@@ -49,7 +49,7 @@ export function clipBounds(el: Element | null): { top: number; bottom: number } 
   let top = 0;
   let bottom = window.innerHeight;
   for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
-    const st = getComputedStyle(p);
+    const st = window.getComputedStyle(p);
     if (st.overflowX === "visible" && st.overflowY === "visible") continue;
     const r = p.getBoundingClientRect();
     top = Math.max(top, r.top);

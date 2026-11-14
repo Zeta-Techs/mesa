@@ -3151,3 +3151,38 @@ fn ensure_geminiignore_writes_negations_excludes_from_git_and_preserves_user_fil
     assert_eq!(fs::read_to_string(&gi).unwrap(), "secret.txt\n");
     let _ = fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn project_agent_binding_presets_round_trip_and_validate_by_slot() {
+    // 兼容历史仅含 profile / model 的 JSON
+    let legacy: ProjectAgentBinding =
+        serde_json::from_str(r#"{"profile":"p-legacy","model":"glm-5.3"}"#).unwrap();
+    assert_eq!(legacy.profile, "p-legacy");
+    assert_eq!(legacy.model.as_deref(), Some("glm-5.3"));
+    assert_eq!(legacy.effort, None);
+    assert_eq!(legacy.permission_tier, None);
+
+    // 新版 effort + permissionTier camelCase 往返，空字段不落冗余 null
+    let bound = ProjectAgentBinding {
+        profile: "p-chat".into(),
+        model: Some("gpt-6-astra".into()),
+        effort: accept_binding_effort("chat", Some(" high ")).unwrap(),
+        permission_tier: accept_binding_permission_tier("chat", Some("auto")).unwrap(),
+    };
+    let json = serde_json::to_string(&bound).unwrap();
+    assert!(json.contains(r#""permissionTier":"auto""#), "{json}");
+    assert!(json.contains(r#""effort":"high""#), "{json}");
+    let decoded: ProjectAgentBinding = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, bound);
+
+    // 槽位规则：步骤槽禁设 discuss，只读槽（discuss / assistant）忽略权限预设，assistant 不收 effort
+    assert!(accept_binding_permission_tier("step:综述初稿", Some("discuss")).is_err());
+    assert_eq!(
+        accept_binding_permission_tier("step:综述初稿", Some("auto")).unwrap(),
+        Some("auto".to_string())
+    );
+    assert_eq!(accept_binding_permission_tier("discuss", Some("full")).unwrap(), None);
+    assert_eq!(accept_binding_permission_tier("assistant", Some("auto")).unwrap(), None);
+    assert_eq!(accept_binding_effort("assistant", Some("high")).unwrap(), None);
+    assert!(accept_binding_permission_tier("chat", Some("bogus")).is_err());
+}

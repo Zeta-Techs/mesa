@@ -2257,6 +2257,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     agentId: string;
     profileId: string;
     model: string | null;
+    effort?: string | null;
+    permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
   }> {
     const st = useAppStore.getState();
     let research = true;
@@ -2271,10 +2273,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
     if (research) {
       try {
-        const binding = await invoke<{ profile: string; model?: string | null } | null>(
-          "get_project_agent_binding",
-          { projectRoot, slot: READER_BINDING_SLOT },
-        );
+        const binding = await invoke<
+          { profile: string; model?: string | null; effort?: string | null; permissionTier?: string | null } | null
+        >("get_project_agent_binding", { projectRoot, slot: READER_BINDING_SLOT });
         const bound = taskBindingLaunch(st.profiles, binding);
         if (bound) return bound;
       } catch {
@@ -2330,10 +2331,27 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const launch = await resolveReaderLaunch(r.projectRoot);
     const title = `阅读 · ${basename(r.pdfPath).replace(/\.pdf$/i, "")}`;
     const reuseKey = readerReuseKey(r.projectRoot, r.pdfPath);
-    const askMode = (agentId: string) =>
-      useAppStore.getState().agents.find((a) => a.id === agentId)?.permissionModes.includes("ask")
+    const readerPermFor = (
+      agentId: string,
+      presetTier?: "discuss" | "ask" | "auto" | "full" | null,
+    ) => {
+      const det = useAppStore.getState().agents.find((a) => a.id === agentId);
+      if (presetTier === "discuss" && det?.readonlySupported) {
+        return { permission: "discuss" as const, permissionMode: null };
+      }
+      if (
+        presetTier &&
+        presetTier !== "discuss" &&
+        det?.permissionModes.includes(presetTier)
+      ) {
+        return { permission: "write_tree" as const, permissionMode: presetTier };
+      }
+      return det?.permissionModes.includes("ask")
         ? { permissionMode: "ask" as const }
         : {};
+    };
+    const presetTier = launch.permissionTier ?? null;
+    const presetEffort = launch.effort ?? null;
     // 这篇以前读过、那段对话还在：接回它，不另开（2026-11-06 用户：之前精读过的文献直接打开之前的会话）。
     // 连接默认用那段对话自己的；同一家时人在项目 Agents 里给精读绑的连接作候补（与侧栏接着聊同一套 resumeProfileChoice）
     let sessions = useAppStore.getState().sessions;
@@ -2365,7 +2383,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           resume: { agentId: prev.agent, sessionId: prev.sessionId, provider: prev.provider },
           agentId: prev.agent,
           ...choice,
-          ...askMode(prev.agent),
+          ...(launch.agentId === prev.agent && presetEffort ? { effort: presetEffort } : {}),
+          ...readerPermFor(prev.agent, launch.agentId === prev.agent ? presetTier : null),
           runId: run?.id,
           autoStart: true,
           reuseKey,
@@ -2375,7 +2394,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
     if (!launch.profileId) return false;
     setReaderResumedKey(null);
-    // 阅读会话按「请求批准」起（本机设成完全访问也收窄）：改笔记以外的文件先问；
+    // 阅读会话默认按「请求批准」起（专属绑定里预设了权限档则按预设走）：改笔记以外的文件先问；
     // Claude Code 另由 pty_spawn 预放行 notes/（reuseKey reader: 识别）。没有这一档的 CLI 按本机设置
     setPendingTerminal({
       cwd: r.projectRoot,
@@ -2384,7 +2403,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       agentId: launch.agentId,
       profileId: launch.profileId,
       ...(launch.model ? { model: launch.model } : {}),
-      ...askMode(launch.agentId),
+      ...(presetEffort ? { effort: presetEffort } : {}),
+      ...readerPermFor(launch.agentId, presetTier),
       autoStart: true,
       reuseKey,
     });

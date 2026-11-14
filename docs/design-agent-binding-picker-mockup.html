@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 设计对比 ② · 项目 Agent 专属绑定选择器 + 权限/思考预设</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626;
+    --strip: #1c1c1c; --canvas: #111111; --inset: #212121; --raised: #272727;
+    --seg-sel: #2b2b2b; --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --cta: #0169cc; --cta-text: #eaf4ff; --nav-accent: var(--cta);
+    --hover: rgb(255 255 255 / 0.05);
+    --warn-text: #f0c010;
+    --caution-text: color-mix(in srgb, var(--warn-text) 62%, var(--l2));
+    --mesa-amber: #f5b83d;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --float-hl: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #1b1815; --rail-sel: #312d29;
+    --strip: #1e1b18; --canvas: #15130f; --inset: #23211d; --raised: #2c2925;
+    --seg-sel: #35322d; --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+    --cta: #f5b83d; --cta-text: #1d1608; --nav-accent: var(--cta);
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f6f2e9; --rail-sel: #e1dcd3;
+    --strip: #fbf5ed; --canvas: #f2eee5; --inset: #fefaf6; --raised: #ffffff;
+    --seg-sel: #d2cdc3; --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --cta: #e39a1c; --cta-text: #241a02; --nav-accent: var(--cta);
+    --hover: rgb(0 0 0 / 0.045);
+    --mesa-amber: #e39a1c;
+    --float-hl: 0 0 0 0.5px rgba(0,0,0,0.08);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #08090b; color: var(--l2);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .suite-nav {
+    position: sticky; top: 0; z-index: 60;
+    background: rgba(12, 13, 16, 0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #23252a; padding: 10px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+    color: #c8c8ce; font-size: 12.5px;
+  }
+  .suite-links { display: inline-flex; gap: 4px; background: #17181c; padding: 3px; border-radius: 9px; border: 1px solid #282a30; }
+  .suite-links a { color: #9496a1; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-weight: 500; }
+  .suite-links a:hover { color: #e5e5e5; }
+  .suite-links a.active { background: #2b2e37; color: #fff; }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 6px; }
+  .ctrl-label { color: #7c7e88; font-size: 12px; }
+  .seg { display: inline-flex; background: #17181c; padding: 2px; border-radius: 8px; border: 1px solid #282a30; gap: 2px; }
+  .seg button { background: none; border: 0; color: #9496a1; padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: #2c2f38; color: #fff; font-weight: 500; }
+
+  .summary-strip { max-width: 1640px; margin: 14px auto 0; padding: 0 20px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+  .sum-card { background: #131418; border: 1px solid #22242b; border-radius: 10px; padding: 10px 13px; }
+  .sum-card b { display: block; color: #ededf0; font-size: 12.5px; margin-bottom: 3px; }
+  .sum-card p { margin: 0; color: #8c8f99; font-size: 12px; line-height: 1.45; }
+
+  .stage {
+    max-width: 1640px; margin: 14px auto 48px; padding: 0 20px;
+    display: grid; gap: 18px;
+  }
+  .stage.split { grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr); }
+  .stage.single { grid-template-columns: minmax(0, 1fr); max-width: 1120px; }
+
+  .pane-badge-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .pane-badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .pane-badge.now { background: #23252b; color: #a5a7b2; }
+  .pane-badge.new { background: rgba(245, 184, 61, 0.16); color: #f5b83d; border: 0.5px solid rgba(245, 184, 61, 0.35); }
+  .pane-caption { font-size: 12px; color: #858892; }
+
+  /* 项目工作区面 */
+  .proj-surface {
+    background: var(--rail2);
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--field) 80%, transparent);
+    padding: 16px 20px 80px;
+    min-height: 760px;
+    position: relative;
+  }
+  .id-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .id-header h1 { margin: 0; font-size: 18px; font-weight: 600; color: var(--l1); }
+  .mode-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--strip); color: var(--l2); }
+  .path-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--l4); }
+
+  .tab-bar {
+    display: flex; align-items: center; gap: 6px; border-bottom: 0.5px solid var(--hairline); margin-bottom: 18px;
+  }
+  .tab-it {
+    height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--l3); border-bottom: 2px solid transparent;
+  }
+  .tab-it.on { color: var(--l1); border-bottom-color: var(--cta); font-weight: 500; }
+
+  .sec-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 18px 0 10px;
+  }
+  .sec-row:first-of-type { margin-top: 4px; }
+  .sec-title { font-size: 13.5px; font-weight: 600; color: var(--l1); }
+  .sec-sub { font-size: 12px; color: var(--l3); margin-left: 8px; font-weight: 400; }
+  .reset-link { font-size: 12px; color: var(--l3); background: none; border: 0; cursor: pointer; padding: 3px 7px; border-radius: 6px; }
+  .reset-link:hover { background: var(--hover); color: var(--l1); }
+
+  .slot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+
+  /* 现状卡片与一列长菜单还原 */
+  .now-slot {
+    background: var(--well); border-radius: 10px; padding: 11px 12px; position: relative;
+  }
+  .now-slot.marked { background: var(--seg-sel); }
+  .slot-head { display: flex; align-items: center; gap: 7px; }
+  .slot-head h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--l1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot-tag { font-size: 11.5px; color: var(--l1); font-weight: 500; }
+  .now-trigger {
+    margin-top: 6px; padding: 5px 7px; border-radius: 6px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .now-long-menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30;
+    background: var(--raised); border: 0.5px solid var(--field); border-radius: 8px;
+    box-shadow: var(--float-hl);
+    max-height: 250px; overflow-y: auto; padding: 4px 0;
+  }
+  .now-opt { padding: 7px 11px; position: relative; }
+  .now-opt:hover, .now-opt.hov { background: var(--hover); }
+  .now-opt b { display: block; font-size: 12px; color: var(--l1); font-weight: 500; }
+  .now-opt span { display: block; font-size: 11.5px; color: var(--l3); margin-top: 1px; }
+  .fake-native-tip {
+    position: absolute; right: 14px; top: 34px; z-index: 35;
+    background: #2c2c2e; color: #ececec; border: 1px solid #48484c; border-radius: 6px;
+    padding: 3px 8px; font-size: 11.5px; pointer-events: none;
+  }
+
+  /* 新版卡片（不搞深浅棋盘格，统一 .ccode-well 底色 + 品牌 M + 权限/思考预设微标） */
+  .new-slot {
+    background: var(--well); border-radius: 10px; padding: 11px 12px; position: relative;
+    transition: background-color .12s;
+  }
+  .new-slot.open-ring { outline: 1px solid var(--field); }
+  .pin-pill {
+    font-size: 11px; padding: 1px 6px; border-radius: 5px;
+    background: color-mix(in srgb, var(--cta) 15%, transparent);
+    color: color-mix(in srgb, var(--cta) 75%, var(--l1));
+    font-weight: 500;
+  }
+  .new-trigger {
+    margin-top: 6px; width: 100%; border: 0; background: transparent; color: inherit; font: inherit;
+    padding: 6px 8px; border-radius: 7px; text-align: left; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; transition: background-color .12s;
+  }
+  .new-trigger:hover { background: var(--hover); }
+  .trig-main { min-width: 0; flex: 1; }
+  .trig-line1 {
+    display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--l1);
+  }
+  .trig-line1.unbound { color: var(--l2); font-weight: 450; }
+  .trig-line2 {
+    margin-top: 3px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    font-size: 11.5px; color: var(--l3);
+  }
+  .preset-chip {
+    display: inline-flex; align-items: center; gap: 3.5px;
+    padding: 0.5px 6px; border-radius: 4px;
+    background: color-mix(in srgb, var(--l1) 7%, transparent);
+    color: var(--l2); font-size: 11px;
+  }
+  .preset-chip.caution { color: var(--caution-text); }
+
+  /* 品牌色 M 字标 */
+  .agent-m {
+    width: 12px; height: 10px; display: inline-block; flex: none;
+    -webkit-mask: var(--m-mask) center / contain no-repeat;
+    mask: var(--m-mask) center / contain no-repeat;
+  }
+
+  /* ==================== 新版专属绑定筛选弹层 ==================== */
+  .slot-popover {
+    position: absolute; top: calc(100% + 6px); z-index: 50;
+    background: var(--raised);
+    border: 0.5px solid var(--field);
+    box-shadow: var(--float-hl);
+    border-radius: 12px;
+    padding: 6px;
+    color: var(--l2);
+    animation: pop .13s ease-out;
+  }
+  .slot-popover.align-left { left: 0; }
+  .slot-popover.align-right { right: 0; }
+  .slot-popover.mode-a { width: 348px; }
+  .slot-popover.mode-b { width: 472px; }
+  @keyframes pop { from { opacity: 0; transform: translateY(-3px) scale(.99); } to { opacity: 1; transform: none; } }
+
+  .pop-inherit-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 12px;
+  }
+  .pop-inherit-row:hover { background: var(--hover); }
+  .pop-inherit-row.selected { background: var(--hover); color: var(--l1); }
+  .pop-div { height: 0.5px; background: var(--hairline); margin: 5px 4px; }
+  .pop-lbl { font-size: 11px; color: var(--l3); padding: 3px 8px 4px; display: flex; align-items: center; justify-content: space-between; }
+
+  /* Agent 筛选两列胶囊（借鉴聊天层 WhoView） */
+  .agent-pills {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 0 2px;
+  }
+  .ag-btn {
+    height: 28px; padding: 0 8px; border-radius: 7px; border: 0; background: transparent;
+    color: var(--l2); font: inherit; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; text-align: left;
+  }
+  .ag-btn:hover { background: var(--hover); color: var(--l1); }
+  .ag-btn.on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+
+  /* 同家多连接切换胶囊 */
+  .conn-tabs {
+    display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 4px 2px;
+  }
+  .conn-chip {
+    height: 23px; padding: 0 8px; border-radius: 999px; border: 0.5px solid var(--hairline);
+    background: transparent; color: var(--l3); font: inherit; font-size: 11px; cursor: pointer;
+  }
+  .conn-chip:hover { color: var(--l1); border-color: var(--field); }
+  .conn-chip.on { background: var(--inset); color: var(--l1); border-color: var(--field); font-weight: 500; }
+
+  /* 模型搜索壳 + 模型单选列表 */
+  .model-search {
+    margin: 4px 4px 3px; height: 27px; padding: 0 8px; border-radius: 7px;
+    background: var(--inset); display: flex; align-items: center; gap: 6px;
+  }
+  .model-search input {
+    border: 0; background: transparent; color: var(--l1); font: inherit; font-size: 12px; width: 100%; outline: none;
+  }
+  .model-list { max-height: 148px; overflow-y: auto; padding: 2px; }
+  .m-row {
+    width: 100%; border: 0; background: transparent; color: var(--l2); font: inherit;
+    padding: 5px 8px; border-radius: 7px; cursor: pointer; text-align: left;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .m-row:hover { background: var(--hover); color: var(--l1); }
+  .m-row.on { color: var(--l1); font-weight: 500; }
+  .m-caps { font-size: 11px; color: var(--l4); font-weight: 400; margin-left: auto; }
+
+  /* 思考强度标尺滑块（复刻聊天层 EffortSlider M▁ 琥珀游标） */
+  .effort-box { padding: 4px 8px 6px; }
+  .effort-top { display: flex; align-items: center; justify-content: space-between; font-size: 11.5px; margin-bottom: 6px; }
+  .effort-val { display: inline-flex; align-items: center; gap: 5px; color: var(--l1); font-weight: 500; }
+  .ruler-track {
+    position: relative; height: 18px; margin: 0 6px; display: flex; align-items: center; cursor: pointer;
+  }
+  .ruler-line { width: 100%; height: 2px; background: var(--field); border-radius: 2px; position: relative; }
+  .ruler-fill { height: 2px; background: var(--l3); border-radius: 2px; transition: width .12s; }
+  .ruler-tick {
+    position: absolute; top: 50%; width: 1px; height: 6px; background: var(--l4); transform: translate(-50%, -50%);
+  }
+  .ruler-knob {
+    position: absolute; top: 50%; width: 15px; height: 7px; border-radius: 2px;
+    background: var(--mesa-amber); transform: translate(-50%, -50%); transition: left .12s;
+  }
+  .effort-stops {
+    display: flex; justify-content: space-between; margin: 2px 2px 0; font-size: 10.5px; color: var(--l4);
+  }
+  .effort-stops span { cursor: pointer; padding: 1px 3px; border-radius: 4px; }
+  .effort-stops span:hover { color: var(--l2); }
+  .effort-stops span.on { color: var(--l1); font-weight: 600; }
+
+  /* 权限档位选择（复刻聊天层 PermissionGlyph 界线符号） */
+  .perm-box { padding: 4px 6px 4px; }
+  .perm-seg {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px;
+    background: var(--inset); padding: 2.5px; border-radius: 8px;
+  }
+  .perm-seg.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .perm-btn {
+    border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 11px;
+    padding: 4px 4px; border-radius: 6px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .perm-btn:hover { color: var(--l1); }
+  .perm-btn.on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+  .perm-btn.caution.on { color: var(--caution-text); }
+  .perm-readonly-note {
+    padding: 4px 8px; font-size: 11px; color: var(--l4); display: flex; align-items: center; gap: 6px;
+  }
+
+  /* 方案 B 左右双栏布局 */
+  .b-cols { display: grid; grid-template-columns: 162px minmax(0, 1fr); gap: 8px; }
+  .b-left { border-right: 0.5px solid var(--hairline); padding-right: 6px; }
+
+  @media (max-width: 1220px) {
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stage.split { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="suite-nav">
+  <strong style="color:#fff">Mesa 设计方案预览</strong>
+  <div class="suite-links">
+    <a href="./design-workbench-v2-mockup.html">① 工作台 UI 优化</a>
+    <a href="./design-agent-binding-picker-mockup.html" class="active">② Agent 专属绑定 + 权限/思考预设</a>
+    <a href="./design-chat-brand-status-mockup.html">③ 聊天层 M▁ 状态设计</a>
+    <a href="./design-global-ui-polish-mockup.html">④ 全局 UI 建议 &amp; 删示例课题</a>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">弹层形态</span>
+    <div class="seg" id="popLayout">
+      <button data-l="a" class="on">方案 A：聊天层同款紧凑筛选（推荐）</button>
+      <button data-l="b">方案 B：左右双栏平铺</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">视图</span>
+    <div class="seg" id="viewMode">
+      <button data-v="split" class="on">左右对比（左现状 / 右可交互）</button>
+      <button data-v="new">只看新方案</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">主题</span>
+    <div class="seg" id="themeMode">
+      <button data-t="neutral" class="on">极简灰蓝（截图同款）</button>
+      <button data-t="ayu">暖炭琥珀</button>
+      <button data-t="ayu-light">暖炭·浅</button>
+    </div>
+  </div>
+</nav>
+
+<section class="summary-strip">
+  <div class="summary-grid">
+    <div class="sum-card">
+      <b>① 告别 50 行拍平长单：Agent → 连接 → 模型分层</b>
+      <p>借鉴聊天层 <code>WhoView</code>，先点带品牌色 <b>M</b> 的 Agent 胶囊，同家有多条连接时出胶囊切换，下面只列这一条连接的模型（支持搜索与能力标注 <code>200K · 思考 · 看图</code>）。</p>
+    </div>
+    <div class="sum-card">
+      <b>② 思考档位提前预设（复用聊天层 M▁ 标尺滑块）</b>
+      <p>大纲/聊想法可预设 <code>high / xhigh</code>，检索/快答可预设 <code>low / medium</code>；连接不支持注入思考档时自动隐藏，不摆无效控件。</p>
+    </div>
+    <div class="sum-card">
+      <b>③ 权限档位按槽位职责智能匹配</b>
+      <p>「项目对话」可选先出方案/请求批准/帮我批准；「科研步骤」可选请求批准/帮我批准（免去每次开工重选）；「问 AI / 项目助手」本身固定只读，不画多余权限行。</p>
+    </div>
+    <div class="sum-card">
+      <b>④ 卡片去棋盘格 + 去冗余原生 Tooltip</b>
+      <p>统一 <code>.ccode-well</code> 沉稳底色（不再深一块浅一块），卡片副行用紧凑芯片展示已预设的权限与思考档；移除遮挡下一行选项的原生 <code>title</code>。</p>
+    </div>
+  </div>
+</section>
+
+<main class="stage split" id="stage"></main>
+
+<script>
+const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
+document.documentElement.style.setProperty(
+  "--m-mask",
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="232 284 560 456"><path d="${M_PATH}"/></svg>`)}")`
+);
+
+const CATALOG = [
+  {
+    agentId: "claude-code", label: "Claude Code", color: "#D97757",
+    efforts: ["", "low", "medium", "high", "max"],
+    perms: ["discuss", "ask", "auto", "full"],
+    conns: [
+      { id: "cc-glm", name: "GLM", models: [
+        { id: "glm-5.3", caps: "128K · 思考" },
+        { id: "glm-5.3-flash", caps: "128K · 极速" }
+      ]},
+      { id: "cc-ant", name: "Anthropic 官方", models: [
+        { id: "claude-opus-4-6", caps: "200K · 思考 · 看图" },
+        { id: "claude-sonnet-4-6", caps: "200K · 思考 · 看图" },
+        { id: "claude-haiku-4-5", caps: "200K · 轻量" }
+      ]}
+    ]
+  },
+  {
+    agentId: "codex", label: "Codex", color: "#8B7EC8",
+    efforts: ["", "low", "medium", "high", "xhigh"],
+    perms: ["discuss", "ask", "auto", "full"],
+    conns: [
+      { id: "cx-oai", name: "OpenAI 官方", models: [
+        { id: "gpt-5.3-codex", caps: "272K · 思考 · 看图" },
+        { id: "gpt-5.2", caps: "200K · 思考 · 看图" }
+      ]},
+      { id: "cx-glm", name: "GLM", models: [
+        { id: "glm-5.3-flash", caps: "128K · 极速" }
+      ]}
+    ]
+  },
+  {
+    agentId: "agy", label: "Antigravity CLI", color: "#3B8EA5",
+    efforts: ["", "low", "medium", "high"],
+    perms: ["ask", "auto", "full"],
+    conns: [
+      { id: "ag-gem", name: "Gemini", models: [
+        { id: "gemini-4-carbon", caps: "1M · 思考 · 看图" },
+        { id: "gemini-3-flash", caps: "1M · 极速 · 看图" }
+      ]}
+    ]
+  },
+  {
+    agentId: "kimi", label: "Kimi Code", color: "#0D9488",
+    efforts: ["", "medium", "high"],
+    perms: ["ask", "auto"],
+    conns: [
+      { id: "km-main", name: "Moonshot", models: [
+        { id: "kimi-k2.5-thinking", caps: "256K · 思考" },
+        { id: "kimi-k2-turbo", caps: "256K · 高速" }
+      ]}
+    ]
+  },
+  {
+    agentId: "grok", label: "Grok Build", color: "#C4506A",
+    efforts: ["", "low", "medium", "high"],
+    perms: ["ask", "auto"],
+    conns: [
+      { id: "gk-glm", name: "xAI 官方", models: [
+        { id: "grok-4.2", caps: "256K · 思考 · 看图" },
+        { id: "grok-4-mini", caps: "128K · 快速" }
+      ]}
+    ]
+  }
+];
+
+const PERM_META = {
+  "": { label: "本机默认", short: "" },
+  discuss: { label: "先出方案", short: "先出方案" },
+  ask: { label: "请求批准", short: "请求批准" },
+  auto: { label: "帮我批准", short: "帮我批准" },
+  full: { label: "完全访问", short: "完全访问" }
+};
+
+function permGlyph(tier) {
+  if (tier === "discuss") {
+    return `<svg viewBox="0 0 20 16" width="15" height="12"><path d="M13 2v12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="2.6" y="9.6" width="7" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+  }
+  if (tier === "auto") {
+    return `<svg viewBox="0 0 20 16" width="15" height="12"><path d="M13 2v6" stroke="currentColor" stroke-width="1.8" stroke-dasharray="2 2"/><rect x="9.5" y="9.6" width="7" height="4" rx="1.2" fill="currentColor"/></svg>`;
+  }
+  if (tier === "full") {
+    return `<svg viewBox="0 0 20 16" width="15" height="12"><path d="M1.5 11.6h8" stroke="currentColor" stroke-width="1.4" stroke-dasharray="1.5 2" opacity=".6"/><rect x="12.6" y="9.6" width="7" height="4" rx="1.2" fill="currentColor"/></svg>`;
+  }
+  return `<svg viewBox="0 0 20 16" width="15" height="12"><path d="M13 2v12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="4.6" y="9.6" width="7" height="4" rx="1.2" fill="currentColor"/></svg>`;
+}
+
+function effortMark(depth) {
+  const y = 3.5 + (depth ?? 0.45) * 8;
+  return `<svg viewBox="0 0 16 14" width="12" height="11" style="${depth === null ? "opacity:.45" : ""}"><path d="M2 13V2L8 ${y.toFixed(1)}L14 2V13" fill="none" stroke="currentColor" stroke-width="2.1"/></svg>`;
+}
+
+const SLOTS = [
+  { id: "chat", group: "fixed", label: "项目对话", icon: "💬", permKind: "chat" },
+  { id: "discuss", group: "fixed", label: "问 AI / 聊想法", icon: "💡", permKind: "readonly", readonlyText: "固定只讨论 · 不改项目文件" },
+  { id: "assistant", group: "fixed", label: "项目助手", icon: "✨", permKind: "readonly", readonlyText: "固定只读核对 · 推荐 Claude Code / Codex" },
+  { id: "reader", group: "fixed", label: "沉浸阅读对话", icon: "📖", permKind: "chat" },
+  { id: "step:search", group: "step", label: "文献检索与筛选", icon: "🔍", permKind: "step" },
+  { id: "step:notes", group: "step", label: "文献精读与笔记", icon: "📑", permKind: "step" },
+  { id: "step:outline", group: "step", label: "综述大纲", icon: "📋", permKind: "step" },
+  { id: "step:draft", group: "step", label: "综述初稿", icon: "✍️", permKind: "step" }
+];
+
+const bindings = {
+  "chat": null,
+  "discuss": { agentId: "agy", connId: "ag-gem", model: "gemini-4-carbon", effort: "high", perm: "" },
+  "assistant": { agentId: "codex", connId: "cx-glm", model: "glm-5.3-flash", effort: "low", perm: "" },
+  "reader": null,
+  "step:search": { agentId: "claude-code", connId: "cc-ant", model: "claude-sonnet-4-6", effort: "medium", perm: "auto" },
+  "step:notes": null,
+  "step:outline": { agentId: "codex", connId: "cx-oai", model: "gpt-5.3-codex", effort: "xhigh", perm: "ask" },
+  "step:draft": null
+};
+
+let ui = {
+  layout: "a",
+  view: "split",
+  theme: "neutral",
+  openSlot: "discuss",
+  draftAgent: "agy",
+  draftConn: "ag-gem",
+  query: ""
+};
+
+function syncDraftFromSlot(slotId) {
+  const b = bindings[slotId];
+  ui.draftAgent = b ? b.agentId : "claude-code";
+  const ag = CATALOG.find((a) => a.agentId === ui.draftAgent) || CATALOG[0];
+  ui.draftConn = (b && ag.conns.some((c) => c.id === b.connId)) ? b.connId : ag.conns[0].id;
+  ui.query = "";
+}
+
+function renderNowPane() {
+  return `
+    <div>
+      <div class="pane-badge-row">
+        <span class="pane-badge now">现在 Current（复刻你的截图现状）</span>
+        <span class="pane-caption">Agent×连接×模型全部拍平成一列 · 原生悬浮气泡挡住下一行 · 不能预设权限和思考档</span>
+      </div>
+      <div class="proj-surface">
+        <div class="id-header">
+          <h1>HER催化综述</h1>
+          <span class="mode-pill">科研</span>
+          <span style="font-size:13px;color:var(--l3)">HER催化综述</span>
+          <span class="path-mono">~/Documents/HER催化综述</span>
+        </div>
+        <div class="tab-bar">
+          <span class="tab-it">科研任务</span><span class="tab-it">定时任务</span><span class="tab-it">文件</span>
+          <span class="tab-it on">Agent 分工</span>
+        </div>
+        <div class="sec-row">
+          <div><div class="sec-title">专属绑定</div><div style="font-size:12px;color:var(--l3);margin-top:3px">留空跟随项目默认。</div></div>
+          <button class="reset-link">全部跟随项目默认</button>
+        </div>
+        <div class="slot-grid">
+          <div class="now-slot">
+            <div class="slot-head"><span>💬</span><h3>项目对话</h3></div>
+            <div class="now-trigger">
+              <div><div style="font-size:12px;color:var(--l2);font-weight:500">Claude Code · GLM</div><div style="font-size:11.5px;color:var(--l3)">glm-5.3 · 跟随项目默认</div></div>
+              <span style="color:var(--l3)">⌄</span>
+            </div>
+          </div>
+          <div class="now-slot marked">
+            <div class="slot-head"><span>💡</span><h3>问 AI / 聊想法</h3><span class="slot-tag">已指定</span></div>
+            <div class="now-trigger">
+              <div><div style="font-size:12px;color:var(--l2);font-weight:500">Antigravity CLI · Gemini</div><div style="font-size:11.5px;color:var(--l3)">gemini-4-carbon</div></div>
+              <span style="color:var(--l3)">⌄</span>
+            </div>
+            <div class="now-long-menu">
+              <div class="now-opt hov"><b>Grok Build · GLM</b><span>glm-5.3-flash</span></div>
+              <div class="fake-native-tip">Grok Build · GLM · glm-5.3-flash</div>
+              <div class="now-opt"><b>Claude Code · GLM-flash</b><span>glm-5.3-flash</span></div>
+              <div class="now-opt"><b>Claude Code · GLM-flash</b><span>glm-5.2</span></div>
+              <div class="now-opt"><b>Claude Code · Anthropic 官方</b><span>claude-opus-4-6</span></div>
+              <div class="now-opt"><b>Claude Code · Anthropic 官方</b><span>claude-sonnet-4-6</span></div>
+              <div class="now-opt"><b>Kimi Code · GLM</b><span>glm-5.3</span></div>
+              <div class="now-opt"><b>Kimi Code · GLM</b><span>glm-5.3-flashx</span></div>
+              <div class="now-opt"><b>Codex · OpenAI 官方</b><span>gpt-5.3-codex</span></div>
+            </div>
+          </div>
+          <div class="now-slot marked">
+            <div class="slot-head"><span>✨</span><h3>项目助手</h3><span class="slot-tag">已指定</span></div>
+            <div class="now-trigger">
+              <div><div style="font-size:12px;color:var(--l2);font-weight:500">Codex · GLM</div><div style="font-size:11.5px;color:var(--l3)">glm-5.3-flash</div></div>
+              <span style="color:var(--l3)">⌄</span>
+            </div>
+          </div>
+          <div class="now-slot">
+            <div class="slot-head"><span>📖</span><h3>沉浸阅读对话</h3></div>
+            <div class="now-trigger">
+              <div><div style="font-size:12px;color:var(--l2);font-weight:500">Claude Code · GLM</div><div style="font-size:11.5px;color:var(--l3)">glm-5.3 · 跟随项目默认</div></div>
+              <span style="color:var(--l3)">⌄</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-row" style="margin-top:110px">
+          <div><div class="sec-title">科研步骤</div><div style="font-size:12px;color:var(--l3);margin-top:3px">5 步 · 2 已指定</div></div>
+        </div>
+        <div class="slot-grid">
+          <div class="now-slot marked">
+            <div class="slot-head"><span>📋</span><h3>综述大纲</h3><span class="slot-tag">已指定</span></div>
+            <div class="now-trigger"><div><div style="font-size:12px;color:var(--l2)">Codex · OpenAI 官方</div><div style="font-size:11.5px;color:var(--l3)">gpt-5.3-codex</div></div><span>⌄</span></div>
+          </div>
+          <div class="now-slot">
+            <div class="slot-head"><span>✍️</span><h3>综述初稿</h3></div>
+            <div class="now-trigger"><div><div style="font-size:12px;color:var(--l2)">Claude Code · GLM</div><div style="font-size:11.5px;color:var(--l3)">glm-5.3 · 跟随项目默认</div></div><span>⌄</span></div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderPopover(slot, alignRight) {
+  const b = bindings[slot.id];
+  const ag = CATALOG.find((a) => a.agentId === ui.draftAgent) || CATALOG[0];
+  const conn = ag.conns.find((c) => c.id === ui.draftConn) || ag.conns[0];
+  const models = conn.models.filter((m) => !ui.query || m.id.toLowerCase().includes(ui.query.toLowerCase()));
+  const curEffort = (b && b.agentId === ag.agentId) ? (b.effort || "") : "";
+  const curPerm = (b && b.agentId === ag.agentId) ? (b.perm || "") : "";
+  const effIdx = Math.max(0, ag.efforts.indexOf(curEffort));
+  const effPct = ag.efforts.length > 1 ? (effIdx / (ag.efforts.length - 1)) * 100 : 0;
+
+  const permAllowed = slot.permKind === "chat"
+    ? ["", "discuss", "ask", "auto"].filter((p) => !p || ag.perms.includes(p))
+    : slot.permKind === "step"
+      ? ["", "ask", "auto", "full"].filter((p) => !p || ag.perms.includes(p))
+      : [];
+
+  const inheritRow = `
+    <div class="pop-inherit-row ${!b ? "selected" : ""}" data-act="clear-slot">
+      <div>
+        <div style="font-weight:500;color:var(--l1)">跟随项目默认</div>
+        <div style="font-size:11px;color:var(--l3)">Claude Code · GLM · glm-5.3</div>
+      </div>
+      ${!b ? `<span style="color:var(--l1)">✓</span>` : `<span style="font-size:11px;color:var(--l4)">恢复默认</span>`}
+    </div>`;
+
+  const agentSection = `
+    <div class="pop-lbl"><span>筛选 Agent</span><span style="color:var(--l4)">${ag.label}</span></div>
+    <div class="agent-pills" style="${ui.layout === "b" ? "grid-template-columns:1fr" : ""}">
+      ${CATALOG.map((item) => `
+        <button type="button" class="ag-btn ${item.agentId === ag.agentId ? "on" : ""}" data-act="pick-agent" data-agent="${item.agentId}">
+          <span class="agent-m" style="background:${item.color}"></span>
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.label}</span>
+        </button>
+      `).join("")}
+    </div>
+    ${ag.conns.length > 1 ? `
+      <div class="conn-tabs">
+        ${ag.conns.map((c) => `
+          <button type="button" class="conn-chip ${c.id === conn.id ? "on" : ""}" data-act="pick-conn" data-conn="${c.id}">${c.name}</button>
+        `).join("")}
+      </div>
+    ` : `<div style="padding:4px 8px 0;font-size:11px;color:var(--l4)">连接：${conn.name}</div>`}
+  `;
+
+  const modelSection = `
+    <div class="pop-lbl"><span>模型</span><span style="color:var(--l4)">点选即指定</span></div>
+    ${conn.models.length >= 2 ? `
+      <div class="model-search">
+        <span style="color:var(--l4);font-size:12px">⌕</span>
+        <input type="text" placeholder="筛选模型…" value="${ui.query}" data-act="search-model" />
+      </div>
+    ` : ""}
+    <div class="model-list">
+      ${models.map((m) => {
+        const selected = Boolean(b && b.connId === conn.id && b.model === m.id);
+        return `
+          <button type="button" class="m-row ${selected ? "on" : ""}" data-act="pick-model" data-model="${m.id}">
+            <span>${m.id}</span>
+            <span class="m-caps">${m.caps}</span>
+            <span style="width:13px;text-align:right;color:var(--l1)">${selected ? "✓" : ""}</span>
+          </button>`;
+      }).join("")}
+    </div>`;
+
+  const effortSection = `
+    <div class="effort-box">
+      <div class="effort-top">
+        <span style="color:var(--l3);font-size:11px">思考强度预设</span>
+        <span class="effort-val">
+          ${effortMark(curEffort ? effIdx / (ag.efforts.length - 1) : null)}
+          ${curEffort || "跟随连接默认"}
+        </span>
+      </div>
+      <div class="ruler-track">
+        <div class="ruler-line">
+          <div class="ruler-fill" style="width:${effPct}%"></div>
+          ${ag.efforts.map((lv, idx) => {
+            const p = (idx / (ag.efforts.length - 1)) * 100;
+            return idx === effIdx ? "" : `<span class="ruler-tick" style="left:${p}%"></span>`;
+          }).join("")}
+          <span class="ruler-knob" style="left:${effPct}%"></span>
+        </div>
+      </div>
+      <div class="effort-stops">
+        ${ag.efforts.map((lv) => `
+          <span class="${lv === curEffort ? "on" : ""}" data-act="pick-effort" data-effort="${lv}">${lv || "默认"}</span>
+        `).join("")}
+      </div>
+    </div>`;
+
+  const permSection = slot.permKind === "readonly"
+    ? `<div class="perm-readonly-note">🔒 ${slot.readonlyText}</div>`
+    : `
+      <div class="perm-box">
+        <div style="display:flex;justify-content:space-between;padding:0 2px 4px;font-size:11px;color:var(--l3)">
+          <span>权限预设</span>
+          <span style="color:var(--l4)">${slot.permKind === "step" ? "开工与继续时自动带上" : "新开对话默认权限"}</span>
+        </div>
+        <div class="perm-seg ${permAllowed.length === 3 ? "cols-3" : ""}">
+          ${permAllowed.map((p) => `
+            <button type="button" class="perm-btn ${p === "full" ? "caution" : ""} ${curPerm === p ? "on" : ""}" data-act="pick-perm" data-perm="${p}">
+              ${permGlyph(p || "ask")}
+              <span>${PERM_META[p].label}</span>
+            </button>
+          `).join("")}
+        </div>
+      </div>`;
+
+  if (ui.layout === "b") {
+    return `
+      <div class="slot-popover mode-b ${alignRight ? "align-right" : "align-left"}" onclick="event.stopPropagation()">
+        ${inheritRow}
+        <div class="pop-div"></div>
+        <div class="b-cols">
+          <div class="b-left">${agentSection}</div>
+          <div>
+            ${modelSection}
+            <div class="pop-div"></div>
+            ${effortSection}
+            <div class="pop-div"></div>
+            ${permSection}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="slot-popover mode-a ${alignRight ? "align-right" : "align-left"}" onclick="event.stopPropagation()">
+      ${inheritRow}
+      <div class="pop-div"></div>
+      ${agentSection}
+      <div class="pop-div"></div>
+      ${modelSection}
+      <div class="pop-div"></div>
+      ${effortSection}
+      <div class="pop-div"></div>
+      ${permSection}
+    </div>`;
+}
+
+function renderSlotCard(slot, idx) {
+  const b = bindings[slot.id];
+  const isOpen = ui.openSlot === slot.id;
+  const ag = b ? CATALOG.find((a) => a.agentId === b.agentId) : null;
+  const conn = ag ? ag.conns.find((c) => c.id === b.connId) : null;
+  const alignRight = idx % 2 === 1;
+
+  return `
+    <div class="new-slot ${isOpen ? "open-ring" : ""}">
+      <div class="slot-head">
+        <span>${slot.icon}</span>
+        <h3>${slot.label}</h3>
+        ${b ? `<span class="pin-pill">已指定</span>` : ""}
+      </div>
+      <button type="button" class="new-trigger" data-act="toggle-slot" data-slot="${slot.id}">
+        <div class="trig-main">
+          ${b && ag && conn ? `
+            <div class="trig-line1">
+              <span class="agent-m" style="background:${ag.color}"></span>
+              <span>${ag.label} · ${conn.name}</span>
+            </div>
+            <div class="trig-line2">
+              <span>${b.model}</span>
+              ${b.perm ? `<span class="preset-chip ${b.perm === "full" ? "caution" : ""}">${permGlyph(b.perm)} ${PERM_META[b.perm].short}</span>` : ""}
+              ${b.effort ? `<span class="preset-chip">${effortMark(0.8)} ${b.effort}</span>` : ""}
+            </div>
+          ` : `
+            <div class="trig-line1 unbound">
+              <span class="agent-m" style="background:#D97757;opacity:.75"></span>
+              <span>Claude Code · GLM</span>
+            </div>
+            <div class="trig-line2"><span>glm-5.3 · 跟随项目默认</span></div>
+          `}
+        </div>
+        <span style="color:var(--l3);font-size:12px">${isOpen ? "⌃" : "⌄"}</span>
+      </button>
+      ${isOpen ? renderPopover(slot, alignRight) : ""}
+    </div>`;
+}
+
+function renderNewPane() {
+  const fixedSlots = SLOTS.filter((s) => s.group === "fixed");
+  const stepSlots = SLOTS.filter((s) => s.group === "step");
+  const boundSteps = stepSlots.filter((s) => bindings[s.id]).length;
+
+  return `
+    <div>
+      <div class="pane-badge-row">
+        <span class="pane-badge new">建议方案 Proposed（可点击任意卡片交互体验！）</span>
+        <span class="pane-caption">点击不同卡片试试：项目对话 vs 问 AI（只读免权限行）vs 科研步骤（开工权限+思考档一次设好）</span>
+      </div>
+      <div class="proj-surface" id="interactiveSurface">
+        <div class="id-header">
+          <h1>HER催化综述</h1>
+          <span class="mode-pill">科研</span>
+          <span class="path-mono">~/Documents/HER催化综述</span>
+          <span style="font-size:11.5px;color:var(--l4);margin-left:4px">（已去掉重复的同名课题副标）</span>
+        </div>
+        <div class="tab-bar">
+          <span class="tab-it">科研任务</span><span class="tab-it">定时任务</span><span class="tab-it">文件</span>
+          <span class="tab-it on">Agent 分工</span>
+        </div>
+
+        <div class="sec-row">
+          <div><span class="sec-title">专属绑定</span><span class="sec-sub">留空跟随项目默认；可一并预设思考档位与权限</span></div>
+          <button class="reset-link" data-act="reset-all">全部跟随项目默认</button>
+        </div>
+        <div class="slot-grid">
+          ${fixedSlots.map((s, i) => renderSlotCard(s, i)).join("")}
+        </div>
+
+        <div class="sec-row" style="margin-top:24px">
+          <div><span class="sec-title">科研步骤</span><span class="sec-sub">4 步 · ${boundSteps} 已指定</span></div>
+        </div>
+        <div class="slot-grid">
+          ${stepSlots.map((s, i) => renderSlotCard(s, i)).join("")}
+        </div>
+      </div>
+    </div>`;
+}
+
+function render() {
+  document.documentElement.dataset.theme = ui.theme;
+  const stage = document.getElementById("stage");
+  stage.className = `stage ${ui.view === "split" ? "split" : "single"}`;
+  stage.innerHTML = ui.view === "split" ? (renderNowPane() + renderNewPane()) : renderNewPane();
+
+  const searchInput = stage.querySelector('input[data-act="search-model"]');
+  if (searchInput && document.activeElement?.tagName === "INPUT") {
+    searchInput.focus();
+    searchInput.setSelectionRange(ui.query.length, ui.query.length);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) {
+    if (!e.target.closest(".slot-popover") && !e.target.closest(".suite-nav") && ui.openSlot) {
+      ui.openSlot = null;
+      render();
+    }
+    return;
+  }
+  const act = el.dataset.act;
+  if (act === "toggle-slot") {
+    const sid = el.dataset.slot;
+    ui.openSlot = ui.openSlot === sid ? null : sid;
+    if (ui.openSlot) syncDraftFromSlot(ui.openSlot);
+    render();
+  } else if (act === "pick-agent") {
+    ui.draftAgent = el.dataset.agent;
+    const ag = CATALOG.find((a) => a.agentId === ui.draftAgent);
+    ui.draftConn = ag.conns[0].id;
+    // 切换 Agent 时如果已有绑定，顺手切到该连接首模型便于即时预览
+    if (ui.openSlot) {
+      const prev = bindings[ui.openSlot];
+      bindings[ui.openSlot] = {
+        agentId: ag.agentId,
+        connId: ag.conns[0].id,
+        model: ag.conns[0].models[0].id,
+        effort: prev && ag.efforts.includes(prev.effort) ? prev.effort : "",
+        perm: prev && ag.perms.includes(prev.perm) ? prev.perm : ""
+      };
+    }
+    render();
+  } else if (act === "pick-conn") {
+    ui.draftConn = el.dataset.conn;
+    const ag = CATALOG.find((a) => a.agentId === ui.draftAgent);
+    const conn = ag.conns.find((c) => c.id === ui.draftConn);
+    if (ui.openSlot && conn) {
+      const prev = bindings[ui.openSlot];
+      bindings[ui.openSlot] = {
+        agentId: ag.agentId,
+        connId: conn.id,
+        model: conn.models[0].id,
+        effort: prev?.effort || "",
+        perm: prev?.perm || ""
+      };
+    }
+    render();
+  } else if (act === "pick-model") {
+    const ag = CATALOG.find((a) => a.agentId === ui.draftAgent);
+    const conn = ag.conns.find((c) => c.id === ui.draftConn);
+    const prev = bindings[ui.openSlot];
+    bindings[ui.openSlot] = {
+      agentId: ag.agentId,
+      connId: conn.id,
+      model: el.dataset.model,
+      effort: prev?.agentId === ag.agentId ? (prev.effort || "") : "",
+      perm: prev?.agentId === ag.agentId ? (prev.perm || "") : ""
+    };
+    render();
+  } else if (act === "pick-effort") {
+    const ag = CATALOG.find((a) => a.agentId === ui.draftAgent);
+    const conn = ag.conns.find((c) => c.id === ui.draftConn);
+    const prev = bindings[ui.openSlot];
+    bindings[ui.openSlot] = {
+      agentId: ag.agentId,
+      connId: conn.id,
+      model: prev?.connId === conn.id ? prev.model : conn.models[0].id,
+      effort: el.dataset.effort,
+      perm: prev?.perm || ""
+    };
+    render();
+  } else if (act === "pick-perm") {
+    const ag = CATALOG.find((a) => a.agentId === ui.draftAgent);
+    const conn = ag.conns.find((c) => c.id === ui.draftConn);
+    const prev = bindings[ui.openSlot];
+    bindings[ui.openSlot] = {
+      agentId: ag.agentId,
+      connId: conn.id,
+      model: prev?.connId === conn.id ? prev.model : conn.models[0].id,
+      effort: prev?.effort || "",
+      perm: el.dataset.perm
+    };
+    render();
+  } else if (act === "clear-slot") {
+    bindings[ui.openSlot] = null;
+    ui.openSlot = null;
+    render();
+  } else if (act === "reset-all") {
+    Object.keys(bindings).forEach((k) => { bindings[k] = null; });
+    ui.openSlot = null;
+    render();
+  }
+});
+
+document.addEventListener("input", (e) => {
+  if (e.target.matches('input[data-act="search-model"]')) {
+    ui.query = e.target.value;
+    render();
+  }
+});
+
+document.getElementById("popLayout").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-l]");
+  if (!btn) return;
+  ui.layout = btn.dataset.l;
+  document.querySelectorAll("#popLayout button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+document.getElementById("viewMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-v]");
+  if (!btn) return;
+  ui.view = btn.dataset.v;
+  document.querySelectorAll("#viewMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+document.getElementById("themeMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-t]");
+  if (!btn) return;
+  ui.theme = btn.dataset.t;
+  document.querySelectorAll("#themeMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

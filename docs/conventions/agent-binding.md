@@ -18,7 +18,7 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 
 ## 存储与命令
 
-- 槽位绑定：SQLite `projects.task_bindings`（`slot → {profile, model?}`）。白名单 `reader` / `chat` / `discuss` / `assistant` + `step:` 前缀（`valid_agent_binding_slot`）；写 `set_project_agent_binding`（模型须在名单）、读 `get_project_agent_binding`（无白名单校验）。
+- 槽位绑定：SQLite `projects.task_bindings`（`slot → {profile, model?, effort?, permissionTier?}`）。白名单 `reader` / `chat` / `discuss` / `assistant` + `step:` 前缀（`valid_agent_binding_slot`）；写 `set_project_agent_binding`（模型须在名单；`effort` 校验合法档名且 `assistant` 槽忽略；`permissionTier` 按槽职责校验——`chat` / `reader` 接 `discuss | ask | auto | full`、`step:*` 接写树三档 `ask | auto | full`、`discuss` / `assistant` 只读槽忽略权限预设）、读 `get_project_agent_binding`（无白名单校验）。
 - 目标绑定：`tasks` 表 `agent + profile_id + model`（创建时写入，没开始过的目标可经 `task_update` 改；新建目标弹层不点 Agent/连接/模型就存空＝跟随项目默认，未绑目标开工与弹层摘要共用 `goalDefaultProfile`；model 列**追加队尾**——map_task 按位置索引，插中间静默串列，有回归测试钉住）。
 - 日程绑定：`schedules.json` `profile_id + model`（`#[serde(default)]` 兼容旧档；UpdateSchedulePatch 的 model 走 `Option<Option>+空串清空`，与 profileId 同口径；行内换配置连带清 model）。
 
@@ -26,12 +26,12 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 
 | 入口 | 归属 |
 |---|---|
-| 开工弹层（KickoffConfirmDialog） | **步骤绑定**（预选来源；弹层内可见选择即最终值） |
+| 开工弹层（KickoffConfirmDialog） | **步骤绑定**（预选来源，含 `step:` 槽预设的 `effort` 与 `permissionTier`；弹层内可见选择即最终值） |
 | 任务卡「继续」（「AI 干活」行；仅当这一步的 Agent 没在出字/等确认。与「去终端看看」互斥。聚焦步骤自己的工作区卡片不重复这颗按钮） | **步骤绑定 > discuss > 项目默认**（2026-10-22 起：上次工作区对话是同一家 Agent 就接回它——`resumeSession` + `CONTINUE_RESUME_PROMPT`，步骤绑定的连接作 autoLaunchProfileId 预填；没有可接的新开会话，预填 `CONTINUE_STEP_PROMPT`。「新开一轮」只在有可接对话时出现，不接回、不问带不带。按步骤名现读 step: 槽。分流纯逻辑 `workspace-resume.ts continueRoute`）。上次工作区会话是另一家 Agent 时先问：带上 = 简报写入工作区 `.ccode/handoff-*.md`（用户原话与助手正文逐条原文；配了提炼才追加结论，且模型不得改写用户原话。未配提炼则只有原文），`mark_handoff` 的目录用仓库路径（扫描后 project_path 是仓库），新会话首条是读简报再做到完成标准；不带 = 现在这条空白继续 |
 | 「去终端看看」 | 只在 Agent 正在出字或等确认时出现，回到那次对话 |
-| 评审退回修改 / help-wanted 去终端回答 / 整理为笔记（仅精读工作区在跑时；否则只写项目根摘录、不拉起）/ 步骤行「让 Agent 按决定继续」「更换引用样式」（2026-10-24：预填取步骤绑定 > 商量 / 项目默认，与任务卡「继续」同口径；原先不带，接回时模型落到连接名单第一个） | **步骤绑定**（执行面；resume 优先。显式要接回的，以及「去终端回答」，仍回原会话；绑定只在没有可接回的会话时作新开预填） |
-| 侧栏项目行 ＋ / 项目页「新对话」（2026-10-24 起项目「对话」页撤掉，对话挂在侧栏项目下） | **chat 槽 > 项目默认**。已有对话的继续仍用原会话 agent；agent 与 chat 槽相同才用该槽连接预填 |
-| 「跟 AI 商量一下」（任务书讨论）/ MCP 登录 / 聊想法（onDiscuss）/ 文件·资源·文档问 AI | **discuss 槽 > 项目默认**（2026-10-15 用户拍板：商量类与步骤任务类型无关，不吃步骤绑定；不吃 chat 槽） |
+| 评审退回修改 / help-wanted 去终端回答 / 整理为笔记（仅精读工作区在跑时；否则只写项目根摘录、不拉起）/ 步骤行「让 Agent 按决定继续」「更换引用样式」（2026-10-24：预填取步骤绑定 > 商量 / 项目默认，与任务卡「继续」同口径；原先不带，接回时模型落到连接名单第一个） | **步骤绑定**（执行面；resume 优先。显式要接回的，以及「去终端回答」，仍回原会话；绑定只在没有可接回的会话时作新开预填，并带上 `step:` 槽预设的 `effort` 与 `permissionTier`） |
+| 侧栏项目行 ＋ / 项目页「新对话」（2026-10-24 起项目「对话」页撤掉，对话挂在侧栏项目下） | **chat 槽 > 项目默认**（新开空白对话一并预填 `chat` 槽预设的 `effort` 与 `permissionTier`，含自动开与输入栏起步态）。已有对话的继续仍用原会话 agent；agent 与 chat 槽相同才用该槽连接预填 |
+| 「跟 AI 商量一下」（任务书讨论）/ MCP 登录 / 聊想法（onDiscuss）/ 文件·资源·文档问 AI | **discuss 槽 > 项目默认**（2026-10-15 用户拍板：商量类与步骤任务类型无关，不吃步骤绑定；不吃 chat 槽；`discuss` 槽有 `effort` 预设时透传给 AskAiModal 与直接拉起，只读权限恒为 `discuss`） |
 | 编程进树/建树（CodingProjectView） | 项目默认，**不动** |
 | 快速开聊 | 全局记忆 ccode.quickChat，**不进塔** |
 | 接力/提炼接力/外部恢复 | 会话连续性优先，**不进塔** |
@@ -44,21 +44,21 @@ L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（�
 
 ## 关键机制
 
-- **开工弹层的权限档（2026-11-06）**：「权限」一行可选 请求批准 / 帮我批准 / 完全访问（这家 `permissionModes` 没有的不列；一档都没有 = 按本机设置、不给选）。
-  预选 `pickKickoffPermission`：本项目上次（`ccode.kickoffPerm.<root>`，只记 ask / auto）> CLI 本机设置（`cli_default_permission`）> auto > ask。
-  完全访问走 `confirmPermissionChoice` 二次确认、不记成项目默认。值经 `KickoffLaunch.permissionMode` → `buildWorkspaceTerminalRequest` 标签种子
+- **开工弹层的权限档（2026-11-06，2026-11-15 补步骤预设）**：「权限」一行可选 请求批准 / 帮我批准 / 完全访问（这家 `permissionModes` 没有的不列；一档都没有 = 按本机设置、不给选）。
+  预选优先级：`step:` 槽预设的 `permissionTier`（在这家支持档位里时优先，含经二次确认存进专属绑定的 `full`）> `pickKickoffPermission`（本项目上次 `ccode.kickoffPerm.<root>` 只记 ask / auto > CLI 本机设置 `cli_default_permission` > auto > ask）。
+  完全访问走 `confirmPermissionChoice` 二次确认、不写进项目级 `kickoffPerm`（只有勾选「存为本步骤默认」或在 Agents 页专属绑定显式选定时，才存入该 `step:` 槽）。值经 `KickoffLaunch.permissionMode` → `buildWorkspaceTerminalRequest` 标签种子
   （`permission: write_tree` + `permissionMode`；同一工作区复用的闲置标签 reseed 时一并换上）→ pty_spawn 只加在这次命令行，不写 CLI 配置。分路各路同一档。
   不经开工弹层、自动拉起的步骤入口（继续、跟进更新、派活、退回修改：`buildWorkspaceTerminalRequest` 带 `autoStart` 且没传 `launch.permissionMode`）
-  按同一 `pickKickoffPermission` 预选（2026-11-10 HER：Kimi「继续」不带档，落回 CLI 默认每条命令都问），完全访问照样不带过来；
+  先读该步 `step:` 槽预设的 `permissionTier`，未设再按 `pickKickoffPermission` 预选（2026-11-10 HER：Kimi「继续」不带档，落回 CLI 默认每条命令都问）；
   不自动拉起的（「去终端看看」）不预选，启动栏按本机设置。各家档表经 `wireWorkspaceLaunchGuard` 的 `permissionModes` 接进来。
 
-- **开工弹层两态勾选**「存为本步骤默认」：勾=写槽；不勾=槽原样不动（临时换一次不毁绑定）；清槽唯一入口在 Agents 页步骤组行内。勾选框初值=槽存在且当前选择==槽值；偏离时自动摘勾并披露「已存默认 X；本次用 Y」。
+- **开工弹层两态勾选**「存为本步骤默认」：勾=写槽（含连接、模型、思考强度与权限档位）；不勾=槽原样不动（临时换一次不毁绑定）；清槽唯一入口在 Agents 页步骤组行内。勾选框初值=槽存在且当前选择（含思考与权限预设）==槽值；偏离时自动摘勾并披露「已存默认 X；本次用 Y」。
 - **开工记忆拆键**：确认无条件写项目级 `ccode.kickoffLast.<projectRoot>`（预填+折叠判定 `!(stepBinding || preferredAgent || kickoffLast)`）；弹层停写 ccode.askAi（那是 AskAiModal 自管的键）。kickoffLast 缺失时只读回落 askAi 记忆做首跑预填（不回写）。
 - **工作区配置三链**：`workspaceLaunchChain`（launch > stepLaunch > wsLast）纯函数单一出处——buildWorkspaceTerminalRequest 与 organizePdfExcerpt 共用，勿在别处手拼。归属判定 `cfg.steps.find(s => s.workspaceName === ws.name)` **first-match**（wsStepMap 是 last-wins，勿混用）。
 - **步骤名是槽键**：编辑器+write_project_config 双端查重（重名会让绑定/坏行归堆错乱）；改名/换模板绑定可能悬空 → Agents 页步骤组坏行（⚠ 前缀）可清；摘要行「N 步 · M 已专属 · K 失效」组头常显。
 - **日程例外**：pinned profile 失效 fail-loud 不换供应商（铁律只管连接层）；model 不在名单回落名单第一 + 运行历史 summary 前缀披露（无人值守不静默换档）。
 - **日程未钉连接＝跟随项目默认（2026-10-17 审查修复）**：旧口径未钉直接跳到 L0（设置页 AI 专用配置 → 最近用过的连接），跳过项目默认，Agents 页又只写「自动」——无人值守的雷达用哪家看你最近在别处点了什么。现按塔回落：L4 未钉 → **L2 项目默认**（`scheduler::pick_project_default`，与前端 `projectAgentLaunch` 同口径：默认 Agent 的绑定连接还在就用它、否则该 Agent 第一条；模型取名册点选的、不在名单取第一）→ 项目没设默认、或默认那家不能无头写盘（能力表）才回落 L0，回落原因写进运行历史 summary 前缀。界面下拉第一项改叫「跟随项目默认」，Agents 页未钉卡片写出实际会用的连接（`scheduleFallback`）。
-- **Agents 页**：名册两列定稿不动（步骤不进名册——同一事实只在专属绑定区表达一次）；专属绑定、定时任务、科研步骤都是两列卡片（标题在左、状态标签在右、连接和模型在下）。固定用途：项目对话；科研为「问 AI / 聊想法」，编程和工作只显示「问 AI」（没有聊想法）；沉浸阅读对话只在科研项目出现。未绑时卡片里写出实际会用的项目默认，下拉第一项是「项目默认」。专属绑定另有「项目助手」一张卡（三种工作方式都有）。标题旁可「全部跟随项目默认」，清掉 chat/discuss/assistant/reader 与 step: 槽，不动定时任务。没有定时任务则不出现这一组。科研步骤直接铺开，不设收起。按项目自己的工作来：科研有步骤才显示「科研步骤」；科研无流程显示「新建目标」；工作项目显示「工作目标」；编程项目显示「开工」（工作树用项目默认，不按树绑），专属绑定不出现沉浸阅读对话。新建目标不单开槽，默认用名册项目默认。有科研步骤时，已有目标仍单独成组，可改这一条的连接（task_set_launch；正在跑则拒绝）。编程项目列出工作树，一律显示项目默认，不能按树改。编程和工作项目即使存过 reader 槽，打开阅读区也不吃它。
+- **Agents 页（2026-11-15 专属绑定分层筛选与预设）**：名册两列定稿不动（步骤不进名册——同一事实只在专属绑定区表达一次）；专属绑定、定时任务、科研步骤都是两列卡片（标题在左、状态标签在右、连接和模型及预设微胶囊 `.ccode-preset-chip` 在下）。专属绑定与科研步骤卡点开不再铺「连接×模型」单列长表，改用与聊天层同源的分层筛选面板（`SlotBindingPopover`）：顶部「跟随项目默认」一键清槽 → 两列品牌标 Agent 胶囊筛选 → 同家多连接时显连接胶囊 → 可搜模型列表（显 `model_capabilities` 能力小字） → 底部按 `combo_surface` 动态展示「思考强度预设」（琥珀 `M▁` 标尺，仅 `injectEffortAllowed` 时出现）与按槽位职责匹配的「权限预设」（`chat` / `reader` 四档 + 按默认；`step:` 写树三档 + 按默认；`discuss` / `assistant` 静默说明只读；选「完全访问」须过 `confirmPermissionChoice` 二次确认）。名册、已有目标与定时任务卡片仍走单层 `ProfileMenu`。固定用途：项目对话；科研为「问 AI / 聊想法」，编程和工作只显示「问 AI」（没有聊想法）；沉浸阅读对话只在科研项目出现。未绑时卡片里写出实际会用的项目默认。专属绑定另有「项目助手」一张卡（三种工作方式都有）。标题旁可「全部跟随项目默认」，清掉 chat/discuss/assistant/reader 与 step: 槽，不动定时任务。没有定时任务则不出现这一组。科研步骤直接铺开，不设收起。按项目自己的工作来：科研有步骤才显示「科研步骤」；科研无流程显示「新建目标」；工作项目显示「工作目标」；编程项目显示「开工」（工作树用项目默认，不按树绑），专属绑定不出现沉浸阅读对话。新建目标不单开槽，默认用名册项目默认。有科研步骤时，已有目标仍单独成组，可改这一条的连接（task_set_launch；正在跑则拒绝）。编程项目列出工作树，一律显示项目默认，不能按树改。编程和工作项目即使存过 reader 槽，打开阅读区也不吃它。
 
 ## 测试钉住面
 

@@ -244,7 +244,10 @@ export default function TaskCardsSection({
   preferredProfile?: string | null;
   preferredModel?: string | null;
   /** 项目槽位专属绑定（B1 步骤槽）：聚焦步骤的商量/继续与卡片「继续」优先用 step:<名> */
-  taskBindings?: Record<string, { profile: string; model?: string | null }> | null;
+  taskBindings?: Record<
+    string,
+    { profile: string; model?: string | null; effort?: string | null; permissionTier?: string | null }
+  > | null;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const preferredAgentTrimmed = preferredAgent?.trim() ?? "";

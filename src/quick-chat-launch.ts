@@ -143,7 +143,15 @@ export function openProjectChat(project: ProjectDto): void {
   const mode = normalizeWorkMode(project.workMode);
   const kind = mode === "coding" || mode === "office" ? mode : "research";
   const { profiles, setPendingTerminal, setPage } = useAppStore.getState();
-  const pick = projectChatLaunch(profiles, project) ?? quickChatDefaultPick();
+  const bound = projectChatLaunch(profiles, project);
+  const pick = bound ?? quickChatDefaultPick();
+  const presetTier = bound?.permissionTier ?? null;
+  const permSeed =
+    presetTier === "discuss"
+      ? { permission: "discuss" as const, permissionMode: null }
+      : presetTier
+        ? { permission: "write_tree" as const, permissionMode: presetTier }
+        : {};
   const prefix = `${projectChatReuseKey(kind, project.path)}:`;
   setPendingTerminal({
     cwd: project.path,
@@ -152,7 +160,8 @@ export function openProjectChat(project: ProjectDto): void {
     agentId: pick.agentId,
     profileId: pick.profileId,
     model: pick.model,
-    effort: "effort" in pick ? (pick.effort ?? null) : null,
+    effort: bound?.effort ?? null,
+    ...permSeed,
     autoStart: false,
     surface: "chat",
     reuseKey: `${prefix}${crypto.randomUUID()}`,

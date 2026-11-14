@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-15 · 项目 Agent 分工专属绑定分层筛选面板与思考档位 / 权限预设
+
+用户指出项目 `Agent 分工` 的专属绑定单列「连接×模型」展开太长，要求借鉴聊天层的筛选结构，并支持在专属绑定里提前设好每个配置的权限和思考档位；审阅设计对照稿（`docs/design-agent-binding-picker-mockup.html`）后拍板按推荐方案 A 执行。定：① `projects.task_bindings` 槽对象扩为 `{profile, model?, effort?, permissionTier?}`，后端按槽职责校验（`assistant` 忽略 `effort`；`chat` / `reader` 接四档权限，`step:*` 接写树三档，`discuss` / `assistant` 只读槽忽略权限预设）；② 专属绑定与科研步骤卡片改用 `SlotBindingPopover` 分层面板（顶部「跟随项目默认」→ 两列品牌标 Agent 筛选 → 多连接胶囊 → 可搜模型列表 → 底部按 `combo_surface` 动态挂载琥珀 `M▁` 思考强度标尺与按槽位匹配的权限预设，选「完全访问」须过 `confirmPermissionChoice` 二次确认），卡片第二行以 `.ccode-preset-chip` 回显已设档位，名册与定时任务仍走轻量 `ProfileMenu`；③ 预设值端到端接入 `chat`（`openProjectChat` 及输入栏起步态）、`reader`（沉浸阅读自动拉起）、`discuss`（`AskAiModal` 与直接拉起的 `effort`）与 `step:*`（`KickoffConfirmDialog` 预选及「存为本步骤默认」写回、不经弹层的自动继续/派活/跟进 `buildWorkspaceTerminalRequest`）。细则 agent-binding.md。
+
 ### 2026-11-15 · 工作台卡片层次、任务两区对齐与右栏定时任务降噪
 
 用户审阅工作台对比稿（`docs/design-workbench-v2-mockup.html`）后拍板执行：① 拍板队列、项目分组、定时任务及空态卡片从偏灰的气泡底色统一回归全站 `.ccode-well` 内容卡片层次，项目分组左侧仅在出错 / 等人处理 / 正在跑时亮起 `2.5px` 语义微锚线（`data-signal`），卡点聚拢为内嵌式提醒条，「其他 N 个项目没有进行中的事」升级为可点击项目轻胶囊；② 项目任务行改为左（图标 + 名称 + 在跑 Agent 轻标）右（状态短语 + 光标 + 待拍板 + 等宽时间）两区对齐，消除长短标题造成的视线折返，组尾记目标入口平时轻隐、悬停显露；③ 修正 340px 右栏下定时任务把操作按钮折到第三行的问题，闲置行的常规「现在跑」改为悬停 / 聚焦显露（停止 / 重跑 / 重新打开 / 去拍板常显）。细则 codex-style-ui.md §5。

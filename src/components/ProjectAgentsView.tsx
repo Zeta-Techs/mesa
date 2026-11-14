@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUpRight,
@@ -25,32 +25,56 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { selectHiddenProfiles, useAppStore } from "../store";
 import { toast } from "../toast";
-import { AGENTS, type CodingOverviewDto, type ProjectDto, type ScheduleDto, type TaskDto } from "../types";
+import {
+  AGENTS,
+  type AgentCapabilitiesDto,
+  type CodingOverviewDto,
+  type ComboSurfaceDto,
+  type DetectResult,
+  type ModelCapabilityDto,
+  type ProjectDto,
+  type ScheduleDto,
+  type TaskDto,
+} from "../types";
 import { ghostActionClass } from "./PageFrame";
 import MesaBuddyIcon from "./MesaBuddyIcon";
+import { AgentMark } from "./RelayPicker";
+import EffortMark from "./EffortMark";
+import { effortDepth } from "../effort-depth";
+import {
+  PERMISSION_TIERS,
+  PermissionGlyph,
+  confirmPermissionChoice,
+} from "./ChatPermissionBadge";
+import { modelCapsLabel } from "../model-caps-label";
+import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import { agentBrand } from "../agent-colors";
 import {
   buildProjectAgentRoster,
   currentProfileLine,
+  normalizeBindingPermissionTier,
   projectAgentsEmptyWorkHint,
   projectAgentLaunch,
   projectAgentsHint,
+  resolveProfileModel,
   selectedProjectAgentProfile,
   READER_BINDING_SLOT,
   CHAT_BINDING_SLOT,
   DISCUSS_BINDING_SLOT,
   ASSISTANT_BINDING_SLOT,
   stepSlotKey,
+  type BindingPermissionTier,
+  type ProjectAgentBinding,
+  type ProjectAgentProfile,
   type ProjectAgentRow,
 } from "../project-agents";
 import { declaredTaskKindsForMode, isDeclaredTask, taskStatusLabel } from "../project-tasks";
 import { normalizeWorkMode } from "../work-mode";
 import { schedulesForProject } from "../schedule-tasks";
 import { IS_WINDOWS } from "../hotkeys";
-import { confirmDialog } from "./ConfirmDialog";
+import { confirmDialog, confirmDialogOpen } from "./ConfirmDialog";
 import { headlessWriteBlocked } from "../agent-caps";
 import { isLitWatchSkill } from "../schedule-skill";
-import type { AgentCapabilitiesDto } from "../types";
 import { usePolling } from "../polling";
 
 export default function ProjectAgentsView({
@@ -65,6 +89,7 @@ export default function ProjectAgentsView({
   onError: (message: string) => void;
 }) {
   const profiles = useAppStore((state) => state.profiles);
+  const agents = useAppStore((state) => state.agents ?? []);
   const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const setPage = useAppStore((state) => state.setPage);
   const [saving, setSaving] = useState(false);
@@ -74,6 +99,9 @@ export default function ProjectAgentsView({
   );
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>(
     project.defaultModels ?? {},
+  );
+  const [taskBindings, setTaskBindings] = useState<Record<string, ProjectAgentBinding>>(
+    project.taskBindings ?? {},
   );
   const [tasks, setTasks] = useState<TaskDto[]>([]);
   const [schedules, setSchedules] = useState<ScheduleDto[]>([]);
@@ -86,7 +114,8 @@ export default function ProjectAgentsView({
     setDefaultAgent(project.defaultAgent ?? "");
     setDefaultProfiles(project.defaultProfiles ?? {});
     setDefaultModels(project.defaultModels ?? {});
-  }, [project.defaultAgent, project.defaultModels, project.defaultProfiles]);
+    setTaskBindings(project.taskBindings ?? {});
+  }, [project.defaultAgent, project.defaultModels, project.defaultProfiles, project.taskBindings]);
 
   const taskKinds = useMemo(
     () => declaredTaskKindsForMode(project.workMode),
@@ -234,9 +263,17 @@ export default function ProjectAgentsView({
     }
   }
 
-  /** 槽位专属绑定：某个固定用途不吃项目默认，单独指一条连接+模型（agent 跟着连接走）。
-      首个槽位 = 精读阅读会话；槽位清单与后端 PROJECT_AGENT_BINDING_SLOTS 同源 */
-  async function saveSlotBinding(slot: string, profileId: string, modelId: string) {
+  /** 槽位专属绑定：某个固定用途不吃项目默认，单独指一条连接+模型，并可预设思考强度与权限档位（agent 跟着连接走）。
+      槽位清单与后端 PROJECT_AGENT_BINDING_SLOTS 同源 */
+  async function saveSlotBinding(
+    slot: string,
+    profileId: string,
+    modelId: string,
+    effort?: string | null,
+    permissionTier?: BindingPermissionTier | null,
+  ) {
+    const cleanEffort = profileId ? (effort?.trim() || null) : null;
+    const cleanPerm = profileId ? (normalizeBindingPermissionTier(permissionTier) ?? null) : null;
     setSaving(true);
     try {
       await invoke("set_project_agent_binding", {
@@ -244,10 +281,21 @@ export default function ProjectAgentsView({
         slot,
         profileId: profileId || null,
         model: modelId || null,
+        effort: cleanEffort,
+        permissionTier: cleanPerm,
       });
-      const next = { ...(project.taskBindings ?? {}) };
-      if (profileId) next[slot] = { profile: profileId, model: modelId || null };
-      else delete next[slot];
+      const next = { ...taskBindings };
+      if (profileId) {
+        next[slot] = {
+          profile: profileId,
+          model: modelId || null,
+          ...(cleanEffort ? { effort: cleanEffort } : {}),
+          ...(cleanPerm ? { permissionTier: cleanPerm } : {}),
+        };
+      } else {
+        delete next[slot];
+      }
+      setTaskBindings(next);
       onProjectChanged({ ...project, taskBindings: next });
       // 生效时机披露（用户自然预期「切换立即生效」，实际在跑会话沿用原 Agent、
       // 下次开工/继续才用新值）：保存回执带一句，免得自己去发现
@@ -265,7 +313,7 @@ export default function ProjectAgentsView({
     }
   }
 
-  const scheduleChoices = useMemo(() => {
+  const scheduleProfiles = useMemo(() => {
     const bound = new Set(
       schedules.map((item) => item.profileId).filter((id): id is string => Boolean(id)),
     );
@@ -275,18 +323,7 @@ export default function ProjectAgentsView({
         (profile) =>
           !headlessWriteBlocked(scheduleCaps[profile.agent]?.headlessWrite) ||
           bound.has(profile.id),
-      )
-      .flatMap((profile) => {
-        const agentLabel = AGENTS.find((agent) => agent.id === profile.agent)?.label ?? profile.agent;
-        const models = profile.models.length > 0 ? profile.models : [""];
-        return models.map((modelId) => ({
-          id: profile.id,
-          name: `${agentLabel} · ${profile.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${profile.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
+      );
   }, [hiddenProfiles, profiles, scheduleCaps, schedules]);
 
   async function reloadSchedules() {
@@ -351,7 +388,7 @@ export default function ProjectAgentsView({
   }
 
   async function clearAllBindings() {
-    const slots = Object.keys(project.taskBindings ?? {}).filter(
+    const slots = Object.keys(taskBindings).filter(
       (slot) =>
         slot === CHAT_BINDING_SLOT ||
         slot === DISCUSS_BINDING_SLOT ||
@@ -373,10 +410,13 @@ export default function ProjectAgentsView({
           slot,
           profileId: null,
           model: null,
+          effort: null,
+          permissionTier: null,
         });
       }
-      const next = { ...(project.taskBindings ?? {}) };
+      const next = { ...taskBindings };
       for (const slot of slots) delete next[slot];
+      setTaskBindings(next);
       onProjectChanged({ ...project, taskBindings: next });
     } catch (reason) {
       onError(`清除专属绑定失败：${String(reason)}`);
@@ -385,77 +425,27 @@ export default function ProjectAgentsView({
     }
   }
 
-  /** 精读槽位可选的连接×模型（跨 Agent 拍平，带 Agent 前缀防混淆；显式槽
-      尊重停用——被停用的已绑定项仍列出） */
-  const readerSlotProfiles = useMemo(() => {
-    const boundId = project.taskBindings?.[READER_BINDING_SLOT]?.profile;
-    return profiles
-      .filter((p) => !hiddenProfiles.includes(p.id) || p.id === boundId)
-      .flatMap((p) => {
-        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
-        const models = p.models.length > 0 ? p.models : [""];
-        return models.map((modelId) => ({
-          id: p.id,
-          name: `${agentLabel} · ${p.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
-  }, [profiles, hiddenProfiles, project.taskBindings]);
+  const readerBinding = taskBindings[READER_BINDING_SLOT];
+  const chatBinding = taskBindings[CHAT_BINDING_SLOT];
+  const discussBinding = taskBindings[DISCUSS_BINDING_SLOT];
+  const assistantBinding = taskBindings[ASSISTANT_BINDING_SLOT];
 
-  const readerBinding = project.taskBindings?.[READER_BINDING_SLOT];
-  const chatBinding = project.taskBindings?.[CHAT_BINDING_SLOT];
-  const discussBinding = project.taskBindings?.[DISCUSS_BINDING_SLOT];
-  const chatSlotProfiles = useMemo(() => {
-    const boundId = chatBinding?.profile;
-    return profiles
-      .filter((p) => !hiddenProfiles.includes(p.id) || p.id === boundId)
-      .flatMap((p) => {
-        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
-        const models = p.models.length > 0 ? p.models : [""];
-        return models.map((modelId) => ({
-          id: p.id,
-          name: `${agentLabel} · ${p.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
-  }, [profiles, hiddenProfiles, chatBinding?.profile]);
-  const assistantBinding = project.taskBindings?.[ASSISTANT_BINDING_SLOT];
-  const assistantSlotProfiles = useMemo(() => {
-    const boundId = assistantBinding?.profile;
-    return profiles
-      .filter((p) => !hiddenProfiles.includes(p.id) || p.id === boundId)
-      .flatMap((p) => {
-        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
-        const models = p.models.length > 0 ? p.models : [""];
-        return models.map((modelId) => ({
-          id: p.id,
-          name: `${agentLabel} · ${p.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
-  }, [profiles, hiddenProfiles, assistantBinding]);
-  const discussSlotProfiles = useMemo(() => {
-    const boundId = discussBinding?.profile;
-    return profiles
-      .filter((p) => !hiddenProfiles.includes(p.id) || p.id === boundId)
-      .flatMap((p) => {
-        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
-        const models = p.models.length > 0 ? p.models : [""];
-        return models.map((modelId) => ({
-          id: p.id,
-          name: `${agentLabel} · ${p.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
-  }, [profiles, hiddenProfiles, discussBinding]);
+  const readerSlotProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfiles.includes(p.id) || p.id === readerBinding?.profile),
+    [profiles, hiddenProfiles, readerBinding?.profile],
+  );
+  const chatSlotProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfiles.includes(p.id) || p.id === chatBinding?.profile),
+    [profiles, hiddenProfiles, chatBinding?.profile],
+  );
+  const assistantSlotProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfiles.includes(p.id) || p.id === assistantBinding?.profile),
+    [profiles, hiddenProfiles, assistantBinding?.profile],
+  );
+  const discussSlotProfiles = useMemo(
+    () => profiles.filter((p) => !hiddenProfiles.includes(p.id) || p.id === discussBinding?.profile),
+    [profiles, hiddenProfiles, discussBinding?.profile],
+  );
 
   // 流程步骤清单（步骤组数据源）：步骤在 project.toml，ProjectDto 不带——挂载读一次，
   // 读不到/无步骤不渲染步骤组（专属绑定区只留固定用途）。步骤组展开态组件内不持久化
@@ -493,7 +483,7 @@ export default function ProjectAgentsView({
       });
     }
     if (loaded) {
-      for (const slot of Object.keys(project.taskBindings ?? {})) {
+      for (const slot of Object.keys(taskBindings)) {
         if (slot.startsWith("step:") && !names.has(slot.slice("step:".length))) {
           rows.push({
             slot,
@@ -505,9 +495,9 @@ export default function ProjectAgentsView({
       }
     }
     return rows;
-  }, [pipelineSteps, project.taskBindings]);
+  }, [pipelineSteps, taskBindings]);
   const boundStepCount = stepRows.filter(
-    (r) => !r.stale && project.taskBindings?.[r.slot],
+    (r) => !r.stale && taskBindings[r.slot],
   ).length;
   const staleStepCount = stepRows.filter((r) => r.stale).length;
   const workMode = normalizeWorkMode(project.workMode);
@@ -521,7 +511,7 @@ export default function ProjectAgentsView({
     workMode === "office" ||
     (workMode === "research" &&
       (goals.length > 0 || (pipelineSteps !== null && pipelineSteps.length === 0)));
-  const hasExclusiveBinding = Object.keys(project.taskBindings ?? {}).some(
+  const hasExclusiveBinding = Object.keys(taskBindings).some(
     (slot) =>
       slot === CHAT_BINDING_SLOT ||
       slot === DISCUSS_BINDING_SLOT ||
@@ -533,10 +523,19 @@ export default function ProjectAgentsView({
     const launch = projectAgentLaunch(profiles, defaultAgent, defaultProfiles, defaultModels);
     // 没设项目默认时如实说「开始时再选」（2026-11-05 用户：满屏「跟随项目默认」看不出到底用谁）；
     // 设了就写出它解析到的那家，「跟随项目默认」只在第二行说一次，卡片右上角不再另挂标签
-    if (!launch) return { line: "还没设项目默认", detail: "开始或开对话时再选" };
+    if (!launch) {
+      return {
+        agentId: null as string | null,
+        profileId: null as string | null,
+        line: "还没设项目默认",
+        detail: "开始或开对话时再选",
+      };
+    }
     const agentLabel = AGENTS.find((agent) => agent.id === launch.agentId)?.label ?? launch.agentId;
     const profile = profiles.find((item) => item.id === launch.profileId);
     return {
+      agentId: launch.agentId,
+      profileId: launch.profileId,
       line: `${agentLabel} · ${profile?.name ?? "连接"}`,
       detail: `${launch.model || "CLI 默认"} · 跟随项目默认`,
     };
@@ -548,41 +547,42 @@ export default function ProjectAgentsView({
   const scheduleFallback = useMemo(() => {
     const launch = projectAgentLaunch(profiles, defaultAgent, defaultProfiles, defaultModels);
     if (!launch) {
-      return { tag: "自动", line: "运行时再决定", detail: "设置页 AI 专用配置，或最近用过的连接", option: "自动" };
+      return {
+        agentId: null as string | null,
+        tag: "自动",
+        line: "运行时再决定",
+        detail: "设置页 AI 专用配置，或最近用过的连接",
+        option: "自动",
+      };
     }
     if (headlessWriteBlocked(scheduleCaps[launch.agentId]?.headlessWrite)) {
       return {
+        agentId: null as string | null,
         tag: "自动",
         line: "项目默认不能用于定时任务",
         detail: "运行时改用设置页 AI 专用配置或最近用过的连接",
         option: "自动",
       };
     }
-    return { tag: "", line: inherited.line, detail: inherited.detail, option: "项目默认" };
+    return {
+      agentId: inherited.agentId,
+      tag: "",
+      line: inherited.line,
+      detail: inherited.detail,
+      option: "项目默认",
+    };
   }, [defaultAgent, defaultModels, defaultProfiles, profiles, scheduleCaps, inherited]);
 
-  /** 步骤槽可选清单与精读槽同款（跨 Agent 拍平 + 停用尊重 + 绑定项保留） */
+  /** 步骤槽与声明目标可选连接（停用尊重 + 绑定项保留） */
   const stepSlotProfiles = useMemo(() => {
     const boundIds = new Set(
       [
-        ...stepRows.map((r) => project.taskBindings?.[r.slot]?.profile),
+        ...stepRows.map((r) => taskBindings[r.slot]?.profile),
         ...goals.map((goal) => goal.profileId),
       ].filter((id): id is string => Boolean(id)),
     );
-    return profiles
-      .filter((p) => !hiddenProfiles.includes(p.id) || boundIds.has(p.id))
-      .flatMap((p) => {
-        const agentLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
-        const models = p.models.length > 0 ? p.models : [""];
-        return models.map((modelId) => ({
-          id: p.id,
-          name: `${agentLabel} · ${p.name}`,
-          modelId,
-          model: modelId || "CLI 默认",
-          modelLine: `${agentLabel} · ${p.name} · ${modelId || "CLI 默认"}`,
-        }));
-      });
-  }, [goals, profiles, hiddenProfiles, stepRows, project.taskBindings]);
+    return profiles.filter((p) => !hiddenProfiles.includes(p.id) || boundIds.has(p.id));
+  }, [goals, profiles, hiddenProfiles, stepRows, taskBindings]);
 
   return (
     <section aria-label="本项目用哪家 Agent">
@@ -694,7 +694,7 @@ export default function ProjectAgentsView({
 
       <div className="mt-8">
         <div className="mb-4 flex items-start justify-between gap-3">
-          <SectionHeading title="专属绑定" hint="留空跟随项目默认。" />
+          <SectionHeading title="专属绑定" hint="留空跟随项目默认；可一并预设思考强度与权限。" />
           <button
             type="button"
             className={`${ghostActionClass} shrink-0`}
@@ -711,11 +711,16 @@ export default function ProjectAgentsView({
             tag={chatBinding ? "已指定" : ""}
             marked={Boolean(chatBinding)}
             binding={chatBinding}
+            unboundAgentId={inherited.agentId}
+            unboundProfileId={inherited.profileId}
             unboundLine={inherited.line}
             unboundDetail={inherited.detail}
-            choices={chatSlotProfiles}
+            eligibleProfiles={chatSlotProfiles}
+            agents={agents}
+            defaultProfiles={defaultProfiles}
+            presetMode="chat"
             disabled={saving}
-            onPick={(pid, mid) => void saveSlotBinding(CHAT_BINDING_SLOT, pid, mid)}
+            onPick={(pid, mid, eff, perm) => void saveSlotBinding(CHAT_BINDING_SLOT, pid, mid, eff, perm)}
             onClear={() => void saveSlotBinding(CHAT_BINDING_SLOT, "", "")}
             onAdd={() => setPage("profiles")}
           />
@@ -725,11 +730,16 @@ export default function ProjectAgentsView({
             tag={discussBinding ? "已指定" : ""}
             marked={Boolean(discussBinding)}
             binding={discussBinding}
+            unboundAgentId={inherited.agentId}
+            unboundProfileId={inherited.profileId}
             unboundLine={inherited.line}
             unboundDetail={inherited.detail}
-            choices={discussSlotProfiles}
+            eligibleProfiles={discussSlotProfiles}
+            agents={agents}
+            defaultProfiles={defaultProfiles}
+            presetMode="discuss"
             disabled={saving}
-            onPick={(pid, mid) => void saveSlotBinding(DISCUSS_BINDING_SLOT, pid, mid)}
+            onPick={(pid, mid, eff) => void saveSlotBinding(DISCUSS_BINDING_SLOT, pid, mid, eff, null)}
             onClear={() => void saveSlotBinding(DISCUSS_BINDING_SLOT, "", "")}
             onAdd={() => setPage("profiles")}
           />
@@ -739,9 +749,14 @@ export default function ProjectAgentsView({
             tag={assistantBinding ? "已指定" : ""}
             marked={Boolean(assistantBinding)}
             binding={assistantBinding}
+            unboundAgentId={inherited.agentId}
+            unboundProfileId={inherited.profileId}
             unboundLine={inherited.line}
             unboundDetail={inherited.detail}
-            choices={assistantSlotProfiles}
+            eligibleProfiles={assistantSlotProfiles}
+            agents={agents}
+            defaultProfiles={defaultProfiles}
+            presetMode="assistant"
             note="推荐使用 Claude Code / Codex：查错时可以打开项目文件核对"
             disabled={saving}
             onPick={(pid, mid) => void saveSlotBinding(ASSISTANT_BINDING_SLOT, pid, mid)}
@@ -755,11 +770,16 @@ export default function ProjectAgentsView({
               tag={readerBinding ? "已指定" : ""}
               marked={Boolean(readerBinding)}
               binding={readerBinding}
+              unboundAgentId={inherited.agentId}
+              unboundProfileId={inherited.profileId}
               unboundLine={inherited.line}
               unboundDetail={inherited.detail}
-              choices={readerSlotProfiles}
+              eligibleProfiles={readerSlotProfiles}
+              agents={agents}
+              defaultProfiles={defaultProfiles}
+              presetMode="chat"
               disabled={saving}
-              onPick={(pid, mid) => void saveSlotBinding(READER_BINDING_SLOT, pid, mid)}
+              onPick={(pid, mid, eff, perm) => void saveSlotBinding(READER_BINDING_SLOT, pid, mid, eff, perm)}
               onClear={() => void saveSlotBinding(READER_BINDING_SLOT, "", "")}
               onAdd={() => setPage("profiles")}
             />
@@ -767,7 +787,7 @@ export default function ProjectAgentsView({
         </ul>
       </div>
       {workMode !== "research" &&
-        Object.keys(project.taskBindings ?? {}).some(
+        Object.keys(taskBindings).some(
           (slot) => slot === READER_BINDING_SLOT || slot.startsWith("step:"),
         ) && (
         <div className="mt-8">
@@ -778,7 +798,7 @@ export default function ProjectAgentsView({
             />
           </div>
           <ul className="space-y-2">
-            {Object.keys(project.taskBindings ?? {})
+            {Object.keys(taskBindings)
               .filter((slot) => slot === READER_BINDING_SLOT || slot.startsWith("step:"))
               .map((slot) => (
                 <li
@@ -844,11 +864,16 @@ export default function ProjectAgentsView({
                     ? { profile: item.profileId, model: item.model }
                     : undefined
                 }
+                unboundAgentId={schedStale ? null : scheduleFallback.agentId}
+                unboundProfileId={schedStale ? null : inherited.profileId}
                 unboundLine={schedStale ? "连接已删除，下次运行会失败；可换绑或改回跟随项目默认" : scheduleFallback.line}
                 unboundDetail={schedStale ? "" : scheduleFallback.detail}
                 defaultOptionLabel={scheduleFallback.option}
-                choices={scheduleChoices}
-                disabled={saving || scheduleChoices.length === 0}
+                eligibleProfiles={scheduleProfiles}
+                agents={agents}
+                defaultProfiles={defaultProfiles}
+                presetMode="none"
+                disabled={saving || scheduleProfiles.length === 0}
                 onPick={(pid, mid) => void saveScheduleLaunch(item, pid, mid)}
                 onClear={() => void saveScheduleLaunch(item, "", "")}
                 onAdd={() => setPage("profiles")}
@@ -931,9 +956,14 @@ export default function ProjectAgentsView({
                       ? { profile: goal.profileId, model: goal.model }
                       : undefined
                   }
+                  unboundAgentId={goalStale ? null : inherited.agentId}
+                  unboundProfileId={goalStale ? null : inherited.profileId}
                   unboundLine={goalStale ? "连接已删除，可清除或换绑" : inherited.line}
                   unboundDetail={goalStale ? "" : inherited.detail}
-                  choices={stepSlotProfiles}
+                  eligibleProfiles={stepSlotProfiles}
+                  agents={agents}
+                  defaultProfiles={defaultProfiles}
+                  presetMode="none"
                   disabled={saving || goal.status === "running" || stepSlotProfiles.length === 0}
                   onPick={(pid, mid) => void saveGoalLaunch(goal, pid, mid)}
                   onClear={() => void saveGoalLaunch(goal, "", "")}
@@ -959,7 +989,7 @@ export default function ProjectAgentsView({
           </div>
           <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
               {stepRows.map((row) => {
-                const binding = project.taskBindings?.[row.slot];
+                const binding = taskBindings[row.slot];
                 return (
                   <SlotCard
                     key={row.slot}
@@ -969,11 +999,16 @@ export default function ProjectAgentsView({
                     marked={Boolean(binding) && !row.stale}
                     stale={row.stale}
                     binding={binding}
+                    unboundAgentId={row.stale ? null : inherited.agentId}
+                    unboundProfileId={row.stale ? null : inherited.profileId}
                     unboundLine={row.stale ? "绑定已失效，可清除" : inherited.line}
                     unboundDetail={row.stale ? "" : inherited.detail}
-                    choices={stepSlotProfiles}
+                    eligibleProfiles={stepSlotProfiles}
+                    agents={agents}
+                    defaultProfiles={defaultProfiles}
+                    presetMode="step"
                     disabled={saving || stepSlotProfiles.length === 0}
-                    onPick={(pid, mid) => void saveSlotBinding(row.slot, pid, mid)}
+                    onPick={(pid, mid, eff, perm) => void saveSlotBinding(row.slot, pid, mid, eff, perm)}
                     onClear={() => void saveSlotBinding(row.slot, "", "")}
                     onAdd={() => setPage("profiles")}
                   />
@@ -1069,7 +1104,46 @@ function SectionHeading({ title, hint }: { title: string; hint: string }) {
   );
 }
 
-/** 与名册卡同一套：标题在左，状态标签在右，下面是连接和模型。已指定用选中底。 */
+type SlotEligibleProfile = ProjectAgentProfile & {
+  gatewayId?: string | null;
+  accountType?: string;
+};
+
+/** 槽位支持哪些预设控件：
+ *  - chat（项目对话 / 沉浸阅读）：思考强度 + 4 档权限（先出方案 / 请求批准 / 帮我批准 / 完全访问）
+ *  - step（科研步骤）：思考强度 + 3 档写权限（请求批准 / 帮我批准 / 完全访问）
+ *  - discuss（问 AI / 聊想法）：思考强度 + 只读提示
+ *  - assistant（项目助手）：只读核查提示
+ *  - none（定时任务 / 目标）：只分层筛选 Agent → 连接 → 模型 */
+type SlotPresetMode = "chat" | "step" | "discuss" | "assistant" | "none";
+
+const SLOT_POPOVER_CAP = 520;
+const SLOT_POPOVER_WIDTH = 352;
+
+function permTiersForSlot(mode: SlotPresetMode) {
+  if (mode === "chat") return PERMISSION_TIERS;
+  if (mode === "step") return PERMISSION_TIERS.filter((t) => t.id !== "discuss");
+  return [];
+}
+
+function isPermAvailableForAgent(
+  agents: readonly DetectResult[],
+  agentId: string,
+  tier: BindingPermissionTier,
+): boolean {
+  if (agents.length === 0) return true;
+  const det = agents.find((a) => a.id === agentId);
+  if (!det) return true;
+  if (tier === "discuss") return Boolean(det.readonlySupported);
+  return Boolean(det.permissionModes?.includes(tier));
+}
+
+function defaultEffortLevelsForAgent(agents: readonly DetectResult[], agentId: string): string[] {
+  const levels = agents.find((a) => a.id === agentId)?.effort?.levels;
+  return levels && levels.length > 0 ? levels : ["low", "medium", "high"];
+}
+
+/** 与名册卡同一套：标题在左，状态胶囊在右，下面是分层筛选面板与预设微标。 */
 function SlotCard({
   Icon,
   label,
@@ -1077,11 +1151,16 @@ function SlotCard({
   marked,
   stale,
   binding,
+  unboundAgentId = null,
+  unboundProfileId = null,
   unboundLine = "跟随项目默认",
   unboundDetail = "",
   defaultOptionLabel = "项目默认",
   note,
-  choices,
+  eligibleProfiles,
+  agents,
+  defaultProfiles,
+  presetMode,
   disabled,
   onPick,
   onClear,
@@ -1092,23 +1171,27 @@ function SlotCard({
   tag: string;
   marked?: boolean;
   stale?: boolean;
-  binding?: { profile: string; model?: string | null };
+  binding?: ProjectAgentBinding;
+  unboundAgentId?: string | null;
+  unboundProfileId?: string | null;
   unboundLine?: string;
   /** 未绑定时第二行，用来对齐已绑卡片的模型行 */
   unboundDetail?: string;
-  /** 下拉第一项。专属绑定是「项目默认」；定时任务未钉连接是「项目默认」（那家不能定时写盘或项目没设默认时是「自动」）。 */
+  /** 面板首行恢复默认项文案。专属绑定是「项目默认」；定时任务未钉连接可能是「自动」。 */
   defaultOptionLabel?: string;
   /** 卡片最下面一行小字说明（项目助手：哪些能力只有部分 CLI 有） */
   note?: string;
-  choices: readonly {
-    id: string;
-    name: string;
-    modelId: string;
-    model: string;
-    modelLine: string;
-  }[];
+  eligibleProfiles: readonly SlotEligibleProfile[];
+  agents: readonly DetectResult[];
+  defaultProfiles: Record<string, string>;
+  presetMode: SlotPresetMode;
   disabled: boolean;
-  onPick: (profileId: string, modelId: string) => void;
+  onPick: (
+    profileId: string,
+    modelId: string,
+    effort?: string | null,
+    permissionTier?: BindingPermissionTier | null,
+  ) => void;
   onClear: () => void;
   onAdd: () => void;
 }) {
@@ -1139,24 +1222,24 @@ function SlotCard({
         )}
       </div>
       <div className="mt-1 min-w-0">
-        {choices.length === 0 ? (
+        {eligibleProfiles.length === 0 ? (
           <button type="button" className={ghostActionClass} onClick={onAdd}>
             还没有连接
           </button>
         ) : (
-          <ProfileMenu
-            row={{
-              agentId: label,
-              label,
-              isProjectDefault: false,
-              defaultProfileId: binding?.profile ?? "",
-              defaultModelId: binding?.model ?? "",
-              profiles: choices as ProjectAgentRow["profiles"],
-              works: [],
-            }}
+          <SlotBindingPopover
+            label={label}
+            stale={Boolean(stale)}
+            binding={binding}
+            unboundAgentId={unboundAgentId}
+            unboundProfileId={unboundProfileId}
             unboundLine={unboundLine}
             unboundDetail={unboundDetail}
             defaultOptionLabel={defaultOptionLabel}
+            eligibleProfiles={eligibleProfiles}
+            agents={agents}
+            defaultProfiles={defaultProfiles}
+            presetMode={presetMode}
             disabled={disabled}
             onPick={onPick}
             onClear={onClear}
@@ -1166,6 +1249,699 @@ function SlotCard({
       </div>
       {note && <p className="mt-1.5 text-micro leading-4 text-l4">{note}</p>}
     </li>
+  );
+}
+
+function SlotBindingPopover({
+  label,
+  stale,
+  binding,
+  unboundAgentId,
+  unboundProfileId,
+  unboundLine,
+  unboundDetail,
+  defaultOptionLabel,
+  eligibleProfiles,
+  agents,
+  defaultProfiles,
+  presetMode,
+  disabled,
+  onPick,
+  onClear,
+  onAdd,
+}: {
+  label: string;
+  stale: boolean;
+  binding?: ProjectAgentBinding;
+  unboundAgentId: string | null;
+  unboundProfileId: string | null;
+  unboundLine: string;
+  unboundDetail: string;
+  defaultOptionLabel: string;
+  eligibleProfiles: readonly SlotEligibleProfile[];
+  agents: readonly DetectResult[];
+  defaultProfiles: Record<string, string>;
+  presetMode: SlotPresetMode;
+  disabled: boolean;
+  onPick: (
+    profileId: string,
+    modelId: string,
+    effort?: string | null,
+    permissionTier?: BindingPermissionTier | null,
+  ) => void;
+  onClear: () => void;
+  onAdd: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState<"above" | "below">("below");
+  const [alignRight, setAlignRight] = useState(false);
+  const [room, setRoom] = useState(SLOT_POPOVER_CAP);
+  const [query, setQuery] = useState("");
+
+  const boundProfile = useMemo(
+    () =>
+      !stale && binding?.profile
+        ? eligibleProfiles.find((p) => p.id === binding.profile)
+        : undefined,
+    [stale, binding?.profile, eligibleProfiles],
+  );
+  const unbound = !boundProfile;
+  const boundModelId = boundProfile ? resolveProfileModel(boundProfile.models, binding?.model) : "";
+  const boundAgentLabel = boundProfile
+    ? (AGENTS.find((a) => a.id === boundProfile.agent)?.label ?? boundProfile.agent)
+    : "";
+  const boundPerm =
+    boundProfile && (presetMode === "chat" || presetMode === "step")
+      ? normalizeBindingPermissionTier(binding?.permissionTier)
+      : null;
+  const boundEffort =
+    boundProfile && (presetMode === "chat" || presetMode === "step" || presetMode === "discuss")
+      ? (binding?.effort?.trim() || null)
+      : null;
+
+  const availableAgents = useMemo(() => {
+    const present = new Set(eligibleProfiles.map((p) => p.agent));
+    const catalogMatched = AGENTS.filter((a) => present.has(a.id));
+    const extras = Array.from(present)
+      .filter((id) => !AGENTS.some((a) => a.id === id))
+      .map((id) => ({ id, label: id }));
+    return [...catalogMatched, ...extras];
+  }, [eligibleProfiles]);
+
+  const initialAgentAndProfile = useCallback(() => {
+    if (boundProfile) {
+      return { agentId: boundProfile.agent, profileId: boundProfile.id };
+    }
+    if (unboundAgentId && eligibleProfiles.some((p) => p.agent === unboundAgentId)) {
+      const byDefault =
+        (unboundProfileId && eligibleProfiles.find((p) => p.id === unboundProfileId)) ||
+        (defaultProfiles[unboundAgentId] &&
+          eligibleProfiles.find((p) => p.id === defaultProfiles[unboundAgentId])) ||
+        eligibleProfiles.find((p) => p.agent === unboundAgentId)!;
+      return { agentId: unboundAgentId, profileId: byDefault.id };
+    }
+    const first = eligibleProfiles[0];
+    return { agentId: first?.agent ?? "", profileId: first?.id ?? "" };
+  }, [boundProfile, defaultProfiles, eligibleProfiles, unboundAgentId, unboundProfileId]);
+
+  const [draftAgentId, setDraftAgentId] = useState(() => initialAgentAndProfile().agentId);
+  const [draftProfileId, setDraftProfileId] = useState(() => initialAgentAndProfile().profileId);
+
+  const toggleOpen = () => {
+    if (!open) {
+      const init = initialAgentAndProfile();
+      setDraftAgentId(init.agentId);
+      setDraftProfileId(init.profileId);
+      setQuery("");
+    }
+    setOpen((v) => !v);
+  };
+
+  const activeAgentId = availableAgents.some((a) => a.id === draftAgentId)
+    ? draftAgentId
+    : (availableAgents[0]?.id ?? "");
+  const activeAgentLabel =
+    AGENTS.find((a) => a.id === activeAgentId)?.label ?? activeAgentId;
+  const agentProfiles = useMemo(
+    () => eligibleProfiles.filter((p) => p.agent === activeAgentId),
+    [eligibleProfiles, activeAgentId],
+  );
+  const activeProfile =
+    agentProfiles.find((p) => p.id === draftProfileId) ?? agentProfiles[0] ?? eligibleProfiles[0];
+  const rawModels = useMemo(
+    () => (activeProfile && activeProfile.models.length > 0 ? [...activeProfile.models] : [""]),
+    [activeProfile],
+  );
+  const activeModelId =
+    boundProfile?.id === activeProfile?.id
+      ? boundModelId
+      : (rawModels[0] ?? "");
+
+  // 思考强度能力：仅在弹层打开且槽位支持预设思考档时按需查 combo_surface
+  const supportsEffortPreset =
+    presetMode === "chat" || presetMode === "step" || presetMode === "discuss";
+  const [effortInjectable, setEffortInjectable] = useState(false);
+  const [comboLevels, setComboLevels] = useState<string[]>([]);
+  useEffect(() => {
+    if (!open || !supportsEffortPreset || !activeProfile?.id) {
+      return;
+    }
+    let cancelled = false;
+    invoke<ComboSurfaceDto>("combo_surface", {
+      profileId: activeProfile.id,
+      model: activeModelId.trim() || null,
+    })
+      .then((c) => {
+        if (cancelled) return;
+        setEffortInjectable(c.injectEffortAllowed === true);
+        setComboLevels(Array.isArray(c.effortLevels) ? c.effortLevels : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEffortInjectable(false);
+        setComboLevels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, supportsEffortPreset, activeProfile?.id, activeModelId]);
+
+  const effortLevels = useMemo(() => {
+    if (comboLevels.length > 0) return comboLevels;
+    return defaultEffortLevelsForAgent(agents, activeAgentId);
+  }, [comboLevels, agents, activeAgentId]);
+
+  // 模型能力标注（200K · 思考 · 看图）：仅打开时查询一次
+  const [capsLabels, setCapsLabels] = useState<Record<string, string>>({});
+  const modelsKey = useMemo(() => rawModels.filter(Boolean).join("\n"), [rawModels]);
+  useEffect(() => {
+    if (!open || !modelsKey) return;
+    let cancelled = false;
+    invoke<ModelCapabilityDto[]>("model_capabilities", {
+      models: modelsKey.split("\n"),
+      gatewayId: activeProfile?.gatewayId ?? null,
+    })
+      .then((list) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const item of list) map[item.model] = modelCapsLabel(item);
+        setCapsLabels(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [open, modelsKey, activeProfile?.gatewayId]);
+
+  useLayoutEffect(() => {
+    if (!open || !wrapRef.current || !dialogRef.current) return;
+    const place = () => {
+      if (!wrapRef.current || !dialogRef.current) return;
+      const anchor = wrapRef.current.getBoundingClientRect();
+      const bounds = clipBounds(wrapRef.current);
+      const natural = Math.min(dialogRef.current.scrollHeight + 8, SLOT_POPOVER_CAP);
+      const nextSide = pickPopoverSide(anchor, bounds, natural);
+      setSide(nextSide);
+      const nextRoom = popoverRoom(anchor, bounds, nextSide, SLOT_POPOVER_CAP);
+      setRoom(nextRoom >= 180 ? nextRoom : SLOT_POPOVER_CAP);
+      const winW = window.innerWidth || 1280;
+      setAlignRight(anchor.left + SLOT_POPOVER_WIDTH > winW - 12 && anchor.right >= SLOT_POPOVER_WIDTH);
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [open, activeAgentId, activeProfile?.id, effortInjectable]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (confirmDialogOpen() || target?.closest?.('[role="alertdialog"]')) return;
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (confirmDialogOpen()) return;
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const currentEffort =
+    boundProfile?.agent === activeAgentId ? (boundEffort ?? "") : "";
+  const currentPerm: BindingPermissionTier | null =
+    boundProfile?.agent === activeAgentId ? boundPerm : null;
+
+  const permChoices = permTiersForSlot(presetMode);
+  const inheritTitle =
+    defaultOptionLabel === "项目默认" ? "跟随项目默认" : defaultOptionLabel;
+  const filteredModels = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return rawModels;
+    return rawModels.filter((m) => (m || "cli 默认").toLowerCase().includes(q));
+  }, [query, rawModels]);
+
+  function handlePickAgent(nextAgentId: string) {
+    setDraftAgentId(nextAgentId);
+    setQuery("");
+    const list = eligibleProfiles.filter((p) => p.agent === nextAgentId);
+    const preferred =
+      (defaultProfiles[nextAgentId] && list.find((p) => p.id === defaultProfiles[nextAgentId])) ||
+      list[0];
+    if (!preferred) return;
+    setDraftProfileId(preferred.id);
+    const nextModel = preferred.models[0] ?? "";
+    const nextLevels = defaultEffortLevelsForAgent(agents, nextAgentId);
+    const keptEffort = boundEffort && nextLevels.includes(boundEffort) ? boundEffort : null;
+    const keptPerm =
+      boundPerm && isPermAvailableForAgent(agents, nextAgentId, boundPerm) ? boundPerm : null;
+    onPick(preferred.id, nextModel, keptEffort, keptPerm);
+  }
+
+  function handlePickProfile(nextProfile: SlotEligibleProfile) {
+    setDraftProfileId(nextProfile.id);
+    setQuery("");
+    const keptModel =
+      activeModelId && nextProfile.models.includes(activeModelId)
+        ? activeModelId
+        : (nextProfile.models[0] ?? "");
+    onPick(nextProfile.id, keptModel, currentEffort || null, currentPerm);
+  }
+
+  function handlePickModel(modelId: string) {
+    if (!activeProfile) return;
+    onPick(activeProfile.id, modelId, currentEffort || null, currentPerm);
+    if (presetMode === "none" || presetMode === "assistant") {
+      setOpen(false);
+    }
+  }
+
+  function handlePickEffort(level: string) {
+    if (!activeProfile) return;
+    onPick(activeProfile.id, activeModelId, level || null, currentPerm);
+  }
+
+  async function handlePickPerm(tier: BindingPermissionTier | null) {
+    if (!activeProfile) return;
+    const nextTier = tier === currentPerm ? null : tier;
+    if (nextTier === "full" && currentPerm !== "full") {
+      const ok = await confirmPermissionChoice(activeAgentLabel, "full", false);
+      if (!ok) return;
+    }
+    onPick(activeProfile.id, activeModelId, currentEffort || null, nextTier);
+  }
+
+  const cardEffortLevels = boundProfile
+    ? defaultEffortLevelsForAgent(agents, boundProfile.agent)
+    : [];
+  const cardPermMeta = boundPerm
+    ? PERMISSION_TIERS.find((t) => t.id === boundPerm)
+    : null;
+  const effChoices = useMemo(
+    () => [{ value: "", label: "默认" }, ...effortLevels.map((l) => ({ value: l, label: l }))],
+    [effortLevels],
+  );
+  const effIdx = Math.max(
+    0,
+    effChoices.findIndex((c) => c.value === currentEffort),
+  );
+  const effPct = effChoices.length > 1 ? (effIdx / (effChoices.length - 1)) * 100 : 0;
+  const effDepth = currentEffort ? effortDepth(currentEffort, effortLevels) : null;
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label={`更换 ${label} 的项目连接`}
+        className={`flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-hover disabled:opacity-50 ${
+          open ? "bg-hover" : ""
+        }`}
+        onClick={toggleOpen}
+      >
+        <span className="min-w-0 flex-1">
+          {boundProfile ? (
+            <>
+              <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-l1">
+                <AgentMark agentId={boundProfile.agent} decorative />
+                <span className="truncate">{boundAgentLabel} · {boundProfile.name}</span>
+              </span>
+              <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-l3">
+                <span className="truncate">{boundModelId || "CLI 默认"}</span>
+                {cardPermMeta && (
+                  <span
+                    className={`ccode-preset-chip text-micro ${
+                      boundPerm === "full" ? "text-caution-text" : ""
+                    }`}
+                  >
+                    <PermissionGlyph tier={boundPerm!} />
+                    <span>{cardPermMeta.label}</span>
+                  </span>
+                )}
+                {boundEffort && (
+                  <span className="ccode-preset-chip text-micro">
+                    <EffortMark depth={effortDepth(boundEffort, cardEffortLevels)} />
+                    <span>{boundEffort}</span>
+                  </span>
+                )}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-l2">
+                {!stale && unboundAgentId && (
+                  <span className="shrink-0 opacity-75">
+                    <AgentMark agentId={unboundAgentId} decorative />
+                  </span>
+                )}
+                <span className="truncate">{unboundLine}</span>
+              </span>
+              {unboundDetail && (
+                <span className="mt-0.5 block truncate text-xs text-l3">
+                  {unboundDetail}
+                </span>
+              )}
+            </>
+          )}
+        </span>
+        <ChevronDown
+          size={14}
+          className={`shrink-0 text-l3 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {open && (
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-label={`${label} 的项目连接`}
+          style={{ maxHeight: room }}
+          className={`ccode-float-surface absolute z-50 flex w-[22rem] max-w-[calc(100vw-2rem)] flex-col overflow-y-auto overscroll-contain rounded-xl border border-field p-1.5 text-xs shadow-lg ${
+            side === "above" ? "bottom-full mb-1.5" : "top-full mt-1.5"
+          } ${alignRight ? "right-0" : "left-0"}`}
+        >
+          {/* 1. 恢复项目默认行 */}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => {
+              setOpen(false);
+              onClear();
+            }}
+            className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left transition-colors disabled:opacity-50 ${
+              unbound && !stale ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
+            }`}
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-l1">{inheritTitle}</span>
+              {!stale && unboundLine && unboundLine !== inheritTitle && (
+                <span className="mt-0.5 block truncate text-micro text-l3">{unboundLine}</span>
+              )}
+            </span>
+            {unbound && !stale ? (
+              <Check size={14} className="shrink-0 text-l1" aria-hidden="true" />
+            ) : (
+              <span className="shrink-0 text-micro text-l4">恢复默认</span>
+            )}
+          </button>
+
+          <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+
+          {/* 2. Agent 两列筛选胶囊 + 连接切换 */}
+          <div className="flex items-center justify-between px-2 pb-1 text-micro text-l3">
+            <span>筛选 Agent</span>
+            <span className="text-l4">{activeAgentLabel}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-1 px-0.5">
+            {availableAgents.map((a) => {
+              const selected = a.id === activeAgentId;
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  disabled={disabled}
+                  aria-pressed={selected}
+                  onClick={() => handlePickAgent(a.id)}
+                  className={`flex h-7 min-w-0 items-center gap-1.5 rounded-lg px-2 text-left transition-colors disabled:opacity-50 ${
+                    selected
+                      ? "bg-seg-sel font-medium text-l1"
+                      : "text-l2 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  <AgentMark agentId={a.id} decorative />
+                  <span className="min-w-0 flex-1 truncate">{a.label}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {agentProfiles.length > 1 ? (
+            <div className="flex flex-wrap gap-1 px-1 pt-1.5">
+              {agentProfiles.map((p) => {
+                const selected = p.id === activeProfile?.id;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    disabled={disabled}
+                    aria-pressed={selected}
+                    onClick={() => handlePickProfile(p)}
+                    className={`h-6 max-w-full truncate rounded-full border px-2.5 text-micro transition-colors disabled:opacity-50 ${
+                      selected
+                        ? "border-field bg-inset font-medium text-l1"
+                        : "border-hairline text-l3 hover:border-field hover:text-l1"
+                    }`}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          ) : activeProfile ? (
+            <p className="px-2 pt-1 text-micro text-l4">连接：{activeProfile.name}</p>
+          ) : null}
+
+          <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+
+          {/* 3. 模型选择列表（模型多时出搜索框） */}
+          <div className="flex items-center justify-between px-2 pb-1 text-micro text-l3">
+            <span>模型</span>
+            <span className="text-l4">点选即指定</span>
+          </div>
+          {rawModels.length >= 5 && (
+            <div className="mx-1 mb-1 flex h-7 items-center gap-1.5 rounded-lg bg-inset px-2">
+              <Search size={12} className="shrink-0 text-l4" aria-hidden="true" />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="筛选模型…"
+                aria-label="筛选模型"
+                className="w-full min-w-0 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
+              />
+            </div>
+          )}
+          <ul
+            role="listbox"
+            aria-label={`${activeProfile?.name ?? activeAgentLabel} 的模型`}
+            className="max-h-36 overflow-y-auto overscroll-contain px-0.5"
+          >
+            {filteredModels.length === 0 ? (
+              <li className="px-2 py-2 text-micro text-l4">没有匹配的模型</li>
+            ) : (
+              filteredModels.map((m) => {
+                const selected =
+                  Boolean(boundProfile) &&
+                  boundProfile?.id === activeProfile?.id &&
+                  boundModelId === m;
+                const display = m || "CLI 默认";
+                const caps = m ? capsLabels[m] : "";
+                return (
+                  <li key={m || "__cli_default__"}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      disabled={disabled}
+                      onClick={() => handlePickModel(m)}
+                      className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                        selected
+                          ? "font-medium text-l1 hover:bg-hover"
+                          : "text-l2 hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{display}</span>
+                      {caps && <span className="shrink-0 text-micro font-normal text-l4">{caps}</span>}
+                      <Check
+                        size={13}
+                        strokeWidth={2}
+                        aria-hidden="true"
+                        className={`shrink-0 ${selected ? "text-l1" : "invisible"}`}
+                      />
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ul>
+
+          {/* 4. 思考强度预设（M▁ 琥珀标尺滑块） */}
+          {supportsEffortPreset && effortInjectable && (
+            <>
+              <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+              <div className="px-2 pb-1.5 pt-0.5">
+                <div className="mb-1.5 flex items-center justify-between text-micro">
+                  <span className="text-l3">思考强度预设</span>
+                  <span className="inline-flex items-center gap-1 font-medium text-l1">
+                    <EffortMark depth={effDepth} />
+                    <span>{currentEffort || "跟随默认"}</span>
+                  </span>
+                </div>
+                <div className="relative mx-2 h-4">
+                  <span className="absolute bottom-1 left-0 h-0.5 w-full rounded-full bg-field" />
+                  <span
+                    className="absolute bottom-1 left-0 h-0.5 rounded-full bg-l3 transition-[width] duration-[120ms]"
+                    style={{ width: `${effPct}%` }}
+                  />
+                  {effChoices.map((c, idx) =>
+                    idx === effIdx ? null : (
+                      <span
+                        key={c.value || "default"}
+                        aria-hidden="true"
+                        className={`absolute bottom-1 h-1.5 w-px -translate-x-1/2 ${
+                          idx < effIdx ? "bg-l3" : "bg-l4"
+                        }`}
+                        style={{ left: `${(idx / Math.max(1, effChoices.length - 1)) * 100}%` }}
+                      />
+                    ),
+                  )}
+                  <span
+                    aria-hidden="true"
+                    className="ccode-effort-knob pointer-events-none absolute bottom-1 h-2 w-3.5 -translate-x-1/2 rounded-xs transition-[left] duration-[120ms]"
+                    style={{ left: `${effPct}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, effChoices.length - 1)}
+                    step={1}
+                    value={effIdx}
+                    disabled={disabled}
+                    aria-label="思考强度预设"
+                    onChange={(e) => {
+                      const next = effChoices[Number(e.target.value)];
+                      if (next) handlePickEffort(next.value);
+                    }}
+                    className="absolute inset-y-0 -right-2 -left-2 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
+                  />
+                </div>
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-1">
+                  {effChoices.map((c) => {
+                    const selected = c.value === currentEffort;
+                    return (
+                      <button
+                        key={c.value || "default"}
+                        type="button"
+                        disabled={disabled}
+                        aria-pressed={selected}
+                        onClick={() => handlePickEffort(c.value)}
+                        className={`rounded px-1.5 py-0.5 text-micro transition-colors disabled:opacity-50 ${
+                          selected
+                            ? "bg-seg-sel font-medium text-l1"
+                            : "text-l4 hover:bg-hover hover:text-l2"
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* 5. 权限预设（按槽位职责匹配） */}
+          {permChoices.length > 0 && (
+            <>
+              <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+              <div className="px-1.5 pb-1 pt-0.5">
+                <div className="mb-1.5 flex items-center justify-between px-0.5 text-micro">
+                  <span className="text-l3">权限预设</span>
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    aria-pressed={currentPerm === null}
+                    onClick={() => void handlePickPerm(null)}
+                    className={`rounded px-1.5 py-0.5 transition-colors disabled:opacity-50 ${
+                      currentPerm === null
+                        ? "font-medium text-l2"
+                        : "text-l4 hover:bg-hover hover:text-l2"
+                    }`}
+                  >
+                    {currentPerm === null ? "按默认" : "恢复按默认"}
+                  </button>
+                </div>
+                <div
+                  className={`grid gap-1 rounded-lg bg-inset p-0.5 ${
+                    permChoices.length === 3 ? "grid-cols-3" : "grid-cols-4"
+                  }`}
+                >
+                  {permChoices.map((t) => {
+                    const tier = t.id as BindingPermissionTier;
+                    const available = isPermAvailableForAgent(agents, activeAgentId, tier);
+                    const selected = currentPerm === tier;
+                    const danger = tier === "full";
+                    return (
+                      <button
+                        key={tier}
+                        type="button"
+                        disabled={disabled || !available}
+                        aria-pressed={selected}
+                        title={available ? t.desc : `${activeAgentLabel} 没有这一档`}
+                        onClick={() => void handlePickPerm(tier)}
+                        className={`flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-micro transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          selected
+                            ? danger
+                              ? "bg-seg-sel font-medium text-caution-text"
+                              : "bg-seg-sel font-medium text-l1"
+                            : "text-l3 hover:bg-hover hover:text-l1"
+                        }`}
+                      >
+                        <PermissionGlyph
+                          tier={t.id}
+                          className={danger ? "text-caution-text" : selected ? "text-l1" : "text-l3"}
+                        />
+                        <span className="truncate">{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {(presetMode === "discuss" || presetMode === "assistant") && (
+            <>
+              <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+              <p className="flex items-center gap-1.5 px-2 py-1 text-micro text-l4">
+                <PermissionGlyph tier="discuss" className="text-l4" />
+                <span>
+                  {presetMode === "assistant"
+                    ? "固定只读核查，永不修改文件"
+                    : "固定只读讨论，不直接改项目文件"}
+                </span>
+              </p>
+            </>
+          )}
+
+          <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+          <button
+            type="button"
+            className="flex h-7 w-full shrink-0 items-center rounded-lg px-2.5 text-left text-xs text-l4 hover:bg-hover hover:text-l1"
+            onClick={() => {
+              setOpen(false);
+              onAdd();
+            }}
+          >
+            去连接页添加
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

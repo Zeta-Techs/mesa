@@ -439,7 +439,14 @@ export default function KickoffConfirmDialog({
   // （combo_surface 的 injectEffortAllowed）才显示——不给用户调不了的东西；
   // 值是「本次覆盖」，不写回绑定（改持久默认去网关库逐模型策略）。
   // 运行中仍可在底部状态栏调（状态栏是运行层，这里是起点，数据源同是 combo）。
-  const [kickEffort, setKickEffort] = useState("");
+  const [kickEffort, setKickEffort] = useState(() => stepBinding?.effort ?? "");
+  const effortTouchedRef = useRef(false);
+  useEffect(() => {
+    if (effortTouchedRef.current || launchTouchedRef.current) return;
+    if (stepBinding?.effort && stepBinding.profileId === profileId) {
+      setKickEffort(stepBinding.effort);
+    }
+  }, [stepBinding?.effort, stepBinding?.profileId, profileId]);
   const [effortInjectable, setEffortInjectable] = useState(false);
   useEffect(() => {
     if (!profileId || !model.trim()) {
@@ -490,10 +497,19 @@ export default function KickoffConfirmDialog({
     };
   }, [agentId]);
   const [permPick, setPermPick] = useState<KickoffPermission | null>(null);
+  const stepPermTier: KickoffPermission | null =
+    stepBinding &&
+    stepBinding.agentId === agentId &&
+    stepBinding.permissionTier &&
+    stepBinding.permissionTier !== "discuss"
+      ? stepBinding.permissionTier
+      : null;
   const permTier: KickoffPermission | null =
     permPick && permAvailable.includes(permPick)
       ? permPick
-      : pickKickoffPermission(permAvailable, loadKickoffPermission(projectPath), localPermTier);
+      : stepPermTier && permAvailable.includes(stepPermTier)
+        ? stepPermTier
+        : pickKickoffPermission(permAvailable, loadKickoffPermission(projectPath), localPermTier);
   async function choosePermission(tier: KickoffPermission) {
     if (tier === "full" && permTier !== "full") {
       const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
@@ -906,6 +922,8 @@ export default function KickoffConfirmDialog({
           slot: stepSlotKey(step.name),
           profileId: launch.profileId,
           model: launch.model || null,
+          effort: launch.effort || null,
+          permissionTier: launch.permissionMode || null,
         }).catch((reason) => {
           toast(`本步骤默认没存成：${String(reason)}。开工不受影响，可去「Agent 分工」页签重存。`, "warning");
         });
@@ -1064,7 +1082,7 @@ export default function KickoffConfirmDialog({
               <select
                 className="h-6 shrink-0 rounded-md border border-field bg-canvas px-1 text-micro text-l2 outline-none focus:border-l4"
                 value={kickEffort}
-                onChange={(e) => setKickEffort(e.target.value)}
+                onChange={(e) => { effortTouchedRef.current = true; setKickEffort(e.target.value); }}
                 title="思考档：只影响这一次运行，不改绑定的默认；运行中还可在底部状态栏调整"
                 aria-label="思考档"
               >

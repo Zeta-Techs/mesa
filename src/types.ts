@@ -1538,9 +1538,17 @@ export interface ProjectDto {
   defaultProfiles?: Record<string, string>;
   /** Agent id → 本项目在该默认连接里选用的模型。空 = 用连接名单的第一个。 */
   defaultModels?: Record<string, string>;
-  /** 槽位 → 专属绑定（固定用途单独指一条连接+模型，agent 跟随连接；键见
+  /** 槽位 → 专属绑定（固定用途单独指一条连接+模型+可选思考/权限预设，agent 跟随连接；键见
    *  project-agents.ts READER_BINDING_SLOT 等，与后端 PROJECT_AGENT_BINDING_SLOTS 同源） */
-  taskBindings?: Record<string, { profile: string; model?: string | null }>;
+  taskBindings?: Record<
+    string,
+    {
+      profile: string;
+      model?: string | null;
+      effort?: string | null;
+      permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+    }
+  >;
 }
 
 /** 档案卡 .ccode/project.toml 的资源条目 */

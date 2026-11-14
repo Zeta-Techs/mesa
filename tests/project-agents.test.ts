@@ -598,3 +598,81 @@ test("没绑连接的目标按项目默认解析：项目定的连接 > 这家�
   assert.equal(goalDefaultProfile(profiles, null, null)?.id, "cc-1");
   assert.equal(goalDefaultProfile([{ id: "g", agent: "gemini" }], null)?.id, "g");
 });
+
+test("专属绑定预设：taskBindingLaunch / projectChatLaunch / slotPrefs / resolveStepLaunch 透传 effort 与 permissionTier", async () => {
+  const { projectChatLaunch, normalizeBindingPermissionTier } = await import("../src/project-agents.ts");
+  const list = [
+    { id: "cc1", agent: "claude-code", models: ["glm-5.3", "glm-5.3-flash"] },
+    { id: "cx1", agent: "codex", models: ["gpt-5.5"] },
+  ];
+  assert.equal(normalizeBindingPermissionTier("auto"), "auto");
+  assert.equal(normalizeBindingPermissionTier("discuss"), "discuss");
+  assert.equal(normalizeBindingPermissionTier("bogus"), null);
+
+  assert.deepEqual(
+    taskBindingLaunch(list, {
+      profile: "cc1",
+      model: "glm-5.3-flash",
+      effort: "high",
+      permissionTier: "auto",
+    }),
+    {
+      agentId: "claude-code",
+      profileId: "cc1",
+      model: "glm-5.3-flash",
+      effort: "high",
+      permissionTier: "auto",
+    },
+  );
+
+  // 非法权限档静默忽略，空白 effort 不透传
+  assert.deepEqual(
+    taskBindingLaunch(list, {
+      profile: "cx1",
+      model: "gpt-5.5",
+      effort: "  ",
+      permissionTier: "invalid-tier",
+    }),
+    {
+      agentId: "codex",
+      profileId: "cx1",
+      model: "gpt-5.5",
+    },
+  );
+
+  const project = {
+    defaultAgent: "codex",
+    taskBindings: {
+      chat: { profile: "cc1", model: "glm-5.3", effort: "medium", permissionTier: "discuss" },
+      discuss: { profile: "cx1", model: "gpt-5.5", effort: "high" },
+      "step:综述大纲": { profile: "cx1", model: "gpt-5.5", effort: "xhigh", permissionTier: "auto" },
+    },
+  };
+  assert.deepEqual(projectChatLaunch(list, project), {
+    agentId: "claude-code",
+    profileId: "cc1",
+    model: "glm-5.3",
+    effort: "medium",
+    permissionTier: "discuss",
+  });
+  assert.deepEqual(slotPrefs(list, project, DISCUSS_BINDING_SLOT), {
+    preferredAgent: "codex",
+    preferredProfile: "cx1",
+    preferredModel: "gpt-5.5",
+    preferredEffort: "high",
+  });
+  assert.deepEqual(
+    resolveStepLaunch(list, project.taskBindings, "综述大纲", {
+      agentId: "claude-code",
+      profileId: "cc1",
+      model: "glm-5.3",
+    }),
+    {
+      agentId: "codex",
+      profileId: "cx1",
+      model: "gpt-5.5",
+      effort: "xhigh",
+      permissionTier: "auto",
+    },
+  );
+});

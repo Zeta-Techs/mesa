@@ -49,7 +49,14 @@ pub struct ProjectAgentBinding {
     /// 绑定的 profile id（连接被删时读取侧按未绑定回落，写入侧有清理）
     pub profile: String,
     /// 该连接里选用的模型 id；空/不在名单 = 用名单第一个
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// 预设思考强度（如 low / medium / high / xhigh / max）；空 = 跟随连接策略或 CLI 默认
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// 预设权限档位（discuss / ask / auto / full）；空 = 按槽位默认或 CLI 本机设置
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -3748,15 +3755,52 @@ fn valid_agent_binding_slot(slot: &str) -> bool {
         .is_some_and(|name| !name.trim().is_empty())
 }
 
-/// 保存项目某槽位的专属 Agent 绑定（profile + model；agent 跟随 profile 所属 CLI，
-/// 不单存）。模型须在该连接名单里；不传 = 用名单第一个。清空 = profile 传 None
-/// （该槽位回落项目默认/启动栏自动链）。只保存引用，不改连接本身。
+const BINDING_PERMISSION_TIERS: &[&str] = &["discuss", "ask", "auto", "full"];
+
+fn accept_binding_effort(slot: &str, raw: Option<&str>) -> Result<Option<String>, String> {
+    if slot == "assistant" {
+        return Ok(None);
+    }
+    let Some(trimmed) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if trimmed.chars().count() > 32
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!("思考档位格式不合法：{trimmed}"));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn accept_binding_permission_tier(slot: &str, raw: Option<&str>) -> Result<Option<String>, String> {
+    if slot == "assistant" || slot == "discuss" {
+        return Ok(None);
+    }
+    let Some(trimmed) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    if !BINDING_PERMISSION_TIERS.contains(&trimmed) {
+        return Err(format!("未知权限档位：{trimmed}"));
+    }
+    if slot.starts_with(STEP_SLOT_PREFIX) && trimmed == "discuss" {
+        return Err("科研步骤需要写入工作区，不支持预设「先出方案」".to_string());
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+/// 保存项目某槽位的专属 Agent 绑定（profile + model + 可选 effort / permissionTier；
+/// agent 跟随 profile 所属 CLI，不单存）。模型须在该连接名单里；不传 = 用名单第一个。
+/// 清空 = profile 传 None（该槽位回落项目默认/启动栏自动链）。只保存引用，不改连接本身。
 #[tauri::command]
 pub async fn set_project_agent_binding(
     project_root: String,
     slot: String,
     profile_id: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
+    permission_tier: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let project = PathBuf::from(crate::sessions::expand_tilde(&project_root));
@@ -3767,15 +3811,19 @@ pub async fn set_project_agent_binding(
         let profile_id = profile_id
             .map(|value| value.trim().to_string())
             .filter(|id| !id.is_empty());
-        let model = if let Some(profile_id) = profile_id.as_deref() {
+        let (model, effort, permission_tier) = if let Some(profile_id) = profile_id.as_deref() {
             let bindings = crate::gateway_store::load_bindings()?;
             let binding = bindings
                 .iter()
                 .find(|binding| binding.id == profile_id)
                 .ok_or("连接不存在")?;
-            accept_project_model(&binding.models, model.as_deref())?
+            (
+                accept_project_model(&binding.models, model.as_deref())?,
+                accept_binding_effort(&slot, effort.as_deref())?,
+                accept_binding_permission_tier(&slot, permission_tier.as_deref())?,
+            )
         } else {
-            None
+            (None, None, None)
         };
         let conn = db()?;
         let raw: String = conn
@@ -3794,6 +3842,8 @@ pub async fn set_project_agent_binding(
                     ProjectAgentBinding {
                         profile: profile_id,
                         model,
+                        effort,
+                        permission_tier,
                     },
                 );
             }

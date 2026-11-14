@@ -24,6 +24,8 @@ export interface AskAiFile {
   preferredProfile?: string | null;
   /** 项目 Agents 页在这条连接里点选的模型。 */
   preferredModel?: string | null;
+  /** 槽位绑定里预设的思考强度。 */
+  preferredEffort?: string | null;
   /** 项目对话：true = 隔离写入，结束后验收。 */
   writeReview?: boolean;
   workMode?: "office" | "coding" | "research";
@@ -90,23 +92,25 @@ export function askAiCanSkip(
 
 /** 项目绑了 Agents 就直接用；没绑才回落「问 AI」勾过的默认。⌘ 重选返回 null。 */
 export function askAiDirectLaunch(
-  file: Pick<AskAiFile, "preferredAgent" | "preferredProfile" | "preferredModel">,
+  file: Pick<AskAiFile, "preferredAgent" | "preferredProfile" | "preferredModel" | "preferredEffort">,
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
   remembered: AskAiRemembered | null,
   forcePick?: boolean,
-): { agentId: string; profileId: string; model: string } | null {
+): { agentId: string; profileId: string; model: string; effort?: string | null } | null {
   if (forcePick) return null;
   const agent = file.preferredAgent?.trim() ?? "";
   if (agent) {
     // 空绑定不传空串占位——「没绑」与「绑了空串」语义不同，后者依赖被调方容忍
     const bound = file.preferredProfile?.trim();
     const model = file.preferredModel?.trim();
-    return projectAgentLaunch(
+    const effort = file.preferredEffort?.trim() || null;
+    const base = projectAgentLaunch(
       profiles,
       agent,
       bound ? { [agent]: bound } : {},
       model ? { [agent]: model } : null,
     );
+    return base ? { ...base, ...(effort ? { effort } : {}) } : null;
   }
   if (!askAiCanSkip(remembered, profiles) || !remembered) return null;
   return {
@@ -118,7 +122,7 @@ export function askAiDirectLaunch(
 
 export function buildAskAiPending(
   file: AskAiFile,
-  choice: { agentId: string; profileId: string; model: string },
+  choice: { agentId: string; profileId: string; model: string; effort?: string | null },
 ) {
   const hasFile = file.path.trim().length > 0;
   const quoted = hasFile && /\s/.test(file.path) ? `"${file.path}"` : file.path;
@@ -137,6 +141,7 @@ export function buildAskAiPending(
     profileId: choice.profileId,
     // 空串也要带上：缺省会被启动栏上次的模型（常是中转 DeepSeek）顶掉
     model: choice.model,
+    ...(choice.effort ? { effort: choice.effort } : {}),
     initialPrompt,
     autoStart: !!choice.profileId,
     previewPath: wantPreview ? file.path : undefined,

@@ -395,7 +395,13 @@ export async function buildWorkspaceTerminalRequest(
     autoStart?: boolean;
     launch?: KickoffLaunch;
     resumeSession?: boolean;
-    stepLaunch?: { agentId: string; profileId: string; model: string } | null;
+    stepLaunch?: {
+      agentId: string;
+      profileId: string;
+      model: string;
+      effort?: string | null;
+      permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+    } | null;
     /** 仅「去终端看看」：步骤绑定若是另一家 Agent，不接回历史会话。
      *  评审退回、去终端回答不传——那些入口要回到发出请求的那次对话。 */
     releaseToStepBinding?: boolean;
@@ -460,8 +466,15 @@ export async function buildWorkspaceTerminalRequest(
     opts.stepLaunch.agentId === resume.agentId
       ? opts.stepLaunch
       : null;
+  const stepPermMode =
+    opts?.stepLaunch?.permissionTier &&
+    opts.stepLaunch.permissionTier !== "discuss" &&
+    opts.stepLaunch.agentId === (resume?.agentId ?? chain.agentId)
+      ? opts.stepLaunch.permissionTier
+      : null;
   const permissionMode =
     opts?.launch?.permissionMode ??
+    stepPermMode ??
     (opts?.autoStart ? await defaultStepPermission(ws.repoPath, resume?.agentId ?? chain.agentId) : null);
   const railStep = await workspaceStep(ws);
   return {
@@ -480,10 +493,14 @@ export async function buildWorkspaceTerminalRequest(
     profileId: resume ? undefined : chain.profileId,
     model: resume ? sameAgentBinding?.model || undefined : chain.model,
     autoLaunchProfileId: sameAgentBinding?.profileId,
-    // 开工弹层的本次思考档覆盖（空 = 绑定默认）：随标签种子传递，launch 时经
-    // pty_spawn effortOverride 注入，不写回绑定
-    effort: opts?.launch?.effort ?? undefined,
-    // 开工弹层选的权限档（只加在这次命令行）；自动拉起的入口按开工弹层同一口径预选；都没有 = 按本机设置
+    // 开工弹层的本次思考档覆盖 > 步骤槽绑定预设思考档（空 = 绑定默认）：随标签种子传递，launch 时经
+    // pty_spawn effortOverride 注入，不写回连接本身
+    effort:
+      opts?.launch?.effort ??
+      (opts?.stepLaunch?.agentId === (resume?.agentId ?? chain.agentId)
+        ? (opts?.stepLaunch?.effort ?? undefined)
+        : undefined),
+    // 开工弹层选的权限档（只加在这次命令行）；自动拉起的入口优先步骤槽绑定预设、再按开工弹层同一口径预选；都没有 = 按本机设置
     ...(permissionMode ? { permission: "write_tree" as const, permissionMode } : {}),
     resume: resume ?? undefined,
     initialPrompt,
@@ -499,14 +516,25 @@ export async function buildWorkspaceTerminalRequest(
 export async function resolveStepLaunchByWorkspace(
   ws: Pick<WorkspaceDto, "name" | "repoPath">,
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
-): Promise<{ agentId: string; profileId: string; model: string } | null> {
+): Promise<{
+  agentId: string;
+  profileId: string;
+  model: string;
+  effort?: string | null;
+  permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+} | null> {
   try {
     const read = await invoke<{
       config: { steps: readonly { name: string; workspaceName: string }[] };
     }>("read_project_config", { path: ws.repoPath });
     const step = read.config.steps.find((x) => x.workspaceName === ws.name);
     if (!step) return null;
-    const binding = await invoke<{ profile: string; model?: string | null } | null>(
+    const binding = await invoke<{
+      profile: string;
+      model?: string | null;
+      effort?: string | null;
+      permissionTier?: string | null;
+    } | null>(
       "get_project_agent_binding",
       { projectRoot: ws.repoPath, slot: stepSlotKey(step.name) },
     );

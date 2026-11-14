@@ -85,7 +85,10 @@ export default function PipelineEditor({
   warnings: string[];
   saving: boolean;
   /** 步骤专属绑定（改名/删步骤保存时点名受影响条数；undefined = 调用方没有该数据） */
-  taskBindings?: Record<string, { profile: string; model?: string | null }> | null;
+  taskBindings?: Record<
+    string,
+    { profile: string; model?: string | null; effort?: string | null; permissionTier?: string | null }
+  > | null;
   /** 从步骤 ✎ 进入时定位的步骤序号：滚动到该卡片并聚焦简报输入框 */
   focusStep?: number | null;
   /** 从项目页「内置模板有更新 · 去看看」进来：展开模板更新一节并选好这套模板 */

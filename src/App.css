@@ -794,6 +794,17 @@ body {
     color: var(--color-l1);
   }
 
+  /* 专属绑定卡片第二行的思考强度 / 权限预设微胶囊：比「已指定」更克制，一眼读出预设档位 */
+  .ccode-preset-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3.5px;
+    padding: 1px 6px;
+    border-radius: 5px;
+    background-color: color-mix(in srgb, var(--color-l1) 7%, transparent);
+    color: var(--color-l2);
+  }
+
   /* 活跃度热力图（用量页）· 格子边长由 --heat-cell 一个变量决定（2026-10-13）：
      窗口变宽只让格子在 9–28px 里按设备像素分档变大（2x 屏 0.5px 一档，非整数缩放 1px 一档），变高不再把格子拉成长方形。
      9 是下限（2026-10-31 由 11 下调，57 周窗口在窄卡里放得下）：放不下 9 才出横向滚动，星期列 sticky 钉住。

@@ -1916,6 +1916,10 @@ export const TerminalView = memo(function TerminalView({
       .then(setRelayOptions)
       .catch(() => setRelayOptions([]));
   }
+  // 项目 chat 槽显式预设为「完全访问」的连接：该标签在这条连接上保住 full，换去别的连接时不跟过去
+  const slotFullProfileRef = useRef<string | null>(
+    permissionMode === "full" && profileId ? profileId : null,
+  );
   /**
    * 开聊前换目录（聊天项目弹层、把文件夹拖进来、终端空态卡的目录菜单）。随手聊目录可能还没建：与快速开聊同一个后端入口创建。
    * 选的是已添加的项目、且这个标签没手动换过 Agent：按项目里「＋ 新对话」同一条塔带上用谁（chat 槽 > 项目默认，2026-10-22）
@@ -1946,6 +1950,30 @@ export const TerminalView = memo(function TerminalView({
       setProfileId(launchTo.profileId);
       setModel(launchTo.model);
       setModelKept(false);
+      if (launchTo.permissionTier === "discuss") {
+        slotFullProfileRef.current = null;
+        permissionRef.current = "discuss";
+        permissionModeRef.current = null;
+        onPatchLaunch?.(tabId, {
+          effort: launchTo.effort ?? null,
+          permission: "discuss",
+          permissionMode: null,
+        });
+      } else if (launchTo.permissionTier) {
+        slotFullProfileRef.current = launchTo.permissionTier === "full" ? launchTo.profileId : null;
+        permissionRef.current = "write_tree";
+        permissionModeRef.current = launchTo.permissionTier;
+        onPatchLaunch?.(tabId, {
+          effort: launchTo.effort ?? null,
+          permission: "write_tree",
+          permissionMode: launchTo.permissionTier,
+        });
+      } else {
+        slotFullProfileRef.current = null;
+        calibratePermissionFor(launchTo.agentId, launchTo.profileId, {
+          effort: launchTo.effort ?? null,
+        });
+      }
       if (changed) setLaunchAutoNote("按项目默认");
     } catch {
       // 读不到项目表：只换目录，用谁照旧
@@ -2116,6 +2144,7 @@ export const TerminalView = memo(function TerminalView({
   /** 改权限：完全访问二次确认；live = 进程在跑（换了要重开接回）。返回是否真改了 */
   async function pickLaunchPermission(id: PermissionTier, live: boolean): Promise<boolean> {
     if (!(await confirmPermissionChoice(agentLabel(agentId), id, live, chatPermissionMemoryApplies(reuseKey)))) return false;
+    if (id !== "full") slotFullProfileRef.current = null;
     onPatchLaunch?.(
       tabId,
       id === "discuss"
@@ -2147,7 +2176,9 @@ export const TerminalView = memo(function TerminalView({
       const calibrated = profilePermissionMode({
         permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
         mode: supportedMode,
-        remembered: rememberedFullAccess(targetProfileId),
+        remembered:
+          rememberedFullAccess(targetProfileId) ||
+          slotFullProfileRef.current === targetProfileId,
         fullAvailable,
       });
       if (calibrated !== undefined) nextMode = calibrated;
@@ -2173,7 +2204,8 @@ export const TerminalView = memo(function TerminalView({
     const next = profilePermissionMode({
       permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
       mode: permissionModeRef.current,
-      remembered: rememberedFullAccess(profileId),
+      remembered:
+        rememberedFullAccess(profileId) || slotFullProfileRef.current === profileId,
       fullAvailable: launchFullAvailable,
     });
     if (next !== undefined) {

@@ -41,6 +41,8 @@ async function renderView(options: {
   profiles?: ProjectAgentProfile[];
   project?: Partial<ProjectDto>;
   tasks?: ProjectAgentTaskRef[];
+  pipelineSteps?: { name: string; skills?: string[] }[];
+  combo?: { injectEffortAllowed?: boolean; effortLevels?: string[] };
   write?: (command: string) => Promise<void>;
 } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
@@ -69,11 +71,26 @@ async function renderView(options: {
       invoke: async (command: string, args: unknown) => {
         calls.push({ command, args });
         if (command === "task_list") return options.tasks ?? [];
+        if (command === "list_schedules") return [];
+        if (command === "agent_capabilities") return [];
+        if (command === "coding_overview") return { worktrees: [] };
         // B1 流程步骤组：挂载读一次步骤清单（组件 catch 降级，这里正常回）
         if (command === "read_project_config") {
           return { config: { steps: options.pipelineSteps ?? [] }, warnings: [] };
         }
-        if (["set_project_default_agent", "set_project_default_profile"].includes(command)) {
+        if (command === "combo_surface") {
+          return options.combo ?? { injectEffortAllowed: true, effortLevels: ["low", "medium", "high"] };
+        }
+        if (command === "model_capabilities") {
+          return [];
+        }
+        if (
+          [
+            "set_project_default_agent",
+            "set_project_default_profile",
+            "set_project_agent_binding",
+          ].includes(command)
+        ) {
           await options.write?.(command);
           return;
         }
@@ -368,5 +385,98 @@ test("没设默认时如实说开始时再选；跟随项目默认只说一次�
     assert.match(gem.host.textContent!, /默认选择仅对本项目生效。/);
   } finally {
     await gem.close();
+  }
+});
+
+test("专属绑定筛选面板：按 Agent→连接→模型分层选择，并支持提前预设思考强度与权限档位", async () => {
+  const view = await renderView({
+    project: {
+      workMode: "research",
+      defaultAgent: "codex",
+      defaultProfiles: { codex: "codex-a" },
+    },
+    pipelineSteps: [{ name: "综述大纲", skills: ["review-framework"] }],
+  });
+  try {
+    // 1. 打开「项目对话」专属绑定筛选面板
+    await view.click("更换 项目对话 的项目连接");
+    const dialog = view.host.querySelector('[role="dialog"][aria-label="项目对话 的项目连接"]')!;
+    assert.ok(dialog, "应打开专属绑定分层筛选面板");
+    assert.match(dialog.textContent!, /筛选 Agent/);
+    assert.match(dialog.textContent!, /思考强度预设/);
+    assert.match(dialog.textContent!, /权限预设/);
+
+    // 2. 同家（Codex）有两条连接时显示切换胶囊，点选「科研 · 精读」立即绑定
+    const connBtn = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.trim() === "科研 · 精读",
+    )!;
+    assert.ok(connBtn, "应显示同家连接胶囊「科研 · 精读」");
+    await view.act(async () => connBtn.click());
+
+    // 3. 预设思考强度 high + 权限「帮我批准」（auto）
+    const highBtn = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.trim() === "high",
+    )!;
+    await view.act(async () => highBtn.click());
+
+    const autoBtn = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("帮我批准"),
+    )!;
+    await view.act(async () => autoBtn.click());
+
+    const saveCalls = view.calls.filter((c) => c.command === "set_project_agent_binding");
+    assert.deepEqual(saveCalls.at(-1)?.args, {
+      projectRoot: "/project",
+      slot: "chat",
+      profileId: "codex-b",
+      model: "gpt-6-astra-review",
+      effort: "high",
+      permissionTier: "auto",
+    });
+
+    // 卡片触发器第二行展示微标胶囊（权限 + 思考强度）
+    const chatTrigger = view.button("更换 项目对话 的项目连接");
+    assert.match(chatTrigger.textContent!, /Codex · 科研 · 精读/);
+    assert.match(chatTrigger.textContent!, /gpt-6-astra-review/);
+    const presetChips = Array.from(chatTrigger.querySelectorAll(".ccode-preset-chip")).map((el) =>
+      el.textContent?.trim(),
+    );
+    assert.deepEqual(presetChips, ["帮我批准", "high"]);
+
+    // 4. 点首行「跟随项目默认」清空绑定与预设
+    const clearBtn = Array.from(dialog.querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => b.textContent?.includes("跟随项目默认"),
+    )!;
+    await view.act(async () => clearBtn.click());
+    assert.equal(view.host.querySelector('[role="dialog"][aria-label="项目对话 的项目连接"]'), null);
+    assert.deepEqual(view.calls.at(-1)?.args, {
+      projectRoot: "/project",
+      slot: "chat",
+      profileId: null,
+      model: null,
+      effort: null,
+      permissionTier: null,
+    });
+
+    // 5. 「问 AI / 聊想法」与「项目助手」只显示只读提示，不画写权限按钮；「科研步骤」显示 3 档写权限（不含先出方案）
+    await view.click("更换 问 AI / 聊想法 的项目连接");
+    const discussDialog = view.host.querySelector('[role="dialog"][aria-label="问 AI / 聊想法 的项目连接"]')!;
+    assert.match(discussDialog.textContent!, /思考强度预设/);
+    assert.match(discussDialog.textContent!, /固定只读讨论/);
+    assert.ok(!discussDialog.textContent!.includes("帮我批准"));
+
+    await view.click("更换 项目助手 的项目连接");
+    const assistantDialog = view.host.querySelector('[role="dialog"][aria-label="项目助手 的项目连接"]')!;
+    assert.match(assistantDialog.textContent!, /固定只读核查/);
+    assert.ok(!assistantDialog.textContent!.includes("思考强度预设"));
+
+    await view.click("更换 综述大纲 的项目连接");
+    const stepDialog = view.host.querySelector('[role="dialog"][aria-label="综述大纲 的项目连接"]')!;
+    assert.match(stepDialog.textContent!, /请求批准/);
+    assert.match(stepDialog.textContent!, /帮我批准/);
+    assert.match(stepDialog.textContent!, /完全访问/);
+    assert.ok(!stepDialog.textContent!.includes("先出方案"), "科研步骤不提供先出方案档");
+  } finally {
+    await view.close();
   }
 });

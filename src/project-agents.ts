@@ -285,26 +285,53 @@ export function projectAgentPrefs(project?: {
 /** 槽位 key（与后端 PROJECT_AGENT_BINDING_SLOTS 白名单同源；reader = 沉浸阅读会话） */
 export const READER_BINDING_SLOT = "reader";
 
+/** 槽位预设权限档位（与聊天层 PERMISSION_TIERS 同源；步骤槽不含 discuss） */
+export type BindingPermissionTier = "discuss" | "ask" | "auto" | "full";
+const VALID_BINDING_TIERS: readonly BindingPermissionTier[] = ["discuss", "ask", "auto", "full"];
+
+export function normalizeBindingPermissionTier(
+  raw: string | null | undefined,
+): BindingPermissionTier | null {
+  const t = raw?.trim();
+  return t && (VALID_BINDING_TIERS as readonly string[]).includes(t)
+    ? (t as BindingPermissionTier)
+    : null;
+}
+
 /** 槽位专属绑定（agent 跟随 profile 所属 CLI，不单存） */
 export type ProjectAgentBinding = {
   profile: string;
   model?: string | null;
+  effort?: string | null;
+  permissionTier?: string | null;
 };
 
-/** 槽位专属绑定 → 启动三元组。绑定缺失/连接被删返回 null（调用方回落项目默认
+export type ResolvedTaskBindingLaunch = {
+  agentId: string;
+  profileId: string;
+  model: string;
+  effort?: string | null;
+  permissionTier?: BindingPermissionTier | null;
+};
+
+/** 槽位专属绑定 → 启动五元组。绑定缺失/连接被删返回 null（调用方回落项目默认
  *  或启动栏自动链）；显式绑定尊重停用项；模型不在名单里回落名单第一个。 */
 export function taskBindingLaunch(
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
   binding: ProjectAgentBinding | null | undefined,
-): { agentId: string; profileId: string; model: string } | null {
+): ResolvedTaskBindingLaunch | null {
   const id = binding?.profile?.trim();
   if (!id) return null;
   const profile = profiles.find((p) => p.id === id);
   if (!profile) return null;
+  const effort = binding?.effort?.trim() || null;
+  const permissionTier = normalizeBindingPermissionTier(binding?.permissionTier);
   return {
     agentId: profile.agent,
     profileId: profile.id,
     model: resolveProfileModel(profile.models, binding?.model ?? undefined),
+    ...(effort ? { effort } : {}),
+    ...(permissionTier ? { permissionTier } : {}),
   };
 }
 
@@ -328,7 +355,7 @@ export function projectChatLaunch(
     defaultModels?: Record<string, string> | null;
     taskBindings?: Record<string, ProjectAgentBinding> | null;
   } | null | undefined,
-): { agentId: string; profileId: string; model: string } | null {
+): ResolvedTaskBindingLaunch | null {
   if (!project) return null;
   return (
     taskBindingLaunch(profiles, project.taskBindings?.[CHAT_BINDING_SLOT]) ??
@@ -370,6 +397,7 @@ export function slotPrefs(
   preferredAgent?: string;
   preferredProfile?: string;
   preferredModel?: string;
+  preferredEffort?: string;
 } {
   const binding = project?.taskBindings?.[slot];
   const launch = taskBindingLaunch(profiles, binding);
@@ -378,6 +406,7 @@ export function slotPrefs(
       preferredAgent: launch.agentId,
       preferredProfile: launch.profileId,
       ...(launch.model ? { preferredModel: launch.model } : {}),
+      ...(launch.effort ? { preferredEffort: launch.effort } : {}),
     };
   }
   return projectAgentPrefs(project);
@@ -421,8 +450,8 @@ export function resolveStepLaunch(
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
   taskBindings: Record<string, ProjectAgentBinding> | null | undefined,
   stepName: string,
-  projectDefaultLaunch: { agentId: string; profileId: string; model: string } | null,
-): { agentId: string; profileId: string; model: string } | null {
+  projectDefaultLaunch: ResolvedTaskBindingLaunch | null,
+): ResolvedTaskBindingLaunch | null {
   return (
     taskBindingLaunch(profiles, taskBindings?.[stepSlotKey(stepName)]) ??
     projectDefaultLaunch
