@@ -1000,10 +1000,48 @@ fn validate_step_binding_rules() {
     );
 }
 
+fn sample_review_steps() -> Vec<StepDto> {
+    vec![
+        StepDto {
+            name: "文献检索与筛选".into(),
+            workspace_name: "lit-search".into(),
+            inputs: vec!["notes/".into()],
+            brief: "检索候选文献并写入 papers/included.json；项目根 notes/ 已有笔记的注明已有笔记。".into(),
+            expected_artifacts: vec![
+                "papers/included.json".into(),
+                "papers/included.md".into(),
+                "references.bib".into(),
+            ],
+            ..StepDto::default()
+        },
+        StepDto {
+            name: "文献精读与笔记".into(),
+            workspace_name: "lit-notes".into(),
+            inputs: vec!["papers/included.json".into(), "references.bib".into()],
+            brief: "按 papers/included.json 精读或速读文献，产出写入 notes/。".into(),
+            expected_artifacts: vec!["notes/index.json".into(), "notes/handoff.md".into()],
+            ..StepDto::default()
+        },
+        StepDto {
+            name: "综述初稿".into(),
+            workspace_name: "draft".into(),
+            inputs: vec![
+                "papers/included.json".into(),
+                "notes/index.json".into(),
+                "references.bib".into(),
+            ],
+            brief: "依据笔记与引文库起草 manuscript/draft.md。".into(),
+            expected_artifacts: vec!["manuscript/draft.md".into()],
+            decision_mode: "auto_continue".into(),
+            ..StepDto::default()
+        },
+    ]
+}
+
 #[test]
 fn bundled_review_template_has_no_step_warnings() {
-    // 英文综述模板应用到新项目后不该一进页就挂「!」（2026-11-05：检索步简报提到 notes/ 却没声明输入）
-    let steps = demo_review_template().steps;
+    // 英文综述步骤链应用到新项目后不该一进页就挂「!」（2026-11-05：首步简报提到 notes/ 豁免，后续步声明上游输入）
+    let steps = sample_review_steps();
     let mut prior: Vec<String> = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         let warnings = validate_step(step, &[], &prior, i == 0);
@@ -2025,168 +2063,6 @@ fn append_steps_rejects_unregistered_project() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-// ===== 示例课题（create_demo_at / build_demo_pdf） =====
-
-#[test]
-fn demo_pdf_xref_offsets_are_valid() {
-    let pdf = build_demo_pdf();
-    assert!(pdf.starts_with(b"%PDF-1.4\n"), "PDF 魔数头");
-    assert!(pdf.ends_with(b"%%EOF\n"), "EOF 收尾");
-    // 全 ASCII：字节偏移可直接按文本解析
-    let text = String::from_utf8(pdf.clone()).unwrap();
-    let sx = text.rfind("startxref").expect("缺 startxref");
-    let xref_pos: usize = text[sx..].lines().nth(1).unwrap().trim().parse().unwrap();
-    assert_eq!(
-        &pdf[xref_pos..xref_pos + 4],
-        b"xref",
-        "startxref 必须指向 xref 表"
-    );
-    // 逐条 n 项的偏移必须精确指向 "N 0 obj"
-    let xref = &text[xref_pos..];
-    let entries: Vec<&str> = xref.lines().skip(2).take(6).collect();
-    assert_eq!(entries.len(), 6, "xref 应有 0..=5 共 6 项");
-    assert!(entries[0].ends_with(" f "), "0 号为 free 项");
-    for (i, entry) in entries.iter().enumerate().skip(1) {
-        // lines() 不含换行符：19 字符 + LF = 固定的 20 字节 xref 项
-        assert_eq!(entry.len(), 19, "xref 项固定 20 字节（含 LF）: {entry:?}");
-        let off: usize = entry[..10].trim().parse().unwrap();
-        assert!(
-            pdf[off..].starts_with(format!("{i} 0 obj").as_bytes()),
-            "对象 {i} 的 xref 偏移错位"
-        );
-    }
-    assert!(text.contains("trailer\n<< /Size 6 /Root 1 0 R >>"));
-}
-
-#[test]
-fn create_demo_flow_and_idempotency() {
-    if crate::agents::resolve_binary("git").is_none() {
-        eprintln!("测试环境无 git，跳过 create_demo 用例");
-        return;
-    }
-    let dir = temp_dir("demo");
-    let conn = db_at(&dir.join("app.db")).unwrap();
-    let base = dir.join("documents");
-    let root = base.join(DEMO_DIR_NAME);
-
-    let p = create_demo_at(&base, &conn).unwrap();
-    assert_eq!(p.name, DEMO_PROJECT_NAME);
-    assert!(root.join(DEMO_PDF_REL).exists());
-    assert!(root.join("notes").is_dir());
-    assert!(root.join("references.bib").exists());
-    assert!(root.join("README.md").exists());
-    let included: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(root.join("papers/included.json")).unwrap())
-            .unwrap();
-    assert_eq!(included[0]["id"], "leader-2016-demo");
-    assert_eq!(included[0]["fulltextStatus"], "demo-only");
-    let pdf = fs::read(root.join(DEMO_PDF_REL)).unwrap();
-    assert!(
-        pdf.starts_with(b"%PDF-") && pdf.ends_with(b"%%EOF\n"),
-        "PDF 结构完整"
-    );
-    // 档案卡 = 当前英文综述模板 + 检索步 seed_complete；不另写一套旧简报
-    let text = fs::read_to_string(config_path(&root)).unwrap();
-    let (config, _) = parse_config(&text);
-    let canon = demo_review_template();
-    assert_eq!(
-        config.topic.as_deref(),
-        Some("GLP-1 受体激动剂的心血管结局（演示课题）")
-    );
-    assert_eq!(config.steps.len(), canon.steps.len());
-    assert_eq!(config.steps[0].workspace_name, "lit-search");
-    assert_eq!(
-        config.steps[0].skills, canon.steps[0].skills,
-        "检索步技能应与英文综述模板一致"
-    );
-    assert!(config.steps[0].seed_complete);
-    assert_eq!(config.steps[0].brief, canon.steps[0].brief);
-    assert_eq!(
-        config.steps[1].skills, canon.steps[1].skills,
-        "精读步技能应与英文综述模板一致"
-    );
-    assert_eq!(config.steps[1].brief, canon.steps[1].brief);
-    assert_eq!(config.steps[3].run.len(), canon.steps[3].run.len());
-    assert_eq!(config.steps[4].workspace_name, "polish");
-    assert_eq!(config.resources.len(), 2);
-    assert!(git_has_head(&root), "bootstrap 应已产生初始提交");
-    let cards = task_cards_at(&root);
-    assert_eq!(cards.len(), 1, "示例课题应预置一张演示卡片");
-    let demo_card = &cards[0];
-    assert_eq!(demo_card.name, "示例：开读这一篇");
-    assert_eq!(demo_card.step.as_deref(), Some("文献精读与笔记"));
-    let draft_text = fs::read_to_string(root.join(".ccode/drafts/lit-notes.md")).unwrap();
-    assert!(
-        draft_text.starts_with("# 任务书草稿：文献精读与笔记"),
-        "{draft_text}"
-    );
-    for marker in ["想法期讨论沉淀（示范）", "开读这一篇", "综述大纲"] {
-        assert!(draft_text.contains(marker), "示范草稿缺内容: {marker}");
-    }
-    assert!(
-        config.steps[0]
-            .human_tasks
-            .iter()
-            .any(|h| h.title.contains("下载付费墙文献全文")),
-        "检索步应保留模板的付费墙事项: {:?}",
-        config.steps[0].human_tasks
-    );
-
-    // 幂等：二次调用返回同一项目，且不覆盖用户改过的内容
-    write(&root.join("README.md"), "user edit");
-    write(&root.join("papers/included.json"), "user supplied records");
-    let p2 = create_demo_at(&base, &conn).unwrap();
-    assert_eq!(p2.path, p.path);
-    assert_eq!(
-        fs::read_to_string(root.join("papers/included.json")).unwrap(),
-        "user supplied records"
-    );
-    assert_eq!(
-        fs::read_to_string(root.join("README.md")).unwrap(),
-        "user edit"
-    );
-    assert_eq!(
-        task_cards_at(&root).len(),
-        1,
-        "幂等路径不得重复播种演示卡片"
-    );
-
-    // 目录已存在但未注册：档案卡跟当前模板，缺的演示文件才补，已有 README 不动
-    remove_project_at(&conn, &root).unwrap();
-    fs::remove_file(root.join("references.bib")).unwrap();
-    write(
-        &config_path(&root),
-        "topic = \"旧演示\"\n[[steps]]\nname = \"旧步骤\"\nworkspace_name = \"old\"\nbrief = \"过期简报\"\n",
-    );
-    let p3 = create_demo_at(&base, &conn).unwrap();
-    assert_eq!(p3.path, p.path);
-    assert!(root.join("references.bib").exists(), "缺的演示文件应补回");
-    assert_eq!(
-        fs::read_to_string(root.join("README.md")).unwrap(),
-        "user edit",
-        "已有 README 不得覆盖"
-    );
-    let text = fs::read_to_string(config_path(&root)).unwrap();
-    let (config, _) = parse_config(&text);
-    assert_eq!(config.steps.len(), canon.steps.len());
-    assert_eq!(config.steps[0].brief, canon.steps[0].brief);
-    assert!(config.steps[0].seed_complete);
-    assert_eq!(task_cards_at(&root).len(), 1, "已有演示卡片不得重复播种");
-
-    // 只有旧目录名时继续用它，不在旁边再造「Mesa 示例课题」
-    remove_project_at(&conn, &root).unwrap();
-    let legacy = base.join(DEMO_DIR_NAME_LEGACY);
-    std::fs::rename(&root, &legacy).unwrap();
-    let p4 = create_demo_at(&base, &conn).unwrap();
-    assert!(
-        Path::new(&p4.path).ends_with(DEMO_DIR_NAME_LEGACY),
-        "应继续用旧目录，实际 {}",
-        p4.path
-    );
-    assert!(!root.exists(), "旧目录还在时不得另建新目录");
-    std::fs::remove_dir_all(&dir).ok();
-}
-
 #[test]
 fn delete_project_dir_removes_dir_and_registration() {
     let dir = temp_dir("deldir");
@@ -2605,7 +2481,12 @@ fn first_step_external_inputs_do_not_create_noise_but_later_missing_inputs_warn(
 #[test]
 fn review_template_steps_survive_serialization() {
     let dir = temp_dir("review-quality-gate");
-    let cfg = demo_project_config();
+    let cfg = ProjectConfigDto {
+        topic: Some("测试综述课题".into()),
+        steps: sample_review_steps(),
+        work_mode: "research".into(),
+        ..sample_config()
+    };
     write_config_at(&dir, &cfg).unwrap();
     let restored = read_config_at(&dir).config;
     let draft = restored

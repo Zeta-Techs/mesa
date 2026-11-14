@@ -106,10 +106,10 @@ if ax texts "$PID" | grep -qx "稍后再说"; then
   # 向导第一屏列出认出的 Agent：从访达启动认不出已装的 CLI，是短 PATH 一类问题
   agents="$(ax texts "$PID" | sed -n '/^已装好，选一个：$/,/^接入方式$/p' | sed '1d;$d' | grep -vx '[01]' | awk '{ printf "%s%s", (NR > 1 ? "、" : ""), $0 }')"
   [[ -n "$agents" ]] && log "- 认出的 Agent：$agents" || log "- 认出的 Agent：（向导第一屏没列，多半一个都没认出）"
-  # 第三屏：示例课题排第一并标「第一次用推荐」（2026-11-07 定位：科研是主线）
+  # 第三屏：两种项目入口（添加已有文件夹 / 新建项目）
   if press "向导第三屏" "建第一个项目" --role AXButton; then
-    if ax wait "$PID" "第一次用推荐" 10 >/dev/null 2>&1; then log "- 向导第三屏：示例课题标着「第一次用推荐」"
-    else FAILS=$((FAILS + 1)); log "- ✗ 向导第三屏没看到「第一次用推荐」"; fi
+    if ax wait "$PID" "从头开始一个新课题" 10 >/dev/null 2>&1; then log "- 向导第三屏：显示新建与添加已有文件夹入口"
+    else FAILS=$((FAILS + 1)); log "- ✗ 向导第三屏没看到「从头开始一个新课题」"; fi
     check "上手向导第三屏"
   fi
   press "关上手向导" "稍后再说" --exact
@@ -137,15 +137,20 @@ press "开新对话" "新对话" --exact --role AXButton && { sleep 2; check "�
 press "回工作台" "工作台" --exact --role AXButton
 
 log
-log "## 示例课题与文件预览"
-# 新版工作台空态有「创建示例课题」按钮直接建；旧版是侧栏 ＋ 菜单里的一项
-press "创建示例课题" "创建示例课题" --role AXButton
-ax press "$PID" "创建示例课题" --role AXMenuItem >/dev/null 2>&1
-if ax wait "$PID" "示例课题（演示）" 60 2>/dev/null; then
-  check "建好示例课题"
-  PROJ="$SANDBOX_HOME/Documents/Mesa 示例课题"
+log "## 新建项目与文件预览"
+press "新建项目" "新建项目…" --role AXButton
+if ax wait "$PID" "创建" 10 2>/dev/null; then
+  ax fill "$PID" "Smoke课题" >/dev/null 2>&1
+  sleep 0.5
+  press "提交新建项目" "创建" --exact --role AXButton
+fi
+if ax wait "$PID" "Smoke课题" 30 2>/dev/null; then
+  check "建好测试课题"
+  PROJ="$SANDBOX_HOME/Documents/Smoke课题"
   FILES="$PROJ/smoke-files"
   mkdir -p "$FILES"
+  printf '# Smoke课题\n' > "$PROJ/README.md"
+  printf '@article{demo2026, title={Smoke}, author={Test}, year={2026}}\n' > "$PROJ/references.bib"
   printf '\\documentclass{article}\n\\begin{document}\nHello $x^2$.\n\\end{document}\n' > "$FILES/main.tex"
   printf 'import json\nprint(json.dumps({"a": 1}))\n' > "$FILES/analysis.py"
   printf '{"name": "smoke", "n": 3}\n' > "$FILES/data.json"
@@ -166,12 +171,12 @@ if ax wait "$PID" "示例课题（演示）" 60 2>/dev/null; then
   }
   open_files() {
     local theme="$1"
-    press "进项目" "示例课题（演示）" --exact --role AXButton || return
+    press "进项目" "Smoke课题" --exact --role AXButton || return
     press "进「文件」标签" "文件" --role AXRadioButton || return
     ax press "$PID" "刷新" --exact >/dev/null 2>&1; sleep 1
     for entry in README.md: references.bib: notes.md:smoke-files main.tex:smoke-files analysis.py:smoke-files \
       data.json:smoke-files table.csv:smoke-files page.html:smoke-files style.css:smoke-files app.js:smoke-files \
-      mod.ts:smoke-files figure.png:smoke-files Liraglutide:papers; do
+      mod.ts:smoke-files figure.png:smoke-files; do
       local f="${entry%%:*}" dir="${entry#*:}"
       reveal "$f" "$dir"
       press "点开 ${f}（${theme}）" "$f" --role AXButton && { sleep 2; check "预览 ${f}（${theme}）"; }
@@ -190,7 +195,7 @@ if ax wait "$PID" "示例课题（演示）" 60 2>/dev/null; then
   press "换回深色主题" "极简灰蓝" --exact
 else
   FAILS=$((FAILS + 1))
-  log "- ✗ 示例课题 60 秒内没出现，跳过文件预览"
+  log "- ✗ 新建项目 30 秒内没出现，跳过文件预览"
 fi
 
 log

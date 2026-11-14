@@ -370,7 +370,7 @@ function App() {
   const exitChromeHidden = useAppStore((s) => s.exitChromeHidden);
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // 侧栏顶部「新项目」的三项菜单（新建 / 已有文件夹 / 示例课题，project-add.ts）
+  // 侧栏顶部「新项目」的两项菜单（新建 / 已有文件夹，project-add.ts）
   const [newProjectMenu, setNewProjectMenu] = useState<{ x: number; y: number } | null>(null);
   const { fullscreen: macFullscreen, animating: macFullscreenAnimating } =
     useMacFullscreenState(IS_MAC);
@@ -965,7 +965,7 @@ function App() {
         void openQuickChat();
         return;
       }
-      // 新项目（默认 ⇧⌘N）：直接开「新建项目」；添加已有文件夹 / 示例课题走按钮菜单。同新对话，输入框里也接
+      // 新项目（默认 ⇧⌘N）：直接开「新建项目」；添加已有文件夹走按钮菜单。同新对话，输入框里也接
       if (allowed && eventMatchesCombo(e, newProjectCombo)) {
         e.preventDefault();
         setPaletteOpen(false);

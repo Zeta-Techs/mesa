@@ -8,7 +8,6 @@ import {
   Check,
   ChevronUp,
   Copy,
-  FlaskConical,
   FolderOpen,
   FolderPlus,
   MessageSquare,
@@ -1403,8 +1402,8 @@ function ProjectScreen({
       run(s);
     });
   };
-  // 先问手上有什么活，不首推综述示例（2026-11-08 用户拍板「科研项目不先套流程」）：建好的项目先是目标列表，
-  // 示例课题降为「想先看完整流程长什么样」。卡片标题是回答，后面小字是入口原名（说明书照它写）
+  // 先问手上有什么活（2026-11-08 用户拍板「科研项目不先套流程」；2026-11-14 移除「创建示例课题」）：
+  // 建好的项目先是目标列表。卡片标题是回答，后面小字是入口原名（说明书照它写）
   const actions = [
     {
       answer: "资料已经在电脑上",
@@ -1419,13 +1418,6 @@ function ProjectScreen({
       hint: "建一个新文件夹，起名、选位置；建好就能写这次想完成什么",
       icon: FolderPlus,
       run: (s: ReturnType<typeof useAppStore.getState>) => s.setNewProjectOpenReq({ token: Date.now() }),
-    },
-    {
-      answer: "还没想好，先看个例子",
-      label: "创建示例课题",
-      hint: "带好文献和英文综述流程的示例课题，照着点一遍，看 AI 怎么检索、精读、写初稿，你怎么评审；随时可以删",
-      icon: FlaskConical,
-      run: (s: ReturnType<typeof useAppStore.getState>) => s.setDemoProjectOpenReq(Date.now()),
     },
   ];
   return (

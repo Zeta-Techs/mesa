@@ -673,9 +673,6 @@ interface AppState {
   /** 「新建项目…」从聊天 / 终端标签发起时，建好后回到那个标签并把目录换成新项目（一次性） */
   tabCwdReq: { tabId: string; cwd: string } | null;
   setTabCwdReq: (req: { tabId: string; cwd: string } | null) => void;
-  /** 侧栏「＋ → 创建示例课题」的一次性请求（token）：项目页消费后执行创建 */
-  demoProjectOpenReq: number | null;
-  setDemoProjectOpenReq: (token: number | null) => void;
   /** 后端按最近会话活跃度排序的仓库；本地缓存用于终端首开即时展示。 */
   recentRepos: RepoDto[];
   recentReposLoading: boolean;
@@ -1091,8 +1088,6 @@ export const useAppStore = create<AppState>((set, get) => {
   setNewProjectOpenReq: (req) => set({ newProjectOpenReq: req }),
   tabCwdReq: null,
   setTabCwdReq: (req) => set({ tabCwdReq: req }),
-  demoProjectOpenReq: null,
-  setDemoProjectOpenReq: (token) => set({ demoProjectOpenReq: token }),
   recentRepos: cachedRecentRepos(),
   recentReposLoading: false,
   recentReposLoaded: false,

@@ -947,7 +947,6 @@ pub fn run() {
             projects::ensure_git_repo,
             projects::commit_project_bootstrap,
             projects::commit_project_ledger,
-            projects::create_demo_project,
             projects::write_workspace_task_md,
             projects::inspect_step_inputs,
             zotero::zotero_inspect,

@@ -1235,14 +1235,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }, [newProjectOpenReq]);
   // 从聊天 / 终端标签发起的新建：建好就回那个标签（用户：新建完要回到原来的聊天框）
   const newProjectReturnRef = useRef<string | null>(null);
-  // 侧栏「＋ → 创建示例课题」的一次性请求（创建逻辑含选中+刷新，在本页）
-  const demoProjectOpenReq = useAppStore((s) => s.demoProjectOpenReq);
-  useEffect(() => {
-    if (!demoProjectOpenReq) return;
-    useAppStore.getState().setDemoProjectOpenReq(null);
-    void onCreateDemo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [demoProjectOpenReq]);
 
   // 「agent 已跑完」跃迁触发一次 refresh（v3.97）：步骤状态只从 git 派生，agent 干完若已提交，
   // 不重拉 health 就永远停在「进行中」。terminalRunInputs 是 TerminalPage 镜像进 store 的既有信号，
@@ -2100,25 +2092,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     setAddProjectPath(selected);
   }
 
-  const [demoBusy, setDemoBusy] = useState(false);
-  /** 空态次入口：一键创建带演示数据的示例课题（后端幂等，重复点不重复建） */
-  async function onCreateDemo() {
-    setDemoBusy(true);
-    try {
-      const project = await invoke<ProjectDto>("create_demo_project");
-      // 先落项目列表再选中分组：分组表由 projects 派生，反了会被空表 effect 重置
-      const list = await invoke<ProjectDto[]>("list_projects");
-      setProjects(list);
-      useAppStore.getState().setProjectPaths(list.map((p) => p.path));
-      setSelectedGroupKey(`p:${project.path}`);
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDemoBusy(false);
-    }
-  }
-
   return (
     <div className="relative flex h-full flex-col bg-rail2">
       {/* 待你处理（全局收件箱）：文档流单行 strip（只占 32px，不顶开工作台）；
@@ -2299,19 +2272,20 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             <div className="flex items-center justify-center gap-2">
               <button
                 type="button"
-                onClick={() => void onAddProject()}
+                onClick={() => {
+                  newProjectReturnRef.current = null;
+                  setCreatingProject(true);
+                }}
                 className={primaryActionClass}
               >
-                添加项目
+                新建项目…
               </button>
               <button
                 type="button"
-                disabled={demoBusy}
-                onClick={() => void onCreateDemo()}
-                title="带演示数据和完整研究流程，随时可以删"
+                onClick={() => void onAddProject()}
                 className={secondaryActionClass}
               >
-                {demoBusy ? "正在创建…" : "✦ 创建示例课题"}
+                添加已有文件夹…
               </button>
             </div>
           }

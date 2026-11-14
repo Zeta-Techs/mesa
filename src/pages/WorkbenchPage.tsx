@@ -17,6 +17,7 @@ import { phonePendingCount } from "../phone-drop";
 import { bulkReadableItems, inboxCategoryOf } from "../inbox";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
+import { openAddExistingFolder, openNewProject } from "../project-add";
 import { useClientOpen } from "../components/ClientOpenDialog";
 import { alertDialog } from "../components/ConfirmDialog";
 import { AGENTS } from "../types";
@@ -202,7 +203,6 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const setTaskReviewReq = useAppStore((s) => s.setTaskReviewReq);
   const setFocusTabReq = useAppStore((s) => s.setFocusTabReq);
   const setProjectFocusReq = useAppStore((s) => s.setProjectFocusReq);
-  const setDemoProjectOpenReq = useAppStore((s) => s.setDemoProjectOpenReq);
   const setWorkspaceReviewRequest = useAppStore((s) => s.setWorkspaceReviewRequest);
 
   function openRun(runId: string, tabId?: string) {
@@ -1943,19 +1943,16 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 工作台会把所有项目里等你决定的事、手上在做的事和定时任务排在一处。先有一个项目——一个放资料和成果的文件夹。
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button type="button" className={primaryActionClass} onClick={() => setPage("workspaces")}>
-                  添加项目
+                <button type="button" className={primaryActionClass} onClick={openNewProject}>
+                  新建项目…
                 </button>
                 <button
                   type="button"
                   className={secondaryActionClass}
-                  title="建一个带好文献和流程的示例课题，照着点一遍就知道怎么用"
-                  onClick={() => {
-                    setPage("workspaces");
-                    setDemoProjectOpenReq(Date.now());
-                  }}
+                  title="把电脑上已有的文件夹登记为项目"
+                  onClick={openAddExistingFolder}
                 >
-                  创建示例课题
+                  添加已有文件夹…
                 </button>
                 <button type="button" className={ghostActionClass} onClick={() => void openQuickChat()}>
                   先随便聊聊

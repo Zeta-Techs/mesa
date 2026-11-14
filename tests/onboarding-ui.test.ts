@@ -106,7 +106,6 @@ async function mount(facts: OnboardingFacts = blank, formOnly = false) {
       setGatewayLibraryReq: () => requests.push("gw-lib"),
       setNewProjectOpenReq: () => requests.push("new"),
       setAddProjectOpenReq: () => requests.push("add"),
-      setDemoProjectOpenReq: () => requests.push("demo"),
       saveGateway: async () => {
         requests.push("save");
         return { id: "gateway", name: "测试服务商" };
@@ -353,11 +352,10 @@ test("安装在途：有忙碌反馈且不丢失安装界面，完成后恢复�
   }
 });
 
-test("项目卡整行可点击：三种入口分别派发原有请求", async () => {
+test("项目卡整行可点击：两种入口分别派发原有请求", async () => {
   for (const [label, request] of [
     ["从头开始一个新课题：新建项目", "new"],
     ["资料已经在电脑上：添加已有文件夹", "add"],
-    ["还没想好，先看个例子：创建示例课题", "demo"],
   ]) {
     const ui = await mount({ ...blank, profileCount: 1, userSessionCount: 1 });
     try {

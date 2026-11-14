@@ -328,13 +328,17 @@ test("quarto render 的产物落点：--output-dir 按稿件深度指回项目�
   assert.ok(seen >= 10, "应覆盖到全部模板的渲染命令");
 });
 
-test("quarto-render 技能与导出的综述模板都用 ../output", () => {
+test("quarto-render 技能与内置综述模板都用 ../output", () => {
   const skill = readFileSync("src-tauri/resources/skills/quarto-render/SKILL.md", "utf8");
   assert.match(skill, /--to pdf --output-dir \.\.\/output/);
   assert.doesNotMatch(skill, /--output-dir output\b/);
-  const exported = readFileSync("src-tauri/resources/pipeline-review.json", "utf8");
-  assert.doesNotMatch(exported, /--output-dir output\b/);
-  assert.match(exported, /--output-dir \.\.\/output/);
+  const review = PIPELINE_TEMPLATES.find((t) => t.id === "review")!;
+  const renderRuns = review.steps.flatMap((s) => s.run.map((r) => r.command)).filter((cmd) => cmd.includes("quarto render"));
+  assert.ok(renderRuns.length > 0);
+  for (const cmd of renderRuns) {
+    assert.doesNotMatch(cmd, /--output-dir output\b/);
+    assert.match(cmd, /--output-dir \.\.\/output/);
+  }
 });
 
 test("quarto-render 随包 CSL 是编号引用", () => {

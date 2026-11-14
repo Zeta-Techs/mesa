@@ -27,7 +27,7 @@ export const DEFAULT_FOCUS_RAIL_HOTKEY = "mod+0";
 /** 运行页里聊天 / 终端来回切（同右上角 >_，2026-10-25）。光标在终端里也要接——从终端切回聊天正是这时候按，
  *  所以不走 globalHotkeyAllowed：带 Shift 的 Ctrl+Shift+T 不是 shell / CLI 的键（Ctrl+T 照常进终端） */
 export const DEFAULT_TOGGLE_SURFACE_HOTKEY = "mod+shift+t";
-/** 新项目（侧栏顶部「新项目」，2026-10-27）：按键直接开「新建项目」；点按钮是三项菜单（新建 / 已有文件夹 / 示例课题） */
+/** 新项目（侧栏顶部「新项目」，2026-10-27）：按键直接开「新建项目」；点按钮是两项菜单（新建 / 已有文件夹） */
 export const DEFAULT_NEW_PROJECT_HOTKEY = "mod+shift+n";
 /** 搜索对话和项目（标题栏放大镜，2026-10-27）：⌘F 留给终端搜索，⌘K 是命令面板 */
 export const DEFAULT_RAIL_SEARCH_HOTKEY = "mod+shift+f";

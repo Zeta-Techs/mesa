@@ -461,9 +461,7 @@ const LIT_SEARCH_NO_WASTE =
 const LIT_INTAKE_CLAUSE =
   "工作区 .ccode/handoff-lit-intake.md（开工时从项目根 papers/reading-list.md 冻结）是用户攒下的积累清单，这一轮只认这份快照，开工后再加入积累的留到下一轮（快照不存在时才只读一次项目根那份）。快照里的、人从 Zotero / EndNote 导入或放进 papers/imports/ 的，都是人挑过的：与 included.md 存量、人工导入题录、检索候选池统一去重（同篇不重复列）后每条都写进 included.json，检索的年份等过滤不套用、Agent 不排除，不合适的标 pending、理由写「建议排除：…」由人定；项目根 notes/ 已有这篇笔记的，reason 注明「已有笔记」。不回写、不删除、不清空积累台账。";
 
-/** 英文综述（review）：文献检索 → 精读笔记 → 大纲 → 初稿 → 润色定稿。
- *  示例课题直接用这份模板（src-tauri/resources/pipeline-review.json）。
- *  改这里之后跑：node --experimental-strip-types scripts/export-review-template.ts */
+/** 英文综述（review）：文献检索 → 精读笔记 → 大纲 → 初稿 → 润色定稿。 */
 const REVIEW_STEPS: ProjectStepDto[] = [
   {
     name: "文献检索与筛选",

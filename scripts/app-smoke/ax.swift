@@ -175,6 +175,13 @@ case "menu":
 case "raise":
     for w in windows(pid) { AXUIElementPerformAction(w, kAXRaiseAction as CFString) }
     NSRunningApplication(processIdentifier: pid)?.activate()
+case "fill":
+    guard args.count >= 4 else { fail("fill 要给值") }
+    let val = args[3]
+    guard let tf = allNodes(pid).first(where: { $0.role == "AXTextField" }) else { fail("找不到输入框") }
+    AXUIElementSetAttributeValue(tf.el, kAXFocusedAttribute as CFString, true as CFTypeRef)
+    let err = AXUIElementSetAttributeValue(tf.el, kAXValueAttribute as CFString, val as CFTypeRef)
+    guard err == .success else { fail("填入输入框失败：AXError \(err.rawValue)") }
 default:
     fail("未知命令 \(args[1])")
 }

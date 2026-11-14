@@ -80,7 +80,6 @@
   精读索引不必给它建行，进度行同口径不算它）；`machine:count:` 可带 `::except=a.md,b.md` 不计入的文件名——
   精读步「至少写了 1 篇笔记」原先被必交的 `notes/handoff.md` 自己满足，现剔除 handoff/glossary/excerpts/inbox。
 - 三套文献链：`papers/included.json` → `notes/index.json`，含 pending 与全文/复核状态；两套实验链：`experiments/matrix.json` → `results/matrix.json` 与运行 manifest；清洗：`data/fields.json` → `cleaning/fields.json`，删除字段仍留记录，派生字段另列。证据集合空时如实说明，不塞假记录只为机器检查通过。
-- 示例课题同步生成演示 `included.json`，标记 `demo-only`；演示 PDF 不是全文证据。已注册的演示不覆盖；未注册再创建会按当前模板重写档案卡，缺文件才补。
 - **已有项目不静默升级**：模板是应用时的快照；更新内置模板不会覆盖项目步骤/任务书草稿。旧项目由人备份后在流程编辑器逐步采纳，补真实 ID/证据而非伪造新格式；同名步骤追加会跳过，不能用追加代替升级。内置技能通过已有「有新版/更新」路径提示，更新前备份；不直接覆盖本机用户技能。
 - **未实测模板如实标注**（2026-10-23）：内置模板只有在真实课题上从头到尾走完一遍才给 `fieldTested: true`（目前仅英文综述）；其余在三处选择器（首次选模板弹层、项目设置「选择模板」、编辑器「＋ 从模板追加」）带「未实测」徽标，悬停说明用的时候任务书可能要边走边改。走完一套就改 true 并同步说明书模板表；用户另存的模板不打这个标。
 
@@ -279,7 +278,7 @@
 - **分路声明（2026-11-03 协作四期）**：`[steps.fan_out]` 写在步骤合同里（与 checks 同级），英文综述 / 毕业论文的「文献精读与笔记」带 `LIT_NOTES_FANOUT`
   （`pipeline-presets.ts`：included.json 纳入的篇、每路 8 篇、最多 4 路；`own` 点名不跑 `lit_records.py write`；`merge` 写清收尾要出的共享文件，同样不跑 write、不改 papers/ 下的清单）。
   不进任务书正文（各路开场另给），不占长度预算。各路开场（`fan-out.ts lanePrompt`，所有分路通用）写明读材料的中间文件（抽出的文字、页面截图、临时脚本）放系统临时目录、不放进工作区（2026-11-10 HER：第 4 路的 OCR 截图和 swift 脚本放在 artifacts/，评审后带回了项目）；
-  收尾一路合表照搬各路写好的行、只调顺序和格式，各路漏在产物目录里的中间文件删掉。改英文综述模板后照旧跑 `scripts/export-review-template.ts` 同步示例课题 JSON。
+  收尾一路合表照搬各路写好的行、只调顺序和格式，各路漏在产物目录里的中间文件删掉。
   **数据清洗（2026-11-04）**：数据处理模板「数据登记与检查」多交 `data/datasets.json`（id、name、path，机器验收 records），「清洗与整理」带 `DATA_CLEAN_FANOUT`
   （每个数据集一路、最多 4 路）。各路只写 `cleaning/batches/<序号>-<名>/`，不写 help-wanted 与 cleaning/ 顶层文件；**各路问不了人，关键规则（去重、剔除、插补、合表、
   单位编码）只写草案、脚本里默认不执行**，收尾一路问过人再按裁决打开。Codex 干跑实证：不写这句时 glm-5.2 一路自己把去重做了。
@@ -326,7 +325,7 @@
   `TemplatePickModal` 不再有「不使用研究流程」出口，唯一的关闭是「先不套」（只关、已填主题照样落盘）。
   空流程的项目设置「选择模板」与老项目「还没有研究步骤」横幅也打开这一层（换模板仍走内联模板库）；有流程的科研项目只要还有目标（含已归档），
   步骤下面接一栏目标（`ProjectUserTasksView compactWhenEmpty`），套流程前记的目标与项目助手派的新目标不得在项目页上消失；一个目标都没记过时不铺空态，只留标题、一句说明和「新建目标」（2026-11-09 用户反馈：有流程的项目找不到新建目标，流程外的事没处记）。**目标名字与要求分开**（同日）：描述只有一句话（单行、≤80 字）时才顶替名字，项目助手派的整份任务合同只进详情「要求」，默认露四行、点「展开全部要求」才全显示；确认框正文限高可滚，按钮不得被挤出窗口。
-  上手向导第三屏先问「你手上现在有什么活？」，三张卡按回答排（已有文件夹 / 新建 / 示例），示例课题不标推荐。
+  上手向导第三屏先问「你手上现在有什么活？」，两张卡按回答排（已有文件夹 / 新建项目）。
   不得恢复注册后自动弹选模板，也不得把「先挑流程」放回新建项目的必经路径。
   沉浸阅读在 `pdf_owner_project` 未命中时把所在文件夹加成项目并默认写该标记。
   **`pipeline_opt_out` 口径**：serde/toml 缺省 false；render_config 里 false 移除该行（同 topic 清除口径，
@@ -1766,7 +1765,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 
 - **科研语义只进模板/数据/技能包**：流水线步骤、任务简报、技能包都是可编辑预设；引擎保持通用，不在逻辑里写死「文献/数据/
   论文」概念。
-- **示例课题（15 分钟精读环）**：`projects::create_demo_project` 在「文档/Mesa 示例课题」幂等生成演示项目。步骤**就是**内置「英文综述」模板（`PIPELINE_TEMPLATES` id=review → `src-tauri/resources/pipeline-review.json`，改 `REVIEW_STEPS` 后跑 `scripts/export-review-template.ts`；`tests/pipeline-review-sync.test.ts` 守同步）。演示只叠加：课题主题、示例 PDF/清单、检索步 `seed_complete = true`。打开后当前步是「文献精读与笔记」，主按钮「开读这一篇」。已注册直接返回现有 project。目录还在但未注册（删除后再点「创建示例课题」、或废纸篓/iCloud 还原）时**档案卡按当前英文综述模板重写**，缺的演示文件才补，已有笔记/PDF/README 不动。用「添加项目」选中旧目录只读盘上的档案卡，不会刷新步骤——要同步流程请用「创建示例课题」。**「开读这一篇」不得挂到普通模板**：判定单一出处 `demoReadPaperResource`（检索步 `seedComplete` + 当前步挂 `lit-notes` + 已有 PDF）；英文综述/科研论文/毕业论文等流程线只显示「开始」。有 PDF 不是充分条件——真实课题导入文献后几乎都会中招。
+- **示例课题生成链路已移除（2026-11-14 用户拍板）**：侧栏「新项目」、工作台空态、项目页空态与上手向导第三屏均移除「创建示例课题」入口，后端 `create_demo_project` 与 `pipeline-review.json` 导出链一并删除；存量本地已建演示项目（含 `seed_complete` 步骤）保留字段反序列化与 `demoReadPaperResource` 兼容，普通模板流程线只显示「开始」。
 - **开步确认后自动拉起 Agent**：`startPipelineStep` 经 `buildWorkspaceTerminalRequest(..., { autoStart, launch })` 带 `autoStart`。确认弹层三行（本步要交 / 接到的输入芯片 / 将用哪个 Agent）+ 连接选择；无连接时主按钮「先加连接」跳连接页。TASK.md 默认折叠。
 - **合并后自动提货**：`merge_workspace` 在拷回 `papers/` 等 gitignored 产物之后，按本步 `expected_artifacts` 扫项目根，未跟踪文件自动 `register_artifact`；已 git 跟踪的跳过。开步弹层芯片来自 `inspect_step_inputs`（扫磁盘，不依赖人填 yaml）。
 - **雷达收件箱一次推送一条（2026-10-15 拍板，取代 v3.215 按篇开读）**：`lit:` 条目只报数不带路——主文案「<项目名>有N条新命中」，按钮「去看看」，action 只带 projectRoot；点击经 `setProjectFocusReq(focus:"lit")` 跳该项目文献雷达卡。**不按篇展开、不列论文标题；点击不再自动写积累账、不再自动进沉浸阅读**——逐篇的加积累/开读只在雷达卡与「积累 N」抽屉由人发起（与 2026-10-14「加入积累只写账不跳转」同口径）。隔离树未采纳 run 仍是单条「待评审」走 review 动作。死代码同批清除：papersForLitCandidate、openLitInboxPaper、收件箱侧 list_watch_entries 扇出（litEntriesByRoot）、focusEntryId 四文件链（store 类型 → WorkspacesPage → ProjectSchedulesView → LitWatchCard focusEntryId/startOpen）。

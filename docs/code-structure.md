@@ -90,7 +90,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   聊天变体留左右两格 chatMetaRef 给 ChatSurface portal 挂「权限 · 项目 | 模型」，2026-10-23） 等
   App.tsx                    # 应用壳：标题栏（收件箱/帮助/命令面板）、三段式侧栏（快速入口/项目树/系统段）、主区 page 驱动挂载、
                              #   全局快捷键、启动过渡、跨实例同步、通知、确认框宿主。侧栏顶部（2026-10-27 用户拍板）：无品牌行，收展钮与「搜索对话和项目」放大镜在标题栏左组（红绿灯右边，openRailSearch 置 store 的 railSearchReq，
-                             #   收着时先拉探出层）；侧栏最上是快速入口（新对话 ⌘N / 新项目 ⇧⌘N（三项菜单 project-add.ts）/ 工作台 ⌘1 / 对话管理），中段项目树（ProjectTree，课题下挂对话），
+                             #   收着时先拉探出层）；侧栏最上是快速入口（新对话 ⌘N / 新项目 ⇧⌘N（两项菜单 project-add.ts）/ 工作台 ⌘1 / 对话管理），中段项目树（ProjectTree，课题下挂对话），
                              #   底部资源段（连接/技能/MCP/用量/设置：展开态平时连接、设置 + › 记号，悬停这一排抽屉滑出其余三个（`.ccode-rail-drawer`，2026-10-25）、图标态竖排五个；五个可拖动排序，顺序 rail-bar-order.ts，前两个常显，2026-10-31）；收起态=图标条（项目树不可用，展开后才有）。
                              #   主区：page==="workbench" 显示工作台概览、page==="workspaces" 显示选中课题详情（选中经 selectProjectReq
                              #   一次性请求由项目页消费——与收件箱/对话页/统计页跳转同一条链，禁再拿它当持久选中态渲染）。
@@ -147,7 +147,7 @@ components/ImageMarkDialog.tsx  # 审阅给一张图加意见的弹层（2026-11
   components/shortcut-nudges.tsx # 用鼠标做了本有快捷键的事时提醒快捷键：关对话到第 2 段 → ⌘W / Ctrl+Shift+W（侧栏 × / ⋯ 与对话头 ⋯ 共用一份计数，确认框开着不出）；对话头 >_ 聊天 ↔ 终端点到第 3 下 → 切换快捷键（tests/shortcut-nudges-ui.test.ts）
   components/RailSearchPalette.tsx # 「搜索对话和项目」弹层（2026-10-24 照 Claude 客户端）：Modal + body portal 管焦点，combobox/listbox 管结果选择；打开由宿主回调，状态与关键词筛选在 rail-search.ts
   order-schedule.ts          # 派活单「定时」一栏 → 定时任务周期（parseOrderCadence：每周X / 每天 / 工作日 / 每 N 小时 + 时刻，认不出回落每周一 9:00 标 guessed）+ cadenceLabel（tests/order-schedule.test.ts）
-  project-add.ts             # 「新项目」三条路单一出处（2026-10-27）：openNewProject / openAddExistingFolder / openDemoProject（切项目页 + 一次性请求）与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
+  project-add.ts             # 「新项目」两条路单一出处（2026-10-27，2026-11-14 移除示例课题）：openNewProject / openAddExistingFolder 与 projectAddMenuItems，侧栏顶部按钮菜单、⇧⌘N、命令面板共用
   rail-search.ts             # 搜索弹层纯逻辑（打开请求走 store 的 railSearchReq，不在这里）：空查询=最近对话 50 段；有查询=命中项目在前、命中对话在后（标题命中先于只命中文件夹名），多词全中；可按真实光标状态筛运行中 / 等确认 / 未读
                              #   （2026-10-23 照 Claude 客户端侧栏，不再按工作方式分组；置顶 / 课题 / 未添加三段，段内可拖动排序）
                              #   （注册项目 + list_workspaces 推导的「未添加」仓库段；重拉触发=store.projectsVersion 管理动作代数
@@ -225,7 +225,8 @@ rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N �
                              #   模块级缓存）、点开走 OfficePreviewModal（displayName 用原名、↑↓ 翻、右下一个后续动作）、文字就地展开；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
-  components/ExternalTerminalDialog.tsx # 外部终端打开/继续弹窗（ProfilesPage / SessionsPage / ProjectTree 共用）：选工作文件夹（最近项目一键点选 + 系统目录浏览）、启动模型与「默认权限 / 完全访问」档位（可勾选记住为默认），底栏一键打开外部终端或复制带文件夹与权限的启动/继续命令
+  external-terminal-dirs.ts  # 外部终端弹窗目录记忆纯逻辑（ccode.externalTerminalDirs）：默认预填上次打开的项目（过滤/折回内部隔离 worktree 与 scratch），合并手动浏览打开过的目录、已注册项目与 CLI 最近仓库生成「最近项目」（tests/external-terminal-dirs.test.ts）
+  components/ExternalTerminalDialog.tsx # 外部终端打开/继续弹窗（ProfilesPage / SessionsPage / ProjectTree 共用）：选工作文件夹（默认上次打开的项目，最近项目一键点选 + 系统目录浏览，目录逻辑在 external-terminal-dirs.ts）、启动模型与思考档位、「默认权限 / 完全访问」档位（可勾选记住为默认），底栏一键打开外部终端或复制带文件夹与权限的启动/继续命令
 components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.askAiReq）：选 Agent/连接/模型，可勾「设为默认」（记忆存取在 ask-ai.ts）；beginAskAi = 三处共用入口（ScheduleSection / ProjectGroup / ProjectFilesView），先拼项目上下文包（composeLaunchPrompt），上次的选择仍有效就直连进终端不弹窗；startProjectChat 只委托 quick-chat-launch 的 openProjectChat（侧栏项目行「＋」与项目页「＋ 新对话」共用）
   components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
                              #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）
@@ -853,7 +854,7 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    开通步骤 docs/release.md）
   （scripts/app-sandbox.sh + scripts/app-smoke/：打包版新用户沙盒与自动点验（只在 Mac）——app-sandbox.sh 用空家目录（--home 可换）、
    访达双击同款环境另起一个装好的 Mesa.app；smoke.sh 在沙盒里经无障碍接口（ax.swift，按控件文字 AXPress，不动鼠标键盘）
-   走第一次打开 → 各页 → 示例课题 → 各类文件预览（深浅主题各一遍）→ 诊断页，查整页报错与应用日志 error，出报告和截图；
+   走第一次打开 → 各页 → 新建项目 → 各类文件预览（深浅主题各一遍）→ 诊断页，查整页报错与应用日志 error，出报告和截图；
    开发版的新用户沙盒是 scripts/dev-sandbox.sh）
   （scripts/buddy-sprite/：项目助手「小桌」精灵图的重孵材料——基准图、各行描述、帧位排布参考、extract.py 切帧、assemble.py 拼图出联系表；步骤见其 README）
   （scripts/dev-sandbox.sh：新用户沙盒——空家目录跑开发版（17577）或 --app 跑打好的程序；Windows 另设 MESA_SANDBOX_HOME（src-tauri/src/dirs.rs）
