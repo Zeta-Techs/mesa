@@ -339,7 +339,8 @@ def parse_bibtex(text):
 
 def _placeholder(value):
     # 「无期号」= 这本刊不分期（lit_records.py 补字段时按 Crossref 判定），同样不是值
-    return str(value).strip() in ('待补', '待核', '无期号')
+    s = str(value).strip()
+    return s in ('待补', '待核', '无期号') or s.upper() == 'TBD'
 
 
 def load(path):

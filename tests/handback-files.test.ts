@@ -67,3 +67,36 @@ test("投稿声明按节拆成一框一节，空的写回「待填」带原提�
   assert.deepEqual(parseDeclarations(out).map((s) => s.body), ["", "NSFC 21902127", sections[2].body]);
 });
 
+test("投稿声明兼容编号双语标题与多行列表「待填」（2026-11-15 HER 定稿实证）", () => {
+  const real = `# 投稿声明模板（Declarations）
+
+## 1. Authors（作者、单位、通讯作者邮箱）
+
+- **作者列表**：待填
+- **作者单位（Affiliations）**：待填
+- **通讯作者及邮箱（Corresponding Author & Email）**：待填
+
+## 3. Competing Interests / Declaration of Competing Interest（利益冲突）
+
+待填
+
+## 4. Author Contributions — CRediT（作者贡献）
+
+待填
+
+## 5. Declaration of Generative AI and AI-Assisted Technologies in the Writing Process（AI 使用声明）
+
+During the preparation of this work, the authors used AI-assisted tools.
+`;
+  const parsed = parseDeclarations(real);
+  assert.deepEqual(
+    parsed.map((s) => s.label),
+    ["作者与单位", "利益冲突", "作者贡献（CRediT）", "AI 使用声明"],
+  );
+  assert.equal(parsed[0].body, "");
+  assert.match(parsed[0].hint, /作者列表.*通讯作者/);
+  assert.equal(parsed[1].body, "");
+  assert.match(parsed[3].body, /During the preparation/);
+});
+
+

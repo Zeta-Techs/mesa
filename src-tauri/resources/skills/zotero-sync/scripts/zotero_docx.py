@@ -139,7 +139,12 @@ def write_report(path: Path, payload: dict):
         lines.append("正文插图找不到或读不出尺寸（未写 docx）：")
         for target in payload["missing_images"]:
             lines.append(f"- `{target}`")
-    else:
+    if payload.get("unmatched_braces"):
+        lines.append("")
+        lines.append("正文残留未解析花括号键（未写 docx）：")
+        for hit in payload["unmatched_braces"]:
+            lines.append(f"- `{hit}`")
+    if not payload["missing"] and not payload.get("missing_images") and not payload.get("unmatched_braces"):
         lines.append("")
         if payload.get("caption_only"):
             lines.append("⚠ 下面这些文献只在图注或表题里引用。图注只写作者-年、不写引用域，Refresh 后它们进不了参考文献表。在正文里至少引用一次再重新生成：")
@@ -162,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--report", required=True)
     parser.add_argument("--zotero-db", default="")
+    parser.add_argument("--project-root", default="")
     args = parser.parse_args(argv)
     cite = load_cite()
     bridge = load_bridge()
@@ -231,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     # 留一个空段做插入锚点，人 Refresh 后点 Add/Edit Bibliography 让 Zotero 自己插域。
     body_el.insert(insert_at + 1, cite.w_el("p"))
     uniq_missing = sorted(set(missing))
+    visible = cite.visible_text(body_el)
+    unmatched_braces = sorted({m.group(0) for m in cite.RAW_HASH_BRACE.finditer(visible)})
     payload = {
         "source": str(source),
         "spans": len(cited),
@@ -238,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         "missing": uniq_missing,
         "images": len(images),
         "missing_images": missing_images,
+        "unmatched_braces": unmatched_braces,
         "caption_only": cite.caption_only_keys(rec_nums, cited),
         "binding": binding,
     }
@@ -250,11 +259,10 @@ def main(argv: list[str] | None = None) -> int:
     if missing_images:
         print("missing figures: " + ", ".join(missing_images), file=sys.stderr)
         return 1
-    visible = cite.visible_text(body_el)
-    if cite.CURLY_KEY.search(visible):
+    if unmatched_braces:
         print("visible text contains an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
-    cite.write_docx(out, body_el, images, cite.read_typeface(source))
+    cite.write_docx(out, body_el, images, cite.read_typeface(source, args.project_root))
     return 0
 
 

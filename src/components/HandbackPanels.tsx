@@ -115,7 +115,10 @@ export function FigurePermissionsPanel({
     return file.error ? <InlineNotice tone="err" size="micro">{file.error}</InlineNotice> : <p className="text-micro text-l4">读取清单…</p>;
   }
   if (groups.length === 0) return <p className="text-micro text-l4">清单里没有拼图块，不用申请。</p>;
-  const count = (status: string) => groups.filter((g) => g.rows.every((r) => r.status === status)).length;
+  const isSelfDrawn = (g: PaperGroup) => !g.doiUrl && g.licence === "作者自绘";
+  const paperGroups = groups.filter((g) => !isSelfDrawn(g));
+  const selfDrawnCount = groups.filter(isSelfDrawn).reduce((sum, g) => sum + g.rows.length, 0);
+  const count = (status: string) => paperGroups.filter((g) => g.rows.every((r) => r.status === status)).length;
   const pending = count("待申请");
 
   async function setStatus(group: PaperGroup, status: string) {
@@ -137,7 +140,8 @@ export function FigurePermissionsPanel({
     <div className="text-xs">
       <div className="mb-1 flex flex-wrap items-center gap-2 text-micro text-l4">
         <span>
-          {groups.length} 篇 · 待申请 {pending} 篇 · 已申请 {count("已申请")} · 已获许可 {count("已获许可")} · 无需申请 {count("无需申请")}
+          {paperGroups.length} 篇 · 待申请 {pending} 篇 · 已申请 {count("已申请")} · 已获许可 {count("已获许可")} · 无需申请 {count("无需申请")}
+          {selfDrawnCount > 0 ? ` · 本稿自绘 ${selfDrawnCount} 块` : ""}
         </span>
         <button type="button" onClick={() => void openOriginals()} className="ml-auto rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1" title="期刊要出版社原图时，下载的高清原图放这里，文件名用「来源键-原图编号」">
           原图文件夹
@@ -145,6 +149,7 @@ export function FigurePermissionsPanel({
       </div>
       <ul className="max-h-80 space-y-1 overflow-auto">
         {groups.map((group) => {
+          const selfDrawn = isSelfDrawn(group);
           const mixed = new Set(group.rows.map((r) => r.status)).size > 1;
           const status = mixed ? "" : group.rows[0].status;
           return (
@@ -155,7 +160,7 @@ export function FigurePermissionsPanel({
                   className="truncate text-micro text-l4"
                   title={group.rows.map((r) => `图 ${r.figure} ← ${r.label}：${r.credit}`).join("\n")}
                 >
-                  图 {group.rows.map((r) => r.figure).join("、")} ← {group.rows.map((r) => r.label).join("、")} · {group.publisher} · {group.licence || "许可未查到"}
+                  图 {group.rows.map((r) => r.figure).join("、")} ← {group.rows.map((r) => r.label).join("、")} · {selfDrawn ? group.licence : `${group.publisher} · ${group.licence || "许可未查到"}`}
                 </p>
               </div>
               {group.doiUrl && (
@@ -169,20 +174,24 @@ export function FigurePermissionsPanel({
                   <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               )}
-              <select
-                value={status}
-                disabled={file.saving}
-                onChange={(event) => void setStatus(group, event.target.value)}
-                aria-label={`${shortCite(group.paper)} 的状态`}
-                className="shrink-0 rounded-sm border border-field bg-canvas px-1 py-0.5 text-xs text-l2"
-              >
-                {mixed && <option value="">各块不同</option>}
-                {PERMISSION_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              {selfDrawn ? (
+                <span className="shrink-0 px-1.5 py-0.5 text-micro text-l4">无需申请</span>
+              ) : (
+                <select
+                  value={status}
+                  disabled={file.saving}
+                  onChange={(event) => void setStatus(group, event.target.value)}
+                  aria-label={`${shortCite(group.paper)} 的状态`}
+                  className="shrink-0 rounded-sm border border-field bg-canvas px-1 py-0.5 text-xs text-l2"
+                >
+                  {mixed && <option value="">各块不同</option>}
+                  {PERMISSION_STATUSES.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              )}
             </li>
           );
         })}

@@ -350,6 +350,10 @@ pub(crate) fn read_records_at(root: &Path) -> Vec<RunRecord> {
     text.lines()
         .filter_map(|line| serde_json::from_str::<RunRecord>(line.trim()).ok())
         .filter(|r| r.kind == "run")
+        .map(|mut r| {
+            r.models.retain(|m| !is_placeholder_model(m));
+            r
+        })
         .collect()
 }
 
@@ -382,6 +386,12 @@ fn agent_label(agent: &str) -> String {
         .unwrap_or_else(|| agent.to_string())
 }
 
+/// `<synthetic>` 是 Claude Code 自己补的报错占位，`__kimi_env_model__` 是 Kimi 启动合成别名（未解析前不算真实模型名）
+fn is_placeholder_model(model: &str) -> bool {
+    let t = model.trim();
+    t.is_empty() || t == "<synthetic>" || t == crate::agents::KIMI_ENV_MODEL_ALIAS
+}
+
 /// 按记录生成 AI 使用声明的事实底稿：只列 Mesa 里实际跑过的，按「用途 × Agent」聚合模型与次数。
 pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
     use std::collections::BTreeMap;
@@ -398,7 +408,13 @@ pub(crate) fn render_ai_usage(records: &[RunRecord]) -> String {
             .entry((record.purpose.clone(), agent_label(&record.agent)))
             .or_default();
         row.runs += 1;
-        row.models.extend(record.models.iter().cloned());
+        row.models.extend(
+            record
+                .models
+                .iter()
+                .filter(|m| !is_placeholder_model(m))
+                .cloned(),
+        );
         let start_day: String = record.created_at.chars().take(10).collect();
         let end_day: String = record
             .closed_at
@@ -585,10 +601,9 @@ fn run_models(run: &crate::runs::RunDto) -> Vec<String> {
     let Some(session) = run.session_id.as_deref() else {
         return Vec::new();
     };
-    // `<synthetic>` 是 Claude Code 自己补的报错占位，`__kimi_env_model__` 是 Kimi 启动合成别名（未解析前不算真名）
     let models: Vec<String> = crate::usage::session_models(&run.agent, session)
         .into_iter()
-        .filter(|m| m != "<synthetic>" && m != crate::agents::KIMI_ENV_MODEL_ALIAS)
+        .filter(|m| !is_placeholder_model(m))
         .collect();
     if !models.is_empty() {
         return models;
@@ -1039,5 +1054,33 @@ mod tests {
         assert!(read_checks_at(&root).items.is_empty());
         archive_checks(&root, "run-1", &[]).unwrap();
         assert!(!checks_dir(&root).join("runs").join("run-1.jsonl").exists(), "接回清空核验后旧存档一并清除");
+    }
+
+    #[test]
+    fn placeholder_models_are_filtered_from_records_and_ai_usage() {
+        let root = temp_root("synthetic-model");
+        let record = RunRecord {
+            v: 1,
+            kind: "run".into(),
+            run_id: "r-syn".into(),
+            task_kind: "pipeline_step".into(),
+            purpose: "研究流程：综述初稿".into(),
+            agent: "claude".into(),
+            models: vec![
+                "<synthetic>".into(),
+                crate::agents::KIMI_ENV_MODEL_ALIAS.into(),
+                "glm-5.3".into(),
+            ],
+            created_at: "2026-11-12T08:00:00Z".into(),
+            status: "completed".into(),
+            ..RunRecord::default()
+        };
+        append_run_record_at(&root, &record).unwrap();
+        let usage = fs::read_to_string(ai_usage_path(&root)).unwrap();
+        assert!(usage.contains("glm-5.3"), "{usage}");
+        assert!(!usage.contains("<synthetic>"), "{usage}");
+        assert!(!usage.contains(crate::agents::KIMI_ENV_MODEL_ALIAS), "{usage}");
+        let loaded = read_records_at(&root);
+        assert_eq!(loaded[0].models, vec!["glm-5.3".to_string()]);
     }
 }

@@ -384,7 +384,7 @@ export function decisionCandidatePaths(
 export function continueAfterDecisionsPrompt(target: string, kind: ReviewItemKind): string {
   const file = target.trim();
   if (kind === "verify") {
-    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。写了确认的：人已对过原文，保留这句，句中的 [待核实] 标记删掉；写了删除该论断的：删掉对应句子（引用检查里的存疑条目删掉对应引用及只靠它撑的论断）；写了改正为的：按依据改，依据写明保留待核实的就留着标记。没写裁决的不要动。改完把稿件里实际剩余的 [待核实] 与清单对一遍，用本步骤 run 脚本重渲 PDF 和 Word，重新生成 output/endnote.docx 与 output/zotero.docx（LaTeX 稿不生成这两份），再按 bib-check 复核一次、结论追加进 citation-check.md，changelog 记下按裁决改了哪些句。${file} 里的裁决是 Mesa 替人写进去的，随这一轮改动一起提交。然后继续这一步还没做完的事，不要停下来等我再点评审。`;
+    return `manuscript 里的待核实清单 ${file} 已经逐条写上裁决。写了确认的：人已确认保留当前写法，句中的 [待核实] 标记删掉（尚未补入全文 PDF 的仅摘要文献仍须保留句内 the abstract reports / abstract-only 等摘要级限定词，不得因确认而升级成全文实证；引文库元数据存疑项则维持 references.bib 现有条目不动）；写了删除该论断的：删掉对应句子（引用检查里的存疑条目删掉对应引用及只靠它撑的论断）；写了改正为的：按依据改，依据写明保留待核实的就留着标记。没写裁决的不要动。改完把稿件里实际剩余的 [待核实] 与清单对一遍，用本步骤 run 脚本重渲 PDF 和 Word，重新生成 output/endnote.docx 与 output/zotero.docx（LaTeX 稿不生成这两份），再按 bib-check 复核一次、结论追加进 citation-check.md，changelog 记下按裁决改了哪些句。${file} 里的裁决是 Mesa 替人写进去的，随这一轮改动一起提交。然后继续这一步还没做完的事，不要停下来等我再点评审。`;
   }
   return `${file} 里每条都已经写了「决定：」。接受和要求修改的按报告改；拒绝的不改。数字、因果、样本、结论范围的改动写入 changelog 的「科学改动」。${file} 里的决定是 Mesa 替人写进去的，随这一轮改动一起提交。改完继续这一步还没做完的事，不要停下来等我再点评审。`;
 }

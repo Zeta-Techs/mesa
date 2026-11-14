@@ -439,6 +439,7 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
         lines.append("条目地址未写入域，没有编造占位 URI。")
         return lines
     bound = 0
+    dup_count = 0
     for key in cited:
         rec = records.get(key)
         if not rec:
@@ -452,10 +453,16 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
             rec["_zotero_uri"] = hits[0]
             bound += 1
         elif len(hits) > 1:
+            dup_count += 1
             lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
         else:
             lines.append(f"- `{key}` DOI `{doi}` 库里没有，未绑定")
     lines.insert(1, f"已绑定 {bound} 条")
+    if dup_count:
+        lines.append(
+            f"提示：有 {dup_count} 篇在 Zotero 库里存在重复条目（多次导入 RIS 常见），为防绑错未写条目 URI；"
+            "`output/zotero.docx` 已内嵌完整题录，可直接打开点 Refresh 使用。若想绑上本机库条目，可在 Zotero 左侧「重复条目（Duplicate Items）」合并重复项后重新生成。"
+        )
     return lines
 
 

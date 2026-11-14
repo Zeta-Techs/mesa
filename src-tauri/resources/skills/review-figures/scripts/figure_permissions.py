@@ -101,9 +101,9 @@ def build(figures: Path, bib: Path, lookup=crossref) -> str:
                         else "不用申请：基于公开文献数据重绘，图注注明 Data compiled from [@键] 即可"
                     ),
                     "credit": (
-                        "Summarized from [@键].（无需 With permission）"
+                        "保留正文图注已写的来源引用（Summarized from …，无需 With permission）"
                         if is_schem
-                        else "Data compiled from [@键1; @键2].（无需 With permission）"
+                        else "保留正文图注已写的来源引用（Data compiled from …，无需 With permission）"
                     ),
                     "status": "无需申请",
                     "self_drawn": True,

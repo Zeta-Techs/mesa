@@ -88,7 +88,38 @@ const LABELS: Record<string, string> = {
   "ai use declaration": "AI 使用声明",
 };
 
+function declarationLabel(heading: string): string {
+  const exact = LABELS[heading.toLowerCase()];
+  if (exact) return exact;
+  const norm = heading.replace(/^\d+\s*[.、)]\s*/, "").trim();
+  const lower = norm.toLowerCase();
+  if (LABELS[lower]) return LABELS[lower];
+  if (/author\s+contributions?|\bcredit\b|作者贡献/.test(lower)) return "作者贡献（CRediT）";
+  if (/\bauthors?\b|作者与单位|^作者/.test(lower)) return "作者与单位";
+  if (/\bfunding\b|基金/.test(lower)) return "基金";
+  if (/conflicts?\s+of\s+interest|competing\s+interests?|利益冲突/.test(lower)) return "利益冲突";
+  if (/\bai\b|generative\s+ai|ai\s*使用声明/.test(lower)) return "AI 使用声明";
+  return norm || heading;
+}
+
 const PENDING = /^待填(?:[（(]([^）)]*)[）)])?\s*$/;
+const PENDING_BULLET = /^[-*]\s*(?:\*\*([^*]+)\*\*|([^：:]+))\s*[：:]\s*待填(?:[（(]([^）)]*)[）)])?\s*$/;
+
+function parsePendingBody(body: string): { isPending: boolean; hint: string } {
+  const single = PENDING.exec(body);
+  if (single) return { isPending: true, hint: single[1] ?? "" };
+  const nonEmpty = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  if (nonEmpty.length === 0) return { isPending: true, hint: "" };
+  const hints: string[] = [];
+  for (const line of nonEmpty) {
+    const m = PENDING_BULLET.exec(line);
+    if (!m) return { isPending: false, hint: "" };
+    const item = (m[1] ?? m[2] ?? "").trim();
+    const extra = (m[3] ?? "").trim();
+    hints.push(extra ? `${item}：${extra}` : item);
+  }
+  return { isPending: true, hint: hints.filter(Boolean).join("；") };
+}
 
 /** 投稿声明按「## 小标题」拆节；文件开头的说明不算一节 */
 export function parseDeclarations(text: string): DeclarationSection[] {
@@ -98,12 +129,12 @@ export function parseDeclarations(text: string): DeclarationSection[] {
   const flush = () => {
     if (!cur) return;
     const body = cur.body.join("\n").trim();
-    const pending = PENDING.exec(body);
+    const pending = parsePendingBody(body);
     out.push({
       heading: cur.heading,
-      label: LABELS[cur.heading.toLowerCase()] ?? cur.heading,
-      body: pending ? "" : body,
-      hint: pending?.[1] ?? "",
+      label: declarationLabel(cur.heading),
+      body: pending.isPending ? "" : body,
+      hint: pending.hint,
     });
   };
   for (const line of lines) {

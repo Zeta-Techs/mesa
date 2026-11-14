@@ -106,8 +106,35 @@ def norm(s):
 # ---------- 读稿 ----------
 
 class Para:
-    def __init__(self, text, line, heading=False, auto_number=False, level=0):
-        self.text, self.line, self.heading, self.auto_number, self.level = text, line, heading, auto_number, level
+    def __init__(self, text, line, heading=False, auto_number=False, level=0, is_bib=False):
+        self.text, self.line, self.heading, self.auto_number, self.level, self.is_bib = (
+            text, line, heading, auto_number, level, is_bib
+        )
+
+
+REF_HEADING = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?\s+)?(?:references|bibliography|literature\s+cited|works\s+cited|参考文献|引用文献)\s*$",
+    re.I,
+)
+
+
+def exclude_bibliography(paras):
+    """参考文献表里是所引论文的原标题，连接号、英美拼写、单位写法受原刊约束，不计入本文正文体例混用。"""
+    out = []
+    in_ref = False
+    ref_level = 0
+    for p in paras:
+        if p.heading:
+            if REF_HEADING.match(p.text):
+                in_ref = True
+                ref_level = p.level
+                continue
+            if in_ref and (ref_level == 0 or p.level == 0 or p.level <= ref_level):
+                in_ref = False
+        if in_ref or p.is_bib:
+            continue
+        out.append(p)
+    return out
 
 
 def read_text_doc(path: Path):
@@ -143,14 +170,21 @@ def read_docx(path: Path):
         root = ET.fromstring(zf.read("word/document.xml"))
         styles = ET.fromstring(zf.read("word/styles.xml")) if "word/styles.xml" in zf.namelist() else None
     numbered_styles, heading_styles = set(), set()
+    heading_levels = {}
     if styles is not None:
         for st in styles.iter(W + "style"):
             sid = st.get(W + "styleId", "")
             name = st.find(W + "name")
             label = (name.get(W + "val", "") if name is not None else "") + " " + sid
             ppr = st.find(W + "pPr")
-            if re.search(r"heading|标题", label, re.I) or (ppr is not None and ppr.find(W + "outlineLvl") is not None):
+            ol = ppr.find(W + "outlineLvl") if ppr is not None else None
+            if re.search(r"heading|标题", label, re.I) or ol is not None:
                 heading_styles.add(sid)
+                m_lvl = re.search(r"(?:heading|标题)\s*(\d+)", label, re.I)
+                if m_lvl:
+                    heading_levels[sid] = int(m_lvl.group(1))
+                elif ol is not None and (ol.get(W + "val") or "").isdigit():
+                    heading_levels[sid] = int(ol.get(W + "val")) + 1
             if ppr is not None and ppr.find(W + "numPr") is not None:
                 numbered_styles.add(sid)
     paras = []
@@ -167,9 +201,12 @@ def read_docx(path: Path):
             num = ppr.find(W + "numPr")
             has_num = num is not None and (num.find(W + "numId") is None or num.find(W + "numId").get(W + "val") != "0")
         heading = sid in heading_styles or bool(re.match(r"(?i)heading|标题", sid))
+        m_sid_lvl = re.search(r"(?:heading|标题)\s*(\d+)", sid, re.I)
+        level = heading_levels.get(sid, int(m_sid_lvl.group(1)) if m_sid_lvl else 0)
+        is_bib = bool(re.search(r"bibliograph|参考文献", sid, re.I))
         runs = [r for r in p.iter(W + "r") if "".join(t.text or "" for t in r.iter(W + "t")).strip()]
         bold = bool(runs) and all(bold_run(r) for r in runs)
-        paras.append(Para(text.strip(), i, heading=heading, auto_number=has_num or sid in numbered_styles))
+        paras.append(Para(text.strip(), i, heading=heading, auto_number=has_num or sid in numbered_styles, level=level, is_bib=is_bib))
         paras[-1].bold_short = bold and len(text.strip()) < 150 and not text.strip().endswith(".")
     # 很多稿件不用标题样式、标题只是加粗的短段：一个标题样式都没有时按这个认
     if not any(p.heading for p in paras):
@@ -397,13 +434,14 @@ def check_file(path: Path, root: Path):
         return [item(f"READ-{rel}", "structure", "needs_human", f"读不了 {rel}：{e}", rel)], False
     items = []
     is_docx = path.suffix.lower() == ".docx"
-    check_authors(rel, front, paras, items)
+    body_paras = exclude_bibliography(paras)
+    check_authors(rel, front, body_paras, items)
     check_heading_numbers(rel, front, paras, items, is_docx)
-    check_captions(rel, paras, items)
-    check_slips(rel, paras, items)
-    check_units(rel, paras, items)
-    check_dashes(rel, paras, items)
-    check_spelling(rel, paras, items)
+    check_captions(rel, body_paras, items)
+    check_slips(rel, body_paras, items)
+    check_units(rel, body_paras, items)
+    check_dashes(rel, body_paras, items)
+    check_spelling(rel, body_paras, items)
     check_conclusion(rel, paras, items)
     # 多份稿件同名检查项不撞车
     for i in items:

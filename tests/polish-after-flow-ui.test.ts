@@ -222,7 +222,7 @@ test("定稿步逐条裁决走完后：后续三项不发灰、行内逐步引�
       Array.from(declRow.querySelectorAll("button")).find((b) => b.textContent?.trim() === "打开填写")!.click();
       await new Promise((r) => setTimeout(r, 0));
     });
-    assert.ok(declRow.textContent?.includes("1. Authors"), "打开填写应展开分节表单");
+    assert.ok(declRow.textContent?.includes("作者与单位"), "打开填写应展开分节表单");
     const declCheckbox = declRow.querySelector<HTMLElement>('input[type="checkbox"], [role="checkbox"]')!;
     await act(async () => {
       declCheckbox.click();

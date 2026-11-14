@@ -167,3 +167,53 @@ test("非晶前缀 the a-Ni 与美式名词复数 analyses / catalyses 不误判
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("文末 References 节与 Word Bibliography 样式里的所引论文标题不计入正文连接号/拼写混用（2026-11-15 HER 定稿实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "ms-check-refs-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  writeFileSync(
+    join(root, "manuscript/review-final.md"),
+    [
+      "## Introduction",
+      "",
+      "W–P co-doping was analyzed to optimize catalytic performance.",
+      "",
+      "## Conclusions",
+      "",
+      "Summary.",
+      "",
+      "## References",
+      "",
+      "[1] Chen et al., Tuning electronic property via W-P co-doping to catalyse behaviour in grey electrodes.",
+    ].join("\n"),
+  );
+  const docx = join(root, "review-final.docx");
+  const builder = String.raw`
+import sys, zipfile
+W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+def p(text, style=""):
+    ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+    return f'<w:p>{ppr}<w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
+body = "".join([
+    p("1 Introduction", "Heading2"),
+    p("W–P co-doping was analyzed to optimize catalytic performance."),
+    p("2 Conclusions", "Heading2"),
+    p("Summary."),
+    p("References", "Heading2"),
+    p("[23] Chen et al., Tuning electronic property via W-P co-doping to catalyse behaviour.", "Bibliography"),
+])
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    z.writestr("word/document.xml", f'<w:document {W}><w:body>{body}</w:body></w:document>')
+`;
+  const built = spawnSync(python, ["-c", builder, docx], { encoding: "utf8" });
+  assert.equal(built.status, 0, built.stderr);
+  try {
+    const r = run(["manuscript/review-final.md", docx, "--root", root], root);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const list = items(root);
+    assert.equal(find(list, "DASH-WP").length, 0, `References 里的 W-P 原标题不应报连接号不一：${JSON.stringify(list)}`);
+    assert.ok(find(list, "SPELL-MIX").every((i) => i.status === "passed"), `References 里的英式拼写不应判混用：${JSON.stringify(list)}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

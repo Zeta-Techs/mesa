@@ -50,7 +50,8 @@ CITE_RE = re.compile(
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CURLY_TEMP = re.compile(r"\{[^{}]{1,80},\s*[^{}]{1,20}\}")
 # Quarto / 交叉引用花括号。EndNote 会把 {#键} 当成临时引文去库里搜。
-CURLY_KEY = re.compile(r"\{#(?!fig-|tbl-)([A-Za-z0-9_.:-]+)\}")
+CURLY_KEY = re.compile(r"\{#(?!fig-|tbl-|sec-)([A-Za-z0-9_.:-]+)\}")
+RAW_HASH_BRACE = re.compile(r"\{#[A-Za-z0-9_.:-]+\}")
 
 
 def load_library_match():
@@ -242,42 +243,54 @@ def run_text(text: str, vertical: str | None = None, bold: bool = False, italic:
     return r
 
 
-# Pandoc 单位：cm^−3^、kg^−1^。两端的 ^ 收成上标或下标，不再把记号留在正文里。
-# 上下标内容不得含空白（Pandoc 规则）：放宽会让「约义 ~」（~79–81%、~2 µm）与化学式
-# 下标号错位配对，把整段正文排成下标、化学式拆碎（2026-10-11 定稿审计实证，4 段 + 1 图注）。
-MARK_RE = re.compile(r"(\*\*[^*]+\*\*|\*[^*]+\*|\^[^\s^]+\^|~[^\s~]+~)")
-
-# Pandoc 反斜杠转义（\@、\~、\^ 等）：剥离出来当字面量，不参与标记配对（a-MgCl~2~\@polymer
-# 的 \@ 若不剥，正文会残留字面反斜杠；\~ 若不剥会被当标记参与配对）。
+# Pandoc 单位与化学/物理角标：cm^−3^、kg^−1^、ΔG~H\*~。两端的 ^ / ~ 收成上标或下标，不再把记号留在正文里。
+# 上下标内容不得含未转义空白（Pandoc 规则）：放宽会让「约义 ~」（~79–81%、~2 µm）与化学式
+# 下标号错位配对，把整段正文排成下标、化学式拆碎（2026-10-11 定稿审计实证，4 段 + 1 图注）；
+# 同时允许内部带反斜杠转义（如 review-writing 规范要求的 ΔG~H\*~，2026-11-15 HER 定稿审计实证）。
 ESCAPE_RE = re.compile(r"\\([!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-])")
+INLINE_TOKEN_RE = re.compile(
+    r"\\([!\"#$%&'()*+,./:;<=>?@\[\\\]^_`{|}~-])"
+    r"|\*\*(?!\s)((?:\\.|[^*\\])+?)(?<![\s\\])\*\*"
+    r"|\*(?!\s)((?:\\.|[^*\\])+?)(?<![\s\\])\*"
+    r"|\^((?:\\[^\s]|[^\s^\\])+)\^"
+    r"|~((?:\\[^\s]|[^\s~\\])+ )~".replace(" )~", ")~")
+)
+
+
+def _unescape_pandoc(text: str) -> str:
+    return ESCAPE_RE.sub(r"\1", text)
 
 
 def append_marked(p: ET.Element, text: str) -> None:
     pos = 0
-    for esc in ESCAPE_RE.finditer(text):
-        _emit_marked(p, text[pos:esc.start()])
-        p.append(run_text(esc.group(1)))
-        pos = esc.end()
-    _emit_marked(p, text[pos:])
+    plain: list[str] = []
 
+    def flush_plain() -> None:
+        if plain:
+            p.append(run_text("".join(plain)))
+            plain.clear()
 
-def _emit_marked(p: ET.Element, text: str) -> None:
-    pos = 0
-    for match in MARK_RE.finditer(text):
+    for match in INLINE_TOKEN_RE.finditer(text):
         if match.start() > pos:
-            p.append(run_text(text[pos:match.start()]))
-        token = match.group(0)
-        if token.startswith("**"):
-            p.append(run_text(token[2:-2], bold=True))
-        elif token.startswith("*"):
-            p.append(run_text(token[1:-1], italic=True))
-        elif token.startswith("^"):
-            p.append(run_text(token[1:-1], vertical="superscript"))
-        else:
-            p.append(run_text(token[1:-1], vertical="subscript"))
+            plain.append(text[pos : match.start()])
+        if match.group(1) is not None:
+            plain.append(match.group(1))
+        elif match.group(2) is not None:
+            flush_plain()
+            p.append(run_text(_unescape_pandoc(match.group(2)), bold=True))
+        elif match.group(3) is not None:
+            flush_plain()
+            p.append(run_text(_unescape_pandoc(match.group(3)), italic=True))
+        elif match.group(4) is not None:
+            flush_plain()
+            p.append(run_text(_unescape_pandoc(match.group(4)), vertical="superscript"))
+        elif match.group(5) is not None:
+            flush_plain()
+            p.append(run_text(_unescape_pandoc(match.group(5)), vertical="subscript"))
         pos = match.end()
     if pos < len(text):
-        p.append(run_text(text[pos:]))
+        plain.append(text[pos:])
+    flush_plain()
 
 
 def split_lead_sentence(text: str) -> tuple[str, str]:
@@ -503,6 +516,12 @@ def split_blocks(text: str) -> list[tuple[str, str]]:
                 buf = []
             i += 1
             continue
+        if re.match(r"^\s*(?:[-*+]|\d{1,3}[.)])\s+", line):
+            if buf:
+                blocks.append(("p", "\n".join(buf)))
+            buf = [line.lstrip()]
+            i += 1
+            continue
         buf.append(line)
         i += 1
     if fence:
@@ -511,26 +530,58 @@ def split_blocks(text: str) -> list[tuple[str, str]]:
         blocks.append(("p", "\n".join(buf)))
     sample = " ".join([fields.get("title", ""), fields.get("abstract", ""), body[:2000]])
     chinese = len(re.findall(r"[\u4e00-\u9fff]", sample)) > len(re.findall(r"[A-Za-z]", sample)) * 0.2
-    labels = ("摘要", "关键词", "图", "表") if chinese else ("Abstract", "Keywords", "Figure", "Table")
+    labels = ("摘要", "关键词", "图", "表", "节") if chinese else ("Abstract", "Keywords", "Figure", "Table", "Section")
     head: list[tuple[str, str]] = []
     if fields.get("title"):
         head.append(("title", fields["title"]))
     if fields.get("abstract"):
         head.append(("label", labels[0]))
+    if fields.get("abstract"):
         head.append(("p", fields["abstract"]))
     if fields.get("keywords"):
         head.append(("label", labels[1]))
         head.append(("p", fields["keywords"]))
-    return [("lang", f"{labels[2]}\t{labels[3]}")] + head + blocks
+    return [("lang", f"{labels[2]}\t{labels[3]}\t{labels[4]}")] + head + blocks
 
 
-def crossref_maps(blocks: list[tuple[str, str]]) -> tuple[dict[str, int], dict[str, int]]:
+HEADING_ATTR_RE = re.compile(r"\s*\{([^{}]+)\}\s*$")
+
+
+def parse_heading_attrs(text: str) -> tuple[str, list[str], bool]:
+    match = HEADING_ATTR_RE.search(text)
+    if not match:
+        return text, [], False
+    tokens = match.group(1).split()
+    if not tokens or not any(
+        tok == "-" or tok.startswith(("#", ".")) or "=" in tok for tok in tokens
+    ):
+        return text, [], False
+    clean = text[: match.start()].rstrip()
+    idents = [tok[1:] for tok in tokens if tok.startswith("#") and len(tok) > 1]
+    unnumbered = any(tok in {"-", ".unnumbered"} for tok in tokens)
+    return clean, idents, unnumbered
+
+
+def crossref_maps(blocks: list[tuple[str, str]]) -> tuple[dict[str, int], dict[str, int], dict[str, str]]:
     figures: dict[str, int] = {}
     tables: dict[str, int] = {}
+    sections: dict[str, str] = {}
+    numbers = [0, 0, 0, 0, 0, 0]
     figure_no = 0
     table_no = 0
     for index, (kind, content) in enumerate(blocks):
-        if kind == "p":
+        if kind.startswith("h") and kind[1:].isdigit():
+            level = int(kind[1:])
+            _clean, idents, unnumbered = parse_heading_attrs(content)
+            if not unnumbered:
+                numbers[level - 1] += 1
+                for deeper in range(level, 6):
+                    numbers[deeper] = 0
+                sec_no = ".".join(str(n) for n in numbers[:level] if n)
+                for ident in idents:
+                    if ident.startswith("sec-"):
+                        sections.setdefault(ident, sec_no)
+        elif kind == "p":
             for ident in re.findall(r"\{#(fig-[A-Za-z0-9_-]+)", content):
                 figure_no += 1
                 figures.setdefault(ident, figure_no)
@@ -539,17 +590,31 @@ def crossref_maps(blocks: list[tuple[str, str]]) -> tuple[dict[str, int], dict[s
             caption = next((text for name, text in blocks[index + 1 :] if name == "tablecap"), "")
             for ident in re.findall(r"\{#(tbl-[A-Za-z0-9_-]+)", caption):
                 tables.setdefault(ident, table_no)
-    return figures, tables
+    return figures, tables, sections
 
 
-def resolve_crossrefs(text: str, figures: dict[str, int], tables: dict[str, int], figure_word: str, table_word: str) -> str:
-    """Figure @fig-1、Table @tbl-1 换成编号。对不上编号的只留名字，不留 @ 和花括号。"""
+def resolve_crossrefs(
+    text: str,
+    figures: dict[str, int],
+    tables: dict[str, int],
+    figure_word: str,
+    table_word: str,
+    sections: dict[str, str] | None = None,
+    section_word: str = "Section",
+) -> str:
+    """Figure @fig-1、Table @tbl-1、@sec-intro 换成编号。对不上编号的只留名字，不留 @ 和花括号。"""
+    secs = sections or {}
 
     def fig(ident: str) -> str:
         return f"{figure_word} {figures[ident]}" if ident in figures else ident
 
     def tbl(ident: str) -> str:
         return f"{table_word} {tables[ident]}" if ident in tables else ident
+
+    def sec(ident: str) -> str:
+        if ident not in secs:
+            return ident
+        return f"第 {secs[ident]} 节" if section_word == "节" else f"{section_word} {secs[ident]}"
 
     ident = r"[A-Za-z0-9_-]+"
     # 图片/链接后面的 {#fig-1} 是 image_spans 判定编号与写图注的锚点，先摘出来，
@@ -563,16 +628,22 @@ def resolve_crossrefs(text: str, figures: dict[str, int], tables: dict[str, int]
     text = re.sub(r"\]\([^)]*\)\s*\{#[A-Za-z0-9_-]+\}", stash, text)
     # 表题末尾的 {#tbl-1} 是锚点：只在确属本文表题（在编号表里）时删除；对不上的键保留给正文。
     text = re.sub(r"\s*\{#(tbl-[^}]+)\}", lambda m: "" if m.group(1) in tables else m.group(0), text)
-    text = re.sub(rf"\bFigure\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
-    text = re.sub(rf"\bTable\s*@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
-    text = re.sub(rf"Fig\.\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
+    text = re.sub(rf"\bFigures?\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
+    text = re.sub(rf"\bTables?\s*@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
+    text = re.sub(rf"\bSections?\s*@(sec-{ident})", lambda m: sec(m.group(1)), text)
+    text = re.sub(rf"Figs?\.\s*@(fig-{ident})", lambda m: fig(m.group(1)), text)
+    text = re.sub(rf"Secs?\.\s*@(sec-{ident})", lambda m: sec(m.group(1)), text)
+    text = re.sub(rf"§+\s*@(sec-{ident})", lambda m: sec(m.group(1)), text)
     text = re.sub(rf"(?<=图)\s*@(fig-{ident})", lambda m: f" {figures[m.group(1)]}" if m.group(1) in figures else m.group(1), text)
     text = re.sub(rf"(?<=表)\s*@(tbl-{ident})", lambda m: f" {tables[m.group(1)]}" if m.group(1) in tables else m.group(1), text)
+    text = re.sub(rf"第\s*@(sec-{ident})\s*节", lambda m: sec(m.group(1)), text)
     text = re.sub(rf"@(fig-{ident})", lambda m: fig(m.group(1)), text)
     text = re.sub(rf"@(tbl-{ident})", lambda m: tbl(m.group(1)), text)
-    # 独立成对的 {#fig-x}/{#tbl-x}（不在图片后）：对上编号就收成编号，对不上只留键名。
+    text = re.sub(rf"@(sec-{ident})", lambda m: sec(m.group(1)), text)
+    # 独立成对的 {#fig-x}/{#tbl-x}/{#sec-x}（不在图片后）：对上编号就收成编号，对不上只留键名。
     text = re.sub(rf"\{{#(fig-{ident})\}}", lambda m: fig(m.group(1)), text)
     text = re.sub(rf"\{{#(tbl-{ident})\}}", lambda m: tbl(m.group(1)), text)
+    text = re.sub(rf"\{{#(sec-{ident})\}}", lambda m: sec(m.group(1)), text)
     text = re.sub(r"\x00ANCHOR(\d+)\x00", lambda m: anchors[int(m.group(1))], text)
     return text.strip()
 
@@ -943,14 +1014,39 @@ def build_body(
     table_no = 0
     figure_word = "Figure"
     table_word = "Table"
-    figures, tables = crossref_maps(blocks)
+    section_word = "Section"
+    figures, tables, sections = crossref_maps(blocks)
     for kind, content in blocks:
         if kind == "lang":
             words = (content or "").split("\t")
             figure_word = words[0] or figure_word
             table_word = words[1] if len(words) > 1 and words[1] else table_word
+            section_word = words[2] if len(words) > 2 and words[2] else section_word
             continue
-        content = resolve_crossrefs(content, figures, tables, figure_word, table_word)
+        if kind.startswith("h") and kind[1:].isdigit():
+            level = int(kind[1:])
+            clean_title, _idents, unnumbered = parse_heading_attrs(content)
+            clean_title = resolve_crossrefs(
+                clean_title, figures, tables, figure_word, table_word, sections, section_word
+            )
+            if unnumbered:
+                heading_text = clean_title
+            else:
+                numbers[level - 1] += 1
+                for deeper in range(level, 6):
+                    numbers[deeper] = 0
+                prefix = ".".join(str(n) for n in numbers[:level] if n)
+                heading_text = f"{prefix} {clean_title}" if prefix else clean_title
+            p = w_el("p")
+            props = w_el("pPr")
+            props.append(w_el("pStyle", **{"val": f"Heading{level}"}))
+            p.append(props)
+            append_marked(p, heading_text)
+            body.append(p)
+            continue
+        content = resolve_crossrefs(
+            content, figures, tables, figure_word, table_word, sections, section_word
+        )
         if kind == "code":
             p = w_el("p")
             p.append(run_text(content))
@@ -993,19 +1089,6 @@ def build_body(
             props.append(w_el("pStyle", **{"val": "Heading1"}))
             p.append(props)
             append_inline(p, content, bib, rec_nums, cited, missing, True)
-            body.append(p)
-            continue
-        if kind.startswith("h") and kind[1:].isdigit():
-            level = int(kind[1:])
-            numbers[level - 1] += 1
-            for deeper in range(level, 6):
-                numbers[deeper] = 0
-            prefix = ".".join(str(n) for n in numbers[:level] if n)
-            p = w_el("p")
-            props = w_el("pPr")
-            props.append(w_el("pStyle", **{"val": f"Heading{level}"}))
-            p.append(props)
-            append_inline(p, f"{prefix} {content}", bib, rec_nums, cited, missing, True)
             body.append(p)
             continue
         append_content(
@@ -1190,7 +1273,12 @@ def write_report(path: Path, payload: dict):
         lines.append("正文插图找不到或读不出尺寸（未写 docx）：")
         for target in payload["missing_images"]:
             lines.append(f"- `{target}`")
-    else:
+    if payload.get("unmatched_braces"):
+        lines.append("")
+        lines.append("正文残留临时引文或未解析花括号键（未写 docx）：")
+        for hit in payload["unmatched_braces"]:
+            lines.append(f"- `{hit}`")
+    if not payload["missing"] and not payload.get("missing_images") and not payload.get("unmatched_braces"):
         lines.append("")
         if payload.get("caption_only"):
             lines.append("⚠ 下面这些文献只在图注或表题里引用。图注只写作者-年、不写引用域，点 Update 后它们进不了参考文献表。在正文里至少引用一次再重新生成：")
@@ -1297,6 +1385,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     body_el.insert(insert_at + 1, reflist)
     uniq_missing = sorted(set(missing))
+    visible = visible_text(body_el)
+    unmatched_braces = sorted(
+        {m.group(0) for m in RAW_HASH_BRACE.finditer(visible)}
+        | {m.group(0) for m in CURLY_TEMP.finditer(visible)}
+    )
     payload = {
         "source": str(source),
         "spans": len(cited),
@@ -1304,6 +1397,7 @@ def main(argv: list[str] | None = None) -> int:
         "missing": uniq_missing,
         "images": len(images),
         "missing_images": missing_images,
+        "unmatched_braces": unmatched_braces,
         "caption_only": caption_only_keys(rec_nums, cited),
         "binding": binding,
     }
@@ -1316,8 +1410,7 @@ def main(argv: list[str] | None = None) -> int:
     if missing_images:
         print("missing figures: " + ", ".join(missing_images), file=sys.stderr)
         return 1
-    visible = visible_text(body_el)
-    if CURLY_KEY.search(visible) or CURLY_TEMP.search(visible):
+    if unmatched_braces:
         print("visible text contains {Author, Year} or an unmatched brace key; refusing to write docx", file=sys.stderr)
         return 1
     write_docx(out, body_el, images, read_typeface(source, args.project_root))

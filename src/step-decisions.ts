@@ -479,13 +479,20 @@ export function stepWaitItems(step: WaitStep): { during: string[]; after: string
       "简报里要你写进 .ccode/help-wanted.md 问用户的那一项（带上依据再问）：问完按该条兜底做无依赖准备，未答不得锁死标准、核心篇目、大纲骨架或目标期刊",
     );
   }
+  const isTwoRoundReview = /本步分两轮|写完报告就停/.test(brief);
   for (const h of step.humanTasks ?? []) {
     if (h.optional) continue;
     const title = humanTitle(h.title);
     if (!title) continue;
     if (h.timing === "before") during.push(`开工前等你做完：${title}`);
     else if (h.timing === "during") during.push(`执行中等你交付：${title}`);
-    else if (h.timing === "after") after.push(`完成后交给你：${title}`);
+    else if (h.timing === "after") {
+      if (isTwoRoundReview && title === "逐条决定审查报告") {
+        during.push(`第一轮写完报告停等：${title}`);
+      } else {
+        after.push(`完成后交给你：${title}`);
+      }
+    }
   }
   if (isLayoutProofStep(step)) {
     after.push("渲染出样张后停下来让你看版式与裁剪，不要未经你看就当排版通过");

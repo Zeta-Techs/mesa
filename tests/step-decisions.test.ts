@@ -63,6 +63,19 @@ test("决策暂停策略：按步骤列出必须停的事项，批次提交不�
     brief: "写进 .ccode/help-wanted.md 问用户一句",
   });
   assert.equal(search.during.some((x) => x.includes("问用户的那一项")), true);
+  // 两轮审查定稿步（2026-11-15 HER 润色实证）：「逐条决定审查报告」必须进中途停工门，不能写「本步中途没有必须等人拍板的事项」
+  const polish = decisionPolicyBlock({
+    name: "润色与定稿",
+    workspaceName: "polish",
+    brief: "本步分两轮，第一轮只写审查报告，写完报告就停。",
+    humanTasks: [
+      { title: "逐条决定审查报告", timing: "after" },
+      { title: "逐条裁决 [待核实] 与存疑条目", timing: "after" },
+    ],
+  });
+  assert.doesNotMatch(polish, /本步中途没有必须等人拍板的事项/);
+  assert.match(polish, /本步必须停下来等你[\s\S]*第一轮写完报告停等：逐条决定审查报告/);
+  assert.match(polish, /达到完成标准后交给你[\s\S]*完成后交给你：逐条裁决 \[待核实\] 与存疑条目/);
 });
 
 test("空草稿：新建小节并写入答案", () => {

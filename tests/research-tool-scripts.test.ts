@@ -865,3 +865,85 @@ test("Blender validates provenance and dimensions without executing Blender; Ori
     assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).readyToExecute,false);
   } finally { rmSync(root,{recursive:true,force:true}); }
 });
+
+test("两份域稿支持 {#sec-}/@sec- 章节交叉引用、ΔG~H\\*~ 下标与 H* 自由基、紧邻编号列表分段及拦截报告口径（2026-11-15 HER 定稿审计实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-sec-sub-list-"));
+  const zoteroDocx = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Huang2027,\n title={Balanced interfacial charge}, author={Huang, Kai}, year={2027}, journal={Appl. Catal. B}, doi={10.1016/j.apcatb.2026.127635}, volume={TBD}\n}\n",
+    );
+    const md = join(root, "review-final.md");
+    writeFileSync(
+      md,
+      [
+        "---",
+        'title: "HER Borides"',
+        "---",
+        "",
+        "## Introduction {#sec-intro}",
+        "",
+        "As outlined in @sec-mech and Section @sec-intro, H~2~O* → TS → H* + OH* feeds adsorbed H* onto a site with ΔG~H\\*~ ≈ 0 eV [@Huang2027].",
+        "",
+        "## Mechanisms {#sec-mech}",
+        "",
+        "### Dual-site division {#sec-dual}",
+        "",
+        "See Sec. @sec-dual for ΔG~H\\*~ comparisons:",
+        "1. **Paired condition reporting**: report electrolyte and iR.",
+        "2. **Intrinsic turnover**: pair geometric overpotential with ECSA.",
+        "",
+        "## Declarations {.unnumbered}",
+        "",
+        "Pending author confirmation.",
+      ].join("\n"),
+    );
+    const enOut = join(root, "endnote.docx");
+    const zoOut = join(root, "zotero.docx");
+    const enRep = join(root, "en-report.md");
+    const zoRep = join(root, "zo-report.md");
+    const rEn = run(citeDocx, ["--input", md, "--bib", bib, "--output", enOut, "--report", enRep]);
+    assert.equal(rEn.status, 0, rEn.stderr);
+    const rZo = run(zoteroDocx, ["--input", md, "--bib", bib, "--output", zoOut, "--report", zoRep]);
+    assert.equal(rZo.status, 0, rZo.stderr);
+
+    for (const docx of [enOut, zoOut]) {
+      const xml = zipXml(docx).stdout;
+      assert.doesNotMatch(xml, /\{#sec-|@sec-|~H\*~/);
+      assert.match(xml, />1 Introduction</);
+      assert.match(xml, />2 Mechanisms</);
+      assert.match(xml, />2\.1 Dual-site division</);
+      assert.match(xml, />Declarations</);
+      assert.match(xml, /As outlined in Section 2 and Section 1/);
+      assert.match(xml, /See Section 2\.1 for /);
+      // H* 自由基星号保留，不把两处 H* 之间的正文吞成斜体
+      assert.match(xml, /H\* \+ OH\* feeds adsorbed H\* onto a site with ΔG/);
+      // ΔG~H\*~ 渲成下标 H*
+      assert.match(xml, /<w:vertAlign w:val="subscript" \/><\/w:rPr><w:t>H\*<\/w:t>/);
+      // 紧邻 1. / 2. 各自独立成段，不粘成一段
+      const paras = [...xml.matchAll(/<w:p\b.*?<\/w:p>/gs)].map((m) =>
+        [...m[0].matchAll(/<w:t[^>]*>(.*?)<\/w:t>/gs)].map((t) => t[1]).join(""),
+      );
+      assert.equal(paras.filter((p) => p.startsWith("1. Paired condition")).length, 1);
+      assert.equal(paras.filter((p) => p.startsWith("2. Intrinsic turnover")).length, 1);
+    }
+    // volume={TBD} 占位符已被 bridge.load 剔除，不进 traveling library
+    assert.doesNotMatch(fldData(enOut).stdout, /TBD/);
+
+    // 残留 {Author, 2020} 拒写 docx 时，报告须如实写明未写 docx，不得误报「打开 output/endnote.docx」
+    const dirtyMd = join(root, "dirty.md");
+    writeFileSync(dirtyMd, "## Intro\n\nLeftover {Huang, 2027} temp cite [@Huang2027].\n");
+    const dirtyDocx = join(root, "dirty.docx");
+    const dirtyRep = join(root, "dirty-report.md");
+    const rDirty = run(citeDocx, ["--input", dirtyMd, "--bib", bib, "--output", dirtyDocx, "--report", dirtyRep]);
+    assert.notEqual(rDirty.status, 0);
+    assert.equal(existsSync(dirtyDocx), false);
+    const dirtyReportText = readFileSync(dirtyRep, "utf8");
+    assert.match(dirtyReportText, /未写 docx/);
+    assert.doesNotMatch(dirtyReportText, /打开 `output\/endnote\.docx`/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
