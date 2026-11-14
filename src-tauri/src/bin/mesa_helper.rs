@@ -1,8 +1,8 @@
 //! Mesa 的随包小助手（独立进程）：给 Agent 与各家 CLI 用的几件本机小事，按第一个参数分派——
 //! hook（Windows 上写 hooks 状态日志）、image（出图）、peek / tell（同项目看一眼、留话）、
-//! svg-render（科研做图）、codex-token（Codex 渠道现取密钥）。
+//! svg-render（科研做图）、codex-token（Codex 渠道现取密钥）、launch（不开 Mesa 在终端按连接直接起 CLI）。
 //!
-//! 安全边界：不监听网络；除 image、codex-token 外不读密钥（见 main 里的说明与 image_gen.rs）。
+//! 安全边界：不监听网络；除 image、codex-token、launch 外不读密钥（launch 只在本机进程内注入给子进程，不打印、不落明文）。
 //! 2026-11-09 起不再做浏览器扩展的 native messaging 宿主（扩展与「存到 Mesa」已撤）。
 
 use std::io::{Read, Write};
@@ -94,6 +94,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("codex-token") {
         std::process::exit(ccode_lib::helper_codex_token(&args[2..]));
     }
-    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token …（由 Mesa 调用，不单独使用）");
+    // `mesa_helper launch <连接 ID 或名称> [-- <CLI 参数…>]`：不开 Mesa 在任意终端现取 keys.json 起 CLI（尤其 agy API 连接）
+    if args.get(1).map(String::as_str) == Some("launch") {
+        std::process::exit(ccode_lib::helper_launch(&args[2..]));
+    }
+    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token|launch …");
     std::process::exit(2);
 }

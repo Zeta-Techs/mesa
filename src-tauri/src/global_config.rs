@@ -2343,17 +2343,23 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
 }
 
 /// Antigravity CLI 官方 Google 账号「设为全局」：撤掉 `modelProvider="gemini"`、`model="mesa/..."` 与 `mesa/*` 自定义模型；
+/// 若官方连接上选定了模型，则按 `agy models` 第二列显示名写入顶层 `model`（直接写 CLI 别名会被 agy 静默回退默认模型，1.5.8 实证）；
 /// 用户自己的 `trustedWorkspaces`、`toolPermission`、`agentMode`、非 `mesa/` 自定义模型及 JSONC 注释（经 `jsonc_layout_kept`）原样保留。
-fn patch_agy_settings_official(existing: &str) -> Result<String, String> {
-    let mut v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(existing))
-        .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?;
+fn patch_agy_settings_official(existing: Option<&str>, selected_model: Option<&str>) -> Result<String, String> {
+    let mut v = match existing {
+        Some(raw) => serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(raw))
+            .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?,
+        None => json!({}),
+    };
     let Some(obj) = v.as_object_mut() else {
         return Err("现有 settings.json 根节点不是对象，已停止写入".into());
     };
     if obj.get("modelProvider").and_then(|x| x.as_str()) == Some("gemini") {
         obj.remove("modelProvider");
     }
-    if obj
+    if let Some(display) = selected_model.and_then(agents::agy_official_settings_model) {
+        obj.insert("model".into(), json!(display));
+    } else if obj
         .get("model")
         .and_then(|x| x.as_str())
         .is_some_and(|m| !official_model_kept("agy", m))
@@ -2370,8 +2376,10 @@ fn patch_agy_settings_official(existing: &str) -> Result<String, String> {
     to_pretty(&v)
 }
 
-/// 官方账号「设为全局」的写计划：文件不存在就不写（不存在 = 本来就没有 API 配置）。
-fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, String> {
+/// 官方账号「设为全局」的写计划：默认文件不存在就不写（不存在 = 本来就没有 API 配置）；
+/// Antigravity 官方连接显式选了模型时，即使尚无 settings.json 也创建并写入该官方模型。
+fn plan_official_writes(home: &Path, profile: &Profile) -> Result<Vec<PlannedWrite>, String> {
+    let agent = profile.agent.as_str();
     let mut plans = Vec::new();
     let dir = cli_dir(home, agent);
     let mut add = |tag: &'static str, path: PathBuf, f: &dyn Fn(&str) -> Result<String, String>| {
@@ -2407,7 +2415,25 @@ fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, S
             add("legacy-config.toml", kimi_legacy_dir(home).join("config.toml"), &patch_kimi_config_official)?;
         }
         "grok" => add("config.toml", dir.join("config.toml"), &patch_grok_config_official)?,
-        "agy" => add("settings.json", dir.join("settings.json"), &patch_agy_settings_official)?,
+        "agy" => {
+            let path = dir.join("settings.json");
+            let selected = profile.models.first().map(String::as_str);
+            match read_existing(&path)? {
+                Some(text) => plans.push(PlannedWrite {
+                    tag: "settings.json",
+                    path,
+                    content: patch_agy_settings_official(Some(&text), selected)?,
+                }),
+                None if selected.and_then(agents::agy_official_settings_model).is_some() => {
+                    plans.push(PlannedWrite {
+                        tag: "settings.json",
+                        path,
+                        content: patch_agy_settings_official(None, selected)?,
+                    });
+                }
+                None => {}
+            }
+        }
         other => return Err(format!("{other} 的官方账号不支持「设为全局」")),
     }
     Ok(plans)
@@ -2653,7 +2679,7 @@ fn plan_writes(
     models: &[String],
 ) -> Result<Vec<PlannedWrite>, String> {
     if is_official(profile) {
-        return plan_official_writes(home, &profile.agent);
+        return plan_official_writes(home, profile);
     }
     if profile.no_auth {
         return Err("无密钥连接不支持「设为全局」；请使用启动注入，避免污染 CLI 全局配置".into());
@@ -2863,7 +2889,7 @@ fn plan_writes(
         }
         "agy" => {
             return Err(
-                "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。"
+                "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动、点这行的「外部终端」图标，或点右侧 ⋯ →「复制终端启动命令」（经 mesa_helper 现取密钥，不落明文）。"
                     .into(),
             );
         }

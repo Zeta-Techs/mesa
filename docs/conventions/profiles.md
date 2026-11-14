@@ -483,7 +483,7 @@ Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 | CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` 与顶层 `model`；`models.json` 撤 Mesa 写的条目 |
 | Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`；Mesa 渠道（`ccode*`）与别名**连同密钥留着**（2026-10-31，取代 10-30「撤掉明文 `api_key`」：会话存的是模型别名，撤了中转老会话一续就缺密钥；Kimi 只有明文与要用户 shell 导出的 `api_key_env`，没有可现取的引用）。新旧两个配置目录存在的都改 |
 | Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]`：没有自己密钥的整段撤（留着官方令牌会发去中转），**带自己 `api_key` / `env_key` 的留着，Mesa 写的也留**（2026-10-31，取代 10-30「Mesa 写的连同密钥整段撤」：会话记着 `current_model_id`，撤了 `grok -r` 续中转老会话找不到模型；grok 1.0.70 实测留下的段照样用自己的密钥）。官方启动另查「中转段没有自己密钥」并拦下 |
-| Antigravity CLI | `~/.gemini/antigravity-cli/settings.json`（JSONC 容错保注释）：`modelProvider` 为 `"gemini"` 时撤，顶层 `model` 以 `mesa/` 开头时撤，`customModelsConfig.customModels` 里撤 `mesa/*` 条目（删空后顺带回收空对象），用户自己的自定义模型、`trustedWorkspaces` 等不动 |
+| Antigravity CLI | `~/.gemini/antigravity-cli/settings.json`（JSONC 容错保注释）：`modelProvider` 为 `"gemini"` 时撤，若官方连接选定了模型则按 `agy models` 第二列显示名写入顶层 `model`（直接写 CLI 别名会被 agy 静默回退默认模型，1.5.8 实证；无文件时也会创建），否则仅在顶层 `model` 以 `mesa/` 开头或非官方模型时撤；`customModelsConfig.customModels` 里撤 `mesa/*` 条目，用户自己的自定义模型、`trustedWorkspaces` 等不动 |
 
 官方计划是删键，**比对磁盘必须整份比**（`disk_equals_plans`）——API 计划用的子集比对对删键永远为真，托盘会两项都打勾、「已是官方」会跳过写入。`plans_match_disk` 按账号类型分派。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像。未登录官方账号时前端先确认一次。
 

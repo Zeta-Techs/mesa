@@ -27,6 +27,7 @@ import {
   ShieldCheck,
   SquareArrowOutUpRight,
   Star,
+  Terminal,
   Trash2,
   Undo2,
   Check,
@@ -2415,7 +2416,7 @@ const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
  *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
 const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok", "agy"]);
 const AGY_API_GLOBAL_REASON =
-  "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。";
+  "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动、点这行的「外部终端」图标，或点右侧 ⋯ →「复制终端启动命令」（经 mesa_helper 现取密钥，不落明文）。";
 function officialGlobalIsPatch(agent: string): boolean {
   return OFFICIAL_GLOBAL_AGENTS.has(agent);
 }
@@ -4120,6 +4121,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
+  async function copyTerminalLaunchCommand(profile: Profile) {
+    try {
+      const cmd = await invoke<string>("profile_terminal_command", {
+        profileId: profile.id,
+      });
+      await navigator.clipboard.writeText(cmd);
+      toast(
+        "已复制终端启动命令（运行时经 mesa_helper 现取密钥，不落明文；Mesa 关着也能在任意终端直接跑）",
+        "success",
+      );
+    } catch (e) {
+      await alertDialog(`复制失败：${String(e)}`);
+    }
+  }
+
   // 连接行「改作出图模型」：把这条连接里的出图模型设成出图模型，切到左栏「出图模型」
   const imageGenRef = useRef<HTMLElement | null>(null);
   const imageGenSetting = useAppStore((s) => `${s.settings?.imageGenGatewayId ?? ""}\u0001${s.settings?.imageGenModel ?? ""}`);
@@ -5681,6 +5697,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               label: "启动前预览",
               icon: Eye,
               onSelect: () => void onPreviewLaunchPlan(rowMenu.profile),
+            },
+            {
+              label: "复制终端启动命令",
+              icon: Terminal,
+              disabled: !!rowMenu.profile.slotMissing,
+              title:
+                "复制经 mesa_helper 现取密钥与会话级配置的命令（不含明文密钥）；不开 Mesa 也能在任意终端直接敲，或自己绑成 shell 别名",
+              onSelect: () => void copyTerminalLaunchCommand(rowMenu.profile),
             },
             ...(rowMenu.profile.accountType !== "official" &&
             rowMenu.profile.gatewayId

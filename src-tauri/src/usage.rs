@@ -1751,10 +1751,12 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
             } else {
                 ""
             };
-            match agy_models.get(&s.session_id) {
-                Some(m) if !m.is_empty() => format!("{base_marker}{db_tag}|{m}"),
-                _ => format!("{base_marker}{db_tag}"),
-            }
+            let prof_tag = meta_flags
+                .get(&(s.agent.clone(), s.session_id.clone()))
+                .and_then(|(_, p)| p.as_deref())
+                .unwrap_or("");
+            let model_tag = agy_models.get(&s.session_id).map(String::as_str).unwrap_or("");
+            format!("{base_marker}{db_tag}|{prof_tag}|{model_tag}")
         } else {
             base_marker
         };

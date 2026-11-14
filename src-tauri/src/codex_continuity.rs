@@ -70,13 +70,21 @@ pub(crate) fn stable_helper() -> Option<PathBuf> {
     static CACHE: Mutex<Option<PathBuf>> = Mutex::new(None);
     let mut cached = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cached.is_none() {
-        *cached = locate_and_copy_helper();
+        *cached = locate_and_copy_helper_for(TOKEN_SUBCOMMAND);
     }
     cached.clone()
 }
 
-fn locate_and_copy_helper() -> Option<PathBuf> {
-    let src = crate::image_gen::find_bundled_helper(TOKEN_SUBCOMMAND)?;
+/// 按指定子命令（如 `"launch"`）查找并刷新配置目录 `bin/mesa_helper`：保证拷过去的二进制已支持该子命令。
+pub(crate) fn stable_helper_for(mode: &str) -> Option<PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    locate_and_copy_helper_for(mode)
+}
+
+fn locate_and_copy_helper_for(mode: &str) -> Option<PathBuf> {
+    let src = crate::image_gen::find_bundled_helper(mode)?;
     let name = if cfg!(windows) { "mesa_helper.exe" } else { "mesa_helper" };
     let Some(dir) = crate::storage::config_root().map(|r| r.join("bin")) else {
         return Some(src);

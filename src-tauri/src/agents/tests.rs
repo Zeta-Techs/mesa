@@ -3831,3 +3831,69 @@ fn agy_external_detection_catches_db_only_session_and_gemini_dir_resume() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn agy_official_model_mapping_and_helper_launch_formatting() {
+    assert_eq!(
+        agy_official_settings_model("claude-sonnet-4-6").as_deref(),
+        Some("Claude Sonnet 4.6 (Thinking)")
+    );
+    assert_eq!(
+        agy_official_settings_model("gemini-3.8-flash-low").as_deref(),
+        Some("Gemini 3.8 Flash (Low)")
+    );
+    assert_eq!(
+        agy_official_settings_model("Gemini 4 Carbon (Medium)").as_deref(),
+        Some("Gemini 4 Carbon (Medium)")
+    );
+    assert_eq!(agy_official_settings_model("mesa/gemini-2.5-pro"), None);
+    assert_eq!(agy_official_settings_model("deepseek-v3"), None);
+
+    let unix_helper = std::path::Path::new("/Users/demo/Library/Application Support/ccode/bin/mesa_helper");
+    assert_eq!(
+        format_helper_launch_command_for(false, unix_helper, "prof-1", None, &[]),
+        "'/Users/demo/Library/Application Support/ccode/bin/mesa_helper' launch prof-1"
+    );
+    assert_eq!(
+        format_helper_launch_command_for(
+            false,
+            unix_helper,
+            "prof-1",
+            Some("/Users/demo/my proj"),
+            &["--conversation".to_string(), "conv-42".to_string()],
+        ),
+        "cd '/Users/demo/my proj' && '/Users/demo/Library/Application Support/ccode/bin/mesa_helper' launch prof-1 --conversation conv-42"
+    );
+
+    let win_helper = std::path::Path::new(r"C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe");
+    assert_eq!(
+        format_helper_launch_command_for(true, win_helper, "prof-1", None, &[]),
+        r"& 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' 'prof-1'"
+    );
+    assert_eq!(
+        format_helper_launch_command_for(
+            true,
+            win_helper,
+            "prof-1",
+            Some(r"C:\work\proj"),
+            &["--conversation".to_string(), "conv-42".to_string()],
+        ),
+        r"Set-Location 'C:\work\proj'; & 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' 'prof-1' --conversation 'conv-42'"
+    );
+
+    let (m, r, pass) = parse_helper_extra_args(
+        "agy",
+        &[
+            "--".into(),
+            "--model".into(),
+            "gemini-2.5-pro".into(),
+            "--conversation".into(),
+            "conv-99".into(),
+            "-p".into(),
+            "hi".into(),
+        ],
+    );
+    assert_eq!(m.as_deref(), Some("gemini-2.5-pro"));
+    assert_eq!(r.as_deref(), Some("conv-99"));
+    assert_eq!(pass, vec!["--conversation", "conv-99", "-p", "hi"]);
+}

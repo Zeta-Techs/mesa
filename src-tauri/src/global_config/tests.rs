@@ -2283,5 +2283,27 @@ fn agy_set_global_supports_official_patch_and_rejects_api() {
     assert!(bak_text.contains("mesa/gemini-2.5-pro") && bak_text.contains("// 用户注释保留"));
     fs::copy(&backups[0], dir.join("settings.json")).unwrap();
     assert!(fs::read_to_string(dir.join("settings.json")).unwrap().contains("\"modelProvider\": \"gemini\""));
+
+    // 官方连接显式选定模型（CLI 别名）时，按 agy 原生显示名写入顶层 model；无 settings.json 时也能新建写入
+    off.models = vec!["claude-sonnet-4-6".into()];
+    let mut with_model = plan_writes(&home, &off, None, &[]).unwrap();
+    keep_jsonc_layout_in_preview("agy", &mut with_model);
+    apply_plans("agy", &bk, &home, &with_model).unwrap();
+    let patched_model = fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(patched_model.contains("// 用户注释保留"));
+    assert!(patched_model.contains("\"model\": \"Claude Sonnet 4.6 (Thinking)\""), "{patched_model}");
+    assert!(!patched_model.contains("\"modelProvider\""));
+    assert!(disk_equals_plans(&with_model));
+
+    let fresh_home = tmpdir("agy-global-fresh");
+    let fresh_plans = plan_writes(&fresh_home, &off, None, &[]).unwrap();
+    assert_eq!(fresh_plans.len(), 1);
+    apply_plans("agy", &fresh_home.join("bk"), &fresh_home, &fresh_plans).unwrap();
+    let fresh_written: Value = serde_json::from_str(
+        &fs::read_to_string(fresh_home.join(".gemini/antigravity-cli/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fresh_written["model"], "Claude Sonnet 4.6 (Thinking)");
+    fs::remove_dir_all(&fresh_home).ok();
     fs::remove_dir_all(&home).ok();
 }

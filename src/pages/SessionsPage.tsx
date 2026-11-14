@@ -719,25 +719,35 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   /** A2. 复制恢复命令（cc-switch 风格）：粘贴到任意终端即可恢复该会话 */
   async function copyResumeCommand(s: SessionMetaDto) {
     try {
+      const prof = resumeProfile(s);
       const cmd = await invoke<string>("session_resume_command", {
         agentId: s.agent,
         sessionId: s.sessionId,
         cwd: s.cwd ?? s.projectPath,
         baseUrl: resumeBaseUrl(s),
         provider: s.provider ?? null,
+        profileId: prof?.id ?? null,
       });
       await navigator.clipboard.writeText(cmd);
       // 菜单点完即关，行内反馈看不到——走 toast。Mesa 连接开的 Codex / Antigravity API 对话：
-      // 裸恢复命令不带密钥或会话级 --settings，终端里直接跑接不上，要说在前面
-      const prof = resumeProfile(s);
+      // Codex 裸恢复命令不带密钥；Antigravity API 会话优先走 mesa_helper 现取密钥与 --settings（不落明文），缺 helper 时退回裸命令并提示
       const needsCodexKey = s.agent === "codex" && Boolean(resumeBaseUrl(s));
-      const needsAgyEnv = s.agent === "agy" && Boolean(prof && prof.accountType !== "official");
+      const agyViaHelper =
+        s.agent === "agy" &&
+        Boolean(prof && prof.accountType !== "official") &&
+        cmd.includes("mesa_helper");
+      const needsAgyEnv =
+        s.agent === "agy" &&
+        Boolean(prof && prof.accountType !== "official") &&
+        !agyViaHelper;
       toast(
         needsCodexKey
           ? "已复制继续命令。这段对话走的是 Mesa 的连接，终端里要先设好 CODEX_API_KEY 才能接上；直接用「在外部终端继续」更省事"
-          : needsAgyEnv
-            ? "已复制继续命令。这段对话走的是 Mesa 的 API 连接，终端直接运行缺 --settings 与 GEMINI_API_KEY；直接用「在外部终端继续」更省事"
-            : COPY_RESUME_DONE,
+          : agyViaHelper
+            ? "已复制继续命令（运行时经 mesa_helper 现取密钥与 --settings，不落明文，粘贴到终端即可继续）"
+            : needsAgyEnv
+              ? "已复制继续命令。这段对话走的是 Mesa 的 API 连接，终端直接运行缺 --settings 与 GEMINI_API_KEY；直接用「在外部终端继续」更省事"
+              : COPY_RESUME_DONE,
         needsCodexKey || needsAgyEnv ? "warning" : "success",
       );
     } catch (e) {

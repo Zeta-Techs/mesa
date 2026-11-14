@@ -105,9 +105,12 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 严格遵守 `docs/conventions/profiles.md` §12 九条规则：
 
-- **第三方中转与 Gemini 官方 API 密钥不支持设为全局**：`agy` 只从环境变量读 `GEMINI_API_KEY` 与 `GOOGLE_GEMINI_BASE_URL`，不支持配置文件或 `.env` 落盘，而 Mesa 不改用户 shell 配置。后端拒收并返回明确原因，前端连接页将这两类绑定的「设为全局默认」按钮置灰并悬停说明：「Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。」
-- **外部终端拉起与会话归属**：连接行「外部终端」图标每次弹目录选择框（默认预填上次工作目录），经一次性启动脚本携带 `--settings` 临时设置文件与环境密钥拉起 `agy`；后端记录启动前快照并在新 `brain/<id>/` 会话落盘后按工作目录匹配回写 `(profile_id, launch_model, effort)`，保证外部终端新建会话的用量计费模型与后续续聊连接归属不丢失；复制裸 `agy --conversation` 命令时对 API / 中转连接给出不含密钥提示。
-- **官方 Google 账号支持设为全局**：写前完整备份 `~/.gemini/antigravity-cli/settings.json`（走统一备份与恢复表），用 JSONC 保格式编辑撤除 `modelProvider`（当值为 `"gemini"` 时）、指向 `mesa/` 的 `model`，以及 `customModelsConfig.customModels` 下 `mesa/` 前缀的条目，保留用户的 `trustedWorkspaces`、自定义模型和注释。
+- **第三方中转与 Gemini 官方 API 密钥不支持设为全局**：`agy` 只从环境变量读 `GEMINI_API_KEY` 与 `GOOGLE_GEMINI_BASE_URL`，不支持配置文件或 `.env` 落盘，而 Mesa 不改用户 shell 配置。后端拒收并返回明确原因，前端连接页将这两类绑定的「设为全局默认」按钮置灰并悬停说明：「Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动、点这行的「外部终端」图标，或点右侧 ⋯ →「复制终端启动命令」（经 mesa_helper 现取密钥，不落明文）。」
+- **外部终端拉起、免界面快捷命令与会话归属**：
+  1. 连接行「外部终端」图标每次弹目录选择框（默认预填上次工作目录），经一次性启动脚本携带 `--settings` 临时设置文件与环境密钥拉起 `agy`；
+  2. 连接行 `⋯ → 复制终端启动命令` 提供 `mesa_helper launch <profile_id>` 命令——即使 Mesa 完全关闭，用户也可直接在任意终端运行（或自行绑定 shell alias），由 `mesa_helper` 在本机进程内从 0600 `keys.json` 现取密钥、生成会话级 `--settings` 并拉起 `agy`，剪贴板与 shell 历史全程零明文密钥；对话页「复制继续命令」对 API 连接会话同样优先生成 `mesa_helper launch <profile_id> --conversation <id>`（缺 helper 时退回裸命令并提示）；
+  3. 后端在外部启动前记录快照，并在新 `brain/<id>/` 或纯文字 `conversations/<id>.db`（含 `-wal`）会话落盘后按工作目录匹配回写 `(profile_id, launch_model, effort)`，保证外部终端新建会话的用量计费模型与后续续聊连接归属不丢失。
+- **官方 Google 账号支持设为全局**：写前完整备份 `~/.gemini/antigravity-cli/settings.json`（走统一备份与恢复表），用 JSONC 保格式编辑撤除 `modelProvider`（当值为 `"gemini"` 时）、指向 `mesa/` 的 `model`，以及 `customModelsConfig.customModels` 下 `mesa/` 前缀的条目；若官方连接显式选定了模型，则按 `agy models` 第二列显示名（如 `"Claude Sonnet 4.6 (Thinking)"`）写入顶层 `model`（1.5.8 实证直接写第一列 CLI 别名会被静默回退默认模型；无 `settings.json` 时也会新建写入），保留用户的 `trustedWorkspaces`、自定义模型和注释。
 - `official_global_is_patch` 与前端 `OFFICIAL_GLOBAL_AGENTS` 双端同步加入 `"agy"`。
 
 ## 5. 权限、只读、授权

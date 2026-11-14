@@ -2838,6 +2838,17 @@ fn parse_grok_models(text: &str) -> Vec<String> {
     out.into_iter().map(|(_, s)| s).collect()
 }
 
+/// `agy models` 内置兜底名单与第二列显示名对照（1.5.8 实证：命令行 `--model` 吃第一列别名，
+/// 但官方模式 `~/.gemini/antigravity-cli/settings.json` 的顶层 `model` 必须写第二列显示名，写别名会静默回退默认模型）
+pub(crate) const AGY_OFFICIAL_MODEL_PAIRS: &[(&str, &str)] = &[
+    ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+    ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+    ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+    ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
+    ("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
+    ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+];
+
 /// `agy models` 内置兜底名单（未缓存时的默认列表，1.5.8 实证）
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) const AGY_OFFICIAL_FALLBACK_MODELS: &[&str] = &[
@@ -2871,8 +2882,8 @@ fn strip_ansi_escapes(s: &str) -> String {
 }
 
 /// `agy models` 的输出：`<cli_id>\t<Display Name>` 逐行，前面可能夹带 ANSI 控制码与 `\r` spinner 帧（1.5.8 实证）
-pub(crate) fn parse_agy_models(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
+pub(crate) fn parse_agy_model_pairs(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
     for raw_line in text.lines() {
         let seg = raw_line.rsplit('\r').next().unwrap_or(raw_line);
         let clean = strip_ansi_escapes(seg);
@@ -2885,12 +2896,95 @@ pub(crate) fn parse_agy_models(text: &str) -> Vec<String> {
             && !display.is_empty()
             && !slug.contains(' ')
             && !slug.starts_with("mesa/")
-            && !out.iter().any(|x| x == slug)
+            && !out.iter().any(|(x, _)| x == slug)
         {
-            out.push(slug.to_string());
+            out.push((slug.to_string(), display.to_string()));
         }
     }
     out
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn parse_agy_models(text: &str) -> Vec<String> {
+    parse_agy_model_pairs(text)
+        .into_iter()
+        .map(|(slug, _)| slug)
+        .collect()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn agy_display_cache_path() -> Option<PathBuf> {
+    Some(
+        crate::dirs::config_dir()?
+            .join("ccode")
+            .join("official-models")
+            .join("agy-display.json"),
+    )
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn write_agy_display_cache(pairs: &[(String, String)]) {
+    if pairs.is_empty() {
+        return;
+    }
+    let Some(path) = agy_display_cache_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let map: std::collections::BTreeMap<&str, &str> = pairs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    if let Ok(text) = serde_json::to_string(&map) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn read_agy_display_cache() -> std::collections::BTreeMap<String, String> {
+    agy_display_cache_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+/// 将 Mesa 官方连接里存的模型标识转换成 `~/.gemini/antigravity-cli/settings.json` 认的显示名：
+/// - 若本来就是带空格的官方显示名（如 `"Gemini 4 Carbon (Medium)"`）原样采用；
+/// - 若是 `agy models` 第一列 CLI 别名，查缓存与内置表转成第二列显示名；
+/// - 中转名、`mesa/*` 或无法映射到官方显示名的别名返回 `None`（避免写进 settings.json 后被 agy 静默忽略）。
+pub(crate) fn agy_official_settings_model(model: &str) -> Option<String> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() || !official_model_allowed("agy", trimmed) {
+        return None;
+    }
+    if trimmed.contains(' ') {
+        return Some(trimmed.to_string());
+    }
+    #[cfg(not(test))]
+    {
+        let mut cached = read_agy_display_cache();
+        if !cached.contains_key(trimmed) {
+            if let Some(path) = resolve_binary("agy") {
+                let envs = agy_models_probe_env();
+                if let Some(pairs) = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
+                    .map(|t| parse_agy_model_pairs(&t))
+                    .filter(|p| !p.is_empty())
+                {
+                    write_agy_display_cache(&pairs);
+                    cached = pairs.into_iter().collect();
+                }
+            }
+        }
+        if let Some(display) = cached.get(trimmed) {
+            return Some(display.clone());
+        }
+    }
+    AGY_OFFICIAL_MODEL_PAIRS
+        .iter()
+        .find(|(slug, _)| slug.eq_ignore_ascii_case(trimmed))
+        .map(|(_, display)| (*display).to_string())
 }
 
 fn agy_models_probe_env() -> Vec<(String, String)> {
@@ -3036,9 +3130,11 @@ pub(crate) fn official_models_for_launch(agent: &str) -> Vec<String> {
         if let Some(path) = resolve_binary("agy") {
             let envs = agy_models_probe_env();
             refresh_official_models_cache("agy", || {
-                cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(12))
-                    .map(|t| parse_agy_models(&t))
-                    .unwrap_or_default()
+                let pairs = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(12))
+                    .map(|t| parse_agy_model_pairs(&t))
+                    .unwrap_or_default();
+                write_agy_display_cache(&pairs);
+                pairs.into_iter().map(|(s, _)| s).collect()
             });
         }
     }
@@ -4717,7 +4813,16 @@ pub(crate) fn detect_new_agy_external_session(
         .into_iter()
         .filter(|(cid, _)| !known_before.contains(cid))
         .filter_map(|(cid, path)| {
-            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            let mut mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                let mut wal = path.as_os_str().to_os_string();
+                wal.push("-wal");
+                if let Ok(wal_mtime) = std::fs::metadata(&wal).and_then(|m| m.modified()) {
+                    if wal_mtime > mtime {
+                        mtime = wal_mtime;
+                    }
+                }
+            }
             (mtime >= floor).then_some((cid, mtime))
         })
         .collect();
@@ -4752,13 +4857,20 @@ pub(crate) fn detect_new_agy_external_session(
 fn snapshot_agy_external_before(
     profile: &Profile,
 ) -> Option<(PathBuf, std::collections::HashSet<String>, std::time::SystemTime)> {
-    let home = profile
+    let agy_root = profile
         .extra_env
-        .get("HOME")
+        .get("ANTIGRAVITY_APP_DATA_DIR")
         .filter(|d| !d.trim().is_empty())
         .map(PathBuf::from)
-        .or_else(crate::dirs::home_dir)?;
-    let agy_root = home.join(".gemini/antigravity-cli");
+        .or_else(|| {
+            let home = profile
+                .extra_env
+                .get("HOME")
+                .filter(|d| !d.trim().is_empty())
+                .map(PathBuf::from)
+                .or_else(crate::dirs::home_dir)?;
+            Some(home.join(".gemini/antigravity-cli"))
+        })?;
     let known: std::collections::HashSet<String> =
         crate::sessions::agy_collect_session_files(&agy_root)
             .into_iter()
@@ -4901,12 +5013,12 @@ fn resume_command_line_with(
 }
 
 /// PowerShell 单引号包裹（内嵌 ' 加倍）。复制命令给用户粘贴到 Windows 默认交互 shell。
-#[cfg(any(windows, test))]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-#[cfg(any(windows, test))]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn ps_arg(a: &str) -> String {
     if a.starts_with('-')
         && !a
@@ -4919,7 +5031,7 @@ fn ps_arg(a: &str) -> String {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
 fn windows_ps_invoke(
     cwd: &str,
     binary: &str,
@@ -5022,9 +5134,74 @@ fn windows_paste_binary(binary: &str) -> String {
         .unwrap_or_else(|| binary.to_string())
 }
 
+/// 生成粘贴到外部终端直接跑的 `mesa_helper launch` 命令（不含明文密钥；Mesa 关闭时也能直接运行）
+pub(crate) fn format_helper_launch_command_for(
+    is_windows: bool,
+    helper: &Path,
+    profile_id: &str,
+    cwd: Option<&str>,
+    extra_args: &[String],
+) -> String {
+    let helper_str = helper.to_string_lossy();
+    let mut invoke_args: Vec<&str> = Vec::with_capacity(2 + extra_args.len());
+    invoke_args.push("launch");
+    invoke_args.push(profile_id);
+    for a in extra_args {
+        invoke_args.push(a.as_str());
+    }
+    if is_windows {
+        if let Some(dir) = cwd.filter(|d| !d.trim().is_empty()) {
+            return windows_ps_invoke(dir, &helper_str, invoke_args);
+        }
+        let mut cmd = format!("& {}", ps_quote(&helper_str));
+        for a in invoke_args {
+            cmd.push(' ');
+            cmd.push_str(&ps_arg(a));
+        }
+        return cmd;
+    }
+    let mut cmd = if let Some(dir) = cwd.filter(|d| !d.trim().is_empty()) {
+        format!(
+            "cd {} && {}",
+            sh_quote_if_needed(dir),
+            sh_quote_if_needed(&helper_str)
+        )
+    } else {
+        sh_quote_if_needed(&helper_str)
+    };
+    for a in invoke_args {
+        cmd.push(' ');
+        cmd.push_str(&sh_quote_if_needed(a));
+    }
+    cmd
+}
+
+/// 连接页「复制终端启动命令」：返回在任意终端直接运行（无需打开 Mesa 界面、不落明文密钥）的 `mesa_helper launch <profile_id>` 命令
+#[tauri::command]
+pub fn profile_terminal_command(
+    store: tauri::State<'_, ProfileStore>,
+    profile_id: String,
+) -> Result<String, String> {
+    let profile = store.get(&profile_id)?;
+    if profile.slot_missing {
+        return Err("这个网关还没配该协议的端点".into());
+    }
+    let helper = crate::codex_continuity::stable_helper_for("launch").ok_or_else(|| {
+        "未找到随包 mesa_helper（开发版请先构建 `cargo build --bin mesa_helper`）".to_string()
+    })?;
+    Ok(format_helper_launch_command_for(
+        cfg!(windows),
+        &helper,
+        &profile.id,
+        None,
+        &[],
+    ))
+}
+
 /// 复制用：返回该会话的恢复命令行。
 /// base_url：codex 会话走 Mesa 内联 provider（rollout 记 model_provider="ccode"）时必须
-/// 补上 provider 定义才能在外部恢复——定义不含密钥（env_key 是变量名引用）
+/// 补上 provider 定义才能在外部恢复——定义不含密钥（env_key 是变量名引用）；
+/// agy API 会话若认得出 profile 且找得到 `mesa_helper`，优先返回 `mesa_helper launch <profile_id> --conversation <id>`（运行时现取密钥与 `--settings`，不落明文）。
 #[tauri::command]
 pub fn session_resume_command(
     agent_id: &str,
@@ -5032,6 +5209,7 @@ pub fn session_resume_command(
     cwd: &str,
     base_url: Option<String>,
     provider: Option<String>,
+    profile_id: Option<String>,
 ) -> Result<String, String> {
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
     let mut extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
@@ -5039,6 +5217,28 @@ pub fn session_resume_command(
     if agent_id == "codex" {
         if let Some(m) = crate::sessions::codex_thread_model(session_id) {
             extra.extend(["-m".into(), m]);
+        }
+    }
+    if agent_id == "agy" {
+        if let Some(pid) = profile_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let is_api_profile = crate::profiles::ProfileStore::existing()
+                .and_then(|s| s.get(pid).ok())
+                .is_some_and(|p| {
+                    p.agent == "agy" && p.account_type != crate::profiles::AccountType::Official
+                });
+            if is_api_profile {
+                if let Some(helper) = crate::codex_continuity::stable_helper_for("launch") {
+                    let (_, mut resume) = resume_args(agent_id, session_id);
+                    resume.extend(extra);
+                    return Ok(format_helper_launch_command_for(
+                        cfg!(windows),
+                        &helper,
+                        pid,
+                        Some(cwd),
+                        &resume,
+                    ));
+                }
+            }
         }
     }
     #[cfg(target_os = "windows")]
@@ -5051,6 +5251,247 @@ pub fn session_resume_command(
     );
     #[cfg(not(target_os = "windows"))]
     resume_command_line_with(agent_id, session_id, cwd, binary, &extra)
+}
+
+/// 解析 `mesa_helper launch <连接> [-- <额外参数…>]` 的额外参数：
+/// 提取用户显式指定的 `--model/-m` 与恢复会话 ID，其余参数原样透传给底层 CLI。
+pub(crate) fn parse_helper_extra_args(
+    agent_id: &str,
+    extra_args: &[String],
+) -> (Option<String>, Option<String>, Vec<String>) {
+    let args = if extra_args.first().map(String::as_str) == Some("--") {
+        &extra_args[1..]
+    } else {
+        extra_args
+    };
+    let mut user_model: Option<String> = None;
+    let mut user_resume: Option<String> = None;
+    let mut passthrough: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let cur = args[i].as_str();
+        if (cur == "--model" || cur == "-m") && i + 1 < args.len() {
+            let m = args[i + 1].trim();
+            if !m.is_empty() {
+                user_model = Some(m.to_string());
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(m) = cur.strip_prefix("--model=").map(str::trim).filter(|m| !m.is_empty()) {
+            user_model = Some(m.to_string());
+            i += 1;
+            continue;
+        }
+        if agent_id == "agy" {
+            if cur == "--conversation" && i + 1 < args.len() {
+                let sid = args[i + 1].trim();
+                if !sid.is_empty() {
+                    user_resume = Some(sid.to_string());
+                }
+            } else if let Some(sid) = cur
+                .strip_prefix("--conversation=")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                user_resume = Some(sid.to_string());
+            }
+        } else if matches!(cur, "--resume" | "-r" | "-s" | "-S" | "--session-id")
+            && i + 1 < args.len()
+        {
+            let sid = args[i + 1].trim();
+            if !sid.is_empty() {
+                user_resume = Some(sid.to_string());
+            }
+        }
+        passthrough.push(args[i].clone());
+        i += 1;
+    }
+    (user_model, user_resume, passthrough)
+}
+
+fn find_temp_agy_settings_arg(args: &[String]) -> Option<PathBuf> {
+    args.windows(2)
+        .find(|w| w[0] == "--settings")
+        .map(|w| PathBuf::from(&w[1]))
+        .filter(|p| {
+            p.parent()
+                .and_then(|d| d.file_name())
+                .and_then(|n| n.to_str())
+                == Some("agy-settings")
+        })
+}
+
+/// `mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]`：
+/// 在本机进程内从 0600 `keys.json` 现取密钥并生成会话级 `--settings`（不打印、不落明文），直接以前台交互方式拉起 CLI。
+pub fn helper_launch_cli(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("--probe") {
+        println!("ok");
+        return 0;
+    }
+    let Some(target) = args.first().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+        eprintln!("用法：mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]");
+        return 2;
+    };
+    if matches!(target, "-h" | "--help") {
+        eprintln!("用法：mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]");
+        return 0;
+    }
+    let store = match crate::profiles::ProfileStore::new() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("读取 Mesa 连接库失败：{e}");
+            return 1;
+        }
+    };
+    let mut profile = match store.get(target) {
+        Ok(p) => p,
+        Err(_) => {
+            let all = match store.list() {
+                Ok(list) => list,
+                Err(e) => {
+                    eprintln!("读取 Mesa 连接列表失败：{e}");
+                    return 1;
+                }
+            };
+            let mut matched: Vec<Profile> = all.into_iter().filter(|p| p.name == target).collect();
+            match matched.len() {
+                1 => matched.remove(0),
+                0 => {
+                    eprintln!("未找到连接「{target}」；可在 Mesa 连接页点该连接右侧 ⋯ →「复制终端启动命令」");
+                    return 2;
+                }
+                _ => {
+                    let choices: Vec<String> = matched
+                        .iter()
+                        .map(|p| format!("{}（{}，ID: {}）", p.name, p.agent, p.id))
+                        .collect();
+                    eprintln!("存在多个同名连接，请改用连接 ID：{}", choices.join("、"));
+                    return 2;
+                }
+            }
+        }
+    };
+    let agent_id = profile.agent.clone();
+    let (user_model, user_resume, passthrough) = parse_helper_extra_args(&agent_id, &args[1..]);
+    if let Some(ref m) = user_model {
+        if profile.account_type != crate::profiles::AccountType::Official
+            && !profile.models.iter().any(|x| x == m)
+        {
+            profile.models.insert(0, m.clone());
+        }
+    }
+    let selected_model = user_model.or_else(|| profile.models.first().cloned());
+    crate::combo::apply_to_profile(&mut profile, selected_model.as_deref());
+    let key = match crate::profiles::get_key_for_profile(&profile) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("读取密钥失败：{e}");
+            return 1;
+        }
+    };
+    if let Err(e) = ensure_launch_credentials(&profile, key.as_deref()) {
+        eprintln!("{e}");
+        return 1;
+    }
+    let (mut launch_args, env, env_remove) = match external_launch_args(
+        &agent_id,
+        &profile,
+        key,
+        selected_model.as_deref(),
+        None,
+        None,
+        None,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if user_resume.is_some() {
+        if let Some(pos) = launch_args.iter().position(|a| a == "--session-id") {
+            let end = (pos + 2).min(launch_args.len());
+            launch_args.drain(pos..end);
+        }
+    }
+    launch_args.extend(passthrough);
+    let temp_settings = find_temp_agy_settings_arg(&launch_args);
+    let binary = match binary_for(&agent_id).and_then(resolve_binary) {
+        Some(b) => b,
+        None => {
+            if let Some(ref p) = temp_settings {
+                let _ = std::fs::remove_file(p);
+            }
+            eprintln!("未找到 {agent_id} 的 CLI 二进制");
+            return 127;
+        }
+    };
+    let cwd_str = std::env::current_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if agent_id == "gemini" && !cwd_str.is_empty() {
+        crate::projects::ensure_geminiignore(std::path::Path::new(&cwd_str));
+    }
+    let agy_snapshot = if agent_id == "agy" && user_resume.is_none() {
+        snapshot_agy_external_before(&profile)
+    } else {
+        None
+    };
+    record_external_session_launch(
+        &agent_id,
+        &profile,
+        selected_model.as_deref(),
+        user_resume.as_deref(),
+        &launch_args,
+        &cwd_str,
+        agy_snapshot.clone(),
+    );
+
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.args(&launch_args);
+    for k in &env_remove {
+        cmd.env_remove(k);
+    }
+    cmd.envs(env);
+    let status = cmd.status();
+
+    if let Some(ref p) = temp_settings {
+        let _ = std::fs::remove_file(p);
+    }
+    if let Some((agy_root, known_before, started_at)) = agy_snapshot {
+        let matched = match detect_new_agy_external_session(
+            &agy_root,
+            &known_before,
+            &cwd_str,
+            started_at,
+        ) {
+            AgyExternalMatch::Matched(cid) | AgyExternalMatch::PendingSingle(cid) => Some(cid),
+            AgyExternalMatch::None => None,
+        };
+        if let Some(cid) = matched {
+            let effort = profile
+                .request_policy
+                .reasoning_effort
+                .as_deref()
+                .unwrap_or("")
+                .trim();
+            let launch = selected_model
+                .as_deref()
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(|m| (m, effort));
+            let _ = crate::sessions::set_session_profile("agy", &cid, &profile.id, launch);
+        }
+    }
+
+    match status {
+        Ok(s) => s.code().unwrap_or(1),
+        Err(e) => {
+            eprintln!("启动 {} 失败：{e}", binary.display());
+            1
+        }
+    }
 }
 
 /// 外部终端在后台线程打开：macOS 上要等 osascript / open 跑完（第一次控制某个终端应用时系统还会弹授权框，
@@ -6475,10 +6916,12 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     if agent_id == "agy" && !cfg!(test) {
         if let Some(path) = resolve_binary("agy") {
             let envs = agy_models_probe_env();
-            let models = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
-                .map(|t| parse_agy_models(&t))
+            let pairs = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
+                .map(|t| parse_agy_model_pairs(&t))
                 .unwrap_or_default();
-            if !models.is_empty() {
+            if !pairs.is_empty() {
+                write_agy_display_cache(&pairs);
+                let models: Vec<String> = pairs.into_iter().map(|(s, _)| s).collect();
                 let count = models.len();
                 refresh_official_models_cache("agy", || models);
                 return OfficialAccountStatusDto {

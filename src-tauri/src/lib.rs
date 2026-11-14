@@ -64,6 +64,11 @@ pub fn helper_svg_render(args: &[String]) -> i32 {
 pub fn helper_codex_token(args: &[String]) -> i32 {
     codex_continuity::helper_token_cli(args)
 }
+
+/// helper 按连接启动 CLI（`mesa_helper launch <连接 ID 或名称> [-- <CLI 参数…>]`）：外部终端不开 Mesa 现取密钥直接跑
+pub fn helper_launch(args: &[String]) -> i32 {
+    agents::helper_launch_cli(args)
+}
 mod codex_continuity;
 mod image_gen;
 mod peek;
@@ -614,6 +619,7 @@ pub fn run() {
             grok_login::grok_login_check,
             grok_login::grok_logout,
             agents::clear_account_conflicts,
+            agents::profile_terminal_command,
             agents::session_resume_command,
             agents::resume_external_terminal,
             agents::new_external_terminal,
