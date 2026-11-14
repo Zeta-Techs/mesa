@@ -171,10 +171,22 @@ export default function WorkbenchProjectGroup({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card.path, card.registered, taskSig]);
   const blockers = projectBlockers({ card, runs, mesaErrors, nowMs: Date.now(), isWindows: IS_WINDOWS, tailFailures });
+  // 左侧微状态锚线：只在出错 / 等人处理 / 正在跑时点亮，安静项目不画色条
+  const signal: "fail" | "wait" | "work" | undefined =
+    blockers.some((b) => b.tone === "fail") || card.tasks.some((t) => t.tone === "fail")
+      ? "fail"
+      : blockers.length > 0
+          || card.tasks.some((t) => t.queued || t.tone === "wait" || t.live?.attention === "confirm")
+          || consults.some((c) => !c.busy)
+        ? "wait"
+        : card.tasks.some((t) => t.live?.attention === "working" || t.tone === "live")
+            || consults.some((c) => c.busy)
+          ? "work"
+          : undefined;
   // 进度写在几个数里（「进行到 第 1 / 5 步」）：项目头不再挂进度条——下面的步骤序号圈已经说了走到哪（2026-10-27 用户：进度条突兀）
   const vitals = card.vitals;
   return (
-    <section className="ccode-workbench-list overflow-hidden rounded-xl" aria-label={card.name}>
+    <section className="ccode-workbench-list overflow-hidden rounded-xl py-0.5" data-signal={signal} aria-label={card.name}>
       <div className="ccode-workbench-project-head group flex min-w-0 flex-wrap items-center gap-2">
         <button
           type="button"
@@ -258,7 +270,11 @@ export default function WorkbenchProjectGroup({
       </div>
 
       {blockers.length > 0 && (
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 pb-1 pl-[calc(1.5rem+6px+0.75rem)] pr-4 text-xs">
+        <div className="ccode-workbench-blocker flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs">
+          <span
+            className={`size-1.5 shrink-0 rounded-full ${blockers.some((b) => b.tone === "fail") ? "bg-err-text" : "bg-warn-text"}`}
+            aria-hidden="true"
+          />
           <span className="shrink-0 text-l3">卡点</span>
           {blockers.slice(0, BLOCKERS_SHOWN).map((b) => (
             <button
@@ -284,7 +300,7 @@ export default function WorkbenchProjectGroup({
 
       <div id={contentsId} hidden={collapsed}>
         {shown.length > 0 && (
-          <ul className="pb-1.5">
+          <ul className="pb-1">
             {shown.map((task) => {
               const meta = task.live ? liveMeta(task.live) : null;
               const selected = selectedTaskId === task.id;
@@ -296,9 +312,9 @@ export default function WorkbenchProjectGroup({
                     type="button"
                     id={`wbt-${card.path}\n${task.id}`}
                     data-workbench-nav={`t:${card.path}\n${task.id}`}
-                    className={`ccode-workbench-task w-full text-left hover:bg-hover ${
+                    className={`ccode-workbench-task hover:bg-hover ${
                       openTaskId === task.id || selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : ""
-                    }`}
+                    } text-left w-[calc(100%-12px)]`}
                     aria-haspopup="dialog"
                     onClick={() => onOpenTask(task)}
                   >
@@ -309,15 +325,21 @@ export default function WorkbenchProjectGroup({
                       <span className="ccode-workbench-task-name min-w-0 text-sm text-l1" title={`${task.kindLabel} · ${task.name}`}>
                         {task.name}
                       </span>
+                      {task.live && (
+                        <span className="shrink-0 text-micro text-l4">
+                          {agentLabel(task.live.agentId) ?? task.live.agentId}
+                        </span>
+                      )}
+                    </span>
+                    <span className="ccode-workbench-task-status">
                       <span className={`ccode-workbench-task-state min-w-0 text-xs ${stateClass(task)}`} title={state}>
                         {task.current && !task.live ? `当前这一步 · ${state}` : state}
-                        {task.live ? ` · ${agentLabel(task.live.agentId) ?? task.live.agentId}` : ""}
                       </span>
                       {task.live && <RunCaret state={caretFor(task.live)} decorative className="shrink-0 text-micro" />}
+                      {task.queued && (
+                        <span className="ccode-workbench-task-flag shrink-0 rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
+                      )}
                     </span>
-                    {task.queued && (
-                      <span className="ccode-workbench-task-flag shrink-0 rounded-full bg-warn px-1.5 py-px text-micro text-warn-text">待拍板</span>
-                    )}
                     <span className="ccode-workbench-task-time min-w-0 text-micro tabular-nums text-l3" title={meta?.elapsed ? "这一轮已跑多久" : task.touchedAt ? `最后一次动它：${absTime(task.touchedAt)}` : undefined}>
                       {meta?.elapsed ? `本轮 ${meta.elapsed}` : shortWhen(task.touchedAt)}
                     </span>
@@ -329,7 +351,7 @@ export default function WorkbenchProjectGroup({
               <li>
                 <button
                   type="button"
-                  className="min-h-7 w-full pl-[calc(1.5rem+6px+0.75rem)] pr-4 text-left text-l3 hover:bg-hover hover:text-l1"
+                  className="mx-1.5 min-h-7 w-[calc(100%-12px)] rounded-lg pl-8 pr-3 text-left text-l3 hover:bg-hover hover:text-l1"
                   aria-expanded={expanded}
                   onClick={() => setExpanded((v) => !v)}
                 >
@@ -340,12 +362,12 @@ export default function WorkbenchProjectGroup({
           </ul>
         )}
         {!collapsed && consults.length > 0 && (
-          <ul className="pb-1.5" aria-label="进行中的研讨">
+          <ul className="pb-1" aria-label="进行中的研讨">
             {consults.map((c) => (
               <li key={c.id}>
                 <button
                   type="button"
-                  className="ccode-workbench-task w-full text-left hover:bg-hover"
+                  className="ccode-workbench-task w-[calc(100%-12px)] text-left hover:bg-hover"
                   title="去对话管理打开这场研讨"
                   onClick={() => onOpenConsult?.(c)}
                 >
@@ -356,6 +378,8 @@ export default function WorkbenchProjectGroup({
                     <span className="ccode-workbench-task-name min-w-0 text-sm text-l1" title={c.title}>
                       {c.title}
                     </span>
+                  </span>
+                  <span className="ccode-workbench-task-status">
                     <span className={`ccode-workbench-task-state min-w-0 text-xs ${c.busy ? "text-l3" : "text-warn-text"}`}>
                       研讨 · {liveConsultState(c)}
                     </span>
@@ -374,7 +398,7 @@ export default function WorkbenchProjectGroup({
         {!collapsed && card.registered ? (
           <SplitPlanRow projectPath={card.path} projectName={card.name} footer={footer} footerExpanded={footerExpanded} />
         ) : footer ? (
-          <div className="pb-2 pl-[calc(1.5rem+6px+0.25rem)] pr-4">{footer}</div>
+          <div className={`pb-1.5 pl-[calc(1.5rem+6px+0.25rem)] pr-4 ${footerExpanded ? "" : "ccode-workbench-foot"}`}>{footer}</div>
         ) : null}
       </div>
     </section>

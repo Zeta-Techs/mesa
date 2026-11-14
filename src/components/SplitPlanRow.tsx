@@ -120,7 +120,7 @@ export default function SplitPlanRow({
   const showTrigger = eligible && !plan && !asking && !footerExpanded;
   const footerRow =
     footer || showTrigger ? (
-      <div className="flex flex-wrap items-center gap-1 pb-2 pl-[calc(1.5rem+6px+0.25rem)] pr-4">
+      <div className={`flex flex-wrap items-center gap-1 pb-1.5 pl-[calc(1.5rem+6px+0.25rem)] pr-4 ${footerExpanded ? "" : "ccode-workbench-foot"}`}>
         {footer}
         {showTrigger && (
           <button

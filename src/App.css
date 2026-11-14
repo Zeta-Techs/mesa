@@ -4392,38 +4392,71 @@ select:focus-visible {
   border-left: 0;
   border-radius: var(--ccode-radius-panel);
 }
-/* 拍板队列、项目分组、定时任务：无边框气泡色底块（2026-10-29，原 strip 底 + 细线框） */
-.ccode-workbench-list { background: var(--color-chat-bubble); }
-.ccode-workbench-project-head {
-  min-height: 42px;
-  padding: 7px 14px 3px 6px;
+/* 拍板队列、项目分组、定时任务：统一回归全局 .ccode-well 卡片底色 + 微描边，项目组左侧只在有事时亮状态锚线（2026-11-15） */
+.ccode-workbench-list {
+  position: relative;
+  background: color-mix(in srgb, var(--ccode-surface-base, var(--color-canvas)) 65%, var(--color-raised));
+  border: 0.5px solid color-mix(in srgb, var(--color-hairline) 75%, transparent);
 }
-/* 项目头的时间与任务行时间同一右缘（右内边距相同、右对齐），宽度随字，按钮紧挨着它 */
-/* 项目头的去处 / 外开：悬停或焦点在这一组里时才出现（每组常驻一排按钮是噪音）；触屏没有悬停，照常显示 */
+.ccode-workbench-list[data-signal="wait"]::before,
+.ccode-workbench-list[data-signal="work"]::before,
+.ccode-workbench-list[data-signal="fail"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2.5px;
+  border-radius: 0 2px 2px 0;
+  pointer-events: none;
+}
+.ccode-workbench-list[data-signal="wait"]::before { background: var(--color-mesa-amber); }
+.ccode-workbench-list[data-signal="work"]::before { background: var(--color-ok-text); }
+.ccode-workbench-list[data-signal="fail"]::before { background: var(--color-err-text); }
+.ccode-workbench-project-head {
+  min-height: 40px;
+  padding: 7px 12px 5px 8px;
+}
+/* 内嵌式卡点提醒条：比裸字聚拢、不铺刺眼整底色 */
+.ccode-workbench-blocker {
+  margin: 0 10px 4px 36px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ccode-surface-base, var(--color-canvas)) 55%, transparent);
+}
+/* 项目头的去处 / 外开、分组底部的记目标及定时任务常驻「现在跑」：悬停或键盘焦点落入时显露，平时降噪；触屏无悬停照常显示 */
 @media (hover: hover) {
   .ccode-workbench-reveal { opacity: 0; transition: opacity 120ms; }
   section:hover > .ccode-workbench-project-head .ccode-workbench-reveal,
   section:focus-within > .ccode-workbench-project-head .ccode-workbench-reveal { opacity: 1; }
+  .ccode-workbench-foot { opacity: 0.65; transition: opacity 140ms; }
+  section:hover .ccode-workbench-foot,
+  section:focus-within .ccode-workbench-foot { opacity: 1; }
+  .ccode-workbench-schedule [data-routine-action="true"] { opacity: 0; transition: opacity 120ms; }
+  .ccode-workbench-schedule:hover [data-routine-action="true"],
+  .ccode-workbench-schedule:focus-within [data-routine-action="true"] { opacity: 1; }
 }
 .ccode-workbench-project-name { flex-basis: 12rem; }
 .ccode-workbench-queue-row {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px 10px;
   align-items: center;
-  padding: 11px 14px;
+  padding: 9px 12px;
 }
 .ccode-workbench-queue-symbol { width: 24px; height: 24px; border-radius: 7px; }
-.ccode-workbench-queue-actions > button { min-height: 30px; font-size: var(--text-xs); }
-/* 任务一行读完：点 · 名称紧跟状态 · 待拍板 · 时间（2026-10-27 精修，原七列 56px 行） */
+.ccode-workbench-queue-actions > button { min-height: 26px; font-size: var(--text-xs); }
+/* 任务行两区对齐：左图标 + 标题（带在跑 Agent 轻标），右对齐状态短语 / 光标 / 待拍板 + 等宽时间（2026-11-15，消除长短标题导致的状态锯齿） */
 .ccode-workbench-task {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto 7.5rem;
-  grid-template-areas: "dot main flag time";
+  grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto) 5.6rem;
+  grid-template-areas: "dot main status time";
   align-items: center;
   column-gap: 10px;
   min-height: 34px;
-  padding: 5px 14px 5px 14px;
+  margin: 0 6px;
+  padding: 5px 8px 5px 10px;
+  border-radius: 8px;
 }
 /* 步骤序号圈：当前步实心（强调色底），其余描边；颜色跟随所在行的语气 */
 .ccode-workbench-step-badge {
@@ -4440,26 +4473,36 @@ select:focus-visible {
 }
 .ccode-workbench-step-badge.is-current { background: var(--color-nav-accent); border-color: var(--color-nav-accent); color: var(--color-canvas); }
 .ccode-workbench-task-dot { grid-area: dot; }
-.ccode-workbench-task-main { grid-area: main; display: flex; align-items: baseline; gap: 8px; overflow: hidden; }
+.ccode-workbench-task-main { grid-area: main; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
 .ccode-workbench-task-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccode-workbench-task-status {
+  grid-area: status;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 20rem;
+}
 .ccode-workbench-task-state { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ccode-workbench-task-flag { grid-area: flag; }
 .ccode-workbench-task-time { grid-area: time; text-align: right; white-space: nowrap; }
 .ccode-workbench-schedule {
   display: grid;
-  grid-template-columns: 6.5rem minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  grid-template-columns: 5.5rem minmax(0, 1.2fr) minmax(0, 1fr) auto;
   grid-template-areas: "time identity state action";
   align-items: center;
-  column-gap: 12px;
+  column-gap: 10px;
   row-gap: 2px;
-  min-height: 44px;
-  padding: 6px 14px;
+  min-height: 42px;
+  margin: 0 5px;
+  padding: 6px 9px;
+  border-radius: 8px;
 }
 .ccode-workbench-schedule-time { grid-area: time; }
 .ccode-workbench-schedule-identity { grid-area: identity; }
 .ccode-workbench-schedule-state { grid-area: state; }
 .ccode-workbench-schedule-action { grid-area: action; }
-.ccode-workbench-schedule-action > button { min-height: 30px; font-size: var(--text-xs); }
+.ccode-workbench-schedule-action > button { min-height: 26px; font-size: var(--text-xs); }
 .ccode-workbench-time-item {
   display: flex;
   gap: 8px;
@@ -4471,32 +4514,43 @@ select:focus-visible {
   font-size: var(--text-xs);
 }
 .ccode-workbench-time-item:hover { background: var(--color-hover); }
+.ccode-workbench-quiet-chip {
+  background: color-mix(in srgb, var(--ccode-surface-base, var(--color-canvas)) 65%, var(--color-raised));
+  border: 0.5px solid color-mix(in srgb, var(--color-hairline) 75%, transparent);
+  transition: background-color 120ms, color 120ms, border-color 120ms;
+}
+.ccode-workbench-quiet-chip:hover {
+  background: var(--color-seg-sel);
+  border-color: var(--color-field);
+}
 @container workbench (max-width: 740px) {
-  .ccode-workbench-task { grid-template-columns: 16px minmax(0, 1fr) auto 5.5rem; }
+  .ccode-workbench-task { grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto) 5rem; }
+  .ccode-workbench-task-status { max-width: 14rem; }
   .ccode-workbench-vitals { display: none; }
   .ccode-workbench-project-name { flex-basis: 10rem; }
   .ccode-workbench-schedule {
-    grid-template-columns: 5.5rem minmax(0, 1fr) auto;
+    grid-template-columns: 4.2rem minmax(0, 1fr) auto;
     grid-template-areas: "time identity action" ". state action";
-    column-gap: 10px;
+    column-gap: 8px;
   }
-  .ccode-workbench-queue-row { grid-template-columns: 24px minmax(0, 1fr); }
-  .ccode-workbench-queue-actions { grid-column: 2; justify-content: flex-start; }
+  .ccode-workbench-queue-row { grid-template-columns: 24px minmax(0, 1fr); gap: 6px 9px; }
+  .ccode-workbench-queue-actions { grid-column: 2; justify-content: flex-end; }
 }
 @container workbench (max-width: 470px) {
-  /* 最窄：状态换到名称下面，时间跟在状态后 */
+  /* 最窄：任务状态换到名称下面，时间跟在状态后；340px 右栏里的定时任务保持三列横排不再把按钮拆到第三行 */
   .ccode-workbench-task {
-    grid-template-columns: 16px minmax(0, 1fr) auto;
-    grid-template-areas: "dot main flag" ". time time";
+    grid-template-columns: 18px minmax(0, 1fr);
+    grid-template-areas: "dot main" ". status" ". time";
     row-gap: 2px;
-    padding-right: 12px;
   }
-  .ccode-workbench-task-main { flex-direction: column; align-items: flex-start; gap: 1px; }
+  .ccode-workbench-task-status { justify-content: flex-start; max-width: 100%; }
   .ccode-workbench-task-name, .ccode-workbench-task-state { max-width: 100%; }
   .ccode-workbench-task-time { text-align: left; }
   .ccode-workbench-updated { display: none; }
+}
+@container workbench (max-width: 280px) {
   .ccode-workbench-schedule {
-    grid-template-columns: 4.5rem minmax(0, 1fr);
+    grid-template-columns: 4rem minmax(0, 1fr);
     grid-template-areas: "time identity" ". state" ". action";
   }
   .ccode-workbench-schedule-action { text-align: left; }

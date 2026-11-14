@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 设计对比 ① · 工作台 UI 优化方案</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626;
+    --strip: #1c1c1c; --canvas: #111111; --inset: #212121; --raised: #272727;
+    --seg-sel: #2b2b2b; --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --cta: #0169cc; --cta-text: #eaf4ff; --nav-accent: var(--cta);
+    --hover: rgb(255 255 255 / 0.05);
+    --ok: #10331f; --ok-text: #4cc38a;
+    --err: #381e24; --err-text: #f07070;
+    --warn: #37300f; --warn-text: #f0c010;
+    --mesa-amber: #f5b83d; --mesa-amber-ink: #1d1608;
+    --link: #60a0f0;
+    --well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+    --chat-bubble: color-mix(in oklab, var(--canvas), var(--l1) 4.5%);
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #1b1815; --rail-sel: #312d29;
+    --strip: #1e1b18; --canvas: #15130f; --inset: #23211d; --raised: #2c2925;
+    --seg-sel: #35322d; --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+    --cta: #f5b83d; --cta-text: #1d1608; --nav-accent: var(--cta);
+  }
+  [data-theme="midnight"] {
+    --rail: #0c0b09; --rail2: #1a1917; --rail-sel: #31302d;
+    --strip: #1e1d1b; --canvas: #131210; --inset: #232220; --raised: #2b2a28;
+    --seg-sel: #373633; --hairline: #31302d; --field: #464542;
+    --l1: #e9e6e2; --l2: #bdbab4; --l3: #95959a; --l4: #6b6b72;
+    --cta: #faa8d4; --cta-text: #2a1220; --nav-accent: var(--cta);
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f6f2e9; --rail-sel: #e1dcd3;
+    --strip: #fbf5ed; --canvas: #f2eee5; --inset: #fefaf6; --raised: #ffffff;
+    --seg-sel: #d2cdc3; --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --cta: #e39a1c; --cta-text: #241a02; --nav-accent: var(--cta);
+    --hover: rgb(0 0 0 / 0.045);
+    --ok: #dcfce7; --ok-text: #16794b;
+    --err: #fee2e2; --err-text: #b91c1c;
+    --warn: #fef3c7; --warn-text: #92560a;
+    --mesa-amber: #e39a1c; --mesa-amber-ink: #ffffff;
+    --link: #2470d8;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #08090b;
+    color: var(--l2);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 顶部设计导航栏 */
+  .suite-nav {
+    position: sticky; top: 0; z-index: 40;
+    background: rgba(12, 13, 16, 0.92);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid #23252a;
+    padding: 10px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+    color: #c8c8ce; font-size: 12.5px;
+  }
+  .suite-links { display: inline-flex; gap: 4px; background: #17181c; padding: 3px; border-radius: 9px; border: 1px solid #282a30; }
+  .suite-links a {
+    color: #9496a1; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-weight: 500; transition: .12s;
+  }
+  .suite-links a:hover { color: #e5e5e5; background: rgba(255,255,255,.04); }
+  .suite-links a.active { background: #2b2e37; color: #fff; }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 6px; }
+  .ctrl-label { color: #7c7e88; font-size: 12px; }
+  .seg {
+    display: inline-flex; background: #17181c; padding: 2px; border-radius: 8px; border: 1px solid #282a30; gap: 2px;
+  }
+  .seg button {
+    background: none; border: 0; color: #9496a1; padding: 4px 10px; border-radius: 6px;
+    font: inherit; font-size: 12px; cursor: pointer; transition: .12s;
+  }
+  .seg button:hover { color: #e5e5e5; }
+  .seg button.on { background: #2c2f38; color: #fff; font-weight: 500; }
+
+  /* 设计要点横幅 */
+  .summary-strip {
+    max-width: 1640px; margin: 16px auto 0; padding: 0 20px;
+  }
+  .summary-grid {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+  }
+  .sum-card {
+    background: #131418; border: 1px solid #22242b; border-radius: 10px; padding: 11px 13px;
+  }
+  .sum-card b { display: block; color: #ededf0; font-size: 12.5px; margin-bottom: 3px; }
+  .sum-card p { margin: 0; color: #8c8f99; font-size: 12px; line-height: 1.45; }
+  .sum-num {
+    display: inline-flex; width: 17px; height: 17px; border-radius: 5px;
+    background: rgba(245, 184, 61, 0.16); color: #f5b83d; font-size: 11px; font-weight: 700;
+    align-items: center; justify-content: center; margin-right: 5px;
+  }
+
+  /* 舞台容器 */
+  .stage {
+    max-width: 1640px; margin: 16px auto 40px; padding: 0 20px;
+    display: grid; gap: 18px;
+  }
+  .stage.split { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stage.single { grid-template-columns: minmax(0, 1fr); }
+
+  .pane-wrap { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .pane-badge-row { display: flex; align-items: center; gap: 8px; padding: 0 4px; }
+  .pane-badge {
+    font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  }
+  .pane-badge.now { background: #23252b; color: #a5a7b2; }
+  .pane-badge.new { background: rgba(245, 184, 61, 0.16); color: #f5b83d; border: 0.5px solid rgba(245, 184, 61, 0.35); }
+  .pane-caption { font-size: 12px; color: #858892; }
+
+  /* 模拟 Mesa 窗口 */
+  .mesa-win {
+    background: var(--rail);
+    color: var(--l2);
+    border-radius: 14px;
+    border: 1px solid color-mix(in srgb, var(--field) 80%, transparent);
+    overflow: hidden;
+    display: flex;
+    min-height: 680px;
+  }
+  .mesa-side {
+    width: 212px; flex: none; padding: 14px 10px;
+    display: flex; flex-direction: column; gap: 2px;
+    font-size: 13px; color: var(--l2);
+  }
+  .stage.split .mesa-side { width: 168px; padding: 12px 8px; font-size: 12px; }
+  .traffic { display: flex; gap: 6px; padding: 2px 8px 12px; }
+  .traffic i { width: 10px; height: 10px; border-radius: 50%; background: color-mix(in srgb, var(--l4) 45%, transparent); }
+  .nav-it {
+    height: 32px; padding: 0 8px; border-radius: 7px; display: flex; align-items: center; gap: 8px;
+    color: var(--l1); cursor: default; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .nav-it svg { width: 14px; height: 14px; color: var(--l3); flex: none; }
+  .nav-it.active { background: var(--rail-sel); font-weight: 500; position: relative; }
+  .nav-it.active::before {
+    content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 2.5px; border-radius: 2px; background: var(--nav-accent);
+  }
+  .nav-it.active svg { color: var(--nav-accent); }
+  .nav-sec { margin: 14px 8px 4px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--l3); }
+  .tree-it {
+    height: 29px; padding: 0 8px; border-radius: 6px; display: flex; align-items: center; gap: 7px;
+    color: var(--l2); font-size: 12.5px;
+  }
+  .tree-it .caret { margin-left: auto; width: 7px; height: 2.8px; border-radius: 1px; }
+  .caret.work { background: var(--l3); animation: breathe 2.4s ease-in-out infinite; }
+  .caret.wait { background: var(--mesa-amber); }
+  .caret.unread { background: var(--link); }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.24; } }
+
+  /* 主内容壳 */
+  .mesa-body {
+    flex: 1; min-width: 0; display: flex; flex-direction: column;
+    background: var(--canvas);
+    margin: 6px 6px 6px 0;
+    border-radius: 10px;
+    border: 0.5px solid color-mix(in srgb, var(--hairline) 75%, transparent);
+    overflow: hidden;
+  }
+  .win-top {
+    height: 36px; padding: 0 14px; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    font-size: 12px; color: var(--l3); border-bottom: 0.5px solid color-mix(in srgb, var(--hairline) 50%, transparent);
+  }
+  .wb-scroll { padding: 18px 22px 28px; flex: 1; overflow: auto; }
+  .stage.split .wb-scroll { padding: 16px 16px 24px; }
+
+  .wb-grid { display: grid; gap: 20px; align-items: start; }
+  .wb-grid.two-col { grid-template-columns: minmax(0, 1fr) 310px; }
+  .stage.split .wb-grid.two-col { grid-template-columns: minmax(0, 1fr) 248px; gap: 14px; }
+  .wb-grid.one-col { grid-template-columns: minmax(0, 1fr); max-width: 920px; }
+
+  /* 区块标题 */
+  .sec-head {
+    display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; flex-wrap: wrap;
+  }
+  .sec-head h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--l1); letter-spacing: -0.01em; }
+  .count-pill {
+    font-size: 11px; color: var(--l3); background: var(--well); padding: 1px 7px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .filter-seg {
+    display: inline-flex; background: var(--well); padding: 2px; border-radius: 7px; gap: 1px; font-size: 11.5px;
+  }
+  .filter-seg span {
+    padding: 2px 8px; border-radius: 5px; color: var(--l3); cursor: pointer;
+  }
+  .filter-seg span.on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+  .ghost-btn {
+    display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
+    border-radius: 6px; border: 0; background: transparent; color: var(--l3); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .ghost-btn:hover { background: var(--hover); color: var(--l1); }
+
+  /* ==================== 现状（NOW）样式还原 ==================== */
+  .now-card {
+    background: var(--chat-bubble);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .now-ph {
+    display: flex; align-items: center; gap: 7px; padding: 9px 14px 7px 10px; min-height: 42px;
+  }
+  .now-pname { font-size: 13.5px; font-weight: 600; color: var(--l1); }
+  .now-vitals { font-size: 12px; color: var(--l3); }
+  .now-blocker {
+    padding: 0 14px 6px 38px; font-size: 12px; display: flex; gap: 8px; color: var(--warn-text);
+  }
+  .now-blocker b { color: var(--l3); font-weight: 400; }
+  .now-row {
+    display: flex; align-items: center; gap: 9px; padding: 6px 14px 6px 14px; min-height: 34px;
+    font-size: 13px;
+  }
+  .now-row:hover { background: var(--hover); }
+  .now-row .nm { color: var(--l1); }
+  .now-row .st { color: var(--l3); font-size: 12px; margin-left: 7px; }
+  .now-row .tm { margin-left: auto; font-size: 11px; color: var(--l3); font-variant-numeric: tabular-nums; flex: none; }
+  .now-foot {
+    padding: 2px 14px 9px 34px; display: flex; gap: 6px;
+  }
+  .now-queue { background: var(--chat-bubble); border-radius: 12px; padding: 4px 0; }
+  .now-qrow { padding: 8px 12px; display: flex; gap: 9px; align-items: flex-start; }
+  .now-qrow:hover { background: var(--hover); }
+  .now-qbox { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--warn-text); flex: none; margin-top: 2px; }
+  .now-sched {
+    background: var(--chat-bubble); border-radius: 12px; padding: 10px 13px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .now-pill-btn {
+    border: 0.5px solid var(--field); border-radius: 6px; padding: 3px 9px; font-size: 11.5px; color: var(--l2); background: transparent;
+  }
+
+  /* ==================== 优化方案（NEW）样式 ==================== */
+  /* 离开期间简报条 */
+  .away-bar {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--well);
+    border-radius: 10px;
+    padding: 7px 12px;
+    margin-bottom: 14px;
+    font-size: 12px; color: var(--l2);
+  }
+  .away-bar .m-mark { display: inline-flex; align-items: flex-end; gap: 2px; flex: none; }
+  .away-bar .m-mark i { width: 6px; height: 2.6px; border-radius: 1px; background: var(--mesa-amber); }
+
+  /* 项目分组卡：回归全局统一的 .ccode-well 底色 + 左侧微状态锚线（只在有事时亮） */
+  .new-card {
+    position: relative;
+    background: var(--well);
+    border-radius: 12px;
+    margin-bottom: 10px;
+    padding: 2px 0 4px;
+    transition: background-color .14s;
+  }
+  .new-card[data-signal="wait"]::before,
+  .new-card[data-signal="work"]::before,
+  .new-card[data-signal="err"]::before {
+    content: "";
+    position: absolute; left: 0; top: 12px; bottom: 12px; width: 2.5px; border-radius: 0 2px 2px 0;
+  }
+  .new-card[data-signal="wait"]::before { background: var(--mesa-amber); }
+  .new-card[data-signal="work"]::before { background: var(--ok-text); }
+  .new-card[data-signal="err"]::before { background: var(--err-text); }
+
+  .new-ph {
+    display: flex; align-items: center; gap: 7px; padding: 8px 12px 6px 10px; min-height: 40px;
+  }
+  .chev-btn {
+    width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--l4); font-size: 11px; cursor: pointer; flex: none;
+  }
+  .chev-btn:hover { background: var(--hover); color: var(--l1); }
+  .mode-ic { color: var(--l3); display: inline-flex; flex: none; }
+  .new-pname { font-size: 13.5px; font-weight: 600; color: var(--l1); cursor: pointer; }
+  .new-pname:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .new-vitals {
+    font-size: 11.5px; color: var(--l3); display: inline-flex; align-items: center; gap: 6px;
+    margin-left: 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .new-vitals .sep { color: var(--l4); }
+  .ph-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex: none; }
+  .jump-pill {
+    opacity: 0; transition: opacity .12s, background-color .12s;
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 9px; border-radius: 6px;
+    background: color-mix(in srgb, var(--raised) 80%, transparent);
+    color: var(--l2); font-size: 11.5px; font-weight: 500; cursor: pointer; border: 0;
+  }
+  .jump-pill:hover { background: var(--seg-sel); color: var(--l1); }
+  .new-card:hover .jump-pill, .new-card:hover .reveal-ic { opacity: 1; }
+  .reveal-ic {
+    opacity: 0; transition: opacity .12s;
+    width: 24px; height: 24px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center;
+    color: var(--l3); cursor: pointer;
+  }
+  .reveal-ic:hover { background: var(--hover); color: var(--l1); }
+  .ask-why-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    height: 24px; padding: 0 8px; border-radius: 6px;
+    color: var(--l2); font-size: 11.5px; cursor: pointer;
+  }
+  .ask-why-pill:hover { background: var(--hover); color: var(--l1); }
+
+  /* 内嵌式卡点提醒条（比裸文字更聚拢，不铺刺眼底色） */
+  .new-blocker {
+    margin: 0 10px 4px 36px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--canvas) 55%, transparent);
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; color: var(--l2); cursor: pointer;
+  }
+  .new-blocker:hover { background: var(--hover); }
+  .new-blocker .b-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn-text); flex: none; }
+
+  /* 任务行：左图标 + 标题，右侧对齐状态胶囊/短语 + 等宽时间，视线不再来回折返 */
+  .new-row {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto 4.6rem;
+    align-items: center;
+    gap: 8px;
+    margin: 0 6px;
+    padding: 6px 8px 6px 10px;
+    border-radius: 8px;
+    min-height: 34px;
+    cursor: pointer;
+  }
+  .new-row:hover { background: var(--hover); }
+  .step-circle {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 1.4px solid var(--l4); color: var(--l3);
+    font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .step-circle.cur {
+    background: var(--nav-accent); border-color: var(--nav-accent); color: var(--cta-text); font-weight: 700;
+  }
+  .row-title-wrap { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .row-nm { color: var(--l1); font-size: 13px; font-weight: 450; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-agent-tag { font-size: 11px; color: var(--l4); flex: none; }
+  .row-state {
+    font-size: 12px; color: var(--l3); display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .row-state.live { color: var(--ok-text); }
+  .row-state.wait { color: var(--warn-text); }
+  .row-state.err { color: var(--err-text); }
+  .row-tm { text-align: right; font-size: 11px; color: var(--l4); font-variant-numeric: tabular-nums; }
+
+  /* 组尾记目标：平时收敛成极安静的一行微字，悬停亮起，不抢任务视觉权重 */
+  .new-foot {
+    margin: 2px 6px 0 28px;
+    padding: 3px 8px;
+    display: flex; align-items: center; gap: 12px;
+    opacity: 0.62; transition: opacity .14s;
+  }
+  .new-card:hover .new-foot { opacity: 1; }
+  .foot-act {
+    font-size: 11.5px; color: var(--l3); cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px; border-radius: 5px;
+  }
+  .foot-act:hover { background: var(--hover); color: var(--l1); }
+
+  /* 安静项目折叠底栏 */
+  .quiet-bar {
+    margin-top: 8px; padding: 7px 12px; border-radius: 10px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    font-size: 12px; color: var(--l3);
+  }
+  .quiet-chip {
+    padding: 2px 8px; border-radius: 6px; background: var(--well); color: var(--l2);
+    font-size: 12px; cursor: pointer; transition: .12s;
+  }
+  .quiet-chip:hover { background: var(--seg-sel); color: var(--l1); }
+
+  /* 右栏：等你拍板（紧凑两行 + 行内直接响应钮） */
+  .new-queue {
+    background: var(--well); border-radius: 12px; padding: 4px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .new-qitem {
+    padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background-color .12s;
+  }
+  .new-qitem:hover { background: var(--hover); }
+  .nq-top { display: flex; align-items: center; gap: 7px; }
+  .nq-caret { width: 7px; height: 3px; border-radius: 1px; background: var(--mesa-amber); flex: none; }
+  .nq-caret.done { background: var(--ok-text); }
+  .nq-title { font-size: 12.5px; font-weight: 500; color: var(--l1); min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nq-sub {
+    margin-top: 4px; padding-left: 14px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    font-size: 11.5px; color: var(--l3);
+  }
+  .nq-btns { display: inline-flex; gap: 4px; }
+  .mini-act {
+    padding: 1px 7px; border-radius: 5px; font-size: 11px; color: var(--l2);
+    background: var(--raised); border: 0.5px solid var(--field); cursor: pointer;
+  }
+  .mini-act:hover { background: var(--seg-sel); color: var(--l1); }
+  .mini-act.pri { color: var(--l1); font-weight: 500; }
+
+  /* 右栏：定时任务（时间轴式排布 + 悬停才显「现在跑」） */
+  .new-sched-list {
+    background: var(--well); border-radius: 12px; padding: 5px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .new-srow {
+    display: grid; grid-template-columns: 3.4rem minmax(0, 1fr) auto;
+    align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px; cursor: pointer;
+  }
+  .new-srow:hover { background: var(--hover); }
+  .s-time { font-size: 12px; font-weight: 600; color: var(--l1); font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .s-day { display: block; font-size: 10.5px; font-weight: 400; color: var(--l4); }
+  .s-name { font-size: 12.5px; font-weight: 500; color: var(--l1); }
+  .s-meta { font-size: 11px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .s-run {
+    opacity: 0; transition: opacity .12s;
+    padding: 2px 8px; border-radius: 5px; font-size: 11px; color: var(--l2); background: var(--raised);
+  }
+  .new-srow:hover .s-run { opacity: 1; }
+
+  /* 空状态对比 */
+  .empty-card {
+    background: var(--well); border-radius: 14px; padding: 26px 28px; max-width: 640px;
+  }
+  .btn-pri {
+    height: 32px; padding: 0 14px; border-radius: 8px; border: 0;
+    background: var(--cta); color: var(--cta-text); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .btn-sec {
+    height: 32px; padding: 0 13px; border-radius: 8px; border: 0.5px solid var(--field);
+    background: var(--raised); color: var(--l1); font: inherit; font-size: 13px; cursor: pointer;
+  }
+
+  @media (max-width: 1180px) {
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .stage.split { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="suite-nav">
+  <strong style="color:#fff">Mesa 设计方案预览</strong>
+  <div class="suite-links">
+    <a href="./design-workbench-v2-mockup.html" class="active">① 工作台 UI 优化</a>
+    <a href="./design-agent-binding-picker-mockup.html">② Agent 专属绑定 + 权限/思考预设</a>
+    <a href="./design-chat-brand-status-mockup.html">③ 聊天层 M▁ 状态设计</a>
+    <a href="./design-global-ui-polish-mockup.html">④ 全局 UI 建议 &amp; 删示例课题</a>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">视图</span>
+    <div class="seg" id="viewMode">
+      <button data-v="split" class="on">左右同屏对比</button>
+      <button data-v="new">只看优化方案（全宽）</button>
+      <button data-v="now">只看现在（全宽）</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">场景</span>
+    <div class="seg" id="sceneMode">
+      <button data-s="busy" class="on">日常多项目推进</button>
+      <button data-s="empty">新用户首次打开（已去示例课题）</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">主题</span>
+    <div class="seg" id="themeMode">
+      <button data-t="neutral" class="on">极简灰蓝</button>
+      <button data-t="ayu">暖炭琥珀</button>
+      <button data-t="midnight">沉浸黑</button>
+      <button data-t="ayu-light">暖炭·浅</button>
+    </div>
+  </div>
+</nav>
+
+<section class="summary-strip">
+  <div class="summary-grid">
+    <div class="sum-card">
+      <b><span class="sum-num">1</span>底色统一 + 左缘语义微锚点</b>
+      <p>分组底色从过浅的气泡色回到全站统一的 <code>.ccode-well</code>；仅在项目「等你 / 在跑 / 出错」时亮一道 2.5px 左缘色线，0.2 秒扫出重点，零整卡染色。</p>
+    </div>
+    <div class="sum-card">
+      <b><span class="sum-num">2</span>任务行「双区对齐」，视线不折返</b>
+      <p>现状的状态灰字紧跟在长短不一的任务名后，起点参差不齐；改为「左任务名 · 右侧状态+呼吸光标 · 定宽等宽时间」，扫读像表格一样顺滑但无表格线。</p>
+    </div>
+    <div class="sum-card">
+      <b><span class="sum-num">3</span>卡点收进暗槽，组尾动作降噪</b>
+      <p>「卡点」从散落的黄字收成内嵌浅暗条；「＋ 记下一个目标」平时降到 60% 静默微字、悬停项目时亮起；无事项目化为可点胶囊而不是顿号长句。</p>
+    </div>
+    <div class="sum-card">
+      <b><span class="sum-num">4</span>右栏拍板行内直达 + 定时去描边</b>
+      <p>「等你拍板」用琥珀光标标需要你定的事、绿色标待验收成果，行内直接给轻量「允许/去评审」；「定时任务」改左时刻右详情，「现在跑」悬停才露。</p>
+    </div>
+  </div>
+</section>
+
+<main class="stage split" id="stage"></main>
+
+<script>
+const ICONS = {
+  flask: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>`,
+  code: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`,
+  briefcase: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>`,
+  branch: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
+  target: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
+  buddy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5.2H8.4a4.8 4.8 0 0 0-4.8 4.8v3.4a4.8 4.8 0 0 0 4.8 4.8h.9v2.6l3.4-2.6h2.9a4.8 4.8 0 0 0 4.8-4.8v-1.6"/><path d="M19.4 2.2l.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55z" fill="#f5b83d" stroke="#f5b83d" stroke-width="1"/><ellipse cx="9.3" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none"/><ellipse cx="14.5" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none"/><path d="M10.5 14.3c.8.7 2 .7 2.8 0"/></svg>`,
+  plus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>`,
+  wb: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>`,
+  chats: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/></svg>`
+};
+
+function renderSidebar() {
+  return `
+    <aside class="mesa-side">
+      <div class="traffic"><i></i><i></i><i></i></div>
+      <div class="nav-it">${ICONS.plus} 新对话</div>
+      <div class="nav-it">${ICONS.plus} 新项目</div>
+      <div class="nav-it active">${ICONS.wb} 工作台</div>
+      <div class="nav-it">${ICONS.chats} 对话管理</div>
+      <div class="nav-sec">项目</div>
+      <div class="tree-it">📁 HER催化综述 <span class="caret work"></span></div>
+      <div class="tree-it">📁 AI模型评测 <span class="caret wait"></span></div>
+      <div class="tree-it">📁 Ccode <span class="caret unread"></span></div>
+      <div class="tree-it">📁 电化学数据清洗</div>
+      <div class="tree-it">📁 组会幻灯片</div>
+    </aside>`;
+}
+
+function renderNowBusy() {
+  return `
+    <div class="wb-grid two-col">
+      <div>
+        <div class="sec-head">
+          <h2>项目</h2>
+          <span class="count-pill">1 个运行中</span>
+          <span style="flex:1"></span>
+          <button class="ghost-btn">${ICONS.buddy} 项目助手</button>
+          <div class="filter-seg"><span class="on">进行中 3</span><span>全部</span><span>科研</span><span>编程</span></div>
+        </div>
+
+        <div class="now-card">
+          <div class="now-ph">
+            <span style="color:var(--l3)">⌄</span>
+            <span class="mode-ic">${ICONS.briefcase}</span>
+            <span class="now-pname">AI模型评测</span>
+            <span style="flex:1"></span>
+            <button class="ghost-btn" style="color:var(--l2)">${ICONS.buddy} 问问怎么回事</button>
+          </div>
+          <div class="now-blocker"><b>卡点</b><span>「整理各家最新推理模型对比表」上次停了，需要处理</span></div>
+          <div class="now-row">
+            <span class="mode-ic">${ICONS.target}</span>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <span class="nm">整理各家最新推理模型对比表</span>
+              <span class="st" style="color:var(--warn-text)">上次停了，需要处理</span>
+            </span>
+            <span class="tm">2 小时前</span>
+          </div>
+          <div class="now-foot">
+            <button class="ghost-btn">＋ 记下一个目标</button>
+            <button class="ghost-btn">⑂ 拆成几个目标同时做…</button>
+          </div>
+        </div>
+
+        <div class="now-card">
+          <div class="now-ph">
+            <span style="color:var(--l3)">⌄</span>
+            <span class="mode-ic">${ICONS.flask}</span>
+            <span class="now-pname">HER催化综述</span>
+            <span class="now-vitals">进行到 第 2 / 5 步</span>
+          </div>
+          <div class="now-row">
+            <span class="step-circle cur">2</span>
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+              <span class="nm">文献精读与笔记</span>
+              <span class="st" style="color:var(--ok-text)">正在干活 · 编辑 notes/08-chen2025.md · Claude Code</span>
+            </span>
+            <span class="tm">本轮 6 分钟</span>
+          </div>
+          <div class="now-row">
+            <span class="step-circle">3</span>
+            <span><span class="nm">综述大纲</span><span class="st">提前开了，还没保存</span></span>
+            <span class="tm">昨天</span>
+          </div>
+        </div>
+
+        <div class="now-card">
+          <div class="now-ph">
+            <span style="color:var(--l3)">⌄</span>
+            <span class="mode-ic">${ICONS.code}</span>
+            <span class="now-pname">Ccode</span>
+            <span class="now-vitals">基准 main · 分支 2 条 · 需同步 1</span>
+          </div>
+          <div class="now-row">
+            <span class="mode-ic">${ICONS.branch}</span>
+            <span><span class="nm">feat/agent-slot-filter</span><span class="st">比 main 多出提交，等待合并</span></span>
+            <span class="tm">18 分钟前</span>
+          </div>
+        </div>
+
+        <p style="font-size:12px;color:var(--l3);padding:4px 12px">
+          其他 2 个项目没有进行中的事：<span style="color:var(--l2)">电化学数据清洗</span> · <span style="color:var(--l2)">组会幻灯片</span>
+        </p>
+      </div>
+
+      <aside>
+        <div class="sec-head"><h2 style="font-size:15px">等你拍板</h2><span class="count-pill">2</span></div>
+        <div class="now-queue">
+          <div class="now-qrow">
+            <span class="now-qbox"></span>
+            <div style="min-width:0">
+              <div style="color:var(--l1);font-size:12.5px">Codex 请求运行脚本 lit_records.py</div>
+              <div style="color:var(--l3);font-size:11.5px;margin-top:2px">HER催化综述 · 待确认</div>
+            </div>
+          </div>
+          <div class="now-qrow">
+            <span class="now-qbox" style="border-color:var(--ok-text)"></span>
+            <div style="min-width:0">
+              <div style="color:var(--l1);font-size:12.5px">「文献检索与筛选」待评审</div>
+              <div style="color:var(--l3);font-size:11.5px;margin-top:2px">电化学数据清洗 · 可合并</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-head" style="margin-top:22px"><h2 style="font-size:15px">定时任务</h2><span class="count-pill">2 个在用</span></div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="now-sched">
+            <div>
+              <div style="color:var(--l1);font-size:12.5px">明天 08:30 · 文献雷达</div>
+              <div style="color:var(--l3);font-size:11.5px">HER催化综述 · 每天 · 上次命中 3</div>
+            </div>
+            <span class="now-pill-btn">现在跑</span>
+          </div>
+          <div class="now-sched">
+            <div>
+              <div style="color:var(--l1);font-size:12.5px">周五 18:00 · 进展周报草稿</div>
+              <div style="color:var(--l3);font-size:11.5px">AI模型评测 · 每周</div>
+            </div>
+            <span class="now-pill-btn">现在跑</span>
+          </div>
+        </div>
+      </aside>
+    </div>`;
+}
+
+function renderNewBusy() {
+  return `
+    <div class="away-bar">
+      <span class="m-mark"><b style="color:var(--l1);font-size:12px">M</b><i></i></span>
+      <span>你离开的 45 分钟里：<b>HER催化综述</b> 完成了 2 篇文献笔记，<b>文献雷达</b> 发现 3 篇新论文。</span>
+      <button class="ghost-btn" style="margin-left:auto;height:22px;font-size:11.5px">知道了</button>
+    </div>
+
+    <div class="wb-grid two-col">
+      <div>
+        <div class="sec-head">
+          <h2>项目</h2>
+          <span class="count-pill" style="color:var(--ok-text)">1 运行中</span>
+          <span style="flex:1"></span>
+          <button class="ghost-btn">${ICONS.buddy} 项目助手</button>
+          <div class="filter-seg"><span class="on">进行中 3</span><span>全部</span><span>科研</span><span>编程</span></div>
+        </div>
+
+        <!-- 有卡点项目：左缘琥珀微色条 + 内嵌暗槽卡点条 -->
+        <div class="new-card" data-signal="wait">
+          <div class="new-ph">
+            <span class="chev-btn">⌄</span>
+            <span class="mode-ic">${ICONS.briefcase}</span>
+            <span class="new-pname">AI模型评测</span>
+            <span class="new-vitals"><span class="sep">·</span>1 个目标需处理</span>
+            <div class="ph-actions">
+              <button class="jump-pill">打开项目 →</button>
+              <span class="ask-why-pill">${ICONS.buddy} 问问怎么回事</span>
+            </div>
+          </div>
+          <div class="new-blocker">
+            <span class="b-dot"></span>
+            <span style="min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">卡点：「整理各家最新推理模型对比表」上次中断，未生成对比汇总</span>
+            <span style="color:var(--l4);font-size:11px;flex:none">查看详情 ›</span>
+          </div>
+          <div class="new-row">
+            <span class="mode-ic">${ICONS.target}</span>
+            <div class="row-title-wrap"><span class="row-nm">整理各家最新推理模型对比表</span></div>
+            <span class="row-state wait">上次停了，需要处理</span>
+            <span class="row-tm">2 小时前</span>
+          </div>
+          <div class="new-foot">
+            <span class="foot-act">＋ 记下一个目标</span>
+            <span class="foot-act">⑂ 拆成几个目标同时做…</span>
+          </div>
+        </div>
+
+        <!-- 运行中科研项目：左缘绿微色条 + 双区对齐任务行 -->
+        <div class="new-card" data-signal="work">
+          <div class="new-ph">
+            <span class="chev-btn">⌄</span>
+            <span class="mode-ic">${ICONS.flask}</span>
+            <span class="new-pname">HER催化综述</span>
+            <span class="new-vitals">第 2 / 5 步</span>
+            <div class="ph-actions">
+              <button class="jump-pill">回到对话 →</button>
+              <span class="reveal-ic" title="问项目助手">${ICONS.buddy}</span>
+            </div>
+          </div>
+          <div class="new-row">
+            <span class="step-circle cur">2</span>
+            <div class="row-title-wrap">
+              <span class="row-nm">文献精读与笔记</span>
+              <span class="row-agent-tag">Claude Code</span>
+            </div>
+            <span class="row-state live">
+              <span class="caret work" style="display:inline-block;width:7px;height:2.8px;border-radius:1px;background:var(--ok-text)"></span>
+              编辑 notes/08-chen2025.md
+            </span>
+            <span class="row-tm" style="color:var(--l2)">本轮 6m</span>
+          </div>
+          <div class="new-row">
+            <span class="step-circle">3</span>
+            <div class="row-title-wrap"><span class="row-nm">综述大纲</span></div>
+            <span class="row-state">提前开了，还没保存</span>
+            <span class="row-tm">昨天</span>
+          </div>
+        </div>
+
+        <!-- 编程项目：安静无左色条 -->
+        <div class="new-card">
+          <div class="new-ph">
+            <span class="chev-btn">⌄</span>
+            <span class="mode-ic">${ICONS.code}</span>
+            <span class="new-pname">Ccode</span>
+            <span class="new-vitals">main <span class="sep">·</span> 2 分支 <span class="sep">·</span> 需同步 1</span>
+            <div class="ph-actions">
+              <button class="jump-pill">打开项目 →</button>
+              <span class="reveal-ic">${ICONS.buddy}</span>
+            </div>
+          </div>
+          <div class="new-row">
+            <span class="mode-ic">${ICONS.branch}</span>
+            <div class="row-title-wrap"><span class="row-nm" style="font-family:ui-monospace,SFMono-Regular,monospace;font-size:12px">feat/agent-slot-filter</span></div>
+            <span class="row-state">领先 main 3 个提交</span>
+            <span class="row-tm">18 分钟前</span>
+          </div>
+        </div>
+
+        <div class="quiet-bar">
+          <span>暂无进行中的项目</span>
+          <span class="quiet-chip">电化学数据清洗</span>
+          <span class="quiet-chip">组会幻灯片</span>
+        </div>
+      </div>
+
+      <aside>
+        <div class="sec-head">
+          <h2 style="font-size:15px">等你拍板</h2>
+          <span class="count-pill" style="color:var(--mesa-amber)">2</span>
+          <span style="margin-left:auto;font-size:11px;color:var(--l4)">J/K · A 允许</span>
+        </div>
+        <div class="new-queue">
+          <div class="new-qitem">
+            <div class="nq-top">
+              <span class="nq-caret" title="停着等你确认"></span>
+              <span class="nq-title">请求运行 lit_records.py</span>
+            </div>
+            <div class="nq-sub">
+              <span>HER催化综述 · Codex</span>
+              <span class="nq-btns">
+                <button class="mini-act pri">允许</button>
+                <button class="mini-act">拒绝</button>
+              </span>
+            </div>
+          </div>
+          <div class="new-qitem">
+            <div class="nq-top">
+              <span class="nq-caret done" title="做完等你评审"></span>
+              <span class="nq-title">「文献检索与筛选」已完成</span>
+            </div>
+            <div class="nq-sub">
+              <span>电化学数据清洗 · 12 篇命中</span>
+              <span class="nq-btns">
+                <button class="mini-act pri">去评审</button>
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-head" style="margin-top:20px">
+          <h2 style="font-size:15px">定时任务</h2>
+          <span class="count-pill">2</span>
+        </div>
+        <div class="new-sched-list">
+          <div class="new-srow">
+            <div class="s-time">08:30<span class="s-day">明天</span></div>
+            <div style="min-width:0">
+              <div class="s-name">文献雷达</div>
+              <div class="s-meta">HER催化综述 · 上次 +3 篇</div>
+            </div>
+            <span class="s-run">现在跑</span>
+          </div>
+          <div class="new-srow">
+            <div class="s-time">18:00<span class="s-day">周五</span></div>
+            <div style="min-width:0">
+              <div class="s-name">进展周报草稿</div>
+              <div class="s-meta">AI模型评测 · 每周巡检</div>
+            </div>
+            <span class="s-run">现在跑</span>
+          </div>
+        </div>
+      </aside>
+    </div>`;
+}
+
+function renderNowEmpty() {
+  return `
+    <div class="empty-card" style="background:var(--chat-bubble)">
+      <h3 style="margin:0;font-size:16px;color:var(--l1)">从一个项目开始</h3>
+      <p style="margin:6px 0 16px;color:var(--l2);font-size:13px">
+        工作台会把所有项目里等你决定的事、手上在做的事和定时任务排在一处。先有一个项目——一个放资料和成果的文件夹。
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-pri">添加项目</button>
+        <button class="btn-sec" style="outline:1.5px dashed var(--err-text)">创建示例课题（待删）</button>
+        <button class="ghost-btn">先随便聊聊</button>
+      </div>
+    </div>`;
+}
+
+function renderNewEmpty() {
+  return `
+    <div class="empty-card">
+      <div style="display:inline-flex;align-items:flex-end;gap:3px;margin-bottom:8px">
+        <strong style="font-size:18px;color:var(--l1);line-height:1">M</strong>
+        <span style="width:9px;height:3.5px;border-radius:1px;background:var(--mesa-amber)"></span>
+      </div>
+      <h3 style="margin:0;font-size:16px;color:var(--l1)">从一个项目文件夹开始</h3>
+      <p style="margin:6px 0 18px;color:var(--l3);font-size:13px;max-width:480px">
+        新建一个课题目录，或把电脑上已有的文献、代码、文档文件夹加进来。AI 停下来等你拍板的事和进展都会汇总在这里。
+      </p>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-pri">新建项目…</button>
+        <button class="btn-sec">添加已有文件夹…</button>
+        <button class="ghost-btn">先开一段随手聊 →</button>
+      </div>
+    </div>`;
+}
+
+let state = { view: "split", scene: "busy", theme: "neutral" };
+
+function render() {
+  document.documentElement.dataset.theme = state.theme;
+  const stage = document.getElementById("stage");
+  stage.className = `stage ${state.view === "split" ? "split" : "single"}`;
+
+  const nowBody = state.scene === "busy" ? renderNowBusy() : renderNowEmpty();
+  const newBody = state.scene === "busy" ? renderNewBusy() : renderNewEmpty();
+
+  const paneNow = `
+    <div class="pane-wrap">
+      <div class="pane-badge-row">
+        <span class="pane-badge now">现在 Current</span>
+        <span class="pane-caption">气泡浅底偏平 · 任务状态随名字长短参差 · 卡点与底栏按钮偏散 · 定时每行带描边钮</span>
+      </div>
+      <div class="mesa-win">
+        ${renderSidebar()}
+        <div class="mesa-body">
+          <div class="win-top"><span>?</span><span>⌘K 命令面板</span><span>待处理 2</span></div>
+          <div class="wb-scroll">${nowBody}</div>
+        </div>
+      </div>
+    </div>`;
+
+  const paneNew = `
+    <div class="pane-wrap">
+      <div class="pane-badge-row">
+        <span class="pane-badge new">优化方案 Proposed（悬停卡片试试交互）</span>
+        <span class="pane-caption">统一 .ccode-well 底 + 2.5px 语义微锚线 · 任务行双区对齐 · 内嵌卡点槽 · 行内轻审批</span>
+      </div>
+      <div class="mesa-win">
+        ${renderSidebar()}
+        <div class="mesa-body">
+          <div class="win-top">
+            <span style="background:var(--inset);padding:2px 9px;border-radius:6px;color:var(--l3)">⌕ 搜索或跳转… <kbd style="opacity:.7;margin-left:6px">⌘K</kbd></span>
+            <span style="display:inline-flex;align-items:center;gap:5px;color:var(--l1)"><i style="width:6px;height:2.6px;border-radius:1px;background:var(--mesa-amber);display:inline-block"></i>待处理 2</span>
+          </div>
+          <div class="wb-scroll">${newBody}</div>
+        </div>
+      </div>
+    </div>`;
+
+  stage.innerHTML = state.view === "split" ? paneNow + paneNew : (state.view === "new" ? paneNew : paneNow);
+}
+
+document.getElementById("viewMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-v]");
+  if (!btn) return;
+  state.view = btn.dataset.v;
+  document.querySelectorAll("#viewMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+document.getElementById("sceneMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-s]");
+  if (!btn) return;
+  state.scene = btn.dataset.s;
+  document.querySelectorAll("#sceneMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+document.getElementById("themeMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-t]");
+  if (!btn) return;
+  state.theme = btn.dataset.t;
+  document.querySelectorAll("#themeMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  render();
+});
+
+render();
+</script>
+</body>
+</html>

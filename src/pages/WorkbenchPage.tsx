@@ -7,7 +7,6 @@ import {
   AlarmClock,
   Files,
   Inbox,
-  Moon,
   Plus,
   TriangleAlert,
 } from "lucide-react";
@@ -76,6 +75,7 @@ import WorkbenchApprovalPanel from "../components/WorkbenchApprovalPanel";
 import WorkbenchProjectGroup from "../components/WorkbenchProjectGroup";
 import ContextMenu from "../components/ContextMenu";
 import MesaBuddyIcon from "../components/MesaBuddyIcon";
+import RunCaret from "../components/RunCaret";
 import WorkbenchTaskPanel, { type TaskPanelAction } from "../components/WorkbenchTaskPanel";
 import { runFailureReason } from "../run-failure";
 import {
@@ -1606,7 +1606,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
 
   function renderQueueList(rows: typeof queueRows, label: string) {
     return (
-      <ul className="ccode-workbench-list overflow-hidden rounded-xl" aria-label={label}>
+      <ul className="ccode-workbench-list overflow-hidden rounded-xl py-1" aria-label={label}>
         {rows.map((row, index) => {
           const tierHead = showTierHeads && row.tier !== "notice" && (index === 0 || rows[index - 1].tier !== row.tier);
           const selected = row === selectedRow;
@@ -1616,9 +1616,9 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           const symbolColor = row.dot === "bg-err-text" ? "text-err-text" : row.dot === "bg-ok-text" ? "text-ok-text" : row.tier === "notice" ? "text-l3" : "text-warn-text";
           return (
             <li key={row.key} id={`wbq-${row.key}`} data-workbench-nav={`q:${row.key}`} tabIndex={-1}
-              className={`group relative ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
+              className={`group relative mx-1 rounded-lg ${selected ? "bg-hover shadow-[inset_2px_0_0_var(--color-nav-accent)]" : "hover:bg-hover"}`}
               onFocusCapture={() => setSelectedKey(`q:${row.key}`)}>
-              {tierHead && <p className="px-3.5 pb-0.5 pt-2 text-micro text-l3">{QUEUE_TIER_LABEL[row.tier]}</p>}
+              {tierHead && <p className="px-3 pb-0.5 pt-1.5 text-micro text-l3">{QUEUE_TIER_LABEL[row.tier]}</p>}
               <div className="ccode-workbench-queue-row">
                 <span aria-hidden="true" className={`ccode-workbench-queue-symbol flex shrink-0 items-center justify-center border border-hairline ${symbolColor}`}><Symbol size={14} strokeWidth={1.6} /></span>
                 <button type="button" className="ccode-workbench-queue-content min-w-0 flex-1 text-left" aria-haspopup={approval ? "dialog" : undefined} onClick={() => openRow(row)}>
@@ -1682,14 +1682,14 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
       {/* 单栏自上而下：等你拍板 → 正在进行 → 记下目标 → 定时任务（2026-10-27 设计稿第一批：
           拍板队列提到最上面；「继续工作」大卡与最近对话删掉——侧栏点对话就能接着聊，最近对话就是侧栏那一份） */}
       {away && (
-        <div className="mb-5 flex min-w-0 items-center gap-2 px-1 text-sm text-l3">
-          <Moon size={13} strokeWidth={1.8} className="shrink-0 text-l4" aria-hidden="true" />
+        <div className="mb-4 flex min-w-0 items-center gap-2.5 rounded-xl px-3.5 py-2 text-xs text-l2 ccode-well">
+          <RunCaret state="confirm" decorative className="shrink-0 text-micro" />
           <span className="min-w-0 truncate">
             {away.lead}：{away.parts.join(" · ")}
           </span>
           <button
             type="button"
-            className="ml-auto shrink-0 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+            className="ml-auto shrink-0 rounded-md px-2 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
             onClick={() => setAwayDismissed(true)}
           >
             知道了
@@ -1902,29 +1902,25 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                   );
                 })}
                 {quietCards.length > 0 && (
-                  <p
-                    className="flex flex-wrap items-baseline gap-x-1.5 gap-y-1 px-4 py-1.5 text-xs text-l3"
-                  >
+                  <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5 text-xs text-l3">
                     <span>
                       {cardFilter === "active" ? "其他" : "另有"} {quietCards.length} 个项目没有进行中的事：
                     </span>
-                    {quietCards.map((card, i) => (
-                      <span key={card.path} className="inline-flex items-baseline gap-1.5">
-                        <button
-                          type="button"
-                          className="text-l2 hover:text-l1 hover:underline"
-                          title={`去项目页：${card.path}`}
-                          onClick={() => {
-                            setSelectProjectReq(card.path);
-                            setPage("workspaces");
-                          }}
-                        >
-                          {card.name}
-                        </button>
-                        {i < quietCards.length - 1 && <span aria-hidden="true">·</span>}
-                      </span>
+                    {quietCards.map((card) => (
+                      <button
+                        key={card.path}
+                        type="button"
+                        className="ccode-workbench-quiet-chip rounded-md px-2 py-0.5 text-l2 hover:text-l1"
+                        title={`去项目页：${card.path}`}
+                        onClick={() => {
+                          setSelectProjectReq(card.path);
+                          setPage("workspaces");
+                        }}
+                      >
+                        <span className="text-xs">{card.name}</span>
+                      </button>
                     ))}
-                  </p>
+                  </div>
                 )}
               </div>
             ) : (
@@ -1937,7 +1933,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
           ) : (
             // 新用户第一次打开（2026-10-27 用户：「新用户看到的工作台什么样，设计了吗」）：说清这一页以后会放什么，
             // 给三个起步入口；不放示例数据冒充项目
-            <div className="rounded-xl bg-chat-bubble px-6 py-7">
+            <div className="rounded-xl px-6 py-7 ccode-well">
               <h3 className="text-base font-semibold text-l1">从一个项目开始</h3>
               <p className="mt-1.5 max-w-xl text-sm leading-relaxed text-l2">
                 工作台会把所有项目里等你决定的事、手上在做的事和定时任务排在一处。先有一个项目——一个放资料和成果的文件夹。

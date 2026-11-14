@@ -125,12 +125,13 @@ export default function WorkbenchSchedules({
       </div>
       )}
 
-      <div className="ccode-workbench-list overflow-hidden rounded-xl">
+      <div className="ccode-workbench-list overflow-hidden rounded-xl py-1">
         {rows.map((row) => {
           const selected = selectedTaskId === row.task.id;
           const next = row.nextAt === null ? null : new Date(row.nextAt);
           const time = row.task.tone === "live" ? "在跑" : row.task.state.startsWith("已自动暂停") ? "暂停" : next ? nextLabel(row.nextAt!, nowMs) : "—";
           const extra = stateBeyondNext(row.task.state);
+          const stateText = `${row.task.tone === "live" ? "" : extra}${row.task.queued ? `${extra && row.task.tone !== "live" ? " · " : ""}在「等你拍板」里` : ""}`;
           return (
             <div
               key={row.task.id}
@@ -158,19 +159,21 @@ export default function WorkbenchSchedules({
                   {row.projectName} · {row.frequency}
                 </span>
               </div>
-              <span
-                className={`ccode-workbench-schedule-state min-w-0 truncate text-xs ${TONE_TEXT[row.task.tone]}`}
-                title={row.task.state}
-              >
-                {row.task.tone === "live" ? "" : extra}
-                {row.task.queued ? `${extra ? " · " : ""}在「等你拍板」里` : ""}
-              </span>
+              {stateText && (
+                <span
+                  className={`ccode-workbench-schedule-state min-w-0 truncate text-xs ${TONE_TEXT[row.task.tone]}`}
+                  title={row.task.state}
+                >
+                  {stateText}
+                </span>
+              )}
               <span className="ccode-workbench-schedule-action text-right">
                 {row.task.queued ? (
                   <button type="button" className={rowActionClass} onClick={() => onQueue(row)}>去拍板</button>
                 ) : row.action && (
                   <button
                     type="button"
+                    data-routine-action={row.action === "run" ? "true" : undefined}
                     className={rowActionClass}
                     title={ACTION_TIP[row.action]}
                     onClick={() => onAction(row)}

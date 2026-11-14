@@ -211,6 +211,7 @@ test("详情按需取花费并去重；项目头落点、项目折叠与当前�
     ui.data.runs = [{ id: "run", taskId: "goal", projectRoot: project.path, agent: "codex", sessionId: "session", isolationPath: project.path, internal: false, status: "running", createdAt: "2026-10-27T10:00:00", closedAt: null }];
     await ui.render();
     assert.equal(ui.calls.some((call) => call.command === "session_usage"), false);
+    assert.equal(ui.host.querySelector('section[aria-label="测试项目"]')?.getAttribute("data-signal"), "work");
     assert.match(ui.host.querySelector(".ccode-workbench-task")!.textContent!, /本轮/);
     const collapse = ui.host.querySelector<HTMLButtonElement>('[aria-label="收起测试项目"]')!;
     await ui.update(() => collapse.click());
@@ -288,6 +289,7 @@ test("同刻定时任务可展开并打开；待拍板只导航，操作后只�
     await ui.update(() => ui.button("去拍板").click());
     assert.equal(ui.dom.window.document.activeElement?.id, "wbq-sched:paused:paused");
     assert.equal(ui.calls.length, before);
+    assert.equal(ui.button("现在跑").getAttribute("data-routine-action"), "true");
     await ui.update(() => ui.button("现在跑").click());
     assert.deepEqual(ui.calls.slice(before).map((call) => call.command), ["run_schedule_now", "list_schedules"]);
     // 一两个要跑的时候不出时间项：和下面的表是同一件事
