@@ -311,7 +311,7 @@ test("科研步骤与流程遮罩接入共享底色，工作树和目标继续�
   for (const file of ["CodingProjectView", "ProjectUserTasksView", "LitWatchCard", "ResourceListSection", "ScheduleSection"]) {
     assert.match(source(`components/${file}.tsx`), /projectWellClass/, file);
   }
-  assert.match(source("components/ProjectAgentsView.tsx"), /row.isProjectDefault \? "bg-seg-sel" : "ccode-well"/);
+  assert.match(source("components/ProjectAgentsView.tsx"), /aria-label="项目 Agent 名册"[\s\S]*?ccode-well/);
 });
 
 /**

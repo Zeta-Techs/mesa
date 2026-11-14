@@ -36,7 +36,7 @@ import {
   type ScheduleDto,
   type TaskDto,
 } from "../types";
-import { ghostActionClass } from "./PageFrame";
+import { ghostActionClass, secondaryActionClass } from "./PageFrame";
 import MesaBuddyIcon from "./MesaBuddyIcon";
 import { AgentMark } from "./RelayPicker";
 import EffortMark from "./EffortMark";
@@ -586,112 +586,214 @@ export default function ProjectAgentsView({
     return profiles.filter((p) => !hiddenProfiles.includes(p.id) || boundIds.has(p.id));
   }, [goals, profiles, hiddenProfiles, stepRows, taskBindings]);
 
+  const defaultRow = useMemo(
+    () => roster.rows.find((row) => row.isProjectDefault) ?? null,
+    [roster.rows],
+  );
+  const otherRows = useMemo(
+    () => roster.rows.filter((row) => !row.isProjectDefault),
+    [roster.rows],
+  );
+  const defaultSelectedProfile = defaultRow
+    ? selectedProjectAgentProfile(defaultRow)
+    : undefined;
+  const rowsWithWorks = useMemo(
+    () => roster.rows.filter((row) => row.works.length > 0),
+    [roster.rows],
+  );
+
   return (
     <section aria-label="本项目用哪家 Agent">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-medium text-l1">本项目用哪家 Agent</h2>
-          <p className="mt-1 text-xs text-l3">
-            {defaultAgent
-              ? projectAgentsHint(project.workMode)
-              : "还没设默认：点「开始」或开对话时再选。在下面任一家点 ☆ 设为默认，这个项目的对话和步骤都用它。"}
-          </p>
-        </div>
-        <button
-          type="button"
-          className={`${ghostActionClass} shrink-0 gap-1`}
-          onClick={() => setPage("profiles")}
-        >
-          管理连接
-          <ArrowUpRight size={14} aria-hidden="true" />
-        </button>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium text-l1">本项目用哪家 Agent</h2>
       </div>
       {roster.rows.length === 0 ? (
-        <p className="px-1 py-6 text-center text-xs text-l4">
-          还没有可用连接。
+        <div className="ccode-well flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-4 text-xs">
+          <p className="text-l3">
+            还没有可用连接。
+            <button
+              type="button"
+              className="ml-1 text-l2 underline-offset-2 hover:text-l1 hover:underline"
+              onClick={() => setPage("profiles")}
+            >
+              去连接页
+            </button>
+          </p>
           <button
             type="button"
-            className="ml-1 text-l2 underline-offset-2 hover:text-l1 hover:underline"
+            aria-label="管理连接"
+            className={`${ghostActionClass} shrink-0 gap-1`}
             onClick={() => setPage("profiles")}
           >
-            去连接页
+            连接页
+            <ArrowUpRight size={13} aria-hidden="true" />
           </button>
-        </p>
+        </div>
       ) : (
-        <ul aria-label="项目 Agent 名册" className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
-          {/* 设了默认的那家排第一（2026-11-05）：一眼看到这个项目用谁；其余保持原顺序 */}
-          {[...roster.rows].sort((a, b) => Number(b.isProjectDefault) - Number(a.isProjectDefault)).map((row) => (
-            <li
-              key={row.agentId}
-              className={`min-w-0 rounded-lg p-3 transition-colors ${
-                row.isProjectDefault ? "bg-seg-sel" : "ccode-well"
-              }`}
-            >
-              <div className="flex items-center gap-2">
+        <div
+          aria-label="项目 Agent 名册"
+          className={`ccode-well rounded-xl p-4 ${
+            defaultRow ? "ring-1 ring-cta-bd/35" : ""
+          }`}
+        >
+          {defaultRow ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-2.5">
                 <span
                   aria-hidden="true"
-                  className="size-2 shrink-0 rounded-full"
-                  style={{ background: agentBrand(row.agentId) }}
+                  className="mt-1.5 size-2.5 shrink-0 rounded-full"
+                  style={{ background: agentBrand(defaultRow.agentId) }}
                 />
-                <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">
-                  {row.label}
-                </h3>
-                <button
-                  type="button"
-                  className={`${ghostActionClass} shrink-0 gap-1 ${row.isProjectDefault ? "font-medium text-l1" : ""}`}
-                  disabled={saving}
-                  aria-pressed={row.isProjectDefault}
-                  aria-label={row.isProjectDefault ? `取消 ${row.label} 的项目默认` : `将 ${row.label} 设为项目默认`}
-                  title={row.isProjectDefault
-                    ? "取消本项目默认，不改 Mesa 启动栏或 CLI 全局配置"
-                    : "只影响本项目的默认选择，不改 Mesa 启动栏或 CLI 全局配置"}
-                  onClick={() => void saveAgent(row.isProjectDefault ? "" : row.agentId)}
-                >
-                  <Star size={13} fill={row.isProjectDefault ? "currentColor" : "none"} aria-hidden="true" />
-                  {row.isProjectDefault ? "项目默认" : "设为默认"}
-                </button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-base font-semibold text-l1">
+                      {defaultRow.label}
+                    </h3>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      aria-pressed={true}
+                      aria-label={`取消 ${defaultRow.label} 的项目默认`}
+                      title="取消本项目默认，不改 Mesa 启动栏或 CLI 全局配置"
+                      onClick={() => void saveAgent("")}
+                      className="ccode-bound-pill inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2.5 text-micro font-medium transition-opacity hover:opacity-85 disabled:opacity-50"
+                    >
+                      <Star size={11} fill="currentColor" aria-hidden="true" />
+                      项目默认
+                    </button>
+                    {defaultSelectedProfile ? (
+                      <span className="min-w-0 truncate font-mono text-xs text-l2">
+                        {defaultSelectedProfile.name} / {defaultSelectedProfile.model}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className={ghostActionClass}
+                        onClick={() => setPage("profiles")}
+                      >
+                        还没有连接
+                      </button>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-l3">
+                    下方未单独指定的入口、步骤与目标均使用此配置启动（{projectAgentsHint(project.workMode)}）
+                  </p>
+                </div>
               </div>
-              <div className="mt-1 min-w-0 pl-2">
-                {row.profiles.length === 0 ? (
-                  <button
-                    type="button"
-                    className={ghostActionClass}
-                    onClick={() => setPage("profiles")}
-                  >
-                    还没有连接
-                  </button>
-                ) : (
-                  <ProfileMenu
-                    row={row}
+              <div className="flex shrink-0 items-center gap-2">
+                {defaultRow.profiles.length > 0 && (
+                  <DefaultModelMenu
+                    row={defaultRow}
                     disabled={saving}
-                    onPick={(profileId, modelId) => void saveProfile(row.agentId, profileId, modelId)}
+                    onPick={(profileId, modelId) =>
+                      void saveProfile(defaultRow.agentId, profileId, modelId)
+                    }
                     onAdd={() => setPage("profiles")}
                   />
                 )}
+                <button
+                  type="button"
+                  aria-label="管理连接"
+                  className={`${ghostActionClass} shrink-0 gap-1`}
+                  onClick={() => setPage("profiles")}
+                >
+                  连接页
+                  <ArrowUpRight size={13} aria-hidden="true" />
+                </button>
               </div>
-              {row.works.length > 0 && (
-                <ul className="mt-3 space-y-2 pl-[18px]">
-                  {row.works.map((work) => (
-                    <li key={work.id} className="min-w-0">
-                      {onOpenGoals ? (
-                        <button
-                          type="button"
-                          className="block w-full truncate text-left text-xs text-l2 hover:text-l1"
-                          onClick={onOpenGoals}
-                        >
-                          {work.name}
-                        </button>
-                      ) : (
-                        <p className="truncate text-xs text-l2">{work.name}</p>
-                      )}
-                      <p className="truncate text-micro text-l4">{work.statusLabel}</p>
-                    </li>
-                  ))}
-                </ul>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-l1">
+                  还没设默认：点「开始」或开对话时再选
+                </p>
+                <p className="mt-1 text-xs text-l3">
+                  点下方任一家设为本项目默认，项目的对话、步骤与未单独指定的入口都用它。
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="管理连接"
+                className={`${ghostActionClass} shrink-0 gap-1`}
+                onClick={() => setPage("profiles")}
+              >
+                连接页
+                <ArrowUpRight size={13} aria-hidden="true" />
+              </button>
+            </div>
+          )}
+
+          {otherRows.length > 0 && (
+            <div className="mt-3.5 flex flex-wrap items-center gap-1.5 border-t border-hairline pt-3">
+              <span className="mr-1 shrink-0 text-xs text-l3">
+                {defaultRow ? "切换默认到：" : "设为默认："}
+              </span>
+              {otherRows.map((row) => {
+                const picked = selectedProjectAgentProfile(row);
+                return (
+                  <button
+                    key={row.agentId}
+                    type="button"
+                    disabled={saving}
+                    aria-pressed={false}
+                    aria-label={`将 ${row.label} 设为项目默认`}
+                    title={
+                      picked
+                        ? `只影响本项目的默认选择（${picked.name} · ${picked.model}），不改 Mesa 启动栏或 CLI 全局配置`
+                        : "只影响本项目的默认选择，不改 Mesa 启动栏或 CLI 全局配置"
+                    }
+                    onClick={() => void saveAgent(row.agentId)}
+                    className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-inset px-2.5 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ background: agentBrand(row.agentId) }}
+                    />
+                    <span className="truncate font-medium">{row.label}</span>
+                    {picked ? (
+                      <span className="max-w-[11rem] truncate text-l3">
+                        · {picked.model}
+                      </span>
+                    ) : (
+                      <span className="text-l4">· 还没有连接</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {rowsWithWorks.length > 0 && (
+            <ul className="mt-3 space-y-1.5 border-t border-hairline pt-2.5">
+              {rowsWithWorks.flatMap((row) =>
+                row.works.map((work) => (
+                  <li key={work.id} className="flex min-w-0 items-center gap-2 text-xs">
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ background: agentBrand(row.agentId) }}
+                    />
+                    <span className="shrink-0 text-micro text-l4">{row.label}</span>
+                    {onOpenGoals ? (
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 truncate text-left text-l2 hover:text-l1"
+                        onClick={onOpenGoals}
+                      >
+                        {work.name}
+                      </button>
+                    ) : (
+                      <span className="min-w-0 flex-1 truncate text-l2">{work.name}</span>
+                    )}
+                    <span className="shrink-0 text-micro text-l4">{work.statusLabel}</span>
+                  </li>
+                )),
               )}
-            </li>
-          ))}
-        </ul>
+            </ul>
+          )}
+        </div>
       )}
 
       <div className="mt-8">
@@ -1947,33 +2049,22 @@ function SlotBindingPopover({
   );
 }
 
-function ProfileMenu({
+function DefaultModelMenu({
   row,
   disabled,
-  unboundLine,
-  unboundDetail,
-  defaultOptionLabel = "项目默认",
   onPick,
-  onClear,
   onAdd,
 }: {
   row: ProjectAgentRow;
   disabled: boolean;
-  /** 未绑定时的展示行（缺省回落名单第一条的「伪当前」，名册行的既有口径） */
-  unboundLine?: string;
-  unboundDetail?: string;
-  defaultOptionLabel?: string;
   onPick: (profileId: string, modelId: string) => void;
-  /** 传了才有「清除」项（槽位专属绑定用；名册行不传，行为不变） */
-  onClear?: () => void;
   onAdd: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const unbound = !row.defaultProfileId && unboundLine !== undefined;
-  const current = unbound ? undefined : selectedProjectAgentProfile(row);
-  const line = unbound ? unboundLine : currentProfileLine(row);
+  const current = selectedProjectAgentProfile(row);
+  const line = currentProfileLine(row);
 
   useEffect(() => {
     if (!open) return;
@@ -2003,52 +2094,23 @@ function ProfileMenu({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-label={`更换 ${row.label} 的项目连接`}
-        title={`${line ?? "还没有连接"}；只修改本项目的连接和模型`}
-        className="flex min-h-11 w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-hover disabled:opacity-50"
+        title={`${line ?? "还没有连接"}；只修改本项目的默认连接和模型`}
+        className={`${secondaryActionClass} gap-1.5`}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-medium text-l2">
-            {unbound ? line : current?.name}
-          </span>
-          {(current || unboundDetail) && (
-            <span className="mt-0.5 block truncate text-xs text-l3">
-              {current ? current.model : unboundDetail}
-            </span>
-          )}
-        </span>
-        <ChevronDown size={14} className="shrink-0 text-l3" aria-hidden="true" />
+        <span>换默认模型</span>
+        <ChevronDown
+          size={13}
+          className={`shrink-0 text-l3 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
       </button>
       {open && (
         <ul
           role="listbox"
           aria-label={`${row.label} 的项目连接`}
-          className="ccode-float-surface absolute inset-x-0 z-50 mt-1 max-h-64 overflow-y-auto overscroll-contain rounded-md border border-field py-1"
+          className="ccode-float-surface absolute right-0 z-50 mt-1.5 max-h-64 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-field p-1 shadow-lg"
         >
-          {onClear && (
-            <li>
-              <button
-                type="button"
-                role="option"
-                aria-selected={unbound}
-                className={`flex w-full items-center gap-2 px-2.5 py-2 text-left text-xs ${
-                  unbound ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
-                }`}
-                onClick={() => {
-                  setOpen(false);
-                  onClear();
-                }}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{defaultOptionLabel}</span>
-                  {unbound && line && line !== defaultOptionLabel && (
-                    <span className="mt-0.5 block truncate text-l3">{line}</span>
-                  )}
-                </span>
-                {unbound && <Check size={14} className="shrink-0" aria-hidden="true" />}
-              </button>
-            </li>
-          )}
           {row.profiles.map((profile) => {
             const selected = profile.id === current?.id && profile.modelId === current?.modelId;
             return (
@@ -2058,7 +2120,7 @@ function ProfileMenu({
                   role="option"
                   aria-selected={selected}
                   disabled={disabled}
-                  className={`flex w-full items-center gap-2 px-2.5 py-2 text-left disabled:opacity-50 ${
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left disabled:opacity-50 ${
                     selected ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
                   }`}
                   onClick={() => {
@@ -2070,15 +2132,15 @@ function ProfileMenu({
                     <span className="block truncate text-xs font-medium">{profile.name}</span>
                     <span className="mt-0.5 block truncate text-xs text-l3">{profile.model}</span>
                   </span>
-                  {selected && <Check size={14} className="shrink-0" aria-hidden="true" />}
+                  {selected && <Check size={14} className="shrink-0 text-cta" aria-hidden="true" />}
                 </button>
               </li>
             );
           })}
-          <li>
+          <li className="mt-1 border-t border-hairline pt-1">
             <button
               type="button"
-              className="flex h-7 w-full items-center px-2.5 text-left text-xs text-l4 hover:bg-hover hover:text-l1"
+              className="flex h-7 w-full items-center rounded-lg px-2.5 text-left text-xs text-l4 hover:bg-hover hover:text-l1"
               onClick={() => {
                 setOpen(false);
                 onAdd();

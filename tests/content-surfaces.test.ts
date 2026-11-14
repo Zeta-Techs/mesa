@@ -55,7 +55,7 @@ test("全局卡片迁移覆盖工作台/技能/MCP/连接/设置等管理页", (
   assert.doesNotMatch(source("pages/WorkbenchPage.tsx"), /bg-raised\/(?:40|55)/);
   // 连接页 2026-10-29 起左选右看：Agent 节不套卡（节标题 + 细线），未安装不再靠去卡底降权
   assert.doesNotMatch(source("pages/ProfilesPage.tsx"), /"border-field ccode-well"/);
-  assert.match(source("components/ProjectAgentsView.tsx"), /row.isProjectDefault \? "bg-seg-sel" : "ccode-well"/);
+  assert.match(source("components/ProjectAgentsView.tsx"), /aria-label="项目 Agent 名册"[\s\S]*?ccode-well/);
 });
 
 test("科研子卡/设置卡/知识条目统一，独立画布不继承项目底色", () => {

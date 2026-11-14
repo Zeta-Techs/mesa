@@ -138,24 +138,19 @@ async function renderView(options: {
   };
 }
 
-test("Agents 名册保留两列断点，默认操作常驻，连接名与模型分行", async () => {
+test("本项目默认聚光灯卡置顶展示当前连接与模型，其余家收为快速切换胶囊", async () => {
   const view = await renderView();
   try {
-    const list = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
-    assert.ok(list.classList.contains("md:grid-cols-2"));
-    assert.ok(list.classList.contains("grid-cols-1"));
-    assert.equal(list.children.length, 6);
-    for (const row of Array.from(list.children)) {
-      assert.ok(row.classList.contains("min-w-0"));
-      const action = row.querySelector('[aria-pressed]')!;
-      assert.ok(!action.className.includes("opacity-0"), "默认操作不再依赖悬停");
-    }
-    assert.ok(list.children[0].classList.contains("bg-seg-sel"));
-    const connection = view.button("更换 Codex 的项目连接");
-    assert.equal(connection.querySelector(".font-medium")!.textContent, "Codex-GPT-6");
-    assert.equal(connection.querySelector(".text-l3")!.textContent, "gpt-6-astra");
-    assert.ok(connection.querySelectorAll(".block.truncate").length === 2);
-    assert.match(view.button("更换 Qwen Code 的项目连接").textContent!, /CLI 默认/);
+    const spotlight = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.ok(spotlight.classList.contains("ccode-well"));
+    assert.match(spotlight.textContent!, /Codex/);
+    assert.match(spotlight.textContent!, /Codex-GPT-6 \/ gpt-6-astra/);
+    assert.match(spotlight.textContent!, /切换默认到：/);
+    assert.equal(view.button("更换 Codex 的项目连接").textContent?.trim(), "换默认模型");
+    assert.equal(view.button("取消 Codex 的项目默认").getAttribute("aria-pressed"), "true");
+    // 其余 5 家收在底部快速切换胶囊行，并直接显示模型或 CLI 默认
+    assert.match(view.button("将 Qwen Code 设为项目默认").textContent!, /CLI 默认/);
+    assert.match(view.button("将 Gemini CLI 设为项目默认").textContent!, /deepseek-v4-flash-0731/);
     assert.match(view.host.textContent!, /默认选择仅对本项目生效。/);
     assert.ok(!view.host.textContent!.includes("在工作树里选谁开工"));
     assert.equal(view.calls.length, 0, "展示名册不写配置，编程页不轮询声明目标");
@@ -190,12 +185,12 @@ test("默认 Agent 的设置和取消仅调用项目接口，不改变各家的�
 test("连接菜单分行显示并保持原有选择、回退和保存范围", async () => {
   const view = await renderView({ project: { defaultProfiles: { gemini: "gemini-a" } } });
   try {
-    const trigger = view.button("更换 Codex 的项目连接");
-    assert.match(trigger.textContent!, /Codex-GPT-6/, "未绑定时仍展示第一条连接");
+    const spotlight = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.match(spotlight.textContent!, /Codex-GPT-6 \/ gpt-6-astra/, "未绑定时仍展示第一条连接");
     await view.click("更换 Codex 的项目连接");
     const menu = view.host.querySelector('[role="listbox"]')!;
     assert.ok(menu.classList.contains("max-h-64"));
-    assert.ok(menu.classList.contains("inset-x-0"));
+    assert.ok(menu.classList.contains("right-0"));
     assert.ok(menu.classList.contains("z-50"));
     const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="option"]'));
     assert.equal(items[0].getAttribute("aria-selected"), "true");
@@ -203,7 +198,7 @@ test("连接菜单分行显示并保持原有选择、回退和保存范围", as
     assert.equal(items[1].querySelector(".text-l3")!.textContent, "gpt-6-astra-review");
     await view.act(async () => items[1].click());
     assert.equal(view.host.querySelector('[role="listbox"]'), null);
-    assert.equal(trigger.querySelector(".font-medium")!.textContent, "科研 · 精读");
+    assert.match(spotlight.textContent!, /科研 · 精读 \/ gpt-6-astra-review/);
     assert.deepEqual(view.calls, [{
       command: "set_project_default_profile",
       args: {
@@ -216,11 +211,12 @@ test("连接菜单分行显示并保持原有选择、回退和保存范围", as
     assert.equal(view.changes.at(-1)!.defaultAgent, "codex");
     assert.deepEqual(view.changes.at(-1)!.defaultProfiles, { codex: "codex-b", gemini: "gemini-a" });
     assert.deepEqual(view.changes.at(-1)!.defaultModels, { codex: "gpt-6-astra-review" });
+    await view.click("将 Gemini CLI 设为项目默认");
     await view.click("更换 Gemini CLI 的项目连接");
     assert.equal(view.host.querySelectorAll('[role="option"]').length, 1, "单连接仍能打开菜单");
     await view.click("去连接页添加");
     assert.deepEqual(view.pages, ["profiles"]);
-    assert.equal(view.calls.length, 1);
+    assert.equal(view.calls.length, 2);
   } finally {
     await view.close();
   }
@@ -233,11 +229,15 @@ test("同一条连接的其他模型可以点选，不再只留第一个", async
         ? { ...profile, name: "Test", models: ["deepseek-v4-flash-0731", "deepseek-v4.1-flash"] }
         : profile,
     ),
-    project: { defaultProfiles: { grok: "grok-a" }, defaultModels: { grok: "deepseek-v4-flash-0731" } },
+    project: {
+      defaultAgent: "grok",
+      defaultProfiles: { grok: "grok-a" },
+      defaultModels: { grok: "deepseek-v4-flash-0731" },
+    },
   });
   try {
-    const trigger = view.button("更换 Grok Build 的项目连接");
-    assert.match(trigger.textContent!, /deepseek-v4-flash-0731/);
+    const spotlight = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.match(spotlight.textContent!, /Test \/ deepseek-v4-flash-0731/);
     await view.click("更换 Grok Build 的项目连接");
     const items = Array.from(view.host.querySelectorAll<HTMLButtonElement>('[role="option"]'));
     assert.deepEqual(items.map((item) => item.querySelector(".text-l3")!.textContent), [
@@ -247,7 +247,7 @@ test("同一条连接的其他模型可以点选，不再只留第一个", async
     assert.equal(items[0].getAttribute("aria-selected"), "true");
     assert.equal(items[1].getAttribute("aria-selected"), "false");
     await view.act(async () => items[1].click());
-    assert.equal(trigger.querySelector(".text-l3")!.textContent, "deepseek-v4.1-flash");
+    assert.match(spotlight.textContent!, /Test \/ deepseek-v4\.1-flash/);
     assert.deepEqual(view.calls, [{
       command: "set_project_default_profile",
       args: {
@@ -297,7 +297,7 @@ test("保存中的默认操作和已打开菜单都禁用，失败不冒充成�
     await view.act(async () => option.click());
     assert.equal(view.calls.length, 1);
     await view.act(async () => finish());
-    assert.ok(!view.button("更换 Codex 的项目连接").disabled);
+    assert.ok(!view.button("更换 Gemini CLI 的项目连接").disabled);
   } finally {
     finish();
     await view.close();
@@ -313,7 +313,7 @@ test("保存中的默认操作和已打开菜单都禁用，失败不冒充成�
       assert.equal(failed.changes.length, 0);
       assert.match(failed.errors[0], /失败.*只读项目/);
       assert.equal(failed.button("取消 Codex 的项目默认").getAttribute("aria-pressed"), "true");
-      assert.match(failed.button("更换 Codex 的项目连接").textContent!, /Codex-GPT-6/);
+      assert.match(failed.host.querySelector('[aria-label="项目 Agent 名册"]')!.textContent!, /Codex-GPT-6/);
     } finally {
       await failed.close();
     }
@@ -368,7 +368,7 @@ test("目标绑定连接已删：卡片如实标「已失效」，不再显示�
   }
 });
 
-test("没设默认时如实说开始时再选；跟随项目默认只说一次；设了默认的那家排第一", async () => {
+test("没设默认时如实说开始时再选；跟随项目默认只说一次；设了默认的那家置顶聚光灯展示", async () => {
   const none = await renderView({ project: { workMode: "research", defaultAgent: null, defaultProfiles: {} } });
   try {
     assert.match(none.host.textContent!, /还没设默认：点「开始」或开对话时再选/);
@@ -379,9 +379,9 @@ test("没设默认时如实说开始时再选；跟随项目默认只说一次�
   }
   const gem = await renderView({ project: { defaultAgent: "gemini" } });
   try {
-    const list = gem.host.querySelector('[aria-label="项目 Agent 名册"]')!;
-    assert.match(list.children[0].textContent!, /Gemini CLI/);
-    assert.ok(list.children[0].classList.contains("bg-seg-sel"));
+    const spotlight = gem.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.match(spotlight.querySelector("h3")!.textContent!, /Gemini CLI/);
+    assert.ok(spotlight.classList.contains("ccode-well"));
     assert.match(gem.host.textContent!, /默认选择仅对本项目生效。/);
   } finally {
     await gem.close();
