@@ -5,6 +5,7 @@ import {
   BookOpen,
   BookText,
   CheckCheck,
+  CircleHelp,
   Compass,
   ExternalLink,
   Info,
@@ -1736,7 +1737,7 @@ function App() {
               )}
             </div>
             <div className="ccode-titlebar-side relative z-3 ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
-              {/* 帮助：命令面板左侧常驻安静胶囊（书册图标 +「帮助」；窄窗自动收为图标）。
+              {/* 帮助：命令面板左侧常驻安静胶囊（问号图标 +「帮助」；窄窗自动收为图标）。
                   避免裸问号挂在顶栏最右破坏胶囊收尾节奏；有新版时带绿点提示。
                   下拉结构与关闭范式对齐收件箱（Esc / 遮罩 / 再点），与收件箱/命令面板互斥。 */}
               <div className="relative flex items-center" ref={helpRootRef}>
@@ -1752,8 +1753,8 @@ function App() {
                   aria-haspopup="menu"
                   className="ccode-titlebar-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:text-l1"
                 >
-                  <BookOpen
-                    size={13}
+                  <CircleHelp
+                    size={14}
                     strokeWidth={1.8}
                     className="shrink-0"
                     aria-hidden="true"
@@ -1864,10 +1865,9 @@ function App() {
                 }}
                 title={`打开命令面板（${paletteComboLabel}）`}
                 aria-label="打开命令面板"
-                className="ccode-titlebar-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1.5 text-micro text-l3 hover:text-l1"
+                className="ccode-titlebar-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-micro text-l3 hover:text-l1 sm:pl-2 sm:pr-1.5"
               >
-                <NAV_ICONS.search size={12.5} strokeWidth={1.8} className="shrink-0 opacity-80" aria-hidden="true" />
-                <span className="hidden sm:inline">搜索或跳转…</span>
+                <span className="hidden sm:inline">命令面板</span>
                 <kbd className="ccode-titlebar-kbd rounded px-1 py-px font-mono text-micro text-l3">
                   {paletteComboLabel}
                 </kbd>

@@ -961,7 +961,7 @@ body {
   background: transparent;
 }
 
-/* 顶栏右组三枚功能胶囊（帮助 / 搜索或跳转 ⌘K / 待处理 N）：同 .ccode-rail-search，玻璃顶栏上不用实心底，
+/* 顶栏右组三枚功能胶囊（帮助 / 命令面板 ⌘K / 待处理 N）：同 .ccode-rail-search，玻璃顶栏上不用实心底，
    用前景色薄洗层 + 0.5px 内描边，深浅十四套主题与任意透明度档都跟着底色自然融合。 */
 .ccode-titlebar-pill {
   background: color-mix(in srgb, var(--color-l1) 4.5%, transparent);
