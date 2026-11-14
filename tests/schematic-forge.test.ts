@@ -117,13 +117,27 @@ test("检查：图上文字要在 brief / facts 里有原文；facts 写的关�
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test("检查：缺 brief / facts 拦下；改了图纸没重渲拦下；重渲后重建一致通过", opts, () => {
+test("检查：缺 brief / facts 拦下；改了图纸没重渲拦下；渲染记录完好但渲染器细节升级时交人判断而非拦下", opts, () => {
   const root = project(base);
   try {
     assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg"]).status, 0);
     run(root, "schematic_check.py", ["figures/t/figure.json"]);
     assert.ok(checks(root).some((i) => i.id === "MISSING-BRIEF" && i.status === "blocked"));
     assert.ok(checks(root).some((i) => i.id === "REBUILD" && i.status === "passed"));
+
+    // 模拟旧版渲染器产出的 SVG 与 render.json 哈希完全一致（未手工改图、未改图纸），新版渲染器重算有细微样式差异：应为 needs_human
+    const svgPath = join(root, "figures/t/t.svg");
+    const recPath = join(root, "figures/t/render.json");
+    const legacySvg = readFileSync(svgPath, "utf8").replace('refX="8.8"', 'refX="9"');
+    writeFileSync(svgPath, legacySvg);
+    const sha = spawnSync(python, ["-c", "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())", svgPath], { encoding: "utf8" }).stdout.trim();
+    const rec = JSON.parse(readFileSync(recPath, "utf8"));
+    rec.outputs.svg = sha;
+    writeFileSync(recPath, JSON.stringify(rec, null, 2));
+    run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.ok(checks(root).some((i) => i.id === "REBUILD" && i.status === "needs_human"));
+
+    // 改了图纸却没重跑 render_figure.py：必须拦下
     const spec = JSON.parse(readFileSync(join(root, "figures/t/figure.json"), "utf8"));
     spec.elements[0].x = 5;
     writeFileSync(join(root, "figures/t/figure.json"), JSON.stringify(spec));

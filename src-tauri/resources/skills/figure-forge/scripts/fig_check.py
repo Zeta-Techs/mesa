@@ -38,7 +38,9 @@ def load_common():
 C = load_common()
 CHECKER = "script:fig_check"
 TIMEOUT = 300
-IMAGE_REF = re.compile(r"!\[[^\]]*\]\(\s*<?([^)\s>]+)>?|\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
+IMAGE_REF = re.compile(r"!(?:\[(?:[^[\]]|\[[^[\]]*\])*\])\(\s*<?([^)\s>]+)>?|\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}")
+FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+SIBLING_EXTS = (".svg", ".png", ".pdf", ".eps", ".tif", ".tiff", ".webp", ".jpg", ".jpeg")
 
 
 def sha256(path):
@@ -145,14 +147,41 @@ def main():
             items.append(C.item(CHECKER, iid, "figure_rebuild", "needs_human", f"{file} 重跑出了图，但与原文件字节不同", file,
                                 source=script_rel, detail="PDF / PNG 常带生成时间；请目视对比，确认数据与画面一致"))
     if args.coverage:
-        registered = {str(f.get("file", "")).lstrip("./") for f in figures}
-        for path in C.manuscript_files(root, None, args.files):
+        registered = set()
+        reg_hashes = set()
+        for f in figures:
+            primary = str(f.get("file", "")).lstrip("./")
+            outs = [primary] + [str(o).lstrip("./") for o in (f.get("outputs") or []) if o]
+            if primary and (f.get("script") or f.get("spec")):
+                stem = Path(primary).with_suffix("")
+                outs.extend(f"{stem.as_posix()}{ext}" for ext in SIBLING_EXTS)
+            for rel_out in outs:
+                if not rel_out:
+                    continue
+                registered.add(rel_out)
+                p = root / rel_out
+                if p.is_file():
+                    reg_hashes.add(sha256(p))
+        seen_cov = set()
+        for path in C.manuscript_files(root, C.MANUSCRIPT_HELPER_RE, args.files):
             rel = path.relative_to(root).as_posix()
             try:
                 lines = path.read_text(encoding="utf-8").splitlines()
             except (OSError, UnicodeDecodeError):
                 continue
+            fence = None
             for no, text in enumerate(lines, 1):
+                m_fence = FENCE_RE.match(text)
+                if m_fence:
+                    tok = m_fence.group(1)
+                    if fence is None:
+                        fence = tok
+                        continue
+                    if tok[0] == fence[0] and len(tok) >= len(fence):
+                        fence = None
+                        continue
+                if fence is not None:
+                    continue
                 for a, b in IMAGE_REF.findall(text):
                     ref = (a or b).strip()
                     if ref.startswith(("http://", "https://")):
@@ -162,10 +191,22 @@ def main():
                         ref_rel = norm.relative_to(root).as_posix()
                     except ValueError:
                         ref_rel = ref
-                    if ref_rel not in registered and ref.lstrip("./") not in registered:
-                        items.append(C.item(CHECKER, f"COV-{ref_rel}", "figure_rebuild", "needs_human",
-                                            f"稿件引用的 {ref_rel} 没登记生成脚本", rel, no,
-                                            detail="数据图要登记脚本；示意图、转载图写明来源即可"))
+                    if ref_rel in registered or ref.lstrip("./") in registered or ref_rel in seen_cov:
+                        continue
+                    if norm.is_file() and sha256(norm) in reg_hashes:
+                        continue
+                    panel_spec = norm.with_suffix(".json")
+                    if panel_spec.is_file():
+                        try:
+                            pdata = json.loads(panel_spec.read_text(encoding="utf-8"))
+                            if isinstance(pdata, dict) and isinstance(pdata.get("panels"), list) and pdata["panels"]:
+                                continue
+                        except (ValueError, OSError):
+                            pass
+                    seen_cov.add(ref_rel)
+                    items.append(C.item(CHECKER, f"COV-{ref_rel}", "figure_rebuild", "needs_human",
+                                        f"稿件引用的 {ref_rel} 没登记生成脚本", rel, no,
+                                        detail="数据图要登记脚本；示意图、转载图写明来源即可"))
     out = C.write_items(root, "fig-check.jsonl", items)
     raise SystemExit(C.summary(items, out))
 

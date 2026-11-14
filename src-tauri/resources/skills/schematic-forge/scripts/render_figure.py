@@ -96,7 +96,7 @@ class Assets:
         if namespace_ids:
             # 同一张 SVG 里多次内联同一个多层渐变图元时，隔离其内部 gradient/clip id，防改色互相覆盖
             pfx = f"ico-{safe_id(el['id'])}-"
-            ids = set(re.findall(r'\bid="([^"]+)"', text))
+            ids = sorted(set(re.findall(r'\bid="([^"]+)"', text)), key=lambda s: (-len(s), s))
             for gid in ids:
                 text = text.replace(f'id="{gid}"', f'id="{pfx}{gid}"')
                 text = text.replace(f"url(#{gid})", f"url(#{pfx}{gid})")
@@ -1270,7 +1270,7 @@ assets_book = None  # PPTX 写字体名时查本机有没有（fill_text 用）
 
 def rel(p, root):
     try:
-        return Path(os.path.relpath(p, root)).as_posix()
+        return Path(os.path.relpath(Path(p).resolve(), Path(root).resolve())).as_posix()
     except ValueError:
         return Path(p).as_posix()
 

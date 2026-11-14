@@ -162,6 +162,51 @@ test("fig_check：确定性脚本逐字节一致通过、失败与漏出图拦�
   }
 });
 
+test("fig_check --coverage：图注含 [@key] 仍能识别图片路径，outputs 同源副本与拼图 JSON 不误报，配套文件跳过且去重", () => {
+  const root = tmp();
+  try {
+    mkdirSync(join(root, "figures/fig1"), { recursive: true });
+    writeFileSync(join(root, "figures/fig1/fig1.svg"), "<svg/>");
+    writeFileSync(join(root, "figures/fig1/fig1.png"), "PNG-FIG1-BYTES");
+    writeFileSync(join(root, "figures/fig1.png"), "PNG-FIG1-BYTES");
+    writeFileSync(join(root, "figures/fig4.png"), "PANEL-PNG");
+    writeFileSync(
+      join(root, "figures/fig4.json"),
+      JSON.stringify({ width_cm: 17, panels: [{ letter: "a", source: "figures/src/a.png" }] }),
+    );
+    writeFileSync(
+      join(root, "figures/manifest.json"),
+      JSON.stringify({
+        figures: [
+          {
+            file: "figures/fig1/fig1.svg",
+            spec: "figures/fig1/figure.json",
+            kind: "schematic",
+            outputs: ["figures/fig1/fig1.png"],
+          },
+        ],
+      }),
+    );
+    writeFileSync(join(root, "manuscript/style-sheet.md"), "![示例](../figures/helper-only.png)\n");
+    writeFileSync(
+      join(root, "manuscript/draft.md"),
+      [
+        "![**Figure 1.** Mechanism [@Zhang2024].](../figures/fig1.png)",
+        "![**Figure 4.** Reprinted panels [@Li2023].](../figures/fig4.png)",
+        "![**Figure 5.** Unregistered [@Wang2022].](../figures/unreg.png)",
+        "![Again](../figures/unreg.png)",
+      ].join("\n"),
+    );
+    const r = run(skill("figure-forge", "fig_check.py"), ["--root", root, "--coverage"], root);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const list = items(root, "fig-check.jsonl");
+    const covs = list.filter((i) => i.id.startsWith("COV-"));
+    assert.deepEqual(covs.map((i) => i.id), ["COV-figures/unreg.png"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("stat_check / num_check：--files 指定 manuscript/ 之外的报告（数据处理的 analysis-report.md、学位论文 chapters/）", () => {
   const root = tmp();
   try {
@@ -225,6 +270,45 @@ test("fig_lint：对数轴次刻度重叠直接提示 NullFormatter；tight_layo
     assert.match(clash?.title ?? "", /NullFormatter/);
     assert.equal(byId(list, "OK-figures/edge.svg")?.status, "passed", `贴边微余量不应误杀：${JSON.stringify(list)}`);
     assert.equal(byId(list, "CLIP-figures/clip.svg")?.status, "blocked");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fig_lint：pathlib.Path 子目录路径不丢目录，同一张图多格式连存只出一条 GRAY 且目标指向原图文件", { skip: !hasMatplotlib }, () => {
+  const root = tmp();
+  try {
+    mkdirSync(join(root, "figures/sub"), { recursive: true });
+    writeFileSync(
+      join(root, "figures/make.py"),
+      [
+        "from pathlib import Path",
+        "import matplotlib",
+        "matplotlib.rcParams['svg.fonttype'] = 'none'",
+        "matplotlib.rcParams['pdf.fonttype'] = 42",
+        "import matplotlib.pyplot as plt",
+        "fig, ax = plt.subplots(figsize=(89/25.4, 60/25.4), dpi=200)",
+        "ax.plot([1, 2], [3, 4])",
+        "out = Path('figures/sub')",
+        "fig.savefig(out / 'p.png')",
+        "fig.savefig(out / 'p.svg')",
+        "fig.savefig(out / 'p.pdf')",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(root, "figures/manifest.json"),
+      JSON.stringify({ figures: [{ file: "figures/sub/p.svg", script: "figures/make.py" }] }),
+    );
+    const r = run(skill("figure-forge", "fig_lint.py"), ["--root", root], root);
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const list = items(root, "fig-lint.jsonl");
+    assert.equal(byId(list, "OK-figures/sub/p.svg")?.status, "passed", JSON.stringify(list));
+    assert.equal(byId(list, "OK-p.svg"), undefined);
+    const grays = list.filter((i) => i.id.startsWith("GRAY-"));
+    assert.equal(grays.length, 1, JSON.stringify(grays));
+    assert.equal(grays[0].id, "GRAY-figures/sub/p.svg");
+    assert.equal(grays[0].target?.file, "figures/sub/p.svg");
+    assert.match(grays[0].evidence?.detail ?? "", /\.ccode\/checks\/fig-lint\/.*-gray\.png/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

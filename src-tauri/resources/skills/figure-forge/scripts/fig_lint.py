@@ -59,8 +59,14 @@ def _sw(message, *a, **k):
 warnings.showwarning = _sw
 warnings.simplefilter("always")
 _orig = Figure.savefig
+_gray_cache = {}
 def _audit(fig, fname, kw, before):
-    fname = str(getattr(fname, "name", fname))
+    if isinstance(fname, (str, bytes, os.PathLike)):
+        fname = os.fsdecode(os.fspath(fname))
+    elif hasattr(fname, "name") and isinstance(fname.name, str):
+        fname = fname.name
+    else:
+        return
     fig.canvas.draw()
     r = fig.canvas.get_renderer()
     fb = fig.bbox
@@ -96,19 +102,24 @@ def _audit(fig, fname, kw, before):
                       "minor": id(t) in minor_ticks,
                       "bold": str(t.get_fontweight()) in ("bold", "heavy", "black", "700", "800", "900")})
     msgs = [m for m in captured[before:] if re.search(r"missing from|Glyph \d+|findfont: Font family", m)]
-    gray = None
-    try:
-        base = os.path.splitext(os.path.basename(fname))[0]
-        gray = os.path.join(GRAY, base + "-gray.png")
-        os.makedirs(GRAY, exist_ok=True)
-        _orig(fig, gray, dpi=150)
-        from PIL import Image
-        Image.open(gray).convert("L").save(gray)
-    except Exception:
-        gray = None
     w_in, h_in = fig.get_size_inches()
+    size_mm = [round(w_in * 25.4, 1), round(h_in * 25.4, 1)]
+    fig_sig = (id(fig), size_mm[0], size_mm[1], tuple((t["text"], round(t["pt"], 2)) for t in texts))
+    gray = _gray_cache.get(fig_sig)
+    if gray is None:
+        try:
+            rel_no_ext = os.path.splitext(os.path.relpath(os.path.abspath(fname)))[0]
+            slug = re.sub(r"[^A-Za-z0-9._-]+", "_", rel_no_ext).strip("._-") or "fig"
+            gray = os.path.join(GRAY, slug + "-gray.png")
+            os.makedirs(GRAY, exist_ok=True)
+            _orig(fig, gray, dpi=150)
+            from PIL import Image
+            Image.open(gray).convert("L").save(gray)
+            _gray_cache[fig_sig] = gray
+        except Exception:
+            gray = None
     results.append({"file": os.path.abspath(fname), "texts": texts, "fig": [fb.x0, fb.y0, fb.x1, fb.y1], "dpi": fig.dpi,
-                    "size_mm": [round(w_in * 25.4, 1), round(h_in * 25.4, 1)],
+                    "size_mm": size_mm, "fig_sig": str(hash(fig_sig)),
                     "tight": kw.get("bbox_inches") == "tight", "msgs": msgs, "gray": gray,
                     "svg_fonttype": matplotlib.rcParams.get("svg.fonttype"), "pdf_fonttype": matplotlib.rcParams.get("pdf.fonttype")})
 def _savefig(self, fname, *a, **kw):
@@ -185,13 +196,23 @@ def main():
         if r.returncode != 0 and not done[key]:
             items.append(C.item(CHECKER, f"LINT-{fig['file']}", "figure_lint", "blocked", f"{fig['script']} 运行失败", fig["script"],
                                 detail=(r.stderr or "")[-600:]))
+    reg_files = {str(f.get("file", "")).lstrip("./") for f in figs}
     for results in done.values():
+        rels = []
+        gray_owner = {}
         for res in results:
             fpath = Path(res.get("file", ""))
             try:
                 frel = fpath.resolve().relative_to(root).as_posix()
             except ValueError:
                 frel = fpath.as_posix()
+            rels.append((frel, fpath, res))
+            if a.only and frel not in a.only:
+                continue
+            gk = res.get("fig_sig") or res.get("gray")
+            if gk and (gk not in gray_owner or (frel in reg_files and gray_owner[gk] not in reg_files)):
+                gray_owner[gk] = frel
+        for frel, fpath, res in rels:
             if a.only and frel not in a.only:
                 continue
             if "error" in res:
@@ -245,10 +266,14 @@ def main():
             if len(items) == n_before:
                 items.append(C.item(CHECKER, f"OK-{frel}", "figure_lint", "passed",
                                     f"{frel} 版面自检通过（{res['size_mm'][0]:g}×{res['size_mm'][1]:g} mm，{len(texts)} 段文字）", frel))
-            if res.get("gray"):
+            gk = res.get("fig_sig") or res.get("gray")
+            if res.get("gray") and gray_owner.get(gk) == frel:
+                gray_owner.pop(gk, None)
+                gray_rel = (Path(res["gray"]).relative_to(root).as_posix()
+                            if Path(res["gray"]).is_relative_to(root) else res["gray"])
                 items.append(C.item(CHECKER, f"GRAY-{frel}", "figure_lint", "needs_human",
-                                    f"{frel} 黑白打印分得开吗？看灰度预览", Path(res["gray"]).relative_to(root).as_posix()
-                                    if Path(res["gray"]).is_relative_to(root) else res["gray"]))
+                                    f"{frel} 黑白打印分得开吗？看灰度预览", frel,
+                                    detail=f"灰度预览：{gray_rel}"))
     if not figs:
         items.append(C.item(CHECKER, "NONE", "figure_lint", "needs_human", "登记里没有用脚本生成的数据图", a.manifest))
     return C.summary(items, C.write_items(root, "fig-lint.jsonl", items))

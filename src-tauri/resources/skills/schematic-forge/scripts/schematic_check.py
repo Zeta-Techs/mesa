@@ -813,15 +813,38 @@ def main():
         elif rec.get("spec_sha256") != F.spec_digest(spec_path):
             add("REBUILD", "schematic_rebuild", "blocked", f"图纸在上次渲染后改过，SVG / PPTX 还是旧的：重跑 render_figure.py {srel}")
         else:
-            rb_assets = R.Assets(fig_dir, R.Raster())
+            rb_assets = R.Assets(fig_dir, R.Raster(probe=False))
             try:
                 svg_now = R.build_svg(spec, layouts, rb_assets, index, image_rects)
             finally:
                 shutil.rmtree(rb_assets.tmp, ignore_errors=True)
             same = svg_now == svg_path.read_text(encoding="utf-8")
-            add("REBUILD", "schematic_rebuild", "passed" if same else "blocked",
-                "图纸重建出的 SVG 与现有文件一致" if same else "图纸重建出的 SVG 与现有文件不一致（本机字体或素材变了？）：重跑 render_figure.py",
-                R.rel(svg_path, root))
+            if same:
+                add("REBUILD", "schematic_rebuild", "passed", "图纸重建出的 SVG 与现有文件一致", R.rel(svg_path, root))
+            else:
+                svg_recorded = (rec.get("outputs") or {}).get("svg")
+                svg_intact = bool(svg_recorded) and svg_recorded == F.file_digest(svg_path)
+                asset_changed = False
+                svg_mtime = svg_path.stat().st_mtime
+                for el in spec.get("elements", []):
+                    src = el.get("src") or ""
+                    if el.get("type") in ("hero_panel", "image", "figure", "icon") and src and not src.startswith("lib:"):
+                        try:
+                            ap, _ = rb_assets.resolve(el)
+                            if ap.stat().st_mtime > svg_mtime + 1.0:
+                                asset_changed = True
+                                break
+                        except Exception:
+                            asset_changed = True
+                            break
+                if svg_intact and not asset_changed:
+                    add("REBUILD", "schematic_rebuild", "needs_human",
+                        f"图纸与上次渲染记录一致，但当前渲染器或本机字体算出的 SVG 有细微差异：现图满意可保留，想同步新版样式可重跑 render_figure.py {srel}",
+                        R.rel(svg_path, root))
+                else:
+                    add("REBUILD", "schematic_rebuild", "blocked",
+                        f"图纸重建出的 SVG 与现有文件不一致（引用素材改过或渲染未同步）：重跑 render_figure.py {srel}",
+                        R.rel(svg_path, root))
         ai = rec.get("ai_elements") or []
         if ai:
             add("AI-USE", "schematic_disclosure", "needs_human",
