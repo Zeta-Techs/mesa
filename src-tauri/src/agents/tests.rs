@@ -59,6 +59,8 @@ thread_local! {
     // 默认当作已选 API Key（其余 gemini 单测测的是注入本身）
     pub(super) static TEST_GEMINI_AUTH: std::cell::RefCell<Option<String>> =
         std::cell::RefCell::new(Some("gemini-api-key".into()));
+    pub(super) static TEST_AGY_SETTINGS: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[test]
@@ -322,11 +324,16 @@ fn e2e_dump_resume_plans() {
 fn e2e_dump_launch_plans() {
     let base = std::env::var("E2E_BASE").expect("E2E_BASE");
     let out = std::env::var("E2E_OUT").expect("E2E_OUT");
+    let cfg_dir = std::path::Path::new(&out)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("mesa-config");
+    let _cfg_guard = crate::storage::TestConfigRoot::redirect_to(&cfg_dir);
     // 测试态 Codex 版本默认取桩（None = 当旧版）：端到端要按本机真实版本拼参数（--no-daemon、计划工具）
     CODEX_VERSION_FOR_TEST.with(|c| c.set(cli_version_uncached_ok("codex")));
     // (agent, 协议, base_url 后缀)：Anthropic 协议的 base 不带 /v1（CLI 自己拼 /v1/messages），
     // OpenAI / Responses 协议带 /v1，Gemini 由 CLI 拼 /v1beta
-    let cases: [(&str, Option<&str>, &str); 9] = [
+    let cases: [(&str, Option<&str>, &str); 10] = [
         ("claude-code", None, ""),
         ("codebuddy", None, "/v1"),
         ("codex", None, "/v1"),
@@ -335,6 +342,7 @@ fn e2e_dump_launch_plans() {
         ("opencode", None, "/v1"),
         ("grok", None, "/v1"),
         ("gemini", None, ""),
+        ("agy", None, ""),
         ("cursor", None, ""),
     ];
     let mut all = serde_json::Map::new();
@@ -3607,4 +3615,97 @@ fn candidate_dirs_cover_tinytex_from_quarto() {
     let tinytex = std::path::Path::new("TinyTeX").join("bin");
     assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("windows"))));
     assert!(dirs.iter().any(|d| d.ends_with(tinytex.join("win32"))));
+}
+
+#[test]
+fn agy_api_launch_merges_jsonc_custom_models_strips_v1beta_and_passes_effort() {
+    TEST_AGY_SETTINGS.with(|s| {
+        *s.borrow_mut() = Some(
+            r#"{
+                // 用户注释
+                "modelProvider": "google",
+                "customModelsConfig": {
+                    "customModels": {
+                        "user/my-gem": { "apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": "gemini-2.5-pro" },
+                        "mesa/stale": { "apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": "stale" },
+                    },
+                },
+            }"#
+            .into(),
+        );
+    });
+    let mut p = profile("agy", Some("https://relay.example.com/v1beta/"));
+    p.models = vec!["gemini-2.5-pro".into(), "gemini-2.5-flash".into()];
+    p.request_policy.reasoning_effort = Some("high".into());
+
+    let plan = launch_plan(&p, Some("sk-agy-secret".into()), None).expect("agy launch_plan");
+    TEST_AGY_SETTINGS.with(|s| *s.borrow_mut() = None);
+
+    assert!(plan.env.contains(&(
+        "GOOGLE_GEMINI_BASE_URL".into(),
+        "https://relay.example.com".into()
+    )));
+    assert!(plan.env.contains(&("GEMINI_API_KEY".into(), "sk-agy-secret".into())));
+    let idx = plan.args.iter().position(|a| a == "--settings").expect("--settings");
+    let settings_path = &plan.args[idx + 1];
+    let text = std::fs::read_to_string(settings_path).expect("read agy settings file");
+    let _ = std::fs::remove_file(settings_path);
+    assert!(!text.contains("sk-agy-secret"), "设置文件绝不含密钥");
+    let val: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(val["modelProvider"], "gemini");
+    assert_eq!(val["model"], "mesa/gemini-2.5-pro");
+    let cm = val["customModelsConfig"]["customModels"].as_object().unwrap();
+    assert!(cm.contains_key("user/my-gem"), "保留用户自己的自定义模型");
+    assert!(!cm.contains_key("mesa/stale"), "不继承旧 mesa/ 条目");
+    assert_eq!(
+        cm["mesa/gemini-2.5-pro"]["apiProvider"],
+        "API_PROVIDER_GOOGLE_GEMINI"
+    );
+    assert_eq!(cm["mesa/gemini-2.5-flash"]["modelName"], "gemini-2.5-flash");
+    let midx = plan.args.iter().position(|a| a == "--model").expect("--model");
+    assert_eq!(plan.args[midx + 1], "mesa/gemini-2.5-pro");
+    let eidx = plan.args.iter().position(|a| a == "--effort").expect("--effort");
+    assert_eq!(plan.args[eidx + 1], "high");
+}
+
+#[test]
+fn agy_official_launch_and_models_parser_and_conflict_cleanup() {
+    let sample = "\x1b[36m⠋ Fetching...\r\x1b[0mgemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6\nmesa/skip\tCustom\n";
+    assert_eq!(
+        parse_agy_models(sample),
+        vec!["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+    );
+
+    let mut p = profile("agy", None);
+    p.account_type = crate::profiles::AccountType::Official;
+    p.request_policy.reasoning_effort = Some("medium".into());
+    let plan = launch_plan(&p, None, Some("gemini-3.8-flash-high")).unwrap();
+    assert!(plan.env_remove.contains(&"GEMINI_API_KEY".into()));
+    assert!(plan.env_remove.contains(&"GOOGLE_GEMINI_BASE_URL".into()));
+    assert_eq!(
+        plan.args,
+        vec!["--model", "gemini-3.8-flash-high", "--effort", "medium"]
+    );
+
+    let tmp = std::env::temp_dir().join(format!("mesa-agy-conflict-{}", uuid::Uuid::new_v4()));
+    let cfg_dir = tmp.join("home/.gemini/antigravity-cli");
+    let bak_dir = tmp.join("bak");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::create_dir_all(&bak_dir).unwrap();
+    std::fs::write(
+        cfg_dir.join("settings.json"),
+        "// 保留注释\n{\n  \"modelProvider\": \"gemini\",\n  \"model\": \"mesa/foo\",\n  \"trustedWorkspaces\": [\"/w\"],\n  \"customModelsConfig\": { \"customModels\": { \"mesa/foo\": {}, \"mine/bar\": {} } }\n}\n",
+    )
+    .unwrap();
+    let hits = agy_official_settings_conflicts(&tmp.join("home"));
+    assert_eq!(hits.len(), 2);
+    let cleaned = clear_agy_settings_conflicts_at(&tmp.join("home"), &bak_dir).unwrap();
+    assert_eq!(cleaned.len(), 1);
+    let after = std::fs::read_to_string(cfg_dir.join("settings.json")).unwrap();
+    assert!(after.contains("// 保留注释"), "JSONC 注释保留");
+    assert!(after.contains("trustedWorkspaces"));
+    assert!(after.contains("mine/bar"));
+    assert!(!after.contains("mesa/foo"));
+    assert!(!after.contains("\"modelProvider\""));
+    let _ = std::fs::remove_dir_all(&tmp);
 }

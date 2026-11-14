@@ -55,6 +55,11 @@ export function diagnose(output: string, method: string, isWindows: boolean): st
 const WINGET_AGENTS = new Set(["claude-code", "codex", "opencode", "kimi", "grok"]);
 
 export function installToolHelp(agentId: string, isWindows: boolean): string {
+  if (agentId === "agy") {
+    return isWindows
+      ? "Antigravity CLI 在 Windows 上随官方桌面安装包或 MSI 安装器提供（下载：https://antigravity.google/download），装好后完全退出并重新打开 Mesa。"
+      : "未找到 curl 或 bash。也可以在系统终端手动运行：curl -fsSL https://antigravity.google/cli/install.sh | bash，装好后重新打开 Mesa。";
+  }
   if (isWindows) {
     if (agentId === "cursor") {
       return "Cursor CLI 在 Windows 上用官方的 PowerShell 安装器，但这台电脑找不到 PowerShell。也可以在 PowerShell 里手动运行：irm 'https://cursor.com/install?win32=true' | iex，装好后重新打开 Mesa。";

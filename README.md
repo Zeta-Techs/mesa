@@ -7,7 +7,7 @@
 **给研究生和科研人员的开源 AI 科研工作台：AI 负责干活，Mesa 负责管活和核验，你负责拍板。**
 
 读文献 → 整数据 → 做图 → 写论文，每一步 AI 在隔离副本里做，你看过才进项目；引用只用查得到的文献，数据不编造。
-底下调用 Claude Code、Codex 等编码 Agent 干活（没装的，上手向导就地装好），九家的连接、对话和终端一并管好。
+底下调用 Claude Code、Codex 等编码 Agent 干活（没装的，上手向导就地装好），十家的连接、对话和终端一并管好。
 
 <p>
   <a href="https://github.com/Zeta-Techs/mesa/actions/workflows/build.yml"><img src="https://github.com/Zeta-Techs/mesa/actions/workflows/build.yml/badge.svg" alt="Build" /></a>
@@ -46,7 +46,7 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 | 下一步接着做 | 每次重新交代背景 | 任务书自动带上前面的产物、已定结论和你的研究档案 |
 | 导师批注 | 手抄给 AI | Word 批注抽成意见清单，处理完回流各步 |
 
-**同时也是一个顺手的 Agent 控制台**：Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build 九家共用一套连接（默认只在启动时注入，不改各家配置文件）；聊天和真实终端是同一段对话（`⌘⇧T` 切换）；九家本地会话统一搜索、回放、接着聊；花费按项目和模型汇总。
+**同时也是一个顺手的 Agent 控制台**：Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 十家共用一套连接（默认只在启动时注入，不改各家配置文件）；聊天和真实终端是同一段对话（`⌘⇧T` 切换）；十家本地会话统一搜索、回放、接着聊；花费按项目和模型汇总。
 
 <table>
   <tr>
@@ -55,7 +55,7 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
   </tr>
   <tr>
     <td><img src="docs/assets/readme/onboarding.jpg" alt="上手向导" /><br/><sub>上手向导：接上 AI、聊第一句、建项目</sub></td>
-    <td><img src="docs/assets/readme/connections.jpg" alt="连接页" /><br/><sub>连接页：九家 Agent 的 API 连接与官方账号，测试通过、全局使用中一眼看清</sub></td>
+    <td><img src="docs/assets/readme/connections.jpg" alt="连接页" /><br/><sub>连接页：十家 Agent 的 API 连接与官方账号，测试通过、全局使用中一眼看清</sub></td>
   </tr>
   <tr>
     <td><img src="docs/assets/readme/radar.jpg" alt="文献雷达" /><br/><sub>文献雷达：定时巡检新文献，中文摘要、分区与影响因子，采纳前先评审</sub></td>
@@ -72,7 +72,7 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 | 工作 | **工作台** | 等你拍板（所有项目等你决定的事，行内处理、键盘、撤销）、按项目分组列出步骤 / 分支 / 目标 / 定时、点任务看右侧任务面板；关标签后按运行身份找回 |
 | 工作 | **新对话 / 新项目** | 按钮（不是页面）：`⌘N` 不建项目直接开一段空白对话；`⌘⇧N` 新建项目，也可登记已有文件夹或生成示例课题 |
 | 工作 | **运行** | 一次摆一段对话，聊天 / 终端是同一会话两种看法：输入框里直接切模型、思考档和权限四档，「＋」与 `/` 里选常用提示词；文件树、改动面板、沉浸阅读。侧栏里没有这一行：点侧栏里的对话就进来；侧栏收成图标或隐藏时，悬停或 `⌘0` 把项目树探出来，隐藏时顶部岛上也能切对话 |
-| 工作 | **对话管理** | 打开对话页：九家 CLI 本地会话的搜索、结构化回放、自动起名、归档 / 导出 / 接力；可交给 Codex 客户端、Claude 桌面版接着做；列表栏可拖宽 |
+| 工作 | **对话管理** | 打开对话页：十家 CLI 本地会话的搜索、结构化回放、自动起名、归档 / 导出 / 接力；可交给 Codex 客户端、Claude 桌面版接着做；列表栏可拖宽 |
 | 项目 | **项目** | 科研 / 编程 / 工作。四个页签：任务、定时任务、文件、Agent 分工（任务页分别叫科研任务、编程任务、工作任务）；项目的对话在侧栏它下面 |
 | 资源与管理 | **连接** | 左栏选 Agent（可拖动排序）、右栏看连接；网关 × 绑定，默认启动注入环境变量（零污染），可选「设为全局默认」；官方账号显示套餐与登录状态；出图模型单列一项 |
 | 资源与管理 | **技能** | Skills 统一库，分发到各 CLI；内置 22 个技能（科研 21 个 + 出图） |
@@ -95,8 +95,8 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 - **编程 / 工作项目**：编程用独立工作树，合进基准或开 PR；工作项目用「新建目标」
 - **连接**：Agent × 网关 × 绑定；API 配置与官方账号双轨（官方账号可测试、显示套餐，型号问本机 CLI 得来）；密钥 0600 本地存储、绝不回显；网关可设兼容选项（超时、不发实验性请求头 / 思考参数）；模型能力库随包自带、联网定期更新；CLI 安装 / 更新一键完成，Mesa 里启动的 Codex、Qwen 不再弹它们自己的更新提示
 - **运行**：默认聊天层，像常见的 AI 客户端——模型 · 思考单菜单、权限四档（先出方案 / 请求批准 / 帮我批准 / 完全访问，按各家 CLI 的原生参数；先出方案在多数家是计划模式，方案看过点头就开工）、对话末尾的确认卡；底下仍是真实终端，两者是同一会话。聊天层优先取各 CLI 自带的结构化事件（hook、Codex app-server 等），不改你的 CLI 配置，取不到就回落读会话文件。xterm.js 终端；空闲 30 分钟没在看的对话自动停、点开发一句就接回；Agent 退出回落 shell、会话可恢复；Monaco 预览 / 编辑（⌘S、改动撞车时左右对比合并、GBK 等编码照原样保存）；PDF / docx / pptx / 表格 / 图片 / Jupyter 笔记本 / 音视频内嵌预览，跟着磁盘变化自动刷新，装了 LibreOffice 可看 Office 原样；选段「◈ 问 AI」；⛶ 沉浸阅读（笔记｜PDF｜终端，高亮批注记进笔记）
-- **对话**：解析九个 CLI 本地会话（含外部终端里跑的）；按项目 / 步骤整理；pin 快照、标签、归档、批量删除、◈ 摘要、Markdown 导出、会话包换机导入；Claude Code 对话被截图撑爆请求体（413）时一键「瘦身」并续聊；Mesa 自己的后台对话按保留期自动清理
-- **客户端接力**：对话 / 项目一键交给 Codex 客户端、Claude 桌面版接着做。打开前先预检（客户端装没装、渠道客户端认不认、对话文件还在不在、是否仍在 Mesa 终端里运行），缺 Codex 渠道定义时当场「写入并打开」。目前只有这两家有可接的客户端，其余七家不显示入口
+- **对话**：解析十个 CLI 本地会话（含外部终端里跑的）；按项目 / 步骤整理；pin 快照、标签、归档、批量删除、◈ 摘要、Markdown 导出、会话包换机导入；Claude Code 对话被截图撑爆请求体（413）时一键「瘦身」并续聊；Mesa 自己的后台对话按保留期自动清理
+- **客户端接力**：对话 / 项目一键交给 Codex 客户端、Claude 桌面版接着做。打开前先预检（客户端装没装、渠道客户端认不认、对话文件还在不在、是否仍在 Mesa 终端里运行），缺 Codex 渠道定义时当场「写入并打开」。目前只有这两家有可接的客户端，其余八家不显示入口
 - **定时跟进**：可选独立本机后台（默认关闭），退出桌面后处理已授权的定时任务；限定轮数、期限与累计软预算，等人释放进程、回答后原会话续跑，成果仍人工评审。不是关机也能运行的云服务。
 - **技能 / MCP**：技能四路导入（目录 / ZIP / GitHub / 收编）与 ZIP 导出；内置技能在普通对话里走轻量模式，结果回在对话里，不拉着跑完整流程；MCP 预设含 Consensus、Undermind、Blender
 
@@ -132,7 +132,7 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 - [docs/guide/user-guide.md](docs/guide/user-guide.md) — 产品说明书（查某个按钮、某种状态、某个页面；需要后补的图和视频已标位）
 - [CHANGELOG.md](CHANGELOG.md) — 版本更新日志
 - [docs/architecture.md](docs/architecture.md) — 架构设计与决策记录
-- [docs/agent-integration-matrix.md](docs/agent-integration-matrix.md) — 九个 CLI 的 env / 配置 / 会话格式调研，以及各家桌面客户端的深链与会话存储调研（§13）
+- [docs/agent-integration-matrix.md](docs/agent-integration-matrix.md) — 十个 CLI 的 env / 配置 / 会话格式调研，以及各家桌面客户端的深链与会话存储调研（§13）
 - [docs/design-client-handoff.md](docs/design-client-handoff.md) — 客户端接力设计稿（能力分档、预检模型、真机点验清单）
 - [docs/design-chat-layer.md](docs/design-chat-layer.md) — 聊天层设计稿
 - [docs/design-chat-structured-channels.md](docs/design-chat-structured-channels.md) — 聊天层结构化旁路设计与实测

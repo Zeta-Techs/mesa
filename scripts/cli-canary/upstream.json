@@ -1,4 +1,11 @@
 {
+ "agy": {
+  "acp": "不接：ACP 会取代终端界面（design-chat-structured-channels.md §11）",
+  "program-status": "用上：默认旁路（1.5.8 起，Windows 不接）",
+  "remote": "不接：--remote-agent / remote-control 是云端远程会话与后台遥控，不是本机终端旁路",
+  "server": "不接：mic-serve 是跨主机传麦克风音频，不是会话旁路",
+  "stream-json": "不接：只在 -p -o stream-json 无头模式"
+ },
  "claude-code": {
   "hooks": "用上：每次启动经 --settings 带 hooks（chat_channel.rs prepare_structured）",
   "program-status": "用上：hooks 起不来时的兜底旁路（PROGRAM_STATUS_MIN）",

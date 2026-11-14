@@ -28,7 +28,8 @@ E2E = os.path.join(ROOT, "scripts", "e2e-model-routing")
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLATFORM = sys.platform if sys.platform in ("win32", "darwin") else "linux"
 BIN = {"claude-code": "claude", "codex": "codex", "gemini": "gemini", "qwen": "qwen", "opencode": "opencode",
-       "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok", "opencode2": "opencode"}
+       "kimi": "kimi", "codebuddy": "codebuddy", "cursor": "cursor-agent", "grok": "grok", "agy": "agy",
+       "opencode2": "opencode"}
 # 金丝雀里的名字 → Mesa 的 agent id。OpenCode 1.x / 2.x 同命令名、同一个会话库，不能装在一起（2026-11-04 起两版都支持）：
 # 「opencode2」是装着 2.x 时的那一份基线，Mesa 里仍是 opencode（按 --version 大版本分开走，agents::opencode_v2）
 MESA_ID = {"opencode2": "opencode"}
@@ -38,12 +39,12 @@ MAJOR = {"opencode": lambda m: m < 2, "opencode2": lambda m: m >= 2}
 
 def mesa(agent):
     return MESA_ID.get(agent, agent)
-# 不在 PATH 上时的常见安装位置（Kimi 官方安装脚本装在自己的目录里）
-BIN_FALLBACK = {"kimi": "~/.kimi-code/bin/kimi"}
+# 不在 PATH 上时的常见安装位置（Kimi / Antigravity 官方安装脚本装在自己的目录里）
+BIN_FALLBACK = {"kimi": "~/.kimi-code/bin/kimi", "agy": "~/.antigravity/antigravity/bin/agy"}
 # 有结构化旁路的家跑 Mesa 的旁路端到端（chat_channel e2e）；Gemini 不开全局 hooks、Cursor 没有旁路，只抓屏。
-# Grok、Kimi（2.4 起，2026-11-04）的旁路是程序状态（OSC 7501），Windows 的 ConPTY 两个方向都吞 OSC，Mesa 在 Windows 不接它
-# （chat_channel.rs prepare），也只抓屏
-PROGRAM_STATUS = {"grok", "kimi"}
+# Grok、Kimi（2.4 起，2026-11-04）、Antigravity CLI（1.5.8 起，2026-11-14）的旁路是程序状态（OSC 7501），
+# Windows 的 ConPTY 两个方向都吞 OSC，Mesa 在 Windows 不接它（chat_channel.rs prepare），也只抓屏
+PROGRAM_STATUS = {"grok", "kimi", "agy"}
 CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "opencode2", "codex"} | (set() if PLATFORM == "win32" else PROGRAM_STATUS)
 # 旁路直接报会话 id 的家（程序状态不带会话 id）
 SESSION_ID = CHANNEL - PROGRAM_STATUS
@@ -354,7 +355,8 @@ def screen_phase(agent, gw, out, adir, deps):
     return json.loads(line) if line else None
 
 
-# 「全局配置」层（2026-10-30）：外部终端里直接用 CLI 的无头命令。Cursor 不支持设为全局，不跑
+# 「全局配置」层（2026-10-30）：外部终端里直接用 CLI 的无头命令。Cursor 不支持设为全局；
+# agy 只支持官方 Google 账号设为全局（API 密钥 / 中转只从环境变量读，Mesa 不改用户 shell 配置），均不跑
 GLOBAL_PROMPT = "say ok"
 GLOBAL_CMD = {"claude-code": ["-p"], "codex": ["exec", "--skip-git-repo-check"], "gemini": ["-p"], "qwen": ["-p"],
               "opencode": ["run"], "kimi": ["-p"], "codebuddy": ["-p"], "grok": ["-p"],

@@ -201,6 +201,12 @@ pub fn plan_for(agent: &str, g: &Grant, write_dirs: &[String], windows: bool) ->
             summary: format!("Grok Build 的限制办法还没核对过，这次不加限制{}", budget_note(g, agent)),
             enforced: false,
         },
+        "agy" => GrantPlan {
+            args: vec!["--dangerously-skip-permissions".into()],
+            claude_settings: None,
+            summary: format!("Antigravity CLI 的沙箱不可用时会自动降级，这次不加限制{}", budget_note(g, agent)),
+            enforced: false,
+        },
         other => GrantPlan {
             args: Vec::new(),
             claude_settings: None,
@@ -286,6 +292,8 @@ mod tests {
         let p = plan_for("kimi", &Grant::default(), &dirs(), false);
         assert!(!p.enforced && p.args.is_empty() && p.summary.contains("没有可用的限制办法"));
         assert!(plan_for("grok", &Grant::default(), &dirs(), false).args.contains(&"--yolo".to_string()));
+        let agy = plan_for("agy", &Grant::default(), &dirs(), false);
+        assert!(!agy.enforced && agy.args.contains(&"--dangerously-skip-permissions".to_string()));
     }
 
     #[test]

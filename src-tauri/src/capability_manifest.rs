@@ -340,6 +340,11 @@ pub(crate) const NO_CAPABILITY_WRITES: &[AgentWithoutCapabilityWrites] = &[
         reason: NoWriteReason::PolicyOnly,
         note: "只写 settings.json 的 env 块（endpoint/key/model），无能力键",
     },
+    AgentWithoutCapabilityWrites {
+        agent: "agy",
+        reason: NoWriteReason::PolicyOnly,
+        note: "会话级设置文件只写 modelProvider/model 与 customModelsConfig.customModels（apiProvider + modelName），无模型能力键；官方设为全局只撤回 mesa/ 项",
+    },
 ];
 
 #[cfg(test)]

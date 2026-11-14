@@ -31,7 +31,8 @@ const LIST_CAP: usize = 20;
 // v10（2026-10-31）：Claude Code 同一次回复拆成几行、每行带整份 usage，原先逐行相加，用量约翻倍；改为按 message.id 合一。
 // 只清 Claude Code 能从会话文件重抽的行和它的 seen 标记；文件已被 CLI 清掉的旧行重抽不回来，保持原数。
 // v13（2026-11-13）：Kimi 2.6 不再写 llm.request，Mesa 开的会话用量记成合成别名；改按启动记下的模型换。只清 Kimi 能重抽的行
-const USAGE_SCHEMA_VERSION: &str = "13";
+// v14（2026-11-14）：接入 Antigravity CLI（agy）用量提取（按 step_index 去重、input_tokens 已去缓存读、模型取 Model Selection 或启动记录）
+const USAGE_SCHEMA_VERSION: &str = "14";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -539,6 +540,121 @@ where
     out
 }
 
+/// 将 agy `<USER_SETTINGS_CHANGE>` 里的 `Model Selection` 展示名归一为标准模型 id：
+/// - `Gemini 3.8 Flash (High)` → `gemini-3.8-flash-high`
+/// - `Claude Sonnet 4.6 (Thinking)` → `claude-sonnet-4-6`（Claude Opus 则保留 `-thinking`）
+/// - `GPT-OSS 120B (Medium)` → `gpt-oss-120b-medium`
+/// - `mesa/<model>` 自定义键 → `<model>`
+/// 空值或 `None` 返回空串（未知模型不估价）
+pub(crate) fn agy_normalize_model_selection(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('.').trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("none") {
+        return String::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix("mesa/") {
+        return rest.trim().to_string();
+    }
+    match trimmed {
+        "Claude Sonnet 4.6 (Thinking)" => return "claude-sonnet-4-6".into(),
+        "Claude Opus 4.6 (Thinking)" => return "claude-opus-4-6-thinking".into(),
+        _ => {}
+    }
+    let is_claude = trimmed.to_ascii_lowercase().starts_with("claude ");
+    let mut slug = String::with_capacity(trimmed.len());
+    let mut prev_dash = false;
+    for ch in trimmed.chars() {
+        if ch == '(' || ch == ')' {
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() || (ch == '.' && !is_claude) {
+            slug.push(ch.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !slug.is_empty() && !prev_dash {
+            slug.push('-');
+            prev_dash = true;
+        }
+    }
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
+}
+
+fn agy_extract_model_change(content: &str) -> Option<String> {
+    const MARKER: &str = "changed setting `Model Selection` from ";
+    let idx = content.find(MARKER)?;
+    let rest = &content[idx + MARKER.len()..];
+    let to_idx = rest.find(" to ")?;
+    let after = &rest[to_idx + 4..];
+    let end = after.find(['\n', '<']).unwrap_or(after.len());
+    Some(agy_normalize_model_selection(&after[..end]))
+}
+
+/// Antigravity CLI：同一步从 RUNNING 变 DONE 会再写一行同 `step_index`，先按 `step_index` 合并去重；
+/// `input_tokens` 已是扣掉缓存读后的新增输入（实测 prompt=100, cached=20 → input_tokens=80），不调 `uncached_input`
+fn agy_events<I, S>(lines: I) -> Vec<UsageEvent>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut steps: Vec<Value> = Vec::new();
+    let mut by_step: HashMap<i64, usize> = HashMap::new();
+    for line in lines {
+        let Ok(v) = serde_json::from_str::<Value>(line.as_ref()) else {
+            continue;
+        };
+        if !v.is_object() {
+            continue;
+        }
+        if let Some(idx) = v.get("step_index").and_then(|x| x.as_i64()) {
+            if let Some(&pos) = by_step.get(&idx) {
+                steps[pos] = v;
+            } else {
+                by_step.insert(idx, steps.len());
+                steps.push(v);
+            }
+        } else {
+            steps.push(v);
+        }
+    }
+    let mut out = Vec::new();
+    let mut current_model = String::new();
+    for v in steps {
+        if get_str(&v, "type") == Some("USER_INPUT") {
+            if let Some(c) = get_str(&v, "content") {
+                if let Some(next_model) = agy_extract_model_change(c) {
+                    current_model = next_model;
+                }
+            }
+            continue;
+        }
+        if get_str(&v, "type") != Some("PLANNER_RESPONSE") || get_str(&v, "status") != Some("DONE")
+        {
+            continue;
+        }
+        let input = v.get("input_tokens").and_then(|x| x.as_u64());
+        let output = v.get("output_tokens").and_then(|x| x.as_u64());
+        let cache_read = v.get("cache_read_tokens").and_then(|x| x.as_u64());
+        if input.is_none() && output.is_none() && cache_read.is_none() {
+            continue;
+        }
+        let day = get_str(&v, "created_at").map(day_of_iso).unwrap_or_default();
+        out.push(UsageEvent {
+            day,
+            model: current_model.clone(),
+            input: input.unwrap_or(0),
+            output: output.unwrap_or(0),
+            cache_read: cache_read.unwrap_or(0),
+            cache_write: 0,
+            cache_write_1h: 0,
+            source: SOURCE_CLI.into(),
+            internal: false,
+            official: false,
+        });
+    }
+    out
+}
+
 fn opencode_events(db_path: &Path, session_id: &str) -> Vec<UsageEvent> {
     let Some(conn) = crate::sessions::open_opencode_db(db_path) else {
         return Vec::new();
@@ -656,6 +772,7 @@ where
         "codebuddy" => codebuddy_events(lines),
         "cursor" => cursor_events(lines),
         "grok" => grok_events(lines),
+        "agy" => agy_events(lines),
         _ => claude_events(lines, session_id),
     }
 }
@@ -990,12 +1107,13 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
         // 留着（用量历史永久保留）
         let partial: Option<&[&str]> = match current.as_deref() {
-            Some("12") => Some(&["kimi"]),
-            Some("11") => Some(&["claude-code", "kimi"]),
-            Some("10") => Some(&["claude-code", "kimi"]),
-            Some("9") => Some(&["claude-code", "kimi"]),
-            Some("8") => Some(&["claude-code", "codex", "gemini", "qwen", "kimi"]),
-            Some("7") => Some(&["claude-code", "grok", "codex", "gemini", "qwen", "kimi"]),
+            Some("13") => Some(&["agy"]),
+            Some("12") => Some(&["kimi", "agy"]),
+            Some("11") => Some(&["claude-code", "kimi", "agy"]),
+            Some("10") => Some(&["claude-code", "kimi", "agy"]),
+            Some("9") => Some(&["claude-code", "kimi", "agy"]),
+            Some("8") => Some(&["claude-code", "codex", "gemini", "qwen", "kimi", "agy"]),
+            Some("7") => Some(&["claude-code", "grok", "codex", "gemini", "qwen", "kimi", "agy"]),
             _ => None,
         };
         let reset_sql = match partial {
@@ -1359,6 +1477,34 @@ fn kimi_config_toml() -> String {
     String::new()
 }
 
+/// Mesa 启动的 agy 自定义模型会话（`Model Selection` 为空）从 `session_meta.launch_model` 回填真实模型名
+fn agy_launch_models(conn: &Connection) -> HashMap<String, String> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT session_id, launch_model FROM session_meta
+         WHERE agent='agy' AND launch_model IS NOT NULL AND launch_model<>''",
+    ) else {
+        return HashMap::new();
+    };
+    stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map(|rows| rows.flatten().collect())
+        .unwrap_or_default()
+}
+
+fn fill_agy_launch_model(events: &mut [UsageEvent], launch_model: Option<&String>) {
+    let Some(raw) = launch_model else {
+        return;
+    };
+    let clean = raw.strip_prefix("mesa/").unwrap_or(raw.as_str());
+    if clean.is_empty() {
+        return;
+    }
+    for event in events {
+        if event.model.is_empty() {
+            event.model = clean.to_string();
+        }
+    }
+}
+
 /// 官方账号（订阅制）profile id 集：重建索引时把会话档案的 profile 解析成认证方式。
 /// 测试环境不读本机真实配置（解析链语义由注入 meta_official 的单测覆盖）
 #[cfg(not(test))]
@@ -1562,6 +1708,7 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
     let meta_flags = session_meta_flags(&conn);
     let kimi_models = kimi_launch_models(&conn);
     let kimi_cfg = kimi_config_toml();
+    let agy_models = agy_launch_models(&conn);
     let official_profiles = official_profile_ids();
     let scan = crate::sessions::scan_sessions();
     let mut indexed = 0usize;
@@ -1581,6 +1728,11 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         };
         let marker = if s.agent == "kimi" && !base_marker.is_empty() {
             match kimi_models.get(&s.session_id) {
+                Some(m) if !m.is_empty() => format!("{base_marker}|{m}"),
+                _ => base_marker,
+            }
+        } else if s.agent == "agy" && !base_marker.is_empty() {
+            match agy_models.get(&s.session_id) {
                 Some(m) if !m.is_empty() => format!("{base_marker}|{m}"),
                 _ => base_marker,
             }
@@ -1608,6 +1760,8 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
         if s.agent == "kimi" {
             let prior = kimi_prior_day_models(&conn, &s.session_id);
             resolve_kimi_events(&mut events, kimi_models.get(&s.session_id), &kimi_cfg, &prior);
+        } else if s.agent == "agy" {
+            fill_agy_launch_model(&mut events, agy_models.get(&s.session_id));
         }
         for event in &mut events {
             event.source.clone_from(&source);
@@ -3801,4 +3955,67 @@ pub async fn usage_by_gateway(range: String) -> Result<Vec<GatewayUsageRow>, Str
 
 #[cfg(test)]
 mod gateway_usage_tests;
+
+#[cfg(test)]
+mod agy_usage_tests {
+    use super::*;
+
+    #[test]
+    fn agy_normalizes_display_and_custom_model_names() {
+        assert_eq!(
+            agy_normalize_model_selection("Gemini 3.8 Flash (High)."),
+            "gemini-3.8-flash-high"
+        );
+        assert_eq!(
+            agy_normalize_model_selection("Claude Sonnet 4.6 (Thinking)"),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            agy_normalize_model_selection("Claude Opus 4.6 (Thinking)"),
+            "claude-opus-4-6-thinking"
+        );
+        assert_eq!(
+            agy_normalize_model_selection("GPT-OSS 120B (Medium)"),
+            "gpt-oss-120b-medium"
+        );
+        assert_eq!(
+            agy_normalize_model_selection("mesa/gemini-2.5-pro"),
+            "gemini-2.5-pro"
+        );
+        assert_eq!(agy_normalize_model_selection("None"), "");
+        assert_eq!(agy_normalize_model_selection("."), "");
+    }
+
+    #[test]
+    fn agy_events_dedup_steps_preserve_uncached_input_and_fill_launch_model() {
+        let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("tests/fixtures/agy/sample-transcript.jsonl");
+        let events = extract_file_events("agy", &fixture, Some("conv-1"));
+        assert_eq!(events.len(), 2, "{events:?}");
+        // 第一步 RUNNING 被后续同 step_index 的 DONE 替换，且 input_tokens=80 不被二次减去 cache_read=20
+        assert_eq!(events[0].model, "gemini-3.8-flash-high");
+        assert_eq!(
+            (events[0].input, events[0].cache_read, events[0].output),
+            (80, 20, 12)
+        );
+        // step 4 切到 Claude Sonnet 4.6 (Thinking) → step 5 按新模型入账
+        assert_eq!(events[1].model, "claude-sonnet-4-6");
+        assert_eq!(
+            (events[1].input, events[1].cache_read, events[1].output),
+            (110, 30, 18)
+        );
+
+        // 自定义模型（Model Selection 为空）可用启动记录回填；无记录则保持空串（不猜价）
+        let custom_lines = [
+            r#"{"step_index":0,"type":"USER_INPUT","status":"DONE","created_at":"2026-11-14T01:00:00Z","content":"<USER_REQUEST>hi</USER_REQUEST>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to .\n</USER_SETTINGS_CHANGE>"}"#,
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-14T01:00:01Z","input_tokens":50,"cache_read_tokens":10,"output_tokens":8}"#,
+        ];
+        let mut custom = events_from_lines("agy", custom_lines, Some("conv-custom"));
+        assert_eq!(custom[0].model, "");
+        fill_agy_launch_model(&mut custom, Some(&"mesa/gemini-2.5-flash".to_string()));
+        assert_eq!(custom[0].model, "gemini-2.5-flash");
+    }
+}
 

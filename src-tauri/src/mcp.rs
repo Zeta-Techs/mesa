@@ -514,7 +514,14 @@ pub(crate) fn strip_bom(text: &str) -> &str {
 fn jsonc_read(path: &Path) -> Result<serde_json::Value, String> {
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
-    serde_json::from_str(&strip_jsonc(&text))
+    let stripped = strip_jsonc(&text);
+    // Antigravity CLI 初始生成的 ~/.gemini/config/mcp_config.json 常为 0 字节空文件（1.5.8 本机实证）
+    if stripped.trim().is_empty()
+        && path.file_name().and_then(|n| n.to_str()) == Some("mcp_config.json")
+    {
+        return Ok(serde_json::json!({}));
+    }
+    serde_json::from_str(&stripped)
         .map_err(|e| format!("{} 解析失败: {e}（已拒写，请先手工修复）", path.display()))
 }
 
@@ -970,11 +977,15 @@ fn entry_json(server: &McpServerDto, agent: &str) -> Result<serde_json::Value, S
             }
         }
         // cwd 只写给核实支持的家（claude/codebuddy/cursor 不写，matrix §10.2）
-        if !server.cwd.trim().is_empty() && matches!(agent, "gemini" | "qwen" | "opencode" | "kimi")
+        if !server.cwd.trim().is_empty()
+            && matches!(agent, "gemini" | "qwen" | "opencode" | "kimi" | "agy")
         {
             m.insert("cwd".into(), json!(server.cwd.trim()));
         }
     } else {
+        if agent == "agy" && server.kind == "sse" {
+            return Err("Antigravity CLI 只支持 stdio 与 Streamable HTTP（不支持 SSE）".into());
+        }
         if server.url.trim().is_empty() {
             return Err("remote 类型必须填 URL".into());
         }
@@ -982,6 +993,10 @@ fn entry_json(server: &McpServerDto, agent: &str) -> Result<serde_json::Value, S
             "gemini" | "qwen" => {
                 // remote 一律 httpUrl（url = SSE 已 legacy）
                 m.insert("httpUrl".into(), json!(server.url.trim()));
+            }
+            "agy" => {
+                // Antigravity CLI 远程服务器字段名是 serverUrl（不是 url 也不是 httpUrl）
+                m.insert("serverUrl".into(), json!(server.url.trim()));
             }
             _ => {
                 m.insert("url".into(), json!(server.url.trim()));
@@ -1220,6 +1235,11 @@ fn agent_paths(agent: &str) -> Result<(PathBuf, Vec<PathBuf>), String> {
         "grok" => {
             let base = crate::agent_specs::agent_config_root_with(agent, &home, &env_home).ok_or("未知 agent")?;
             let p = base.join("config.toml");
+            (p.clone(), vec![p])
+        }
+        // Antigravity CLI 用户级 MCP 在 ~/.gemini/config/mcp_config.json（独立于 Gemini CLI 的 ~/.gemini/settings.json）
+        "agy" => {
+            let p = home.join(".gemini").join("config").join("mcp_config.json");
             (p.clone(), vec![p])
         }
         _ => return Err(format!("未知 agent: {agent}")),
@@ -1728,7 +1748,7 @@ fn reverse_entry(agent: &str, name: &str, v: &serde_json::Value) -> McpServerDto
             }
         }
         _ => {
-            // claude/codebuddy/cursor/gemini/qwen：command → stdio，url/httpUrl → remote
+            // claude/codebuddy/cursor/gemini/qwen/agy：command → stdio，url/httpUrl/serverUrl → remote
             if v.get("command").is_some() {
                 server.command = s("command");
                 server.args = arr("args");
@@ -1736,8 +1756,11 @@ fn reverse_entry(agent: &str, name: &str, v: &serde_json::Value) -> McpServerDto
                 server.env = pairs("env");
             } else {
                 server.kind = "remote".into();
-                let url = s("url");
-                server.url = if url.is_empty() { s("httpUrl") } else { url };
+                server.url = ["url", "httpUrl", "serverUrl"]
+                    .into_iter()
+                    .map(s)
+                    .find(|u| !u.is_empty())
+                    .unwrap_or_default();
                 server.headers = pairs("headers");
             }
         }
@@ -1849,7 +1872,7 @@ fn comparable(s: &McpServerDto, with_cwd: bool) -> serde_json::Value {
 /// codebuddy 的顶层并列 `disabledMcpServers` 名单。其余家未实证有 enabled 语义，
 /// 一律不产出「外部已禁用」状态（宁缺毋滥，不猜）。
 fn agent_has_enabled_semantics(agent: &str) -> bool {
-    matches!(agent, "codex" | "grok" | "codebuddy")
+    matches!(agent, "codex" | "grok" | "codebuddy" | "agy")
 }
 
 /// TOML 系（codex/grok）：条目 `enabled` 缺省 = true
@@ -1880,6 +1903,11 @@ fn entry_disabled_externally(agent: &str, name: &str) -> Result<bool, String> {
             };
             Ok(codebuddy_disabled(&jsonc_read(path)?, name))
         }
+        "agy" => Ok(agent_entries("agy")?
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .and_then(|(_, v)| v.get("disabled").and_then(|x| x.as_bool()))
+            .unwrap_or(false)),
         _ => Ok(false),
     }
 }
@@ -2315,7 +2343,12 @@ fn parse_pasted(
             server.url = s_get(value, "url");
         }
         if server.kind == "remote" && server.url.is_empty() {
-            server.url = s_get(value, "httpUrl");
+            let hu = s_get(value, "httpUrl");
+            server.url = if hu.is_empty() {
+                s_get(value, "serverUrl")
+            } else {
+                hu
+            };
         }
         let (r, u) = resolve_on_import(&mut server, None);
         resolved += r;
@@ -4121,6 +4154,82 @@ done
         let r = check("HTTP/1.1 500 Internal Server Error");
         assert!(!r.ok);
         assert_eq!(r.status, "error");
+    }
+
+    #[test]
+    fn agy_mcp_tolerates_zero_byte_file_and_maps_server_url_and_disabled() {
+        let dir = std::env::temp_dir().join(format!("ccode-mcp-agy-{}", uuid::Uuid::new_v4()));
+        let cfg = dir.join("home/.gemini/config/mcp_config.json");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, "").unwrap(); // 0 字节空文件
+        TEST_HOME.with(|h| *h.borrow_mut() = Some(dir.join("home")));
+        TEST_BACKUP.with(|b| *b.borrow_mut() = Some(dir.join("bak")));
+
+        assert!(agent_entries("agy").unwrap().is_empty());
+        let remote = McpServerDto {
+            id: "1".into(),
+            name: "my-http".into(),
+            kind: "remote".into(),
+            command: String::new(),
+            args: vec![],
+            cwd: String::new(),
+            env: vec![],
+            url: "https://mcp.example.com/mcp".into(),
+            headers: vec![],
+            apps: HashMap::new(),
+            enabled: true,
+            origin: "ccode".into(),
+            startup_timeout_ms: None,
+            last_check: None,
+        };
+        let j = entry_json(&remote, "agy").unwrap();
+        assert_eq!(j["serverUrl"], "https://mcp.example.com/mcp");
+        assert!(j.get("url").is_none() && j.get("httpUrl").is_none());
+        write_json_entry("agy", "my-http", Some(j)).unwrap();
+
+        let stdio = McpServerDto {
+            id: "2".into(),
+            name: "my-stdio".into(),
+            kind: "stdio".into(),
+            command: "/usr/bin/env".into(),
+            args: vec!["node".into(), "srv.js".into()],
+            cwd: "/tmp".into(),
+            env: vec![],
+            url: String::new(),
+            headers: vec![],
+            apps: HashMap::new(),
+            enabled: true,
+            origin: "ccode".into(),
+            startup_timeout_ms: None,
+            last_check: None,
+        };
+        let sj = entry_json(&stdio, "agy").unwrap();
+        assert_eq!(sj["command"], "/usr/bin/env");
+        write_json_entry("agy", "my-stdio", Some(sj)).unwrap();
+        assert_eq!(agent_entries("agy").unwrap().len(), 2);
+
+        let rev = reverse_entry("agy", "my-http", &agent_entries("agy").unwrap().into_iter().find(|(n, _)| n == "my-http").unwrap().1);
+        assert_eq!((rev.kind.as_str(), rev.url.as_str()), ("remote", "https://mcp.example.com/mcp"));
+
+        // 移除 stdio 条目，保留 http 条目，且写前已自动备份
+        write_json_entry("agy", "my-stdio", None).unwrap();
+        assert_eq!(agent_entries("agy").unwrap().len(), 1);
+        assert!(std::fs::read_dir(dir.join("bak")).unwrap().flatten().count() >= 1);
+
+        let mut sse = remote.clone();
+        sse.kind = "sse".into();
+        assert!(entry_json(&sse, "agy").unwrap_err().contains("不支持 SSE"));
+
+        std::fs::write(
+            &cfg,
+            r#"{"mcpServers":{"my-http":{"serverUrl":"https://mcp.example.com/mcp","disabled":true}}}"#,
+        )
+        .unwrap();
+        assert!(entry_disabled_externally("agy", "my-http").unwrap());
+
+        TEST_HOME.with(|h| *h.borrow_mut() = None);
+        TEST_BACKUP.with(|b| *b.borrow_mut() = None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

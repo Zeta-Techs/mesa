@@ -188,7 +188,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
 ];
 
 /** 没有（也不该有）任何预设的 Agent；缺省适用面里排除它们 */
-const PRESET_EXEMPT_AGENTS = new Set(["gemini", "cursor"]);
+const PRESET_EXEMPT_AGENTS = new Set(["gemini", "agy", "cursor"]);
 
 /** 派生视图：沿用旧 per-agent 预设的字段，弹层下拉消费 */
 export interface Preset {
@@ -258,6 +258,7 @@ export function presetsForAgent(agent: string): Preset[] {
  */
 export const NO_PRESET_REASON: Record<string, string> = {
   gemini: "用 Google 官方账号/API 时 Base URL 留空即可，不需要填端点。",
+  agy: "用 Google 官方账号或官方 Gemini API 时无须填端点；第三方中转请在网关库填写 Gemini 协议地址。",
   cursor:
     "Cursor 的端点是它自家协议（非 OpenAI/Anthropic 兼容），第三方供应商端点接上也不通，所以不设预设。",
 };

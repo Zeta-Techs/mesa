@@ -31,6 +31,8 @@ enum DocFamily {
     HooksFileJson,
     /// kimi config.toml 的 [[hooks]] 扁平表（toml_edit 保留其余键原样）
     KimiToml,
+    /// Antigravity CLI ~/.gemini/config/hooks.json：顶层是命名钩子组字典，只管 `"mesa-attention"` 键
+    AgyNamedGroup,
 }
 
 /// 每 agent 一张桥接规格（事件名/matcher 为 matrix 源码级调研结论）
@@ -140,6 +142,18 @@ static BRIDGE_SPECS: &[BridgeSpec] = &[
             ("PermissionRequest", ""),
         ],
         handler_async: true,
+    },
+    BridgeSpec {
+        agent: "agy",
+        config_rel: ".gemini/config/hooks.json",
+        log_tag: "agy",
+        family: DocFamily::AgyNamedGroup,
+        events: [
+            ("PreInvocation", ""),
+            ("Stop", ""),
+            ("PreToolUse", "*"),
+        ],
+        handler_async: false,
     },
 ];
 
@@ -281,11 +295,15 @@ fn stable_hook_exe(log_path: &Path) -> Option<String> {
 
 /// 写进全局配置的 hook 命令：Windows 有可用的原生程序就用它（三种宿主都认的写法），否则 PowerShell 脚本
 fn global_hook_command(log_path: &Path) -> String {
+    global_hook_command_capped(log_path, PAYLOAD_CAP)
+}
+
+fn global_hook_command_capped(log_path: &Path, cap: usize) -> String {
     #[cfg(windows)]
     if let Some(exe) = stable_hook_exe(log_path) {
-        return format!("{exe} hook {} {PAYLOAD_CAP}", win_cmdline_path(log_path));
+        return format!("{exe} hook {} {cap}", win_cmdline_path(log_path));
     }
-    hook_command(log_path)
+    hook_command_capped(log_path, cap)
 }
 
 /// 精确注意力是否可用：开关打开（写了全局配置），或这家由 Mesa 每次启动注入
@@ -600,7 +618,9 @@ fn parse_json_doc(existing: Option<&str>, spec: &BridgeSpec) -> Result<Value, St
         Some(t) if !t.trim().is_empty() => {
             // qwen/gemini 的 settings.json 实为 JSONC：先去注释与尾逗号（mcp.rs 同款容错读）
             let text = match spec.family {
-                DocFamily::SettingsJson { tolerant: true } => crate::mcp::strip_jsonc(t),
+                DocFamily::SettingsJson { tolerant: true } | DocFamily::AgyNamedGroup => {
+                    crate::mcp::strip_jsonc(t)
+                }
                 _ => t.to_string(),
             };
             serde_json::from_str(&text)
@@ -818,6 +838,51 @@ fn whole_file_doc(spec: &BridgeSpec, command: &str) -> Result<String, String> {
     to_pretty(&json!({ "hooks": hooks }))
 }
 
+// ===== Antigravity CLI 命名钩子组族（~/.gemini/config/hooks.json 的顶层键 "mesa-attention"） =====
+
+const AGY_HOOK_GROUP: &str = "mesa-attention";
+
+/// Antigravity CLI 的 `~/.gemini/config/hooks.json` 顶层是命名组字典（与 Claude/Gemini 的 `{"hooks": ...}` 不同）：
+/// - `SessionStart` / `PreInvocation` / `Stop`：直接为 handler 数组 `[h]`；
+/// - `PreToolUse` / `PostToolUse`：matcher 数组 `[{"matcher": "*", "hooks": [h]}]`。
+/// 只增改顶层 `"mesa-attention"`，用户自己的其他钩子组原样保留。
+fn merge_agy_named_group(
+    spec: &BridgeSpec,
+    existing: Option<&str>,
+    log_path: &Path,
+) -> Result<String, String> {
+    let mut v = parse_json_doc(existing, spec)?;
+    let cmd = global_hook_command_capped(log_path, PAYLOAD_CAP);
+    let cmd_small = global_hook_command_capped(log_path, PAYLOAD_CAP_SMALL);
+    let h = handler_json(spec, &cmd);
+    let h_small = handler_json(spec, &cmd_small);
+    v.as_object_mut().unwrap().insert(
+        AGY_HOOK_GROUP.into(),
+        json!({
+            "SessionStart": [h.clone()],
+            "PreInvocation": [h.clone()],
+            "PreToolUse": [{ "matcher": "*", "hooks": [h.clone()] }],
+            "PostToolUse": [{ "matcher": "*", "hooks": [h_small] }],
+            "Stop": [h],
+        }),
+    );
+    to_pretty(&v)
+}
+
+fn remove_agy_named_group(spec: &BridgeSpec, existing: Option<&str>) -> Result<String, String> {
+    let mut v = parse_json_doc(existing, spec)?;
+    let marker = spec.marker();
+    if let Some(obj) = v.as_object_mut() {
+        let should_remove = obj
+            .get(AGY_HOOK_GROUP)
+            .is_some_and(|g| has_marker(&g.to_string(), &marker));
+        if should_remove {
+            obj.remove(AGY_HOOK_GROUP);
+        }
+    }
+    to_pretty(&v)
+}
+
 fn has_marker(text: &str, marker: &str) -> bool {
     // JSON 文本里 Windows 路径分隔符被转义成两个字符 \\：必须先按对归一，
     // 否则单字符替换会得到双斜杠（C://..//hooks-state//...）匹配不上 marker
@@ -1005,11 +1070,13 @@ fn apply_hooks_at(
         let command = global_hook_command(log_path);
         match spec.family {
             DocFamily::KimiToml => merge_kimi_toml(spec, existing.as_deref(), &command)?,
+            DocFamily::AgyNamedGroup => merge_agy_named_group(spec, existing.as_deref(), log_path)?,
             _ => merge_json_doc(spec, existing.as_deref(), &command)?,
         }
     } else {
         match spec.family {
             DocFamily::KimiToml => remove_kimi_toml(spec, existing.as_deref())?,
+            DocFamily::AgyNamedGroup => remove_agy_named_group(spec, existing.as_deref())?,
             _ => remove_json_doc(spec, existing.as_deref())?,
         }
     };
@@ -1054,7 +1121,7 @@ fn normalize_event(raw: &str) -> String {
 /// 归一化事件 → 注意力状态；一张表覆盖七家桥接的全部事件名
 fn event_state(normalized: &str) -> Option<&'static str> {
     match normalized {
-        "userpromptsubmit" | "beforeagent" => Some("working"),
+        "userpromptsubmit" | "beforeagent" | "preinvocation" => Some("working"),
         // 工具开始 / 结束：批准之后工具还在跑，不能停在上一条「待确认」上
         "pretooluse" | "posttooluse" | "beforetool" | "aftertool" => Some("working"),
         // 回合确定结束：同会话文件里的 turn_duration / task_complete 判 settled，前端不再等 PTY 静下来
@@ -1234,6 +1301,28 @@ fn read_log_tail(path: &Path) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// 从会话文件路径提取匹配 `HookRecord.session_id` 的键：
+/// Antigravity CLI 路径为 `.../brain/<uuid>/.system_generated/logs/transcript[_full].jsonl`，`<uuid>` 在往上第三级目录；
+/// 其余 CLI 取文件主名（grok `updates.jsonl` 另走 `transcript_path` 匹配）。
+fn session_id_from_file_path(agent: &str, file_path: &str) -> Option<String> {
+    let p = Path::new(file_path);
+    if agent == "agy" {
+        if let Some(id) = p
+            .parent() // logs
+            .and_then(Path::parent) // .system_generated
+            .and_then(Path::parent) // <uuid>
+            .and_then(Path::file_name)
+            .map(|n| n.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+        {
+            return Some(id);
+        }
+    }
+    p.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+}
+
 /// sessions::tail_state_impl 的精确标记融合入口：
 /// 仅当 agent 在桥接注册表内、设置开启、且日志内有该会话的未过期事件时返回精确状态，
 /// 其余情况 None 回落尾部推断。
@@ -1242,13 +1331,7 @@ pub(crate) fn state_for_session_file(agent: &str, file_path: &str) -> Option<Str
     if !precise_enabled(agent) {
         return None;
     }
-    let session_id = Path::new(file_path)
-        .file_stem()?
-        .to_string_lossy()
-        .into_owned();
-    if session_id.is_empty() {
-        return None;
-    }
+    let session_id = session_id_from_file_path(agent, file_path)?;
     let log = hooks_log_path(spec).ok()?;
     state_from_text(&read_log_tail(&log), &session_id, file_path, now_unix())
 }
@@ -1277,6 +1360,7 @@ fn support_note(agent: &str) -> Option<&'static str> {
         "codex" => Some("在 Mesa 里启动时自动带上（Codex 自带的 app-server 通道）"),
         // 程序状态 OSC 7501（program_status.rs，2026-10-22）：不开开关也有回合与等确认，开了卡上多出要跑的命令
         "grok" => Some("不开也行：Grok 在 Mesa 里会自己报进度和等确认；开了确认卡上多出要运行的命令"),
+        "agy" => Some("不开也行：Antigravity CLI 在 Mesa 里会自己报进度和等确认；开了能看到正在运行的工具与命令"),
         "cursor" => Some("无「等待确认」原生事件，暂不支持"),
         _ => None,
     }
@@ -1312,13 +1396,7 @@ pub async fn session_confirm_detail(agent: String, file_path: String) -> Option<
         if !precise_enabled(&agent) {
             return None;
         }
-        let session_id = Path::new(&file_path)
-            .file_stem()?
-            .to_string_lossy()
-            .into_owned();
-        if session_id.is_empty() {
-            return None;
-        }
+        let session_id = session_id_from_file_path(&agent, &file_path)?;
         let log = hooks_log_path(spec).ok()?;
         let (state, detail) =
             latest_from_text(&read_log_tail(&log), &session_id, &file_path, now_unix())?;
@@ -2273,11 +2351,11 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
-    /// 支持清单：七家在桥接注册表内，cursor/opencode 不支持且带备注
+    /// 支持清单：八家在桥接注册表内，cursor/opencode 不支持且带备注
     #[test]
     fn support_list_covers_all_nine() {
         let list = crate::agent_specs::all_agent_specs();
-        assert_eq!(list.len(), 9, "九家 agent");
+        assert_eq!(list.len(), 10, "十家 agent");
         let supported: Vec<&str> = list
             .iter()
             .filter(|s| spec_for(s.id).is_some())
@@ -2292,14 +2370,19 @@ mod tests {
                 "qwen",
                 "kimi",
                 "codebuddy",
-                "grok"
+                "grok",
+                "agy"
             ]
         );
         for id in ["cursor", "opencode"] {
             assert!(spec_for(id).is_none());
             assert!(support_note(id).is_some(), "{id} 不支持须带备注");
         }
-        assert!(support_note("codex").is_some() && support_note("codebuddy").is_some());
+        assert!(
+            support_note("codex").is_some()
+                && support_note("codebuddy").is_some()
+                && support_note("agy").is_some()
+        );
     }
 
     /// 每次启动注入：Claude / CodeBuddy 两家带 hooks；其余三家（Qwen / OpenCode / Codex）走各自通道；
@@ -2491,5 +2574,40 @@ mod tests {
         assert!(!gemini_hook_unnamed(&after, &spec.marker()));
         assert_eq!(std::fs::read_to_string(&real).unwrap(), before, "真实文件不得被改");
         std::fs::remove_dir_all(tmp).ok();
+    }
+
+    #[test]
+    fn agy_named_group_hooks_roundtrip_and_session_id_extraction() {
+        let dir = tmpdir("agy-hooks");
+        let home = dir.join("home");
+        let log = dir.join("hooks-state").join("agy-hooks.jsonl");
+        let backups = dir.join("backups");
+        let spec = spec_for("agy").unwrap();
+        let cfg = home.join(spec.config_rel);
+        fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        fs::write(&cfg, "// jsonc\n{\n  \"user-group\": { \"Stop\": [{ \"type\": \"command\", \"command\": \"echo hi\" }] },\n}\n").unwrap();
+
+        apply_hooks_at(spec, &home, &log, &backups, true).unwrap();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(v["user-group"]["Stop"][0]["command"], "echo hi", "保留用户已有命名钩子组");
+        assert!(v["mesa-attention"]["SessionStart"][0]["command"].is_string());
+        assert!(v["mesa-attention"]["PreInvocation"][0]["command"].is_string());
+        assert_eq!(v["mesa-attention"]["PreToolUse"][0]["matcher"], "*");
+        assert!(v["mesa-attention"]["PostToolUse"][0]["hooks"][0]["command"].is_string());
+        assert!(v["mesa-attention"]["Stop"][0]["command"].is_string());
+
+        apply_hooks_at(spec, &home, &log, &backups, false).unwrap();
+        let after: Value = serde_json::from_str(&fs::read_to_string(&cfg).unwrap()).unwrap();
+        assert!(after.get("mesa-attention").is_none());
+        assert_eq!(after["user-group"]["Stop"][0]["command"], "echo hi");
+        assert!(fs::read_dir(&backups).unwrap().flatten().count() >= 1, "开关 hooks 前自动备份");
+
+        let agy_path = "/Users/u/.gemini/antigravity-cli/brain/e90f428b-5164/.system_generated/logs/transcript_full.jsonl";
+        assert_eq!(
+            session_id_from_file_path("agy", agy_path).as_deref(),
+            Some("e90f428b-5164")
+        );
+        assert_eq!(event_state(&normalize_event("PreInvocation")), Some("working"));
+        fs::remove_dir_all(&dir).ok();
     }
 }

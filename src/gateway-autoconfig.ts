@@ -61,6 +61,7 @@ const HOME_VENDOR: Record<string, VendorId> = {
   "claude-code": "claude",
   codex: "gpt",
   gemini: "gemini",
+  agy: "gemini",
   qwen: "qwen",
   kimi: "kimi",
   grok: "grok",

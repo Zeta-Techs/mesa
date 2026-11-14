@@ -472,7 +472,7 @@ Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 
 **请求头的全局写入口径（2026-10-30）**：Header 的值取自环境变量。能写「变量名引用」的写引用（Codex `env_http_headers`、OpenCode `{env:VAR}`、Grok `$VAR`）；只认明文的（Claude / CodeBuddy / Qwen / Gemini / Kimi）不写，预览 `skipped_policies` 写明「只在 Mesa 启动时带上」。禁止为了全局生效把 Header 明文写进 CLI 配置。
 
-**官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：七家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok；OpenCode 没有官方账号，Cursor 不支持设为全局）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
+**官方账号「设为全局」= 撤掉 API 键、交回 CLI 登录（2026-10-28 用户拍板，取代下段「恢复首次快照」）**：八家（codex / claude-code / gemini / qwen / codebuddy / kimi / grok / agy；OpenCode 没有官方账号，Cursor 不支持设为全局；Antigravity CLI 只从环境变量读端点与密钥、Mesa 不改用户 shell 配置，故 API / 中转连接不支持设为全局、仅官方 Google 账号支持）都走 `plan_official_writes` 写计划，与 API 绑定同一套预览、事务备份、cc-switch 挡路、`record_active_global`、漂移与托盘勾选。每家只撤会盖过官方登录的东西，其余配置与别的渠道定义一律不动；文件不存在不写：
 
 | Agent | 撤 / 改 |
 |---|---|
@@ -483,6 +483,7 @@ Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 | CodeBuddy | env 撤 `CODEBUDDY_BASE_URL` / `_API_KEY` / `_AUTH_TOKEN`，非官方模型撤 `CODEBUDDY_MODEL` 与顶层 `model`；`models.json` 撤 Mesa 写的条目 |
 | Kimi | `default_model` 改指 `kimi login` 配好的 `managed:kimi-code` 模型（当前默认就是则不动）；没登录过就撤 `default_model`；Mesa 渠道（`ccode*`）与别名**连同密钥留着**（2026-10-31，取代 10-30「撤掉明文 `api_key`」：会话存的是模型别名，撤了中转老会话一续就缺密钥；Kimi 只有明文与要用户 shell 导出的 `api_key_env`，没有可现取的引用）。新旧两个配置目录存在的都改 |
 | Grok | 撤顶层 `api_key` / `env_key`、`[endpoints].models_base_url`；非 grok 默认模型撤；指向非 x.ai 地址的 `[model.<id>]`：没有自己密钥的整段撤（留着官方令牌会发去中转），**带自己 `api_key` / `env_key` 的留着，Mesa 写的也留**（2026-10-31，取代 10-30「Mesa 写的连同密钥整段撤」：会话记着 `current_model_id`，撤了 `grok -r` 续中转老会话找不到模型；grok 1.0.70 实测留下的段照样用自己的密钥）。官方启动另查「中转段没有自己密钥」并拦下 |
+| Antigravity CLI | `~/.gemini/antigravity-cli/settings.json`（JSONC 容错保注释）：`modelProvider` 为 `"gemini"` 时撤，顶层 `model` 以 `mesa/` 开头时撤，`customModelsConfig.customModels` 里撤 `mesa/*` 条目（删空后顺带回收空对象），用户自己的自定义模型、`trustedWorkspaces` 等不动 |
 
 官方计划是删键，**比对磁盘必须整份比**（`disk_equals_plans`）——API 计划用的子集比对对删键永远为真，托盘会两项都打勾、「已是官方」会跳过写入。`plans_match_disk` 按账号类型分派。前后端判定 `official_global_is_patch` ↔ `officialGlobalIsPatch` 双端镜像。未登录官方账号时前端先确认一次。
 

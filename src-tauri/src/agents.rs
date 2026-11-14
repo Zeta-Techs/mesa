@@ -541,7 +541,7 @@ fn official_connected_caveat(agent_id: &str) -> &'static str {
     match agent_id {
         // 2026-10-28 本机实测：个人 Google 账号登录后 Gemini CLI 报 IneligibleTierError（UNSUPPORTED_CLIENT），
         // Google 已不让个人版 Code Assist 用这个客户端，改推 Antigravity；Workspace / 付费 Code Assist 账号不在此列
-        "gemini" => "；注意：个人 Google 账号已不能用 Gemini CLI（Google 改推 Antigravity），只有 Workspace / 企业版 Code Assist 账号还能用，个人用户请改用 API 连接",
+        "gemini" => "；注意：个人 Google 账号已不能用 Gemini CLI（Google 改推 Antigravity），只有 Workspace / 企业版 Code Assist 账号还能用，个人用户可在 Mesa 里直接选 Antigravity CLI 或改用 API 连接",
         _ => "",
     }
 }
@@ -1278,6 +1278,175 @@ fn write_settings_overlay_file(prefix: &str, body: &str) -> Result<String, Strin
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Antigravity CLI 会话级 `--settings` 文件：落 `<config_root>/agy-settings/<uuid>.json`（0700 目录 / 0600 文件）。
+/// 不能复用 `external-launch` 的 60 秒自删（会话中途 `/model` 或续聊还要读它；文件内不含任何密钥，只扫 >7 天旧文件）。
+/// 走 `storage::config_root()`，使单测与金丝雀的 `TestConfigRoot` 重定向生效，不碰真实配置目录。
+fn agy_settings_dir() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    {
+        let thread = format!("{:?}", std::thread::current().id())
+            .replace(|c: char| !c.is_ascii_alphanumeric(), "");
+        return Some(
+            std::env::temp_dir()
+                .join(format!("ccode-test-config-{thread}"))
+                .join("ccode")
+                .join("agy-settings"),
+        );
+    }
+    #[cfg(not(test))]
+    Some(crate::storage::config_root()?.join("agy-settings"))
+}
+
+fn write_agy_session_settings(profile: &Profile, picked: &str) -> Result<String, String> {
+    let dir = agy_settings_dir().ok_or("无法确定平台配置目录")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 Antigravity 会话设置目录失败: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("收紧 Antigravity 会话设置目录权限失败: {e}"))?;
+    }
+    sweep_stale_agy_settings(&dir);
+    let body = agy_session_settings_body(
+        profile,
+        picked,
+        agy_user_settings_text(profile).as_deref(),
+    )
+    .to_string();
+    let path = dir.join(format!("{}.json", uuid::Uuid::new_v4()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|e| format!("创建 Antigravity 会话设置文件失败: {e}"))?;
+    use std::io::Write;
+    file.write_all(body.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&path);
+            format!("写入 Antigravity 会话设置文件失败: {e}")
+        })?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn sweep_stale_agy_settings(dir: &std::path::Path) {
+    let Some(cutoff) =
+        std::time::SystemTime::now().checked_sub(std::time::Duration::from_secs(7 * 86_400))
+    else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.path().extension().is_some_and(|e| e == "json")
+            && entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .is_ok_and(|mtime| mtime < cutoff)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn agy_user_settings_text(profile: &Profile) -> Option<String> {
+    #[cfg(test)]
+    {
+        let _ = profile;
+        return tests::TEST_AGY_SETTINGS.with(|k| k.borrow().clone());
+    }
+    #[cfg(not(test))]
+    {
+        let home = profile
+            .extra_env
+            .get("HOME")
+            .filter(|d| !d.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(crate::dirs::home_dir)?;
+        std::fs::read_to_string(home.join(".gemini/antigravity-cli/settings.json")).ok()
+    }
+}
+
+/// 生成 Antigravity CLI 会话级 `--settings` 内容（纯函数）：
+/// 保留用户 `~/.gemini/antigravity-cli/settings.json`（JSONC）里所有非 `mesa/` 自定义模型，
+/// 并入当前连接的 `mesa/<id>` 条目（`API_PROVIDER_GOOGLE_GEMINI`），钉住 `modelProvider="gemini"` 与 `model="mesa/<picked>"`。
+pub(crate) fn agy_session_settings_body(
+    profile: &Profile,
+    picked: &str,
+    user_text: Option<&str>,
+) -> serde_json::Value {
+    let mut custom_models = serde_json::Map::new();
+    if let Some(text) = user_text {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&crate::mcp::strip_jsonc(text)) {
+            if let Some(existing) = v
+                .pointer("/customModelsConfig/customModels")
+                .and_then(|m| m.as_object())
+            {
+                for (k, val) in existing {
+                    if !k.starts_with("mesa/") {
+                        custom_models.insert(k.clone(), val.clone());
+                    }
+                }
+            }
+        }
+    }
+    let mut ids: Vec<&str> = Vec::new();
+    for m in std::iter::once(picked).chain(profile.models.iter().map(String::as_str)) {
+        let m = m.trim();
+        if !m.is_empty() && !ids.contains(&m) {
+            ids.push(m);
+        }
+    }
+    for id in ids {
+        custom_models.insert(
+            format!("mesa/{id}"),
+            serde_json::json!({
+                "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+                "modelName": id,
+            }),
+        );
+    }
+    serde_json::json!({
+        "modelProvider": "gemini",
+        "model": format!("mesa/{picked}"),
+        "customModelsConfig": {
+            "customModels": custom_models,
+        },
+    })
+}
+
+/// `google.golang.org/genai` 自己拼 `/v1beta/models/...`：剥掉用户或中转末尾误带的 `/v1beta` 或 `/v1`
+pub(crate) fn normalize_agy_gemini_base_url(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    for suffix in ["/v1beta", "/v1"] {
+        if trimmed.len() > suffix.len()
+            && trimmed[trimmed.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+        {
+            return trimmed[..trimmed.len() - suffix.len()].to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn agy_effort_arg(raw: Option<&str>) -> Option<&'static str> {
+    let canonical = crate::agent_specs::canonical_reasoning_effort(raw?)?;
+    match canonical.as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        _ => None,
+    }
+}
+
 /// Qwen 的系统设置覆盖层（`QWEN_CODE_SYSTEM_SETTINGS_PATH`，合并时排在用户 settings.json 之后）。
 /// 用户 settings.json 的 `model.name` 盖过 `OPENAI_MODEL`，命中的 `modelProviders` 条目自带的 baseUrl / envKey
 /// 又盖过环境变量：设过全局（或在 Qwen 里 /model 过）之后按连接启动，请求打到全局那条连接——模型不同名时
@@ -1508,13 +1677,11 @@ pub fn launch_plan(
         }
         return Ok(plan);
     }
-    // grok 未显式选模型时用绑定清单第一个兜底（2026-09-17 实测）：grok 按 id 路由，
-    // 不注 GROK_DEFAULT_MODEL / -m 会回落 ~/.grok/config.toml 的 [models].default——
-    // 通常是第一方 grok-* 模型，第一方 id 绕过网关直连 xAI 代理，失败形态是
-    // 「连接超时」而非「模型不存在」，极易误诊成网关不通。其他 CLI 未选模型同样
-    // 回落自家默认，但请求仍发往所选网关、报错可读，不做兜底。
+    // grok / agy 未显式选模型时用绑定清单第一个兜底：
+    // - grok 按 id 路由，不注 GROK_DEFAULT_MODEL / -m 会回落 ~/.grok/config.toml 的 [models].default；
+    // - agy API 连接必须登记并选中自定义模型 `mesa/<id>`，不带 `--model` 会走 Google 账号默认模型。
     let model = model.or_else(|| {
-        if profile.agent != "grok" {
+        if !matches!(profile.agent.as_str(), "grok" | "agy") {
             return None;
         }
         profile
@@ -1538,6 +1705,35 @@ pub fn launch_plan(
                 if profile.agent == "grok" {
                     if let Some(overlay) = grok_config_overlay(profile, model) {
                         plan.env.push(("GROK_CONFIG".into(), overlay.to_string()));
+                    }
+                }
+                // agy：会话级 `--settings <0600 file>` + `--model mesa/<picked>` 零污染注入（不改用户 settings.json，不注 shell 函数）
+                if profile.agent == "agy" {
+                    let picked = model
+                        .map(str::trim)
+                        .filter(|m| !m.is_empty())
+                        .ok_or("Antigravity CLI 使用 API 连接时必须至少配置一个模型")?;
+                    // google.golang.org/genai 自己拼 /v1beta/models/...：独立连接直填 /v1 或 /v1beta 时统一剥掉；
+                    // 不带地址（官方 Gemini API Key）时主动清掉父进程残留 GOOGLE_GEMINI_BASE_URL
+                    let mut saw_base = false;
+                    for (k, v) in &mut plan.env {
+                        if k == "GOOGLE_GEMINI_BASE_URL" {
+                            *v = normalize_agy_gemini_base_url(v);
+                            saw_base = !v.is_empty();
+                        }
+                    }
+                    if !saw_base {
+                        plan.env.retain(|(k, _)| k != "GOOGLE_GEMINI_BASE_URL");
+                        plan.env_remove.push("GOOGLE_GEMINI_BASE_URL".into());
+                    }
+                    let settings_file = write_agy_session_settings(profile, picked)?;
+                    plan.args.push("--settings".into());
+                    plan.args.push(settings_file);
+                    plan.args.push("--model".into());
+                    plan.args.push(format!("mesa/{picked}"));
+                    if let Some(eff) = agy_effort_arg(profile.request_policy.reasoning_effort.as_deref()) {
+                        plan.args.push("--effort".into());
+                        plan.args.push(eff.into());
                     }
                 }
             }
@@ -2430,6 +2626,9 @@ pub(crate) fn official_model_allowed(agent: &str, model: &str) -> bool {
     }) {
         return false;
     }
+    if agent == "agy" && m.starts_with("mesa/") {
+        return false;
+    }
     if agent == "codex" {
         return m.starts_with("gpt-")
             || m.starts_with("o1")
@@ -2639,6 +2838,68 @@ fn parse_grok_models(text: &str) -> Vec<String> {
     out.into_iter().map(|(_, s)| s).collect()
 }
 
+/// `agy models` 内置兜底名单（未缓存时的默认列表，1.5.8 实证）
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) const AGY_OFFICIAL_FALLBACK_MODELS: &[&str] = &[
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-low",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6-thinking",
+    "gpt-oss-120b-medium",
+];
+
+fn strip_ansi_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&nc) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&nc) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// `agy models` 的输出：`<cli_id>\t<Display Name>` 逐行，前面可能夹带 ANSI 控制码与 `\r` spinner 帧（1.5.8 实证）
+pub(crate) fn parse_agy_models(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw_line in text.lines() {
+        let seg = raw_line.rsplit('\r').next().unwrap_or(raw_line);
+        let clean = strip_ansi_escapes(seg);
+        let Some((slug, display)) = clean.split_once('\t') else {
+            continue;
+        };
+        let slug = slug.trim();
+        let display = display.trim();
+        if !slug.is_empty()
+            && !display.is_empty()
+            && !slug.contains(' ')
+            && !slug.starts_with("mesa/")
+            && !out.iter().any(|x| x == slug)
+        {
+            out.push(slug.to_string());
+        }
+    }
+    out
+}
+
+fn agy_models_probe_env() -> Vec<(String, String)> {
+    let mut envs = crate::settings::official_outbound_env();
+    envs.push(("GEMINI_API_KEY".into(), String::new()));
+    envs.push(("GOOGLE_GEMINI_BASE_URL".into(), String::new()));
+    envs
+}
+
 /// `cursor-agent models` 的输出：「slug - 显示名」逐行，第一行标题（2026-10-28 本机实证）
 fn parse_cursor_models(text: &str) -> Vec<String> {
     text.lines()
@@ -2710,6 +2971,14 @@ pub(crate) fn official_models_for(agent: &str) -> Vec<String> {
             }
             // 名单在 tests/fixtures/gemini-model-aliases.json（model_aliases.rs 实测对应型号）
             "gemini" => return crate::model_aliases::aliases_of("gemini"),
+            "agy" => {
+                let cached = read_official_models_cache("agy");
+                return if cached.is_empty() {
+                    AGY_OFFICIAL_FALLBACK_MODELS.iter().map(|s| (*s).to_string()).collect()
+                } else {
+                    cached
+                };
+            }
             "qwen" => return vec!["coder-model".to_string()],
             _ => return Vec::new(),
         }
@@ -2758,6 +3027,17 @@ pub(crate) fn official_models_for_launch(agent: &str) -> Vec<String> {
             refresh_official_models_cache("grok", || {
                 cli_output_with_env(&path, &["models"], &crate::settings::official_outbound_env(), std::time::Duration::from_secs(20))
                     .map(|t| parse_grok_models(&t))
+                    .unwrap_or_default()
+            });
+        }
+    }
+    #[cfg(not(test))]
+    if agent == "agy" && read_official_models_cache("agy").is_empty() {
+        if let Some(path) = resolve_binary("agy") {
+            let envs = agy_models_probe_env();
+            refresh_official_models_cache("agy", || {
+                cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(12))
+                    .map(|t| parse_agy_models(&t))
                     .unwrap_or_default()
             });
         }
@@ -2849,6 +3129,16 @@ fn apply_official_inject(
                         "default": m, "session_summary": m, "prompt_suggestion": m,
                     }});
                     plan.env.push(("GROK_CONFIG".into(), overlay.to_string()));
+                }
+            }
+            if profile.agent == "agy" {
+                if let Some(m) = model {
+                    plan.args.push("--model".into());
+                    plan.args.push(m.into());
+                }
+                if let Some(eff) = agy_effort_arg(profile.request_policy.reasoning_effort.as_deref()) {
+                    plan.args.push("--effort".into());
+                    plan.args.push(eff.into());
                 }
             }
         }
@@ -3957,8 +4247,28 @@ fn official_launch_conflicts(home: &std::path::Path, profile: &Profile) -> Vec<S
             }
             out
         }
+        "agy" => agy_official_settings_conflicts(home),
         _ => probe_conflicts(home, oa),
     }
+}
+
+/// Antigravity CLI 官方 Google 账号冲突检查（只读 JSONC）：
+/// 顶层 `modelProvider = "gemini"` 或 `model = "mesa/..."` 会让裸 `agy` 走 API 自定义模型而非官方 Google 账号。
+pub(crate) fn agy_official_settings_conflicts(home: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(home.join(".gemini/antigravity-cli/settings.json")) else {
+        return Vec::new();
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&crate::mcp::strip_jsonc(&text)) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    if v.get("modelProvider").and_then(|x| x.as_str()) == Some("gemini") {
+        out.push("~/.gemini/antigravity-cli/settings.json 中 modelProvider 设为 gemini，官方 Google 账号会被切去 API 模式".into());
+    }
+    if let Some(m) = v.get("model").and_then(|x| x.as_str()).filter(|m| m.starts_with("mesa/")) {
+        out.push(format!("~/.gemini/antigravity-cli/settings.json 中默认模型是 API 自定义模型 {m}"));
+    }
+    out
 }
 
 /// Qwen 官方账号（Qwen OAuth）已停用的说明：启动拦截与连接页同一句
@@ -5537,6 +5847,9 @@ pub fn clear_account_conflicts(agent_id: &str) -> Result<Vec<String>, String> {
         .join("ccode")
         .join("conflict-backups");
     std::fs::create_dir_all(&backup_dir).map_err(|e| format!("创建冲突备份目录失败: {e}"))?;
+    if agent_id == "agy" {
+        return clear_agy_settings_conflicts_at(&home, &backup_dir);
+    }
     let mut changed = Vec::new();
     for probe in oa.conflict_probes {
         if !probe.file.ends_with(".json")
@@ -5568,6 +5881,66 @@ pub fn clear_account_conflicts(agent_id: &str) -> Result<Vec<String>, String> {
         }
     }
     Ok(changed)
+}
+
+pub(crate) fn clear_agy_settings_conflicts_at(
+    home: &std::path::Path,
+    backup_dir: &std::path::Path,
+) -> Result<Vec<String>, String> {
+    let rel = ".gemini/antigravity-cli/settings.json";
+    let path = home.join(rel);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+    let clean = crate::mcp::strip_jsonc(&text);
+    let mut v: serde_json::Value = serde_json::from_str(&clean)
+        .map_err(|e| format!("{} 不是合法 JSON/JSONC，已停止清理: {e}", path.display()))?;
+    let Some(obj) = v.as_object_mut() else {
+        return Err(format!("{} 根节点不是对象，已停止清理", path.display()));
+    };
+    let mut changed = false;
+    if obj.get("modelProvider").and_then(|x| x.as_str()) == Some("gemini") {
+        obj.remove("modelProvider");
+        changed = true;
+    }
+    if obj
+        .get("model")
+        .and_then(|x| x.as_str())
+        .is_some_and(|m| m.starts_with("mesa/"))
+    {
+        obj.remove("model");
+        changed = true;
+    }
+    if let Some(cm) = obj
+        .get_mut("customModelsConfig")
+        .and_then(|c| c.get_mut("customModels"))
+        .and_then(|m| m.as_object_mut())
+    {
+        let before = cm.len();
+        cm.retain(|k, _| !k.starts_with("mesa/"));
+        changed |= cm.len() != before;
+    }
+    if !changed {
+        return Ok(Vec::new());
+    }
+    let backup = backup_dir.join(format!(
+        "agy-{}-settings.json.bak",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::copy(&path, &backup).map_err(|e| format!("备份冲突文件失败: {e}"))?;
+    tighten_private_file(&backup)?;
+    let mut pretty = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
+    pretty.push('\n');
+    let out = if clean != crate::mcp::strip_bom(&text) {
+        crate::global_config::merge_jsonc_keys(&text, &pretty).unwrap_or(pretty)
+    } else {
+        pretty
+    };
+    crate::profiles::atomic_write(&path, &out)?;
+    tighten_private_file(&path)?;
+    Ok(vec![format!("~/{rel}（备份已保存）")])
 }
 
 /// 展开 auth 文件候选：(展示路径, 绝对路径)。`/*` 结尾 = 目录扫描（kimi credentials/<name>.json
@@ -5800,10 +6173,15 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     );
     let home = crate::dirs::home_dir();
     // 冲突探测与连接状态无关：未登录时残留的 API 配置同样值得告警
-    let conflicts = home
+    let mut conflicts = home
         .as_ref()
         .map(|h| probe_conflicts(h, oa))
         .unwrap_or_default();
+    if agent_id == "agy" {
+        if let Some(h) = home.as_ref() {
+            conflicts.extend(agy_official_settings_conflicts(h));
+        }
+    }
     let mut unrecognized: Option<String> = None;
     let mut api_key_mode: Option<String> = None;
     let mut corrupt: Option<String> = None;
@@ -5868,6 +6246,29 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     login_env,
                     plan: None,
                     email: cursor_email(line),
+                };
+            }
+        }
+    }
+    if agent_id == "agy" && !cfg!(test) {
+        if let Some(path) = resolve_binary("agy") {
+            let envs = agy_models_probe_env();
+            let models = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
+                .map(|t| parse_agy_models(&t))
+                .unwrap_or_default();
+            if !models.is_empty() {
+                let count = models.len();
+                refresh_official_models_cache("agy", || models);
+                return OfficialAccountStatusDto {
+                    supported: true,
+                    connected: true,
+                    detail: Some(format!("agy models：已登录 Google 账号（共 {count} 个可用模型）")),
+                    login_command,
+                    conflicts,
+                    cleanup_supported: true,
+                    login_env,
+                    plan: None,
+                    email: None,
                 };
             }
         }

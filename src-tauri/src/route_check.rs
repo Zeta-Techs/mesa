@@ -1018,6 +1018,6 @@ mod tests {
             assert!(p.url.ends_with("/cdn-cgi/trace") && p.url.contains(p.host));
             assert!(p.unsupported_regions.contains(&"CN"));
         }
-        assert_eq!(route_check_agents(), ["claude-code", "codex", "gemini", "cursor", "grok"].map(String::from).to_vec());
+        assert_eq!(route_check_agents(), ["claude-code", "codex", "gemini", "cursor", "grok", "agy"].map(String::from).to_vec());
     }
 }

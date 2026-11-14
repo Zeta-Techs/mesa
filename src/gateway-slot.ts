@@ -14,7 +14,7 @@ export function slotForAgent(
   // codebuddy 走 OpenAI chat/completions（同 gateway_store.rs slot_for_agent）
   if (agent === "claude-code") return "anthropic";
   if (agent === "codex") return "responses";
-  if (agent === "gemini") return "gemini";
+  if (agent === "gemini" || agent === "agy") return "gemini";
   if (agent === "cursor") return "cursor";
   if ((agent === "qwen" || agent === "kimi") && protocol === "anthropic") {
     return "anthropic";

@@ -35,6 +35,7 @@ pub(crate) fn agent_label(id: &str) -> &'static str {
         "codebuddy" => "CodeBuddy Code",
         "cursor" => "Cursor CLI",
         "grok" => "Grok Build",
+        "agy" => "Antigravity CLI",
         _ => "这家 Agent",
     }
 }

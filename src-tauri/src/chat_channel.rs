@@ -30,8 +30,12 @@ const CODEX_REMOTE_MIN: (u32, u32, u32) = (0, 163, 0);
 const CODEBUDDY_SETTINGS_MIN: (u32, u32, u32) = (2, 169, 0);
 /// OSC 7501 程序状态（program_status.rs）：开始支持的版本（Orca 实测表，2026-10-17）；本机 2026-10-22 实测
 /// Claude Code 2.1.306、Grok 1.0.67 都会报。只在这家没有别的旁路时用它
-const PROGRAM_STATUS_MIN: &[(&str, (u32, u32, u32))] =
-    &[("claude-code", (2, 1, 295)), ("grok", (1, 0, 60)), ("kimi", (2, 4, 0))];
+const PROGRAM_STATUS_MIN: &[(&str, (u32, u32, u32))] = &[
+    ("claude-code", (2, 1, 295)),
+    ("grok", (1, 0, 60)),
+    ("kimi", (2, 4, 0)),
+    ("agy", (1, 5, 8)),
+];
 /// CLI 自己报的一句现状（程序状态 msg）上限
 const STATUS_LINE_CAP: usize = 240;
 /// 这一轮实时文字最多留多少字符（只给预览用，正文以会话文件为准）
@@ -834,12 +838,12 @@ fn str_field(v: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
-/// 工具名 + 参数 → 审批卡要显示的东西（九家工具名不同，按名字与常见参数键归类；认不出的给参数原文）
+/// 工具名 + 参数 → 审批卡要显示的东西（十家工具名不同，按名字与常见参数键归类；认不出的给参数原文）
 pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
     let lower = name.to_lowercase().replace(['_', '-'], "");
     let path = str_field(
         input,
-        &["file_path", "filePath", "path", "absolute_path", "notebook_path"],
+        &["file_path", "filePath", "path", "Path", "absolute_path", "notebook_path"],
     );
     let mut dto = ApprovalDto {
         tool_name: (!name.is_empty()).then(|| name.to_string()),
@@ -847,7 +851,7 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
         ..Default::default()
     };
     let is = |names: &[&str]| names.iter().any(|n| lower == *n);
-    if is(&["requestuserinput", "question", "elicitation"]) {
+    if is(&["requestuserinput", "question", "askquestion", "elicitation"]) {
         let mut lines = Vec::new();
         if let Some(message) = input.get("message").and_then(Value::as_str) { lines.push(message.to_string()); }
         if let Some(questions) = input.get("questions").and_then(Value::as_array) {
@@ -855,7 +859,13 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
                 if let Some(text) = q.get("question").and_then(Value::as_str) { lines.push(text.to_string()); }
                 if let Some(options) = q.get("options").and_then(Value::as_array) {
                     for o in options.iter().take(20) {
-                        if let Some(label) = o.get("label").and_then(Value::as_str) { lines.push(format!("• {label}")); }
+                        if let Some(label) = o
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .or_else(|| o.as_str())
+                        {
+                            lines.push(format!("• {label}"));
+                        }
                     }
                 }
             }
@@ -882,11 +892,11 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
     if is(&[
         "bash", "shell", "runshellcommand", "execcommand", "commandexecution", "runcommand",
         "runterminalcmd", "localshell", "powershell",
-    ]) || (input.get("command").is_some() && path.is_none())
+    ]) || ((input.get("command").is_some() || input.get("CommandLine").is_some()) && path.is_none())
     {
         dto.kind = "execute";
-        dto.command = str_field(input, &["command", "cmd", "script"]).map(|c| redact_cap(&c));
-        dto.detail = str_field(input, &["description", "justification", "reason"])
+        dto.command = str_field(input, &["command", "cmd", "script", "CommandLine"]).map(|c| redact_cap(&c));
+        dto.detail = str_field(input, &["description", "justification", "reason", "toolSummary"])
             .map(|d| redact_cap(&d));
         if dto.command.is_none() {
             dto.detail = dto.detail.or_else(|| compact_args(input));
@@ -943,10 +953,10 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
         dto.kind = "edit";
         dto.path = path.map(|p| crate::sessions::redact_sensitive_text(&p));
         dto.old_text =
-            str_field(input, &["old_string", "oldString", "old_str"]).map(|t| redact_cap(&t));
+            str_field(input, &["old_string", "oldString", "old_str", "Target"]).map(|t| redact_cap(&t));
         dto.new_text = str_field(
             input,
-            &["new_string", "newString", "new_str", "content", "file_text"],
+            &["new_string", "newString", "new_str", "content", "Content", "Replacement", "file_text"],
         )
         .map(|t| redact_cap(&t));
         if let Some(edits) = input.get("edits").and_then(|e| e.as_array()) {
@@ -975,7 +985,7 @@ pub(crate) fn approval_from_tool(name: &str, input: &Value) -> ApprovalDto {
         dto.path = path.map(|p| crate::sessions::redact_sensitive_text(&p));
         return dto;
     }
-    if is(&["webfetch", "fetch", "fetchurl", "readurl", "websearch", "googlewebsearch"]) {
+    if is(&["webfetch", "fetch", "fetchurl", "readurl", "websearch", "googlewebsearch", "searchweb"]) {
         dto.kind = "fetch";
         dto.detail = str_field(input, &["url", "query", "prompt"]).map(|t| redact_cap(&t));
         return dto;
@@ -1006,7 +1016,7 @@ pub(crate) fn map_hook(rec: &crate::hooks::HookRecord) -> Vec<ChannelEvent> {
             path: rec.transcript_path.clone(),
             source: s("source"),
         }),
-        "userpromptsubmit" | "beforeagent" => out.push(ChannelEvent::TurnStart),
+        "userpromptsubmit" | "beforeagent" | "preinvocation" => out.push(ChannelEvent::TurnStart),
         "pretooluse" | "beforetool" => out.push(ChannelEvent::ToolStart {
             call_id: s("tool_use_id"),
             name: s("tool_name").unwrap_or_default(),
@@ -1072,14 +1082,29 @@ pub(crate) fn map_program_status(r: &crate::program_status::Report, turn_open: b
             out.push(ChannelEvent::StatusLine(r.msg.clone()));
             out
         }
-        State::Blocked if turn_open => vec![ChannelEvent::ApprovalAsked {
-            request_id: None,
-            call_id: None,
-            name: None,
-            input: Value::Null,
-            replyable: false,
-            detail: r.msg.clone(),
-        }],
+        State::Blocked if turn_open => {
+            // Antigravity CLI 1.5.8 的 OSC 7501 Blocked 直接把命令写在 msg 里（`Approve Bash: <cmd>`）：
+            // 没开全局 hooks 时也拆成命令审批卡，确认卡上直接显示要跑的命令
+            let (name, input, detail) = if let Some(cmd) = r
+                .msg
+                .as_deref()
+                .and_then(|m| m.strip_prefix("Approve Bash: "))
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+            {
+                (Some("Bash".into()), json!({ "command": cmd }), None)
+            } else {
+                (None, Value::Null, r.msg.clone())
+            };
+            vec![ChannelEvent::ApprovalAsked {
+                request_id: None,
+                call_id: None,
+                name,
+                input,
+                replyable: false,
+                detail,
+            }]
+        }
         State::Done | State::Idle if turn_open => vec![ChannelEvent::TurnEnd { reason: None }],
         State::Error if turn_open => vec![ChannelEvent::TurnEnd { reason: Some("error".into()) }],
         _ => Vec::new(),
@@ -2036,7 +2061,7 @@ pub(crate) fn prune_on_startup() {
     if let Some(root) = channels_root() {
         prune_channel_dirs(&root);
     }
-    for agent in ["claude-code", "codebuddy", "qwen", "gemini", "kimi", "grok", "codex"] {
+    for agent in ["claude-code", "codebuddy", "qwen", "gemini", "kimi", "grok", "codex", "agy"] {
         if let Some(log) = crate::hooks::log_path_for(agent) {
             crate::hooks::rotate_log_if_large(&log);
         }
@@ -2107,9 +2132,14 @@ pub(crate) struct Prepared {
 }
 
 impl Prepared {
-    /// 这个标签用程序状态（OSC 7501）当旁路：PTY 读线程要答探询、把报告交给 `program_status_report`
+    /// 这个标签用程序状态（OSC 7501）当旁路（或 agy 的 hooks 旁路靠 OSC 7501 补 Blocked 审批）：
+    /// PTY 读线程要答探询、把报告交给 `program_status_report`
     pub(crate) fn program_status(&self) -> bool {
         self.kind == "program-status"
+            || (self.kind == "hooks"
+                && !cfg!(windows)
+                && self.agent == "agy"
+                && version_at_least("agy", (1, 5, 8)))
     }
 
     /// 进程没起来：收掉旁路进程与目录
@@ -3079,7 +3109,7 @@ fn codex_loop(ch: Arc<Channel>, port: u16, token: String) {
     disconnect(&ch);
 }
 
-/// PTY 读线程读到程序状态报告（只有 program-status 旁路的标签会交来）
+/// PTY 读线程读到程序状态报告（program-status 旁路，或 agy 的 hooks 旁路补 Blocked 审批）
 pub(crate) fn program_status_report(pty_id: &str, report: &crate::program_status::Report) {
     let Some(ch) = registry().lock().ok().and_then(|r| r.get(pty_id).cloned()) else {
         // 旁路还没登记（进程刚起、启动时的那一报）：启动时的状态不开回合，丢了无妨
@@ -3087,9 +3117,35 @@ pub(crate) fn program_status_report(pty_id: &str, report: &crate::program_status
     };
     let events = match ch.tracker.lock() {
         Ok(t) if t.snap.kind == "program-status" => map_program_status(report, is_open(&t.snap.turn)),
+        Ok(t) if t.snap.kind == "hooks" && t.snap.agent == "agy" => {
+            map_agy_hooks_program_status(report, &t.snap.turn)
+        }
         _ => return,
     };
     feed(&ch, events);
+}
+
+/// agy 开了全局 hooks 时（SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop）缺 Notification /
+/// PermissionRequest：只取 OSC 7501 的 Blocked 补审批提醒、Working 收掉已答的审批，回合开关仍由 hooks 管
+pub(crate) fn map_agy_hooks_program_status(
+    r: &crate::program_status::Report,
+    turn: &Option<TurnDto>,
+) -> Vec<ChannelEvent> {
+    use crate::program_status::State;
+    match r.state {
+        State::Blocked if is_open(turn) => vec![ChannelEvent::ApprovalAsked {
+            request_id: None,
+            call_id: None,
+            name: None,
+            input: Value::Null,
+            replyable: false,
+            detail: r.msg.clone(),
+        }],
+        State::Working if turn.as_ref().is_some_and(|tr| tr.status == "awaiting_approval") => {
+            vec![ChannelEvent::ApprovalResolved { request_id: None }]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// PTY 退出（或标签重启 Agent）：收掉旁路进程、连接与目录
@@ -4493,6 +4549,51 @@ mod tests {
         assert!(t.snap.live_text.is_none());
         assert_eq!(t.snap.turn.as_ref().unwrap().seq, 2);
     }
+
+    #[test]
+    fn agy_preinvocation_and_hybrid_osc7501_approval_roundtrip() {
+        let mut t = Tracker::new("tab-agy", "agy", "hooks");
+        for ev in map_hook(&rec(
+            r#"1792430340 tab-agy {"session_id":"550e8400-e29b-41d4-a716-446655440000","hook_event_name":"PreInvocation"}"#,
+        )) {
+            t.apply(ev, 10);
+        }
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("running"));
+        t.apply(
+            ChannelEvent::ToolStart {
+                call_id: Some("call-1".into()),
+                name: "run_command".into(),
+                input: json!({
+                    "CommandLine": "echo mesa > mesa_probe.txt",
+                    "toolSummary": "写探针",
+                }),
+            },
+            20,
+        );
+        let blocked = crate::program_status::Report {
+            state: crate::program_status::State::Blocked,
+            kind: None,
+            msg: Some("Waiting for approval".into()),
+        };
+        for ev in map_agy_hooks_program_status(&blocked, &t.snap.turn) {
+            t.apply(ev, 30);
+        }
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("awaiting_approval"));
+        assert_eq!(
+            t.snap.approval.as_ref().and_then(|a| a.command.as_deref()),
+            Some("echo mesa > mesa_probe.txt")
+        );
+        let working = crate::program_status::Report {
+            state: crate::program_status::State::Working,
+            kind: None,
+            msg: Some("Running command".into()),
+        };
+        for ev in map_agy_hooks_program_status(&working, &t.snap.turn) {
+            t.apply(ev, 40);
+        }
+        assert!(t.snap.approval.is_none());
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("running"));
+    }
 }
 
 /// 端到端：真 CLI + 假网关（scripts/e2e-model-routing/gateway.py），跑 Mesa 自己的 prepare / 旁路读取 / 回复，
@@ -4508,7 +4609,8 @@ mod e2e {
     const COPY: &[&str] = &[
         ".claude/settings.json", ".claude.json", ".codex/config.toml", ".grok/config.toml",
         ".qwen/settings.json", ".kimi-code/config.toml", ".config/opencode/opencode.json",
-        ".gemini/settings.json", ".codebuddy/settings.json",
+        ".gemini/settings.json", ".gemini/antigravity-cli/settings.json",
+        ".codebuddy/settings.json",
     ];
 
     struct Run {
@@ -4950,8 +5052,31 @@ mod e2e {
         println!("{agent}{label}: 思考摘要 {:?}", r.thoughts);
     }
 
-    /// 旁路没报会话文件时，在临时 HOME 里找这段对话：OpenCode 是库路径 + `#` + 会话 id，其余按 `<会话 id>.jsonl`
+    /// 旁路没报会话文件时，在临时 HOME 里找这段对话：OpenCode 是库路径 + `#` + 会话 id，agy 在 brain/<id>/.system_generated/logs/，其余按 `<会话 id>.jsonl`
     fn temp_home_transcript(agent: &str, home: &Path, session_id: Option<&str>) -> Option<String> {
+        if agent == "agy" {
+            let brain = home.join(".gemini").join("antigravity-cli").join("brain");
+            let pick_logs = |dir: &Path| -> Option<PathBuf> {
+                let logs = dir.join(".system_generated").join("logs");
+                let full = logs.join("transcript_full.jsonl");
+                if full.is_file() {
+                    return Some(full);
+                }
+                let compact = logs.join("transcript.jsonl");
+                compact.is_file().then_some(compact)
+            };
+            if let Some(sid) = session_id {
+                if let Some(p) = pick_logs(&brain.join(sid)) {
+                    return Some(p.to_string_lossy().into_owned());
+                }
+            }
+            let entries = std::fs::read_dir(&brain).ok()?;
+            return entries
+                .flatten()
+                .filter_map(|e| pick_logs(&e.path()))
+                .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+                .map(|p| p.to_string_lossy().into_owned());
+        }
         let sid = session_id?;
         let mut stack = vec![(home.to_path_buf(), 0)];
         while let Some((dir, depth)) = stack.pop() {
@@ -5018,6 +5143,38 @@ mod e2e {
                 }
             }
             std::fs::write(&cj, d.to_string()).unwrap();
+        }
+        if agent == "agy" {
+            let agy_root = home.join(".gemini").join("antigravity-cli");
+            let cache_dir = agy_root.join("cache");
+            std::fs::create_dir_all(&cache_dir).unwrap();
+            std::fs::write(
+                cache_dir.join("onboarding.json"),
+                json!({
+                    "onboardingComplete": true,
+                    "consumerOnboardingComplete": true,
+                    "enterpriseOnboardingComplete": false,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let settings_path = agy_root.join("settings.json");
+            let mut settings: Value = std::fs::read_to_string(&settings_path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(&t)).ok())
+                .unwrap_or_else(|| json!({}));
+            let real = crate::paths::strip_verbatim(std::fs::canonicalize(&work).unwrap());
+            let mut trusted: Vec<String> = Vec::new();
+            for p in [work.clone(), real] {
+                let s = p.to_string_lossy().into_owned();
+                for key in [s.clone(), s.replace('\\', "/")] {
+                    if !trusted.contains(&key) {
+                        trusted.push(key);
+                    }
+                }
+            }
+            settings["trustedWorkspaces"] = json!(trusted);
+            std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
         }
         // 状态日志、旁路目录、hook 脚本都落进测试配置根（storage::config_root 的测试接缝，线程局部：
         // prepare 在本线程算好路径交给读取线程）

@@ -22,6 +22,7 @@ export const AGENT_BRAND: Record<string, string> = {
   codebuddy: "#C45959", // 砖红
   cursor: "#A87F2A", // 暗琥珀
   grok: "#C4506A", // 雾玫红
+  agy: "#3B8EA5", // 湖青蓝（与 gemini 灰蓝、kimi 青玉拉开）
 };
 
 /** 未知 Agent 兜底：按 id 哈希取 HSL 色，确定性且不与上方令牌池撞色 */

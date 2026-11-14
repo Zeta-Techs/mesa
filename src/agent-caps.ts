@@ -45,6 +45,7 @@ export const ESC_INTERRUPT_AGENTS: ReadonlySet<string> = new Set([
   "opencode",
   "codebuddy",
   "cursor",
+  "agy",
 ]);
 
 export function escInterruptSafe(agentId: string | null | undefined): boolean {

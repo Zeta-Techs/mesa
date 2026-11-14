@@ -48,7 +48,7 @@ pub fn slot_for_agent(agent: &str, protocol: Option<&str>) -> Slot {
         //（2.171 源码 resolveModelBaseURL；2026-10-21 实测给 Anthropic 地址只得空回复）
         "claude-code" => Slot::Anthropic,
         "codex" => Slot::Responses,
-        "gemini" => Slot::Gemini,
+        "gemini" | "agy" => Slot::Gemini,
         "cursor" => Slot::Cursor,
         "qwen" | "kimi" if protocol == Some("anthropic") => Slot::Anthropic,
         _ => Slot::Openai,
@@ -464,7 +464,7 @@ pub fn materialize(
                 // 物化时剥掉末尾版本段，启动注入 / 设为全局 / 拉目录拿到的都是 CLI 真正要的 base。
                 // 仅限已实证自拼版本段的两家；codebuddy / qwen、kimi 的 anthropic 协议通道未实证，不动。
                 match binding.agent.as_str() {
-                    "gemini" | "claude-code" => {
+                    "gemini" | "agy" | "claude-code" => {
                         crate::models::strip_trailing_version_segment(&u)
                     }
                     _ => u,

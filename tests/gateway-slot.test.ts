@@ -6,6 +6,7 @@ test("slotForAgent 与后端槽表一致", () => {
   assert.equal(slotForAgent("claude-code"), "anthropic");
   assert.equal(slotForAgent("codex"), "responses");
   assert.equal(slotForAgent("gemini"), "gemini");
+  assert.equal(slotForAgent("agy"), "gemini");
   assert.equal(slotForAgent("cursor"), "cursor");
   assert.equal(slotForAgent("grok"), "openai");
   assert.equal(slotForAgent("opencode"), "openai");

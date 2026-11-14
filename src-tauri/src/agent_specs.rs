@@ -1065,6 +1065,68 @@ static AGENT_SPECS: &[AgentSpec] = &[
         skill_dist: SkillDist::CopyOnly("~/.grok/skills 首版未经实机验证，保守强制 copy"),
         clients: &[],
     },
+    AgentSpec {
+        id: "agy",
+        display_name: "Antigravity CLI",
+        binary: "agy",
+        version_args: &["--version"],
+        protocols: &[],
+        // 1.5.8 沙箱 + 假网关实测（design-agy-integration.md §1–§3）：
+        // 仅从环境变量读 GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL（自动拼 /v1beta/models/<m>:streamGenerateContent），
+        // 且当 modelProvider="gemini" 时无论是官方 API 密钥还是第三方中转都要求在 settings 里登记
+        // customModelsConfig.customModels.<键> 并传 --model <键>；Mesa 生成 0600 会话级设置文件经 --settings 传入。
+        launch: LaunchSpec::Env(EnvInject {
+            base_url: Some("GOOGLE_GEMINI_BASE_URL"),
+            key: Some("GEMINI_API_KEY"),
+            model: None,
+            fixed_env: &[],
+            fixed_args: &[],
+        }),
+        // 1.5.8 实测位置参数报 rc=2（Prompts are read only from -p, -i, or stdin）；交互首条用 -i
+        prompt_inject: PromptInject::Flag("-i"),
+        // 仅供交互聊天「先出方案」；实测 --mode plan 无进程级只读保证，inspect_readonly_args / 研讨不放开
+        readonly_args: &["--mode", "plan"],
+        permission_args: &[
+            ("auto", &["--mode", "auto"]),
+            ("full", &["--dangerously-skip-permissions"]),
+        ],
+        fixed_session_id: false,
+        resume: ResumeSpec { prepend: false, args: &["--conversation", "{session}"] },
+        fork: None,
+        skills_dir: &[".gemini", "config", "skills"],
+        packaging: PackagingSpec {
+            install_script: Some("curl -fsSL https://antigravity.google/cli/install.sh | bash"),
+            install_script_win: Some("irm https://antigravity.google/cli/install.ps1 | iex"),
+            self_update: Some(&["update"]),
+            update_fallback: &[UpdateChannel::SelfUpdate],
+            ..NO_PACKAGING
+        },
+        official_account: Some(OfficialAccountSpec {
+            login_cmd: &["acp", "--login"],
+            auth_file_paths: &[],
+            env_purge_list: &["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"],
+            conflict_probes: &[],
+            detection_note: Some("凭证存系统钥匙串（Mesa 不主动读取钥匙串以免弹窗），连接状态由 `agy models` 非阻塞核对"),
+            api_key_fields: &[],
+            route_probe: Some(RouteProbe {
+                url: "https://cloudcode-pa.googleapis.com/",
+                host: "cloudcode-pa.googleapis.com",
+                reports_region: false,
+                unsupported_regions: &[],
+                service_check: None,
+            }),
+        }),
+        model_switch: ModelSwitch::Direct("/model {model}"),
+        // 1.5.8 假网关实测：low/medium/high 发 thinkingConfig.thinkingLevel，xhigh/max 在 Gemini 模型报错
+        effort_levels: Some((&["low", "medium", "high"], "/effort {level}")),
+        submit_csi_u: false,
+        // 仅官方 Google 账号连接可执行「设为全局默认」（撤回 modelProvider/customModels 下的 mesa/ 项）；
+        // API 密钥与第三方中转只从环境变量读凭证，Mesa 不改 shell 配置，前后端拒收并写明原因
+        set_global: SetGlobalCap::Supported,
+        mcp_write: McpWriteCap::Full,
+        skill_dist: SkillDist::SymlinkOrCopy,
+        clients: &[],
+    },
 ];
 
 /// 按 id 查规格
@@ -1164,6 +1226,7 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
         "codex" => vec!["low", "medium", "high", "xhigh", "ultra", "max"],
         "opencode" => vec!["none", "minimal", "low", "medium", "high"],
         "grok" => GROK_REASONING_EFFORTS.to_vec(),
+        "agy" => vec!["low", "medium", "high"],
         // kimi 合法值随模型 catalog 漂移（low/medium/high/xhigh/max/on/off），env 通道无闭集
         // 校验且官方明确原样透传——自由输入反而更准，不给下拉
         _ => vec![],
@@ -1327,6 +1390,9 @@ pub(crate) fn request_policy_support(agent: &str) -> RequestPolicySupportDto {
         // 逐模型 [model.<id>] 表明确不在白名单内，api_backend/context_window 注不进，
         // 走绑定「API 后端」+ 设为全局（global_config::patch_grok_config）或中转目录声明
         "grok" => row("inject", "inject", "inject", "inject", "inject"),
+        // agy 1.5.8 实测：仅 --effort <low|medium|high> 可注入 thinkingConfig.thinkingLevel；
+        // 采样参数与自定义请求头均无 CLI 参数、环境变量或 settings.json 入口
+        "agy" => row("unsupported", "unsupported", "unsupported", "inject", "unsupported"),
         // cursor 本机未安装（2026-08-28），无法 strings 实证——保持 unknown 如实标注
         _ => row("unknown", "unknown", "unknown", "unknown", "unknown"),
     }
@@ -1352,8 +1418,8 @@ fn readonly_cap(spec: &AgentSpec) -> CapabilityFlagDto {
 fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
     match agent {
         "qwen" => flag(false, Some("无头写盘未验证，定时任务请换别家")),
-        // grok 定时任务带 --yolo、claude 带 bypassPermissions：自动批准全部工具，不限课题目录
-        "grok" | "claude-code" => flag(true, Some("会批准全部操作")),
+        // grok 定时任务带 --yolo、claude 带 bypassPermissions、agy 带 --dangerously-skip-permissions：自动批准全部工具，不限课题目录
+        "grok" | "claude-code" | "agy" => flag(true, Some("会批准全部操作")),
         // codex 定时任务是 -s workspace-write，只写课题目录，不必再附注（Windows 另看沙箱开没开）
         "codex" if cfg!(windows) => codex_windows_headless_cap(
             codex_windows_sandbox_mode().as_deref(),
@@ -1525,6 +1591,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(h.join("bin"));
             out.push(h.join(".kimi-code/bin")); // Kimi Code 新版官方安装器
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器（x.ai/cli/install.sh）
+            out.push(h.join(".antigravity/antigravity/bin")); // Antigravity CLI 官方安装器 / 桌面版附带 CLI
             out.push(h.join(".volta/bin")); // Volta（node 版本管理器）固定 shim 目录
             out.push(h.join(".local/share/mise/shims")); // mise（node 版本管理器）固定 shim 目录
             // `quarto install tinytex` 在 macOS 的落点（没有 Homebrew 时 Mesa 这样装 TeX，不写 PATH）
@@ -1546,6 +1613,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(h.join(".local/bin"));
             out.push(h.join(".kimi-code/bin")); // Kimi Code 新版官方安装器
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器
+            out.push(h.join(".antigravity/antigravity/bin")); // Antigravity CLI 官方安装器
             out.push(h.join(".volta/bin")); // Volta（node 版本管理器）固定 shim 目录
             out.push(h.join(".local/share/mise/shims")); // mise（node 版本管理器）固定 shim 目录
         }
@@ -1565,6 +1633,8 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
             out.push(local.join("GitHubDesktop").join("bin"));
             // Cursor CLI 官方 Windows 安装器（cursor-agent.cmd 启动器，进程直启见 process::cursor_entry_from_launcher）
             out.push(local.join("cursor-agent"));
+            // Antigravity CLI 官方 Windows 安装器落点（%LOCALAPPDATA%\agy\bin）
+            out.push(local.join("agy").join("bin"));
         }
         if let Some(roaming) = crate::dirs::data_dir() {
             out.push(roaming.join("npm"));
@@ -1572,6 +1642,7 @@ pub(crate) fn binary_candidate_dirs() -> Vec<std::path::PathBuf> {
         if let Some(h) = crate::dirs::home_dir() {
             out.push(h.join(".kimi-code/bin")); // Kimi Code 新版官方安装器
             out.push(h.join(".grok/bin")); // Grok Build 官方安装器（%USERPROFILE%\.grok\bin\grok.exe）
+            out.push(h.join(".antigravity").join("antigravity").join("bin")); // Antigravity 桌面版附带 CLI 兜底
             out.push(h.join(".local").join("bin")); // 官方 install.sh 在 MINGW 下落点
         }
         // Node.js 官方 Windows 安装器默认目录；GUI 启动时 PATH 可能未继承，
@@ -1688,6 +1759,7 @@ pub fn agent_config_root_with(
         "codebuddy" => moved("CODEBUDDY_CONFIG_DIR", ".codebuddy"),
         "cursor" => home.join(".cursor"),
         "grok" => moved("GROK_HOME", ".grok"),
+        "agy" => home.join(".gemini").join("antigravity-cli"),
         _ => return None,
     })
 }
@@ -1706,11 +1778,12 @@ pub fn agent_config_root(agent: &str) -> Option<std::path::PathBuf> {
     agent_config_root_with(agent, &home, &env_path)
 }
 
-/// 该 agent 的技能目录：配置目录下 `skills`（Cursor 是 `skills-cursor`），与 MCP 同源。
+/// 该 agent 的技能目录：配置目录下 `skills`（Cursor 是 `skills-cursor`，Antigravity CLI 是 `~/.gemini/config/skills`），与 MCP 同源。
 pub fn skills_dir_for(spec: &AgentSpec) -> Option<std::path::PathBuf> {
     let home = crate::dirs::home_dir()?;
     match spec.id {
         "cursor" => Some(home.join(".cursor").join("skills-cursor")),
+        "agy" => Some(home.join(".gemini").join("config").join("skills")),
         id => match agent_config_root_with(id, &home, &env_path) {
             Some(root) => Some(root.join("skills")),
             None => Some(spec.skills_dir.iter().fold(home, |p, seg| p.join(seg))),
@@ -1730,7 +1803,7 @@ mod tests {
             let want = if ["claude-code", "codex", "kimi"].contains(&agent.as_str()) { 1 } else { 2 };
             assert_eq!(*tier, want, "{agent}");
         }
-        assert_eq!(tiers.len(), 9);
+        assert_eq!(tiers.len(), 10);
     }
 
     use super::*;
@@ -1757,7 +1830,7 @@ mod tests {
         }
     }
 
-    const KNOWN_IDS: [&str; 9] = [
+    const KNOWN_IDS: [&str; 10] = [
         "claude-code",
         "codex",
         "gemini",
@@ -1767,6 +1840,7 @@ mod tests {
         "codebuddy",
         "cursor",
         "grok",
+        "agy",
     ];
 
     /// 客户端规格：id 全局唯一，深链模板带对应占位且以自己的 scheme 开头，至少能开一种目标
@@ -1807,7 +1881,7 @@ mod tests {
             let fork = agent_spec(id).and_then(|s| s.fork.as_ref()).unwrap_or_else(|| panic!("{id} 有原生分叉"));
             assert!(fork.args.contains(&"{session}"), "{id} 的分叉参数缺 {{session}} 占位");
         }
-        for id in ["gemini", "kimi", "cursor"] {
+        for id in ["gemini", "kimi", "cursor", "agy"] {
             assert!(agent_spec(id).unwrap().fork.is_none(), "{id} 没核实过原生分叉");
         }
     }
@@ -1845,10 +1919,11 @@ mod tests {
             if let Some(default) = spec.protocols.first() {
                 assert!(spec.protocols.contains(default), "{id} 协议表错位");
             }
-            // 官方账号规格（若填）：auth 文件与 env 净化清单不能为空（login_cmd 允许为空 = 裸启动 TUI 登录）
+            // 官方账号规格（若填）：auth 文件（agy 凭证仅存系统钥匙串，允许为空但须带 detection_note）与 env 净化清单不能为空
             if let Some(oa) = &spec.official_account {
                 assert!(
-                    !oa.auth_file_paths.is_empty(),
+                    !oa.auth_file_paths.is_empty()
+                        || (id == "agy" && oa.detection_note.is_some()),
                     "{id} 官方账号缺 auth 文件路径"
                 );
                 assert!(
@@ -2075,6 +2150,7 @@ mod tests {
             "codebuddy",
             "cursor",
             "grok",
+            "agy",
         ] {
             assert!(
                 !agent_spec(id).unwrap().packaging.interactive_tui,
@@ -2083,11 +2159,11 @@ mod tests {
         }
     }
 
-    /// 三项能力（设为全局默认 / MCP 分发 / 技能分发方式）的九家取值：
-    /// 支持面必须与 global_config plan_writes 的 match arm、mcp/skills 消费点一致
+    /// 三项能力（设为全局默认 / MCP 分发 / 技能分发方式）的十家取值：
+    /// 支持面必须与 global_config plan_writes/plan_official_writes、mcp/skills 消费点一致
     #[test]
     fn capability_fields_match_consumers() {
-        // 「设为全局默认」：global_config::plan_writes 有写计划的八家 Supported
+        // 「设为全局默认」：global_config 有写计划的九家 Supported（agy 仅官方连接可写，API 连接由前后端拒收并写明原因）
         for id in [
             "claude-code",
             "codex",
@@ -2097,6 +2173,7 @@ mod tests {
             "kimi",
             "codebuddy",
             "grok",
+            "agy",
         ] {
             assert_eq!(
                 agent_spec(id).unwrap().set_global,
@@ -2109,7 +2186,7 @@ mod tests {
             panic!("cursor 应为 Unsupported");
         };
         assert!(!reason.is_empty(), "cursor 缺原因文案");
-        // MCP 分发：仅 grok 只读（原因指向 grok mcp add），其余八家 Full
+        // MCP 分发：仅 grok 只读（原因指向 grok mcp add），其余九家 Full
         assert_eq!(
             agent_spec("grok").unwrap().mcp_write,
             McpWriteCap::ReadOnly(
@@ -2125,6 +2202,7 @@ mod tests {
             "kimi",
             "codebuddy",
             "cursor",
+            "agy",
         ] {
             assert_eq!(
                 agent_spec(id).unwrap().mcp_write,
@@ -2132,7 +2210,7 @@ mod tests {
                 "{id} 应支持 MCP 分发"
             );
         }
-        // 技能分发：cursor/grok 强制 copy（带原因），其余七家 symlink 优先
+        // 技能分发：cursor/grok 强制 copy（带原因），其余八家 symlink 优先
         for id in ["cursor", "grok"] {
             let SkillDist::CopyOnly(reason) = agent_spec(id).unwrap().skill_dist else {
                 panic!("{id} 应强制 copy");
@@ -2147,6 +2225,7 @@ mod tests {
             "opencode",
             "kimi",
             "codebuddy",
+            "agy",
         ] {
             assert_eq!(
                 agent_spec(id).unwrap().skill_dist,

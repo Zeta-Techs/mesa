@@ -105,10 +105,12 @@ def shell_args(schema, escalate=False):
         kind = spec.get("type") if isinstance(spec, dict) else None
         if key == "code":
             args[key] = f'return await Bash({{ command: {json.dumps(PROBE)}, description: "写一个探针文件" }})'
-        elif key in ("command", "cmd", "script"):
+        elif key in ("command", "cmd", "script", "CommandLine"):
             args[key] = ["bash", "-lc", PROBE] if kind == "array" else PROBE
-        elif key == "description":
+        elif key in ("description", "toolSummary"):
             args[key] = "写一个探针文件"
+        elif key == "WaitMsBeforeAsync":
+            args[key] = 5000
     # TRIGGER_ESC：Codex 在沙箱里跑普通命令不问人，要申请出沙箱（require_escalated）才走审批
     if escalate and "sandbox_permissions" in props:
         args["sandbox_permissions"] = "require_escalated"

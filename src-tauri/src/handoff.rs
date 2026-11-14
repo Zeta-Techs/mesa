@@ -813,11 +813,11 @@ mod tests {
         assert_eq!(links[0].from_session_id, "s2");
     }
 
-    /// 接力目标清单覆盖九 CLI，目前仅 kimi 标注需手动注入
+    /// 接力目标清单覆盖十家 CLI，目前仅 kimi 标注需手动注入
     #[test]
     fn handoff_targets_cover_registry() {
         let targets = handoff_targets_sync();
-        assert_eq!(targets.len(), 9);
+        assert_eq!(targets.len(), 10);
         let manual: Vec<&str> = targets
             .iter()
             .filter(|t| !t.prompt_supported)

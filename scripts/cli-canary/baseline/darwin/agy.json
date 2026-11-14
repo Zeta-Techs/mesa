@@ -1,0 +1,111 @@
+{
+ "agent": "agy",
+ "channel": {
+  "approvalKind": "execute",
+  "approvalReplyable": false,
+  "approvalTool": "Bash",
+  "kind": "program-status",
+  "statuses": [
+   "-",
+   "awaiting_approval",
+   "completed"
+  ]
+ },
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true,
+  "旁路拿到会话文件": true,
+  "旁路端到端通过": true,
+  "解析器读到回复": true,
+  "解析器读到工具结果": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true,
+  "这一轮走完": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_result",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "run_command"
+  ]
+ },
+ "platform": "darwin",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "contents",
+    "generationConfig",
+    "systemInstruction",
+    "tools"
+   ],
+   "contextHeadings": [],
+   "contextTags": [],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": null,
+   "path": "/agy/v1beta/models/e2e-picked:streamGenerateContent",
+   "systemHeadings": [],
+   "tools": [
+    ""
+   ]
+  },
+  "other": [
+   "/agy/v1beta/models/gemini-3.1-flash-lite-preview:streamGenerateContent tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Yes, run command",
+    "Yes, and always allow in this conversation for commands that start with 'echo mesa > mesa_probe.txt'",
+    "Yes, and always allow for commands that start with 'echo mesa > mesa_probe.txt' (Persist to settings.json)",
+    "No, cancel"
+   ],
+   "question": "Run this command?"
+  },
+  "previewReadable": true
+ },
+ "transcript": {
+  "GENERIC": {
+   "keys": [
+    "content",
+    "created_at",
+    "source",
+    "status",
+    "step_index",
+    "type"
+   ]
+  },
+  "PLANNER_RESPONSE": {
+   "keys": [
+    "cache_read_tokens",
+    "content",
+    "created_at",
+    "input_tokens",
+    "output_tokens",
+    "source",
+    "status",
+    "step_index",
+    "tool_calls",
+    "type"
+   ]
+  },
+  "USER_INPUT": {
+   "keys": [
+    "content",
+    "created_at",
+    "source",
+    "status",
+    "step_index",
+    "type"
+   ]
+  }
+ },
+ "version": "1.5.8"
+}
