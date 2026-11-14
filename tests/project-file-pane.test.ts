@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   clampFilePaneWidth,
+  dockedFilePaneWidth,
   dockOccupant,
   filePaneShouldClose,
   FILE_PANE_WIDTH_DEFAULT,
@@ -14,6 +15,16 @@ test("文件栏宽度：夹在 360–960，双击（负数）回默认", () => {
   assert.equal(clampFilePaneWidth(2000), 960);
   assert.equal(clampFilePaneWidth(-1), FILE_PANE_WIDTH_DEFAULT);
   assert.equal(clampFilePaneWidth(Number.NaN), FILE_PANE_WIDTH_DEFAULT);
+});
+
+test("笔记本宽度常驻停靠：按剩余宽度自动收窄侧栏，仅极窄窗口退回浮层抽屉", () => {
+  // 14 寸笔记本全屏（mainWithDock ≈ 1220）：保留默认 560，主区留 660
+  assert.equal(dockedFilePaneWidth(1220, 560), 560);
+  // 默认 1100 宽窗口（mainWithDock ≈ 880）：自动收窄到 360 并排停靠，不退回遮罩抽屉
+  assert.equal(dockedFilePaneWidth(880, 560), 360);
+  assert.equal(dockedFilePaneWidth(1000, 560), 480);
+  // 半屏窄窗（mainWithDock < 880）：退回浮层抽屉
+  assert.equal(dockedFilePaneWidth(879, 560), null);
 });
 
 test("停靠位轮流：只开一个给它，两个都开看谁在前", () => {

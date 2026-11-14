@@ -4204,10 +4204,34 @@ select:focus-visible {
   color: var(--color-l1);
   text-decoration-color: var(--color-cta);
 }
-/* 从 PDF 高亮「在笔记里看」定位到的那一段：底色淡出 */
-.md-body .md-flash {
-  animation: md-flash 2.4s ease-out;
+/* 从 PDF 高亮「在笔记里看」或审查意见行号定位到的那一段 / 表格行：常驻左线底色 + 脉冲淡出 */
+.md-body .md-target {
+  background-color: color-mix(in srgb, var(--color-cta) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-cta);
   border-radius: 3px;
+}
+.md-body tr.md-target {
+  box-shadow: none;
+}
+.md-body tr.md-target > td,
+.md-body tr.md-target > th {
+  background-color: color-mix(in srgb, var(--color-cta) 12%, transparent);
+}
+.md-body tr.md-target > td:first-child,
+.md-body tr.md-target > th:first-child {
+  box-shadow: inset 3px 0 0 var(--color-cta);
+}
+.md-body .md-flash,
+.md-body tr.md-flash > td,
+.md-body tr.md-flash > th {
+  animation: md-flash 2.4s ease-out;
+}
+.md-body .md-flash {
+  border-radius: 3px;
+}
+.monaco-editor .ccode-editor-target-line {
+  background-color: color-mix(in srgb, var(--color-cta) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--color-cta);
 }
 @keyframes md-flash {
   0%,

@@ -38,7 +38,7 @@ import { comboLabel, eventMatchesCombo, IS_MAC, IS_WINDOWS, READER_MODE_HOTKEY }
 import { createImeLock, imeBlocksEnter } from "../ime-guard";
 // md-math 模块作用域完成 marked 公式扩展注册（全局生效，占位=原始 $..$ 源码，未升级处观感不变）
 import { renderMathInto } from "../md-math";
-import { mdBlocks, mdChildTagOf, mdLineForChild } from "../md-block-map";
+import { mdBlockForChild, mdBlocks, mdChildTagOf, mdLineForChild, type MdBlockInfo } from "../md-block-map";
 import { renderMarkdownDocument, splitMdFrontmatter } from "../md-render";
 import { citeTipFor, decorateCitations } from "../chat-inline-refs";
 import { parentDir } from "../path-utils";
@@ -269,8 +269,8 @@ function MarkdownView({
   const bodyRef = useRef<HTMLDivElement>(null);
   const showMermaid = useMemo(() => hasMermaidFence(text), [text]);
 
-  /** 每个顶层块对应的源码行（含 YAML 头偏移）；对不上的为 null */
-  function childLines(): (number | null)[] {
+  /** 每个顶层块对应的源码块信息（含 YAML 头偏移与列表子项行号）；对不上的为 null */
+  function childBlocks(): (MdBlockInfo | null)[] {
     const host = bodyRef.current;
     if (!host) return [];
     const blocks = mdBlocks(mdSource);
@@ -278,9 +278,19 @@ function MarkdownView({
       mdChildTagOf(c.tagName, c.getAttribute("class") ?? ""),
     );
     return tags.map((_, i) => {
-      const line = mdLineForChild(blocks, tags, i);
-      return line === null ? null : line + doc.lineOffset;
+      const blk = mdBlockForChild(blocks, tags, i);
+      if (!blk) return null;
+      return {
+        ...blk,
+        line: blk.line + doc.lineOffset,
+        ...(blk.itemLines ? { itemLines: blk.itemLines.map((l) => l + doc.lineOffset) } : {}),
+      };
     });
+  }
+
+  /** 每个顶层块对应的源码行（含 YAML 头偏移）；对不上的为 null */
+  function childLines(): (number | null)[] {
+    return childBlocks().map((b) => b?.line ?? null);
   }
 
   /** 阅读态视口顶上那一块的源码行 */
@@ -329,50 +339,118 @@ function MarkdownView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 外部行号定位（右侧文件抽屉对照审查意见）：定位到对应段落/表格行/列表项并闪一下
-  const revealDoneKeyRef = useRef<string | null>(null);
+  // 外部行号定位（右侧文件栏 / 独立文件窗口对照审查意见）：精确定位到对应段落/表格行/列表项，
+  // 常驻浅底标记，并在本地图片异步解码增高期间持续稳住视口（人手动滚轮立即让位）
+  const revealDoneKeyRef = useRef<string | null>(
+    initialLine && initialLine > 1 && revealLine && revealLine > 0
+      ? `${filePath}|${revealLine}|${revealNonce ?? 0}`
+      : null,
+  );
   useLayoutEffect(() => {
-    if (!revealLine || revealLine <= 0) return;
-    const key = `${filePath}|${revealLine}|${revealNonce ?? 0}`;
-    if (revealDoneKeyRef.current === key) return;
     const host = bodyRef.current;
     const scroll = scrollRef.current;
-    if (!host || !scroll || host.children.length === 0) return;
+    if (!host || !scroll) return;
+    host.querySelectorAll(".md-target").forEach((el) => el.classList.remove("md-target"));
+    if (!revealLine || revealLine <= 0) {
+      revealDoneKeyRef.current = null;
+      return;
+    }
+    if (host.children.length === 0) return;
+    const key = `${filePath}|${revealLine}|${revealNonce ?? 0}`;
+    const shouldScroll = revealDoneKeyRef.current !== key;
     revealDoneKeyRef.current = key;
-    const lines = childLines();
+
+    const blocks = childBlocks();
     let pick = -1;
-    lines.forEach((l, i) => {
-      if (l !== null && l <= revealLine) pick = i;
+    blocks.forEach((b, i) => {
+      if (b !== null && b.line <= revealLine) pick = i;
     });
     const blockEl = (pick >= 0 ? host.children[pick] : host.children[0]) as HTMLElement | undefined;
     if (!blockEl) return;
-    const blockLine = pick >= 0 ? lines[pick] : null;
+    const block = pick >= 0 ? blocks[pick] : null;
+    const blockLine = block?.line ?? null;
     let target: HTMLElement = blockEl;
     if (blockEl.tagName === "TABLE" && blockLine !== null) {
       const rowIdx = revealLine - blockLine - 2;
       if (rowIdx >= 0) {
         const rows = blockEl.querySelectorAll<HTMLElement>("tbody tr");
-        if (rowIdx < rows.length) target = rows[rowIdx]!;
+        if (rows.length > 0) target = rows[Math.min(rowIdx, rows.length - 1)]!;
       } else {
         const headRow = blockEl.querySelector<HTMLElement>("thead tr");
         if (headRow) target = headRow;
       }
     } else if ((blockEl.tagName === "OL" || blockEl.tagName === "UL") && blockLine !== null) {
-      const itemIdx = revealLine - blockLine;
+      let itemIdx = revealLine - blockLine;
+      if (block?.itemLines?.length) {
+        itemIdx = 0;
+        block.itemLines.forEach((il, k) => {
+          if (il <= revealLine) itemIdx = k;
+        });
+      }
       const items = blockEl.querySelectorAll<HTMLElement>(":scope > li");
-      if (itemIdx >= 0 && itemIdx < items.length) target = items[itemIdx]!;
+      if (items.length > 0 && itemIdx >= 0) {
+        target = items[Math.min(itemIdx, items.length - 1)]!;
+      }
     }
-    target.scrollIntoView({ block: "center" });
-    const raf = requestAnimationFrame(() => {
-      if (target.isConnected) target.scrollIntoView({ block: "center" });
-    });
+    target.classList.add("md-target");
+    if (!shouldScroll) return;
+
+    const align = () => {
+      if (!target.isConnected || !scrollRef.current) return;
+      const sc = scrollRef.current;
+      if (sc.clientHeight <= 0) {
+        target.scrollIntoView?.({ block: "center" });
+        return;
+      }
+      const sRect = sc.getBoundingClientRect();
+      const tRect = target.getBoundingClientRect();
+      const anchor =
+        tRect.height > sc.clientHeight * 0.5
+          ? 44
+          : Math.max(32, Math.round((sc.clientHeight - tRect.height) * 0.34));
+      sc.scrollTop = Math.max(0, sc.scrollTop + (tRect.top - sRect.top) - anchor);
+    };
+
+    align();
+    let raf = requestAnimationFrame(align);
     target.classList.remove("md-flash");
     void target.offsetWidth;
     target.classList.add("md-flash");
-    const timer = setTimeout(() => target.classList.remove("md-flash"), 2500);
+    const flashTimer = setTimeout(() => target.classList.remove("md-flash"), 2500);
+
+    // 稿件含多张本地图异步加载（read_image_bytes）会把正文撑高数千像素，2.5s 内跟随重算；人一动手立即停跟
+    let userMoved = false;
+    const stopFollow = () => {
+      userMoved = true;
+    };
+    const scheduleAlign = () => {
+      if (userMoved) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (!userMoved) align();
+      });
+    };
+    scroll.addEventListener("wheel", stopFollow, { passive: true });
+    scroll.addEventListener("touchmove", stopFollow, { passive: true });
+    scroll.addEventListener("pointerdown", stopFollow, { passive: true });
+    host.addEventListener("load", scheduleAlign, true);
+    const ro =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleAlign) : null;
+    ro?.observe(host);
+    const settleTimer = setTimeout(() => {
+      ro?.disconnect();
+      host.removeEventListener("load", scheduleAlign, true);
+    }, 2500);
+
     return () => {
       cancelAnimationFrame(raf);
-      clearTimeout(timer);
+      clearTimeout(flashTimer);
+      clearTimeout(settleTimer);
+      ro?.disconnect();
+      host.removeEventListener("load", scheduleAlign, true);
+      scroll.removeEventListener("wheel", stopFollow);
+      scroll.removeEventListener("touchmove", stopFollow);
+      scroll.removeEventListener("pointerdown", stopFollow);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealLine, revealNonce, filePath, html]);
@@ -1408,10 +1486,19 @@ function TextFilePreviewEditor({
     const line = Math.max(1, Math.min(revealLine, total));
     ed.revealLineInCenter(line);
     ed.setPosition({ lineNumber: line, column: 1 });
+    const deco = ed.createDecorationsCollection?.([
+      {
+        range: { startLineNumber: line, startColumn: 1, endLineNumber: line, endColumn: 1 },
+        options: { isWholeLine: true, className: "ccode-editor-target-line" },
+      },
+    ]);
     const raf = requestAnimationFrame(() => {
       if (editorRef.current === ed) ed.revealLineInCenter(line);
     });
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      deco?.clear();
+    };
   }, [revealLine, revealNonce, ready]);
 
   // 双击段落跳源码行的定位执行：nonce 去重防阅读⇄编辑往返时旧定位重放；
@@ -1897,6 +1984,32 @@ function TextFilePreviewEditor({
             ))}
           </div>
         )}
+        {ready && Boolean(revealLine && revealLine > 0) && (
+          <button
+            type="button"
+            onClick={() => {
+              if (mode === "read") {
+                jumpToSource(revealLine!);
+              } else {
+                const ed = editorRef.current;
+                if (!ed) return;
+                const total = ed.getModel()?.getLineCount() ?? revealLine!;
+                const line = Math.max(1, Math.min(revealLine!, total));
+                ed.setPosition({ lineNumber: line, column: 1 });
+                ed.revealLineInCenter(line);
+                ed.focus();
+              }
+            }}
+            title={
+              mode === "read"
+                ? `当前定位第 ${revealLine} 行；点一下切到源码精确查看该行`
+                : `回到第 ${revealLine} 行`
+            }
+            className="shrink-0 rounded-sm bg-accent-tint px-1.5 py-0.5 font-mono text-micro text-accent hover:opacity-90"
+          >
+            第 {revealLine} 行
+          </button>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {readOnlyReason && !isHtml && (
             <button
@@ -2184,6 +2297,8 @@ function TextFilePreviewEditor({
                 annotateCopy={annotateCopy}
                 onOpenFile={onOpenFile}
                 onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
+                revealLine={revealLine}
+                revealNonce={revealNonce}
               />
             )
           ) : (

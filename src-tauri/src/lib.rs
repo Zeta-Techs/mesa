@@ -3,6 +3,7 @@ use tauri::{Emitter, Manager};
 mod about;
 mod conflict_hint;
 mod desk_pet;
+mod file_window;
 pub mod dirs;
 mod attach_grants;
 mod agent_specs;
@@ -571,6 +572,11 @@ pub fn run() {
                     window_close::on_main_close_requested(window, api);
                 }
             }
+            if let tauri::WindowEvent::Destroyed = event {
+                if window.label() == file_window::LABEL {
+                    file_window::on_destroyed();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             profiles::list_profiles,
@@ -605,6 +611,9 @@ pub fn run() {
             desk_pet::desk_pet_hide,
             desk_pet::desk_pet_open,
             desk_pet::desk_pet_cursor,
+            file_window::file_viewer_open,
+            file_window::file_viewer_state,
+            file_window::file_viewer_is_open,
             window_close::confirm_quit,
             window_close::release_single_instance,
             app_icon::apply_app_icon,

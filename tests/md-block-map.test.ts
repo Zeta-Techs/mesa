@@ -5,6 +5,7 @@ import { marked } from "marked";
 // 显式声明运行前提：mathBlock 扩展注册进全局 marked（md-block-map 也会带上）
 import "../src/md-math.ts";
 import {
+  mdBlockForChild,
   mdBlocks,
   mdChildTagOf,
   mdLineForChild,
@@ -170,4 +171,22 @@ test("mdChildTagOf：装饰链改写的顶层节点归一", () => {
 
 test("mdChildTagOf：class 撞名不误判（md-codebook 不是 md-code）", () => {
   assert.equal(mdChildTagOf("DIV", "md-codebook"), "div");
+});
+
+test("mdBlocks + mdBlockForChild：多行列表项精确给出每个顶层 li 起始行", () => {
+  const doc = [
+    "# 清单", // 1
+    "", // 2
+    "1. 第一条首行", // 3
+    "   第一条续行", // 4
+    "2. 第二条首行", // 5
+    "", // 6
+    "3. 第三条跨空行", // 7
+  ].join("\n");
+  const host = renderToHost(doc);
+  const tags = childTagsOf(host);
+  const blocks = mdBlocks(doc);
+  const ol = mdBlockForChild(blocks, tags, 1);
+  assert.equal(ol?.tag, "ol");
+  assert.deepEqual(ol?.itemLines, [3, 5, 7]);
 });

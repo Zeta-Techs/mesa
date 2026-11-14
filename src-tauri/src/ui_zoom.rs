@@ -69,6 +69,7 @@ pub fn apply_to_main(app: &tauri::AppHandle, zoom: f64) {
     if let Some(window) = app.get_webview_window("main") {
         apply(&window, zoom);
     }
+    crate::file_window::apply_zoom_if_open(app, zoom);
 }
 
 #[cfg(test)]

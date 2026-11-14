@@ -23,7 +23,7 @@ test("手写依据 UI：不提供默认批准，保存原文与依据后才满�
         "./HumanTasksList": "export const useHumanTasks = () => ({states:[],loading:false,error:null,dropHover:null,rowRefs:{current:new Map()},registerOffer:null}); export const RegisterOfferRow=()=>null;",
         "../pipeline-start": "export const buildWorkspaceTerminalRequest=async()=>({});",
         "../md-math": "export const renderMathInto=async()=>{};",
-        "../project-file-open": "export const showProjectFile=async()=>{};",
+        "../project-file-open": "export const showProjectFile=async()=>{}; export const openProjectFileInWindow=async()=>{}; export const confirmDiscardProjectFile=async()=>true; export const setProjectFilePaneDirty=()=>{};",
       };
       // 宿主边界对任何导入方都打桩：md-math 真模块会把 katex CSS（含字体 URL）拉进
       // bundle（无字体 loader 即失败）；真 store 在模块作用域读 localStorage，Node 下即崩

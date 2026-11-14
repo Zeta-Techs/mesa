@@ -16,8 +16,40 @@ export interface PreviewDraft {
 }
 
 const ARM_MS = 5000;
+const STORAGE_KEY = "ccode.draftHandoff";
 const armed = new Map<string, number>();
 const drafts = new Map<string, PreviewDraft>();
+
+function saveCrossWindowDraft(path: string, draft: PreviewDraft, now: number): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        path,
+        expiresAt: now + ARM_MS,
+        draft: { text: draft.text, baseline: draft.baseline, mode: draft.mode, viewState: null },
+      }),
+    );
+  } catch {
+    /* 隐私模式或配额满时仅保留同窗内存寄存 */
+  }
+}
+
+function takeCrossWindowDraft(path: string, now: number): PreviewDraft | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { path?: string; expiresAt?: number; draft?: PreviewDraft };
+    if (parsed.path !== path) return null;
+    localStorage.removeItem(STORAGE_KEY);
+    if (typeof parsed.expiresAt !== "number" || parsed.expiresAt < now || !parsed.draft) return null;
+    return parsed.draft;
+  } catch {
+    return null;
+  }
+}
 
 export function armDraftHandoff(path: string, now = Date.now()): void {
   armed.set(path, now + ARM_MS);
@@ -29,12 +61,17 @@ export function stashDraftIfArmed(path: string, draft: PreviewDraft, now = Date.
   armed.delete(path);
   if (until === undefined || until < now) return false;
   drafts.set(path, draft);
+  saveCrossWindowDraft(path, draft, now);
   return true;
 }
 
-/** 新编辑器加载时取走（只取一次） */
-export function takeDraft(path: string): PreviewDraft | null {
+/** 新编辑器加载时取走（只取一次；支持同窗口重挂与拆出独立文件窗口） */
+export function takeDraft(path: string, now = Date.now()): PreviewDraft | null {
   const d = drafts.get(path) ?? null;
-  drafts.delete(path);
-  return d;
+  if (d) {
+    drafts.delete(path);
+    takeCrossWindowDraft(path, now);
+    return d;
+  }
+  return takeCrossWindowDraft(path, now);
 }

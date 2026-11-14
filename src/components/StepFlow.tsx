@@ -112,7 +112,7 @@ import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmL
 import ReviewDecisionList from "./ReviewDecisionList";
 import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
 import ProjectFilePreview from "./ProjectFilePreview";
-import { showProjectFile } from "../project-file-open";
+import { confirmDiscardProjectFile, openProjectFileInWindow, showProjectFile } from "../project-file-open";
 import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
@@ -3418,6 +3418,24 @@ export default function StepFlow({
                     list: req.list,
                     from: human.title,
                   });
+                }}
+                onOpenFileInWindow={(req) => {
+                  void (async () => {
+                    if (useAppStore.getState().projectFilePane && (await confirmDiscardProjectFile())) {
+                      useAppStore.getState().closeProjectFile();
+                    }
+                    await openProjectFileInWindow({
+                      projectRoot: projectPath,
+                      root: req.root,
+                      path: req.path,
+                      name: req.name,
+                      rel: req.rel,
+                      line: req.line,
+                      showList: req.showList ?? (req.list.length > 1 ? true : undefined),
+                      list: req.list,
+                      from: human.title,
+                    });
+                  })();
                 }}
                 onOpenCount={(count) =>
                   setDecisionOpen((prev) => {

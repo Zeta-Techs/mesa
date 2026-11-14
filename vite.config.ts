@@ -125,10 +125,11 @@ export default defineConfig(async () => ({
 
   build: {
     rollupOptions: {
-      // 桌宠小窗单独一个入口：只带小桌和它的话，不载主窗口那一整套
+      // 桌宠小窗与独立文件查看窗口各自一个入口：不载主窗口那一整套
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         pet: fileURLToPath(new URL("./pet.html", import.meta.url)),
+        fileViewer: fileURLToPath(new URL("./file-viewer.html", import.meta.url)),
       },
       output: {
         // 大依赖拆独立 vendor chunk：首屏只载 react + 当前页，

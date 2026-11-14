@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文件查看 — Mesa</title>
+    <style>
+      html, body, #root {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #eef0f4;
+      }
+      @media (prefers-color-scheme: dark) {
+        html, body, #root {
+          background: #11131a;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/file-viewer/main.tsx"></script>
+  </body>
+</html>

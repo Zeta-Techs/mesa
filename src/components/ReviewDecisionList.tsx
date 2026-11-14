@@ -82,6 +82,7 @@ export default function ReviewDecisionList({
   onAllDecided,
   onOpenCount,
   onOpenFile,
+  onOpenFileInWindow,
   refreshKey,
 }: {
   worktreePath?: string | null;
@@ -94,6 +95,8 @@ export default function ReviewDecisionList({
   onOpenCount?: (count: number) => void;
   /** 在项目右侧抽屉打开对照文件（带完整涉及文件树 + 可选行号定位）。 */
   onOpenFile?: (req: ReviewDecisionOpenFileReq) => void;
+  /** 在独立系统窗口打开对照文件（笔记本窄屏或双屏并排看意见）。 */
+  onOpenFileInWindow?: (req: ReviewDecisionOpenFileReq) => void;
   /** 变了就重读文件（步骤的运行状态 / Agent 注意力）：这一行常在文件写出来之前就挂上了 */
   refreshKey?: string;
 }) {
@@ -314,10 +317,30 @@ export default function ReviewDecisionList({
                       list: fileList,
                     });
                   }}
-                  title="在右侧抽屉列出本批意见涉及的全部文件，边对照原稿边逐条决定"
+                  title="在右侧文件栏列出本批意见涉及的全部文件，边对照原稿边逐条决定"
                   className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
                 >
                   {fileList.length > 1 ? `对照文件（${fileList.length}）` : "对照文件"}
+                </button>
+              )}
+              {onOpenFileInWindow && fileList.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const primary = fileList[0]!;
+                    onOpenFileInWindow({
+                      path: primary.path,
+                      root: primary.root ?? fileRoot,
+                      name: primary.name,
+                      rel: primary.rel ?? primary.name,
+                      showList: true,
+                      list: fileList,
+                    });
+                  }}
+                  title="拆成独立新窗口打开对照文件：主窗口保留全宽看意见，点意见里的行号会在新窗口同步定位"
+                  className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
+                >
+                  新窗口打开
                 </button>
               )}
             </div>

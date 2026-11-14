@@ -78,6 +78,7 @@ import ProjectFilePreview from "./ProjectFilePreview";
 import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
 import { armDraftHandoff } from "../file-draft-handoff";
+import { openProjectFileInWindow } from "../project-file-open";
 import { organizePdfExcerpt } from "../pdf-organize";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
@@ -1551,6 +1552,31 @@ export default function ProjectFilesView({
         >
           <Maximize2 size={12} aria-hidden="true" />
           窗口预览
+        </button>
+        <button
+          type="button"
+          className={rowActionClass}
+          title="拆成独立系统窗口打开这份文件"
+          onClick={() => {
+            if (!preview) return;
+            const snapshot = preview;
+            if (dirtyRef.current) {
+              armDraftHandoff(snapshot.path);
+              dirtyRef.current = false;
+            }
+            setPreview(null);
+            setWindowed(false);
+            setTimeout(() => {
+              void openProjectFileInWindow({
+                projectRoot: projectPath,
+                root: projectPath,
+                path: snapshot.path,
+                name: snapshot.name,
+              });
+            }, 0);
+          }}
+        >
+          新窗口
         </button>
         <button
           type="button"

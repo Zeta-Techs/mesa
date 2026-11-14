@@ -373,6 +373,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
                              # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
                              # 先载 App.css 用主窗口同一套主题令牌（挂 data-theme，自定义主题按深浅退回沉浸黑），卡片带指向小桌的尾巴、按项目分组、整行点了去看看
+  file-viewer/FileViewerApp.tsx # 独立文件查看窗口（file-viewer.html 入口 file-viewer/main.tsx，file_window.rs 建窗）：按需懒载 ProjectFilePreview 与 FileSelectionTree（过 entryGuardPlugin），
+                             # 收 file-viewer:state 实时切换文件与行号、跟主窗口同步主题与缩放、关窗前拦截未保存改动、支持左侧文件树收折与 ↑↓ 翻文件；跨窗口未保存草稿经 file-draft-handoff localStorage 5 秒交接
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）+ 问它一句（不打断，run_ask_aside，只给 Claude Code / Codex）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
@@ -654,8 +656,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板
   assistant-brief.ts         # 项目助手「现在的情况」卡与按状态换的常用问题（2026-11-08，纯逻辑；reviewRoundFocus「这一轮怎么样」的重点、setReviewingStep 评审页开着哪一步）：briefLines（出错 / 等确认 / 待评审 / 核验待判断 / 目标待验收与上次打开以来的保存、完成）、quickAsks（出错→为什么、待评审→先帮你过一遍、没流程→想做什么）、reviewPrereadFocus（评审前只读看一遍的重点，评审页同用）、knowledgeDraftFocus（项目知识还是空的时提议从项目文件起草，最多五条 :::记下，人逐条点）、summaryDue / summaryFocus（聊满 10 轮提议整理定下的事，点了才调 AI）；取数在 project-assistant-run gatherBriefInput，不调 AI（tests/assistant-brief.test.ts）
-  project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）：本步文件、步骤卡、收尾包、文献雷达、资料列表与版本入口都调它；换文件或切换版本模式有没保存的改动先问；轻模块，调用方不必拉进预览组件
-  project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）；versions 请求只切展示模式不改现稿（tests/project-file-pane.test.ts）
+  project-file-open.ts       # 项目页打开文件的唯一入口 showProjectFile（2026-11-11）与独立窗口入口 openProjectFileInWindow（2026-11-14）：本步文件、步骤卡、收尾包、文献雷达、资料列表与版本入口都调它；独立文件窗口开着时 showProjectFile 直接同步过去不再弹主窗侧栏；换文件或切换版本模式有没保存的改动先问；轻模块，调用方不必拉进预览组件
+  project-file-pane.ts       # 文件栏纯逻辑：宽度 360–960、dockedFilePaneWidth（主区留 520 即可按剩余宽度收窄并排停靠，保笔记本屏幕常驻不关）、dockOccupant（与项目助手轮流谁在前）、neighborFile（↑↓）、filePaneShouldClose（只在项目页换项目时收、脏不收）；versions 请求只切展示模式不改现稿（tests/project-file-pane.test.ts）
   assistant-dock.ts          # 项目助手常驻侧栏纯逻辑（2026-11-05）：clampAssistantWidth（340–640）、canDockAssistant（主区留 720）、assistantWhere（此刻在看哪）、assistantShortcutTarget（⌘J / 命令面板问哪个项目）、assistantDayLabel / sameLocalDay（问答记录按天分隔）（tests/assistant-dock.test.ts）
   session-tail.ts            # 某一步最近那段对话里 AI 最后说的话（find_session + get_session_conversation_page 最后一页），aiReportsFailure 标出错；30 秒缓存
   assistant-dispatch.ts      # 另有 stepWorkspace / liveRunIn、DispatchResult / DispatchRecord、dispatchStatus（派出去的活现在怎样）； 派活单执行（调 invoke）：第 N 步 → AI 开着就 mail_send 留话、没开着就 buildWorkspaceTerminalRequest 接回带单自动开跑；
@@ -2132,6 +2134,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
   desk_pet.rs                # 桌宠小窗：按设置建 / 关 / 重排（透明无边框置顶、不进任务栏、所有桌面可见、不抢焦点；权限单独 capabilities/desk-pet.json），
                              # 记位置（拔了外接屏回主屏右下角）、右键隐藏、「去看看」叫回主窗口发 desk-pet:open、desk_pet_cursor 给倾身用的鼠标位置；建窗命令一律 async；清单不在这里拼（主窗口 desk-pet-host.ts）
+  file_window.rs             # 独立文件查看窗口（label `file-viewer`，file-viewer.html，权限 capabilities/file-viewer.json）：file_viewer_open（async 防 Windows WebView2 死锁）/ file_viewer_state / file_viewer_is_open，
+                             # 最小内尺寸 480×360 支持笔记本左右半屏贴靠，随 ui_zoom 同步原生缩放，关窗销毁清状态；DTO 统一 camelCase 对齐前端
   window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()；Windows / Linux 单实例回调与更新重启前放锁（release_single_instance）
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）
   main_window.rs             # 主窗口创建：配置里 create:false，setup 一开头按同一份配置建；Windows 建窗即去标题栏，Win11 注入 __MESA_BOOT_GLASS__ 让启动页首帧透出 Mica；Windows 建好先 DWM 隐身，index.html 首帧画好调 boot_window_painted 露出，1 秒兜底

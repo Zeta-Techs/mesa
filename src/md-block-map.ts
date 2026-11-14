@@ -20,6 +20,8 @@ export interface MdBlockInfo {
   line: number;
   /** 渲染后期望的顶层元素归一化标签；"*"=任意（raw html 块）；null=不产出顶层元素（space/def） */
   tag: string | "*" | null;
+  /** 列表块（ol/ul）各顶层 li 的起始行（1 起，相对同一份 srcRaw） */
+  itemLines?: number[];
 }
 
 function tagOfToken(tok: Token): string | "*" | null {
@@ -79,7 +81,26 @@ export function mdBlocks(srcRaw: string): MdBlockInfo[] {
       start = at;
     }
     const startLine = line + crossed;
-    out.push({ line: startLine, tag: tagOfToken(tok) });
+    let itemLines: number[] | undefined;
+    if (tok.type === "list") {
+      const items = (tok as Tokens.List).items ?? [];
+      let curPos = start;
+      let curLine = startLine;
+      itemLines = [];
+      for (const item of items) {
+        const itemRaw = item.raw ?? "";
+        const foundAt = itemRaw ? src.indexOf(itemRaw, curPos) : -1;
+        if (foundAt >= 0) {
+          curLine += countNewlines(src, curPos, foundAt);
+          itemLines.push(curLine);
+          curLine += countNewlines(src, foundAt, foundAt + itemRaw.length);
+          curPos = foundAt + itemRaw.length;
+        } else {
+          itemLines.push(curLine);
+        }
+      }
+    }
+    out.push({ line: startLine, tag: tagOfToken(tok), ...(itemLines ? { itemLines } : {}) });
     line = startLine + countNewlines(src, start, start + raw.length);
     pos = start + raw.length;
   }
@@ -109,11 +130,11 @@ export function mdChildTagOf(tagName: string, className: string): string {
  * （注释/script/style 被清洗整块剥掉的场景），避免把后续元素绑到 html 块行号。
  * 对不齐返回 null。
  */
-export function mdLineForChild(
+export function mdBlockForChild(
   blocks: MdBlockInfo[],
   childTags: string[],
   targetIndex: number,
-): number | null {
+): MdBlockInfo | null {
   if (targetIndex < 0 || targetIndex >= childTags.length) return null;
   // 从 from 起下一个非 null-tag 块的下标（不存在为 -1）
   const nextVisible = (from: number) => {
@@ -138,8 +159,16 @@ export function mdLineForChild(
       const ni = nextVisible(ti + 1);
       if (ni >= 0 && blocks[ni].tag === want) ti = ni;
     }
-    if (ci === targetIndex) return blocks[ti].line;
+    if (ci === targetIndex) return blocks[ti];
     ti++;
   }
   return null;
+}
+
+export function mdLineForChild(
+  blocks: MdBlockInfo[],
+  childTags: string[],
+  targetIndex: number,
+): number | null {
+  return mdBlockForChild(blocks, childTags, targetIndex)?.line ?? null;
 }

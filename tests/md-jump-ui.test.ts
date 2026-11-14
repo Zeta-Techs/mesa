@@ -203,6 +203,26 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
     await act(async () => root.render(h(Preview, { path: "/tree/note.md", root: "/tree", hideReadOnlyToolbar: true })));
     assert.match(host.textContent ?? "", /note\.md/);
     assert.ok(Array.from(host.querySelectorAll("button")).some((button) => button.textContent === "编辑"), "可编辑预览不能隐藏工具栏");
+
+    // 外部 revealLine：阅读态标出 .md-target，工具条给出「第 N 行」一键切源码精确查看
+    await act(async () =>
+      root.render(h(Preview, { path: "/tree/note.md", root: "/tree", revealLine: 7, revealNonce: 1 })),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const targetEl = host.querySelector(".md-body .md-target");
+    assert.equal(targetEl?.textContent, "第二段内容。");
+    const lineChip = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "第 7 行",
+    );
+    assert.ok(lineChip, "工具条应显示当前定位行号按钮");
+    jump.reveal.length = 0;
+    await act(async () => {
+      lineChip.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.ok(!host.querySelector(".md-body"), "点第 7 行应切到源码编辑态");
+    assert.equal(jump.reveal.at(-1), 7);
   } finally {
     await act(async () => root.unmount());
     for (const [key, desc] of restore) {

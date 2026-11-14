@@ -4,10 +4,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { pathWithin, samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
-import { canDockAssistant } from "../assistant-dock";
 import { supportsImmersiveReader } from "../project-files";
+import { armDraftHandoff } from "../file-draft-handoff";
 import {
   clampFilePaneWidth,
+  dockedFilePaneWidth,
   dockOccupant,
   FILE_PANE_WIDTH_KEY,
   filePaneShouldClose,
@@ -17,7 +18,12 @@ import {
   type ProjectFilePaneReq,
 } from "../project-file-pane";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
-import { confirmDiscardProjectFile as confirmDiscard, setProjectFilePaneDirty, showProjectFile } from "../project-file-open";
+import {
+  confirmDiscardProjectFile as confirmDiscard,
+  openProjectFileInWindow,
+  setProjectFilePaneDirty,
+  showProjectFile,
+} from "../project-file-open";
 import { BookOpen, ExternalLink, FolderSearch } from "lucide-react";
 import { ghostActionClass, LoadingRows } from "./PageFrame";
 
@@ -133,13 +139,13 @@ export default function ProjectFilePaneHost() {
   const widthRef = useRef(width);
   widthRef.current = width;
   const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
-  const [roomy, setRoomy] = useState(false);
+  const [dockWidth, setDockWidth] = useState<number | null>(null);
   useEffect(() => {
     const dock = document.getElementById("ccode-assistant-dock");
     const main = document.querySelector<HTMLElement>(".ccode-app-main");
     setDockEl(dock);
     if (!dock || !main || typeof ResizeObserver === "undefined") return;
-    const measure = () => setRoomy(canDockAssistant(main.clientWidth + dock.clientWidth, width));
+    const measure = () => setDockWidth(dockedFilePaneWidth(main.clientWidth + dock.clientWidth, width));
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(main);
@@ -150,10 +156,21 @@ export default function ProjectFilePaneHost() {
   const onPage = page === "workspaces";
   const occupant = dockOccupant(front, assistantOpen, !!pane && onPage);
   const visible = !!pane && occupant === "file";
-  const docked = !!pane && roomy && !!dockEl;
+  const docked = !!pane && dockWidth !== null && !!dockEl;
 
   async function close() {
     if (await confirmDiscard()) closePane();
+  }
+
+  async function popOutToWindow() {
+    if (!pane) return;
+    const snapshot = { ...pane, showList: listOpen };
+    if (dirty) armDraftHandoff(pane.path);
+    setProjectFilePaneDirty(false);
+    setDirty(false);
+    closePane();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await openProjectFileInWindow(snapshot).catch((reason) => setError(String(reason)));
   }
 
   async function step(delta: -1 | 1) {
@@ -226,6 +243,16 @@ export default function ProjectFilePaneHost() {
           title={listOpen ? "收起左侧文件列表，让预览更宽" : "展开文件列表，在抽屉里切换要查看的文件"}
         >
           文件树
+        </button>
+      )}
+      {!pane.versions && (
+        <button
+          type="button"
+          className={ghostActionClass}
+          onClick={() => void popOutToWindow()}
+          title="在新窗口打开：拆成独立窗口对照查看，主窗口保留全宽看意见；点意见里的行号会同步定位"
+        >
+          新窗口
         </button>
       )}
       {!pane.versions && total > 1 && index >= 0 && (
@@ -304,9 +331,9 @@ export default function ProjectFilePaneHost() {
       headerExtra={actions}
       fillBody
       docked={
-        docked
+        docked && dockWidth !== null
           ? {
-              width,
+              width: dockWidth,
               onResize: (w) => setWidth(clampFilePaneWidth(w)),
               onResizeEnd: () => {
                 try {

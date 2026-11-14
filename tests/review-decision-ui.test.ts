@@ -44,6 +44,7 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
   let missingFile = false;
   let openCount = -1;
   const openedFiles: Array<Record<string, unknown>> = [];
+  const openedWindows: Array<Record<string, unknown>> = [];
   Object.assign(dom.window, {
     __TAURI_INTERNALS__: {
       invoke: async (command: string, args: { path?: string; text?: string; cwd?: string; paths?: string[] }) => {
@@ -87,6 +88,9 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
           onOpenFile: (req: unknown) => {
             openedFiles.push(req as Record<string, unknown>);
           },
+          onOpenFileInWindow: (req: unknown) => {
+            openedWindows.push(req as Record<string, unknown>);
+          },
           onAllDecided: () => {
             continued += 1;
           },
@@ -107,6 +111,16 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
     assert.equal(openedFiles.length, 1);
     assert.equal(openedFiles[0]?.showList, true);
     assert.equal(openedFiles[0]?.path, "/proj/manuscript/draft.md");
+    const openWinBtn = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "新窗口打开",
+    );
+    assert.ok(openWinBtn);
+    await act(async () => {
+      openWinBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(openedWindows.length, 1);
+    assert.equal(openedWindows[0]?.showList, true);
+    assert.equal(openedWindows[0]?.path, "/proj/manuscript/draft.md");
     const lineBtn = [...host.querySelectorAll("button")].find(
       (button) => button.textContent === "manuscript/draft.md:18",
     );

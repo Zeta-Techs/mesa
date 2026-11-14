@@ -38,12 +38,23 @@ export type DockFront = "assistant" | "file";
 export const FILE_PANE_WIDTH_DEFAULT = 560;
 export const FILE_PANE_WIDTH_MIN = 360;
 export const FILE_PANE_WIDTH_MAX = 960;
+/** 常驻侧栏时主区至少留这么宽：13/14 寸笔记本窗口（主区+侧栏 ≥ 880px，即总窗宽 ≥ 1100px）自动收窄侧栏并排停靠，
+ *  不退回遮罩浮层抽屉（避免点左侧审查意见时把文件栏关掉） */
+export const FILE_DOCK_MIN_MAIN_PX = 520;
 export const FILE_PANE_WIDTH_KEY = "ccode.projectFilePane.width";
 
 /** 拖出来的宽度夹进 360–960；负数 = 双击恢复默认。文件常要看 PDF / 表格，比项目助手宽 */
 export function clampFilePaneWidth(width: number): number {
   if (!Number.isFinite(width) || width < 0) return FILE_PANE_WIDTH_DEFAULT;
   return Math.round(Math.min(FILE_PANE_WIDTH_MAX, Math.max(FILE_PANE_WIDTH_MIN, width)));
+}
+
+/** 当前窗口主区+侧栏总宽下，文件栏常驻停靠的实际宽度；放不下（< 520 + 360）返回 null 退回浮层抽屉 */
+export function dockedFilePaneWidth(mainWithDock: number, preferredWidth: number): number | null {
+  if (!Number.isFinite(mainWithDock)) return null;
+  const maxPane = Math.floor(mainWithDock - FILE_DOCK_MIN_MAIN_PX);
+  if (maxPane < FILE_PANE_WIDTH_MIN) return null;
+  return Math.min(clampFilePaneWidth(preferredWidth), maxPane);
 }
 
 /** 停靠位此刻给谁：只开着一个就是它；两个都开着看最后叫出来的那个 */
