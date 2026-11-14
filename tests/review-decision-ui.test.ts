@@ -43,9 +43,10 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
   let continued = 0;
   let missingFile = false;
   let openCount = -1;
+  const openedFiles: Array<Record<string, unknown>> = [];
   Object.assign(dom.window, {
     __TAURI_INTERNALS__: {
-      invoke: async (command: string, args: { path?: string; text?: string }) => {
+      invoke: async (command: string, args: { path?: string; text?: string; cwd?: string; paths?: string[] }) => {
         if (command === "read_file_preview") {
           if (missingFile) throw new Error("文件不存在");
           return { text: saved, truncated: false, revision: "r1" };
@@ -54,6 +55,9 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
           saved = args.text ?? saved;
           assert.match(saved, /决定：接受/);
           return "r2";
+        }
+        if (command === "existing_files") {
+          return (args.paths ?? []).map((p) => ({ path: p, abs: `${args.cwd ?? "/proj"}/${p}` }));
         }
         throw new Error(command);
       },
@@ -80,6 +84,9 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
           projectRoot: "/proj",
           target: "manuscript/review-report.md",
           kind: "report",
+          onOpenFile: (req: unknown) => {
+            openedFiles.push(req as Record<string, unknown>);
+          },
           onAllDecided: () => {
             continued += 1;
           },
@@ -89,6 +96,26 @@ test("审查条目逐条点，点完最后一条也不自己跳去对话", async
     assert.match(host.textContent ?? "", /R001/);
     assert.match(host.textContent ?? "", /R002/);
     assert.ok([...host.querySelectorAll("button")].some((button) => button.textContent === "全部接受"));
+    const openDrawerBtn = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").startsWith("对照文件"),
+    );
+    assert.ok(openDrawerBtn);
+    assert.equal(openDrawerBtn.textContent, "对照文件（2）");
+    await act(async () => {
+      openDrawerBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(openedFiles.length, 1);
+    assert.equal(openedFiles[0]?.showList, true);
+    assert.equal(openedFiles[0]?.path, "/proj/manuscript/draft.md");
+    const lineBtn = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "manuscript/draft.md:18",
+    );
+    assert.ok(lineBtn);
+    await act(async () => {
+      lineBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(openedFiles[1]?.line, 18);
+    assert.equal(openedFiles[1]?.path, "/proj/manuscript/draft.md");
     const accept = [...host.querySelectorAll("button")].find((button) => button.textContent === "接受");
     assert.ok(accept);
     await act(async () => {

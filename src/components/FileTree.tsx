@@ -234,12 +234,28 @@ const FileTreeNode = memo(function FileTreeNode({
   );
 });
 
-export function FileSelectionTree({ paths, selected, onSelect }: {
+export function FileSelectionTree({
+  paths,
+  selected,
+  onSelect,
+  label = "版本文件树",
+  expandAll = false,
+}: {
   paths: readonly string[];
   selected: string;
   onSelect: (path: string) => void;
+  label?: string;
+  expandAll?: boolean;
 }) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    if (!expandAll) return new Set();
+    const initial = new Set<string>();
+    for (const file of paths) {
+      const parts = file.replace(/\\/g, "/").split("/");
+      for (let depth = 1; depth < parts.length; depth++) initial.add(parts.slice(0, depth).join("/"));
+    }
+    return initial;
+  });
   const cache = useMemo(() => {
     const directories: Record<string, DirEntryDto[]> = { "": [] };
     for (const file of paths) {
@@ -260,6 +276,17 @@ export function FileSelectionTree({ paths, selected, onSelect }: {
     return directories;
   }, [paths]);
   useEffect(() => {
+    if (!expandAll) return;
+    setExpanded((current) => {
+      const next = new Set(current);
+      for (const file of paths) {
+        const parts = file.replace(/\\/g, "/").split("/");
+        for (let depth = 1; depth < parts.length; depth++) next.add(parts.slice(0, depth).join("/"));
+      }
+      return next;
+    });
+  }, [paths, expandAll]);
+  useEffect(() => {
     const parts = selected.replace(/\\/g, "/").split("/");
     setExpanded((current) => {
       const next = new Set(current);
@@ -277,7 +304,7 @@ export function FileSelectionTree({ paths, selected, onSelect }: {
     }),
     visibleFiles: [], onOpenFile: onSelect, onOpenTerminal: () => {}, onMenu: () => {},
   };
-  return <div role="tree" aria-label="版本文件树" className="min-h-0 flex-1 overflow-auto">
+  return <div role="tree" aria-label={label} className="min-h-0 flex-1 overflow-auto">
     {cache[""].map((entry) => <FileTreeNode key={entry.path} entry={entry} depth={0} ctx={ctx} />)}
   </div>;
 }

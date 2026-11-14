@@ -350,7 +350,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ProjectAssistantPanel.tsx # 项目助手抽屉（与任务面板同位置，SettingsDrawerShell 的 titleIcon / footer）：顶栏小桌 + 名字 + 项目名；空状态大图小桌按时段换样子 + 三个常用问题细线列表；
                              # 回答首句经 splitAnswerLead 加粗带琥珀竖线、动作按钮经 parseAssistantAnswer；输入框钉底，连接与清空记录在下一行小字；带问题打开按 nonce 只问一次
   components/ProjectFilePaneHost.tsx # 项目页文件栏宿主（2026-11-11，App 挂一份）：读 store.projectFilePane，与项目助手同用 #ccode-assistant-dock、按 dockFront 轮流（轮到别人只藏不卸载）；
-                             # 标题行一排：↑↓ 换清单里的文件、问 AI、外部打开、沉浸阅读、在文件页签里看、「项目助手 / 文件」切换（DockSwitch，助手宿主也用）；版本请求在同一栏 lazy 挂 FileVersionsPanel，历史态不把主仓动作挂到旧版；预览 lazy 加载（启动包不带 pdfjs）
+                             # 标题行一排：文件树（多文件清单可展开抽屉左侧 FileSelectionTree 目录树切换）、↑↓ 换清单里的文件、问 AI、外部打开、沉浸阅读、在文件页签里看、「项目助手 / 文件」切换（DockSwitch，助手宿主也用）；支持 line/nonce 透传行号定位；版本请求在同一栏 lazy 挂 FileVersionsPanel，历史态不把主仓动作挂到旧版；预览 lazy 加载（启动包不带 pdfjs）
   components/ProjectAssistantHost.tsx # 项目助手唯一宿主（App 挂一份）：读 store.assistantReq，补项目条目与步骤数，按钮交 assistant-actions、派活交 assistant-dispatch；
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」

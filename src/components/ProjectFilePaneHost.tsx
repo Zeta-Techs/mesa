@@ -13,6 +13,8 @@ import {
   filePaneShouldClose,
   neighborFile,
   type DockFront,
+  type ProjectFilePaneFile,
+  type ProjectFilePaneReq,
 } from "../project-file-pane";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { confirmDiscardProjectFile as confirmDiscard, setProjectFilePaneDirty, showProjectFile } from "../project-file-open";
@@ -22,6 +24,22 @@ import { ghostActionClass, LoadingRows } from "./PageFrame";
 // 预览按需加载：App 启动包不能静态带上 pdfjs（entry-guard 守着）
 const ProjectFilePreview = lazy(() => import("./ProjectFilePreview"));
 const FileVersionsPanel = lazy(() => import("./FileVersions").then((module) => ({ default: module.FileVersionsPanel })));
+const FileSelectionTree = lazy(() => import("./FileTree").then((module) => ({ default: module.FileSelectionTree })));
+
+function itemTreeRel(item: ProjectFilePaneFile, pane: ProjectFilePaneReq): string {
+  if (item.rel) return item.rel.replace(/\\/g, "/");
+  const baseRoot = item.root ?? pane.root;
+  for (const base of [baseRoot, pane.projectRoot]) {
+    if (base && pathWithin(item.path, base, IS_WINDOWS)) {
+      const trimmed = item.path
+        .slice(base.replace(/[\\/]+$/, "").length)
+        .replace(/^[\\/]+/, "")
+        .replace(/\\/g, "/");
+      if (trimmed) return trimmed;
+    }
+  }
+  return item.name;
+}
 
 /** 停靠位两样都开着时，标题行里的「项目助手 / 文件」轮流切换（同一位置，不并排） */
 export function DockSwitch({ front, onSwitch }: { front: DockFront; onSwitch: (front: DockFront) => void }) {
@@ -71,6 +89,7 @@ export default function ProjectFilePaneHost() {
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(false);
 
   useEffect(() => {
     setError(null);
@@ -79,8 +98,15 @@ export default function ProjectFilePaneHost() {
     if (!pane) {
       setProjectFilePaneDirty(false);
       setDirty(false);
+      setListOpen(false);
     }
   }, [pane]);
+  useEffect(() => {
+    if (pane && pane.showList !== undefined) {
+      setListOpen(pane.showList);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pane?.nonce]);
 
   // 在项目页换到别的项目：文件栏收起（有没保存的改动不收）
   const lastProject = useRef<string | null | undefined>(undefined);
@@ -133,7 +159,15 @@ export default function ProjectFilePaneHost() {
   async function step(delta: -1 | 1) {
     if (!pane) return;
     const next = neighborFile(pane.list, pane.path, delta, IS_WINDOWS);
-    if (next) await showProjectFile({ ...pane, ...next });
+    if (next) {
+      await showProjectFile({
+        ...pane,
+        ...next,
+        root: next.root ?? pane.root,
+        line: undefined,
+        showList: undefined,
+      });
+    }
   }
 
   async function openImmersive() {
@@ -170,14 +204,30 @@ export default function ProjectFilePaneHost() {
   const index = pane.list?.findIndex((f) => samePath(f.path, pane.path, IS_WINDOWS)) ?? -1;
   const total = pane.list?.length ?? 0;
   const inProject = pathWithin(pane.path, pane.projectRoot, IS_WINDOWS);
+  const inRoot = pathWithin(pane.path, pane.root, IS_WINDOWS);
   const rel = inProject
     ? pane.path.slice(pane.projectRoot.replace(/[\\/]+$/, "").length).replace(/^[\\/]+/, "")
-    : pane.path;
+    : inRoot
+      ? pane.path.slice(pane.root.replace(/[\\/]+$/, "").length).replace(/^[\\/]+/, "")
+      : pane.rel ?? pane.path;
+  const treePaths = pane.list ? pane.list.map((item) => itemTreeRel(item, pane)) : [];
+  const selectedTreeRel = index >= 0 ? treePaths[index] ?? rel.replace(/\\/g, "/") : rel.replace(/\\/g, "/");
 
-  // 一行放进标题行（2026-11-11 用户：「这一行是不是可以放在顶部」）：文件名 · 来处 · ↑↓ · 图标动作 · 切换 · ✕
+  // 一行放进标题行（2026-11-11 用户：「这一行是不是可以放在顶部」）：文件名 · 来处 · 文件树 · ↑↓ · 图标动作 · 切换 · ✕
   const iconAction = `${ghostActionClass} w-7 px-0`;
   const actions = (
     <div className="flex shrink-0 items-center gap-0.5">
+      {!pane.versions && total > 1 && (
+        <button
+          type="button"
+          aria-expanded={listOpen}
+          className={`${ghostActionClass} ${listOpen ? "bg-seg-sel text-l1" : ""}`}
+          onClick={() => setListOpen((v) => !v)}
+          title={listOpen ? "收起左侧文件列表，让预览更宽" : "展开文件列表，在抽屉里切换要查看的文件"}
+        >
+          文件树
+        </button>
+      )}
       {!pane.versions && total > 1 && index >= 0 && (
         <>
           <button
@@ -277,19 +327,49 @@ export default function ProjectFilePaneHost() {
         path={pane.versions.workspaceId ? undefined : pane.path}
         workspaceId={pane.versions.workspaceId}
         onClose={(currentPath) => void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: currentPath ?? pane.path, list: pane.list })}
-      /> : <ProjectFilePreview
-        key={pane.path}
-        path={pane.path}
-        root={pane.root}
-        onOpenFile={(p) =>
-          void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: p })
-        }
-        onOpenReader={supportsImmersiveReader(pane.name) ? () => void openImmersive() : undefined}
-        onDirtyChange={(d) => {
-          setProjectFilePaneDirty(d);
-          if (d !== dirty) setDirty(d);
-        }}
-      />}
+      /> : (
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {listOpen && total > 1 && (
+            <aside className="flex min-h-0 w-40 shrink-0 flex-col border-r border-hairline pr-1">
+              <FileSelectionTree
+                paths={treePaths}
+                selected={selectedTreeRel}
+                label="对照文件树"
+                expandAll
+                onSelect={(pickedRel) => {
+                  const picked = pane.list?.find((item) => itemTreeRel(item, pane) === pickedRel);
+                  if (picked) {
+                    void showProjectFile({
+                      ...pane,
+                      ...picked,
+                      root: picked.root ?? pane.root,
+                      line: undefined,
+                      showList: undefined,
+                    });
+                  }
+                }}
+              />
+            </aside>
+          )}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <ProjectFilePreview
+              key={pane.path}
+              path={pane.path}
+              root={pane.root}
+              revealLine={pane.line ?? null}
+              revealNonce={pane.nonce}
+              onOpenFile={(p) =>
+                void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: p, list: pane.list, from: pane.from })
+              }
+              onOpenReader={supportsImmersiveReader(pane.name) ? () => void openImmersive() : undefined}
+              onDirtyChange={(d) => {
+                setProjectFilePaneDirty(d);
+                if (d !== dirty) setDirty(d);
+              }}
+            />
+          </div>
+        </div>
+      )}
       </Suspense>
     </SettingsDrawerShell>
   );

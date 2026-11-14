@@ -126,10 +126,16 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
   };
 
   for (const line of lines) {
-    const head = line.trim().match(ID_HEAD);
+    const trimmed = line.trim();
+    const head = trimmed.match(ID_HEAD);
     if (head) {
       flush();
-      current = { id: head[1], lines: [line.trim()] };
+      current = { id: head[1], lines: [trimmed] };
+      continue;
+    }
+    // 报告小节标题（如 ## 一般问题、## 建议）结束上一条，不连带后面的「无」粘进上一条末尾
+    if (/^#{1,6}\s/.test(trimmed)) {
+      flush();
       continue;
     }
     if (current) current.lines.push(line);
@@ -209,13 +215,13 @@ export function applyVerifyVerdict(
   return lines.join("\n");
 }
 
-/** 条目自带的改法：审查报告的「建议改法：」、待核实清单的「建议：」。选「修改」时预填，
+/** 条目自带的改法：审查报告的「建议改法： / 修改建议： / 建议：」、待核实清单的「建议：」。选「修改」时预填，
  *  输入框里灰字显示，→ 或 Tab 补全（2026-10-24 用户：建议应该预填好，向右补全）。没有返回空串。 */
 export function itemSuggestion(item: ReviewItem, kind: ReviewItemKind): string {
   const raw =
     kind === "verify"
       ? (item.body.match(/[|｜]\s*建议[：:]\s*([^|｜]*)/)?.[1] ?? "")
-      : (item.body.match(/建议改法[：:]\s*([\s\S]*)$/)?.[1] ?? "");
+      : (item.body.match(/(?:建议改法|修改建议|建议)[：:]\s*([\s\S]*)$/)?.[1] ?? "");
   return raw.replace(/\s+/g, " ").trim();
 }
 
@@ -231,6 +237,144 @@ export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): strin
     .replace(/^\s*[.、:：]\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export interface DecisionLineJump {
+  /** 界面展示文字：首处带路径（如 `manuscript/draft.md:166`），后续逗号行号只写 `212` */
+  label: string;
+  /** 起始行号（范围 `276–283` 取 276；无行号时为 undefined） */
+  line?: number;
+  /** 前置分隔符（如 `, `） */
+  sep?: string;
+}
+
+export type DecisionSummaryToken =
+  | { kind: "text"; text: string }
+  | { kind: "code"; text: string }
+  | {
+      kind: "file";
+      raw: string;
+      code: boolean;
+      path: string;
+      jumps: DecisionLineJump[];
+    };
+
+const FILE_EXT =
+  "(?:md|qmd|rmd|tex|bib|json|jsonl|csv|tsv|txt|py|r|sh|pdf|docx|xlsx|pptx|yaml|yml|toml|csl|lua|html|svg|png|jpe?g|webp)";
+const LINE_PART = "L?\\d+(?:\\s*[-–—]\\s*L?\\d+)?";
+const LINE_TAIL = `(?:[:#]${LINE_PART}(?:(?:\\s*,\\s*|\\s*、\\s*)${LINE_PART})*)?`;
+const FILE_REF_WHOLE = new RegExp(
+  `^((?:[A-Za-z0-9_.\\-\\u4e00-\\u9fa5]+\\/)*[A-Za-z_\\u4e00-\\u9fa5][A-Za-z0-9_.\\-\\u4e00-\\u9fa5]*\\.${FILE_EXT})(${LINE_TAIL})$`,
+  "i",
+);
+const PLAIN_FILE_REF = new RegExp(
+  `((?:[A-Za-z0-9_.\\-\\u4e00-\\u9fa5]+\\/)*[A-Za-z_\\u4e00-\\u9fa5][A-Za-z0-9_.\\-\\u4e00-\\u9fa5]*\\.${FILE_EXT})(${LINE_TAIL})`,
+  "gi",
+);
+
+function parseFileRef(raw: string, code: boolean): Extract<DecisionSummaryToken, { kind: "file" }> | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.includes("://") || trimmed.startsWith("@")) return null;
+  const matched = trimmed.match(FILE_REF_WHOLE);
+  if (!matched) return null;
+  const path = matched[1].replace(/^\.\//, "");
+  const tail = matched[2] ?? "";
+  if (!tail) {
+    return { kind: "file", raw, code, path, jumps: [{ label: path }] };
+  }
+  const lead = tail[0];
+  const rest = tail.slice(1);
+  const jumps: DecisionLineJump[] = [];
+  const segRe = /(\s*[,、]\s*)?(L?\d+(?:\s*[-–—]\s*L?\d+)?)/g;
+  let seg: RegExpExecArray | null;
+  while ((seg = segRe.exec(rest))) {
+    const sep = seg[1];
+    const spec = seg[2];
+    const firstNum = Number(spec.match(/\d+/)?.[0]);
+    const line = Number.isFinite(firstNum) && firstNum > 0 ? firstNum : undefined;
+    if (jumps.length === 0) {
+      jumps.push({ label: `${path}${lead}${spec}`, line });
+    } else {
+      jumps.push({ sep: sep || ", ", label: spec, line });
+    }
+  }
+  return {
+    kind: "file",
+    raw,
+    code,
+    path,
+    jumps: jumps.length > 0 ? jumps : [{ label: trimmed }],
+  };
+}
+
+function tokenizePlainText(text: string): DecisionSummaryToken[] {
+  if (!text) return [];
+  const out: DecisionSummaryToken[] = [];
+  let cursor = 0;
+  PLAIN_FILE_REF.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PLAIN_FILE_REF.exec(text))) {
+    const start = match.index;
+    const prev = start > 0 ? text[start - 1] : "";
+    // 排除 URL 片段、引用键（@foo.md）或英文单词粘连
+    if (prev && /[A-Za-z0-9@/\\:]/.test(prev)) continue;
+    const parsed = parseFileRef(match[0], false);
+    if (!parsed) continue;
+    if (start > cursor) out.push({ kind: "text", text: text.slice(cursor, start) });
+    out.push(parsed);
+    cursor = start + match[0].length;
+  }
+  if (cursor < text.length) out.push({ kind: "text", text: text.slice(cursor) });
+  return out;
+}
+
+/** 拆出条目摘要里的文件路径（含行号/多行号）与普通行内代码，供右侧抽屉点击定位。 */
+export function tokenizeDecisionSummary(summary: string): DecisionSummaryToken[] {
+  const out: DecisionSummaryToken[] = [];
+  const codeSpan = /`([^`\n]+)`/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = codeSpan.exec(summary))) {
+    if (match.index > cursor) {
+      out.push(...tokenizePlainText(summary.slice(cursor, match.index)));
+    }
+    const inner = match[1];
+    const fileToken = parseFileRef(inner, true);
+    out.push(fileToken ?? { kind: "code", text: inner });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < summary.length) {
+    out.push(...tokenizePlainText(summary.slice(cursor)));
+  }
+  return out;
+}
+
+/** 收集全部条目提及的候选路径（保持首次出现顺序），裸文件名（如 `draft.md`）补试报告同目录候选。 */
+export function decisionCandidatePaths(
+  items: readonly ReviewItem[],
+  kind: ReviewItemKind,
+  target: string,
+): { orderedRaws: string[]; candidatesByRaw: Map<string, string[]> } {
+  const cleanTarget = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+  const slash = cleanTarget.lastIndexOf("/");
+  const targetDir = slash > 0 ? cleanTarget.slice(0, slash) : "";
+  const orderedRaws: string[] = [];
+  const candidatesByRaw = new Map<string, string[]>();
+  const addRaw = (raw: string) => {
+    const norm = raw.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!norm || candidatesByRaw.has(norm)) return;
+    const candidates =
+      !norm.includes("/") && targetDir ? [norm, `${targetDir}/${norm}`] : [norm];
+    orderedRaws.push(norm);
+    candidatesByRaw.set(norm, candidates);
+  };
+  for (const item of items) {
+    for (const tok of tokenizeDecisionSummary(reviewItemSummary(item, kind))) {
+      if (tok.kind === "file") addRaw(tok.path);
+    }
+  }
+  if (cleanTarget) addRaw(cleanTarget);
+  return { orderedRaws, candidatesByRaw };
 }
 
 /** 点完后接回这一步原来的对话，让 Agent 按决定继续，不打开评审页。

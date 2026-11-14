@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-14 · 逐条决定审查意见复用右侧文件抽屉列文件与按行定位
+
+用户在走英文综述定稿步「逐条决定审查报告」时提出在右侧抽屉列出涉及文件以便对照看意见。定：步骤卡保持简洁只留 `对照文件` 短入口，不往左侧塞整排文件名标签；打开右侧文件抽屉（`ProjectFilePaneHost`）时在抽屉左侧展开可收起的 `FileSelectionTree` 目录树列出经磁盘核实的相关文件（与「文件版本」同一套树控件，栏头单行保留 `文件树` 切换，不另起第二行工具栏）；条目内的文件路径与多行号（如 `manuscript/draft.md:166, 212, 240`）就地可点，点后在右侧抽屉定位到对应 Markdown 段落/表格行或编辑器行号并闪动提示。细则 codex-style-ui.md §6.4。
+
 ### 2026-11-14 · Kimi Code 与 Grok Build 升入研讨「能看项目」，修复 Antigravity CLI 研讨「只看材料」
 
 用户查看研讨成员选择菜单后询问还有哪几家可升为「能看项目」，听完实测边界后拍板「1 和 3 加 agy 修复」。定：① `INSPECT_AGENTS`（研讨与项目助手只读查看共用 `ai::ai_inspect_readonly`）扩为 `claude-code`、`codex`、`kimi`、`grok`——Kimi 2.x 经 0600 临时 `--agent-file` 白名单锁定 `Read / Glob / Grep / ReadMediaFile`（关子代理并天然排除用户 MCP），Grok 1.0.77 用 `--permission-mode dontAsk --sandbox read-only --disable-web-search --no-subagents --tools read_file,list_dir,grep --deny use_tool`（不传 `--add-dir` 防 1.0.77 拒建会话，`read-only` 下 `read_file` 原生可读工作副本与附图）；② `agy` 因无进程级只读工具锁保持「只看材料」，修复 `ai_prompt_impl_full` 此前一刀切拒掉 `agy` 导致研讨只看材料与项目助手只看记录报错的问题（对显式指定连接或 `consult / project-assistant` 放行，未指定连接的后台起名/翻译自动回落仍跳过 `agy`）；③ 落盘 CLI（`kimi`、`grok`、`agy`）按会话 id 标 `internal` + `set_session_profile`，单次花费回传界面展示而不写 `record_ephemeral_usage` 防双计。细则 pipeline.md「研讨」、matrix §6/§9/§9b。

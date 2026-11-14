@@ -8,6 +8,10 @@ import { samePath } from "./path-utils.ts";
 export interface ProjectFilePaneFile {
   path: string;
   name: string;
+  /** 可选读盘根（清单跨工作副本与项目根时逐项携带；缺省沿用 pane.root） */
+  root?: string;
+  /** 抽屉文件树展示用的相对路径（如 `manuscript/draft.md`）；缺省按 projectRoot / root 推导 */
+  rel?: string;
 }
 
 export interface ProjectFilePaneReq extends ProjectFilePaneFile {
@@ -15,8 +19,12 @@ export interface ProjectFilePaneReq extends ProjectFilePaneFile {
   projectRoot: string;
   /** 读盘白名单根：本步文件在工作副本里就是工作副本，其余是项目根 */
   root: string;
-  /** 打开时那份清单（本步文件按显示顺序）：栏头 ↑↓ 在里面切换；单个文件不给 */
+  /** 打开时那份清单（本步文件 / 审查对照文件）：栏头 ↑↓ 与抽屉左侧文件树共用；单个文件不给 */
   list?: ProjectFilePaneFile[];
+  /** 打开后定位到的行号（1 起；同文件再次点不同行号由 nonce 驱动重定位） */
+  line?: number;
+  /** 打开时是否默认展开抽屉左侧文件树（不传则保持当前展开状态） */
+  showList?: boolean;
   /** 来处小字：「文献检索与筛选 · 本步文件」；不给就不写 */
   from?: string;
   /** 栏头「问 AI」（资料列表接线）：按此刻看的文件路径开商量对话；不给就不显示 */

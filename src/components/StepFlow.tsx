@@ -3405,6 +3405,20 @@ export default function StepFlow({
                 target={human.target}
                 kind={reviewItemKind(human.title)!}
                 refreshKey={`${runStatus}|${agentAttention ?? ""}`}
+                onOpenFile={(req) => {
+                  const alreadyOpen = Boolean(useAppStore.getState().projectFilePane);
+                  void showProjectFile({
+                    projectRoot: projectPath,
+                    root: req.root,
+                    path: req.path,
+                    name: req.name,
+                    rel: req.rel,
+                    line: req.line,
+                    showList: req.showList ?? (!alreadyOpen && req.list.length > 1 ? true : undefined),
+                    list: req.list,
+                    from: human.title,
+                  });
+                }}
                 onOpenCount={(count) =>
                   setDecisionOpen((prev) => {
                     if (prev.get(human.title) === count) return prev;

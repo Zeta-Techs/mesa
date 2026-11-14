@@ -5,16 +5,60 @@ import { researchAbsolutePath } from "../research-report";
 import {
   applyReportVerdict,
   applyVerifyVerdict,
+  decisionCandidatePaths,
   inlineDecisionLine,
   itemSuggestion,
   parseReviewItems,
   reviewItemSummary,
+  tokenizeDecisionSummary,
   type ReviewItem,
   type ReviewItemKind,
   type ReviewVerdict,
 } from "../review-decisions";
+import type { ProjectFilePaneFile } from "../project-file-pane";
 import { InlineNotice } from "./PageFrame";
 import { usePolling } from "../polling";
+
+export interface ReviewDecisionOpenFileReq {
+  path: string;
+  root: string;
+  name: string;
+  rel: string;
+  line?: number;
+  showList?: boolean;
+  list: ProjectFilePaneFile[];
+}
+
+interface ResolvedDecisionFile {
+  path: string;
+  root: string;
+  name: string;
+  rel: string;
+}
+
+async function resolveExistingInRoots(
+  roots: string[],
+  candidates: string[],
+): Promise<Map<string, { abs: string; root: string }>> {
+  const hit = new Map<string, { abs: string; root: string }>();
+  let remaining = candidates;
+  for (const root of roots) {
+    if (remaining.length === 0) break;
+    try {
+      const found = await invoke<Array<{ path: string; abs: string }>>("existing_files", {
+        cwd: root,
+        paths: remaining,
+      });
+      for (const entry of found) {
+        if (!hit.has(entry.path)) hit.set(entry.path, { abs: entry.abs, root });
+      }
+      remaining = remaining.filter((c) => !hit.has(c));
+    } catch {
+      /* 测试桩或根目录暂不可读时跳过，不阻塞清单渲染 */
+    }
+  }
+  return hit;
+}
 
 async function readFirst(roots: string[], rel: string) {
   for (const root of roots) {
@@ -37,6 +81,7 @@ export default function ReviewDecisionList({
   kind,
   onAllDecided,
   onOpenCount,
+  onOpenFile,
   refreshKey,
 }: {
   worktreePath?: string | null;
@@ -47,6 +92,8 @@ export default function ReviewDecisionList({
   onAllDecided?: () => void;
   /** 还没决定的条数。0 表示可以勾上这一行。 */
   onOpenCount?: (count: number) => void;
+  /** 在项目右侧抽屉打开对照文件（带完整涉及文件树 + 可选行号定位）。 */
+  onOpenFile?: (req: ReviewDecisionOpenFileReq) => void;
   /** 变了就重读文件（步骤的运行状态 / Agent 注意力）：这一行常在文件写出来之前就挂上了 */
   refreshKey?: string;
 }) {
@@ -61,6 +108,45 @@ export default function ReviewDecisionList({
   const [revision, setRevision] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [acceptingAll, setAcceptingAll] = useState(false);
+  const [resolvedByRaw, setResolvedByRaw] = useState<Map<string, ResolvedDecisionFile>>(() => new Map());
+  const [fileList, setFileList] = useState<ProjectFilePaneFile[]>([]);
+
+  async function refreshResolvedFiles(parsed: ReviewItem[], currentRoot: string) {
+    const cleanTarget = rel.replace(/\\/g, "/").replace(/^\.\//, "");
+    const { orderedRaws, candidatesByRaw } = decisionCandidatePaths(parsed, kind, cleanTarget);
+    const allCandidates = [...new Set([...candidatesByRaw.values()].flat())];
+    const searchRoots = [...new Set([currentRoot, ...roots])];
+    const existing = allCandidates.length > 0 ? await resolveExistingInRoots(searchRoots, allCandidates) : new Map();
+    if (cleanTarget && !existing.has(cleanTarget)) {
+      existing.set(cleanTarget, { abs: researchAbsolutePath(currentRoot, cleanTarget), root: currentRoot });
+    }
+    const nextByRaw = new Map<string, ResolvedDecisionFile>();
+    const nextList: ProjectFilePaneFile[] = [];
+    const seenAbs = new Set<string>();
+    for (const raw of orderedRaws) {
+      const candidates = candidatesByRaw.get(raw) ?? [raw];
+      for (const candidate of candidates) {
+        const hit = existing.get(candidate);
+        if (!hit) continue;
+        const name = candidate.split("/").pop() ?? candidate;
+        const resolved: ResolvedDecisionFile = {
+          path: hit.abs,
+          root: hit.root,
+          name,
+          rel: candidate,
+        };
+        nextByRaw.set(raw, resolved);
+        const dedupKey = hit.abs.replace(/\\/g, "/");
+        if (!seenAbs.has(dedupKey)) {
+          seenAbs.add(dedupKey);
+          nextList.push({ path: hit.abs, root: hit.root, name, rel: candidate });
+        }
+        break;
+      }
+    }
+    setResolvedByRaw(nextByRaw);
+    setFileList(nextList);
+  }
 
   async function load() {
     setError(null);
@@ -86,6 +172,7 @@ export default function ReviewDecisionList({
     const parsed = parseReviewItems(found.file.text, kind);
     setItems(parsed);
     onOpenCount?.(parsed.filter((item) => item.verdict == null).length);
+    void refreshResolvedFiles(parsed, found.root);
   }
 
   useEffect(() => {
@@ -201,24 +288,99 @@ export default function ReviewDecisionList({
         <>
           <p className="mb-1 text-micro leading-5 text-l4">{inlineDecisionLine(kind, "open")}</p>
           {/* 待核实的「接受」= 人对过原文、AI 去掉标记：一键全部接受等于没核就全转正（2026-10-24） */}
-          {kind !== "verify" && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void acceptAll()}
-            className="mb-1 rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
-          >
-            {acceptingAll ? "接受中…" : "全部接受"}
-          </button>
+          {(kind !== "verify" || (onOpenFile && fileList.length > 0)) && (
+            <div className="mb-1 flex flex-wrap items-center gap-1.5">
+              {kind !== "verify" && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void acceptAll()}
+                  className="rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-micro text-cta-text disabled:opacity-50"
+                >
+                  {acceptingAll ? "接受中…" : "全部接受"}
+                </button>
+              )}
+              {onOpenFile && fileList.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const primary = fileList[0]!;
+                    onOpenFile({
+                      path: primary.path,
+                      root: primary.root ?? fileRoot,
+                      name: primary.name,
+                      rel: primary.rel ?? primary.name,
+                      showList: true,
+                      list: fileList,
+                    });
+                  }}
+                  title="在右侧抽屉列出本批意见涉及的全部文件，边对照原稿边逐条决定"
+                  className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
+                >
+                  {fileList.length > 1 ? `对照文件（${fileList.length}）` : "对照文件"}
+                </button>
+              )}
+            </div>
           )}
         <ul className="max-h-72 space-y-2 overflow-auto">
           {open.map((item) => {
             const draft = drafts[item.id] ?? "";
+            const tokens = tokenizeDecisionSummary(reviewItemSummary(item, kind));
             return (
               <li key={item.id} className="border-t border-hairline pt-2">
                 <p className="text-xs leading-5 text-l1">
                   <span className="mr-1 text-l4">{item.id}</span>
-                  {reviewItemSummary(item, kind)}
+                  {tokens.map((tok, tIdx) => {
+                    if (tok.kind === "text") return <span key={tIdx}>{tok.text}</span>;
+                    if (tok.kind === "code") {
+                      return (
+                        <code key={tIdx} className="rounded-sm bg-inset px-1 font-mono text-micro text-l2">
+                          {tok.text}
+                        </code>
+                      );
+                    }
+                    const normRaw = tok.path.replace(/\\/g, "/").replace(/^\.\//, "");
+                    const resolved = onOpenFile ? resolvedByRaw.get(normRaw) : undefined;
+                    if (!onOpenFile || !resolved) {
+                      return tok.code ? (
+                        <code key={tIdx} className="rounded-sm bg-inset px-1 font-mono text-micro text-l2">
+                          {tok.raw}
+                        </code>
+                      ) : (
+                        <span key={tIdx}>{tok.raw}</span>
+                      );
+                    }
+                    return (
+                      <span key={tIdx}>
+                        {tok.jumps.map((jump, jIdx) => (
+                          <span key={`${tIdx}-${jIdx}`}>
+                            {jump.sep}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onOpenFile({
+                                  path: resolved.path,
+                                  root: resolved.root,
+                                  name: resolved.name,
+                                  rel: resolved.rel,
+                                  line: jump.line,
+                                  list: fileList,
+                                })
+                              }
+                              title={
+                                jump.line
+                                  ? `在右侧抽屉打开 ${resolved.rel}（第 ${jump.line} 行）`
+                                  : `在右侧抽屉打开 ${resolved.rel}`
+                              }
+                              className="rounded-sm bg-inset px-1 font-mono text-micro text-cta underline decoration-dotted underline-offset-2 hover:opacity-80"
+                            >
+                              {jump.label}
+                            </button>
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  })}
                 </p>
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   {VERDICTS.map((verdict) => (

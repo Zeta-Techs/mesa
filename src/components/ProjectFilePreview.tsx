@@ -17,6 +17,8 @@ const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 function PreviewContent({
   path,
   root,
+  revealLine,
+  revealNonce,
   onOpenFile,
   onOpenReader,
   leading,
@@ -28,6 +30,8 @@ function PreviewContent({
 }: {
   path: string;
   root: string;
+  revealLine?: number | null;
+  revealNonce?: number;
   onOpenFile?: (absPath: string) => void;
   /** 「⛶ 沉浸阅读」入口：PDF 预览顶栏与 md 阅读态工具条共用；缺省不渲染该按钮 */
   onOpenReader?: () => void;
@@ -123,6 +127,8 @@ function PreviewContent({
         <FilePreviewEditor
           path={path}
           root={root}
+          revealLine={revealLine}
+          revealNonce={revealNonce}
           onOpenFile={onOpenFile}
           hideImmersive
           onOpenReader={onOpenReader}

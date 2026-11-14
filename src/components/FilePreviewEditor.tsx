@@ -197,6 +197,8 @@ function MarkdownView({
   fsTick = 0,
   syncRef,
   initialLine,
+  revealLine,
+  revealNonce,
   findTick,
 }: {
   text: string;
@@ -204,6 +206,9 @@ function MarkdownView({
   syncRef?: React.MutableRefObject<MdViewSync | null>;
   /** 上屏后滚到这一行所在的块（编辑 → 阅读时保持位置）；只在挂载时用一次 */
   initialLine?: number | null;
+  /** 外部定位请求（如审查意见点路径:行号）：滚到对应块或表格行并闪一下；同文件连点靠 revealNonce 重触发 */
+  revealLine?: number | null;
+  revealNonce?: number;
   /** 值变化就打开查找条（工具条上的查找按钮） */
   findTick?: number;
   /** 文件所在文件夹每变动一次加一：已上屏的本地图核一次磁盘版本（重新出图后换新图） */
@@ -323,6 +328,54 @@ function MarkdownView({
     if (line && line > 1) scrollToLine(line);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 外部行号定位（右侧文件抽屉对照审查意见）：定位到对应段落/表格行/列表项并闪一下
+  const revealDoneKeyRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (!revealLine || revealLine <= 0) return;
+    const key = `${filePath}|${revealLine}|${revealNonce ?? 0}`;
+    if (revealDoneKeyRef.current === key) return;
+    const host = bodyRef.current;
+    const scroll = scrollRef.current;
+    if (!host || !scroll || host.children.length === 0) return;
+    revealDoneKeyRef.current = key;
+    const lines = childLines();
+    let pick = -1;
+    lines.forEach((l, i) => {
+      if (l !== null && l <= revealLine) pick = i;
+    });
+    const blockEl = (pick >= 0 ? host.children[pick] : host.children[0]) as HTMLElement | undefined;
+    if (!blockEl) return;
+    const blockLine = pick >= 0 ? lines[pick] : null;
+    let target: HTMLElement = blockEl;
+    if (blockEl.tagName === "TABLE" && blockLine !== null) {
+      const rowIdx = revealLine - blockLine - 2;
+      if (rowIdx >= 0) {
+        const rows = blockEl.querySelectorAll<HTMLElement>("tbody tr");
+        if (rowIdx < rows.length) target = rows[rowIdx]!;
+      } else {
+        const headRow = blockEl.querySelector<HTMLElement>("thead tr");
+        if (headRow) target = headRow;
+      }
+    } else if ((blockEl.tagName === "OL" || blockEl.tagName === "UL") && blockLine !== null) {
+      const itemIdx = revealLine - blockLine;
+      const items = blockEl.querySelectorAll<HTMLElement>(":scope > li");
+      if (itemIdx >= 0 && itemIdx < items.length) target = items[itemIdx]!;
+    }
+    target.scrollIntoView({ block: "center" });
+    const raf = requestAnimationFrame(() => {
+      if (target.isConnected) target.scrollIntoView({ block: "center" });
+    });
+    target.classList.remove("md-flash");
+    void target.offsetWidth;
+    target.classList.add("md-flash");
+    const timer = setTimeout(() => target.classList.remove("md-flash"), 2500);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealLine, revealNonce, filePath, html]);
 
   // ===== 页内查找（md-find.ts）=====
   const [findOpen, setFindOpen] = useState(false);
@@ -861,6 +914,7 @@ function TextFilePreviewEditor({
   onDirtyChange,
   autoSave,
   revealLine,
+  revealNonce,
   onDiscuss,
   onAnnotate,
   annotateCopy,
@@ -888,8 +942,9 @@ function TextFilePreviewEditor({
   /** 停手 1.5 秒自动保存（阅读区笔记栏，2026-11-05 用户：笔记编辑要完善——关阅读区不再丢没存的字）。
    *  走同一条带版本号的保存：磁盘上已是别的版本（Agent 刚写过）照旧摆出对比合并，不覆盖 */
   autoSave?: boolean;
-  /** 打开后滚到这一行。终端路径点击传入。 */
+  /** 打开后滚到这一行。终端路径点击与右侧文件栏对照传入。 */
   revealLine?: number | null;
+  revealNonce?: number;
   /** md 阅读视图选段「◈ 讨论/改写此段」：写入活跃终端输入（send=true 直接发送）；返回 null 已写入，否则为提示 */
   onDiscuss?: (
     text: string,
@@ -1349,9 +1404,15 @@ function TextFilePreviewEditor({
     if (!ready || !revealLine || revealLine <= 0) return;
     const ed = editorRef.current;
     if (!ed) return;
-    ed.revealLineInCenter(revealLine);
-    ed.setPosition({ lineNumber: revealLine, column: 1 });
-  }, [revealLine, ready]);
+    const total = ed.getModel()?.getLineCount() ?? revealLine;
+    const line = Math.max(1, Math.min(revealLine, total));
+    ed.revealLineInCenter(line);
+    ed.setPosition({ lineNumber: line, column: 1 });
+    const raf = requestAnimationFrame(() => {
+      if (editorRef.current === ed) ed.revealLineInCenter(line);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [revealLine, revealNonce, ready]);
 
   // 双击段落跳源码行的定位执行：nonce 去重防阅读⇄编辑往返时旧定位重放；
   // reveal 等一帧——刚从隐藏态显示时 automaticLayout 的 ResizeObserver 下一帧才
@@ -2063,6 +2124,8 @@ function TextFilePreviewEditor({
             fsTick={fsTick}
             syncRef={mdSyncRef}
             initialLine={readInitialLine}
+            revealLine={revealLine}
+            revealNonce={revealNonce}
             findTick={findTick}
           />
         )

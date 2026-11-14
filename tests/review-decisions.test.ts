@@ -4,10 +4,13 @@ import {
   applyReportVerdict,
   applyVerifyVerdict,
   continueAfterDecisionsPrompt,
+  decisionCandidatePaths,
   isInlineDecisionTaskTitle,
   itemSuggestion,
   parseReviewItems,
+  reviewItemSummary,
   reviewItemsCleared,
+  tokenizeDecisionSummary,
 } from "../src/review-decisions.ts";
 
 const REPORT = `## 严重问题
@@ -127,4 +130,48 @@ test("条目自带的改法取出来给「修改」预填（2026-10-24 用户：
   // 修改的落盘：裁决写改正为，建议栏原样留着
   const ruled = applyVerifyVerdict("- V004 | 位置：a | 建议：改成油浴设定 | 裁决：待裁决 | 依据：\n", "V004", "修改", "改成油浴设定");
   assert.match(ruled, /建议：改成油浴设定 \| 裁决：改正为改成油浴设定 \| 依据：改成油浴设定/);
+
+  // 审查报告实测常写「建议：」（HER 定稿审查报告 R001–R010），且小节标题不粘进上一条末尾
+  const herReport = parseReviewItems(`## 严重问题
+
+R003 位置：\`manuscript/draft.md:266\`。问题：时长超写。类别：事实。建议：改为 10–12 h。
+
+## 一般问题
+
+R004 位置：\`manuscript/draft.md:37\`。问题：语态偏导读。类别：写作。建议：改为面向同行表述。
+
+## 建议
+
+无
+`, "report");
+  assert.equal(herReport.length, 2);
+  assert.doesNotMatch(reviewItemSummary(herReport[0], "report"), /## 一般问题/);
+  assert.doesNotMatch(reviewItemSummary(herReport[1], "report"), /## 建议|无$/);
+  assert.equal(itemSuggestion(herReport[0], "report"), "改为 10–12 h。");
+});
+
+test("条目里的文件路径与多行号拆成可点跳转，裸文件名补试报告同目录", () => {
+  const items = parseReviewItems(`## 严重问题
+
+R001 位置：\`manuscript/draft.md:166, 212, 240\`（\`@tbl-her\`）。问题：与 \`draft.md:131, 195\` 及 \`notes/extraction.md:29\` 口径不一致，参考 \`references.bib:590-591\`。
+`, "report");
+  const tokens = tokenizeDecisionSummary(reviewItemSummary(items[0], "report"));
+  const files = tokens.filter((t) => t.kind === "file");
+  assert.equal(files.length, 4);
+  assert.equal(files[0].path, "manuscript/draft.md");
+  assert.deepEqual(files[0].jumps, [
+    { label: "manuscript/draft.md:166", line: 166 },
+    { sep: ", ", label: "212", line: 212 },
+    { sep: ", ", label: "240", line: 240 },
+  ]);
+  assert.deepEqual(files[3].jumps, [{ label: "references.bib:590-591", line: 590 }]);
+  const { orderedRaws, candidatesByRaw } = decisionCandidatePaths(items, "report", "manuscript/review-report.md");
+  assert.deepEqual(orderedRaws, [
+    "manuscript/draft.md",
+    "draft.md",
+    "notes/extraction.md",
+    "references.bib",
+    "manuscript/review-report.md",
+  ]);
+  assert.deepEqual(candidatesByRaw.get("draft.md"), ["draft.md", "manuscript/draft.md"]);
 });
