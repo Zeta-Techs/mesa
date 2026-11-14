@@ -28,7 +28,7 @@ fn normalized_watch_path(path: &Path) -> String {
 
 fn session_watch_targets(file_path: &str) -> (PathBuf, Vec<String>) {
     let expanded = expand_tilde(file_path);
-    if let Some((db, _session_id)) = expanded.split_once('#') {
+    if let Some((db, session_id)) = expanded.split_once('#') {
         let db = PathBuf::from(db);
         let mut targets = vec![normalized_watch_path(&db)];
         targets.push(normalized_watch_path(Path::new(&format!(
@@ -36,6 +36,23 @@ fn session_watch_targets(file_path: &str) -> (PathBuf, Vec<String>) {
             db.to_string_lossy()
         ))));
         let parent = db.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+        if db.file_name().and_then(|n| n.to_str()) == Some("conversation_summaries.db")
+            && valid_agy_cid(session_id)
+        {
+            let conv_db = parent.join("conversations").join(format!("{session_id}.db"));
+            targets.push(normalized_watch_path(&conv_db));
+            targets.push(normalized_watch_path(Path::new(&format!(
+                "{}-wal",
+                conv_db.to_string_lossy()
+            ))));
+            let logs = parent
+                .join("brain")
+                .join(session_id)
+                .join(".system_generated")
+                .join("logs");
+            targets.push(normalized_watch_path(&logs.join("transcript_full.jsonl")));
+            targets.push(normalized_watch_path(&logs.join("transcript.jsonl")));
+        }
         // SQLite 可能通过替换/重建文件触发父目录事件；保留目录本身作为目标，
         // 但不匹配同目录下其它具体文件，避免无关写入造成刷新风暴。
         targets.push(normalized_watch_path(&parent));
@@ -1023,10 +1040,10 @@ pub(crate) struct ScanFileCache {
     /// grok 会话的 summary.json 指纹侧栏：与 chained 里 updates.jsonl 指纹分开比较，
     /// 不做 XOR 折叠（同长改动会抵消成缓存假命中）
     grok_summary: HashMap<String, Option<FileSig>>,
-    /// agy 会话缓存与外部元信息库（conversation_summaries.db / -wal / last_conversations.json）指纹
+    /// agy 会话缓存与多数据根元信息库（conversation_summaries.db / -wal / metadata / history）指纹
     agy: HashMap<String, (FileSig, SessionMetaDto)>,
-    agy_meta_sig: (Option<FileSig>, Option<FileSig>, Option<FileSig>),
-    agy_meta_map: HashMap<String, AgySummaryEntry>,
+    agy_meta_sig: HashMap<String, AgyMetaSourcesSig>,
+    agy_meta_map: HashMap<String, HashMap<String, AgySummaryEntry>>,
 }
 
 static SCAN_FILE_CACHE: OnceLock<Mutex<ScanFileCache>> = OnceLock::new();
@@ -1455,31 +1472,9 @@ pub fn scan_sessions() -> ScanResult {
         let (reps, members) = merge_codex_chains(grok_metas);
         out.extend(reps);
         chain_members.extend(members);
-        // Antigravity CLI：brain/<id>/.system_generated/logs/transcript_full.jsonl（缺省退回 transcript.jsonl）；
-        // 工作目录与标题从 conversation_summaries.db 只读取（仅留 app_data_dir='antigravity-cli' 且排除子智能体）
-        let cur_agy_sig = agy_meta_sources_sig(&roots.agy);
-        let agy_sources_changed = *agy_meta_sig != cur_agy_sig;
-        if agy_sources_changed {
-            *agy_meta_map = agy_load_meta_map(&roots.agy);
-            *agy_meta_sig = cur_agy_sig;
-        }
-        let agy_files = agy_collect_transcripts(&roots.agy.join("brain"));
-        let mut agy_next: HashMap<String, (FileSig, SessionMetaDto)> =
-            HashMap::with_capacity(agy_files.len());
-        for (cid, f) in agy_files {
-            let Some(sig) = file_sig(&f) else { continue };
-            let key = cache_key(&f);
-            let meta = match agy.get(&key) {
-                Some((old_sig, old)) if !agy_sources_changed && *old_sig == sig => old.clone(),
-                _ => match agy_file_meta(&f, Some(&cid), true, agy_meta_map) {
-                    Some(m) => m,
-                    None => continue,
-                },
-            };
-            agy_next.insert(key, (sig, meta.clone()));
-            out.push(meta);
-        }
-        *agy = agy_next;
+        // Antigravity CLI：扫描默认根、$ANTIGRAVITY_APP_DATA_DIR 与 ~/.cc-switch/agy/*/antigravity-cli，
+        // 合并 brain/<id>/.system_generated/logs/transcript*.jsonl 与未导出 brain/ 的仅落库对话
+        out.extend(agy_scan_roots(&roots.agy, agy, agy_meta_sig, agy_meta_map));
     }
     // pin 即保留：源文件已消失的会话从快照补齐（§6.5）
     let seen: HashSet<(String, String)> = out
@@ -1974,14 +1969,25 @@ fn snapshot_candidates(agent: &str, session_id: &str) -> Vec<PathBuf> {
 
 /// 源文件消失时找快照：Claude 文件名即 session_id；Codex 是 rollout-<时间>-<uuid>，取尾部 uuid
 fn find_snapshot(agent: &str, source: &Path) -> Option<PathBuf> {
-    let stem = source.file_stem()?.to_string_lossy().into_owned();
-    let mut stems = vec![stem.clone()];
-    if stem.len() > 36 {
-        if let Some(tail) = stem.get(stem.len() - 36..) {
-            if tail.chars().filter(|c| *c == '-').count() == 4 {
-                stems.push(tail.to_string());
+    let mut stems = Vec::new();
+    if agent == "agy" {
+        let raw = source.to_string_lossy();
+        if let Some((_, cid)) = agy_split_db_target(&raw) {
+            stems.push(cid.to_string());
+        } else if let Some(cid) = agy_session_id_from_path(source) {
+            stems.push(cid);
+        }
+    }
+    if let Some(stem_os) = source.file_stem() {
+        let stem = stem_os.to_string_lossy().into_owned();
+        if stem.len() > 36 {
+            if let Some(tail) = stem.get(stem.len() - 36..) {
+                if tail.chars().filter(|c| *c == '-').count() == 4 {
+                    stems.push(tail.to_string());
+                }
             }
         }
+        stems.push(stem);
     }
     for s in stems {
         if let Some(p) = snapshot_candidates(agent, &s)
@@ -2670,6 +2676,14 @@ fn tail_state_impl(agent: &str, file_path: &str) -> String {
             return "unknown".into();
         };
         return opencode_tail_state(Path::new(db), sid).into();
+    }
+    if agent == "agy" {
+        if let Some((db, cid)) = agy_split_db_target(file_path) {
+            if let Some(state) = crate::hooks::state_for_session_file(agent, file_path) {
+                return state;
+            }
+            return agy_db_tail_state(db, cid).into();
+        }
     }
     // 精确注意力标记（设置页按 agent 开启的 hooks 桥接）：事件日志优先于尾部推断；
     // 未在桥接注册表/设置未开启/日志缺失/事件过期均返回 None，自动回落下面的尾部推断
@@ -3838,6 +3852,13 @@ pub(crate) fn conversation_page_impl(
             cursor: None,
         });
     }
+    if agent == "agy" {
+        if let Some((db, cid)) = agy_split_db_target(file_path) {
+            if db.exists() {
+                return agy_conversation_page(db, cid, before, around);
+            }
+        }
+    }
     let source = PathBuf::from(file_path);
     let path = if source.exists() {
         source
@@ -3963,8 +3984,17 @@ pub(crate) fn conversation_rest_impl(
     file_path: &str,
     before: u64,
 ) -> Result<ConversationPageDto, String> {
-    if agent != "opencode" && agent != "grok" {
-        let source = PathBuf::from(file_path);
+    let agy_fts_only = agent == "agy"
+        && agy_split_db_target(file_path)
+            .is_some_and(|(db, cid)| agy_resolve_live_transcript(db, cid).is_none());
+    if agent != "opencode" && agent != "grok" && !agy_fts_only {
+        let source = if agent == "agy" {
+            agy_split_db_target(file_path)
+                .and_then(|(db, cid)| agy_resolve_live_transcript(db, cid))
+                .unwrap_or_else(|| PathBuf::from(file_path))
+        } else {
+            PathBuf::from(file_path)
+        };
         let path = if source.exists() {
             source
         } else {
@@ -4031,6 +4061,19 @@ pub(crate) fn conversation_impl_raw(agent: &str, file_path: &str) -> Vec<ChatMes
             return opencode_parse_snapshot(&v);
         }
         return opencode_parse_legacy(&path);
+    }
+    if agent == "agy" {
+        if let Some((db, cid)) = agy_split_db_target(file_path) {
+            if let Some(promoted) = agy_resolve_live_transcript(db, cid) {
+                if let Some(bytes) = read_session_bytes(&promoted) {
+                    let lines = to_lines(&String::from_utf8_lossy(&bytes));
+                    return parse_session_lines(agent, &lines);
+                }
+            }
+            if db.exists() {
+                return agy_parse_fts_db(db, cid);
+            }
+        }
     }
     let path = PathBuf::from(&file_path);
     if agent == "grok" && path.exists() {
@@ -4292,6 +4335,30 @@ fn pin_session_impl(agent: &str, session_id: &str, file_path: &str) -> Result<()
         .map_err(|e| format!("写入 session_meta 失败: {e}"))?;
         invalidate_scan_cache();
         return Ok(());
+    }
+    if agent == "agy" {
+        if let Some((db, cid)) = agy_split_db_target(file_path) {
+            let dst = snapshot_path(agent, session_id, false).ok_or("无法确定平台配置目录")?;
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent).map_err(|e| format!("创建快照目录失败: {e}"))?;
+            }
+            if let Some(promoted) = agy_resolve_live_transcript(db, cid) {
+                fs::copy(&promoted, &dst).map_err(|e| format!("复制快照失败: {e}"))?;
+            } else {
+                let lines = agy_fts_synthetic_lines(db, cid)?;
+                fs::write(&dst, format!("{}\n", lines.join("\n")))
+                    .map_err(|e| format!("写入快照失败: {e}"))?;
+            }
+            let conn = open_db()?;
+            conn.execute(
+                "INSERT INTO session_meta(agent, session_id, pinned, pinned_at, project_path) VALUES(?1, ?2, 1, ?3, ?4)
+                 ON CONFLICT(agent, session_id) DO UPDATE SET pinned=1, pinned_at=?3, project_path=COALESCE(excluded.project_path, session_meta.project_path)",
+                params![agent, session_id, now_iso(), infer_pin_project_path(agent, session_id)],
+            )
+            .map_err(|e| format!("写入 session_meta 失败: {e}"))?;
+            invalidate_scan_cache();
+            return Ok(());
+        }
     }
     let src = PathBuf::from(file_path);
     if !src.exists() {
@@ -5047,7 +5114,7 @@ fn qwen_runtime_root(
 /// 导入白名单与删除白名单同源；测试传 `SessionRoots::at(假 home)` 或带假搬迁变量的 `with`。
 pub(crate) fn session_data_dirs_at(roots: &SessionRoots) -> Vec<(PathBuf, bool)> {
     let [codex_sessions, codex_archived] = roots.codex_dirs();
-    vec![
+    let mut dirs = vec![
         // claude: projects/<dir>/<uuid>.jsonl；codex: sessions|archived_sessions/YYYY/MM/DD/rollout-*.jsonl[.zst]
         (roots.claude_projects(), false),
         (codex_sessions, false),
@@ -5067,12 +5134,15 @@ pub(crate) fn session_data_dirs_at(roots: &SessionRoots) -> Vec<(PathBuf, bool)>
         // grok: sessions/<encoded-cwd>/<session-id>/updates.jsonl（同根的 auth.json/config.toml
         // 与 sessions 根的 session_search.sqlite 不许删 → 限定 sessions 子目录）
         (roots.grok.join("sessions"), false),
-        // agy: brain/<conversation-id>/.system_generated/logs/transcript*.jsonl（同根 settings.json
-        // 与 conversation_summaries.db 不许碰 → 限定 brain 子目录）
-        (roots.agy.join("brain"), false),
         // cursor 不进目录级白名单：~/.cursor 与 IDE 共享，projects 下也有非会话 jsonl，
         // 目录粒度太粗——由 deletable_session_file 里的 cursor_deletable 精确判定
-    ]
+    ];
+    // agy: 所有候选数据根（默认 ~/.gemini/antigravity-cli、$ANTIGRAVITY_APP_DATA_DIR、~/.cc-switch/agy/*/antigravity-cli）
+    // 的 brain 子目录（同根 settings.json 与 conversation_summaries.db 不许碰）
+    for (agy_root, _) in agy_data_roots(&roots.agy) {
+        dirs.push((agy_root.join("brain"), false));
+    }
+    dirs
 }
 
 /// cursor 会话删除的精确判定（projects_root = ~/.cursor/projects，调用方已 canonicalize）：
@@ -5509,6 +5579,9 @@ fn delete_project_sessions_impl(
 /// 会话文件签名（mtime_ms, size）：轮询时先比对签名，没变就不重解析
 #[tauri::command]
 pub async fn session_file_sig(file_path: String) -> Option<(u64, u64)> {
+    if let Some((db, session_id)) = agy_split_db_target(&file_path) {
+        return agy_db_file_sig(db, session_id);
+    }
     if let Some((db, session_id)) = file_path.split_once('#') {
         let conn = open_opencode_db(Path::new(db))?;
         let updated = opencode_latest_updated(&conn, session_id)?.max(0) as u64;

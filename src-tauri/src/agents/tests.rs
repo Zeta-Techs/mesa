@@ -3789,3 +3789,45 @@ fn detect_new_agy_external_session_matches_cwd_and_ignores_excluded_or_ambiguous
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn agy_external_detection_catches_db_only_session_and_gemini_dir_resume() {
+    let tmp = std::env::temp_dir().join(format!("ccode-agy-dbext-{}", uuid::Uuid::new_v4()));
+    let agy_root = tmp.join(".gemini/antigravity-cli");
+    let work = tmp.join("proj");
+    std::fs::create_dir_all(agy_root.join("conversations")).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    let started = std::time::SystemTime::now();
+    let known = std::collections::HashSet::new();
+
+    // 未导出 brain/、只有 conversations/<cid>.db + history.jsonl 的外部纯文字会话也能对齐归属
+    std::fs::write(agy_root.join("conversations/db-only-1.db"), b"sqlite").unwrap();
+    std::fs::write(
+        agy_root.join("history.jsonl"),
+        format!(
+            "{{\"display\":\"hi\",\"workspace\":{},\"conversationId\":\"db-only-1\"}}\n",
+            serde_json::to_string(&work.to_string_lossy()).unwrap()
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        detect_new_agy_external_session(&agy_root, &known, &work.to_string_lossy(), started),
+        AgyExternalMatch::Matched("db-only-1".into())
+    );
+
+    // 隔离 `--gemini_dir` 会话恢复参数自动前置 `--gemini_dir=<dir>`
+    let iso_dir = std::path::Path::new("/Users/demo/.cc-switch/agy/p1");
+    assert_eq!(
+        agy_resume_args_with_gemini_dir("conv-9", Some(iso_dir)),
+        vec![
+            "--gemini_dir=/Users/demo/.cc-switch/agy/p1".to_string(),
+            "--conversation".to_string(),
+            "conv-9".to_string(),
+        ]
+    );
+    assert_eq!(
+        agy_resume_args_with_gemini_dir("conv-9", None),
+        vec!["--conversation".to_string(), "conv-9".to_string()]
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

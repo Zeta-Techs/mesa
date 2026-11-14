@@ -133,6 +133,17 @@ impl DbRow {
                 _ => None,
             })
     }
+
+    pub(crate) fn as_bytes(&self, key: &str) -> Option<&[u8]> {
+        self.names
+            .iter()
+            .position(|n| n == key)
+            .and_then(|i| match &self.vals[i] {
+                rusqlite::types::Value::Blob(b) => Some(b.as_slice()),
+                rusqlite::types::Value::Text(s) => Some(s.as_bytes()),
+                _ => None,
+            })
+    }
 }
 
 pub(super) fn opencode_ms_to_iso(ms: i64) -> String {

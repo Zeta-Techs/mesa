@@ -835,6 +835,14 @@ fn extract_events(session: &crate::sessions::SessionMetaDto) -> Vec<UsageEvent> 
         };
         return opencode_events(Path::new(db), sid);
     }
+    if session.agent == "agy" {
+        if let Some((db, cid)) = crate::sessions::agy_split_db_target(&session.file_path) {
+            let Some(promoted) = crate::sessions::agy_resolve_live_transcript(db, cid) else {
+                return Vec::new();
+            };
+            return extract_file_events("agy", &promoted, Some(cid));
+        }
+    }
     let path = Path::new(&session.file_path);
     extract_file_events(&session.agent, path, Some(&session.session_id))
 }
@@ -846,6 +854,12 @@ pub(crate) fn last_session_model(agent: &str, file_path: &str, session_id: &str)
     if agent == "opencode" {
         let (db, sid) = file_path.split_once('#')?;
         return last_model_of(opencode_events(Path::new(db), sid));
+    }
+    if agent == "agy" {
+        if let Some((db, cid)) = crate::sessions::agy_split_db_target(file_path) {
+            let promoted = crate::sessions::agy_resolve_live_transcript(db, cid)?;
+            return last_model_of(extract_file_events("agy", &promoted, Some(cid)));
+        }
     }
     let path = Path::new(file_path);
     // 先倒着读尾窗：最后一轮的模型就在文件末尾附近（单个 JSON 文档的家尾窗解析不出，会一路翻倍到整份）
@@ -1732,9 +1746,14 @@ fn rebuild_impl() -> Result<UsageBuildResult, String> {
                 _ => base_marker,
             }
         } else if s.agent == "agy" && !base_marker.is_empty() {
+            let db_tag = if crate::sessions::agy_split_db_target(&s.file_path).is_some() {
+                "|db"
+            } else {
+                ""
+            };
             match agy_models.get(&s.session_id) {
-                Some(m) if !m.is_empty() => format!("{base_marker}|{m}"),
-                _ => base_marker,
+                Some(m) if !m.is_empty() => format!("{base_marker}{db_tag}|{m}"),
+                _ => format!("{base_marker}{db_tag}"),
             }
         } else {
             base_marker

@@ -3787,9 +3787,44 @@ pub fn binary_for(agent_id: &str) -> Option<&'static str> {
     agent_spec(agent_id).map(|s| s.binary)
 }
 
+pub(crate) fn agy_resume_args_with_gemini_dir(
+    session_id: &str,
+    gemini_dir: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(dir) = gemini_dir {
+        out.push(format!("--gemini_dir={}", dir.display()));
+    }
+    if let Some(spec) = agent_spec("agy") {
+        out.extend(
+            spec.resume
+                .args
+                .iter()
+                .map(|a| a.replace("{session}", session_id)),
+        );
+    }
+    out
+}
+
 /// 各 CLI 的按 ID 恢复会话参数（§6.12 A），参数格式来自 AgentSpec.resume。
 /// 返回 (prepend, args)：codex 的 resume 是子命令需放最前，其余是位置无关的 flag。
 pub(crate) fn resume_args(agent_id: &str, session_id: &str) -> (bool, Vec<String>) {
+    if agent_id == "agy" {
+        let gemini_dir: Option<std::path::PathBuf> = {
+            #[cfg(not(test))]
+            {
+                crate::sessions::agy_session_gemini_dir(session_id)
+            }
+            #[cfg(test)]
+            {
+                None
+            }
+        };
+        return (
+            false,
+            agy_resume_args_with_gemini_dir(session_id, gemini_dir.as_deref()),
+        );
+    }
     match agent_spec(agent_id) {
         Some(spec) => (
             spec.resume.prepend,
@@ -4674,11 +4709,11 @@ pub(crate) fn detect_new_agy_external_session(
     target_cwd: &str,
     started_at: std::time::SystemTime,
 ) -> AgyExternalMatch {
-    let transcripts = crate::sessions::agy_collect_transcripts(&agy_root.join("brain"));
+    let candidates = crate::sessions::agy_collect_session_files(agy_root);
     let floor = started_at
         .checked_sub(std::time::Duration::from_secs(3))
         .unwrap_or(std::time::UNIX_EPOCH);
-    let fresh: Vec<(String, std::time::SystemTime)> = transcripts
+    let fresh: Vec<(String, std::time::SystemTime)> = candidates
         .into_iter()
         .filter(|(cid, _)| !known_before.contains(cid))
         .filter_map(|(cid, path)| {
@@ -4725,7 +4760,7 @@ fn snapshot_agy_external_before(
         .or_else(crate::dirs::home_dir)?;
     let agy_root = home.join(".gemini/antigravity-cli");
     let known: std::collections::HashSet<String> =
-        crate::sessions::agy_collect_transcripts(&agy_root.join("brain"))
+        crate::sessions::agy_collect_session_files(&agy_root)
             .into_iter()
             .map(|(cid, _)| cid)
             .collect();

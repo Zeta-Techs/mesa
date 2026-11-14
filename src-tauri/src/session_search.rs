@@ -909,7 +909,7 @@ fn load_candidate_texts(
 }
 
 fn source_stamp(s: &SessionMetaDto) -> (i64, u64) {
-    if s.agent == "opencode" {
+    if s.agent == "opencode" || (s.agent == "agy" && s.file_path.contains('#')) {
         let ms = s.updated_at.as_deref().and_then(iso_to_ms).unwrap_or(0);
         return (ms, 0);
     }
@@ -936,7 +936,7 @@ fn iso_to_ms(iso: &str) -> Option<i64> {
 
 /// （用户说的话, AI 的回复），各自脱敏、各自封顶
 fn extract_session_text(s: &SessionMetaDto) -> (String, String) {
-    let msgs = if s.agent == "opencode" {
+    let msgs = if s.agent == "opencode" || (s.agent == "agy" && s.file_path.contains('#')) {
         conversation_impl_raw(&s.agent, &s.file_path)
     } else {
         // Claude 分叉行只索引分出来之后的部分：分叉前那段原会话里也有，别两边都命中
@@ -1012,7 +1012,7 @@ fn locate_all(agent: &str, file_path: &str, query: &str) -> SessionMatchesDto {
     if pq.tokens.is_empty() {
         return out;
     }
-    let found = if agent == "opencode" {
+    let found = if agent == "opencode" || (agent == "agy" && file_path.contains('#')) {
         locate_in_messages(&conversation_impl_raw(agent, file_path), &pq)
     } else {
         locate_jsonl(agent, Path::new(file_path), &pq)

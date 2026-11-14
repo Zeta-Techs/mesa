@@ -120,13 +120,15 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 ### 6.1 数据源与过滤口径
 
-- 会话目录：遍历 `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/`，**优先读 `transcript_full.jsonl`**（未截断正文，且 `tool_calls[].args` 为原生 JSON 对象），不存在时退回读 `transcript.jsonl`。
-- 元数据与工作目录：`rusqlite` 以 `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX` 打开 `~/.gemini/antigravity-cli/conversation_summaries.db`，查询 `conversation_summaries` 表：
+- 多数据根扫描：除默认 `~/.gemini/antigravity-cli` 外，一并扫描 `$ANTIGRAVITY_APP_DATA_DIR`（设置时）以及外部配置工具（如 `cc-switch` 的 `~/.cc-switch/agy/*/antigravity-cli`）通过 `--gemini_dir` 隔离的数据根；跨根同 `conversation_id` 以已导出完整 `transcript*.jsonl` 的记录优先去重。
+- 会话文件两层来源：
+  1. 已导出日志：遍历 `<agy_root>/brain/<id>/.system_generated/logs/`，**优先读 `transcript_full.jsonl`**（未截断正文，且 `tool_calls[].args` 为原生 JSON 对象），不存在时退回读 `transcript.jsonl`；
+  2. 仅落库会话：纯文字外部终端对话在首次触发工具/附件前 `agy` 不写 `brain/<id>`，只落盘 `conversations/<id>.db` 与 `conversation_summaries.db` 的 `conversations_fts` 表。对此类会话生成 `<agy_root>/conversation_summaries.db#<id>` 虚拟路径，只读按字节偏移切片还原 `conversations_fts`（`user_body` / `agent_body` + `user_step_byte_offsets` / `agent_step_byte_offsets` BLOB）多轮问答消息；一旦运行中导出 `brain/<id>/.../transcript*.jsonl`，旧 `#<id>` 路径无缝实时升级读完整日志。
+- 元数据与工作目录：`rusqlite` 以 `SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_NO_MUTEX` 打开 `<agy_root>/conversation_summaries.db`，结合 `conversation_summaries`、`conversations_fts`（`chunk_index = -1` 摘要行与首分片寒暄跳过标题兜底）、`cache/conversation_metadata.json`、`cache/last_conversations.json` 与 `history.jsonl`：
   - **只保留 `app_data_dir = 'antigravity-cli'`** 的行，排除 Antigravity 桌面版/IDE 会话；
-  - **排除子智能体会话**（`COALESCE(nesting_depth, 0) > 0` 或 `COALESCE(parent_conversation_id, '') != ''`），避免后台子任务刷屏顶层对话列表；
-  - 从 `workspace_uris`（JSON 数组，`file://` URI）提取首个本地路径并经 `paths::strip_verbatim` 归一；
-  - 库不存在、繁忙或旧版缺列时，降级查询并退回读 `~/.gemini/antigravity-cli/cache/last_conversations.json`（`{"<cwd>": "<conversation_id>"}` 反查）；仍无则工作目录记空（不猜测，无工作目录时不暴露恢复按钮）。
-- 不读：`implicit/*.pb`、`conversations/*.pb`、SQLite 内的二进制/protobuf 字段、`logs/chunks/`。
+  - **排除子智能体与内部会话**（`COALESCE(nesting_depth, 0) > 0`、`COALESCE(parent_conversation_id, '') != ''`，或 `conversation_metadata.json` 标记 `is_internal` / `summary.Internal`），避免后台子任务刷屏顶层对话列表；
+  - 工作目录优先级：`conversation_summaries.workspace_uris` → `conversation_metadata.json` 的 `WorkspaceURIs` → `last_conversations.json`（`{"<cwd>": "<conversation_id>"}`）→ `history.jsonl`（`{"workspace": "<cwd>", "conversationId": "<id>"}`，防同目录新会话覆盖 `last_conversations.json`）；仍无则工作目录记空（不猜测，无工作目录时不暴露恢复按钮）。
+- 不读：`implicit/*.pb`、`conversations/*.pb`、`conversations/<id>.db` 内部加密/二进制载荷、`logs/chunks/`。
 
 ### 6.2 Transcript 行结构与去重
 
@@ -134,15 +136,15 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 | 字段 | 处理规则 |
 |---|---|
-| `type == "USER_INPUT"` | 提取 `<USER_REQUEST>…</USER_REQUEST>` 内正文（剥离 `<ADDITIONAL_METADATA>`、`<USER_SETTINGS_CHANGE>` 等系统注入块）；若整段仅有 `<USER_SETTINGS_CHANGE>` 则作为设置变更事件提取模型名，不渲染成空白用户气泡 |
+| `type == "USER_INPUT"` | 提取 `<USER_REQUEST>…</USER_REQUEST>` 内正文（剥离 `<ADDITIONAL_METADATA>`、`<USER_SETTINGS_CHANGE>` 等系统注入块），并将 `media[].uri` 本地文件 URI 还原成首行本地路径供聊天层展示图片缩略图；若整段仅有 `<USER_SETTINGS_CHANGE>` 则作为设置变更事件提取模型名，不渲染成空白用户气泡 |
 | `type == "PLANNER_RESPONSE"` | `thinking` 进思考折叠块，`content` 进助手正文，`tool_calls[]`（兼容 `args` 为对象或 JSON 字符串）进工具调用块；`status != "DONE"` 判为回复进行中 |
-| `type == "GENERIC"` | 剥去开头的 `Created At:` / `Completed At:` 时间头，挂接在最近一次未配对工具调用下作为工具输出；无前置工具调用的系统提示折叠处理 |
+| `type == "GENERIC"` | 循环剥去开头可能重复两遍的 `Created At:` / `Completed At:` 时间头，挂接在最近一次未配对工具调用下作为工具输出；无前置工具调用的系统提示折叠处理 |
 | 文本脱敏 | 标题、预览、消息正文、思考内容、工具参数与结果在出 Rust 层前一律经 `redact_sensitive_text` 脱敏 |
 
 ### 6.3 接入点与删除口径
 
-- `sessions.rs` 接入 `mod agy`、目录扫描、增量快照、尾部状态检测、`parse_session_lines` 分发、`SessionRoots` 根路径及删除白名单。
-- 删除会话：将 `brain/<id>/` 移入系统回收站（测试态走直删隔离缝）；严格遵守只读原则**不写 `conversation_summaries.db`**，删除说明提示 `agy` 原生列表可能保留空摘要项。
+- `sessions.rs` 接入 `mod agy`、多数据根扫描、增量快照、尾部状态检测、`parse_session_lines` 分发、`SessionRoots` 根路径及多根删除白名单；全文搜索（`session_search.rs`）与固定快照（`pin_session`）同步支持 `#<id>` 仅落库会话。
+- 删除会话：校验所属 `<agy_root>/brain` 在白名单内后，一并将 `brain/<id>/` 与 `conversations/<id>.db`（含 `-wal` / `-shm`）移入系统回收站（测试态走直删隔离缝），避免仅落库会话删后重现；严格遵守只读原则**不写 `conversation_summaries.db`**，删除说明提示 `agy` 原生列表可能保留空摘要项。
 
 ## 7. 用量统计（`usage.rs`）
 
@@ -156,7 +158,7 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 ## 8. 恢复、分叉、迁移、接力
 
-- 恢复：`agy --conversation <id>`（在原工作目录下拉起）。
+- 恢复：`agy --conversation <id>`（在原工作目录下拉起；若原会话来自 `~/.cc-switch/agy/<provider>/antigravity-cli` 等外部 `--gemini_dir` 数据根，自动前置 `--gemini_dir=<目录>` 定位原会话库）。
 - 分叉、会话迁移（`session_transfer.rs`）、客户端深链接力（`client_open.rs`）：均不做，能力表如实说明原因（无 CLI 分叉参数、不写第三方 SQLite、无公开对话深链）。
 - 聊天内换一家接力（`relay_brief.rs`、`handoff.rs`）：支持作为交出方（从 transcript 生成交接简报）与接手方（带简报开新对话）。
 
