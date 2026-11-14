@@ -39,6 +39,7 @@ test("供应商显示名与切换标签", () => {
   assert.equal(planProviderLabel("minimax"), "MiniMax");
   assert.equal(planProviderLabel("claude"), "Claude");
   assert.equal(planProviderLabel("codex"), "Codex");
+  assert.equal(planProviderLabel("agy"), "Antigravity");
   assert.equal(planProviderLabel("other-x"), "other-x");
   // 同供应商单网关：标签只有供应商名；多网关：追加网关名区分
   assert.equal(planTabLabel({ provider: "kimi", gatewayName: "Kimi 主力" }, 1), "Kimi");
@@ -48,12 +49,14 @@ test("供应商显示名与切换标签", () => {
   );
 });
 
-test("网关名与供应商同义时不显示（GLM 撞智谱徽章）", () => {
+test("网关名与供应商同义或固定「官方账号」时不盖掉品牌名（GLM 撞智谱徽章）", () => {
   assert.ok(!planGatewayNameVisible("GLM", "zhipu"));
   assert.ok(!planGatewayNameVisible("glm 2", "zhipu"));
   assert.ok(!planGatewayNameVisible("智谱", "zhipu"));
   assert.ok(!planGatewayNameVisible("Kimi", "kimi"));
   assert.ok(!planGatewayNameVisible("MiniMax", "minimax"));
+  assert.ok(!planGatewayNameVisible("官方账号", "claude"));
+  assert.ok(!planGatewayNameVisible("官方账号", "agy"));
   assert.ok(!planGatewayNameVisible(null, "zhipu"));
   // 有实际区分信息的名字保留
   assert.ok(planGatewayNameVisible("智谱备用", "zhipu"));
@@ -80,6 +83,8 @@ test("窗口名映射与未知值透传", () => {
   assert.equal(planWindowLabel("five_hour"), "5 小时");
   assert.equal(planWindowLabel("weekly"), "本周");
   assert.equal(planWindowLabel("monthly"), "本月");
+  assert.equal(planWindowLabel("agy_gemini_weekly"), "Gemini 本周");
+  assert.equal(planWindowLabel("agy_3p_weekly"), "Claude / GPT 本周");
   assert.equal(planWindowLabel("custom-x"), "custom-x");
 });
 

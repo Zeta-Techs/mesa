@@ -622,10 +622,10 @@ fn claude_token_shadowed() -> bool {
 /// （2026-10-31 实证：订阅卡读得到余量、连接页却说没登录）。CLAUDE_CONFIG_DIR 自定义时钥匙串项名随目录变，不动 HOME
 fn cli_output_neutral_claude(path: &std::path::Path, args: &[&str], timeout: std::time::Duration) -> Option<String> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut envs: Vec<(String, String)> = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]
-        .iter()
-        .map(|k| ((*k).to_string(), String::new()))
-        .collect();
+    let mut envs: Vec<(String, String)> = crate::settings::official_outbound_env();
+    for k in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"] {
+        envs.push((k.to_string(), String::new()));
+    }
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut tmp: Option<PathBuf> = None;
     #[cfg(target_os = "macos")]

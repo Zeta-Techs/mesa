@@ -1,21 +1,25 @@
-//! 订阅余量卡的官方账号行（2026-10-31）：Claude Code 登录的 Claude 订阅（Pro / Max）与 Codex 登录的
-//! ChatGPT 套餐。与网关行共用 `subscription_quota` 的 DTO、2 分钟缓存与失败回落；接口口径参照
-//! `.reference/paseo` 的 claude-usage-source / codex-usage-source 两个插件，2026-10-31 本机实测过响应形状。
+//! 订阅余量卡的官方账号行（2026-10-31，2026-11-15 补入 Antigravity CLI 与 Claude 死令牌显式提示）：
+//! Claude Code 登录的 Claude 订阅（Pro / Max）、Codex 登录的 ChatGPT 套餐、Antigravity CLI 登录的 Google 账号。
+//! 与网关行共用 `subscription_quota` 的 DTO、2 分钟缓存与失败回落；接口口径参照
+//! `.reference/paseo` 的 claude-usage-source / codex-usage-source 与 `.reference/cc-switch` subscription_agy。
 //! - Claude：凭证只读 CLI 自己的登录存储——macOS 钥匙串 `Claude Code-credentials`（设了 CLAUDE_CONFIG_DIR 时
 //!   服务名追加目录 sha256 前 8 位），先带账户名查、再不带账户名查（本机实测另有一项只装 mcpOAuth，不带账户名
-//!   先命中它）；其他平台读 `{配置目录}/.credentials.json`。只认 `claudeAiOauth.accessToken`。
+//!   先命中它）；其他平台读 `{配置目录}/.credentials.json`。若用户登录过且未手动退出（`claude auth logout` 会删条目），
+//!   但 Claude Code 因 `invalid_grant` 把 `accessToken`/`refreshToken` 清空并置 `expiresAt=0`，仍保留该行并如实提示去连接页重登，不静默消失。
 //!   GET https://api.anthropic.com/api/oauth/usage（Bearer + `anthropic-beta: oauth-2025-04-20`）：
 //!   five_hour / seven_day 的 utilization（0-100）+ resets_at（ISO，5 小时窗没开始时为 null）。
-//!   按模型 / 按入口的周限额（seven_day_opus、limits[] weekly_scoped）卡面暂不展示。
 //! - Codex：`{CODEX_HOME|~/.codex}/auth.json` 的 tokens.access_token（+ account_id 头）；API Key 模式无此字段，不出行。
 //!   GET https://chatgpt.com/backend-api/wham/usage：rate_limit.primary_window / secondary_window 的
 //!   used_percent + reset_at（秒）+ limit_window_seconds，按窗长归 5 小时 / 周 / 月（免费档实测只有 30 天窗）。
+//! - Antigravity CLI（agy）：不直接读钥匙串（免弹窗、免碰令牌），调官方内置 `agy --print /usage --output-format json`
+//!   （0 token、不建会话，清掉 GEMINI_API_KEY / GOOGLE_GEMINI_BASE_URL 防切到 Key 模式，带出网代理）。
+//!   解析 Gemini 组与 Claude/GPT 组的 5h / weekly 剩余比例并转为已用百分比。
 //! - Codex 重置卡（2026-10-31）：GET wham/rate-limit-reset-credits 列卡（credits[] 的 id / status / expires_at，
 //!   不信 available_count，只数 status==available 且没过期的；cc-switch 同口径），wham/usage 的
 //!   rate_limit_reset_credits.applicable_available_count 是「此刻能用」的张数——没被限额卡住时恒 0。
 //!   用卡 POST wham/rate-limit-reset-credits/consume，body {credit_id, redeem_request_id}（codex2api / ai-tools-mng 两家实现一致；
 //!   redeem_request_id 是幂等键）。消费性写操作：只经显式命令 + 前端确认触发，挑最早过期的那张；此刻用不了时不发请求。
-//! 纪律：令牌只在本模块内存里经过，不进 DTO / 日志；**绝不刷新、绝不回写**——令牌过期就请用户跑一次 CLI，
+//! 纪律：令牌只在本模块内存里经过，不进 DTO / 日志；**绝不刷新、绝不回写**——令牌过期就请用户跑一次 CLI 或重新登录，
 //! 由 CLI 自己续期（刷新会轮换令牌，等于改 CLI 的登录存储）。查询走设置里的出网代理（与官方账号启动同源），
 //! 没配就按系统环境直连。
 
@@ -23,6 +27,7 @@ use crate::subscription_quota::{
     cache_get, now_ms, settle_fresh, PlanQuotaDto, PlanQuotaWindowDto, PlanResetCardsDto,
     WINDOW_FIVE_HOUR, WINDOW_MONTHLY, WINDOW_WEEKLY,
 };
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
 
 const CLAUDE_USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -31,12 +36,18 @@ const CLAUDE_KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_RESET_CREDITS_URL: &str = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
+const AGY_USAGE_TIMEOUT: Duration = Duration::from_secs(15);
 
 const CLAUDE_ROW_ID: &str = "official:claude-code";
 pub(crate) const CODEX_ROW_ID: &str = "official:codex";
+const AGY_ROW_ID: &str = "official:agy";
 const ROW_NAME: &str = "官方账号";
 
+/// 未检测到 agy 官方登录时的负缓存截止毫秒（2 分钟，force 强刷时跳过），免得只用 API Key 的用户每次进页都拉起一次 agy
+static AGY_ABSENT_UNTIL: AtomicI64 = AtomicI64::new(0);
+
 struct ClaudeCreds {
+    /// 空串表示用户登录过且未执行 logout，但 Claude Code 因刷新被拒（invalid_grant）清空了本地令牌
     token: String,
     expires_at: Option<i64>,
     plan: Option<String>,
@@ -49,21 +60,41 @@ struct CodexCreds {
 
 // ===== 凭证（只读） =====
 
-/// 钥匙串项里的 JSON → 凭证；只认 claudeAiOauth.accessToken（另一项只有 mcpOAuth，不算）
+/// 钥匙串项里的 JSON → 凭证；只认 claudeAiOauth（另一项只有 mcpOAuth，不算）。
+/// 用户真正执行 `claude auth logout` 时 Claude Code 会删除钥匙串条目；若 `claudeAiOauth` 仍在且留有
+/// 套餐或 `sign_in` 来源、而 `accessToken` 被置空（`expiresAt == 0`，2.1.x 在 `invalid_grant` 时的死令牌清理），
+/// 说明用户并未手动退出登录，保留条目以便界面如实说明原因而非静默消失。
 fn parse_claude_creds(text: &str) -> Option<ClaudeCreds> {
     let v: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
     let oa = v.get("claudeAiOauth")?;
-    let token = oa.get("accessToken")?.as_str()?.trim().to_string();
+    let plan = claude_plan_label(
+        oa.get("subscriptionType").and_then(|x| x.as_str()),
+        oa.get("rateLimitTier").and_then(|x| x.as_str()),
+    );
+    let expires_at = oa.get("expiresAt").and_then(|x| x.as_i64());
+    let token = oa
+        .get("accessToken")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
     if token.is_empty() {
-        return None;
+        let had_signin = expires_at == Some(0)
+            || plan.is_some()
+            || oa.get("subscriptionTypeSource").and_then(|x| x.as_str()) == Some("sign_in");
+        if !had_signin {
+            return None;
+        }
+        return Some(ClaudeCreds {
+            token: String::new(),
+            expires_at,
+            plan,
+        });
     }
     Some(ClaudeCreds {
         token,
-        expires_at: oa.get("expiresAt").and_then(|x| x.as_i64()),
-        plan: claude_plan_label(
-            oa.get("subscriptionType").and_then(|x| x.as_str()),
-            oa.get("rateLimitTier").and_then(|x| x.as_str()),
-        ),
+        expires_at,
+        plan,
     })
 }
 
@@ -372,6 +403,12 @@ async fn get_json(req: reqwest::RequestBuilder) -> Result<(u16, serde_json::Valu
 
 async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
     let mut dto = blank_row(CLAUDE_ROW_ID, "claude", creds.plan.clone(), "https://claude.ai/settings/usage");
+    if creds.token.is_empty() {
+        dto.error = Some(
+            "Claude 官方登录令牌已被服务端作废（你未手动退出，多因续期冲突失效）：点「去连接页」重新登录一次即可恢复".into(),
+        );
+        return dto;
+    }
     if creds.expires_at.is_some_and(|t| t <= now_ms()) {
         dto.error = Some("Claude 登录凭证已过期：用一次 Claude Code 会自动续期，再回来刷新".into());
         return dto;
@@ -397,6 +434,149 @@ async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
         Err(e) => dto.error = Some(e),
     }
     dto
+}
+
+fn agy_window_kind(bucket_id: &str) -> Option<(&'static str, usize)> {
+    match bucket_id {
+        "gemini-5h" => Some(("agy_gemini_5h", 0)),
+        "gemini-weekly" => Some(("agy_gemini_weekly", 1)),
+        "gemini-argon-wtu-weekly" => Some(("agy_gemini_argon_weekly", 2)),
+        "3p-5h" => Some(("agy_3p_5h", 3)),
+        "3p-weekly" => Some(("agy_3p_weekly", 4)),
+        _ => None,
+    }
+}
+
+/// 解析 `agy --print /usage --output-format json` 的输出：将各桶的 remaining_fraction 转为已用百分比
+fn parse_agy_usage(body: &serde_json::Value) -> Result<Vec<PlanQuotaWindowDto>, String> {
+    if body.get("status").and_then(|s| s.as_str()) != Some("SUCCESS") {
+        return Err("Antigravity 用量返回未就绪".into());
+    }
+    let groups = body
+        .get("command")
+        .and_then(|c| c.get("data"))
+        .and_then(|d| d.get("groups"))
+        .and_then(|g| g.as_array())
+        .ok_or_else(|| "Antigravity 用量返回里没有分组数据".to_string())?;
+    let mut ranked: Vec<(usize, PlanQuotaWindowDto)> = Vec::new();
+    for group in groups {
+        let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) else {
+            continue;
+        };
+        for bucket in buckets {
+            let Some(id) = bucket.get("id").and_then(|x| x.as_str()) else {
+                continue;
+            };
+            let Some((kind, order)) = agy_window_kind(id) else {
+                continue;
+            };
+            let Some(rem) = bucket.get("remaining_fraction").and_then(|x| x.as_f64()) else {
+                continue;
+            };
+            if ranked.iter().any(|(_, w)| w.window == kind) {
+                continue;
+            }
+            let used_pct = ((1.0 - rem.clamp(0.0, 1.0)) * 100.0).max(0.0);
+            ranked.push((order, window_dto(kind, used_pct, iso_ms(bucket.get("reset_time")))));
+        }
+    }
+    if ranked.is_empty() {
+        return Err("Antigravity 用量接口没有返回可识别的额度桶".into());
+    }
+    ranked.sort_by_key(|(order, _)| *order);
+    Ok(ranked.into_iter().map(|(_, w)| w).collect())
+}
+
+fn agy_token_file_present() -> bool {
+    crate::dirs::home_dir().is_some_and(|h| {
+        h.join(".gemini/antigravity-cli/antigravity-oauth-token")
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.len() > 0)
+    })
+}
+
+fn run_agy_usage_cli(bin: &std::path::Path) -> Option<(bool, String)> {
+    let mut cmd = crate::process::background_command(bin);
+    for (k, v) in crate::settings::official_outbound_env() {
+        cmd.env(k, v);
+    }
+    // 剥掉环境里的 Gemini API Key / 自定义地址，防止 agy 切入 Key 模式而跳过官方 Google 账号
+    cmd.env_remove("GEMINI_API_KEY")
+        .env_remove("GOOGLE_GEMINI_BASE_URL")
+        .args(["--print", "/usage", "--output-format", "json"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().ok()?;
+    let deadline = std::time::Instant::now() + AGY_USAGE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(30)),
+            Err(_) => return None,
+        }
+    };
+    let out = child.wait_with_output().ok()?;
+    let stdout = String::from_utf8(out.stdout).unwrap_or_default();
+    Some((status.success(), stdout))
+}
+
+async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
+    if cfg!(test) {
+        return None;
+    }
+    if !force {
+        if let Some(hit) = cache_get(AGY_ROW_ID, now) {
+            return Some(hit);
+        }
+    }
+    let has_token_file = agy_token_file_present();
+    if !force && !has_token_file && now < AGY_ABSENT_UNTIL.load(Ordering::Relaxed) {
+        return None;
+    }
+    let bin = tauri::async_runtime::spawn_blocking(|| crate::agents::resolve_binary("agy"))
+        .await
+        .ok()
+        .flatten()?;
+    let ran = tauri::async_runtime::spawn_blocking(move || run_agy_usage_cli(&bin))
+        .await
+        .ok()
+        .flatten();
+    let mut dto = blank_row(AGY_ROW_ID, "agy", None, "");
+    match ran {
+        Some((true, stdout)) => {
+            let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
+            match parse_agy_usage(&body) {
+                Ok(windows) => {
+                    AGY_ABSENT_UNTIL.store(0, Ordering::Relaxed);
+                    dto.ok = true;
+                    dto.windows = windows;
+                    return Some(settle_fresh(dto));
+                }
+                Err(e) if has_token_file => {
+                    dto.error = Some(e);
+                    return Some(settle_fresh(dto));
+                }
+                Err(_) => {}
+            }
+        }
+        Some((false, _)) if has_token_file => {
+            dto.error = Some("Antigravity 额度查询失败：请检查设置里的出网代理，或到连接页重新登录".into());
+            return Some(settle_fresh(dto));
+        }
+        None if has_token_file => {
+            dto.error = Some("Antigravity 额度查询超时：请检查设置里的出网代理后刷新".into());
+            return Some(settle_fresh(dto));
+        }
+        _ => {}
+    }
+    AGY_ABSENT_UNTIL.store(now + 120_000, Ordering::Relaxed);
+    None
 }
 
 fn codex_request(method: reqwest::Method, url: &str, creds: &CodexCreds) -> reqwest::RequestBuilder {
@@ -490,13 +670,14 @@ pub async fn use_codex_reset_card() -> Result<PlanQuotaDto, String> {
     Ok(settle_fresh(query_codex(creds).await))
 }
 
-/// 两家官方账号的行：哪家本机登录了官方账号才出哪家；没登录不出行（不是错误）
+/// 三家官方账号的行（Claude Code / Codex / Antigravity CLI）：哪家本机登录了官方账号才出哪家；没登录不出行（不是错误）
 pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
+    let now = now_ms();
+    let agy_task = tauri::async_runtime::spawn(query_agy_row(force, now));
     // 读钥匙串要跑 security 子进程：放阻塞线程，不占异步运行时
     let (claude, codex) = tauri::async_runtime::spawn_blocking(|| (read_claude_creds(), read_codex_creds()))
         .await
         .unwrap_or((None, None));
-    let now = now_ms();
     let mut out = Vec::new();
     if let Some(creds) = claude {
         out.push(match cache_get(CLAUDE_ROW_ID, now).filter(|_| !force) {
@@ -510,6 +691,9 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
             None => settle_fresh(query_codex(creds).await),
         });
     }
+    if let Ok(Some(agy)) = agy_task.await {
+        out.push(agy);
+    }
     out
 }
 
@@ -518,7 +702,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn claude_creds_need_claude_ai_oauth() {
+    fn claude_creds_need_claude_ai_oauth_and_keep_dead_signin_row() {
         let c = parse_claude_creds(
             r#"{"claudeAiOauth":{"accessToken":"t","expiresAt":5,"subscriptionType":"max","rateLimitTier":"default_claude_max_20x"}}"#,
         )
@@ -526,10 +710,57 @@ mod tests {
         assert_eq!(c.token, "t");
         assert_eq!(c.expires_at, Some(5));
         assert_eq!(c.plan.as_deref(), Some("Max 20x"));
+        // 2026-11-15 本机实况：未手动 logout，invalid_grant 后 Claude Code 清空 accessToken/refreshToken 并置 expiresAt=0，仍保留套餐
+        let dead = parse_claude_creds(
+            r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0,"subscriptionType":"pro","subscriptionTypeSource":"sign_in","rateLimitTier":"default_claude_ai"}}"#,
+        )
+        .unwrap();
+        assert_eq!(dead.token, "");
+        assert_eq!(dead.expires_at, Some(0));
+        assert_eq!(dead.plan.as_deref(), Some("Pro"));
+        // 完全空的残壳（无套餐、无 sign_in、无 expiresAt=0）不算登录
+        assert!(parse_claude_creds(r#"{"claudeAiOauth":{}}"#).is_none());
         // 只有 mcpOAuth 的那一项不算登录
         assert!(parse_claude_creds(r#"{"mcpOAuth":{"x":{"accessToken":"t"}}}"#).is_none());
         assert!(parse_claude_creds("not json").is_none());
         assert_eq!(claude_plan_label(Some("pro"), Some("default_claude_ai")).as_deref(), Some("Pro"));
+    }
+
+    #[test]
+    fn agy_usage_maps_gemini_and_third_party_buckets() {
+        let body = serde_json::json!({
+            "status": "SUCCESS",
+            "command": {
+                "name": "usage",
+                "data": {
+                    "groups": [
+                        {
+                            "name": "Gemini Models",
+                            "buckets": [
+                                {"id": "gemini-weekly", "remaining_fraction": 0.75, "reset_time": "2026-11-21T22:42:06Z"},
+                                {"id": "gemini-5h", "remaining_fraction": 1.0, "reset_time": "2026-11-15T10:00:00Z"}
+                            ]
+                        },
+                        {
+                            "name": "Claude and GPT models",
+                            "buckets": [
+                                {"id": "3p-weekly", "remaining_fraction": 0.1, "reset_time": "2026-11-21T22:42:06Z"},
+                                {"id": "unknown-bucket", "remaining_fraction": 0.5}
+                            ]
+                        }
+                    ]
+                }
+            }
+        });
+        let w = parse_agy_usage(&body).unwrap();
+        assert_eq!(
+            w.iter().map(|x| x.window.as_str()).collect::<Vec<_>>(),
+            ["agy_gemini_5h", "agy_gemini_weekly", "agy_3p_weekly"]
+        );
+        assert_eq!(w[0].used_percent.round(), 0.0);
+        assert_eq!(w[1].used_percent.round(), 25.0);
+        assert_eq!(w[2].used_percent.round(), 90.0);
+        assert!(parse_agy_usage(&serde_json::json!({"status": "ERROR"})).is_err());
     }
 
     #[test]

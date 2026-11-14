@@ -7,6 +7,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   minimax: "MiniMax",
   claude: "Claude",
   codex: "Codex",
+  agy: "Antigravity",
 };
 
 export function planProviderLabel(provider: string): string {
@@ -33,17 +34,18 @@ const PROVIDER_NAME_KEYWORDS: Record<string, string[]> = {
   minimax: ["minimax"],
   claude: ["claude", "anthropic"],
   codex: ["codex", "chatgpt", "openai"],
+  agy: ["antigravity", "agy"],
 };
 
-/** 网关名是否还值得显示：只剩供应商同义词（可带数字编号，如 "GLM"、"glm 2"）时与供应商
- *  徽章重复，不再显示；有实际区分信息（"智谱备用"、"公司号"）才显示 */
+/** 网关名是否还值得显示：只剩供应商同义词（可带数字编号，如 "GLM"、"glm 2"）或固定占位「官方账号」时
+ *  与供应商徽章重复/盖掉品牌名，不再显示；有实际区分信息（"智谱备用"、"公司号"）才显示 */
 export function planGatewayNameVisible(
   name: string | null | undefined,
   provider: string,
 ): boolean {
   if (!name) return false;
   const compact = name.toLowerCase().replace(/[\s\-_·]/g, "");
-  if (!compact) return false;
+  if (!compact || compact === "官方账号") return false;
   let rest = compact;
   for (const k of PROVIDER_NAME_KEYWORDS[provider] ?? []) {
     rest = rest.split(k).join("");
@@ -135,6 +137,11 @@ export function planWindowLabel(window: string): string {
   if (window === "five_hour") return "5 小时";
   if (window === "weekly") return "本周";
   if (window === "monthly") return "本月";
+  if (window === "agy_gemini_5h") return "Gemini 5 小时";
+  if (window === "agy_gemini_weekly") return "Gemini 本周";
+  if (window === "agy_gemini_argon_weekly") return "Gemini Argon 本周";
+  if (window === "agy_3p_5h") return "Claude / GPT 5 小时";
+  if (window === "agy_3p_weekly") return "Claude / GPT 本周";
   return window;
 }
 
