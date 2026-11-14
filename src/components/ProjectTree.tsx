@@ -3,7 +3,6 @@ import {
   AppWindow,
   Archive,
   ArrowLeftRight,
-  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -1503,28 +1502,31 @@ export default function ProjectTree({
             <span
               aria-label={`接力对话：${relayPath}`}
               title={`接力对话：${relayPath}`}
-              className={`${dot ? "mr-0.5" : "mr-1.5"} shrink-0 items-center gap-0.5 ${
+              className={`${dot ? "mr-0.5" : "mr-1.5"} shrink-0 items-center -space-x-1 ${
                 menuOpen ? "hidden" : "inline-flex group-hover/chat:hidden group-focus-within/chat:hidden"
               }`}
               data-relay-agents
             >
-              {(priorRelayAgents.length > 2 ? priorRelayAgents.slice(0, 1) : priorRelayAgents).map((a) => (
-                <AgentIcon
+              {priorRelayAgents.slice(-2).map((a) => (
+                <span
                   key={a}
-                  agent={a}
-                  label={AGENTS.find((x) => x.id === a)?.label ?? a}
-                  size={11}
-                  className="opacity-70"
-                />
+                  className="inline-flex opacity-70"
+                  style={{
+                    WebkitMaskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
+                    maskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
+                  }}
+                >
+                  <AgentIcon
+                    agent={a}
+                    label={AGENTS.find((x) => x.id === a)?.label ?? a}
+                    size={10}
+                  />
+                </span>
               ))}
-              {priorRelayAgents.length > 2 && (
-                <span className="font-mono text-micro leading-none text-l4">+{priorRelayAgents.length - 1}</span>
-              )}
-              <ArrowRight size={9} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4/80" />
               <AgentIcon
                 agent={activeRelayAgent}
                 label={AGENTS.find((x) => x.id === activeRelayAgent)?.label ?? activeRelayAgent}
-                size={12}
+                size={10}
               />
             </span>
           )}

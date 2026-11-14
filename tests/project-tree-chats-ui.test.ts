@@ -1416,9 +1416,9 @@ test("接力对话：标题左缘保持与普通对话对齐，行尾展示各�
     const row = btn.parentElement!;
     const badge = row.querySelector<HTMLElement>("[data-relay-agents]")!;
     assert.ok(badge, "行尾应有接力官方图标簇");
-    assert.equal(badge.getAttribute("aria-label"), "接力对话：Codex → Claude Code", "当前接手那家排在箭头右侧");
+    assert.equal(badge.getAttribute("aria-label"), "接力对话：Codex → Claude Code", "当前接手那家排在最前（右侧）");
     assert.match(badge.className, /group-hover\/chat:hidden/, "悬停时自动让位给 ⋯ 菜单");
-    assert.equal(badge.querySelectorAll("svg").length, 3, "2 家官方图标 SVG + 1 枚中间交接箭头");
+    assert.equal(badge.querySelectorAll("svg").length, 2, "仅叠放 2 枚官方图标 SVG，不带箭头");
   } finally {
     await view.close();
   }
