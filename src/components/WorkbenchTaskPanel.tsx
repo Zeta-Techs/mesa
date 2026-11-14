@@ -175,7 +175,7 @@ function Brief({ text, resetKey }: { text: string; resetKey: string }) {
   const long = paras.length > 3 || text.length > 220;
   return (
     <div className="rounded-lg ccode-well px-3.5 py-3">
-      <div className={`space-y-2 text-[13px] leading-relaxed text-l2 ${long && !open ? "line-clamp-5" : ""}`}>
+      <div className={`space-y-2 text-sm leading-relaxed text-l2 ${long && !open ? "line-clamp-5" : ""}`}>
         {paras.map((p, i) => (
           <p key={i} className="break-words">
             <InlineCodeText text={p} />
@@ -391,7 +391,7 @@ export default function WorkbenchTaskPanel({
               <Section title="怎样算做完" meta={`${items.length} 条`}>
                 <div className="rounded-lg ccode-well px-3.5 py-3">
                   {human.length > 0 && (
-                    <ul className="space-y-2 text-[13px] leading-relaxed text-l1">
+                    <ul className="space-y-2 text-sm leading-relaxed text-l1">
                       {human.map((c) => (
                         <li key={c.text} className="flex items-start gap-2.5">
                           <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-l3" aria-hidden="true" />
