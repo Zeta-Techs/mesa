@@ -11,7 +11,25 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { toast } from "../toast";
-import { AGENTS, type ComboSurfaceDto, type Profile, type ProjectDto } from "../types";
+import { IS_WINDOWS } from "../hotkeys";
+import { samePath } from "../path-utils";
+import {
+  EXTERNAL_TERMINAL_DIRS_KEY,
+  buildRecentExternalProjects,
+  cleanDirPath,
+  isInternalWorktreeOrScratch,
+  parseExternalRecentDirs,
+  recordExternalRecentDir,
+  resolveDefaultExternalCwd,
+  type ExternalRecentDir,
+} from "../external-terminal-dirs";
+import {
+  AGENTS,
+  type ComboSurfaceDto,
+  type Profile,
+  type ProjectDto,
+  type WorkspaceDto,
+} from "../types";
 import { Modal } from "./Modal";
 import {
   InlineNotice,
@@ -42,32 +60,26 @@ export type ExternalTerminalTarget =
       initialFullAccess?: boolean;
     };
 
-function readLastLaunch(): { raw: Record<string, unknown>; cwd: string } {
+function readLegacyLastLaunchCwd(): string {
   try {
     const parsed = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "{}") as Record<
       string,
       unknown
     >;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return {
-        raw: parsed,
-        cwd: typeof parsed.cwd === "string" ? parsed.cwd.trim() : "",
-      };
+      return typeof parsed.cwd === "string" ? parsed.cwd.trim() : "";
     }
   } catch {
     /* 损坏的本地记忆不阻断外部启动 */
   }
-  return { raw: {}, cwd: "" };
+  return "";
 }
 
-function saveLastLaunchCwd(cwd: string) {
-  const trimmed = cwd.trim();
-  if (!trimmed) return;
+function loadExternalRecentDirs(): ExternalRecentDir[] {
   try {
-    const { raw } = readLastLaunch();
-    localStorage.setItem("ccode.lastLaunch", JSON.stringify({ ...raw, cwd: trimmed }));
+    return parseExternalRecentDirs(localStorage.getItem(EXTERNAL_TERMINAL_DIRS_KEY), IS_WINDOWS);
   } catch {
-    /* 存储受限不阻断外部启动 */
+    return [];
   }
 }
 
@@ -92,10 +104,18 @@ export function ExternalTerminalDialog({
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const agents = useAppStore((s) => s.agents);
+  const storeRecentRepos = useAppStore((s) => s.recentRepos);
+  const loadRecentRepos = useAppStore((s) => s.loadRecentRepos);
+  const contextProjectPath = useAppStore((s) => s.contextLabel?.projectPath ?? null);
   const defaultFull = Boolean(settings?.externalTerminalFullAccess);
 
   const [cwd, setCwd] = useState("");
   const [cwdEdited, setCwdEdited] = useState(false);
+  const cwdEditedRef = useRef(false);
+  const [externalRecent, setExternalRecent] = useState<ExternalRecentDir[]>(() =>
+    loadExternalRecentDirs(),
+  );
+  const [pickedDirs, setPickedDirs] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedEffort, setSelectedEffort] = useState("");
   const [effortSurface, setEffortSurface] = useState<{
@@ -106,6 +126,10 @@ export function ExternalTerminalDialog({
   const [fullAccess, setFullAccess] = useState(false);
   const [rememberDefault, setRememberDefault] = useState(false);
   const [projects, setProjects] = useState<ProjectDto[]>([]);
+  const [workspaces, setWorkspaces] = useState<
+    Pick<WorkspaceDto, "repoPath" | "worktreePath">[]
+  >([]);
+  const [homeDir, setHomeDir] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
@@ -116,12 +140,27 @@ export function ExternalTerminalDialog({
     setError(null);
     setRememberDefault(false);
     setCwdEdited(false);
+    cwdEditedRef.current = false;
+    setPickedDirs([]);
+    const extRecent = loadExternalRecentDirs();
+    setExternalRecent(extRecent);
+    void loadRecentRepos();
     setFullAccess(target.initialFullAccess ?? defaultFull);
     setSelectedEffort(target.initialEffort?.trim().toLowerCase() ?? "");
 
     if (target.kind === "new") {
-      const { cwd: lastCwd } = readLastLaunch();
-      setCwd(lastCwd);
+      setCwd(
+        resolveDefaultExternalCwd({
+          externalRecent: extRecent,
+          projects,
+          recentRepos: useAppStore.getState().recentRepos,
+          workspaces,
+          contextProjectPath,
+          legacyLastLaunchCwd: readLegacyLastLaunchCwd(),
+          homeDir,
+          isWindows: IS_WINDOWS,
+        }),
+      );
       setSelectedModel(target.profile.models[0] ?? "");
     } else {
       setCwd(target.initialCwd.trim());
@@ -129,19 +168,45 @@ export function ExternalTerminalDialog({
     }
 
     let cancelled = false;
-    invoke<ProjectDto[]>("list_projects")
-      .then((list) => {
-        if (cancelled) return;
-        setProjects(list);
-        if (target.kind === "new" && !readLastLaunch().cwd && list[0]?.path) {
-          setCwd((prev) => (prev.trim() ? prev : list[0].path));
-        }
-      })
-      .catch(() => {});
+    Promise.all([
+      invoke<ProjectDto[]>("list_projects").catch(() => [] as ProjectDto[]),
+      invoke<Pick<WorkspaceDto, "repoPath" | "worktreePath">[]>("list_workspaces").catch(
+        () => [] as Pick<WorkspaceDto, "repoPath" | "worktreePath">[],
+      ),
+      invoke<string>("home_dir").catch(() => ""),
+    ]).then(([projList, wsList, home]) => {
+      if (cancelled) return;
+      setProjects(projList);
+      setWorkspaces(wsList);
+      if (home) setHomeDir(home);
+    });
     return () => {
       cancelled = true;
     };
   }, [target, defaultFull]);
+
+  useEffect(() => {
+    if (!target || target.kind !== "new" || cwdEditedRef.current) return;
+    const resolved = resolveDefaultExternalCwd({
+      externalRecent,
+      projects,
+      recentRepos: storeRecentRepos,
+      workspaces,
+      contextProjectPath,
+      legacyLastLaunchCwd: readLegacyLastLaunchCwd(),
+      homeDir,
+      isWindows: IS_WINDOWS,
+    });
+    if (resolved) setCwd(resolved);
+  }, [
+    target,
+    externalRecent,
+    projects,
+    storeRecentRepos,
+    workspaces,
+    contextProjectPath,
+    homeDir,
+  ]);
 
   const activeProfile = target ? target.profile : null;
   const activeAgentId = target ? (target.kind === "new" ? target.profile.agent : target.agentId) : "";
@@ -229,7 +294,35 @@ export function ExternalTerminalDialog({
     return out;
   }, [target]);
 
-  const recentProjects = useMemo(() => projects.slice(0, 6), [projects]);
+  const recentProjects = useMemo(
+    () =>
+      buildRecentExternalProjects({
+        pickedDirs,
+        externalRecent,
+        projects,
+        recentRepos: storeRecentRepos,
+        workspaces,
+        homeDir,
+        isWindows: IS_WINDOWS,
+      }),
+    [pickedDirs, externalRecent, projects, storeRecentRepos, workspaces, homeDir],
+  );
+
+  function rememberExternalDir(rawPath: string) {
+    const next = recordExternalRecentDir(
+      loadExternalRecentDirs(),
+      rawPath,
+      new Date().toISOString(),
+      workspaces,
+      IS_WINDOWS,
+    );
+    setExternalRecent(next);
+    try {
+      localStorage.setItem(EXTERNAL_TERMINAL_DIRS_KEY, JSON.stringify(next));
+    } catch {
+      /* 存储受限不阻断外部启动 */
+    }
+  }
 
   async function pickDirectory() {
     const trimmed = cwd.trim();
@@ -239,8 +332,15 @@ export function ExternalTerminalDialog({
       ...(trimmed ? { defaultPath: trimmed } : {}),
     });
     if (typeof picked === "string" && picked.trim()) {
-      setCwd(picked.trim());
+      const cleaned = cleanDirPath(picked);
+      if (!cleaned) return;
+      cwdEditedRef.current = true;
+      setCwd(cleaned);
       setCwdEdited(true);
+      setPickedDirs((prev) => [
+        cleaned,
+        ...prev.filter((p) => !samePath(p, cleaned, IS_WINDOWS)),
+      ]);
       setError(null);
     }
   }
@@ -253,7 +353,7 @@ export function ExternalTerminalDialog({
 
   async function handleLaunch() {
     if (!target) return;
-    const finalCwd = cwd.trim();
+    const finalCwd = cleanDirPath(cwd);
     if (!finalCwd) {
       setError("请先选择或输入工作文件夹");
       return;
@@ -267,7 +367,7 @@ export function ExternalTerminalDialog({
     try {
       await persistDefaultIfChecked();
       if (target.kind === "new") {
-        saveLastLaunchCwd(finalCwd);
+        rememberExternalDir(finalCwd);
         await invoke("new_external_terminal", {
           agentId: target.profile.agent,
           cwd: finalCwd,
@@ -277,7 +377,9 @@ export function ExternalTerminalDialog({
           fullAccess,
         });
       } else {
-        if (cwdEdited) saveLastLaunchCwd(finalCwd);
+        if (cwdEdited || !isInternalWorktreeOrScratch(finalCwd, workspaces, IS_WINDOWS)) {
+          rememberExternalDir(finalCwd);
+        }
         await invoke("resume_external_terminal", {
           agentId: target.agentId,
           sessionId: target.sessionId,
@@ -302,7 +404,7 @@ export function ExternalTerminalDialog({
 
   async function handleCopyCommand() {
     if (!target) return;
-    const finalCwd = cwd.trim();
+    const finalCwd = cleanDirPath(cwd);
     if (!finalCwd) {
       setError("请先选择或输入工作文件夹");
       return;
@@ -315,7 +417,7 @@ export function ExternalTerminalDialog({
     try {
       await persistDefaultIfChecked();
       if (target.kind === "new") {
-        saveLastLaunchCwd(finalCwd);
+        rememberExternalDir(finalCwd);
         const cmd = await invoke<string>("profile_terminal_command", {
           profileId: target.profile.id,
           fullAccess,
@@ -331,6 +433,9 @@ export function ExternalTerminalDialog({
           "success",
         );
       } else {
+        if (cwdEdited || !isInternalWorktreeOrScratch(finalCwd, workspaces, IS_WINDOWS)) {
+          rememberExternalDir(finalCwd);
+        }
         const cmd = await invoke<string>("session_resume_command", {
           agentId: target.agentId,
           sessionId: target.sessionId,
@@ -448,6 +553,7 @@ export function ExternalTerminalDialog({
                 value={cwd}
                 placeholder="选择或输入工作目录路径…"
                 onChange={(e) => {
+                  cwdEditedRef.current = true;
                   setCwd(e.target.value);
                   setCwdEdited(true);
                   if (error) setError(null);
@@ -467,13 +573,15 @@ export function ExternalTerminalDialog({
               <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
                 <span className="text-micro text-l3">最近项目：</span>
                 {recentProjects.map((p) => {
-                  const active = cwd.trim() === p.path;
+                  const active =
+                    Boolean(cwd.trim()) && samePath(cwd.trim(), p.path, IS_WINDOWS);
                   return (
                     <button
                       key={p.path}
                       type="button"
                       title={p.path}
                       onClick={() => {
+                        cwdEditedRef.current = true;
                         setCwd(p.path);
                         setCwdEdited(true);
                         if (error) setError(null);
