@@ -55,7 +55,11 @@ export function readDoc(text: string): { front: string; paras: Para[] } {
     }
     if (fenced || !line.trim()) return;
     const m = line.match(/^(#{1,6})\s+(.*)$/);
-    paras.push(m ? { text: m[2].trim(), line: i + 1, heading: true, level: m[1].length } : { text: line.trim(), line: i + 1, heading: false, level: 0 });
+    paras.push(
+      m
+        ? { text: m[2].replace(/\s*\{[#.][^}]*\}\s*$/, "").trim(), line: i + 1, heading: true, level: m[1].length }
+        : { text: line.trim(), line: i + 1, heading: false, level: 0 },
+    );
   });
   return { front, paras };
 }
@@ -414,14 +418,16 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
   if (input.styleSheet) {
     const issues: string[] = [];
     let firstLine: number | undefined;
+    const normFullText = foldTermText(input.text);
     for (const abbr of styleAbbreviations(input.styleSheet)) {
-      const re = new RegExp(`(?<![\\p{L}\\p{N}])${abbr.abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
-      const hit = paras.find((p) => !p.heading && sec.at(p.line) !== "" && re.test(p.text));
+      const escaped = abbr.abbr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`(?<![\\p{L}\\p{N}~^@]|\\\\@|[\\p{L}\\p{N}]-)${escaped}s?(?![\\p{L}\\p{N}~^@]|\\\\@)`, "u");
+      const hit = paras.find((p) => !p.heading && !p.text.startsWith("![") && sec.at(p.line) !== "" && re.test(p.text));
       if (!hit) continue;
       const where = sec.at(hit.line);
       const problems: string[] = [];
       if (abbr.section && !(where === abbr.section || where.startsWith(`${abbr.section}.`))) problems.push(`规定第 ${abbr.section} 节首次定义，第一次出现在第 ${where} 节（第 ${hit.line} 行）`);
-      if (abbr.full && !input.text.toLowerCase().includes(abbr.full.toLowerCase())) problems.push("正文里没写过全称");
+      if (abbr.full && !hasFullTerm(normFullText, abbr.full)) problems.push("正文里没写过全称");
       if (problems.length) {
         issues.push(`${abbr.abbr}：${problems.join("；")}`);
         firstLine ??= hit.line;
@@ -622,18 +628,38 @@ function stripCodeAndMath(text: string): string {
 
 function proseOnly(text: string): string {
   return stripCodeAndMath(text)
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
-    .replace(/\]\([^)]*\)/g, "]")
+    .replace(/!\[(?:[^[\]]|\[[^[\]]*\])*\]\([^)\n]*\)/g, " ")
+    .replace(/\]\([^)\n]*\)/g, "]")
     .replace(/\{[^}]*\}/g, " ")
     .replace(/https?:\/\/\S+/g, " ")
     .replace(/\b10\.\d{4,9}\/[-._;()/:A-Za-z0-9]+/g, " ")
-    .replace(/-?@[\p{L}\p{N}_:.#$%&\-+?<>~/]+/gu, " ");
+    .replace(/-?@[\p{L}\p{N}_:.#$%&\-+?<>~/]+/gu, " ")
+    .replace(/(?<![\p{L}\p{N}_])(?:\.{0,2}\/)?[\w.-]+(?:\/[\w.-]+)+/gu, " ")
+    .replace(/\b[\w-]+\.(?:py|r|jl|sh|csv|tsv|json|jsonl|ya?ml|toml|md|qmd|tex|bib|ris|docx?|xlsx?|pptx?|pdf|svg|png|jpe?g|webp|tiff?)\b/gi, " ");
+}
+
+function foldTermText(text: string): string {
+  return text.toLowerCase().replace(/[-–—‑\s]+/g, " ").trim();
+}
+
+function hasFullTerm(normText: string, full: string): boolean {
+  const target = foldTermText(full);
+  if (!target) return true;
+  if (normText.includes(target)) return true;
+  if (target.endsWith("y") && target.length > 3 && normText.includes(`${target.slice(0, -1)}ies`)) return true;
+  return false;
 }
 
 /** 写作规范「术语/缩写 | 写法约定 | 首次定义位置」表里的缩写：第一格括号里的（transition metal boride (TMB)），
  *  或写法约定开头的（「HER、OER，首次出现给全称」，全称按第一格「/」分开对应）；位置取第三格开头的节号 */
 export function styleAbbreviations(text: string): { abbr: string; full: string; section: string }[] {
   const out: { abbr: string; full: string; section: string }[] = [];
+  const seen = new Set<string>();
+  const addAbbr = (abbr: string, full: string, section: string) => {
+    if (!abbr || seen.has(abbr)) return;
+    seen.add(abbr);
+    out.push({ abbr, full, section });
+  };
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim().startsWith("|") || /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/.test(line)) continue;
     const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
@@ -641,14 +667,14 @@ export function styleAbbreviations(text: string): { abbr: string; full: string; 
     const section = (cells[2] ?? "").match(/^\s*§?(\d+(?:\.\d+)*)/)?.[1] ?? "";
     const paren = cells[0].match(/^(.*?)\s*\(([A-Z][A-Za-z0-9₀-₉ₓ\-]*[A-Z0-9][A-Za-z0-9]*)\)\s*$/);
     if (paren && !/\s/.test(paren[2])) {
-      out.push({ abbr: paren[2], full: paren[1].trim(), section });
+      addAbbr(paren[2], paren[1].trim(), section);
       continue;
     }
-    const lead = cells[1].match(/^([A-Z][A-Z0-9]{1,9}(?:\s*[、,，]\s*[A-Z][A-Z0-9]{1,9})*)(?=[，,；;。\s]|$)/);
+    const lead = cells[1].match(/^([A-Z][A-Z0-9]{1,9}(?:\s*[、,，]\s*[A-Z][A-Z0-9]{1,9})*)(?=[，,；;：:。（(]|$)/);
     if (lead) {
       const abbrs = lead[1].split(/\s*[、,，]\s*/);
       const fulls = cells[0].split(/\s+\/\s+/);
-      abbrs.forEach((a, i) => out.push({ abbr: a, full: fulls.length === abbrs.length ? fulls[i].trim() : "", section }));
+      abbrs.forEach((a, i) => addAbbr(a, fulls.length === abbrs.length ? fulls[i].trim() : "", section));
     }
   }
   return out;

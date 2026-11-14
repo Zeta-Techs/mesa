@@ -24,6 +24,12 @@ export interface CiteHit {
 const KEY = String.raw`[\w][\w.:-]*`;
 const ITEM = String.raw`\s*-?@${KEY}(?:\s*,[^\];[\]]*)?`;
 const CITE = new RegExp(String.raw`\[(${ITEM}(?:\s*;${ITEM})*)\s*\](?![(\[])`, "g");
+const CROSSREF_PREFIXES = ["fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-"];
+
+function isCrossrefOrNumber(key: string): boolean {
+  const lower = key.toLowerCase();
+  return /^\d+$/.test(key) || CROSSREF_PREFIXES.some((p) => lower.startsWith(p));
+}
 
 /** 一段纯文字里的引用段（不在代码、链接里的文字由调用方挑好再给） */
 export function findCitations(text: string): CiteHit[] {
@@ -33,8 +39,9 @@ export function findCitations(text: string): CiteHit[] {
     for (const part of m[1].split(";")) {
       const pm = new RegExp(String.raw`^\s*(-?)@(${KEY})\s*(?:,\s*([^\]]*?))?\s*$`).exec(part);
       if (!pm) continue;
-      // 键尾的 . : 多半是句读，不是键的一部分
+      // 键尾的 . : 多半是句读，不是键的一部分；纯数字与 Quarto 图表节公式交叉引用（@fig-1 等）不是文献键
       const key = pm[2].replace(/[.:]+$/, "");
+      if (!key || isCrossrefOrNumber(key)) continue;
       items.push({ key, suppressAuthor: pm[1] === "-", locator: pm[3]?.trim() || null });
     }
     if (items.length) hits.push({ index: m.index ?? 0, raw: m[0], items });

@@ -3,14 +3,55 @@
 //! 纯只读扫描，不走 AI；路径口径同 pdf.rs——canonicalize 后必须落在注册项目根或
 //! 工作区工作树/主仓内。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// 扫描上限：防巨型目录拖慢评审打开（超出部分不计入统计，宁缺勿滥）
 const MAX_MD_FILES: usize = 200;
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+const CROSSREF_PREFIXES: [&str; 8] = ["fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-"];
+const MANUSCRIPT_HELPERS_JSON: &str = include_str!("../../tests/fixtures/manuscript-helpers.json");
+
+fn manuscript_helpers() -> &'static [String] {
+    static HELPERS: OnceLock<Vec<String>> = OnceLock::new();
+    HELPERS.get_or_init(|| {
+        #[derive(Deserialize)]
+        struct Fixture {
+            helpers: Vec<String>,
+        }
+        serde_json::from_str::<Fixture>(MANUSCRIPT_HELPERS_JSON)
+            .map(|f| f.helpers.into_iter().map(|s| s.to_ascii_lowercase()).collect())
+            .unwrap_or_default()
+    })
+}
+
+fn is_crossref_or_number(key: &str) -> bool {
+    if key.chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    let lower = key.to_ascii_lowercase();
+    CROSSREF_PREFIXES.iter().any(|p| lower.starts_with(p))
+}
+
+fn strip_fenced_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut fenced = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if !fenced {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -26,10 +67,12 @@ pub struct CitationHealthDto {
 }
 
 /// 提取一段 markdown 文本里的引用键（去重排序）：
-/// 只认方括号引用段，段内按分号拆多键，键名允许字母数字与 `_- . :`
+/// 只认方括号引用段，段内按分号拆多键，键名允许字母数字与 `_- . :`；
+/// 跳过代码块、Markdown 链接 `[...](...)`、纯数字与 Quarto 图表节公式交叉引用（`@fig-` 等）
 pub(crate) fn extract_cite_keys(text: &str) -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
-    let mut rest = text;
+    let stripped = strip_fenced_code(text);
+    let mut rest = stripped.as_str();
     while let Some(open) = rest.find('[') {
         let after = &rest[open + 1..];
         let Some(close) = after.find(']') else { break };
@@ -39,7 +82,8 @@ pub(crate) fn extract_cite_keys(text: &str) -> BTreeSet<String> {
             rest = after;
             continue;
         }
-        if seg.contains('@') {
+        let next_byte = after.as_bytes().get(close + 1).copied();
+        if !matches!(next_byte, Some(b'(' | b'[')) && seg.contains('@') {
             for part in seg.split(';') {
                 let part = part.trim();
                 // 抑制引用 [-@key]：剥前导减号后与正常引用同口径
@@ -47,12 +91,13 @@ pub(crate) fn extract_cite_keys(text: &str) -> BTreeSet<String> {
                 let Some(rest_key) = part.strip_prefix('@') else {
                     continue;
                 };
-                let key: String = rest_key
+                let raw_key: String = rest_key
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
                     .collect();
-                if !key.is_empty() {
-                    keys.insert(key);
+                let key = raw_key.trim_end_matches(['.', ':']);
+                if !key.is_empty() && !is_crossref_or_number(key) {
+                    keys.insert(key.to_string());
                 }
             }
         }
@@ -80,15 +125,41 @@ pub(crate) fn extract_bib_keys(text: &str) -> BTreeSet<String> {
     keys
 }
 
-/// 任务书/人工请求/写作规范里的「[@bib键]」是写法说明，不是正文引用。
-/// style-sheet.md 是大纲那步一并交的写作规范（2026-11-11 HER：「引用一律 [@bib键]」被数成缺一个键 `bib`，评审页显示「引用 33/34 · 缺 1」）
-fn skip_citation_md(name: &str) -> bool {
+/// 任务书/人工请求/指令文件/写作配套文件里的「[@bib键]」或历史记录不是正文引用。
+/// style-sheet.md 是大纲那步一并交的写作规范（2026-11-11 HER：「引用一律 [@bib键]」被数成缺一个键 `bib`）；
+/// manuscript/ 等稿件目录里的配套文件与 tests/fixtures/manuscript-helpers.json 同源（根目录的 outline.md 是大纲正稿，照扫）
+fn skip_citation_md(name: &str, in_manuscript_dir: bool) -> bool {
     let n = name.to_ascii_lowercase();
-    n == "task.md" || n == "help-wanted.md" || n == "review-notes.md" || n == "style-sheet.md"
+    if matches!(
+        n.as_str(),
+        "task.md"
+            | "help-wanted.md"
+            | "review-notes.md"
+            | "style-sheet.md"
+            | "claude.md"
+            | "agents.md"
+            | "gemini.md"
+    ) {
+        return true;
+    }
+    in_manuscript_dir && manuscript_helpers().iter().any(|h| n.contains(h.as_str()))
 }
 
-/// 递归收集 .md 文件：跳过隐藏目录（.git 等）与 node_modules，数量/单文件大小有界
+fn is_skipped_cite_dir(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    name.starts_with('.')
+        || matches!(
+            lower.as_str(),
+            "node_modules" | "output" | "_freeze" | "_extensions" | "template" | "templates" | "artifacts"
+        )
+}
+
+/// 递归收集 .md / .qmd 文件：跳过隐藏与渲染产物目录，数量/单文件大小有界
 fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    collect_md_files_inner(dir, false, out);
+}
+
+fn collect_md_files_inner(dir: &Path, in_manuscript_dir: bool, out: &mut Vec<PathBuf>) {
     if out.len() >= MAX_MD_FILES {
         return;
     }
@@ -104,15 +175,21 @@ fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else { continue };
         if meta.is_dir() {
-            if name.starts_with('.') || name == "node_modules" {
+            if is_skipped_cite_dir(&name) {
                 continue;
             }
-            collect_md_files(&path, out);
-        } else if name.to_lowercase().ends_with(".md")
-            && meta.len() <= MAX_FILE_BYTES
-            && !skip_citation_md(&name)
-        {
-            out.push(path);
+            let next_in_ms = in_manuscript_dir
+                || matches!(
+                    name.to_ascii_lowercase().as_str(),
+                    "manuscript" | "submission" | "proposal" | "chapters"
+                );
+            collect_md_files_inner(&path, next_in_ms, out);
+        } else {
+            let lower = name.to_ascii_lowercase();
+            let is_doc = lower.ends_with(".md") || lower.ends_with(".qmd");
+            if is_doc && meta.len() <= MAX_FILE_BYTES && !skip_citation_md(&name, in_manuscript_dir) {
+                out.push(path);
+            }
         }
     }
 }
@@ -482,11 +559,12 @@ mod tests {
 
     #[test]
     fn extract_ignores_malformed_segments() {
-        // 口径保守：项必须以 [-]@key 起头，带前缀的 [cf. @a1] 与空键 [@]/[@;] 都不收
-        assert!(extract_cite_keys("[cf. @a1] [@] [@;]").is_empty());
-        // 未闭合的方括号段不吞掉后面的正常引用
-        let keys = extract_cite_keys("[@open 后面没有闭合\n正常 [@closed1]");
-        assert_eq!(keys.into_iter().collect::<Vec<_>>(), vec!["closed1"]);
+        // 口径保守：项必须以 [-]@key 起头，带前缀的 [cf. @a1]、空键 [@]/[@;]、链接、代码块、纯数字、交叉引用都不收
+        assert!(extract_cite_keys("[cf. @a1] [@] [@;] [@x](https://a) [@123] [@fig-1] [@tbl-main] [-@sec-intro] [@eq-tafel]").is_empty());
+        assert!(extract_cite_keys("```markdown\n[@in_code]\n```").is_empty());
+        // 未闭合的方括号段不吞掉后面的正常引用；句读尾号去掉
+        let keys = extract_cite_keys("[@open 后面没有闭合\n正常 [@closed1:] 与 [@fig-2; @real2024.]");
+        assert_eq!(keys.into_iter().collect::<Vec<_>>(), vec!["closed1", "real2024"]);
     }
 
     #[test]
@@ -540,8 +618,11 @@ mod tests {
         )
         .unwrap();
         fs::write(dir.join("manuscript").join("draft.md"), "[@doe2020]\n").unwrap();
-        // 写作规范里的写法说明同样不算
+        // 写作规范与 manuscript/ 配套文件里的写法说明同样不算，.qmd 正文与根 outline.md 照扫
         fs::write(dir.join("manuscript").join("style-sheet.md"), "- 引用一律 [@bib键]，键以 references.bib 为准。\n").unwrap();
+        fs::write(dir.join("manuscript").join("section-status.md"), "- 待删旧键 [@dropped2019]\n").unwrap();
+        fs::write(dir.join("manuscript").join("appendix.qmd"), "See [@fig-s1] and [@doe2020].\n").unwrap();
+        fs::write(dir.join("outline.md"), "大纲拟引 [@doe2020]\n").unwrap();
         fs::write(dir.join("references.bib"), "@article{doe2020, title={X}}\n").unwrap();
         let dto = check_citation_health_in(&dir, std::slice::from_ref(&dir)).unwrap();
         assert_eq!(dto.missing, Vec::<String>::new());

@@ -135,7 +135,7 @@ test("非晶前缀 the a-Ni 与美式名词复数 analyses / catalyses 不误判
       "the a–b plane, and the A-site environment were systematically analyzed and optimized.",
       "By contrast, the a catalyst phrase is a real article slip.",
       "",
-      "## Conclusions",
+      "## Conclusions {#sec-conclusions}",
       "",
       "Summary.",
     ].join("\n"),
@@ -144,6 +144,9 @@ test("非晶前缀 the a-Ni 与美式名词复数 analyses / catalyses 不误判
     const r = run(["--root", root], root);
     assert.equal(r.status, 0, r.stderr + r.stdout);
     const list = items(root);
+    const concl = find(list, "CONCLUSION")[0];
+    assert.equal(concl?.status, "passed");
+    assert.doesNotMatch(concl?.title ?? "", /#sec-conclusions/, "Quarto 标题锚点属性不带进检查标题");
     const slips = find(list, "SLIP-");
     assert.equal(slips.length, 1, `只应报真正的 'the a catalyst'，实际：${JSON.stringify(slips)}`);
     assert.match(slips[0].evidence?.quote ?? slips[0].title, /the a catalyst/);

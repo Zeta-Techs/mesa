@@ -129,7 +129,8 @@ def read_text_doc(path: Path):
         m = re.match(r"^(#{1,6})\s+(.*)$", line) if path.suffix != ".tex" else None
         t = re.match(r"\\(?:sub)*section\*?\{(.*)\}", line.strip()) if path.suffix == ".tex" else None
         if m:
-            paras.append(Para(m.group(2).strip(), no, heading=True, level=len(m.group(1))))
+            head_text = re.sub(r"\s*\{[#.][^}]*\}\s*$", "", m.group(2)).strip()
+            paras.append(Para(head_text, no, heading=True, level=len(m.group(1))))
         elif t:
             paras.append(Para(t.group(1).strip(), no, heading=True, auto_number=True))
         else:

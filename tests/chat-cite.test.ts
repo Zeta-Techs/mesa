@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { citeLabel, citeTipText, findCitations } from "../src/chat-cite.ts";
 
-test("认 [@key]、[@a; @b]、[-@key, p. 3]；带前缀的、链接、脚注、邮箱不认（与 citation.rs 同口径）", () => {
-  const text = "见 [@doe2020] 与 [@smith21; @lee:2022]，抑制 [-@hidden9, p. 33]。[cf. @a1] [@x](https://a) [^1] me@example.com";
+test("认 [@key]、[@a; @b]、[-@key, p. 3]；带前缀的、链接、脚注、邮箱、纯数字、Quarto 交叉引用不认（与 citation.rs 同口径）", () => {
+  const text = "见 [@doe2020] 与 [@smith21; @lee:2022]，抑制 [-@hidden9, p. 33]。[cf. @a1] [@x](https://a) [^1] me@example.com [@fig-1] [@tbl-main; @sec-2] [@123]";
   const hits = findCitations(text);
   assert.deepEqual(
     hits.map((h) => h.items.map((i) => i.key)),
