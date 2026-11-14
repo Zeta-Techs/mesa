@@ -22,9 +22,11 @@ import {
   FileText,
   ListFilter,
   Paperclip,
+  Play,
   Rss,
   Table2,
 } from "lucide-react";
+import { cadenceLabel } from "../order-schedule";
 import { LIT_WATCH_SLOT, resolveSkillSlot, useSkillProvides } from "../skill-slots.ts";
 import ContextMenu from "./ContextMenu";
 import { Modal } from "./Modal";
@@ -1218,6 +1220,7 @@ export default function LitWatchCard({
       .catch(() => {});
     let unlisten: (() => void) | undefined;
     listen("scheduler-run-done", () => {
+      setRunningNow(false);
       reload();
     })
       .then((u) => (unlisten = u))
@@ -1391,6 +1394,21 @@ export default function LitWatchCard({
     .filter((v): v is string => v !== null)
     .sort()
     .pop();
+  const [runningNow, setRunningNow] = useState(false);
+
+  async function runRadarNow() {
+    const target = radarSchedules.length === 1 ? radarSchedules[0] : null;
+    if (!target || runningNow) return;
+    setRunningNow(true);
+    setError(null);
+    try {
+      await invoke("run_schedule_now", { id: target.id });
+      showToast("已触发文献雷达巡检，跑完自动刷新命中");
+    } catch (reason) {
+      setRunningNow(false);
+      setError(String(reason));
+    }
+  }
 
   async function saveFilter(next: LitWatchFilterDto | null) {
     setError(null);
@@ -1895,6 +1913,21 @@ export default function LitWatchCard({
     );
   }
 
+  const singleRadar = radarSchedules.length === 1 ? radarSchedules[0] : null;
+  const singleRadarSubCount = singleRadar
+    ? (subsBySchedule[singleRadar.id]?.length ?? 0)
+    : 0;
+  const singleRadarCadence = singleRadar?.enabled
+    ? cadenceLabel({
+        frequency: singleRadar.frequency as "hourly" | "daily" | "weekdays" | "weekly",
+        weekday: singleRadar.weekday ?? null,
+        intervalHours: singleRadar.intervalHours ?? null,
+        hour: singleRadar.hour,
+        minute: singleRadar.minute,
+        guessed: false,
+      })
+    : null;
+
   return (
     <section>
       <div className="mb-2.5 flex flex-wrap items-center gap-2">
@@ -1914,16 +1947,21 @@ export default function LitWatchCard({
                   {visibleEntries.length} 篇
                 </span>
               </>
-            ) : lastRunAt ? (
+            ) : !singleRadarCadence && lastRunAt ? (
               <span className="text-micro font-normal text-l4">
                 {" "}· 上次巡检 {relTime(lastRunAt)}
               </span>
             ) : null}
           </h2>
         </button>
-        {visibleEntries.length > 0 && lastRunAt && (
+        {(singleRadarCadence || (visibleEntries.length > 0 && lastRunAt)) && (
           <span className="text-micro text-l4">
-            上次巡检 {relTime(lastRunAt)}
+            {[
+              singleRadarCadence,
+              lastRunAt ? `上次巡检 ${relTime(lastRunAt)}` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         )}
         {/* 巡检全停用时卡头说清：列表还在，但不会再长新命中（停用开关在下面的任务行） */}
@@ -1936,69 +1974,83 @@ export default function LitWatchCard({
           </span>
         )}
         {bodyOpen && (
-        <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
-          {metricsStatus && (
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+            {metricsStatus && (
+              <button
+                type="button"
+                className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro hover:bg-hover ${
+                  metricsDownloading ? "cursor-wait text-l4" : "text-l3 hover:text-l1"
+                }`}
+                title={
+                  metricsDownloading
+                    ? "正在下载期刊指标表"
+                    : metricsStatus.available
+                      ? metricsTooltip(metricsStatus, metricsUpdate, relTime)
+                      : "下载期刊指标表"
+                }
+                disabled={metricsDownloading}
+                onClick={() => void downloadMetrics()}
+              >
+                {metricsStatus.available ? (
+                  <>
+                    <Table2 size={13} strokeWidth={1.8} />
+                    表格
+                    {metricsUpdate?.hasUpdate && (
+                      <span className="ml-0.5 size-1.5 shrink-0 rounded-full bg-cta" />
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Download size={13} strokeWidth={1.8} />
+                    下载表格
+                  </>
+                )}
+              </button>
+            )}
+            {radarSchedules.length <= 1 && (
+              <button
+                type="button"
+                className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                title="管理订阅关键词"
+                onClick={() => setSubsOpen(true)}
+              >
+                <Rss size={13} strokeWidth={1.8} />
+                订阅{singleRadarSubCount > 0 ? ` (${singleRadarSubCount})` : ""}
+              </button>
+            )}
+            {filterOn ? (
+              /* 筛选生效时换成带字状态：藏掉多少条一眼可见，不必悬停 */
+              <button
+                type="button"
+                className="flex h-7 min-w-0 max-w-[14rem] shrink items-center gap-1 rounded-md px-1.5 text-micro text-cta hover:bg-hover"
+                title={`当前筛选：${litWatchFilterLabel(filter)}（点我修改）`}
+                aria-expanded={filterOpen}
+                onClick={() => setFilterOpen((v) => !v)}
+              >
+                <ListFilter size={13} strokeWidth={1.8} className="shrink-0" />
+                <span className="min-w-0 truncate">筛选：{litWatchFilterLabel(filter)}</span>
+              </button>
+            ) : (
+              <HeadIcon
+                label="按期刊指标筛选新命中（查不到指标的条目开了筛选不显示）"
+                onClick={() => setFilterOpen((v) => !v)}
+              >
+                <ListFilter size={13} strokeWidth={1.8} />
+              </HeadIcon>
+            )}
+          </div>
+          {singleRadar && hasSubs && (
             <button
               type="button"
-              className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro hover:bg-hover ${
-                metricsDownloading ? "cursor-wait text-l4" : "text-l3 hover:text-l1"
-              }`}
-              title={
-                metricsDownloading
-                  ? "正在下载期刊指标表"
-                  : metricsStatus.available
-                    ? metricsTooltip(metricsStatus, metricsUpdate, relTime)
-                    : "下载期刊指标表"
-              }
-              disabled={metricsDownloading}
-              onClick={() => void downloadMetrics()}
+              disabled={runningNow}
+              onClick={() => void runRadarNow()}
+              title={`立即跑一轮「${singleRadar.name}」巡检`}
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-field bg-raised px-2 text-xs text-l1 transition-colors hover:bg-seg-sel disabled:opacity-50"
             >
-              {metricsStatus.available ? (
-                <>
-                  <Table2 size={13} strokeWidth={1.8} />
-                  表格
-                  {metricsUpdate?.hasUpdate && (
-                    <span className="ml-0.5 size-1.5 shrink-0 rounded-full bg-cta" />
-                  )}
-                </>
-              ) : (
-                <>
-                  <Download size={13} strokeWidth={1.8} />
-                  下载表格
-                </>
-              )}
+              <Play size={11.5} strokeWidth={2} aria-hidden="true" />
+              {runningNow ? "巡检中…" : "立即巡检"}
             </button>
-          )}
-          {radarSchedules.length <= 1 && (
-            <button
-              type="button"
-              className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-              title="管理订阅"
-              onClick={() => setSubsOpen(true)}
-            >
-              <Rss size={13} strokeWidth={1.8} />
-              订阅
-            </button>
-          )}
-          {filterOn ? (
-            /* 筛选生效时换成带字状态：藏掉多少条一眼可见，不必悬停 */
-            <button
-              type="button"
-              className="flex h-7 min-w-0 max-w-[14rem] shrink items-center gap-1 rounded-md px-1.5 text-micro text-cta hover:bg-hover"
-              title={`当前筛选：${litWatchFilterLabel(filter)}（点我修改）`}
-              aria-expanded={filterOpen}
-              onClick={() => setFilterOpen((v) => !v)}
-            >
-              <ListFilter size={13} strokeWidth={1.8} className="shrink-0" />
-              <span className="min-w-0 truncate">筛选：{litWatchFilterLabel(filter)}</span>
-            </button>
-          ) : (
-            <HeadIcon
-              label="按期刊指标筛选新命中（查不到指标的条目开了筛选不显示）"
-              onClick={() => setFilterOpen((v) => !v)}
-            >
-              <ListFilter size={13} strokeWidth={1.8} />
-            </HeadIcon>
           )}
         </div>
         )}

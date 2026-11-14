@@ -1264,33 +1264,59 @@ export default function CodingProjectView({
       });
     }
     const isLive = activity !== "空闲";
+    const compactPrimary =
+      w.isPrimary &&
+      !merging &&
+      !isLive &&
+      !w.dirty &&
+      w.ahead === 0 &&
+      w.behind === 0 &&
+      w.unpushed === 0 &&
+      (w.upstreamBehind ?? 0) === 0;
     return (
       <div
         className={`${projectWellClass} transition-colors ${
+          compactPrimary ? "py-2" : ""
+        } ${
           merging
-            ? "ring-1 ring-warn-text/35"
+            ? "border-l-[2.5px] border-l-err-text ring-1 ring-warn-text/30"
             : isLive
-              ? "ring-1 ring-ok-text/25"
+              ? "border-l-[2.5px] border-l-ok-text ring-1 ring-ok-text/20"
               : ""
         }`}
       >
         <div className="flex min-h-7 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
-            <p
+            <div
               className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium text-l1"
               title={w.path}
             >
-              <span className="min-w-0 truncate">{displayName}</span>
+              {!w.isPrimary && <span className="min-w-0 truncate">{displayName}</span>}
               {!w.isPrimary &&
                 w.lane.branch &&
                 w.lane.branch !== displayName && (
                   <BranchLabel name={w.lane.branch} detached={w.detached} />
                 )}
-              {w.isPrimary && <BranchLabel name={label} detached={w.detached} />}
+              {w.isPrimary && <BranchLabel name={label} detached={w.detached} strong />}
               {w.isBase && (
                 <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro font-normal text-l3">
                   基准
                 </span>
+              )}
+              {compactPrimary && (
+                <>
+                  <FactChips
+                    facts={w}
+                    baseBranch={base}
+                    hostKind={hostKind}
+                    cleanLabel
+                  />
+                  <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
+                    <span className="text-micro font-normal text-l4">
+                      {w.lastCommitAt ? `· 最近提交 ${relTime(w.lastCommitAt)}` : "· 还没有提交"}
+                    </span>
+                  </TipWrap>
+                </>
               )}
               {merging && (
                 <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text">
@@ -1309,7 +1335,7 @@ export default function CodingProjectView({
                   {activityText}
                 </span>
               )}
-            </p>
+            </div>
           </div>
           <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1.5">
             {merging ? (
@@ -1387,36 +1413,38 @@ export default function CodingProjectView({
             )}
           </div>
         </div>
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro">
-          <FactChips
-            facts={w}
-            baseBranch={base}
-            hostKind={hostKind}
-            cleanLabel={w.isPrimary && !merging}
-          />
-          <div className="ml-auto flex flex-wrap items-center gap-2 text-l4">
-            <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
-              <span>
-                {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
-              </span>
-            </TipWrap>
-            {!w.isPrimary && (
-              <TipWrap text={w.path}>
-                <button
-                  type="button"
-                  className="inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
-                  aria-label={`打开工作树目录：${label}`}
-                  onClick={() =>
-                    void revealItemInDir(w.path).catch((e) => onError(String(e)))
-                  }
-                >
-                  <FolderOpen size={11.5} strokeWidth={1.8} />
-                  <span>目录</span>
-                </button>
+        {!compactPrimary && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro">
+            <FactChips
+              facts={w}
+              baseBranch={base}
+              hostKind={hostKind}
+              cleanLabel={w.isPrimary && !merging}
+            />
+            <div className="ml-auto flex flex-wrap items-center gap-2 text-l4">
+              <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
+                <span>
+                  {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
+                </span>
               </TipWrap>
-            )}
+              {!w.isPrimary && (
+                <TipWrap text={w.path}>
+                  <button
+                    type="button"
+                    className="inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                    aria-label={`打开工作树目录：${label}`}
+                    onClick={() =>
+                      void revealItemInDir(w.path).catch((e) => onError(String(e)))
+                    }
+                  >
+                    <FolderOpen size={11.5} strokeWidth={1.8} />
+                    <span>目录</span>
+                  </button>
+                </TipWrap>
+              )}
+            </div>
           </div>
-        </div>
+        )}
         {groupingPath === w.path && (
           <form
             className="mt-2 flex gap-2"
@@ -1740,21 +1768,33 @@ export default function CodingProjectView({
                         last={last}
                         nodeY={ROW_NODE_Y}
                       >
-                        {/* 字号写在内层 span：全站 button { font: inherit } 会吞掉按钮上的 text-* */}
-                        <button
-                          type="button"
-                          className="-ml-1 flex h-8 items-center gap-0.5 rounded-md pr-1.5 text-l4 hover:text-l2"
-                          aria-expanded={looseOpen}
-                          onClick={() => setLooseOpenPick(!looseOpen)}
-                        >
-                          <FoldMark open={looseOpen} />
-                          <span className="text-micro font-medium">
-                            未检出的分支{" "}
-                            <span className="ml-0.5 font-normal tabular-nums">
-                              {branchMap.loose.length}
+                        <div className="flex h-8 min-w-0 items-center gap-1.5">
+                          {/* 字号写在内层 span：全站 button { font: inherit } 会吞掉按钮上的 text-* */}
+                          <button
+                            type="button"
+                            className="-ml-1 flex h-8 shrink-0 items-center gap-0.5 rounded-md pr-1.5 text-l4 hover:text-l2"
+                            aria-expanded={looseOpen}
+                            onClick={() => setLooseOpenPick(!looseOpen)}
+                          >
+                            <FoldMark open={looseOpen} />
+                            <span className="text-micro font-medium">
+                              未检出的分支{" "}
+                              <span className="ml-0.5 font-normal tabular-nums">
+                                {branchMap.loose.length}
+                              </span>
                             </span>
-                          </span>
-                        </button>
+                          </button>
+                          {!looseOpen && branchMap.loose.length > 0 && (
+                            <span className="min-w-0 truncate font-mono text-micro text-l4">
+                              （
+                              {branchMap.loose
+                                .slice(0, 3)
+                                .map((b) => b.name)
+                                .join("、")}
+                              {branchMap.loose.length > 3 ? "…" : ""}）
+                            </span>
+                          )}
+                        </div>
                       </RailRow>
                     );
                   }

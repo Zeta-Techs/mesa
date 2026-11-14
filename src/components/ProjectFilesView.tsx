@@ -1579,6 +1579,39 @@ export default function ProjectFilesView({
             )}
           </div>
         </div>
+        <div className="hidden shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5 sm:flex">
+          {supportsImmersiveReader(preview.name) && (
+            <button
+              type="button"
+              className={`${rowActionClass} gap-1`}
+              onClick={() => openImmersive(preview)}
+              title="进入专注沉浸阅读"
+            >
+              <BookOpen size={12} strokeWidth={1.8} aria-hidden="true" />
+              沉浸阅读
+            </button>
+          )}
+          {(wide || windowed) && !compare && (
+            <button
+              type="button"
+              className={`${rowActionClass} gap-1`}
+              onClick={() => setCompare(preview)}
+              title="选另一份文件并排对照"
+            >
+              <Columns2 size={12} strokeWidth={1.8} aria-hidden="true" />
+              对照
+            </button>
+          )}
+          <button
+            type="button"
+            className={`${rowActionClass} gap-1`}
+            onClick={() => askAi(preview)}
+            title="围绕当前文件向 AI 提问"
+          >
+            <MessageSquare size={12} strokeWidth={1.8} aria-hidden="true" />
+            问 AI
+          </button>
+        </div>
         <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
           <button
             type="button"
@@ -1729,15 +1762,17 @@ export default function ProjectFilesView({
           }`}
         >
           <div className="mb-2 flex shrink-0 flex-col gap-1.5">
-            <div className="flex items-center gap-1">
-              <FileKindFilters
-                filter={filter}
-                counts={kindCounts}
-                onChange={setFilter}
-                recent={filter === "recent"}
-                onToggleRecent={() =>
-                  setFilter(filter === "recent" ? "all" : "recent")
-                }
+            <div className="flex items-center gap-1.5">
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery("");
+                }}
+                placeholder="搜索文件名或后缀（pdf / .docx）"
+                className={`${searchFieldClass} min-w-0 flex-1`}
+                aria-label="搜索文件"
               />
               <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
                 <button
@@ -1791,16 +1826,14 @@ export default function ProjectFilesView({
                 />
               )}
             </div>
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setQuery("");
-              }}
-              placeholder="搜索文件名或后缀（pdf / .docx）"
-              className={`${searchFieldClass} w-full`}
-              aria-label="搜索文件"
+            <FileKindFilters
+              filter={filter}
+              counts={kindCounts}
+              onChange={setFilter}
+              recent={filter === "recent"}
+              onToggleRecent={() =>
+                setFilter(filter === "recent" ? "all" : "recent")
+              }
             />
             {picked.size > 0 && (
               <div
@@ -1944,13 +1977,50 @@ export default function ProjectFilesView({
         )}
         {!preview && !windowed && wide && hasSplitHost && (
           <div
-            aria-hidden="true"
+            aria-hidden={officeDocs.length === 0 ? "true" : undefined}
             className={`ml-0 hidden h-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-6 text-center lg:flex ${projectWellClass}`}
           >
-            <p className="text-xs font-medium text-l3">点选左侧文件查看或编辑</p>
+            <p className="text-xs font-medium text-l2">点选左侧文件查看或编辑</p>
             <p className="mt-1.5 text-micro text-l4">
               支持 ↑ / ↓ 连续翻看、{IS_MAC ? "⌘" : "Ctrl"} 点多选、拖入外部文件导入
             </p>
+            {officeDocs.length > 0 && (
+              <div className="mt-5 w-full max-w-md text-left">
+                <p className="mb-1.5 px-2 text-micro font-medium text-l4">近期改动</p>
+                <ul className="space-y-0.5 rounded-xl bg-canvas/45 p-1">
+                  {officeDocs.slice(0, 5).map((doc) => {
+                    const parentRel =
+                      doc.rel && doc.rel !== doc.name
+                        ? doc.rel.slice(0, Math.max(0, doc.rel.length - doc.name.length - 1))
+                        : "";
+                    const mod = modifiedLabel(doc.modified);
+                    return (
+                      <li key={doc.path}>
+                        <button
+                          type="button"
+                          onClick={() => void pickFile(asFileEntry(doc))}
+                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover/70"
+                          title={doc.rel || doc.name}
+                        >
+                          <FileTypeMark path={doc.path} />
+                          <span className="min-w-0 truncate text-xs text-l1">{doc.name}</span>
+                          {parentRel && (
+                            <span className="min-w-0 truncate font-mono text-micro text-l4">
+                              {parentRel}
+                            </span>
+                          )}
+                          {mod && (
+                            <span className="ml-auto shrink-0 text-micro tabular-nums text-l4">
+                              {mod}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>

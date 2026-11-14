@@ -1705,6 +1705,44 @@ export default function TaskCardsSection({
               </div>
             )}
           </div>
+          {(() => {
+            if ((focusRunStatus ?? "pending") !== "pending") return null;
+            const refresh = searchRefreshHint(
+              steps,
+              steps.map((st) => stepKind(st, skillProvides)),
+              stepKeys ?? [],
+              (name) => {
+                const st = steps.find((x) => x.name === name);
+                return (st && stepWorkspace(st)?.mergedAt) || null;
+              },
+              focusIdx,
+              Date.now(),
+            );
+            if (!refresh) return null;
+            return (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-canvas/45 px-3 py-2 text-xs text-l2">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warn-text" />
+                  <span>
+                    距「{refresh.step}」保存已 {refresh.days} 天，投稿前可快速增补近期新发表文献
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void openRework({
+                      target: refresh.step,
+                      ...searchRefreshDraft(refresh.savedAt),
+                    })
+                  }
+                  title={`按原检索式补一轮这段时间新发表的文献，再顺着精读、大纲、初稿跟进`}
+                  className="shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-warn-text transition-colors hover:bg-hover"
+                >
+                  更新检索…
+                </button>
+              </div>
+            );
+          })()}
           {/* 步骤内协同流程线（v3.71）：人/agent 动作按先后排成节点链，当前节点就地操作。
               想法区经 discussContent 收进 discuss 节点内（原先是流程线上方的并列 strip，
               两块并排会把「一步 = 一条线」的时序感冲掉） */}
@@ -1800,7 +1838,7 @@ export default function TaskCardsSection({
                 </span>
               );
               if ((focusRunStatus ?? "pending") === "pending") {
-                return refreshButton || commentsButton ? loopRow([refreshButton, commentsButton]) : null;
+                return commentsButton ? loopRow([commentsButton]) : null;
               }
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {

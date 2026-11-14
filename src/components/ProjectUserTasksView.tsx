@@ -179,6 +179,7 @@ export default function ProjectUserTasksView({
   const [editTask, setEditTask] = useState<TaskDto | null>(null);
   const [reviewTask, setReviewTask] = useState<TaskDto | null>(null);
   const [storageTaskId, setStorageTaskId] = useState<string | null>(null);
+  const [adoptedPreviewPath, setAdoptedPreviewPath] = useState<string | null>(null);
   const taskReviewReq = useAppStore((state) => state.taskReviewReq);
   const setTaskReviewReq = useAppStore((state) => state.setTaskReviewReq);
   // 两类提示分开：读取失败随下一次成功读取消失；操作失败（启动/归档/恢复）留到下一次操作，
@@ -536,11 +537,43 @@ export default function ProjectUserTasksView({
         ) : (
         <>
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <h2 className="text-sm font-medium text-l1">目标</h2>
-            {loaded && tasks.length > 0 && (
-              <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-micro text-l3">{tasks.length} 个</span>
-            )}
+            {loaded && tasks.length > 0 && (() => {
+              const reviewCount = buckets.review.length;
+              const stuckCount = buckets.stuck.length;
+              const restParts = [
+                buckets.running.length > 0 ? `${buckets.running.length} 进行中` : null,
+                buckets.open.length > 0 ? `${buckets.open.length} 未开始` : null,
+                buckets.done.length > 0 ? `${buckets.done.length} 已完成` : null,
+              ].filter(Boolean);
+              if (reviewCount === 0 && stuckCount === 0) {
+                return (
+                  <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-micro text-l3">
+                    {restParts.length > 1 ? restParts.join(" · ") : `${tasks.length} 个`}
+                  </span>
+                );
+              }
+              return (
+                <>
+                  {reviewCount > 0 && (
+                    <span className="rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text">
+                      {reviewCount} {reviewCopy.bucketReview}
+                    </span>
+                  )}
+                  {stuckCount > 0 && (
+                    <span className="rounded-full bg-err px-2 py-0.5 text-micro font-medium text-err-text">
+                      {stuckCount} 需处理
+                    </span>
+                  )}
+                  {restParts.length > 0 && (
+                    <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
+                      {restParts.join(" · ")}
+                    </span>
+                  )}
+                </>
+              );
+            })()}
           </div>
           {loaded && tasks.length > 0 && freeResearch && onPickTemplate && (
             <button
@@ -550,6 +583,16 @@ export default function ProjectUserTasksView({
               onClick={onPickTemplate}
             >
               套一整套流程…
+            </button>
+          )}
+          {loaded && tasks.length > 0 && freeResearch && (
+            <button
+              type="button"
+              className={ghostActionClass}
+              title="说一句想做什么，它帮你理清、起草派活单；你点了才开工"
+              onClick={() => openAssistant(project.path)}
+            >
+              问项目助手
             </button>
           )}
           {loaded && (tasks.length > 0 || quietEmpty) && (
@@ -684,11 +727,11 @@ export default function ProjectUserTasksView({
                       const actionClass = `${task.id === primaryTaskId ? primaryActionClass : secondaryActionClass} gap-1.5`;
                       const cardRingClass =
                         recoveryPending || task.status === "failed"
-                          ? "ring-1 ring-err-text/30"
+                          ? "border-l-[2.5px] border-l-err-text ring-1 ring-err-text/25"
                           : task.status === "pending_review"
-                            ? "ring-1 ring-cta-bd/45"
+                            ? "border-l-[2.5px] border-l-cta ring-1 ring-cta-bd/40"
                             : running
-                              ? "ring-1 ring-ok-text/25"
+                              ? "border-l-[2.5px] border-l-ok-text ring-1 ring-ok-text/20"
                               : task.status === "completed" && !detailsOpen
                                 ? "opacity-90 transition-opacity hover:opacity-100"
                                 : "";
@@ -817,7 +860,26 @@ export default function ProjectUserTasksView({
                                   <h5 className="text-micro font-medium text-l3">{hasAdoptedFiles ? "已写入项目" : "输出范围"} · {outputPaths.length}</h5>
                                   <ul aria-label={hasAdoptedFiles ? "已写入项目的文件" : "声明的输出范围"} className="mt-1.5 flex flex-wrap gap-1.5 font-mono text-xs text-l2">
                                     {outputPaths.map((path) => (
-                                      <li key={path} className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-inset/80 px-2 py-1 break-all">
+                                      <li
+                                        key={path}
+                                        role={hasAdoptedFiles ? "button" : undefined}
+                                        tabIndex={hasAdoptedFiles ? 0 : undefined}
+                                        title={hasAdoptedFiles ? `点击预览 ${path}` : undefined}
+                                        onClick={hasAdoptedFiles ? () => setAdoptedPreviewPath(path) : undefined}
+                                        onKeyDown={
+                                          hasAdoptedFiles
+                                            ? (e) => {
+                                                if (e.key === "Enter" || e.key === " ") {
+                                                  e.preventDefault();
+                                                  setAdoptedPreviewPath(path);
+                                                }
+                                              }
+                                            : undefined
+                                        }
+                                        className={`inline-flex max-w-full items-center gap-1.5 rounded-md bg-inset/80 px-2 py-1 break-all ${
+                                          hasAdoptedFiles ? "cursor-pointer transition-colors hover:bg-hover hover:text-l1" : ""
+                                        }`}
+                                      >
                                         <FileTypeMark path={path} />
                                         <span>{path}</span>
                                       </li>
@@ -987,6 +1049,13 @@ export default function ProjectUserTasksView({
         />
       )}
       {storageTaskId && <GoalStorageModal taskId={storageTaskId} onClose={() => setStorageTaskId(null)} onChanged={() => void load()} />}
+      {adoptedPreviewPath && (
+        <OfficePreviewModal
+          path={joinRunPath(project.path, adoptedPreviewPath)}
+          root={project.path}
+          onClose={() => setAdoptedPreviewPath(null)}
+        />
+      )}
       {reviewTask && (
         <ReviewOutputsModal
           workMode={project.workMode}

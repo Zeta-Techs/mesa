@@ -17,6 +17,7 @@ import {
   MessagesSquare,
   Play,
   Plus,
+  RotateCw,
   Trash2,
 } from "lucide-react";
 import { startProjectChat } from "../components/AskAiModal";
@@ -44,7 +45,9 @@ import {
   helpPendingByRoot,
 } from "../help-requests";
 import ProjectGroup from "../components/ProjectGroup";
-import ArtifactChecklist from "../components/ArtifactChecklist";
+import ArtifactChecklist, {
+  type ArtifactChecklistMeta,
+} from "../components/ArtifactChecklist";
 import { REVIEW_SAVE } from "../review-save-copy";
 import ProjectAgentsView from "../components/ProjectAgentsView";
 import MesaBuddyIcon from "../components/MesaBuddyIcon";
@@ -67,6 +70,7 @@ import {
   EmptyState,
   fieldClass,
   hoverRevealClass,
+  iconActionClass,
   inlineActionClass,
   NoticeBar,
   PageFrame,
@@ -952,6 +956,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   >({});
   // 任务行产物清单手风琴：按工作区 id 记忆展开态，切项目时清空
   const [artifactsOpen, setArtifactsOpen] = useState<Set<string>>(new Set());
+  const [artifactRefreshNonce, setArtifactRefreshNonce] = useState<
+    Record<string, number>
+  >({});
+  const [artifactMeta, setArtifactMeta] = useState<
+    Record<string, ArtifactChecklistMeta>
+  >({});
   const openInTerminal = useOpenInTerminal();
   const setPendingTerminal = useAppStore((s) => s.setPendingTerminal);
   const setWorkspaceReviewRequest = useAppStore(
@@ -1527,6 +1537,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const shownGroupKey = selectedGroup?.key ?? null;
   useEffect(() => {
     setArtifactsOpen(new Set());
+    setArtifactRefreshNonce({});
+    setArtifactMeta({});
   }, [shownGroupKey]);
 
   function toggleArtifacts(wsId: string) {
@@ -2073,6 +2085,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             });
         },
       },
+      {
+        icon: Plus,
+        label: "另建工作区…",
+        onSelect: () => setNewWsRepoPath(workspace.repoPath),
+      },
     );
     if (healthy) {
       items.push({
@@ -2450,32 +2467,33 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             );
             return (
             <>
-            {/* 列表头部行始终渲染（标题）；「新建工作区」按钮只在已有工作区时出现在行尾——
-                空列表时由下方虚线引导卡承载同一入口，同一视野不摆两个相同按钮（v3.92）；
-                无步骤项目与未注册分组同样适用（空态卡按钮对它们照常可用）。
-                有研究步骤时列表恒跟随聚焦步骤（v3.81 起无「全部」切换） */}
-            <div className="flex items-center gap-2 pt-1 text-xs">
-              <span className="font-medium text-l3">
-                {focusStepName
-                  ? `${focusStepName} · 工作区（${wsList.length}）`
-                  : `工作区（${wsList.length}）`}
-              </span>
-              <div className="ml-auto flex items-center gap-1">
-                {wsList.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setNewWsRepoPath(selectedGroup.repoPath)}
-                    className={
-                      focusStepName
-                        ? "shrink-0 rounded-md px-2 py-1 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
-                        : `${actionBtn} shrink-0`
-                    }
-                  >
-                    新建工作区
-                  </button>
-                )}
+            {/* 聚焦步骤且刚好已有 1 个绑定工作区时，收掉冗余的外层标题行（另建工作区在卡片 ⋯ 菜单里），
+                彻底消除「外层工作区标题 + 工作区卡头 + 内层本步文件头」三层套娃；
+                无步骤项目、多工作区并列或空列表时照常显示头部行。 */}
+            {!(focusStepName && wsList.length === 1) && (
+              <div className="flex items-center gap-2 pt-1 text-xs">
+                <span className="font-medium text-l3">
+                  {focusStepName
+                    ? `${focusStepName} · 工作区（${wsList.length}）`
+                    : `工作区（${wsList.length}）`}
+                </span>
+                <div className="ml-auto flex items-center gap-1">
+                  {wsList.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setNewWsRepoPath(selectedGroup.repoPath)}
+                      className={
+                        focusStepName
+                          ? "shrink-0 rounded-md px-2 py-1 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+                          : `${actionBtn} shrink-0`
+                      }
+                    >
+                      新建工作区
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
             {wsList.length === 0 ? (
               /* 空状态改虚线引导卡（v3.92 走查）：纯文字行看起来像「没加载完」，
                  虚线框 + 内嵌动作既填补视觉空白又直接给出下一步 */
@@ -2540,6 +2558,15 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 const boundStep = wsView.steps.find(
                   (step) => step.workspaceName === workspace.name,
                 );
+                const isArtOpen =
+                  artifactsOpen.has(workspace.id) &&
+                  workspace.status === "active";
+                const artSummary = isArtOpen
+                  ? artifactMeta[workspace.id]
+                  : undefined;
+                const artRootLabel = merged
+                  ? REVIEW_SAVE.artifactRootMerged
+                  : "工作区";
                 return (
                   <li
                     key={workspace.id}
@@ -2548,13 +2575,32 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="flex min-w-0 items-center gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <span className="truncate text-sm font-medium text-l1">
-                            {boundStep ? boundStep.name : workspace.name}
+                            {boundStep
+                              ? isArtOpen
+                                ? `${boundStep.name} · 本步文件`
+                                : boundStep.name
+                              : workspace.name}
                           </span>
-                          {boundStep && boundStep.name !== workspace.name && (
-                            <span className="shrink-0 font-mono text-xs text-l4">
-                              {workspace.name}
+                          {boundStep &&
+                            boundStep.name !== workspace.name &&
+                            !isArtOpen && (
+                              <span className="shrink-0 font-mono text-xs text-l4">
+                                {workspace.name}
+                              </span>
+                            )}
+                          {artSummary && artSummary.total > 0 && (
+                            <span
+                              className={
+                                artSummary.produced === artSummary.total
+                                  ? "shrink-0 rounded-full bg-ok px-2 py-0.5 font-mono text-micro font-medium tabular-nums text-ok-text"
+                                  : "shrink-0 rounded-full bg-inset px-2 py-0.5 font-mono text-micro tabular-nums text-l3"
+                              }
+                            >
+                              {artSummary.produced === artSummary.total
+                                ? `✓ ${artSummary.produced} / ${artSummary.total} 已产出`
+                                : `${artSummary.produced} / ${artSummary.total}`}
                             </span>
                           )}
                           {merged ? (
@@ -2576,7 +2622,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                                 ws: workspace,
                               });
                             }}
-                            className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-raised px-2 text-xs ${state.textClass} hover:bg-seg-sel`}
+                            className={`inline-flex h-6 shrink-0 items-center gap-1 rounded-full bg-raised px-2 text-micro ${state.textClass} hover:bg-seg-sel`}
                             title={
                               isDriftFailed || isHealthFailed
                                 ? "状态诊断失败，点开查看详情并重试"
@@ -2584,7 +2630,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                             }
                           >
                             <span
-                              className={`size-2 rounded-full ${state.dotClass}`}
+                              className={`size-1.5 rounded-full ${state.dotClass}`}
                             />
                             {state.label}
                             {(isDriftFailed || isHealthFailed) && (
@@ -2593,12 +2639,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                           </button>
                           )}
                         </div>
-                        {/* 副行：相对时间主显；分支默认就是 ccode/同名，重复列只添杂——
-                            只有与名字不一致的自建工作区才亮分支，完整路径与绝对时间都在悬浮 */}
+                        {/* 副行：相对时间主显；展开本步文件时并入来源（工作区 / 主文件夹），不再在下方另起一行头 */}
                         <p
                           className="mt-0.5 truncate text-micro text-l4"
                           title={`${workspace.branch}\n${workspace.worktreePath}\n创建于 ${absTime(workspace.createdAt)}`}
                         >
+                          {isArtOpen ? `${artRootLabel} · ` : ""}
                           {workspace.branch === `ccode/${workspace.name}`
                             ? `创建于 ${relTime(workspace.createdAt)}`
                             : `${workspace.branch} · ${relTime(workspace.createdAt)}`}
@@ -2645,18 +2691,42 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                             )}
                           </>
                         )}
+                        {isArtOpen && (
+                          <button
+                            type="button"
+                            className={iconActionClass}
+                            disabled={artSummary?.loading}
+                            title="刷新本步文件"
+                            aria-label="刷新本步文件"
+                            onClick={() =>
+                              setArtifactRefreshNonce((prev) => ({
+                                ...prev,
+                                [workspace.id]: (prev[workspace.id] ?? 0) + 1,
+                              }))
+                            }
+                          >
+                            <RotateCw
+                              size={13.5}
+                              strokeWidth={1.8}
+                              className={
+                                artSummary?.loading ? "animate-spin" : undefined
+                              }
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
                         {/* 本步文件：活跃工作区常驻，行内手风琴就地展开 */}
                         {workspace.status === "active" && (
                           <button
                             type="button"
                             onClick={() => toggleArtifacts(workspace.id)}
-                            aria-expanded={artifactsOpen.has(workspace.id)}
+                            aria-expanded={isArtOpen}
                             title="打开这一步已经写出的文件"
                             className={`${actionBtn} ${
-                              artifactsOpen.has(workspace.id) ? "text-l1" : ""
+                              isArtOpen ? "text-l1" : ""
                             }`}
                           >
-                            {artifactsOpen.has(workspace.id) ? "收起文件" : "本步文件"}
+                            {isArtOpen ? "收起文件" : "本步文件"}
                           </button>
                         )}
                         <button
@@ -2672,27 +2742,43 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                           }}
                           title="更多操作"
                           aria-label={`更多操作：${workspace.name}`}
-                          className={`flex h-7 w-7 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1 ${hoverReveal}`}
+                          className={`flex h-7 w-7 items-center justify-center rounded-md text-sm text-l3 hover:bg-hover hover:text-l1 ${
+                            boundStep || isArtOpen ? "" : hoverReveal
+                          }`}
                         >
                           ⋯
                         </button>
                       </div>
                     </div>
-                    {/* 产物清单：已合并读项目根（main），其余读工作树 */}
-                    {artifactsOpen.has(workspace.id) &&
-                      workspace.status === "active" && (
-                        <ArtifactChecklist
-                          embedded
-                          projectPath={selectedGroup.repoPath}
-                          workspaceName={workspace.name}
-                          root={
-                            merged
-                              ? selectedGroup.repoPath
-                              : workspace.worktreePath
-                          }
-                          rootLabel={merged ? REVIEW_SAVE.artifactRootMerged : "工作区"}
-                        />
-                      )}
+                    {/* 产物清单：已合并读项目根（main），其余读工作树；frameless 消除内层重复头与二层底盒 */}
+                    {isArtOpen && (
+                      <ArtifactChecklist
+                        frameless
+                        projectPath={selectedGroup.repoPath}
+                        workspaceName={workspace.name}
+                        root={
+                          merged
+                            ? selectedGroup.repoPath
+                            : workspace.worktreePath
+                        }
+                        rootLabel={artRootLabel}
+                        refreshNonce={artifactRefreshNonce[workspace.id] ?? 0}
+                        onMeta={(meta) =>
+                          setArtifactMeta((prev) => {
+                            const cur = prev[workspace.id];
+                            if (
+                              cur &&
+                              cur.produced === meta.produced &&
+                              cur.total === meta.total &&
+                              cur.loading === meta.loading
+                            ) {
+                              return prev;
+                            }
+                            return { ...prev, [workspace.id]: meta };
+                          })
+                        }
+                      />
+                    )}
                   </li>
                 );
               })}
