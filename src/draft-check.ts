@@ -10,7 +10,7 @@
 import type { CheckItem } from "./research-checks.ts";
 import { excludedKeys, MESA_CHECKER, noteStates } from "./outline-check.ts";
 import { placeholderFigureLines, writingScanSourcePath } from "./draft-review.ts";
-import { isManuscriptBody, isManuscriptHelper } from "./manuscript-files.ts";
+import { isManuscriptBody } from "./manuscript-files.ts";
 
 // ---------- 从脚本移植的正则（改这里先改脚本，对照测试会拦） ----------
 
@@ -746,12 +746,11 @@ export function pickManuscript(artifacts: readonly string[], listed: readonly st
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
   const normArts = artifacts.map(norm);
   const allowPaperOutline = normArts.includes("manuscript/outline.md");
-  // 过程文件、写作规范这类写作配套文件不是稿件：名单只在 manuscript-files.ts（与核验脚本同一份）；
-  // submission/ 下只有 formatted.(md|qmd) 是正文稿件（其余 target-journal、cover-letter、pre-review 等都是投稿材料）
+  // 过程文件、写作规范与投稿材料不是稿件：口径统一在 manuscript-files.ts isManuscriptBody
   const ok = (p: string) =>
     /\.(md|qmd)$/i.test(p) &&
     !/[*?]/.test(p) &&
-    ((isManuscriptBody(p) && !isManuscriptHelper(p) && (!/^submission\//i.test(p) || /^submission\/formatted\.(md|qmd)$/i.test(p))) ||
+    (isManuscriptBody(p) ||
       /^analysis-report\.(md|qmd)$/i.test(p) ||
       (allowPaperOutline && /^manuscript\/outline\.md$/i.test(p)));
   const have = new Set(listed.map(norm));

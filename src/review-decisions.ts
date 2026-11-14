@@ -70,7 +70,7 @@ export function parseVerdictLine(line: string): { verdict: ReviewVerdict; note: 
 }
 
 function fieldValue(body: string, name: string): string {
-  const matched = body.match(new RegExp(`${name}[：:]\\s*([^|]*)`));
+  const matched = body.match(new RegExp(`${name}[：:]\\s*([^|｜]*)`));
   return matched?.[1]?.trim() ?? "";
 }
 
@@ -177,16 +177,16 @@ export function applyReportVerdict(
 }
 
 function setPipeField(line: string, name: string, value: string): string {
-  const pattern = new RegExp(`(${name}[：:])\\s*[^|]*?(\\s*\\|)`);
+  const pattern = new RegExp(`(${name}[：:])\\s*[^|｜]*?(\\s*[|｜])`);
   if (pattern.test(line)) {
     return line.replace(pattern, (_all, label: string, pipe: string) => `${label}${value}${pipe}`);
   }
-  const tail = new RegExp(`(${name}[：:])\\s*[^|]*$`);
+  const tail = new RegExp(`(${name}[：:])\\s*[^|｜]*$`);
   if (tail.test(line)) {
     return line.replace(tail, (_all, label: string) => `${label}${value}`);
   }
   const trimmed = line.trimEnd();
-  return `${trimmed}${trimmed.includes("|") ? " | " : " "}${name}：${value}`;
+  return `${trimmed}${trimmed.includes("|") ? " | " : trimmed.includes("｜") ? " ｜ " : " "}${name}：${value}`;
 }
 
 /** 待核实行：裁决写成确认 / 删除该论断 / 改正为…；修改说明进依据。 */
@@ -214,7 +214,7 @@ export function applyVerifyVerdict(
 export function itemSuggestion(item: ReviewItem, kind: ReviewItemKind): string {
   const raw =
     kind === "verify"
-      ? (item.body.match(/\|\s*建议[：:]\s*([^|]*)/)?.[1] ?? "")
+      ? (item.body.match(/[|｜]\s*建议[：:]\s*([^|｜]*)/)?.[1] ?? "")
       : (item.body.match(/建议改法[：:]\s*([\s\S]*)$/)?.[1] ?? "");
   return raw.replace(/\s+/g, " ").trim();
 }

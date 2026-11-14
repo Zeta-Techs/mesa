@@ -34,10 +34,16 @@ export function isManuscriptHelper(path: string): boolean {
   return HELPER_RE.test(baseName(path));
 }
 
-/** 正文稿件：manuscript/、submission/、proposal/、chapters/ 下的 md / qmd / tex，去掉写作配套文件 */
+/** 正文稿件：manuscript/、proposal/、chapters/ 下的 md / qmd / tex（排除 final-check），
+ *  以及 submission/ 下的 formatted 稿或 latex 章节（其余 cover-letter、figure-permissions、pre-review 等都是投稿材料），去掉写作配套文件 */
 export function isManuscriptBody(path: string): boolean {
   const p = norm(path);
-  return /(^|\/)(manuscript|submission|proposal|chapters)\/.+\.(md|qmd|tex)$/i.test(p) && !isManuscriptHelper(p);
+  const base = baseName(p);
+  if (isManuscriptHelper(p) || /^final-check\./i.test(base) || !/\.(md|qmd|tex)$/i.test(base)) return false;
+  if (/(^|\/)submission\//i.test(p)) {
+    return /(^|\/)submission\/(?:formatted\.(?:md|qmd|tex)|latex[^/]*\/.+\.tex)$/i.test(p);
+  }
+  return /(^|\/)(manuscript|proposal|chapters)\/.+$/i.test(p);
 }
 
 const MAIN_NAME = /^(review-final|paper-final|thesis-final|draft|main|formatted|proposal|analysis-report)\.(md|qmd|tex)$|-draft\.(md|qmd)$/i;

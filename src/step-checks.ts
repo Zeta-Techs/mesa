@@ -11,6 +11,7 @@
 import type { CheckItem } from "./research-checks.ts";
 import { bibIds, imageRefs, manuscriptCitations } from "./draft-check.ts";
 import { excludedKeys, MESA_CHECKER } from "./outline-check.ts";
+import { parseReviewItems } from "./review-decisions.ts";
 import type { StepKind } from "./step-kind.ts";
 
 export interface StepCheckInput {
@@ -332,20 +333,40 @@ export function checkCiConsistency(file: string, text: string): CheckItem[] {
 
 // ---------- 存疑裁决清单（verification-decisions*.md / rule-decisions.md） ----------
 
+const DECISION_ITEM_HEAD = /^(?:#{1,6}\s+)?(?:[-*]\s+)?(?:\*\*)?((?:R|S|V)\d{3,})\b/;
+
 function checkPendingDecisions(items: CheckItem[], file: string, text: string | undefined, label: string) {
   if (!text) return;
-  const lines: number[] = [];
   let fenced = false;
-  text.split(/\r?\n/).forEach((line, i) => {
+  const unFencedLines = text.split(/\r?\n/).map((line) => {
     if (/^\s*(```|~~~)/.test(line)) {
       fenced = !fenced;
-      return;
+      return "";
     }
-    if (fenced) return;
-    if (/(?:裁决|决定|状态|decision)\s*[：:]\s*待裁决/i.test(line) || /\|\s*待裁决\s*\|/.test(line)) {
-      lines.push(i + 1);
-    }
+    return fenced ? "" : line;
   });
+  const structured = parseReviewItems(unFencedLines.join("\n"), "verify");
+  const lines: number[] = [];
+  if (structured.length > 0) {
+    const pendingIds = new Set(structured.filter((it) => !it.verdict).map((it) => it.id));
+    unFencedLines.forEach((line, i) => {
+      const id = line.trim().match(DECISION_ITEM_HEAD)?.[1];
+      if (id && pendingIds.has(id)) {
+        lines.push(i + 1);
+        pendingIds.delete(id);
+      }
+    });
+  } else {
+    unFencedLines.forEach((line, i) => {
+      if (
+        /(?:裁决|决定|状态|decision)\s*[：:]\s*待裁决/i.test(line) ||
+        /\|\s*待裁决\s*\|/.test(line) ||
+        /^\s*[-*]\s+.*(?:裁决|决定)\s*[：:]\s*(?:（[^）]*）|\([^)]*\))?\s*(?:[|｜]|$)/.test(line)
+      ) {
+        lines.push(i + 1);
+      }
+    });
+  }
   if (lines.length > 0) {
     push(items, {
       id: `step-decisions-${file}`,

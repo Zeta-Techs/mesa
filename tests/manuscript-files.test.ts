@@ -40,12 +40,29 @@ test("用公共模块的脚本不再自带名单", () => {
   );
 });
 
-test("配套文件与正文：写作规范、章节状态、修改记录不算正文", () => {
+test("配套文件与正文：写作规范、章节状态、修改记录、投稿材料与终检清单不算正文", () => {
   for (const p of ["manuscript/style-sheet.md", "manuscript/section-status.md", "manuscript/changelog.md", "manuscript/typeface.md", "manuscript/outline.md", "manuscript/README.md"]) {
     assert.ok(isManuscriptHelper(p), p);
     assert.ok(!isManuscriptBody(p), p);
   }
-  for (const p of ["manuscript/draft.md", "manuscript/review-final.md", "manuscript/chapters/02-methods.tex", "proposal/proposal.md"]) {
+  for (const p of [
+    "submission/figure-permissions.md",
+    "submission/target-journal.md",
+    "submission/cover-letter.md",
+    "submission/highlights.md",
+    "submission/pre-review.md",
+    "manuscript/final-check.md",
+  ]) {
+    assert.ok(!isManuscriptBody(p), p);
+  }
+  for (const p of [
+    "manuscript/draft.md",
+    "manuscript/review-final.md",
+    "manuscript/chapters/02-methods.tex",
+    "proposal/proposal.md",
+    "submission/formatted.md",
+    "submission/latex/main.tex",
+  ]) {
     assert.ok(isManuscriptBody(p), p);
   }
   assert.ok(!isManuscriptBody("notes/01-a.md"));
@@ -58,6 +75,7 @@ test("挑主稿按名字，不按传进来的顺序；没有正文时退回大�
   );
   assert.equal(manuscriptSourcePath(["manuscript/style-sheet.md", "manuscript/sections.json", "outline.md"]), "outline.md");
   assert.equal(manuscriptSourcePath(["manuscript/sections/02-b.md", "manuscript/sections/01-a.md"]), "manuscript/sections/01-a.md");
+  assert.equal(manuscriptSourcePath(["submission/figure-permissions.md", "submission/pre-review.md", "manuscript/review-report.md"]), null);
   assert.equal(manuscriptSourcePath(["papers/screening.md", "TASK.md"]), null);
 });
 

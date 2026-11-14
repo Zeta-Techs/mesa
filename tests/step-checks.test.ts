@@ -145,6 +145,46 @@ test("结果分析、返修对照与定稿裁决：图表清单文件缺失、�
   assert.match(rebuttalItems.find((i) => i.id === "step-rebuttal-ids-r1")?.title ?? "", /R1\.2、E\.1/);
   assert.ok(rebuttalItems.some((i) => i.id === "step-unsure-rebuttal/response-letter-r1.md"));
   assert.ok(rebuttalItems.some((i) => i.id === "step-decisions-rebuttal/verification-decisions-r1.md"));
+
+  // 定稿 verification-decisions.md 按规范把「裁决：」留空时同样计入待裁决；填上确认后消失；无条目说明不误报
+  const blankVerify = checkStepArtifacts({
+    kind: "final",
+    artifacts: ["manuscript/review-final.md", "manuscript/verification-decisions.md"],
+    primaryManuscript: "manuscript/review-final.md",
+    files: new Map([
+      ["manuscript/review-final.md", "# Final\n"],
+      [
+        "manuscript/verification-decisions.md",
+        "# 待核实裁决清单\n- V001 | 位置：manuscript/review-final.md:10 | 原文摘要：x | 来源：[@A2024] | 建议：y | 裁决： | 依据：\n",
+      ],
+    ]),
+  });
+  assert.equal(blankVerify.find((i) => i.id === "step-decisions-manuscript/verification-decisions.md")?.target?.line, 2);
+
+  const clearedVerify = checkStepArtifacts({
+    kind: "final",
+    artifacts: ["manuscript/review-final.md", "manuscript/verification-decisions.md"],
+    primaryManuscript: "manuscript/review-final.md",
+    files: new Map([
+      ["manuscript/review-final.md", "# Final\n"],
+      [
+        "manuscript/verification-decisions.md",
+        "# 待核实裁决清单\n- V001 ｜ 位置：manuscript/review-final.md:10 ｜ 原文摘要：x ｜ 来源：[@A2024] ｜ 建议：y ｜ 裁决：确认 ｜ 依据：\n",
+      ],
+    ]),
+  });
+  assert.ok(!clearedVerify.some((i) => i.id === "step-decisions-manuscript/verification-decisions.md"));
+
+  const noneVerify = checkStepArtifacts({
+    kind: "final",
+    artifacts: ["manuscript/review-final.md", "manuscript/verification-decisions.md"],
+    primaryManuscript: "manuscript/review-final.md",
+    files: new Map([
+      ["manuscript/review-final.md", "# Final\n"],
+      ["manuscript/verification-decisions.md", "# 待核实裁决清单\n\n本轮无 [待核实] 条目，无待裁决项。\n"],
+    ]),
+  });
+  assert.ok(!noneVerify.some((i) => i.id === "step-decisions-manuscript/verification-decisions.md"));
 });
 
 test("对照 stat_check.py CI 与 num_check.py：算术矛盾与数字追溯结果一致，且 mergeMesaChecks 自动去重", () => {
