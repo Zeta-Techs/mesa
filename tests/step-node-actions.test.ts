@@ -100,12 +100,31 @@ test("有文献库的三个来源算「已有库」，检索来源不算", () =>
   }
 });
 
-test("就绪口径四选一：待评审 / 已保存 / 会话跑完 / 清单已现算到", () => {
+test("就绪口径：待评审 / 已保存 / CLI 停在提示符（active+非 busy）/ 清单已现 / handback 文件已写出算到", () => {
   const noCount = { expectedCount: undefined };
   assert.equal(stepNodeReady("review", null, noCount), true);
   assert.equal(stepNodeReady("done", null, noCount), true);
   assert.equal(stepNodeReady("active", "done", noCount), true);
-  assert.equal(stepNodeReady("active", null, { expectedCount: 12 }), true);
+  // 交互式 CLI 跑完这一轮留在提示符上时 stepAttention 返回 null（与 buildStepFlow agentIdle / reviewActionVisible 同口径）
+  assert.equal(stepNodeReady("active", null, noCount), true);
+  assert.equal(stepNodeReady("active", "working", { expectedCount: 12 }), true);
+  // AI 写好、人来填的清单：第一轮已写出文件后，即使第二轮在重渲也不把入口藏回去；目录型落点（papers/）不走这条
+  assert.equal(
+    stepNodeReady("active", "working", { title: "换原图与申请转载许可", hitCount: 1 }),
+    true,
+  );
+  assert.equal(
+    stepNodeReady("active", "working", { title: "填作者、单位与投稿声明", hitCount: 1 }),
+    true,
+  );
+  assert.equal(
+    stepNodeReady("active", "working", { title: "补充遗漏的文献", hitCount: 30 }),
+    false,
+  );
+  assert.equal(
+    stepNodeReady("pending", null, { title: "换原图与申请转载许可", hitCount: 1 }),
+    false,
+  );
   // 未就绪的三种：没开工、在出字、在等确认
   assert.equal(stepNodeReady("pending", null, noCount), false);
   assert.equal(stepNodeReady("active", "working", noCount), false);
@@ -118,7 +137,9 @@ test("压暗与就绪是同一口径的反面：就绪的行不压暗", () => {
     ["review", null, false],
     ["done", null, false],
     ["active", "done", false],
+    ["active", null, false],
     ["active", "working", true],
+    ["active", "confirm", true],
     ["pending", null, true],
   ] as const) {
     assert.equal(
@@ -218,6 +239,17 @@ test("AI 写好、人来填的清单：给「打开 / 交给 AI」，不给「�
   ] as const) {
     const h = humanState({ title, timing: "after", target });
     assert.deepEqual(stepNodeAction(humanNode(h), ctx({ runStatus: "review" })), { kind: "edit-handback" }, title);
+    // CLI 跑完这一轮留在提示符上（active + attention=null）时同样就绪，不再灰着丢入口（2026-11-14 HER 润色实测）
+    assert.deepEqual(
+      stepNodeAction(humanNode(h), ctx({ runStatus: "active", agentAttention: null })),
+      { kind: "edit-handback" },
+      `${title} active/idle`,
+    );
+    assert.deepEqual(
+      stepNodeAction(humanNode({ ...h, hitCount: 1 }), ctx({ runStatus: "active", agentAttention: "working" })),
+      { kind: "edit-handback" },
+      `${title} hitCount=1`,
+    );
     assert.equal(stepNodeAction(humanNode(h, { done: true }), ctx({ runStatus: "review" })), null);
   }
   // 普通带落点的交付照旧

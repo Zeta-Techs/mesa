@@ -73,13 +73,22 @@ export function hasLitLibrary(litSource: string | undefined): boolean {
 export function stepNodeReady(
   runStatus: StepRunStatus,
   agentAttention: AgentAttention,
-  human: { expectedCount?: number },
+  human: { title?: string; expectedCount?: number; hitCount?: number },
 ): boolean {
+  const agentBusy = agentAttention === "working" || agentAttention === "confirm";
+  // AI 写好、人来填的清单（figure-permissions.md / declarations.md 等）：文件已落盘就可点开填，
+  // 不因 AI 正在跑下一轮重渲而把清单藏回去；目录型落点（papers/）不走这条，免得精读开工前就被上一步 PDF 点亮。
+  const handbackWritten =
+    runStatus !== "pending" &&
+    Boolean(human.title && handbackTask(human.title)) &&
+    (human.hitCount ?? 0) > 0;
   return (
     runStatus === "review" ||
     runStatus === "done" ||
-    agentAttention === "done" ||
-    human.expectedCount != null
+    // CLI 跑完这一轮留在提示符上时 runStatus 仍是 active、stepAttention 返回 null（与 buildStepFlow agentIdle / reviewActionVisible 同口径）
+    (runStatus === "active" && !agentBusy) ||
+    human.expectedCount != null ||
+    handbackWritten
   );
 }
 
@@ -92,7 +101,7 @@ export function stepNodeReady(
 export function inlineDecisionListVisible(
   runStatus: StepRunStatus,
   agentAttention: AgentAttention,
-  human: { expectedCount?: number },
+  human: { title?: string; expectedCount?: number; hitCount?: number },
 ): boolean {
   return runStatus !== "pending" || stepNodeReady(runStatus, agentAttention, human);
 }
@@ -104,7 +113,7 @@ export function inlineDecisionListVisible(
 export function stepNodeWaiting(
   runStatus: StepRunStatus,
   agentAttention: AgentAttention,
-  human: Pick<HumanTaskStateDto, "timing" | "title" | "expectedCount">,
+  human: Pick<HumanTaskStateDto, "timing" | "title" | "expectedCount" | "hitCount">,
   done: boolean,
 ): boolean {
   return (

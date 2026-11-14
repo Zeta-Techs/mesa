@@ -95,6 +95,7 @@ import {
   isCitationStyleTask,
   journalAsk,
   parseTargetJournal,
+  STYLE_FAMILY_LABEL,
   styleFamilyOf,
   targetJournalDoc,
   topJournals,
@@ -763,7 +764,7 @@ export default function StepFlow({
    *  这里不再留第二份。 */
   /** after 档事项的就绪口径与压暗口径**同一出处**（见 step-node-actions.ts）：
    *  分叉就会出现「压暗的行里躺着可点的按钮」 */
-  const afterReady = (h: { expectedCount?: number }) =>
+  const afterReady = (h: { title?: string; expectedCount?: number; hitCount?: number }) =>
     stepNodeReady(runStatus, agentAttention, h);
   /** 「核对待确认篇目」开工后就挂清单（检索中途写出的待确认也能先点）；没开工时还没有清单，同其他收尾事项一样压暗（2026-11-09 HER 实测） */
   const pendingRowLive = runStatus !== "pending";
@@ -835,11 +836,14 @@ export default function StepFlow({
   const [decisionNote, setDecisionNote] = useState<string | null>(null);
   /** 「打开清单 / 打开填写」展开的是哪一行（按事项标题） */
   const [editOpen, setEditOpen] = useState<string | null>(null);
+  /** 打开清单/填写后未点「交给 AI」就勾了完成框：留一行提醒补交回，防误以为勾选会自动让 AI 重渲 */
+  const [unhandedTitle, setUnhandedTitle] = useState<string | null>(null);
   const [handbackNote, setHandbackNote] = useState<{ title: string; text: string } | null>(null);
   const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(new Map());
   const [citeOpen, setCiteOpen] = useState<string | null>(null);
   const [citeBusy, setCiteBusy] = useState(false);
   const [citeNote, setCiteNote] = useState<string | null>(null);
+  const [currentCiteFamily, setCurrentCiteFamily] = useState<StyleFamily | null>(null);
 
   const [journals, setJournals] = useState<{ name: string; count: number }[] | null>(null);
   const [journalName, setJournalName] = useState("");
@@ -1545,8 +1549,8 @@ export default function StepFlow({
   /** 这一步的文件放在哪：工作区还在用工作区（AI 写在那里，人改完 AI 接着用），否则用项目根 */
   const stepFileRoot = ws?.worktreePath ?? projectPath;
 
-  /** 「交给 AI」：接回这一步原来的对话，把话发过去（同「让 Agent 按决定继续」） */
-  async function handBack(title: string, target: string) {
+  /** 「交给 AI」：接回这一步原来的对话，把话发过去（同「让 Agent 按决定继续」）；发完收起面板并推进到下一项 */
+  async function handBack(title: string, target: string, markDoneTask?: { title: string; done: boolean }) {
     const task = handbackTask(title);
     if (!ws || !task) return;
     setHandbackNote(null);
@@ -1556,6 +1560,12 @@ export default function StepFlow({
         resumeSession: true,
         stepLaunch: resumeLaunch,
       });
+      setEditOpen(null);
+      setUnhandedTitle(null);
+      if (markDoneTask && !markDoneTask.done) {
+        const matched = states?.find((row) => row.step === step.name && row.title === markDoneTask.title);
+        if (matched && !matched.done) void toggle(matched, true);
+      }
       setPendingTerminal(req);
       setPage("terminal");
     } catch (reason) {
@@ -1622,6 +1632,9 @@ export default function StepFlow({
         citationRerenderPrompt(ask),
         { autoStart: true, resumeSession: true, stepLaunch: resumeLaunch },
       );
+      setCiteOpen(null);
+      const citeHuman = states?.find((row) => row.step === step.name && isCitationStyleTask(row.title));
+      if (citeHuman && !citeHuman.done) void toggle(citeHuman, true);
       setPendingTerminal(req);
       setPage("terminal");
     } catch (reason) {
@@ -1653,18 +1666,40 @@ export default function StepFlow({
     return null;
   }
 
+  const stepHasCitationTask = (step.humanTasks ?? []).some((task) => isCitationStyleTask(task.title));
+  useEffect(() => {
+    if (!stepHasCitationTask || runStatus === "pending") {
+      setCurrentCiteFamily(null);
+      return;
+    }
+    let stale = false;
+    void readStyleFamily().then((family) => {
+      if (!stale) setCurrentCiteFamily(family);
+    });
+    void loadTargetJournal();
+    if (citeWant.current !== null && agentAttention !== "working" && agentAttention !== "confirm") {
+      void verifyCitationStyle();
+    }
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepHasCitationTask, ws?.worktreePath, projectPath, ledgerRefreshKey]);
+
   /** 人回到本页时核对：想要的样式和稿子实际用的对不对得上。 */
   async function verifyCitationStyle() {
     const before = citeBefore.current;
     const want = citeWant.current;
     if (want === null) return; // 没选过，不打扰
     const now = await readStyleFamily();
+    setCurrentCiteFamily(now);
     if (now === null) {
       setCiteNote("还没找到 manuscript/citation.csl——样式可能没落到文件上，回对话里问一句再渲。");
       return;
     }
+    const nowLabel = STYLE_FAMILY_LABEL[now];
     if (want !== null && want.family === null) {
-      setCiteNote(`样式文件已存在（${now}）。按期刊的样式请确认 csl 与该刊作者须知一致。`);
+      setCiteNote(`样式文件已存在（${nowLabel}）。按期刊的样式请确认 csl 与该刊作者须知一致。`);
       return;
     }
     if (now === before && now !== want.family) {
@@ -1672,7 +1707,7 @@ export default function StepFlow({
       return;
     }
     if (now !== want.family) {
-      setCiteNote(`样式文件现在是 ${now}，和这一步要的不一致，回对话里核对一下。`);
+      setCiteNote(`样式文件现在是 ${nowLabel}，和这一步要的不一致，回对话里核对一下。`);
       return;
     }
     setCiteNote(null);
@@ -2107,28 +2142,20 @@ export default function StepFlow({
         const human = node.human!;
         const task = handbackTask(human.title)!;
         const open = editOpen === human.title;
+        // 主干当前节点或已展开时，操作栏就地挂在标题正下方（pl-6），右缘不重复摆第二套
+        if (node.section === "main" && (node.key === flow.currentKey || open)) {
+          return null;
+        }
         return (
-          <span className="flex shrink-0 items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setEditOpen(open ? null : human.title)}
-              aria-expanded={open}
-              title={`在这一行下面展开 ${human.target}`}
-              className={outline}
-            >
-              {open ? "收起" : task.open}
-            </button>
-            {ws && (
-              <button
-                type="button"
-                onClick={() => void handBack(human.title, human.target ?? "")}
-                title="回到这一步原来的对话，让 AI 按你改好的内容接着做"
-                className={outline}
-              >
-                {task.handback}
-              </button>
-            )}
-          </span>
+          <button
+            type="button"
+            onClick={() => setEditOpen(open ? null : human.title)}
+            aria-expanded={open}
+            title={`在这一行下面展开 ${human.target}`}
+            className={outline}
+          >
+            {open ? "收起" : task.open}
+          </button>
         );
       }
       case "open-field-docs":
@@ -2441,7 +2468,18 @@ export default function StepFlow({
                   !node.done &&
                   (decisionOpen.get(human.title) ?? 1) > 0)
               }
-              onChange={(checked) => void toggle(human, checked)}
+              onChange={(checked) => {
+                if (checked && editOpen === human.title) {
+                  setEditOpen(null);
+                  if (ws && handbackTask(human.title)) setUnhandedTitle(human.title);
+                } else if (!checked && unhandedTitle === human.title) {
+                  setUnhandedTitle(null);
+                }
+                if (checked && isCitationStyleTask(human.title)) {
+                  setCiteOpen(null);
+                }
+                void toggle(human, checked);
+              }}
               title={
                 isInlineDecisionTaskTitle(human.title) &&
                 !node.done &&
@@ -2451,8 +2489,12 @@ export default function StepFlow({
                     ? `还有 ${decisionOpen.get(human.title)} 条没决定，逐条决定完才能勾`
                     : "等 AI 写出要你裁决的清单，逐条决定完才能勾"
                   : node.done
-                    ? "已完成；取消勾选会保留为未完成，需重新勾选确认"
-                    : "勾选 = 人工确认完成（系统不再追问）"
+                    ? "已完成；取消勾选可重新打开操作"
+                    : isCitationStyleTask(human.title)
+                      ? "勾选 = 保持当前引用样式，跳过这一项"
+                      : handbackTask(human.title)
+                        ? "勾选 = 标为已办完或暂不处理（不会自动触发 AI；要填内容或让 AI 更新成稿请用下方按钮）"
+                        : "勾选 = 人工确认完成（系统不再追问）"
               }
             />
             </span>
@@ -2547,9 +2589,9 @@ export default function StepFlow({
           <span aria-hidden className="min-w-0 flex-1" />
           {nodeActions(node)}
         </div>
-        {node.kind === "human" && isCitationStyleTask(human?.title) && ws && (
+        {node.kind === "human" && human && isCitationStyleTask(human.title) && ws && !node.done && afterReady(human) && (
           <div className="ml-6 mt-1.5">
-            <div className="flex flex-wrap items-center gap-1">
+            <div className="flex flex-wrap items-center gap-1.5">
               {CITATION_STYLE_CHOICES.map((item) => (
                 <button
                   key={item.id}
@@ -2561,10 +2603,10 @@ export default function StepFlow({
                     // 选过样式的人再打开这一排时，顺便核对落到 csl 上没有。
                     if (next !== null) void verifyCitationStyle();
                   }}
-                  className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
+                  className={`rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-50 ${
                     citeOpen === item.id
-                      ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
-                      : "bg-inset text-l3 hover:bg-hover hover:text-l1"
+                      ? "border-cta-bd bg-cta-pill text-cta-pill-text"
+                      : "border-field bg-raised text-l2 hover:bg-hover hover:text-l1"
                   }`}
                 >
                   {item.label}
@@ -2581,17 +2623,30 @@ export default function StepFlow({
                   void openJournals();
                   void loadTargetJournal();
                 }}
-                className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
+                className={`rounded-full border px-2.5 py-0.5 text-xs disabled:opacity-50 ${
                   citeOpen === "journal"
-                    ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
-                    : "bg-inset text-l3 hover:bg-hover hover:text-l1"
+                    ? "border-cta-bd bg-cta-pill text-cta-pill-text"
+                    : "border-field bg-raised text-l2 hover:bg-hover hover:text-l1"
                 }`}
               >
                 按期刊
               </button>
+              <span aria-hidden className="h-3 w-px bg-hairline" />
+              <button
+                type="button"
+                disabled={citeBusy}
+                onClick={() => {
+                  setCiteOpen(null);
+                  void toggle(human, true);
+                }}
+                title="沿用现在的引用样式，进入下一项"
+                className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              >
+                保持当前，不换
+              </button>
             </div>
             {citeOpen && citeOpen !== "journal" && (
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {CITATION_STYLE_CHOICES.find((item) => item.id === citeOpen)?.forms.map((form) => (
                   <button
                     key={form.id}
@@ -2603,7 +2658,7 @@ export default function StepFlow({
                         label: form.label,
                       })
                     }
-                    className="rounded-sm bg-inset px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                    className="rounded-sm border border-field bg-raised px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                   >
                     {form.label}
                   </button>
@@ -2611,7 +2666,7 @@ export default function StepFlow({
               </div>
             )}
             {citeOpen === "journal" && draftJournal && !journalSwap && (
-              <div className="mt-1 flex flex-wrap gap-1">
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <button
                   type="button"
                   disabled={citeBusy}
@@ -2621,7 +2676,7 @@ export default function StepFlow({
                       source: "沿用已定",
                     }, { family: null, label: draftJournal })
                   }
-                  className="rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+                  className="rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110 disabled:opacity-50"
                 >
                   沿用已定：{draftJournal}
                 </button>
@@ -2632,7 +2687,7 @@ export default function StepFlow({
                     setJournalSwap(true);
                     void openJournals();
                   }}
-                  className="rounded-sm bg-inset px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  className="rounded-sm border border-field bg-raised px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
                 >
                   更换期刊
                 </button>
@@ -2640,7 +2695,7 @@ export default function StepFlow({
             )}
             {citeOpen === "journal" && (!draftJournal || journalSwap) && (
               <form
-                className="mt-1 max-w-md"
+                className="mt-1.5 max-w-md"
                 onSubmit={(event) => {
                   event.preventDefault();
                   void chooseCitationStyle(journalAsk(journalName), {
@@ -2661,7 +2716,7 @@ export default function StepFlow({
                           source: "本次选定",
                         }, { family: null, label: item.name })
                       }
-                      className="rounded-sm bg-inset px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                      className="rounded-sm border border-field bg-raised px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                     >
                       {item.name}
                       <span className="ml-1 text-l4">{item.count}</span>
@@ -2678,20 +2733,28 @@ export default function StepFlow({
                   <button
                     type="submit"
                     disabled={citeBusy || !journalName.trim()}
-                    className="rounded-sm bg-inset px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                    className="rounded-sm border border-field bg-raised px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                   >
                     用这个期刊
                   </button>
                 </div>
               </form>
             )}
-            {!node.done && !citeOpen && (
+            {!citeOpen && (
               <p className="mt-1 text-micro text-l4">
-                现在是方括号编号 [1]。不换就勾掉这一行；想换就点一种，AI 回原对话重渲 PDF、Word 和带引用域的 Word。
+                当前：
+                {draftJournal
+                  ? `${currentCiteFamily ? `${STYLE_FAMILY_LABEL[currentCiteFamily]} · ` : ""}按《${draftJournal}》`
+                  : currentCiteFamily
+                    ? STYLE_FAMILY_LABEL[currentCiteFamily]
+                    : "方括号编号 [1]"}
+                。点选新样式后，AI 回原对话重渲 PDF、Word 和带引用域的 Word。
               </p>
             )}
-            {citeNote && <p className="mt-1 text-micro text-l4">{citeNote}</p>}
           </div>
+        )}
+        {node.kind === "human" && isCitationStyleTask(human?.title) && citeNote && (
+          <p className="ml-6 mt-1 text-micro text-l4">{citeNote}</p>
         )}
         {/* 当前节点的引导与展开操作：种子 chips / 落点说明。
             例外：评审节点的验收引导不看「当前」身份（v3.97）——hint 已按 runStatus 门控
@@ -3453,37 +3516,6 @@ export default function StepFlow({
               {decisionNote && <InlineNotice tone="err" size="micro" className="mt-1">{decisionNote}</InlineNotice>}
             </div>
           )}
-        {node.kind === "human" && human && handbackNote?.title === human.title && (
-          <div className="mt-1 pl-6">
-            <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
-          </div>
-        )}
-        {node.kind === "human" &&
-          human?.target &&
-          !node.done &&
-          editOpen === human.title &&
-          handbackTask(human.title) && (
-            <div className="mt-1.5 ml-6 rounded-md border border-hairline px-2.5 py-2">
-              {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
-                  许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
-              {handbackTask(human.title)!.panel === "permissions" ? (
-                <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
-              ) : (
-                <DeclarationsForm
-                  root={stepFileRoot}
-                  rel={human.target}
-                  fallback={
-                    <div className="flex h-[24rem] flex-col overflow-hidden rounded-sm">
-                      <ProjectFilePreview
-                        path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
-                        root={stepFileRoot}
-                      />
-                    </div>
-                  }
-                />
-              )}
-            </div>
-          )}
         {!dense &&
           node.kind === "human" &&
           human &&
@@ -3493,8 +3525,10 @@ export default function StepFlow({
           !isInlineDecisionTaskTitle(human.title) &&
           !isCitationStyleTask(human.title) &&
           (isCurrent ||
+            (!node.done && editOpen === human.title) ||
             (!node.done &&
               human.timing === "after" &&
+              !handbackTask(human.title) &&
               afterReady(human))) && (
             <div className="mt-1 pl-6 text-micro leading-5 text-l4">
               {isPaywallTaskTitle(human.title) ? (
@@ -3753,6 +3787,125 @@ export default function StepFlow({
                   )}
                 </div>
               )}
+            </div>
+          )}
+        {!dense &&
+          node.kind === "human" &&
+          human &&
+          !node.done &&
+          handbackTask(human.title) &&
+          afterReady(human) &&
+          (isCurrent || editOpen === human.title) &&
+          (() => {
+            const task = handbackTask(human.title)!;
+            const open = editOpen === human.title;
+            const skipLabel = task.panel === "permissions" ? "暂不处理，跳过" : "暂不填写，跳过";
+            return (
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 pl-6">
+                <button
+                  type="button"
+                  onClick={() => setEditOpen(open ? null : human.title)}
+                  aria-expanded={open}
+                  title={`在这一行下面展开 ${human.target}`}
+                  className={
+                    !open
+                      ? "shrink-0 rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110"
+                      : "shrink-0 rounded-sm border border-field px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  }
+                >
+                  {open ? "收起" : task.open}
+                </button>
+                {ws && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void handBack(human.title, human.target ?? "", {
+                        title: human.title,
+                        done: node.done,
+                      })
+                    }
+                    title="回到这一步原来的对话，让 AI 按你改好的内容更新成稿并重渲"
+                    className={
+                      open
+                        ? "shrink-0 rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110"
+                        : "shrink-0 rounded-sm border border-field px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                    }
+                  >
+                    {task.handback}
+                  </button>
+                )}
+                <span aria-hidden className="h-3 w-px bg-hairline" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditOpen((cur) => (cur === human.title ? null : cur));
+                    setUnhandedTitle((cur) => (cur === human.title ? null : cur));
+                    void toggle(human, true);
+                  }}
+                  title="先跳过这一项，进入下一步；之后随时可取消勾选再回来处理"
+                  className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                >
+                  {skipLabel}
+                </button>
+              </div>
+            );
+          })()}
+        {node.kind === "human" && human && handbackNote?.title === human.title && (
+          <div className="mt-1 pl-6">
+            <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
+          </div>
+        )}
+        {node.kind === "human" &&
+          human?.target &&
+          !node.done &&
+          editOpen === human.title &&
+          handbackTask(human.title) && (
+            <div className="mt-1.5 ml-6 rounded-md border border-hairline px-2.5 py-2">
+              {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
+                  许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
+              {handbackTask(human.title)!.panel === "permissions" ? (
+                <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
+              ) : (
+                <DeclarationsForm
+                  root={stepFileRoot}
+                  rel={human.target}
+                  fallback={
+                    <div className="flex h-[24rem] flex-col overflow-hidden rounded-sm">
+                      <ProjectFilePreview
+                        path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${human.target}`}
+                        root={stepFileRoot}
+                      />
+                    </div>
+                  }
+                />
+              )}
+            </div>
+          )}
+        {node.kind === "human" &&
+          human &&
+          node.done &&
+          unhandedTitle === human.title &&
+          ws &&
+          handbackTask(human.title) && (
+            <div className="mt-1 flex flex-wrap items-center gap-2 pl-6 text-micro text-l3">
+              <span>已标为完成；若刚改过内容，需交给 AI 才会写进成稿并重渲。</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setUnhandedTitle(null);
+                  void handBack(human.title, human.target ?? "");
+                }}
+                className="shrink-0 rounded-sm border border-cta-bd bg-cta-pill px-1.5 py-0.5 text-xs text-cta-pill-text hover:brightness-110"
+              >
+                {handbackTask(human.title)!.handback}
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnhandedTitle(null)}
+                className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+              >
+                不用更新成稿
+              </button>
             </div>
           )}
       </li>
