@@ -60,7 +60,7 @@ export function openOnboardingGuide() {
   s.setOnboardingWizardOpen(true);
 }
 
-/** 进度环：底圈 field 色、完成段品牌色（与上下文圆环同一画法） */
+/** 进度环：底圈 field 色、完成段品牌色（与上下文圆环同一画法，完成段平滑过渡） */
 export function OnboardingRing({
   done,
   total,
@@ -72,23 +72,25 @@ export function OnboardingRing({
 }) {
   const r = 6;
   const c = 2 * Math.PI * r;
-  const ratio = total > 0 ? Math.min(1, done / total) : 0;
+  const ratio = total > 0 ? Math.min(1, Math.max(0, done / total)) : 0;
   return (
     <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" className="shrink-0 text-cta">
       <circle cx="8" cy="8" r={r} fill="none" stroke="var(--color-field)" strokeWidth="2" />
-      {ratio > 0 && (
-        <circle
-          cx="8"
-          cy="8"
-          r={r}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeDasharray={`${c * ratio} ${c}`}
-          strokeLinecap="round"
-          transform="rotate(-90 8 8)"
-        />
-      )}
+      <circle
+        cx="8"
+        cy="8"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeDasharray={c}
+        strokeDashoffset={c * (1 - ratio)}
+        strokeLinecap="round"
+        transform="rotate(-90 8 8)"
+        className={`transition-[stroke-dashoffset,opacity] duration-300 ease-[var(--ccode-motion-ease)] ${
+          ratio > 0 ? "opacity-100" : "opacity-0"
+        }`}
+      />
     </svg>
   );
 }
@@ -137,8 +139,8 @@ export function OnboardingHost({ ready }: { ready: boolean }) {
     useAppStore.getState().setOnboardingWizardOpen(true);
   }, [ready, state.status, state.welcomed, updateOnboarding]);
 
-  // 引导进行中、还没有连接时，探测已装 Agent 的官方账号登录状态（只读 auth 文件）；向导开着也探
-  // （接好之后回来点「再接一个」要用）。窗口回前台再探一次，在终端里登录完回来就能认出来
+  // 引导进行中、还没有连接时，或向导开着时：探测已装 Agent 的官方账号登录状态（只读 auth 文件）；
+  // 窗口回前台先刷新已装 Agent 检测（外部终端刚装完 CLI 切回来即自动认出），再复查官方账号登录态
   const probeKey =
     ready && facts && (wizardOpen || (state.status === "active" && facts.profileCount === 0))
       ? facts.installedAgents.join(",")
@@ -149,18 +151,31 @@ export function OnboardingHost({ ready }: { ready: boolean }) {
       setOfficial({});
       return;
     }
-    if (!probeKey) return;
     let cancelled = false;
-    const run = () => {
-      void probeOfficial(probeKey.split(",")).then((probe) => {
+    const probeCurrent = () => {
+      const ids = probeKey.split(",").filter(Boolean);
+      if (!ids.length) {
+        setOfficial({});
+        return;
+      }
+      void probeOfficial(ids).then((probe) => {
         if (!cancelled) setOfficial(probe);
       });
     };
-    run();
-    window.addEventListener("focus", run);
+    probeCurrent();
+    const onFocus = () => {
+      void useAppStore
+        .getState()
+        .loadAll()
+        .catch(() => {})
+        .finally(() => {
+          if (!cancelled) probeCurrent();
+        });
+    };
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
-      window.removeEventListener("focus", run);
+      window.removeEventListener("focus", onFocus);
     };
   }, [probeKey]);
 

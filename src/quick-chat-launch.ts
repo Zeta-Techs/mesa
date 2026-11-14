@@ -114,14 +114,22 @@ function quickChatDefaultPick(): QuickChatChoice & { agentId: string } {
   });
 }
 
-/** 开一个空白随手聊（或切到还没说过话的那个）。选谁见 pickQuickChatDefault */
-export async function openQuickChat(prompt?: string): Promise<void> {
+/** 开一个空白随手聊（或切到还没说过话的那个）。选谁见 pickQuickChatDefault；
+ *  传入 profile 时指定用该连接开聊（上手引导多连接试聊） */
+export async function openQuickChat(
+  prompt?: string,
+  profile?: { id: string; agent: string; models?: readonly string[] | null },
+): Promise<void> {
   for (const key of RETIRED_KEYS) {
     try {
       localStorage.removeItem(key);
     } catch {
       /* 忽略 */
     }
+  }
+  if (profile) {
+    await openBlankChat(chatChoiceForProfile(profile), true, prompt);
+    return;
   }
   await openBlankChat(quickChatDefaultPick(), false, prompt);
 }

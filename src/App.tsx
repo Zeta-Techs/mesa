@@ -2219,8 +2219,8 @@ function App() {
                         type="button"
                         onClick={() => setOnboardingWizardOpen(true)}
                         aria-label="上手引导"
-                        className={`relative flex w-full items-center rounded-md text-left transition-colors ${
-                          collapsed ? "h-8 justify-center" : "gap-2 px-2.5 py-1.5"
+                        className={`group relative flex w-full items-center rounded-md text-left transition-colors ${
+                          collapsed ? "h-8 justify-center" : "gap-2.5 px-2.5 py-1.5"
                         } ${
                           onboardingRail.open
                             ? "bg-rail-sel text-l1"
@@ -2234,19 +2234,27 @@ function App() {
                           size={20}
                         />
                         {!collapsed && (
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-baseline justify-between gap-2 text-sm">
-                              <span className="truncate">上手引导</span>
-                              <span className="shrink-0 text-micro tabular-nums text-l3">
-                                {onboardingRail.done}/{onboardingRail.total}
+                          <>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-baseline justify-between gap-2 text-sm">
+                                <span className="truncate font-medium">上手引导</span>
+                                <span className="shrink-0 text-micro tabular-nums text-l3">
+                                  {onboardingRail.done}/{onboardingRail.total}
+                                </span>
                               </span>
+                              {onboardingRail.next && (
+                                <span className="block truncate text-micro text-l3">
+                                  下一步：{onboardingRail.next}
+                                </span>
+                              )}
                             </span>
-                            {onboardingRail.next && (
-                              <span className="block truncate text-micro text-l3">
-                                下一步：{onboardingRail.next}
-                              </span>
-                            )}
-                          </span>
+                            <ChevronRight
+                              size={13}
+                              strokeWidth={1.8}
+                              aria-hidden="true"
+                              className="shrink-0 text-l4 opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100"
+                            />
+                          </>
                         )}
                       </button>
                     </RailTooltip>

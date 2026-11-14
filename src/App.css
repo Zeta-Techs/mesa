@@ -1640,6 +1640,57 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   animation: ccode-sheet-out-left 150ms var(--ccode-motion-spring) forwards;
 }
 
+/* 全屏上手向导（OnboardingWizard）：画布底第一帧即不透明落定，避免打开时与底下侧栏/页面半透明叠影；
+   入场动效作用在内容框架层（整数像素微上浮 + 淡入，不缩放文字）；纯关闭时整层逆向淡出，跳转动作走 closeNow 即时卸载 */
+@keyframes ccode-wizard-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ccode-wizard-step-forward {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes ccode-wizard-step-backward {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.ccode-wizard-enter {
+  animation: ccode-wizard-enter 180ms var(--ccode-motion-spring);
+}
+
+.ccode-wizard-shell.ccode-exiting {
+  animation: ccode-fade-out 140ms var(--ccode-motion-ease) forwards;
+}
+
+.ccode-wizard-step[data-dir="forward"] {
+  animation: ccode-wizard-step-forward 180ms var(--ccode-motion-spring);
+}
+
+.ccode-wizard-step[data-dir="backward"] {
+  animation: ccode-wizard-step-backward 180ms var(--ccode-motion-spring);
+}
+
 /* 沉浸阅读区侧栏收起滑动（ReaderOverlay 左右栏）：整块（栏 + 分隔条）负 margin
    滑出窗口外——栏体宽度全程不变，Monaco/xterm 宿主零重排，PDF 栏的适配重排
    由 PdfContinuousView 的停稳防抖收口。visibility 参与过渡：收起方向在滑动全程
@@ -2099,7 +2150,11 @@ button.ccode-nav-island-announce:hover {
   .ccode-sheet-right,
   .ccode-sheet-left,
   .ccode-sheet-right.ccode-exiting,
-  .ccode-sheet-left.ccode-exiting {
+  .ccode-sheet-left.ccode-exiting,
+  .ccode-wizard-enter,
+  .ccode-wizard-shell.ccode-exiting,
+  .ccode-wizard-step[data-dir="forward"],
+  .ccode-wizard-step[data-dir="backward"] {
     animation: none;
   }
 }

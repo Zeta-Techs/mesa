@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_ONBOARDING,
+  ONBOARDING_CHAT_STARTERS,
   ONBOARDING_STEPS,
+  SAMPLE_PROMPT,
+  compatibleGatewaysForAgent,
   completionNotice,
   connectStage,
   decideInitialStatus,
@@ -13,6 +16,7 @@ import {
   onboardingProgress,
   parseOnboarding,
   serializeOnboarding,
+  stepTransitionDir,
   tipsNotice,
   type OnboardingFacts,
 } from "../src/onboarding.ts";
@@ -116,4 +120,65 @@ test("旧存档（七步时代）：终端 / 标题确认沿用为小提示已�
     welcomed: true,
     acks: { terminal: true, naming: true },
   });
+});
+
+test("stepTransitionDir：前进为 forward、回退为 backward、同屏为 none", () => {
+  assert.equal(stepTransitionDir("connect", "connect"), "none");
+  assert.equal(stepTransitionDir("connect", "chat"), "forward");
+  assert.equal(stepTransitionDir("connect", "project"), "forward");
+  assert.equal(stepTransitionDir("project", "chat"), "backward");
+  assert.equal(stepTransitionDir("chat", "connect"), "backward");
+});
+
+test("试聊预设：首条与默认试问句一致，每条有名称与正文", () => {
+  assert.equal(ONBOARDING_CHAT_STARTERS[0]?.prompt, SAMPLE_PROMPT);
+  assert.ok(ONBOARDING_CHAT_STARTERS.length >= 3);
+  for (const s of ONBOARDING_CHAT_STARTERS) {
+    assert.ok(s.id && s.label && s.prompt.trim().length > 10);
+  }
+});
+
+test("compatibleGatewaysForAgent：按协议槽匹配未绑定的已有网关，过滤已绑定、Cursor 与非对话模型", () => {
+  const gateways = [
+    {
+      id: "gw-multi",
+      name: "智谱 GLM",
+      keyHint: "8a2f",
+      slots: {
+        anthropic: "https://open.bigmodel.cn/api/anthropic",
+        openai: "https://open.bigmodel.cn/api/paas/v4",
+        responses: "https://open.bigmodel.cn/api/v1",
+      },
+      models: [
+        { id: "glm-5.3", status: "available" },
+        { id: "cogview-4", status: "available" },
+        { id: "glm-old", status: "stale" },
+      ],
+    },
+    {
+      id: "gw-moonshot",
+      name: "Moonshot",
+      slots: { openai: "https://api.moonshot.cn/v1" },
+      models: [{ id: "kimi-k2.5", status: "available" }],
+    },
+  ];
+  const profiles = [{ agent: "claude-code", gatewayId: "gw-multi" }];
+
+  // claude-code 已绑 gw-multi，不再重复推荐；gw-moonshot 无 anthropic 槽，也不出现
+  assert.deepEqual(compatibleGatewaysForAgent("claude-code", gateways, profiles), []);
+
+  // codex 走 responses 槽：命中 gw-multi，且过滤掉出图模型 cogview-4 和 stale 模型
+  const codexMatches = compatibleGatewaysForAgent("codex", gateways, profiles);
+  assert.equal(codexMatches.length, 1);
+  assert.equal(codexMatches[0]?.gateway.id, "gw-multi");
+  assert.equal(codexMatches[0]?.slot, "responses");
+  assert.deepEqual(codexMatches[0]?.models, ["glm-5.3"]);
+
+  // kimi 对 moonshot.cn 自动选 kimi 协议
+  const kimiMatches = compatibleGatewaysForAgent("kimi", gateways, profiles);
+  assert.equal(kimiMatches.length, 2);
+  assert.equal(kimiMatches.find((m) => m.gateway.id === "gw-moonshot")?.protocol, "kimi");
+
+  // cursor 不接第三方网关
+  assert.deepEqual(compatibleGatewaysForAgent("cursor", gateways, profiles), []);
 });

@@ -304,16 +304,16 @@ components/ResourceListSection.tsx  # 项目卡资源面板（ProjectGroup，默
   toast.ts                   # 右下角浮动提示总线：toast(msg, tone, { actions, sticky, key }) / dismissToast(key)；带动作按钮、
 exit-animation.ts          # 弹层退场与折叠动效（apple-motion 手感批 2026-10-12，约束 design-system「动效口径」）：useExitRender（open→false 后保持挂载 150ms 播 ccode-exiting 逆向退场、退场中重开取消卸载、closeNow 给 commit 路径选中即散）、useAnimatedDismiss（父级控制挂载的弹层把纯 dismiss 推迟成先退场再 onClose）、PageFrame Collapse 五阶段（0fr/1fr 行轨、open 停稳不裁切焦点环）；reduced-motion 时长取 0 立即卸载不留静态残影（Modal/命令面板/右键菜单/抽屉/灵动岛组件等共用；tests/exit-animation.test.ts）
                              #   常驻不自动消失、同 key 顶替旧的（上手引导「下一步」只留一条）。ToastHost 渲染，满员先挤会自动消失的
-  onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、
-                             #   进度/当前步、新完成集合、首次判定（有连接=老用户收起）、完成提示与「两个小提示」（终端 + 标题，acks 记已讲过，旧存档的终端 / 标题确认沿用）、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
-  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（自带拖动条 / 红绿灯让位，Esc = 稍后再说），三屏；接上 AI 一屏按数据落到「装 Agent（useAgentInstall + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm）/ 连接已添加」，连接已添加时每家已装且接好的 Agent 一张 BuiltinSkillsCard（内置技能没装全才出，人点「装给 X」才分发）；切步回顶 / 焦点归还 / 在途锁导航，项目一屏先问「你手上现在有什么活？」、三张整卡按回答排（已有文件夹 / 新建 / 示例，不标推荐），按需聊天说明（tests/onboarding-ui.test.ts）
+  onboarding.ts              # 上手引导纯逻辑（2026-10-20；2026-10-29 改三步）：三步表（connect / chat / project）与文案、完成判定（全由数据现算）、connectStage（接上 AI 一屏的子阶段）、stepTransitionDir（切步方向）、
+                             #   试聊场景预设（ONBOARDING_CHAT_STARTERS）、已有网关兼容匹配（compatibleGatewaysForAgent）、进度/当前步、新完成集合、首次判定、完成提示与「两个小提示」、localStorage ccode.onboarding 存取（tests/onboarding.test.ts）
+  components/OnboardingWizard.tsx # 全屏上手向导：覆盖标题栏的全窗口层（首帧实底 + 内容微上浮入场、方向感知切步过渡、跳转动作 closeNow 无叠影；Esc 避让展开下拉），三屏；接上 AI 一屏按数据落到「装 Agent（双列 AgentIcon 卡 + 复制命令 + 手动重检 + Node 一键装）/ 选官方账号或 API Key（GatewayQuickForm，支持展开安装其他 Agent）/ 连接已添加（可展开与收起再接一个）」，连接已添加时按需出 BuiltinSkillsCard；聊第一句支持切换连接、三套场景试问与就地改句发送；项目一屏三张整卡按回答排（tests/onboarding-ui.test.ts）
   connect-official.ts        # 向导的官方账号接入：probeOfficial（只读 official_account_status，ready / login / none）、connectOfficialAccount（一键加官方连接）、startOfficialLogin（开终端登录标签）
-  components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、官方账号探测（窗口回前台再探）、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
+  components/OnboardingGuide.tsx # 上手引导外壳：OnboardingHost（App 根部；首次判定、新装自动弹向导一次、窗口回前台重检已装 CLI 并复探官方账号、步骤完成提示与小提示）+ useOnboardingRail / OnboardingRing（平滑过渡进度环，侧栏行点开向导）+ openOnboardingGuide（帮助菜单 / ⌘K）
 components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：前端崩溃时显示错误栈而不是整窗白屏（webview 没有控制台可看的定位手段），componentDidCatch 经 log_event 落应用日志；「尝试恢复」清错误态重渲染
   agent-install.ts           # Agent 安装共用件：AgentCmdResult、diagnose / installToolHelp（isWindows 显式传参，连接页与向导共用）+ useAgentInstall（上手向导就地安装：install_method_preview 先亮命令、事件监听、装完 loadAll；连接页自己的安装 / 更新流程仍在 ProfilesPage）
   agent-update-ui.ts         # 连接页 Agent 更新状态纯逻辑（tests/agent-update-ui.test.ts）：左栏徽标流转（新版 → 更新中 → 已更新 / 已最新 / 失败）、组头右上角按钮与状态（首次检查中不闪「更新」、已最新隐藏、离线确认后不复现）及统一进度/结果卡标题
   agent-install-notes.ts     # 装 Agent 前后的 Windows 提醒（纯函数，tests 同名）：winget 依赖 VC++ 运行库会弹管理员确认的名单、winget 不走出网代理、Claude 缺 Git；winget 失败输出的中英文识别（diagnose 先调它）
-  components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：presetsForAgent 选预设 → probe_gateway_slot 测试 → saveGateway → bindGateway；原生回车提交、在途禁编辑 / 重复提交并通知向导锁导航；自定义端点 / 多槽位去网关库（tests/onboarding-ui.test.ts）
+  components/GatewayQuickForm.tsx # 上手向导里的精简「服务商 + API Key」接入：兼容已有网关免重贴密钥一键测试并绑定，或 MenuSelect 选预设 / 自填地址 → API Key（支持明文切换）→ 自动拉目录 → 单独测试连接或回车测试并保存；自定义多槽位去网关库（tests/onboarding-ui.test.ts）
   skill-preview.ts           # 技能页预览：SKILL.md 拆 frontmatter 字段 + 正文（正文 marked 渲染）（tests/skill-preview.test.ts）
   reasoning-effort.ts        # 网关思考档：逗号多选 + @开场默认；单词旧值=单档；状态栏当前档 currentEffort（屏上 > 本次覆盖 > 开场档）
                              # 与 PTY 输出认档 detectEffortInOutput（Claude Code 三种成句形态）；读回模型 detectModelInOutput（回显句）/

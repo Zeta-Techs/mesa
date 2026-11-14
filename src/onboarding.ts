@@ -8,6 +8,10 @@
  * 界面（全屏向导、侧栏进度行、完成提示）在 components/OnboardingGuide.tsx / OnboardingWizard.tsx。
  */
 
+import { AGENT_PROTOCOLS } from "./types.ts";
+import { slotForAgent, type GatewaySlotName } from "./gateway-slot.ts";
+import { modelKind } from "./model-kinds.ts";
+
 export type OnboardingStepId = "connect" | "chat" | "project";
 
 /** 小提示的确认键：终端那条用户真切过一次终端也记 */
@@ -140,6 +144,111 @@ export function connectStage(facts: OnboardingFacts): ConnectStage {
 /** 一键接入官方账号的按钮文案（向导、侧栏提示共用） */
 export function officialShortcutLabel(agentLabel: string): string {
   return `用 ${agentLabel} 官方账号`;
+}
+
+/** 切步方向：用于向导步骤过渡动画（初次或同屏为 none） */
+export function stepTransitionDir(
+  prev: OnboardingStepId,
+  next: OnboardingStepId,
+): "none" | "forward" | "backward" {
+  if (prev === next) return "none";
+  const from = ONBOARDING_STEPS.findIndex((s) => s.id === prev);
+  const to = ONBOARDING_STEPS.findIndex((s) => s.id === next);
+  if (from < 0 || to < 0 || from === to) return "none";
+  return to > from ? "forward" : "backward";
+}
+
+export const SAMPLE_PROMPT =
+  "用三句话说说你能怎么帮我做科研，比如读文献、整理数据、写论文。";
+
+export type OnboardingChatStarter = {
+  id: "overview" | "literature" | "data";
+  label: string;
+  prompt: string;
+};
+
+/** 第二屏「聊第一句」的场景预设（首条即默认试问句） */
+export const ONBOARDING_CHAT_STARTERS: readonly OnboardingChatStarter[] = [
+  {
+    id: "overview",
+    label: "科研能帮什么",
+    prompt: SAMPLE_PROMPT,
+  },
+  {
+    id: "literature",
+    label: "梳理论文脉络",
+    prompt: "我想快速摸清一个新课题近三年的核心文献脉络和研究空白，在 Mesa 里我们可以怎么配合一步步推进？",
+  },
+  {
+    id: "data",
+    label: "处理数据与作图",
+    prompt: "我手头有一份实验原始 CSV 表格需要清洗异常值并画统计图，你能帮我做哪些事、怎么保证数据不出错？",
+  },
+];
+
+export type CompatibleGatewayMatch<G = { id: string; name: string }> = {
+  gateway: G;
+  protocol: string | null;
+  slot: GatewaySlotName;
+  baseUrl: string;
+  models: string[];
+};
+
+/**
+ * 找出本地已有网关里可直接绑定给指定 Agent 的候选项（免重复贴 API Key）：
+ * - Cursor 只走自家账号，不匹配第三方网关；
+ * - 网关在该 Agent 所需协议槽上有地址，且当前尚未绑定给这家 Agent；
+ * - 模型列表自动剔除非对话模型（出图 / 向量等，防启动闸拦下）。
+ */
+export function compatibleGatewaysForAgent<
+  G extends {
+    id: string;
+    name: string;
+    noAuth?: boolean;
+    keyHint?: string | null;
+    slots?: Partial<Record<GatewaySlotName, string | null | undefined>>;
+    models?: readonly { id: string; status?: string }[];
+  },
+>(
+  agent: string,
+  gateways: readonly G[],
+  profiles: readonly { agent: string; gatewayId?: string | null }[],
+): CompatibleGatewayMatch<G>[] {
+  if (agent === "cursor") return [];
+  const spec = AGENT_PROTOCOLS[agent];
+  const out: CompatibleGatewayMatch<G>[] = [];
+  for (const gw of gateways) {
+    if (profiles.some((p) => p.agent === agent && p.gatewayId === gw.id)) continue;
+    let matched: { protocol: string | null; slot: GatewaySlotName; baseUrl: string } | null = null;
+    if (spec) {
+      const openaiUrl = gw.slots?.openai?.trim();
+      const anthropicUrl = gw.slots?.anthropic?.trim();
+      if (openaiUrl && (spec.options.includes("openai") || spec.options.includes("kimi"))) {
+        const protocol =
+          openaiUrl.includes("moonshot.cn") && spec.options.includes("kimi") ? "kimi" : "openai";
+        matched = { protocol, slot: "openai", baseUrl: openaiUrl };
+      } else if (anthropicUrl && spec.options.includes("anthropic")) {
+        matched = { protocol: "anthropic", slot: "anthropic", baseUrl: anthropicUrl };
+      }
+    } else {
+      const slot = slotForAgent(agent, null);
+      const url = gw.slots?.[slot]?.trim();
+      if (url) matched = { protocol: null, slot, baseUrl: url };
+    }
+    if (!matched) continue;
+    const models = (gw.models ?? [])
+      .filter((m) => m.status !== "stale" && modelKind(m.id) === "chat")
+      .map((m) => m.id.trim())
+      .filter(Boolean);
+    out.push({
+      gateway: gw,
+      protocol: matched.protocol,
+      slot: matched.slot,
+      baseUrl: matched.baseUrl,
+      models: Array.from(new Set(models)),
+    });
+  }
+  return out;
 }
 
 /**
