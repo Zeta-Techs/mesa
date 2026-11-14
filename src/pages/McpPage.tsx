@@ -55,6 +55,9 @@ import {
   LoadingRows,
   PageFrame,
   PageHeader,
+  PageToolbar,
+  PaneSearch,
+  SegTabs,
   paneOutlineButtonClass,
   primaryActionClass,
   secondaryActionClass,
@@ -66,6 +69,7 @@ import {
   dangerActionClass,
   NoticeBar,
 } from "../components/PageFrame";
+import { AgentMark } from "../components/RelayPicker";
 import {
   applyBlenderMcpProbe,
   applyMcpPreset,
@@ -1110,13 +1114,44 @@ export default function McpPage({ visible }: { visible: boolean }) {
       setFixing(false);
     }
   }
-  // 资源页外壳随主区变宽（PageFrame wide）。2026-10-29 列表改「对话页写法」：去整表卡与表头，名称一行、类型 · 命令一行灰字，
-  // 展开用左细线缩进、展开着的那条铺气泡色；页头与宽度维持原样（同日试过对话头式小页头 + 对话栏宽度，用户否掉）。
+
+  const [statusFilter, setStatusFilter] = useState<"all" | "enabled" | "attention">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  function serverHasAttention(s: McpServerDto): boolean {
+    if (!s.enabled) return false;
+    const shownHealth = shownHealthOf(s);
+    const oauthRows = oauth[s.id];
+    const oauthAgents = Array.isArray(oauthRows) ? oauthRows : undefined;
+    const oauthSum = mcpOauthSummary(oauthAgents);
+    const hLabel = mcpHealthLabel(shownHealth, oauthSum);
+    if (hLabel && (hLabel.tone === "warn" || hLabel.tone === "err")) return true;
+    if (mcpCmdPathBadge(cmdPathStatus[s.id]) !== null) return true;
+    if (AGENTS.some((a) => s.apps[a.id] && mcpDistBadge(distStatus[s.id]?.[a.id]) !== null)) return true;
+    if (mcpEnvRefNames([...s.env, ...s.headers]).some((name) => !secretHints[name])) return true;
+    return false;
+  }
+
+  const enabledCount = servers.filter((s) => s.enabled).length;
+  const attentionCount = servers.filter(serverHasAttention).length;
+  const qNorm = searchQuery.trim().toLowerCase();
+  const filteredServers = servers.filter((s) => {
+    if (statusFilter === "enabled" && !s.enabled) return false;
+    if (statusFilter === "attention" && !serverHasAttention(s)) return false;
+    if (!qNorm) return true;
+    const cmdText = s.kind === "stdio" ? `${s.command} ${s.args.join(" ")}` : s.url;
+    return (
+      s.name.toLowerCase().includes(qNorm) ||
+      s.kind.toLowerCase().includes(qNorm) ||
+      cmdText.toLowerCase().includes(qNorm)
+    );
+  });
+
   return (
     <PageFrame width="wide">
       <PageHeader
         title="MCP"
-        meta={`${servers.length} 个`}
+        meta={`${servers.length} 个服务 · ${enabledCount} 个启用`}
         actions={
           <>
             <button
@@ -1147,6 +1182,38 @@ export default function McpPage({ visible }: { visible: boolean }) {
           </>
         }
       />
+      {servers.length > 0 && (
+        <PageToolbar>
+          <SegTabs
+            variant="boxed"
+            size="sm"
+            value={statusFilter}
+            onChange={setStatusFilter}
+            items={[
+              { id: "all", label: `全部 ${servers.length}` },
+              { id: "enabled", label: `已启用 ${enabledCount}` },
+              {
+                id: "attention",
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    {attentionCount > 0 && (
+                      <span className="size-1.5 rounded-full bg-warn-text" aria-hidden="true" />
+                    )}
+                    待处理 {attentionCount}
+                  </span>
+                ),
+              },
+            ]}
+          />
+          <PaneSearch
+            value={searchQuery}
+            onChange={setSearchQuery}
+            placeholder="搜索 MCP 名称或命令…"
+            label="搜索 MCP"
+            className="ml-auto w-60 max-w-full"
+          />
+        </PageToolbar>
+      )}
       {error && <NoticeBar tone="err" className="mb-3" onDismiss={() => setError(null)}>{error}</NoticeBar>}
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
       {loading ? (
@@ -1165,22 +1232,37 @@ export default function McpPage({ visible }: { visible: boolean }) {
             </button>
           }
         />
+      ) : filteredServers.length === 0 ? (
+        <EmptyState
+          title="没有匹配的 MCP 服务"
+          detail="换个筛选条件或清空搜索关键词试试。"
+          action={
+            <button
+              type="button"
+              className={secondaryActionClass}
+              onClick={() => {
+                setStatusFilter("all");
+                setSearchQuery("");
+              }}
+            >
+              显示全部
+            </button>
+          }
+        />
       ) : (
-          // 列表宽于 60rem 时「类型 · 命令」挪成名字右边的一列（宽屏不再左右两头空一大截），窄了折回名字下面
-          <ul className="@container/rows flex flex-col gap-0.5">
-          {servers.map((s) => {
-            const onCount = Object.values(s.apps).filter(Boolean).length;
+        <ul className="@container/rows flex flex-col gap-2">
+          {filteredServers.map((s) => {
+            const enabledAgents = AGENTS.filter((a) => s.apps[a.id]);
+            const onCount = enabledAgents.length;
             const open = expanded === s.id;
-            // 停用的不报旧检测结果（2026-10-31 用户：已停用还亮绿点、写「需登录」对不上）；
-            // 停用时手动点「测试连通」测出的这一次照常显示，启用前可以先试
             const shownHealth = s.enabled ? shownHealthOf(s) : health[s.id];
             const oauthRows = oauth[s.id];
             const oauthAgents = Array.isArray(oauthRows) ? oauthRows : undefined;
+            const oauthByAgent = new Map((oauthAgents ?? []).map((r) => [r.agentId, r]));
             const oauthSum = mcpOauthSummary(oauthAgents);
             const needsLogin = mcpHealthNeedsLogin(shownHealth);
             const healthLabel = mcpHealthLabel(shownHealth, oauthSum);
             const toggleOpen = () => {
-              // 展开前作废该条目的五态缓存，保证看到的是磁盘最新事实
               if (!open)
                 setDistStatus((prev) => {
                   const next = { ...prev };
@@ -1195,19 +1277,22 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   (a) => s.apps[a.id] && mcpDistBadge(distStatus[s.id]?.[a.id]) !== null,
                 )
               : [];
+            const envRefs = mcpEnvRefNames([...s.env, ...s.headers]);
             return (
               <li
                 key={s.id}
-                className={`group rounded-lg transition-colors ${open ? "bg-chat-bubble" : ""}`}
+                className={`ccode-well group overflow-hidden rounded-xl border border-hairline transition-colors ${
+                  open ? "ring-1 ring-field" : ""
+                }`}
               >
                 <div
-                  className={`grid grid-cols-[14px_16px_minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 rounded-lg px-2 py-1.5 @min-[60rem]/rows:grid-cols-[14px_16px_minmax(0,18rem)_minmax(0,1fr)_auto_auto_auto] @min-[60rem]/rows:gap-x-3 ${
-                    open ? "" : "hover:bg-hover"
+                  className={`grid grid-cols-[14px_16px_minmax(0,1fr)_auto_auto_auto] items-center gap-x-2.5 px-3.5 py-2.5 @min-[60rem]/rows:grid-cols-[14px_16px_minmax(0,19rem)_minmax(0,1fr)_auto_auto_auto] @min-[60rem]/rows:gap-x-3 ${
+                    open ? "bg-strip/45" : "hover:bg-hover/60"
                   }`}
                 >
                   <button
                     type="button"
-                    className="flex h-7 items-center justify-center text-l4"
+                    className="flex h-7 items-center justify-center text-l4 hover:text-l2"
                     title={open ? "收起" : "展开完整配置与分发管理"}
                     aria-label={open ? `收起 ${s.name}` : `展开 ${s.name}`}
                     aria-expanded={open}
@@ -1215,7 +1300,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   >
                     <FoldMark open={open} />
                   </button>
-                  {/* 未检测不画点（无状态不渲染状态点），留同宽空位让名字对齐 */}
                   <span className="flex justify-center">
                     <HealthDot
                       health={shownHealth}
@@ -1226,57 +1310,67 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   </span>
                   <button
                     type="button"
-                    className="flex min-w-0 items-baseline gap-2 text-left"
+                    className="flex min-w-0 items-center gap-2 text-left"
                     title={open ? "收起" : "展开完整配置与分发管理"}
                     onClick={toggleOpen}
                   >
                     <span
-                      className={`truncate text-base ${s.enabled ? "font-medium text-l1" : "text-l4"}`}
+                      className={`truncate text-sm ${s.enabled ? "font-semibold text-l1" : "font-medium text-l4"}`}
                     >
                       {s.name}
                     </span>
-                    {/* 状态点只靠颜色分不出黄绿：不正常时名字后面写出来，正常只留点 */}
+                    <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l3">
+                      {s.kind === "stdio" ? "stdio" : "HTTP"}
+                    </span>
                     {healthLabel && (
                       <span
-                        className={`shrink-0 text-xs ${
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-micro font-medium ${
                           healthLabel.tone === "ok"
-                            ? "text-ok-text"
+                            ? "bg-ok text-ok-text"
                             : healthLabel.tone === "warn"
-                              ? "text-caution-text"
-                              : "text-err-text"
+                              ? "bg-warn text-warn-text"
+                              : "bg-err text-err-text"
                         }`}
                         title={needsLogin && !open ? "点击展开，看各 Agent 的登录状态" : undefined}
                       >
                         {healthLabel.text}
                       </span>
                     )}
-                    {!s.enabled && <span className="shrink-0 text-xs text-l4">已停用</span>}
+                    {!s.enabled && (
+                      <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4">
+                        已停用
+                      </span>
+                    )}
                   </button>
-                  {/* 用于：点击展开 / 收起分发管理（勾选在展开区）；全部正常不画点，有异常才写「N 处异常」 */}
                   <button
                     type="button"
                     onClick={toggleOpen}
                     title={
                       onCount > 0
-                        ? `${s.enabled ? "已分发到" : "已停用，启用后会写入"}：${AGENTS.filter((a) => s.apps[a.id]).map((a) => a.label).join("、")}\n点击展开分发管理`
+                        ? `${s.enabled ? "已分发到" : "已停用，启用后会写入"}：${enabledAgents.map((a) => a.label).join("、")}\n点击展开分发管理`
                         : "还没分发给任何 Agent；点击展开分发管理"
                     }
-                    className={`flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-xs ${s.enabled ? "text-l3" : "text-l4"} hover:bg-hover hover:text-l1`}
+                    className={`flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs ${
+                      s.enabled ? "text-l2" : "text-l4"
+                    } hover:bg-hover hover:text-l1`}
                   >
-                    {issues.length > 0 && (
-                      <span className="size-1.5 shrink-0 rounded-full bg-warn-text" />
+                    {enabledAgents.length > 0 && (
+                      <span className="flex items-center gap-1 pr-0.5" aria-hidden="true">
+                        {enabledAgents.slice(0, 4).map((a) => (
+                          <AgentMark key={a.id} agentId={a.id} decorative className="h-2.5 w-auto" />
+                        ))}
+                      </span>
                     )}
-                    {onCount > 0 ? `${onCount} 个 Agent` : "未用"}
+                    <span>{onCount > 0 ? `${onCount} 个 Agent` : "未分发"}</span>
                     {issues.length > 0 && (
                       <span
-                        className="text-caution-text"
+                        className="inline-flex items-center gap-1 rounded-full bg-warn px-1.5 py-0.5 text-micro text-warn-text"
                         title={`${issues.map((a) => `${a.label}：${mcpDistBadge(distStatus[s.id]?.[a.id])?.label}`).join("\n")}\n点击展开处理`}
                       >
-                        · {issues.length} 处异常
+                        {issues.length} 处异常
                       </span>
                     )}
                   </button>
-                  {/* 行内悬浮操作（v3.93）：测试连通 / 编辑 / 删除，裸图标钮 hover 淡入；展开着的那条常显 */}
                   <span
                     className={`flex items-center ${open ? "" : hoverRevealClass} focus-within:opacity-100`}
                   >
@@ -1299,7 +1393,6 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       onClick={() => void onDelete(s)}
                     />
                   </span>
-                  {/* 全局启用开关：停用不删配置，分发映射保留 */}
                   <span
                     className="flex pl-1"
                     title={
@@ -1317,20 +1410,21 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       }
                     />
                   </span>
-                  {/* 第二行（宽屏是第四列）：类型 · 命令（智能缩略，悬浮给全文）；相对路径 / 路径不存在时在前面写出来 */}
-                  <span className="col-span-2 col-start-3 row-start-2 flex min-w-0 items-baseline gap-1.5 pb-0.5 text-xs text-l4 @min-[60rem]/rows:col-span-1 @min-[60rem]/rows:col-start-4 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:pb-0">
+                  <span className="col-span-2 col-start-3 row-start-2 flex min-w-0 items-center gap-1.5 pt-0.5 text-xs text-l3 @min-[60rem]/rows:col-span-1 @min-[60rem]/rows:col-start-4 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:pt-0">
                     {pathBadge && (
                       <span
-                        className={`shrink-0 ${cmdPathStatus[s.id] === "missing" ? "text-err-text" : "text-caution-text"}`}
+                        className={`shrink-0 rounded-sm px-1.5 py-0.5 text-micro font-medium ${
+                          cmdPathStatus[s.id] === "missing"
+                            ? "bg-err text-err-text"
+                            : "bg-warn text-warn-text"
+                        }`}
                         title={pathBadge.tip}
                       >
-                        {pathBadge.label} ·
+                        {pathBadge.label}
                       </span>
                     )}
-                    <span className="shrink-0 text-l3">{s.kind}</span>
-                    <span className="shrink-0">·</span>
                     <span
-                      className="min-w-0 truncate font-mono"
+                      className="min-w-0 truncate font-mono text-l3"
                       title={
                         s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
@@ -1344,19 +1438,28 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   </span>
                 </div>
                 {open && (
-                  // 展开区：左边一条细线缩进（同对话「已思考 ›」展开），不铺卡底
-                  <div className="mb-3 ml-[30px] mr-3 border-l border-hairline pb-1 pl-3 pt-0.5 text-sm text-l3">
-                      <div className="break-all font-mono text-xs leading-5 text-l2">
+                  <div className="grid gap-3 border-t border-hairline bg-strip/35 px-4 py-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+                    {/* 内嵌卡 ①：启动命令 / 端点与环境密钥 */}
+                    <div className="flex flex-col rounded-lg border border-hairline bg-canvas/75 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-l2">
+                          {s.kind === "stdio" ? "启动命令与环境" : "服务端点与请求头"}
+                        </span>
+                        {isAdoptedMcp(s.origin) && (
+                          <span className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4">
+                            收编自 {mcpOriginLabel(s.origin, AGENTS)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-2 break-all rounded-md border border-hairline bg-inset/75 px-2.5 py-2 font-mono text-xs leading-5 text-l1">
                         {s.kind === "stdio"
                           ? `${s.command} ${s.args.join(" ")}`.trim()
                           : s.url}
                       </div>
-                      {/* 命令路径告警的展开区处理：relative 给一键修复（后端 resolver 出候选），
-                          missing 只告警指路编辑（路径失效没有可自动解析的基准） */}
                       {cmdPathStatus[s.id] === "relative" && (
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <span className="text-xs text-caution-text">
-                            相对路径命令：换个工作目录启动就找不到
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-warn/50 px-2.5 py-1.5">
+                          <span className="text-xs text-warn-text">
+                            相对路径命令：换个工作目录启动可能找不到
                           </span>
                           <button
                             type="button"
@@ -1369,113 +1472,112 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         </div>
                       )}
                       {cmdPathStatus[s.id] === "missing" && (
-                        <p className="mt-2 text-xs text-err-text">
-                          命令路径在磁盘上不存在（应用卸载或版本升级后路径失效），请点
-                          编辑修正
+                        <p className="mt-2 rounded-md bg-err/50 px-2.5 py-1.5 text-xs text-err-text">
+                          命令路径在磁盘上不存在（应用卸载或升级后路径失效），请点右上角「编辑」修正
                         </p>
                       )}
                       {s.env.length > 0 && (
-                        <div
-                          className="mt-1.5 truncate font-mono text-micro text-l4"
-                          title={s.env
-                            .map((p) => `${p.key}=${p.value}`)
-                            .join("\n")}
-                        >
-                          环境变量：{s.env.map((p) => `${p.key}=${p.value}`).join("  ")}
+                        <div className="mt-2.5">
+                          <div className="mb-1 text-micro text-l4">环境变量</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {s.env.map((p) => (
+                              <span
+                                key={p.key}
+                                className="max-w-full truncate rounded-sm border border-hairline bg-inset px-1.5 py-0.5 font-mono text-micro text-l2"
+                                title={`${p.key}=${p.value}`}
+                              >
+                                {p.key}={p.value}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
                       {s.headers.length > 0 && (
-                        <div
-                          className="mt-1.5 truncate font-mono text-micro text-l4"
-                          title={s.headers
-                            .map((p) => `${p.key}=${p.value}`)
-                            .join("\n")}
-                        >
-                          请求头：{s.headers.map((p) => `${p.key}=${p.value}`).join("  ")}
+                        <div className="mt-2.5">
+                          <div className="mb-1 text-micro text-l4">请求头</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {s.headers.map((p) => (
+                              <span
+                                key={p.key}
+                                className="max-w-full truncate rounded-sm border border-hairline bg-inset px-1.5 py-0.5 font-mono text-micro text-l2"
+                                title={`${p.key}=${p.value}`}
+                              >
+                                {p.key}={p.value}
+                              </span>
+                            ))}
+                          </div>
                         </div>
                       )}
-                      {mcpEnvRefNames([...s.env, ...s.headers]).map((name) =>
-                        secretHints[name] ? (
-                          <div key={name} className="mt-1.5 text-xs text-l3">
-                            {mcpSecretFieldLabel(name)}已填 {secretHints[name]}
-                          </div>
-                        ) : (
-                          <div key={name} className="mt-1.5 text-xs text-caution-text">
-                            {mcpSecretFieldLabel(name)}未填
-                          </div>
-                        ),
+                      {envRefs.length > 0 && (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {envRefs.map((name) =>
+                            secretHints[name] ? (
+                              <span
+                                key={name}
+                                className="inline-flex items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-micro text-ok-text"
+                              >
+                                {mcpSecretFieldLabel(name)}已填 {secretHints[name]}
+                              </span>
+                            ) : (
+                              <span
+                                key={name}
+                                className="inline-flex items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text"
+                              >
+                                {mcpSecretFieldLabel(name)}未填
+                              </span>
+                            ),
+                          )}
+                        </div>
                       )}
-                      {/* OAuth 登录：令牌在各 CLI 手里，逐家登录、逐家看结果（Mesa 探测的 401 不算数） */}
-                      {s.kind === "remote" && needsLogin && s.enabled && onCount > 0 && (
-                        <div className="mt-2.5">
-                          <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
-                            <span className="text-l2">登录</span>
-                            <span className="text-l4">
-                              要用账号登录，每个 Agent 各登一次；登录后新开的对话才用得上
-                            </span>
+                    </div>
+
+                    {/* 内嵌卡 ②：分发到各 Agent 矩阵（融合五态落盘状态与 OAuth 登录） */}
+                    <div className="flex flex-col rounded-lg border border-hairline bg-canvas/75 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-l2">分发到各 Agent</span>
+                          <span className="text-micro tabular-nums text-l4">
+                            已启用 {onCount} / {AGENTS.length}
+                          </span>
+                        </div>
+                        {s.kind === "remote" && needsLogin && s.enabled && onCount > 0 && (
+                          <div className="flex items-center gap-2 text-micro">
+                            <span className="text-warn-text">需逐家账号登录，登完新开对话生效</span>
                             <button
                               type="button"
-                              className="text-micro text-l4 hover:text-l1 disabled:opacity-50"
+                              className="rounded-sm border border-hairline bg-inset px-1.5 py-0.5 text-micro text-l3 hover:text-l1 disabled:opacity-50"
                               disabled={oauthRows === "checking"}
                               onClick={() => void checkOauth(s)}
                             >
                               {oauthRows === "checking" ? "查询中…" : "重新查询"}
                             </button>
                           </div>
-                          {oauthRows === "checking" && !oauthAgents ? (
-                            <p className="mt-1 text-xs text-l4">正在问各 Agent 登录了没有…</p>
-                          ) : (
-                            <div className="mt-1 grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-6">
-                              {(oauthAgents ?? []).map((row) => {
-                                const label =
-                                  AGENTS.find((a) => a.id === row.agentId)?.label ?? row.agentId;
-                                return (
-                                  <div
-                                    key={row.agentId}
-                                    className="flex h-8 items-center justify-between gap-2 text-xs"
-                                  >
-                                    <span className="shrink-0 text-l3">{label}</span>
-                                    {row.state === "logged_in" ? (
-                                      <span className="shrink-0 text-ok-text">已登录</span>
-                                    ) : row.loginCommand ? (
-                                      <button
-                                        type="button"
-                                        className={paneOutlineButtonClass}
-                                        title={`${row.state === "unknown" ? "查不到登录状态。" : ""}在终端执行 ${row.loginCommand}，${row.how}；登完回到这里会自动重新查询`}
-                                        onClick={() =>
-                                          startOauthLogin(s, row.agentId, row.loginCommand!)
-                                        }
-                                      >
-                                        登录
-                                      </button>
-                                    ) : (
-                                      <span
-                                        className={`min-w-0 truncate ${row.state === "logged_out" ? "text-caution-text" : "text-l4"}`}
-                                        title={`${row.state === "logged_out" ? "未登录。" : "查不到登录状态。"}${row.how}`}
-                                      >
-                                        {row.state === "logged_out" ? "未登录 · " : ""}
-                                        {row.how}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
+                        )}
+                      </div>
+                      {s.kind === "remote" && needsLogin && oauthRows === "checking" && !oauthAgents && (
+                        <p className="mt-1.5 text-micro text-l4">正在查询各 Agent 登录状态…</p>
                       )}
-                      {/* 各 Agent 分发开关：无底的几列（原九宫格小卡去底） */}
-                      <div className="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-6">
+                      <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
                         {AGENTS.map((agent) => {
                           const on = !!s.apps[agent.id];
                           const key = `${s.id}:${agent.id}`;
                           const notInstalled =
                             detectedAgents.length > 0 &&
                             !detectedAgents.some((a) => a.id === agent.id && a.binaryPath);
+                          const state = on && s.enabled ? distStatus[s.id]?.[agent.id] : undefined;
+                          const badge = mcpDistBadge(state);
+                          const oauthRow =
+                            s.kind === "remote" && needsLogin && s.enabled && on
+                              ? oauthByAgent.get(agent.id)
+                              : undefined;
                           return (
                             <div
                               key={agent.id}
-                              className="flex h-8 items-center justify-between gap-2"
+                              className={`flex min-h-9 items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 transition-colors ${
+                                on
+                                  ? "border-hairline bg-inset/55"
+                                  : "border-transparent bg-inset/20"
+                              }`}
                               title={
                                 notInstalled
                                   ? `本机未安装 ${agent.label}：分发会写进它的配置目录，但现在没有 CLI 读取`
@@ -1484,91 +1586,105 @@ export default function McpPage({ visible }: { visible: boolean }) {
                             >
                               <span
                                 className={`flex min-w-0 items-center gap-1.5 text-xs ${
-                                  notInstalled && !on ? "text-l4" : "text-l3"
+                                  notInstalled && !on ? "text-l4" : on ? "font-medium text-l1" : "text-l3"
                                 }`}
                               >
-                                {/* 分发状态徽标（v3.88 三态点扩为五态）：开关表达清单分发意图
-                                    （apps 映射），点/徽标表达磁盘事实（mcp_distribution_status
-                                    只读探测）。全局停用时条目是 Mesa 自己移除的，
-                                    不标「外部已删除」误导 */}
-                                {(() => {
-                                  const state = on && s.enabled ? distStatus[s.id]?.[agent.id] : undefined;
-                                  const badge = mcpDistBadge(state);
-                                  return (
-                                    <>
-                                      {on && s.enabled && (
-                                        <span
-                                          className={`size-1.5 shrink-0 rounded-full ${
-                                            state === "modified"
-                                              ? "bg-warn-text"
-                                              : state === "missing"
-                                                ? "bg-err-text"
-                                                : state === "disabled_externally"
-                                                  ? "bg-l4"
-                                                  : "bg-ok-text"
-                                          }`}
-                                          title={
-                                            badge?.tip ??
-                                            "已写入该 Agent 的用户级配置"
-                                          }
-                                        />
-                                      )}
-                                      <span className="shrink-0">{agent.label}</span>
-                                      {/* modified 沿用原三态点提示；missing/disabled 是
-                                          新增异常态，补文字徽标避免只靠颜色传达。
-                                          开关已经是开着的，原提示「拨开开关重新写入」得先关再开才行——
-                                          徽标本身做成重写按钮，一步到位；放在名称后面，窄了只截徽标 */}
-                                      {badge && state !== "modified" && (
-                                        <button
-                                          type="button"
-                                          className="min-w-0 truncate rounded-sm px-1 py-px text-micro hover:brightness-110 disabled:opacity-50"
-                                          style={{
-                                            color: badge.color,
-                                            background: badge.background,
-                                          }}
-                                          title={`${badge.tip}\n点击按 Mesa 清单重新写入 ${agent.label}`}
-                                          disabled={!!applying[key]}
-                                          onClick={() => void toggleApp(s, agent.id, true, true)}
-                                        >
-                                          {badge.label} · 重写
-                                        </button>
-                                      )}
-                                    </>
-                                  );
-                                })()}
+                                <AgentMark
+                                  agentId={agent.id}
+                                  decorative
+                                  className={`h-3 w-auto shrink-0 ${on ? "" : "opacity-60"}`}
+                                />
+                                <span className="shrink-0 truncate">{agent.label}</span>
+                                {on && s.enabled && (
+                                  <span
+                                    className={`size-1.5 shrink-0 rounded-full ${
+                                      state === "modified"
+                                        ? "bg-warn-text"
+                                        : state === "missing"
+                                          ? "bg-err-text"
+                                          : state === "disabled_externally"
+                                            ? "bg-l4"
+                                            : "bg-ok-text"
+                                    }`}
+                                    title={badge?.tip ?? "已写入该 Agent 的用户级配置"}
+                                  />
+                                )}
+                                {badge && state !== "modified" && (
+                                  <button
+                                    type="button"
+                                    className="min-w-0 truncate rounded-sm px-1 py-px text-micro hover:brightness-110 disabled:opacity-50"
+                                    style={{
+                                      color: badge.color,
+                                      background: badge.background,
+                                    }}
+                                    title={`${badge.tip}\n点击按 Mesa 清单重新写入 ${agent.label}`}
+                                    disabled={!!applying[key]}
+                                    onClick={() => void toggleApp(s, agent.id, true, true)}
+                                  >
+                                    {badge.label} · 重写
+                                  </button>
+                                )}
                                 {notInstalled && (
-                                  <span className="shrink-0 text-micro text-l4">未安装</span>
+                                  <span className="shrink-0 text-micro font-normal text-l4">未装</span>
                                 )}
                               </span>
-                              {caps[agent.id] && !caps[agent.id].mcpWrite.supported ? (
-                                <span
-                                  className="text-xs text-l4"
-                                  title={
-                                    caps[agent.id].mcpWrite.reason ??
-                                    "该 CLI 的 MCP 配置只读，暂不支持分发"
-                                  }
-                                >
-                                  只读
-                                </span>
-                              ) : (
-                                <Toggle
-                                  label={agent.label}
-                                  checked={on}
-                                  onChange={(v) =>
-                                    !applying[key] && void toggleApp(s, agent.id, v)
-                                  }
-                                />
-                              )}
+                              <div className="flex shrink-0 items-center gap-1.5">
+                                {oauthRow && (
+                                  oauthRow.state === "logged_in" ? (
+                                    <span className="text-micro text-ok-text">已登录</span>
+                                  ) : oauthRow.loginCommand ? (
+                                    <button
+                                      type="button"
+                                      className="h-6 rounded-md border border-field bg-strip px-2 text-micro text-l2 hover:bg-hover hover:text-l1"
+                                      title={`${oauthRow.state === "unknown" ? "查不到登录状态。" : ""}在终端执行 ${oauthRow.loginCommand}，${oauthRow.how}；登完回到这里会自动重新查询`}
+                                      onClick={() =>
+                                        startOauthLogin(s, oauthRow.agentId, oauthRow.loginCommand!)
+                                      }
+                                    >
+                                      登录
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className={`max-w-[5.5rem] truncate text-micro ${
+                                        oauthRow.state === "logged_out" ? "text-warn-text" : "text-l4"
+                                      }`}
+                                      title={`${oauthRow.state === "logged_out" ? "未登录。" : "查不到登录状态。"}${oauthRow.how}`}
+                                    >
+                                      {oauthRow.state === "logged_out" ? "未登录" : oauthRow.how}
+                                    </span>
+                                  )
+                                )}
+                                {caps[agent.id] && !caps[agent.id].mcpWrite.supported ? (
+                                  <span
+                                    className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4"
+                                    title={
+                                      caps[agent.id].mcpWrite.reason ??
+                                      "该 CLI 的 MCP 配置只读，暂不支持分发"
+                                    }
+                                  >
+                                    只读
+                                  </span>
+                                ) : (
+                                  <Toggle
+                                    label={agent.label}
+                                    checked={on}
+                                    onChange={(v) =>
+                                      !applying[key] && void toggleApp(s, agent.id, v)
+                                    }
+                                  />
+                                )}
+                              </div>
                             </div>
                           );
                         })}
                       </div>
+                    </div>
                   </div>
                 )}
               </li>
             );
           })}
-          </ul>
+        </ul>
       )}
 
       {modal && (

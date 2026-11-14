@@ -211,12 +211,20 @@ export default function RelayPicker({
 }
 
 /** Agent 标记：Mesa 标志里的 M（与图标源同一条路径），染成这家的品牌色；紧挨文字时传 decorative 免重复念与悬停原生气泡 */
-export function AgentMark({ agentId, decorative = false }: { agentId: string; decorative?: boolean }) {
+export function AgentMark({
+  agentId,
+  decorative = false,
+  className = "h-[0.8em] w-auto shrink-0",
+}: {
+  agentId: string;
+  decorative?: boolean;
+  className?: string;
+}) {
   const name = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
   return (
     <svg
       viewBox="232 284 560 456"
-      className="h-[0.8em] w-auto shrink-0"
+      className={className}
       {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": name })}
       style={{ color: agentBrand(agentId) }}
     >

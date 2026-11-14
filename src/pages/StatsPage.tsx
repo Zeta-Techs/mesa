@@ -72,7 +72,8 @@ import {
   visibleDistRows,
 } from "../usage-dist";
 import VendorIcon from "../components/VendorIcon";
-import { vendorForPlanProvider } from "../vendor-icon";
+import { vendorForGateway, vendorForPlanProvider, type VendorId } from "../vendor-icon";
+import { AgentMark } from "../components/RelayPicker";
 import { useQuotaSwipe } from "../quota-swipe";
 import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
 import { showFloatingCoach } from "../components/CoachTip";
@@ -116,7 +117,9 @@ interface DistRowData {
   nameTitle?: string;
   /** 名称下方一行弱化说明（对话数、模型数、所属项目…） */
   meta?: string;
-  /** 行首色点（Agent 品牌色）；不给就不画 */
+  /** 行首品牌标或厂商图标（优先于 dot） */
+  leading?: ReactNode;
+  /** 行首色点与进度条色（Agent 品牌色）；不给就走主题强调色 */
   dot?: string;
   share: number;
   tokens: number;
@@ -126,6 +129,22 @@ interface DistRowData {
   highlight?: boolean;
   onOpen?: () => void;
   openTitle?: string;
+}
+
+function vendorForModelName(model: string): VendorId | null {
+  const m = model.trim().toLowerCase();
+  if (!m) return null;
+  if (m.includes("claude")) return "anthropic";
+  if (m.startsWith("gpt-") || m.startsWith("chatgpt-") || /^o[134](-|$)/.test(m) || m.includes("codex")) return "openai";
+  if (m.includes("gemini")) return "gemini";
+  if (m.includes("deepseek")) return "deepseek";
+  if (m.includes("kimi") || m.includes("moonshot")) return "kimi";
+  if (m.startsWith("glm") || m.includes("chatglm")) return "zhipu";
+  if (m.includes("qwen") || m.includes("qwq")) return "alibaba";
+  if (m.includes("grok")) return "xai";
+  if (m.includes("minimax") || m.startsWith("abab")) return "minimax";
+  if (m.includes("doubao") || m.includes("seed")) return "doubao";
+  return null;
 }
 
 const CHART_METRICS: { id: ChartMetric; label: string }[] = [
@@ -635,28 +654,32 @@ function DistList({
   const { shown, hidden } = visibleDistRows(rows, expanded);
   return (
     <>
-      <div className="flex items-center gap-3 px-2 pb-1 text-micro text-l3">
+      <div className="mb-1 flex items-center gap-3 border-b border-hairline px-2.5 pb-2 text-micro font-medium text-l3">
         <span className="min-w-0 flex-1">名称</span>
         <span className="hidden w-[28%] sm:block">{shareLabel}</span>
-        <span className="w-16 text-right">tokens</span>
+        <span className="w-16 text-right">Tokens</span>
         <span className="w-12 text-right">占比</span>
-        <span className="w-20 text-right">费用</span>
+        <span className="w-20 text-right">估算</span>
       </div>
       <ul className="space-y-0.5">
         {shown.map((r) => {
           const inner = (
             <>
               <span className="flex min-w-0 flex-1 items-center gap-2.5">
-                {r.dot && (
+                {r.leading ? (
+                  <span className="flex size-5 shrink-0 items-center justify-center rounded-md bg-inset">
+                    {r.leading}
+                  </span>
+                ) : r.dot ? (
                   <span
                     className="size-2 shrink-0 rounded-full"
                     style={{ backgroundColor: r.dot }}
                     aria-hidden="true"
                   />
-                )}
+                ) : null}
                 <span className="min-w-0">
                   <span
-                    className="flex items-center gap-1 truncate text-sm text-l1"
+                    className="flex items-center gap-1 truncate text-sm font-medium text-l1"
                     title={r.nameTitle}
                   >
                     <span className="truncate">{r.name}</span>
@@ -679,7 +702,7 @@ function DistList({
               {/* 轨道 inset 底全圆角；前景有品牌色用品牌色（Agent / 对话），否则走强调色 */}
               <span className="hidden h-1.5 w-[28%] shrink-0 rounded-full bg-inset sm:block">
                 <span
-                  className="block h-1.5 rounded-full"
+                  className="block h-1.5 rounded-full transition-[width]"
                   style={{
                     width: `${barWidthPct(r.share)}%`,
                     backgroundColor: r.dot ?? "var(--color-cta)",
@@ -692,13 +715,13 @@ function DistList({
               <span className="w-12 shrink-0 text-right font-mono text-xs tabular-nums text-l3">
                 {sharePctLabel(r.share)}
               </span>
-              <span className="w-20 max-w-20 shrink-0 overflow-hidden text-right font-mono text-xs tabular-nums text-l2">
+              <span className="w-20 max-w-20 shrink-0 overflow-hidden text-right font-mono text-xs tabular-nums text-l1">
                 {r.cost}
               </span>
             </>
           );
-          const rowClass = `group flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left ${
-            r.highlight ? "bg-hover" : ""
+          const rowClass = `group flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ${
+            r.highlight ? "bg-hover ring-1 ring-cta/30" : ""
           }`;
           return (
             <li key={r.key}>
@@ -1185,6 +1208,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           name: title,
           nameTitle: title,
           meta: `${agentLabel(s.agent)} · ${basename(s.projectPath)}`,
+          leading: <AgentMark agentId={s.agent} decorative className="h-3 w-auto shrink-0" />,
           dot: agentBrand(s.agent),
           share: shareOf(s.costUsd ?? 0, total),
           tokens: s.tokens,
@@ -1202,6 +1226,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         key: `${a.agent}-${a.official}`,
         name: agentLabel(a.agent),
         meta: `${a.modelCount} 个模型${a.official ? " · 订阅" : ""}`,
+        leading: <AgentMark agentId={a.agent} decorative className="h-3 w-auto shrink-0" />,
         dot: agentBrand(a.agent),
         share: shareOf(a.tokens, totalAgentTokens),
         tokens: a.tokens,
@@ -1241,16 +1266,23 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     }
     if (dist === "gateway") {
       const total = gatewayRows.reduce((n, g) => n + g.tokensIn + g.tokensOut, 0);
-      return gatewayRows.map((g) => ({
-        key: `${g.bucket}-${g.gatewayId}`,
-        name: g.gatewayName,
-        nameTitle: g.gatewayName,
-        meta: `${g.sessionCount} 次对话 · ${g.agents.join("、")}`,
-        share: shareOf(g.tokensIn + g.tokensOut, total),
-        tokens: g.tokensIn + g.tokensOut,
-        ...costCell(g.bucket === "official", g.costUsd, g.costPartial),
-        highlight: Boolean(focusGateway && g.gatewayId === focusGateway),
-      }));
+      return gatewayRows.map((g) => {
+        const gw = gateways.find((x) => x.id === g.gatewayId);
+        const vendor = gw ? vendorForGateway(gw) : null;
+        return {
+          key: `${g.bucket}-${g.gatewayId}`,
+          name: g.gatewayName,
+          nameTitle: g.gatewayName,
+          meta: `${g.sessionCount} 次对话 · ${g.agents.join("、")}`,
+          leading: vendor ? (
+            <VendorIcon vendor={vendor} name={g.gatewayName} className="h-3.5 w-3.5 shrink-0" />
+          ) : undefined,
+          share: shareOf(g.tokensIn + g.tokensOut, total),
+          tokens: g.tokensIn + g.tokensOut,
+          ...costCell(g.bucket === "official", g.costUsd, g.costPartial),
+          highlight: Boolean(focusGateway && g.gatewayId === focusGateway),
+        };
+      });
     }
     if (dist === "task") {
       const total = workspaceRows.reduce((n, w) => n + w.tokensIn + w.tokensOut, 0);
@@ -1265,15 +1297,21 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       }));
     }
     const total = modelRows.reduce((n, m) => n + m.input + m.output, 0);
-    return modelRows.map((m) => ({
-      key: `${m.internal}-${m.source}-${m.model}`,
-      name: m.model || "（未知）",
-      nameTitle: m.model,
-      meta: `输入 ${compact(m.input)} · 输出 ${compact(m.output)}`,
-      share: shareOf(m.input + m.output, total),
-      tokens: m.input + m.output,
-      ...costCell(false, m.costUsd, m.costPartial),
-    }));
+    return modelRows.map((m) => {
+      const vendor = vendorForModelName(m.model);
+      return {
+        key: `${m.internal}-${m.source}-${m.model}`,
+        name: m.model || "（未知）",
+        nameTitle: m.model,
+        meta: `输入 ${compact(m.input)} · 输出 ${compact(m.output)}`,
+        leading: vendor ? (
+          <VendorIcon vendor={vendor} name={m.model || "?"} className="h-3.5 w-3.5 shrink-0" />
+        ) : undefined,
+        share: shareOf(m.input + m.output, total),
+        tokens: m.input + m.output,
+        ...costCell(false, m.costUsd, m.costPartial),
+      };
+    });
   })();
   const distLabel = DIST.find((d) => d.id === dist)?.label ?? "";
   async function copyDistTable() {
@@ -1433,35 +1471,34 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             const windows = planWindowsByTightness(row.windows);
             return (
               <>
-                {/* 卡头恒一行，与网关余额卡同口径：网关名可截断，其余不缩 */}
+                {/* 卡头恒一行，把服务商与等级收进紧凑身份胶囊，时间戳窄屏收进重查悬浮提示 */}
                 <div className="flex min-h-8 items-center gap-2">
                   <QuotaFold open={planOpen} onToggle={togglePlanOpen} label="订阅余量" />
                   <h2 className="shrink-0 text-base font-medium text-l1">订阅余量</h2>
-                  {planGatewayNameVisible(row.gatewayName, row.provider) && (
-                    <span className="min-w-0 truncate text-xs text-l2" title={row.gatewayName}>{row.gatewayName}</span>
-                  )}
-                  <span className="flex shrink-0 items-center gap-1.5 text-xs text-l2">
+                  <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-hairline bg-inset px-2 py-0.5 text-xs text-l2">
                     {vendorForPlanProvider(row.provider) && (
                       <VendorIcon
                         vendor={vendorForPlanProvider(row.provider)}
                         name={planProviderLabel(row.provider)}
-                        className="h-3.5 w-3.5"
+                        className="h-3.5 w-3.5 shrink-0"
                       />
                     )}
-                    {planProviderLabel(row.provider)}
-                  </span>
-                  {planLevelLabel(row.planLevel) && (
-                    <span className="flex h-4 shrink-0 items-center justify-center rounded-sm bg-hover px-1 text-micro leading-none text-l2">
-                      <span className="-translate-y-px">{planLevelLabel(row.planLevel)}</span>
+                    <span className="truncate">
+                      {planGatewayNameVisible(row.gatewayName, row.provider)
+                        ? row.gatewayName
+                        : planProviderLabel(row.provider)}
                     </span>
-                  )}
-                  {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
-                  <div className="ml-auto flex shrink-0 items-center">
+                    {planLevelLabel(row.planLevel) && (
+                      <span className="shrink-0 font-medium text-l3">· {planLevelLabel(row.planLevel)}</span>
+                    )}
+                  </span>
+                  {dataAt && <span className="hidden shrink-0 whitespace-nowrap text-micro text-l4 sm:inline">{dataAt}</span>}
+                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
                     <button
                       type="button"
                       className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
                       disabled={planLoading}
-                      title="强制重查"
+                      title={dataAt ? `强制重查（${dataAt}）` : "强制重查"}
                       onClick={() => void loadPlans(true)}
                     >
                       <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${planLoading ? "animate-spin" : ""}`} />
@@ -1988,28 +2025,36 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               次要指标只留对话次数与不计费（2026-10-23 用户「没用的不要」）；tokens 明细给全数（不缩写），方便对账 */}
           <div className="mb-4 grid gap-4 md:grid-cols-2">
             <section className="ccode-well ccode-card flex flex-col p-4" aria-label="花费">
-              <h2 className="text-base font-medium text-l1">花费</h2>
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-base font-medium text-l1">花费</h2>
+                {badge && (
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-micro font-medium tabular-nums ${
+                      badge.tone === "up"
+                        ? "bg-warn text-warn-text"
+                        : badge.tone === "down"
+                          ? "bg-ok text-ok-text"
+                          : "bg-inset text-l3"
+                    }`}
+                  >
+                    周环比 {badge.text}
+                  </span>
+                )}
+              </div>
               <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
                   {fmtCost(stats.cards.costUsd, currency, rate, stats.cards.costPartial)}
                 </span>
                 {/* 2026-11-07 用户拍板：只按官方价估算，不做中转倍率；口径写明，免得当成实际扣费 */}
                 <span
-                  className="text-sm text-l3"
+                  className="text-xs text-l3"
                   title="按各厂商官方价（含缓存读写价）估算；经中转站的实际扣费以中转站为准，单次超长上下文的加价未计"
                 >
                   按官方价估算
                 </span>
               </div>
-              <dl className="mt-3 space-y-1 text-sm">
-                {badge && (
-                  <StatLine
-                    label="周环比"
-                    value={badge.text}
-                    valueClass={badge.tone === "up" ? "text-warn-text" : badge.tone === "down" ? "text-ok-text" : undefined}
-                  />
-                )}
-                <StatLine label="对话" value={`${stats.cards.sessions.toLocaleString("en-US")} 次`} />
+              <dl className="mt-3 space-y-1.5 border-t border-hairline pt-2.5 text-xs">
+                <StatLine label="对话次数" value={`${stats.cards.sessions.toLocaleString("en-US")} 次`} />
                 {stats.cards.officialTokens > 0 && (
                   <StatLine label="订阅（不计费）" value={`${compact(stats.cards.officialTokens)} tokens`} />
                 )}
@@ -2018,27 +2063,64 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 )}
               </dl>
               {/* 脚注贴卡底：两张卡明细行数不一样，脚注对齐成一条线 */}
-              <p className="mt-auto pt-3 text-xs text-l4">
+              <p className="mt-auto pt-3 text-micro leading-relaxed text-l4">
                 官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。走中转的实际扣费以中转站为准。
               </p>
             </section>
             <section className="ccode-well ccode-card flex flex-col p-4" aria-label="tokens">
-              <h2 className="text-base font-medium text-l1">tokens</h2>
-              <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
-                <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
-                  {compact(totalTokens)}
-                </span>
-                <span className="text-sm text-l3">输入 + 输出</span>
-              </div>
-              <dl className="mt-3 space-y-1 text-sm">
-                <StatLine label="输入" value={stats.cards.input.toLocaleString("en-US")} />
-                <StatLine label="输出" value={stats.cards.output.toLocaleString("en-US")} />
-                <StatLine label="缓存读" value={stats.cards.cacheRead.toLocaleString("en-US")} />
-                <StatLine label="缓存写" value={stats.cards.cacheWrite.toLocaleString("en-US")} />
-              </dl>
-              <p className="mt-auto pt-3 text-xs text-l4">
-                输入 {inShare}% · 输出 {100 - inShare}%；缓存读写不计入上面的大数字。
-              </p>
+              {(() => {
+                const cacheDenom = stats.cards.input + stats.cards.cacheRead;
+                const cacheHitPct =
+                  stats.cards.cacheRead > 0 && cacheDenom > 0
+                    ? Math.round((stats.cards.cacheRead / cacheDenom) * 100)
+                    : 0;
+                return (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <h2 className="text-base font-medium text-l1">tokens</h2>
+                      {cacheHitPct > 0 && (
+                        <span
+                          className="inline-flex items-center rounded-full bg-ok px-2 py-0.5 text-micro font-medium tabular-nums text-ok-text"
+                          title="缓存读取占总提示词（输入 + 缓存读）的比例"
+                        >
+                          缓存复用 {cacheHitPct}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
+                        {compact(totalTokens)}
+                      </span>
+                      <span className="text-xs text-l3">输入 + 输出</span>
+                    </div>
+                    <div className="mt-2.5">
+                      <div className="flex h-2 w-full overflow-hidden rounded-full bg-inset" aria-hidden="true">
+                        <span className="h-full bg-cta transition-[width]" style={{ width: `${inShare}%` }} />
+                        <span className="h-full bg-l3/50 transition-[width]" style={{ width: `${100 - inShare}%` }} />
+                      </div>
+                      <div className="mt-1 flex items-center justify-between text-micro tabular-nums text-l3">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="size-1.5 rounded-full bg-cta" aria-hidden="true" />
+                          输入 {inShare}%
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="size-1.5 rounded-full bg-l3/60" aria-hidden="true" />
+                          输出 {100 - inShare}%
+                        </span>
+                      </div>
+                    </div>
+                    <dl className="mt-2.5 space-y-1.5 border-t border-hairline pt-2.5 text-xs">
+                      <StatLine label="输入" value={stats.cards.input.toLocaleString("en-US")} />
+                      <StatLine label="输出" value={stats.cards.output.toLocaleString("en-US")} />
+                      <StatLine label="缓存读" value={stats.cards.cacheRead.toLocaleString("en-US")} />
+                      <StatLine label="缓存写" value={stats.cards.cacheWrite.toLocaleString("en-US")} />
+                    </dl>
+                    <p className="mt-auto pt-3 text-micro leading-relaxed text-l4">
+                      上方大数字仅统计输入与输出，缓存读写单独列示对账。
+                    </p>
+                  </>
+                );
+              })()}
             </section>
           </div>
             {chartPts.length > 1 && (

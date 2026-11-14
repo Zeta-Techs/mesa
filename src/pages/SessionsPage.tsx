@@ -89,7 +89,7 @@ import RunCaret from "../components/RunCaret";
 import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import GitPanel from "../components/GitPanel";
-import RelayPicker from "../components/RelayPicker";
+import RelayPicker, { AgentMark } from "../components/RelayPicker";
 import type { RelayOptionDto, RelayTarget } from "../chat-relay";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
@@ -100,6 +100,7 @@ import { slimMenuAvailable, slimNotice } from "../session-slim";
 import { SECRET_EXPORT_WARNING } from "../session-transfer";
 import {
   Checkbox,
+  compactPrimaryActionClass,
   dangerActionClass,
   EmptyState,
   fieldClass,
@@ -1961,346 +1962,341 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               ))}
             </div>
           )}
-          {/* 一行 chip 快筛 + 当前分类下拉（不挤会话列表）：
-              常用 3 个常驻；近 7 天/已归档收进「更多 ▾」，激活的提到行内常显（内部 AI 只在「范围 → 其他」一处）。
-              分类是下拉而不是内嵌手风琴：展开时列表高度不变，点选项目后面板保持开（边筛边浏览）。 */}
+          {/* 单行复合筛选带：左侧范围浮层胶囊（点开不顶掉会话列表） + 右侧快筛分段与更多 */}
           <div className="relative mt-2">
-          <div className="flex flex-wrap items-center gap-1">
-            {!selecting && (
-              <>
-                {/* 快筛（可叠加的开关）写成分段控件样子：外框 + 打开的格浮起（2026-10-29） */}
-                <span className="ccode-seg-boxed is-sm inline-flex flex-wrap items-center">
-                {QUICK_FILTERS.filter(
-                  (f) => PRIMARY_QUICK.has(f.id) || quick.has(f.id),
-                ).map((f) => {
-                  const on = quick.has(f.id);
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      aria-pressed={on}
-                      title={f.title}
-                      onClick={() => toggleQuick(f.id)}
-                      className="ccode-seg-boxed-item inline-flex items-center gap-1 whitespace-nowrap text-xs"
-                    >
-                      {/* 行内操作与快筛统一用 Lucide 线框（同侧栏）；保留 = 旗子，与行首已保留标记同形 */}
-                      {f.id === "pinned" && <Bookmark size={11} strokeWidth={1.8} aria-hidden="true" />}
-                      {f.label}
-                    </button>
-                  );
-                })}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setTreeOpen((v) => !v)}
+                aria-expanded={treeOpen}
+                title="按项目 / Agent 筛选范围"
+                className={`inline-flex h-7 max-w-[11.5rem] min-w-0 items-center gap-1 rounded-lg border border-field px-2 text-xs transition-colors ${
+                  filterChipLabel || treeOpen
+                    ? "bg-seg-sel font-medium text-l1"
+                    : "bg-strip/60 text-l2 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {filterChipLabel ?? "全部对话"}
                 </span>
-                <span className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setMoreFiltersOpen((v) => !v)}
-                    aria-expanded={moreFiltersOpen}
-                    title="更多快筛（近 7 天 / 已归档）"
-                    className="inline-flex h-7 items-center gap-0.5 rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
+                {filterChipLabel && (
+                  <span
+                    role="button"
+                    title="清除分类筛选"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      selectFilter({ kind: "all" });
+                      setTreeOpen(false);
+                    }}
+                    className="rounded-xs px-0.5 text-l4 hover:text-l1"
                   >
-                    更多
-                    <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                  {moreFiltersOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={() => setMoreFiltersOpen(false)}
-                      />
-                      <div className="ccode-float-surface absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-field p-1">
-                        {QUICK_FILTERS.filter(
-                          (f) => !PRIMARY_QUICK.has(f.id) && f.id !== "internal",
-                        ).map((f) => {
-                          const on = quick.has(f.id);
-                          return (
-                            <button
-                              key={f.id}
-                              type="button"
-                              aria-pressed={on}
-                              title={f.title}
-                              onClick={() => {
-                                toggleQuick(f.id);
-                                setMoreFiltersOpen(false);
-                              }}
-                              className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs hover:bg-hover"
-                            >
-                              <span
-                                className={`w-3 shrink-0 text-cta ${on ? "" : "opacity-0"}`}
+                    ×
+                  </span>
+                )}
+                <ChevronDown
+                  size={12}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className={`shrink-0 text-l4 transition-transform ${treeOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {!selecting && (
+                <>
+                  <span className="ccode-seg-boxed is-sm inline-flex flex-wrap items-center">
+                    {QUICK_FILTERS.filter(
+                      (f) => PRIMARY_QUICK.has(f.id) || quick.has(f.id),
+                    ).map((f) => {
+                      const on = quick.has(f.id);
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          aria-pressed={on}
+                          title={f.title}
+                          onClick={() => toggleQuick(f.id)}
+                          className="ccode-seg-boxed-item inline-flex items-center gap-1 whitespace-nowrap text-xs"
+                        >
+                          {f.id === "pinned" && <Bookmark size={11} strokeWidth={1.8} aria-hidden="true" />}
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                  <span className="relative ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => setMoreFiltersOpen((v) => !v)}
+                      aria-expanded={moreFiltersOpen}
+                      title="更多快筛（近 7 天 / 已归档）"
+                      className="inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+                    >
+                      更多
+                      <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                    {moreFiltersOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => setMoreFiltersOpen(false)}
+                        />
+                        <div className="ccode-float-surface absolute right-0 top-full z-50 mt-1 w-36 rounded-lg border border-field p-1">
+                          {QUICK_FILTERS.filter(
+                            (f) => !PRIMARY_QUICK.has(f.id) && f.id !== "internal",
+                          ).map((f) => {
+                            const on = quick.has(f.id);
+                            return (
+                              <button
+                                key={f.id}
+                                type="button"
+                                aria-pressed={on}
+                                title={f.title}
+                                onClick={() => {
+                                  toggleQuick(f.id);
+                                  setMoreFiltersOpen(false);
+                                }}
+                                className="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-left text-xs hover:bg-hover"
                               >
-                                ✓
-                              </span>
-                              <span className={on ? "text-l1" : "text-l3"}>
-                                {f.label}
-                              </span>
+                                <span
+                                  className={`w-3 shrink-0 text-cta ${on ? "" : "opacity-0"}`}
+                                >
+                                  ✓
+                                </span>
+                                <span className={on ? "text-l1" : "text-l3"}>
+                                  {f.label}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </span>
+                </>
+              )}
+            </div>
+
+            {/* 范围浮层：展开时悬浮在列表上方，不顶掉下方的会话列表 */}
+            {treeOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-40"
+                  onClick={() => setTreeOpen(false)}
+                />
+                <div className="ccode-float-surface absolute inset-x-0 top-full z-50 mt-1.5 max-h-[min(26rem,64vh)] overflow-y-auto rounded-xl border border-field py-1.5">
+                  <div className="mb-1 flex items-center justify-between px-3">
+                    <span className="text-micro font-medium text-l3">选择范围</span>
+                    <button
+                      type="button"
+                      className="rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+                      onClick={() => setTreeOpen(false)}
+                    >
+                      完成
+                    </button>
+                  </div>
+                  {(() => {
+                    const rowCls = (on: boolean) =>
+                      `mx-1.5 flex h-7 w-[calc(100%-12px)] items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
+                        on ? "bg-seg-sel font-medium text-l1" : "text-l2 hover:bg-hover"
+                      }`;
+                    const countCls = (on: boolean) =>
+                      `shrink-0 text-xs tabular-nums ${on ? "text-l2" : "text-l4"}`;
+                    const sectionCls = "mx-3 mb-0.5 mt-2.5 text-micro font-medium text-l4";
+                    const scratchCount = regularVisible.filter(
+                      (s) => isScratchCwd(s.projectPath, IS_WINDOWS) && s.workspace == null,
+                    ).length;
+                    const dirs = scopeDirRows(projectGroups, projectNames, homeDir, IS_WINDOWS);
+                    const dirRow = (row: { path: string; label: string; count: number }) => {
+                      const on = filterActive({ kind: "projectPath", path: row.path });
+                      return (
+                        <button
+                          key={pathKey(row.path, IS_WINDOWS)}
+                          type="button"
+                          onClick={() => pickScope({ kind: "projectPath", path: row.path })}
+                          title={row.path}
+                          className={rowCls(on)}
+                        >
+                          <span className="truncate">{row.label}</span>
+                          <span className={countCls(on)}>{row.count}</span>
+                        </button>
+                      );
+                    };
+                    return (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => pickScope({ kind: "all" })}
+                          className={rowCls(filterActive({ kind: "all" }))}
+                        >
+                          <span className="truncate">全部对话</span>
+                          <span className={countCls(filterActive({ kind: "all" }))}>
+                            {regularVisible.length}
+                          </span>
+                        </button>
+                        {scratchCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => pickScope({ kind: "scratch" })}
+                            title="不属于任何项目的对话（新对话默认放在 ~/ccode/scratch）"
+                            className={rowCls(filterActive({ kind: "scratch" }))}
+                          >
+                            <span className="truncate">随手聊</span>
+                            <span className={countCls(filterActive({ kind: "scratch" }))}>
+                              {scratchCount}
+                            </span>
+                          </button>
+                        )}
+
+                        {dirs.projects.length > 0 && (
+                          <>
+                            <div className={sectionCls}>项目</div>
+                            {dirs.projects.map(dirRow)}
+                          </>
+                        )}
+                        {dirs.others.length > 0 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setProjectsOpen((v) => !v)}
+                              aria-expanded={projectsOpen}
+                              title="没添加到 Mesa 的目录：主目录、临时目录、外部仓库"
+                              className="mx-1.5 mt-0.5 flex h-7 w-[calc(100%-12px)] items-center gap-1.5 rounded-md px-2 text-left text-xs text-l3 hover:bg-hover"
+                            >
+                              <FoldMark open={projectsOpen} />
+                              <span className="min-w-0 flex-1 truncate">其他目录</span>
+                              <span className="shrink-0 text-micro text-l4">{dirs.others.length} 个</span>
                             </button>
+                            {projectsOpen && (
+                              <div className="ml-4 border-l border-hairline pl-1">
+                                {dirs.others.map(dirRow)}
+                              </div>
+                            )}
+                          </>
+                        )}
+
+                        {tree.length > 0 && <div className={sectionCls}>Agent</div>}
+                        {tree.map((g) => {
+                          const on = filterActive({ kind: "agent", agent: g.agent });
+                          const childOn = filter.kind === "project" && filter.agent === g.agent;
+                          const open = expandedGroup?.agent === g.agent;
+                          return (
+                            <div key={g.agent}>
+                              <div
+                                className={`mx-1.5 flex h-7 w-[calc(100%-12px)] items-center rounded-md text-xs ${
+                                  on ? "bg-seg-sel font-medium text-l1" : "text-l2 hover:bg-hover"
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedAgent(open ? null : g.agent)}
+                                  aria-expanded={open}
+                                  aria-label={open ? `收起 ${agentLabel(g.agent)} 的项目` : `展开 ${agentLabel(g.agent)} 的项目`}
+                                  title="按项目细分"
+                                  className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-l4 hover:text-l1"
+                                >
+                                  <FoldMark open={open} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => pickScope({ kind: "agent", agent: g.agent })}
+                                  className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2 pr-2 text-left"
+                                >
+                                  <span className={`flex min-w-0 items-center gap-1.5 truncate ${childOn ? "text-l1" : ""}`}>
+                                    <AgentMark agentId={g.agent} decorative className="h-2.5 w-auto shrink-0" />
+                                    <span className="truncate">{agentLabel(g.agent)}</span>
+                                  </span>
+                                  <span className={countCls(on)}>{g.list.length}</span>
+                                </button>
+                              </div>
+                              {open && (
+                                <div className="mb-0.5 ml-6 border-l border-hairline pl-1">
+                                  {g.projects.map((p) => {
+                                    const pActive = filterActive({
+                                      kind: "project",
+                                      agent: g.agent,
+                                      path: p.path,
+                                    });
+                                    return (
+                                      <button
+                                        key={p.path}
+                                        type="button"
+                                        onClick={() => {
+                                          pickScope({
+                                            kind: "project",
+                                            agent: g.agent,
+                                            path: p.path,
+                                          });
+                                        }}
+                                        onContextMenu={(e) => {
+                                          e.preventDefault();
+                                          const all = sessions.filter(
+                                            (session) =>
+                                              session.agent === g.agent &&
+                                              session.projectPath === p.path,
+                                          );
+                                          const visible = all.filter(
+                                            (session) =>
+                                              !session.internal &&
+                                              session.archived === showArchived,
+                                          );
+                                          setMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            kind: "project",
+                                            agent: g.agent,
+                                            path: p.path,
+                                            count: visible.length,
+                                            extra: all.length - visible.length,
+                                          });
+                                        }}
+                                        title={`${p.path}\n右键可删除这家 Agent 在此目录的对话`}
+                                        className={rowCls(pActive)}
+                                      >
+                                        <span className="truncate">
+                                          {sessionProjectLabel(p.path, projectNames, IS_WINDOWS) ??
+                                            basename(p.path)}
+                                        </span>
+                                        <span className={countCls(pActive)}>{p.list.length}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
                           );
                         })}
-                      </div>
-                    </>
+
+                        {internalVisible.length > 0 && (
+                          <>
+                            <div className={sectionCls}>其他</div>
+                            <button
+                              type="button"
+                              onClick={() => pickScope({ kind: "internal" })}
+                              title="Mesa 自己调用 AI 生成提交信息、摘要、雷达解读等产生的后台对话，默认不在列表里。超过保留期（默认 30 天）的会自动清理，在 设置 → 数据与存储 里改"
+                              className={rowCls(filterActive({ kind: "internal" }))}
+                            >
+                              <span className="truncate">Mesa 内部 AI</span>
+                              <span className={countCls(filterActive({ kind: "internal" }))}>
+                                {internalVisible.length}
+                              </span>
+                            </button>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                  {tree.length === 0 && (
+                    <p className="px-3 py-4 text-center text-xs text-l4">还没有对话记录</p>
                   )}
-                </span>
+                </div>
               </>
             )}
-          </div>
-          <button
-            type="button"
-            onClick={() => setTreeOpen((v) => !v)}
-            aria-expanded={treeOpen}
-            title="按 Agent / 项目筛选"
-            className={`mt-2 flex h-8 w-full items-center gap-1.5 rounded-lg border border-field px-2.5 text-xs transition-colors ${
-              filterChipLabel || treeOpen
-                ? "bg-hover text-l1"
-                : "text-l3 hover:bg-hover hover:text-l1"
-            }`}
-          >
-            <span className="shrink-0 text-l4">范围</span>
-            <span className="min-w-0 flex-1 truncate text-left">
-              {filterChipLabel ?? "全部对话"}
-            </span>
-            {filterChipLabel && (
-              <span
-                role="button"
-                title="清除分类筛选"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  selectFilter({ kind: "all" });
-                  setTreeOpen(false);
-                }}
-                className="px-1 text-l4 hover:text-l1"
-              >
-                ×
-              </span>
-            )}
-            <ChevronDown
-              size={13}
-              strokeWidth={1.8}
-              aria-hidden="true"
-              className={`shrink-0 text-l4 transition-transform ${treeOpen ? "rotate-180" : ""}`}
-            />
-          </button>
           </div>
         </div>
         {error && !selected && (
           <p className="shrink-0 px-3 py-1 text-xs text-err-text">{error}</p>
         )}
-        {treeOpen ? (
-            // 范围选择面（2026-10-17 重排）：按「先找项目、再按 Agent、最后是特殊来源」分段，段头只是标题不带计数；
-            // 每行右侧数字统一是「对话条数」。原先 Agent 在上、项目在下且组头计数是项目个数，
-            // 已添加项目与家目录 / tmp 混排、名字用目录名，内部 AI 又和「更多」里的快筛重复。
-            <div className="min-h-0 flex-1 overflow-auto py-1">
-              <div className="mb-1 flex items-center justify-between px-3">
-                <span className="text-micro text-l4">选择范围</span>
-                <button
-                  type="button"
-                  className={ghostActionClass}
-                  onClick={() => setTreeOpen(false)}
-                >
-                  完成
-                </button>
-              </div>
-              {(() => {
-                const rowCls = (on: boolean) =>
-                  `mx-1 flex h-7 w-[calc(100%-8px)] items-center justify-between gap-2 rounded-md px-2 text-left text-xs ${
-                    on ? "bg-rail-sel text-l1" : "text-l2 hover:bg-hover"
-                  }`;
-                const countCls = (on: boolean) =>
-                  `shrink-0 text-xs tabular-nums ${on ? "text-l2" : "text-l4"}`;
-                const sectionCls = "mx-3 mb-0.5 mt-3 text-micro text-l4";
-                const scratchCount = regularVisible.filter(
-                  (s) => isScratchCwd(s.projectPath, IS_WINDOWS) && s.workspace == null,
-                ).length;
-                const dirs = scopeDirRows(projectGroups, projectNames, homeDir, IS_WINDOWS);
-                const dirRow = (row: { path: string; label: string; count: number }) => {
-                  const on = filterActive({ kind: "projectPath", path: row.path });
-                  return (
-                    <button
-                      key={pathKey(row.path, IS_WINDOWS)}
-                      type="button"
-                      onClick={() => pickScope({ kind: "projectPath", path: row.path })}
-                      title={row.path}
-                      className={rowCls(on)}
-                    >
-                      <span className="truncate">{row.label}</span>
-                      <span className={countCls(on)}>{row.count}</span>
-                    </button>
-                  );
-                };
-                return (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => pickScope({ kind: "all" })}
-                      className={rowCls(filterActive({ kind: "all" }))}
-                    >
-                      <span className="truncate">全部对话</span>
-                      <span className={countCls(filterActive({ kind: "all" }))}>
-                        {regularVisible.length}
-                      </span>
-                    </button>
-                    {scratchCount > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => pickScope({ kind: "scratch" })}
-                        title="不属于任何项目的对话（新对话默认放在 ~/ccode/scratch）"
-                        className={rowCls(filterActive({ kind: "scratch" }))}
-                      >
-                        <span className="truncate">随手聊</span>
-                        <span className={countCls(filterActive({ kind: "scratch" }))}>
-                          {scratchCount}
-                        </span>
-                      </button>
-                    )}
-
-                    {dirs.projects.length > 0 && (
-                      <>
-                        <div className={sectionCls}>项目</div>
-                        {dirs.projects.map(dirRow)}
-                      </>
-                    )}
-                    {dirs.others.length > 0 && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setProjectsOpen((v) => !v)}
-                          aria-expanded={projectsOpen}
-                          title="没添加到 Mesa 的目录：主目录、临时目录、外部仓库"
-                          className="mx-1 mt-0.5 flex h-7 w-[calc(100%-8px)] items-center gap-1.5 rounded-md px-2 text-left text-xs text-l3 hover:bg-hover"
-                        >
-                          <FoldMark open={projectsOpen} />
-                          <span className="min-w-0 flex-1 truncate">其他目录</span>
-                          <span className="shrink-0 text-micro text-l4">{dirs.others.length} 个</span>
-                        </button>
-                        {projectsOpen && (
-                          <div className="ml-4 border-l border-hairline pl-1">
-                            {dirs.others.map(dirRow)}
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {tree.length > 0 && <div className={sectionCls}>Agent</div>}
-                    {tree.map((g) => {
-                      const on = filterActive({ kind: "agent", agent: g.agent });
-                      // 该 Agent 下某个项目是当前筛选：行上弱提示，不抢「选中」填充
-                      const childOn = filter.kind === "project" && filter.agent === g.agent;
-                      const open = expandedGroup?.agent === g.agent;
-                      return (
-                        <div key={g.agent}>
-                          <div
-                            className={`mx-1 flex h-7 w-[calc(100%-8px)] items-center rounded-md text-xs ${
-                              on ? "bg-rail-sel text-l1" : "text-l2 hover:bg-hover"
-                            }`}
-                          >
-                            {/* 展开钮单独一格：点名字就是筛这家（原先点名字只展开，还要再点一层「全部项目」） */}
-                            <button
-                              type="button"
-                              onClick={() => setExpandedAgent(open ? null : g.agent)}
-                              aria-expanded={open}
-                              aria-label={open ? `收起 ${agentLabel(g.agent)} 的项目` : `展开 ${agentLabel(g.agent)} 的项目`}
-                              title="按项目细分"
-                              className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-l4 hover:text-l1"
-                            >
-                              <FoldMark open={open} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => pickScope({ kind: "agent", agent: g.agent })}
-                              className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2 pr-2 text-left"
-                            >
-                              <span className={`truncate ${childOn ? "text-l1" : ""}`}>
-                                {agentLabel(g.agent)}
-                              </span>
-                              <span className={countCls(on)}>{g.list.length}</span>
-                            </button>
-                          </div>
-                          {open && (
-                            <div className="mb-0.5 ml-6 border-l border-hairline pl-1">
-                              {g.projects.map((p) => {
-                                const pActive = filterActive({
-                                  kind: "project",
-                                  agent: g.agent,
-                                  path: p.path,
-                                });
-                                return (
-                                  <button
-                                    key={p.path}
-                                    type="button"
-                                    onClick={() => {
-                                      pickScope({
-                                        kind: "project",
-                                        agent: g.agent,
-                                        path: p.path,
-                                      });
-                                    }}
-                                    onContextMenu={(e) => {
-                                      e.preventDefault();
-                                      // count 与列表所见口径一致（排除 internal、跟随归档开关）；
-                                      // 后端按 agent+path 全删，口径外数量单独透出给确认文案
-                                      const all = sessions.filter(
-                                        (session) =>
-                                          session.agent === g.agent &&
-                                          session.projectPath === p.path,
-                                      );
-                                      const visible = all.filter(
-                                        (session) =>
-                                          !session.internal &&
-                                          session.archived === showArchived,
-                                      );
-                                      setMenu({
-                                        x: e.clientX,
-                                        y: e.clientY,
-                                        kind: "project",
-                                        agent: g.agent,
-                                        path: p.path,
-                                        count: visible.length,
-                                        extra: all.length - visible.length,
-                                      });
-                                    }}
-                                    title={`${p.path}\n右键可删除这家 Agent 在此目录的对话`}
-                                    className={rowCls(pActive)}
-                                  >
-                                    <span className="truncate">
-                                      {sessionProjectLabel(p.path, projectNames, IS_WINDOWS) ??
-                                        basename(p.path)}
-                                    </span>
-                                    <span className={countCls(pActive)}>{p.list.length}</span>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {internalVisible.length > 0 && (
-                      <>
-                        <div className={sectionCls}>其他</div>
-                        <button
-                          type="button"
-                          onClick={() => pickScope({ kind: "internal" })}
-                          title="Mesa 自己调用 AI 生成提交信息、摘要、雷达解读等产生的后台对话，默认不在列表里。超过保留期（默认 30 天）的会自动清理，在 设置 → 数据与存储 里改"
-                          className={rowCls(filterActive({ kind: "internal" }))}
-                        >
-                          <span className="truncate">Mesa 内部 AI</span>
-                          <span className={countCls(filterActive({ kind: "internal" }))}>
-                            {internalVisible.length}
-                          </span>
-                        </button>
-                      </>
-                    )}
-                  </>
-                );
-              })()}
-              {tree.length === 0 && (
-                <EmptyState
-                  title="还没有对话"
-                  detail="各项目里 Agent 做过的记录会列在这里。定时任务等后台跑的不进这份列表。"
-                />
-              )}
-            </div>
-        ) : (
-        // 滚下去后上沿出一根细线：被切掉半截的行压在筛选区下面，不再像排版出错
+        {/* 滚下去后上沿出一根细线：被切掉半截的行压在筛选区下面，不再像排版出错 */}
         <div
           className={`min-h-0 flex-1 overflow-auto border-t transition-colors ${
             listScrolled ? "border-hairline" : "border-transparent"
@@ -2413,12 +2409,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       session: s,
                     });
                   }}
-                  className={`group mx-1.5 rounded-lg px-2.5 py-1.5 text-sm ${
+                  className={`group relative mx-1.5 my-0.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
                     selecting || clickable
                       ? "cursor-pointer hover:bg-hover"
                       : "opacity-60"
                   } ${isSelected ? "bg-rail-sel" : ""}`}
                 >
+                  {isSelected && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-nav-accent"
+                    />
+                  )}
                   <div className="flex min-w-0 items-center gap-1.5">
                     {selecting && (
                       <span
@@ -2455,12 +2457,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         }
                         className="-ml-1 flex h-6 w-4 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
                       >
-                        {/* 运行状态光标（2026-10-24，同侧栏）：Mesa 里开着的按注意力，Mesa 外在写的算在干活 */}
                         <RunCaret state={liveCaret(s)} decorative />
                       </button>
                     )}
+                    {!agentScoped && (
+                      <AgentMark
+                        agentId={s.agent}
+                        decorative
+                        className="h-3 w-auto shrink-0"
+                      />
+                    )}
                     {s.pinned && (
-                      // 常驻状态标记本身可点（取消保留）——不再在 hover 区重复一个书签
                       <button
                         type="button"
                         onClick={(event) => {
@@ -2469,34 +2476,17 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         }}
                         title="已保留（点击取消）"
                         aria-label="已保留（点击取消）"
-                        className="flex shrink-0 items-center rounded-sm px-0.5 text-l3 hover:text-cta"
+                        className="flex shrink-0 items-center rounded-sm px-0.5 text-cta hover:text-l1"
                       >
-                        {/* 只在已保留的行出现，有就是标记；线框浅灰与「保留」筛选钮同形，实心会成一块黑 */}
-                        <Bookmark size={13} strokeWidth={1.8} aria-hidden="true" />
+                        <Bookmark size={12} strokeWidth={1.9} aria-hidden="true" />
                       </button>
                     )}
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium leading-7 text-l1">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium leading-6 text-l1">
                       {sessionTitle(s)}
                     </span>
-                    {s.chainCount > 1 && (
-                      <span
-                        className="shrink-0 px-1 text-xs text-l3"
-                        title="同一段对话接着聊时存成了多个文件，这里合并成一条，打开和继续都接最新那份"
-                      >
-                        {s.chainCount} 次继续
-                      </span>
-                    )}
-                    {s.forkedFrom && (
-                      <span
-                        className="shrink-0 px-1 text-xs text-l3"
-                        title={forkHint(s)}
-                      >
-                        分支
-                      </span>
-                    )}
                     {!s.alive && (
                       <span
-                        className="shrink-0 rounded-sm bg-warn px-1 text-xs text-warn-text"
+                        className="shrink-0 rounded-sm bg-warn px-1 text-micro text-warn-text"
                         title="源文件已失效"
                       >
                         失效
@@ -2573,29 +2563,25 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       </div>
                     )}
                   </div>
-                  {/* meta 行：agent 品牌色胶囊（扫一眼分家）· token mono 小字 + 步骤/接力/标签 chip，AI 摘要截断尾随 */}
-                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-micro text-l4">
+                  {/* 第二行归属：Agent 名称 · 项目名 · 工作区/目标 · 续链/分支/接力/标签 */}
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-[18px] text-micro text-l3">
                     {!agentScoped && (
-                      <span
-                        className="shrink-0 rounded-full px-1.5 py-px font-medium"
-                        style={agentBrandBadgeStyle(s.agent)}
-                      >
+                      <span className="shrink-0 font-medium text-l3">
                         {agentLabel(s.agent)}
                       </span>
                     )}
-                    {/* 哪个项目：范围已限定到单个项目时不写（同一事实不重复）；
-                        原先 meta 行常常只剩一枚 Agent 胶囊，第二行几乎是空的 */}
                     {!projectScoped && (() => {
                       const label = sessionProjectLabel(s.projectPath, projectNames, IS_WINDOWS);
                       return label ? (
-                        <span className="max-w-32 shrink-0 truncate text-l3" title={s.projectPath}>
-                          {label}
-                        </span>
+                        <>
+                          {!agentScoped && <span className="shrink-0 text-l4">·</span>}
+                          <span className="max-w-36 shrink-0 truncate text-l3" title={s.projectPath}>
+                            {label}
+                          </span>
+                        </>
                       ) : null;
                     })()}
                     {s.workspace && (
-                      // 反向跳转（v3.88）：这个 badge 以前只能看不能点——会话与项目/步骤的
-                      // 四条关联全是单向的。点它回工作区页并选中该项目
                       <button
                         type="button"
                         onClick={(e) => {
@@ -2603,7 +2589,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                           setSelectProjectReq(s.projectPath);
                           setPage("workspaces");
                         }}
-                        className="max-w-28 truncate rounded-sm px-1 text-l3 hover:text-l1"
+                        className="max-w-28 truncate rounded-sm bg-inset px-1 py-px text-l2 hover:text-l1"
                         title={
                           (s.stepName
                             ? `研究步骤：${s.stepName}（工作区：${s.workspace}）`
@@ -2616,7 +2602,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     {s.taskName && (
                       <button
                         type="button"
-                        className="max-w-28 shrink-0 truncate rounded-sm px-1 text-l3 hover:text-l1"
+                        className="max-w-28 shrink-0 truncate rounded-sm bg-inset px-1 py-px text-l2 hover:text-l1"
                         title={`目标：${s.taskName}（点击回项目页）`}
                         onClick={(event) => {
                           event.stopPropagation();
@@ -2627,18 +2613,34 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         ▤ {s.taskName}
                       </button>
                     )}
+                    {s.chainCount > 1 && (
+                      <span
+                        className="shrink-0 rounded-sm bg-inset px-1 py-px text-l3"
+                        title="同一段对话接着聊时存成了多个文件，这里合并成一条，打开和继续都接最新那份"
+                      >
+                        {s.chainCount} 次续聊
+                      </span>
+                    )}
+                    {s.forkedFrom && (
+                      <span
+                        className="shrink-0 rounded-sm bg-inset px-1 py-px text-l3"
+                        title={forkHint(s)}
+                      >
+                        分支
+                      </span>
+                    )}
                     {s.handoffFromAgent && (
                       <span
-                        className="max-w-36 shrink-0 truncate px-1 text-l3"
+                        className="max-w-36 shrink-0 truncate rounded-sm bg-inset px-1 py-px text-l3"
                         title={`接自 ${agentLabel(s.handoffFromAgent)} 的对话（简报接力，非记忆转移）`}
                       >
-                        ⇄ 接自 {agentLabel(s.handoffFromAgent)}
+                        ⇄ {agentLabel(s.handoffFromAgent)}
                       </span>
                     )}
                     {s.tags.slice(0, 2).map((tag) => (
                       <span
                         key={tag}
-                        className="max-w-28 truncate px-1 text-l3"
+                        className="max-w-24 truncate rounded-full bg-inset px-1.5 py-px text-l3"
                       >
                         {tag}
                       </span>
@@ -2650,7 +2652,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                     {s.summary && (
                       <span
-                        className="min-w-0 flex-1 truncate text-l3"
+                        className="min-w-0 flex-1 truncate text-l4"
                         title={s.summary}
                       >
                         · {s.summary}
@@ -2708,7 +2710,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               />
             )}
         </div>
-        )}
       </PaneNav>
 
       {/* 回放区（canvas 底）：与列表栏并列常驻，未选中显示空态 */}
@@ -2726,11 +2727,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
           />
         ) : selected ? (
           <div className="flex min-h-0 flex-1 flex-col">
-            {/* 回放头部两行：上行「这是哪条对话 + 能做什么」，下行「谁、在哪个项目、多久前」+ 页签。
-                原先一行 flex-wrap，页签被挤到第二行最左、agent 名在头部和底栏各写一遍 */}
-            {/* 2026-10-29：头部第一行与对话头同高同字（h-9、标题 xs l2），去 strip 底；「继续」浅底细边，提炼简报 / 导出细边 */}
-            <div className="px-3 pb-2">
-              <div className="flex h-9 min-w-0 items-center gap-2">
+            {/* 回放顶盖：对齐新版抽屉顶盖层次，突出主操作「继续对话」与分段切换 */}
+            <div className="ccode-drawer-head px-4 pb-2.5 pt-2.5">
+              <div className="flex min-h-8 min-w-0 items-center gap-2">
                 <button
                   type="button"
                   className="flex h-7 shrink-0 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 md:hidden"
@@ -2739,8 +2738,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 >
                   ☰ 列表
                 </button>
+                <AgentMark
+                  agentId={selected.agent}
+                  decorative
+                  className="h-3.5 w-auto shrink-0"
+                />
                 <span
-                  className="min-w-0 truncate px-1 text-xs text-l2"
+                  className="min-w-0 truncate text-sm font-semibold text-l1"
                   title={sessionTitle(selected)}
                 >
                   {sessionTitle(selected)}
@@ -2749,7 +2753,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   <button
                     type="button"
                     onClick={() => jumpToLive(selected)}
-                    className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-warn-text hover:bg-hover"
+                    className="flex shrink-0 items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text hover:brightness-105"
                     title="终端里在等你确认（批准一个操作或选一项），点击跳过去"
                   >
                     等你确认
@@ -2758,7 +2762,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 ) : (
                   selected.live && (
                     <span
-                      className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l2"
+                      className="flex shrink-0 items-center gap-1 rounded-full bg-cta-pill px-2 py-0.5 text-micro font-medium text-cta-pill-text"
                       title="该对话的 CLI 进程仍在运行（外部探测）"
                     >
                       进行中
@@ -2766,32 +2770,35 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     </span>
                   )
                 )}
-                <span className="ml-auto flex shrink-0 items-center">
-                  {/* 继续：浅底细边，比旁边两个细边钮重一档即可（反色实心太亮，2026-10-29 用户）；
-                      底色取正文色 8% 混进去而不是 inset——浅色主题的 inset 接近白，看不出重一档 */}
+                <span className="ml-auto flex shrink-0 items-center gap-1.5">
                   <button
+                    type="button"
                     onClick={() => resumeInTerminal(selected)}
                     disabled={!selected.alive && !selected.pinned}
-                    className={`${paneOutlineButtonClass} h-7 bg-[color-mix(in_oklab,var(--color-l1)_8%,transparent)] px-2.5 font-medium hover:bg-[color-mix(in_oklab,var(--color-l1)_13%,transparent)]`}
+                    className={`${compactPrimaryActionClass} gap-1`}
                   >
-                    继续
+                    <SquareTerminal size={12} strokeWidth={2} aria-hidden="true" />
+                    继续对话
                   </button>
                   <button
+                    type="button"
                     onClick={(e) => {
                       const r = e.currentTarget.getBoundingClientRect();
                       setRelayOptions([]);
                       setRelayMenu({ x: Math.max(8, r.right - 288), y: r.bottom + 4, s: selected });
                     }}
                     disabled={!selected.alive}
-                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
+                    className={`${paneOutlineButtonClass} inline-flex h-7 items-center gap-1 px-2.5`}
                     title="下一句交给另一家 Agent 接着做"
                   >
+                    <ArrowLeftRight size={12} strokeWidth={1.8} aria-hidden="true" />
                     换 Agent
                   </button>
                   <button
+                    type="button"
                     onClick={() => void onExport()}
                     disabled={exporting || (!selected.alive && !selected.pinned)}
-                    className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
+                    className={`${paneOutlineButtonClass} h-7 px-2.5`}
                   >
                     {exporting ? "导出中…" : "导出"}
                   </button>
@@ -2799,28 +2806,29 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     <button
                       type="button"
                       onClick={() => void openExported()}
-                      className={`${paneOutlineButtonClass} ml-1.5 h-7 px-2.5`}
+                      className={`${paneOutlineButtonClass} h-7 px-2.5`}
                       title={exportPath}
                     >
                       打开
                     </button>
                   )}
                   <button
+                    type="button"
                     onClick={(e) => {
                       const r = e.currentTarget.getBoundingClientRect();
                       setResumeMenu({ x: r.right - 176, y: r.bottom + 4 });
                     }}
                     title="更多对话操作"
                     aria-label="更多对话操作"
-                    className="ml-1 inline-flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                   >
                     <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 </span>
               </div>
-              <div className="mt-1 flex min-w-0 items-center gap-2 text-micro text-l3">
+              <div className="mt-1.5 flex min-w-0 items-center gap-2 text-micro text-l3">
                 <span
-                  className="shrink-0 rounded-full px-1.5 py-px font-medium"
+                  className="shrink-0 rounded-full px-2 py-0.5 font-medium"
                   style={agentBrandBadgeStyle(selected.agent)}
                 >
                   {agentLabel(selected.agent)}
@@ -2828,11 +2836,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 {(() => {
                   const label = sessionProjectLabel(selected.projectPath, projectNames, IS_WINDOWS);
                   if (!label) return null;
-                  // 已添加项目可点回项目页（原底栏「查看项目」挪到这里，就近于项目名）
                   return registeredProjectPaths.has(selected.projectPath) ? (
                     <button
                       type="button"
-                      className="max-w-40 shrink-0 truncate rounded-sm hover:text-l1 hover:underline"
+                      className="max-w-40 shrink-0 truncate rounded-sm font-medium text-l2 hover:text-l1 hover:underline"
                       title={`${selected.projectPath}\n点击回项目页`}
                       onClick={() => {
                         setSelectProjectReq(selected.projectPath);
@@ -2842,7 +2849,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       {label}
                     </button>
                   ) : (
-                    <span className="max-w-40 shrink-0 truncate" title={selected.projectPath}>
+                    <span className="max-w-40 shrink-0 truncate text-l2" title={selected.projectPath}>
                       {label}
                     </span>
                   );
@@ -2853,7 +2860,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     if (!chip) return null;
                     return (
                       <span
-                        className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-l2"
+                        className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-l2"
                         title={chip.tip}
                       >
                         {chip.label}
@@ -2862,7 +2869,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   })()}
                 {selected.workspace && (
                   <span
-                    className="max-w-40 shrink-0 truncate rounded-sm bg-inset px-1.5 py-px text-l2"
+                    className="max-w-40 shrink-0 truncate rounded-sm bg-inset px-1.5 py-0.5 text-l2"
                     title={
                       selected.stepName
                         ? `研究步骤：${selected.stepName}（工作区：${selected.workspace}）`
@@ -2875,7 +2882,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 {selected.forkedFrom && (
                   <button
                     type="button"
-                    className="max-w-56 shrink-0 truncate rounded-sm bg-inset px-1.5 py-px text-l2 hover:text-l1"
+                    className="max-w-56 shrink-0 truncate rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:text-l1"
                     title={`${forkHint(selected)}。点击打开原对话`}
                     disabled={!forkSource(selected)}
                     onClick={() => {
@@ -2888,14 +2895,14 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 )}
                 {selected.handoffFromAgent && (
                   <span
-                    className="shrink-0 rounded-sm bg-inset px-1.5 py-px text-l2"
+                    className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-l2"
                     title={`该对话由 ${agentLabel(selected.handoffFromAgent)} 会话接力生成（简报接力，非记忆转移）`}
                   >
                     ⇄ 接自 {agentLabel(selected.handoffFromAgent)}
                   </span>
                 )}
                 <span
-                  className="min-w-0 truncate text-l4"
+                  className="min-w-0 truncate font-mono text-l4"
                   title={
                     selected.tokenUsage
                       ? `${absTime(selected.updatedAt)} · ${fmtTokens(selected.tokenUsage)}`
@@ -2904,11 +2911,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 >
                   {relTime(selected.updatedAt)}
                 </span>
-                {/* 对话 / 当前项目改动 页签：固定在第二行右端 */}
                 <div className="ccode-seg-boxed is-sm ml-auto inline-flex shrink-0 items-center">
                   {(["chat", "diff"] as const).map((k) => (
                     <button
                       key={k}
+                      type="button"
                       onClick={() => setReplayTab(k)}
                       aria-pressed={replayTab === k}
                       className="ccode-seg-boxed-item inline-flex items-center justify-center text-xs"
@@ -3067,11 +3074,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                   </div>
                 </div>
-                {/* 底部只读操作条：继续由头部主 CTA 负责；项目跳转与 Agent 已在头部第二行，这里只留外部续聊 */}
-                <div className="shrink-0 px-4 pb-2 pt-2.5">
-                  <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-xl bg-inset px-3 py-2">
-                    <span className="min-w-0 flex-1 truncate text-xs text-l4">
-                      历史回放 · 只读
+                {/* 底部单行只读栏：把历史只读提示、免责声明与外部续聊合并成紧凑一行，释放阅读高度 */}
+                <div className="shrink-0 px-4 pb-2.5 pt-2">
+                  <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-hairline bg-strip/65 px-3.5 py-1.5">
+                    <span className="min-w-0 flex-1 truncate text-micro text-l4">
+                      历史回放（只读） · 内容由 AI 生成，请核对后使用
                     </span>
                     <button
                       type="button"
@@ -3094,9 +3101,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       </button>
                     ))}
                   </div>
-                  <p className="mt-1.5 text-center text-micro text-l4">
-                    内容由 AI 生成，请核对后使用
-                  </p>
                 </div>
               </>
             )}

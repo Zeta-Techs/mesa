@@ -842,18 +842,21 @@ export default function CommandPalette({
                   </span>
                   <span className="min-w-0 flex-1 truncate">{c.title}</span>
                   {entry?.current ? (
-                    <span className="flex shrink-0 items-center gap-1 text-xs text-l3">
-                      <Check size={13} strokeWidth={2} aria-hidden="true" />
+                    <span className="flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l2">
+                      <Check size={12} strokeWidth={2} aria-hidden="true" />
                       当前
                     </span>
                   ) : (
-                    hint && (
-                      <span
-                        className={`max-w-[40%] shrink-0 truncate text-xs text-l4 ${entry?.kbd ? "font-mono" : ""}`}
-                      >
+                    hint &&
+                    (entry?.kbd ? (
+                      <kbd className="inline-flex shrink-0 items-center rounded border border-field bg-inset px-1.5 py-0.5 font-mono text-micro text-l3">
+                        {hint}
+                      </kbd>
+                    ) : (
+                      <span className="max-w-[40%] shrink-0 truncate text-xs text-l4">
                         {hint}
                       </span>
-                    )
+                    ))
                   )}
                   {entry?.external && (
                     <ExternalLink size={11} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
@@ -869,19 +872,29 @@ export default function CommandPalette({
           )}
         </ul>
         )}
-        <div className="flex items-center gap-3 border-t border-hairline px-3.5 py-1.5 text-micro text-l4">
-          <span>
-            <kbd className="font-mono text-l3">{mode === "theme" ? "←→↑↓" : "↑↓"}</kbd> 选择
+        <div className="flex items-center gap-3 border-t border-hairline bg-strip/60 px-3.5 py-1.5 text-micro text-l4">
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border border-field bg-inset px-1 py-0.5 font-mono text-micro text-l3">
+              {mode === "theme" ? "←→↑↓" : "↑↓"}
+            </kbd>
+            选择
           </span>
-          <span>
-            <kbd className="font-mono text-l3">↵</kbd> {mode === "theme" ? "应用" : "执行"}
+          <span className="inline-flex items-center gap-1">
+            <kbd className="rounded border border-field bg-inset px-1 py-0.5 font-mono text-micro text-l3">↵</kbd>
+            {mode === "theme" ? "应用" : "执行"}
           </span>
-          {mode === "theme" && (
-            <span>
-              <kbd className="font-mono text-l3">⌫</kbd> 返回
+          {mode === "theme" ? (
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded border border-field bg-inset px-1 py-0.5 font-mono text-micro text-l3">⌫</kbd>
+              返回
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              <kbd className="rounded border border-field bg-inset px-1 py-0.5 font-mono text-micro text-l3">Esc</kbd>
+              关闭
             </span>
           )}
-          {footerNote && <span className="ml-auto min-w-0 truncate">{footerNote}</span>}
+          {footerNote && <span className="ml-auto min-w-0 truncate text-l3">{footerNote}</span>}
         </div>
       </div>
     </div>

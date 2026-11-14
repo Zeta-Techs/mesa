@@ -35,6 +35,25 @@ import { CATEGORY_EXAMPLES } from "../research-profile";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
+const FAMILY_ACCENT: Record<string, string> = {
+  anthropic: "#d97757",
+  claude: "#d97757",
+  openai: "#10a37f",
+  google: "#4285f4",
+  gemini: "#4285f4",
+  deepseek: "#4d6bfe",
+  moonshot: "#6366f1",
+  kimi: "#6366f1",
+  qwen: "#8b5cf6",
+  xai: "#a1a1aa",
+  grok: "#a1a1aa",
+};
+
+function familyAccentColor(family: string | null | undefined): string {
+  if (!family) return "var(--color-cta)";
+  return FAMILY_ACCENT[family.toLowerCase()] ?? "var(--color-cta)";
+}
+
 /** 成员头像：所选模型的厂商图标（认不出用首字），圆底 */
 export function MemberAvatar({ member, size = 22 }: { member: Pick<ConsultMember, "family" | "name">; size?: number }) {
   return (
@@ -556,13 +575,20 @@ export default function ConsultView({
 
   const cols = members.length === 3 ? "md:grid-cols-3" : "md:grid-cols-2";
   const asked = mentionedNames(draft, members);
+  const stageLabel = dto?.busy
+    ? "研讨进行中"
+    : crossRounds > 0
+      ? `已完成 · 交叉 ${crossRounds} 轮`
+      : revealed
+        ? "已完成 · 首轮对照"
+        : "第一轮作答";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 头部：标题行 + 成员行，与对话回放头（对话管理）/ 对话头（研讨页）同高同字同位置 */}
-      <div className={inChatPane ? "px-2 pb-2" : "px-3 pb-2"}>
+      {/* 头部：标题 + 阶段胶囊 + 成员阵容 */}
+      <div className={inChatPane ? "border-b border-hairline px-2 pb-2" : "border-b border-hairline bg-strip/35 px-3.5 pb-2.5 pt-1"}>
         <div className={`flex h-9 min-w-0 items-center ${inChatPane ? "gap-1.5 pl-1.5" : "gap-2"}`}>
-          <Users size={14} strokeWidth={1.8} className={`shrink-0 text-l4 ${inChatPane ? "" : "ml-1"}`} aria-hidden="true" />
+          <Users size={15} strokeWidth={1.8} className={`shrink-0 text-l3 ${inChatPane ? "" : "ml-0.5"}`} aria-hidden="true" />
           {renaming !== null ? (
             <input
               autoFocus
@@ -573,13 +599,25 @@ export default function ConsultView({
                 if (e.key === "Enter") void rename();
                 if (e.key === "Escape") setRenaming(null);
               }}
-              className="h-7 min-w-0 flex-1 rounded-md border border-field bg-canvas px-2 text-xs text-l1 outline-none"
+              className="h-7 min-w-0 flex-1 rounded-md border border-field bg-canvas px-2 text-sm text-l1 outline-none"
             />
           ) : (
-            <span className="min-w-0 truncate px-1 text-xs text-l2" title={record.meta.title} onDoubleClick={() => setRenaming(record.meta.title)}>
+            <span
+              className="min-w-0 truncate px-1 text-sm font-semibold text-l1"
+              title={record.meta.title}
+              onDoubleClick={() => setRenaming(record.meta.title)}
+            >
               {record.meta.title}
             </span>
           )}
+          <span
+            className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-micro font-medium ${
+              dto?.busy ? "bg-cta-pill text-cta-pill-text" : "bg-inset text-l3"
+            }`}
+          >
+            {dto?.busy && <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />}
+            {stageLabel}
+          </span>
           <span className="flex-1" />
           <span className="shrink-0 text-micro tabular-nums text-l4" title="这场研讨各家调用的次数与已知花费">
             {costText(record.messages)}
@@ -606,17 +644,17 @@ export default function ConsultView({
             <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-1 pt-0.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 px-0.5 pt-0.5">
           {members.map((m) => (
             <span
               key={m.id}
-              className="inline-flex h-6 max-w-[16rem] items-center gap-1.5 rounded-full bg-inset pl-0.5 pr-2 text-xs text-l2"
+              className="inline-flex h-6 max-w-[16rem] items-center gap-1.5 rounded-full border border-hairline bg-inset pl-0.5 pr-2.5 text-xs text-l2"
               title={`${m.name} · ${m.model || "默认模型"} · 经 ${agentLabel(m.agent)}${m.canReadProject ? " · 能看项目" : " · 只看材料"}`}
             >
-              <MemberAvatar member={m} size={20} />
-              <span className="shrink-0">{m.name}</span>
+              <MemberAvatar member={m} size={18} />
+              <span className="shrink-0 font-medium text-l1">{m.name}</span>
               {/* 模型名太长只截模型名，经哪个 CLI 总能看见 */}
-              <span className="min-w-0 truncate text-micro text-l4">{m.model || "默认"}</span>
+              <span className="min-w-0 truncate text-micro text-l3">{m.model || "默认"}</span>
               <span className="shrink-0 text-micro text-l4">· {agentLabel(m.agent)}</span>
               {!m.canReadProject && <span className="shrink-0 text-micro text-warn-text">只看材料</span>}
               {hasImages && !m.seesImages && <span className="shrink-0 text-micro text-l4">图没给它看</span>}
@@ -651,28 +689,52 @@ export default function ConsultView({
 
           {revealed && rows.some((r) => r.status !== "pending") && (
             <div className="ccode-well mt-3 overflow-hidden rounded-xl border border-hairline">
-              <div className="border-b border-hairline px-3 py-1.5 text-micro text-l4">各家结论（原话，Mesa 只排在一起，不判谁对）</div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline bg-strip/50 px-3.5 py-2">
+                <span className="text-xs font-semibold text-l1">各家结论对照</span>
+                <span className="text-micro text-l4">原话照搬 · Mesa 只排对照与核依据，不判谁对</span>
+              </div>
               {rows.map((r) => (
-                <div key={r.member.id} className="grid grid-cols-[8.5rem_1fr] gap-3 border-t border-hairline px-3 py-2 first:border-t-0">
-                  <span className="flex min-w-0 items-center gap-2 self-start text-xs text-l1">
-                    <MemberAvatar member={r.member} size={18} />
-                    <span className="truncate">{r.member.name}</span>
-                  </span>
-                  <span className="min-w-0 text-xs leading-relaxed text-l2">
-                    {r.first ?? (r.status === "ok" ? "（没写结论）" : r.status === "pending" ? "还在答" : STATUS_TEXT[r.status as "error"])}
+                <div
+                  key={r.member.id}
+                  className="grid grid-cols-1 gap-2 border-t border-hairline border-l-2 px-3.5 py-2.5 first:border-t-0 sm:grid-cols-[9.5rem_1fr] sm:gap-3"
+                  style={{ borderLeftColor: familyAccentColor(r.member.family) }}
+                >
+                  <div className="flex min-w-0 flex-col gap-0.5 self-start">
+                    <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-l1">
+                      <MemberAvatar member={r.member} size={18} />
+                      <span className="truncate">{r.member.name}</span>
+                    </span>
+                    <span className="pl-[26px] text-micro text-l4">经 {agentLabel(r.member.agent)}</span>
+                  </div>
+                  <div className="min-w-0 text-xs leading-relaxed text-l2">
+                    <div>
+                      {r.first ?? (r.status === "ok" ? "（没写结论）" : r.status === "pending" ? "还在答" : STATUS_TEXT[r.status as "error"])}
+                    </div>
                     {(r.latest || r.crossPassed || r.missing > 0 || r.unseen > 0) && (
-                      <span className="mt-0.5 block text-micro text-l4">
-                        {[
-                          r.latest ? `后来改成：${r.latest}` : "",
-                          r.crossPassed ? "交叉：没补充" : "",
-                          r.missing ? `依据里 ${r.missing} 处找不到` : "",
-                          r.unseen ? `${r.unseen} 处它没看到` : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </span>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {r.latest && (
+                          <span className="inline-flex items-center rounded-sm bg-cta-pill px-1.5 py-0.5 text-micro text-cta-pill-text">
+                            交叉后更新：{r.latest}
+                          </span>
+                        )}
+                        {r.crossPassed && (
+                          <span className="inline-flex items-center rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
+                            交叉：没补充
+                          </span>
+                        )}
+                        {r.missing > 0 && (
+                          <span className="inline-flex items-center rounded-sm bg-warn px-1.5 py-0.5 text-micro text-warn-text">
+                            依据里 {r.missing} 处找不到
+                          </span>
+                        )}
+                        {r.unseen > 0 && (
+                          <span className="inline-flex items-center rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
+                            {r.unseen} 处它没看到
+                          </span>
+                        )}
+                      </div>
                     )}
-                  </span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -763,24 +825,26 @@ export default function ConsultView({
       {/* 输入：点名胶囊 + 输入框；不 @ 就是问所有人 */}
       <div className="shrink-0 px-4 pb-3 pt-1.5">
         <div className="ccode-chat-column mx-auto">
-          <div className="mb-1.5 flex flex-wrap items-center gap-1 px-1 text-micro text-l4">
-            <span className="mr-0.5">点名</span>
+          <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1 text-micro text-l4">
+            <span className="mr-0.5 font-medium text-l3">快捷点名</span>
             {members.map((m) => (
               <button
                 key={m.id}
                 type="button"
                 onClick={() => mention(m.name)}
-                className={`inline-flex h-6 items-center gap-1 rounded-full pl-0.5 pr-2 transition-colors hover:bg-hover hover:text-l1 ${
-                  asked.includes(m.name) ? "bg-cta-pill text-cta-pill-text" : "text-l3"
+                className={`inline-flex h-6 items-center gap-1 rounded-full border pl-0.5 pr-2 transition-colors ${
+                  asked.includes(m.name)
+                    ? "border-cta/40 bg-cta-pill font-medium text-cta-pill-text"
+                    : "border-hairline bg-inset/70 text-l2 hover:border-field hover:bg-hover hover:text-l1"
                 }`}
               >
-                <MemberAvatar member={m} size={18} />
-                <span className="text-micro">{m.name}</span>
+                <MemberAvatar member={m} size={16} />
+                <span className="text-micro">@{m.name}</span>
               </button>
             ))}
             <span className="flex-1" />
             <span>
-              {asked.length ? `只问 ${asked.join("、")}` : "不 @ 就是问所有人"} · 你不说话时它们最多再互相叫 {record.meta.relayLimit} 次
+              {asked.length ? `只问 ${asked.join("、")}` : "不 @ 就是问所有人"} · 最多再互相叫 {record.meta.relayLimit} 次
             </span>
           </div>
           <div className="ccode-consult-composer flex items-end gap-2 rounded-2xl border border-field bg-strip px-3 py-2 focus-within:border-l4">

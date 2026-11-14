@@ -15,6 +15,7 @@ import {
   Trash2,
   WandSparkles,
   Workflow,
+  X,
   BookOpen,
   ChartColumn,
   ListChecks,
@@ -46,21 +47,26 @@ import {
 } from "../skill-delete";
 import {
   Checkbox,
+  compactPrimaryActionClass,
   EmptyState,
   fieldClass,
   FoldMark,
   LoadingRows,
   PageFrame,
   PageHeader,
+  PageToolbar,
+  paneOutlineButtonClass,
   PaneSearch,
   primaryActionClass,
   RowAction,
   rowActionClass,
   secondaryActionClass,
+  SegTabs,
   hoverRevealClass,
   dangerActionClass,
   NoticeBar,
 } from "../components/PageFrame";
+import { AgentMark } from "../components/RelayPicker";
 import type {
   DiscoveredSkillDto,
   ProjectConfigReadDto,
@@ -122,9 +128,8 @@ function AppliedCell({
   installedIds: ReadonlySet<string> | null;
   onOpen: () => void;
 }) {
-  const appliedNames = Object.entries(skill.apps)
-    .filter(([, on]) => on)
-    .map(([id]) => AGENTS.find((a) => a.id === id)?.label ?? id);
+  const appliedAgents = AGENTS.filter((a) => skill.apps[a.id]);
+  const appliedNames = appliedAgents.map((a) => a.label);
   const missingNames = skillMissingAgentNames(skill, installedIds);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const { tip, show, hide } = useHoverTip(anchorRef);
@@ -139,10 +144,17 @@ function AppliedCell({
       }}
       onMouseEnter={has ? show : undefined}
       onMouseLeave={hide}
-      className="flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-left text-xs hover:bg-hover"
+      className="flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-left text-xs hover:bg-hover"
     >
-      <span className="text-l3 hover:text-l1">
-        {has ? `${appliedNames.length} 个 Agent` : "未用"}
+      {has && (
+        <span className="flex items-center gap-1 pr-0.5" aria-hidden="true">
+          {appliedAgents.slice(0, 4).map((a) => (
+            <AgentMark key={a.id} agentId={a.id} decorative className="h-2.5 w-auto" />
+          ))}
+        </span>
+      )}
+      <span className={has ? "text-l2 hover:text-l1" : "text-l4 hover:text-l2"}>
+        {has ? `${appliedNames.length} 个 Agent` : "未分发"}
       </span>
       {has && (
         <HoverTip
@@ -2005,15 +2017,23 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
       stale = true;
     };
   }, [preview]);
+  const [statusFilter, setStatusFilter] = useState<"all" | "applied" | "attention">("all");
+  const skillNeedsAttention = (sk: SkillDto) =>
+    (sk.staleCopies ?? []).length > 0 ||
+    Boolean(updates[sk.id]?.updateAvailable) ||
+    Boolean(sk.optimizeReview?.changed) ||
+    builtinUpdates.includes(sk.name);
+  const attentionCount = skills.filter(skillNeedsAttention).length;
   const q = query.trim().toLowerCase();
-  const matched = q
-    ? skills.filter((sk) =>
-        [sk.name, sk.description, sk.category ?? "", sk.source ?? ""]
-          .join("\n")
-          .toLowerCase()
-          .includes(q),
-      )
-    : skills;
+  const matched = skills.filter((sk) => {
+    if (statusFilter === "applied" && !Object.values(sk.apps).some(Boolean)) return false;
+    if (statusFilter === "attention" && !skillNeedsAttention(sk)) return false;
+    if (!q) return true;
+    return [sk.name, sk.description, sk.category ?? "", sk.source ?? ""]
+      .join("\n")
+      .toLowerCase()
+      .includes(q);
+  });
 
   return (
     <div className="flex h-full">
@@ -2206,29 +2226,50 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
             />
           ) : (
             <div>
-              <div className="mb-1 flex items-center gap-2 px-1">
-                <PaneSearch
-                  className="w-full max-w-sm"
-                  value={query}
-                  onChange={setQuery}
-                  placeholder="搜索技能（名称 / 描述 / 分类 / 来源）"
-                  label="搜索技能"
+              <PageToolbar>
+                <SegTabs
+                  variant="boxed"
+                  size="sm"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  items={[
+                    { id: "all", label: `全部 ${skills.length}` },
+                    { id: "applied", label: `已启用 ${appliedCount}` },
+                    {
+                      id: "attention",
+                      label: (
+                        <span className="inline-flex items-center gap-1.5">
+                          {attentionCount > 0 && (
+                            <span className="size-1.5 rounded-full bg-warn-text" aria-hidden="true" />
+                          )}
+                          待同步/更新 {attentionCount}
+                        </span>
+                      ),
+                    },
+                  ]}
                 />
-                {q && (
-                  <span className="shrink-0 text-micro text-l4">
-                    {matched.length} / {skills.length}
-                  </span>
-                )}
-              </div>
-              {q && matched.length === 0 && (
-                <p className="py-6 text-center text-xs text-l4">
-                  没有匹配「{query}」的技能
+                <div className="ml-auto flex items-center gap-2">
+                  {(q || statusFilter !== "all") && (
+                    <span className="shrink-0 text-micro tabular-nums text-l4">
+                      {matched.length} / {skills.length}
+                    </span>
+                  )}
+                  <PaneSearch
+                    className="w-64 max-w-full"
+                    value={query}
+                    onChange={setQuery}
+                    placeholder="搜索技能（名称 / 描述 / 分类）"
+                    label="搜索技能"
+                  />
+                </div>
+              </PageToolbar>
+              {matched.length === 0 && (
+                <p className="py-8 text-center text-xs text-l4">
+                  {q ? `没有匹配「${query}」的技能` : "当前筛选下没有技能"}
                 </p>
               )}
-              {/* 分组（2026-10-29 去卡片）：组标题是可折叠的粗体节标题，组内行不画框，靠留白分隔 */}
               <div>
                 {[
-                  // 分组顺序 = 技能数组首现顺序；未分类固定沉底（不挡已归组的内容）
                   ...new Set(matched.map((skill) => skill.category ?? "未分类")),
                 ]
                   .sort((a, b) => (a === "未分类" ? 1 : b === "未分类" ? -1 : 0))
@@ -2236,18 +2277,16 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                   const categorySkills = matched.filter(
                     (skill) => (skill.category ?? "未分类") === category,
                   );
-                  // 组内来源全部一致时收进组头标一次（行级不再逐行重复）；混合来源不标，明细在预览面板
                   const distinctSources = [
                     ...new Set(categorySkills.map((s) => sourceLabel(s))),
                   ];
-                  // 分组名已含来源字样（「Mesa 内置」组再标「内置」）时不重复
                   const groupSource =
                     distinctSources.length === 1 &&
                     !category.includes(distinctSources[0]!)
                       ? distinctSources[0]
                       : null;
                   return (
-                    <section key={category} className="mt-6 first:mt-3">
+                    <section key={category} className="mt-5 first:mt-2">
                       <button
                         type="button"
                         onClick={() => toggleCat(category)}
@@ -2255,27 +2294,23 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                           catCollapsed.has(category) ? `展开 ${category}` : `收起 ${category}`
                         }
                         aria-expanded={!catCollapsed.has(category)}
-                        className="flex min-h-9 w-full items-center gap-2 rounded-lg px-1 text-left"
+                        className="flex min-h-8 w-full items-center gap-2 rounded-lg px-1 text-left hover:bg-hover/50"
                       >
                         <span className="text-l4">
                           <FoldMark open={!catCollapsed.has(category)} />
                         </span>
-                        {/* 比页名「技能」（text-lg）低一档：同号时组名跟页名抢（2026-10-30 用户） */}
-                        <span className="text-base font-semibold text-l1">{category}</span>
-                        <span className="text-xs text-l4">
+                        <span className="text-sm font-semibold text-l1">{category}</span>
+                        <span className="text-xs tabular-nums text-l4">
                           {categorySkills.length} 个
                         </span>
-                        {/* 单来源组的来源标注（替代原行级来源列）；嵌在折叠按钮内只能纯展示，
-                            仓库链接在预览面板 */}
                         {groupSource && (
                           <span
-                            className="truncate font-mono text-micro text-l4"
+                            className="rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l4"
                             title={`来源：${groupSource}`}
                           >
                             {groupSource}
                           </span>
                         )}
-                        {/* 未分类组挂归类引导（实际入口是行内 ⋯ → 设置分类，无拖拽归类） */}
                         {category === "未分类" && (
                           <span className="ml-auto text-micro text-l4">
                             行内 ⋯ →「设置分类」即可归档
@@ -2283,62 +2318,73 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                         )}
                       </button>
                       {!catCollapsed.has(category) && (
-                        <div className="pt-1">
-                        {/* 「Mesa 内置」组内按用途加小标题，其余组照旧一整列 */}
+                        <div className="pt-1.5">
                         {(category === "Mesa 内置"
                           ? groupByUsage(categorySkills)
                           : [{ label: null, skills: categorySkills }]
                         ).map((sub) => (
-                        <div key={sub.label ?? ""} className={sub.label ? "mt-3 first:mt-1" : undefined}>
+                        <div key={sub.label ?? ""} className={sub.label ? "mt-3.5 first:mt-0" : undefined}>
                         {sub.label && (
-                          <div className="px-3 pb-1 text-xs text-l4">{sub.label}</div>
+                          <div className="px-1 pb-1.5 text-micro font-medium tracking-wide text-l3">
+                            {sub.label}
+                          </div>
                         )}
-                        <ul className="space-y-0.5">
+                        <ul className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline">
                           {sub.skills.map((skill) => {
                             const stale = (skill.staleCopies ?? []).length > 0;
                             const update = updates[skill.id];
+                            const selected = preview?.skill.id === skill.id;
                             return (
                               <li
                                 key={skill.id}
                                 onClick={() => void onView(skill)}
-                                className={`group grid min-h-12 cursor-pointer grid-cols-[16px_minmax(0,1fr)_5rem_7rem] items-center gap-x-3 rounded-lg py-2 pl-3 pr-2 transition-colors ${
-                                  preview?.skill.id === skill.id
+                                className={`group relative grid min-h-12 cursor-pointer grid-cols-[16px_minmax(0,1fr)_auto_7rem] items-center gap-x-3 py-2.5 pl-3.5 pr-2.5 transition-colors ${
+                                  selected
                                     ? "bg-chat-bubble"
-                                    : "hover:bg-hover"
+                                    : "hover:bg-hover/65"
                                 }`}
                               >
+                                {selected && (
+                                  <span
+                                    aria-hidden="true"
+                                    className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-cta"
+                                  />
+                                )}
                                 {(() => {
                                   const Icon = USAGE_ICONS[usageGroupOf(skill.name)] ?? Puzzle;
-                                  return <Icon size={16} strokeWidth={1.6} className="text-l4" aria-hidden="true" />;
+                                  return (
+                                    <Icon
+                                      size={15}
+                                      strokeWidth={1.7}
+                                      className={selected ? "text-nav-accent" : "text-l3"}
+                                      aria-hidden="true"
+                                    />
+                                  );
                                 })()}
                                 <div className="min-w-0">
                                   <div className="flex min-w-0 items-center gap-1.5">
-                                    <span className="min-w-0 truncate text-base font-medium text-l1">
+                                    <span className="min-w-0 truncate text-sm font-semibold text-l1">
                                       {skill.name}
                                     </span>
-                                    {/* 类型标签（v3.93）：有后端数据支撑的只有 MCP 提及
-                                        （skills.rs 内容扫描）；Prompt/Tool 分类无来源，不编造 */}
                                     {skill.mentionsMcp && (
                                       <TipBadge
                                         text="SKILL.md 正文提及 MCP 工具/服务器"
-                                        className="shrink-0 rounded-sm bg-inset px-1 py-0.5 font-mono text-micro text-l3"
+                                        className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l3"
                                       >
                                         ⌗ MCP
                                       </TipBadge>
                                     )}
-                                    {/* 用户自定义标签 pill：名称后 1-4 个，无标签不渲染 */}
                                     {(skill.tags ?? []).slice(0, 4).map((tag) => (
                                       <span
                                         key={tag}
-                                        className="h-5 max-w-24 shrink-0 truncate rounded-full bg-inset px-1.5 text-xs leading-5 text-l2"
+                                        className="h-5 max-w-24 shrink-0 truncate rounded-full bg-inset px-2 text-micro leading-5 text-l2"
                                       >
                                         {tag}
                                       </span>
                                     ))}
-                                    {/* 状态聚合：副本过期/GitHub 可更新合并为一个警示点，明细在悬浮 */}
                                     {(stale || update?.updateAvailable) && (
                                       <TipBadge
-                                        className="size-2 shrink-0 rounded-full bg-warn-text"
+                                        className="size-1.5 shrink-0 rounded-full bg-warn-text"
                                         text={[
                                           stale
                                             ? `副本过期：${(skill.staleCopies ?? []).join("、")}。点「同步副本」重新分发。`
@@ -2359,7 +2405,7 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                           void onResync(skill);
                                         }}
                                         title={`把库里的最新版重新拷到：${(skill.staleCopies ?? []).join("、")}`}
-                                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
+                                        className="shrink-0 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text hover:brightness-105"
                                       >
                                         同步副本
                                       </button>
@@ -2372,22 +2418,18 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                                           void openOptimizeReview(skill);
                                         }}
                                         title="终端里的 Agent 改过这个技能：看改前改后，保留或撤回"
-                                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-warn-text hover:bg-hover"
+                                        className="shrink-0 rounded-full bg-cta-pill px-2 py-0.5 text-micro font-medium text-cta-pill-text hover:brightness-105"
                                       >
                                         看优化改动
                                       </button>
                                     )}
                                   </div>
-                                  {/* 描述次行：名称下挂一行简介提升扫视效率（来源列拆除后横向空间
-                                      释放，2026-10-23 去掉宽度上限、铺到「已用」列前；对比度提到 xs/l3，米白底色上 micro/l4 太暗）；
-                                      空/纯符号描述不渲染（displayDescription 同预览面板口径） */}
                                   {(() => {
                                     const desc = displayDescription(
                                       skill.description,
                                     );
-                                    // 整段一行铺满再截断，悬停看全文（2026-10-31 试过只留第一句，用户：「中间太空了」）
                                     return desc ? (
-                                      <div className="mt-0.5 truncate text-xs text-l4" title={desc}>
+                                      <div className="mt-0.5 truncate text-xs text-l3" title={desc}>
                                         {desc}
                                       </div>
                                     ) : null;
@@ -2529,281 +2571,334 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
         </PageFrame>
       </div>
 
-      {/* SKILL.md 预览面板 */}
+      {/* SKILL.md 预览抽屉面板 */}
       {preview && (
-        <div className="ccode-skill-preview flex w-[clamp(360px,34vw,460px)] shrink-0 flex-col border-l border-hairline bg-canvas">
-          <div className="flex h-9 shrink-0 items-center gap-2 px-3">
-            <span className="truncate text-sm font-medium text-l1">
-              {preview.skill.name}
-            </span>
-            <button
-              onClick={() => setPreview(null)}
-              title="关闭预览"
-              aria-label="关闭预览"
-              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1"
-            >
-              ×
-            </button>
-          </div>
-          {/* 描述/来源/应用网格与 SKILL.md 同在一个滚动区（v3.47：顶部固定区曾挡掉内容上半部分）；
-              描述全文展示，不再截断；空或纯符号的异常值显示占位 */}
-          <div className="min-h-0 flex-1 overflow-auto">
-          <div className="border-b border-hairline px-3 py-2.5 text-sm leading-5 text-l3">
-            {displayDescription(preview.skill.description) ?? (
-              <span className="text-l4">—</span>
-            )}
-          </div>
-          {/* 哪些步骤在用（v3.88）：删技能前得知道会影响谁——这条以前完全没有。
-              纯前端反查已注册项目的 steps[].skills，打开预览时读一次，不轮询 */}
-          <div className="border-b border-hairline px-3 py-2.5 text-sm">
-            <div className="mb-1 flex items-center justify-between">
-              <span className="text-xs text-l4">哪些步骤在用</span>
+        <aside
+          aria-label={`${preview.skill.name} 预览`}
+          className="ccode-workbench-detail ccode-skill-preview flex w-[clamp(370px,35vw,470px)] shrink-0 flex-col border-l border-hairline"
+        >
+          <div className="ccode-drawer-head shrink-0 px-4 pb-3 pt-3.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h2 className="truncate text-base font-semibold text-l1">
+                    {preview.skill.name}
+                  </h2>
+                  <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
+                    {SOURCE_LABEL[preview.skill.source] ?? preview.skill.source}
+                  </span>
+                </div>
+                {preview.skill.category && (
+                  <div className="mt-0.5 truncate text-xs text-l4">
+                    {preview.skill.category}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreview(null)}
+                title="关闭预览"
+                aria-label="关闭预览"
+                className="flex size-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+              >
+                <X size={15} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              {(preview.skill.staleCopies ?? []).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => void onResync(preview.skill)}
+                  className={compactPrimaryActionClass}
+                  title={`分发给 Agent 的复制件过期：${(preview.skill.staleCopies ?? []).join("、")}`}
+                >
+                  <RefreshCw size={12} strokeWidth={2} className="mr-1" aria-hidden="true" />
+                  同步副本
+                </button>
+              )}
+              {updates[preview.skill.id]?.updateAvailable && (
+                <button
+                  type="button"
+                  onClick={() => void onApplyUpdate(preview.skill)}
+                  disabled={applyingUpdate === preview.skill.id}
+                  className={compactPrimaryActionClass}
+                  title={updates[preview.skill.id].message}
+                >
+                  {applyingUpdate === preview.skill.id ? "正在更新…" : "应用更新"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void onEdit(preview.skill)}
+                className={`${paneOutlineButtonClass} inline-flex items-center gap-1`}
+              >
+                <Pencil size={12} strokeWidth={1.8} aria-hidden="true" />
+                编辑
+              </button>
+              <button
+                type="button"
+                onClick={() => setOptimize(preview.skill)}
+                className={`${paneOutlineButtonClass} inline-flex items-center gap-1`}
+                title="开终端让 Agent 按你的意见改写"
+              >
+                <WandSparkles size={12} strokeWidth={1.8} aria-hidden="true" />
+                优化
+              </button>
               <button
                 type="button"
                 onClick={() => setBindSkill(preview.skill)}
+                className={`${paneOutlineButtonClass} inline-flex items-center gap-1`}
                 title="选项目与步骤，把此技能挂进研究流程（写回 project.toml）"
-                className="rounded-sm px-1 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l1"
               >
                 ＋ 挂载到步骤
               </button>
             </div>
-            {skillUsage === null ? (
-              <span className="text-xs text-l4">查询中…</span>
-            ) : skillUsage.length === 0 ? (
-              <span className="text-xs text-l4" title="删除它不会影响现有研究流程">
-                没有步骤在用
-              </span>
-            ) : (
-              <ul className="space-y-0.5">
-                {skillUsage.map((u) => (
-                  <li key={`${u.projectPath}/${u.step}`}>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3.5">
+            {/* 卡片 ①：简介、来源与流程引用 */}
+            <div className="ccode-well space-y-2.5 rounded-xl border border-hairline p-3.5">
+              <div className="text-sm leading-relaxed text-l2">
+                {displayDescription(preview.skill.description) ?? (
+                  <span className="text-l4">暂无描述</span>
+                )}
+              </div>
+
+              {(Boolean(preview.skill.derivedFrom?.length) ||
+                Boolean(preview.skill.repo) ||
+                (preview.skill.staleCopies ?? []).length > 0 ||
+                Boolean(updates[preview.skill.id]?.updateAvailable)) && (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-hairline pt-2 text-xs text-l3">
+                  {preview.skill.derivedFrom?.length ? (
+                    <span>
+                      从{" "}
+                      {preview.skill.derivedFrom
+                        .filter((d) => skills.some((s) => s.name === d.name))
+                        .map((d) => d.name)
+                        .join("、")}{" "}
+                      合成
+                    </span>
+                  ) : null}
+                  {preview.skill.repo &&
+                    (() => {
+                      const url = skillRepoUrl(preview.skill);
+                      return url ? (
+                        <button
+                          type="button"
+                          onClick={() => void openUrl(url)}
+                          className="font-mono text-xs text-l2 underline decoration-white/20 underline-offset-2 hover:text-l1"
+                          title={`在浏览器打开 ${url}`}
+                        >
+                          {preview.skill.repo}
+                          {preview.skill.repoSubdir ? `/${preview.skill.repoSubdir}` : ""}
+                        </button>
+                      ) : (
+                        <span className="font-mono text-xs text-l2" title={preview.skill.repo}>
+                          {preview.skill.repo}
+                          {preview.skill.repoSubdir ? `/${preview.skill.repoSubdir}` : ""}
+                        </span>
+                      );
+                    })()}
+                  {(preview.skill.staleCopies ?? []).length > 0 && (
+                    <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
+                      副本需同步：{(preview.skill.staleCopies ?? []).join("、")}
+                    </span>
+                  )}
+                  {updates[preview.skill.id]?.updateAvailable && (
+                    <span className="rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
+                      GitHub 可更新
+                    </span>
+                  )}
+                </div>
+              )}
+
+              <div className="border-t border-hairline pt-2">
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-micro font-medium text-l4">流程步骤引用</span>
+                </div>
+                {skillUsage === null ? (
+                  <span className="text-xs text-l4">查询中…</span>
+                ) : skillUsage.length === 0 ? (
+                  <span className="text-xs text-l4" title="删除它不会影响现有研究流程">
+                    当前没有流程步骤在用
+                  </span>
+                ) : (
+                  <ul className="flex flex-wrap gap-1.5">
+                    {skillUsage.map((u) => (
+                      <li key={`${u.projectPath}/${u.step}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectProjectReq(u.projectPath);
+                            setPage("workspaces");
+                          }}
+                          title={`到项目页查看 ${u.projectName}`}
+                          className="inline-flex max-w-full items-center gap-1 rounded-md border border-hairline bg-inset/70 px-2 py-1 text-left text-micro hover:bg-hover"
+                        >
+                          <span className="shrink-0 text-l3">{u.projectName}</span>
+                          <span className="text-l4">·</span>
+                          <span className="truncate font-medium text-l1">{u.step}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            {/* 卡片 ②：应用到各 Agent 矩阵 */}
+            <div className="ccode-well rounded-xl border border-hairline p-3.5">
+              <div className="mb-2.5 flex items-center gap-2">
+                <span className="text-xs font-semibold text-l2">
+                  应用到 Agent
+                </span>
+                <span
+                  className="text-micro tabular-nums text-l4"
+                  title="已应用 / 全部 CLI"
+                >
+                  {Object.values(preview.skill.apps).filter(Boolean).length} / {AGENTS.length}
+                </span>
+                {(() => {
+                  const allKey = `${preview.skill.id}:__all__`;
+                  const installedIds = new Set(
+                    agents.filter((a) => a.binaryPath).map((a) => a.id),
+                  );
+                  const remaining = Object.keys(preview.skill.apps).filter(
+                    (a) =>
+                      !preview.skill.apps[a] &&
+                      (agents.length === 0 || installedIds.has(a)),
+                  ).length;
+                  if (remaining === 0) return null;
+                  return (
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectProjectReq(u.projectPath);
-                        setPage("workspaces");
-                      }}
-                      title={`到项目页查看 ${u.projectName}`}
-                      className="flex w-full min-w-0 items-baseline gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-hover"
+                      onClick={() => void applyAllAgents(preview.skill)}
+                      disabled={applying[allKey]}
+                      title={`分发到剩余 ${remaining} 个已安装的 Agent`}
+                      className={`${compactPrimaryActionClass} ml-auto`}
                     >
-                      <span className="shrink-0 text-l4">{u.projectName}</span>
-                      <span className="min-w-0 truncate text-l2">{u.step}</span>
+                      {applying[allKey] ? "应用中…" : "一键应用"}
                     </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <div className="border-b border-hairline px-3 py-2.5 text-sm text-l3">
-            <span>
-              {SOURCE_LABEL[preview.skill.source] ?? preview.skill.source}
-              {preview.skill.derivedFrom?.length
-                ? `｜从 ${preview.skill.derivedFrom
-                    .filter((d) => skills.some((s) => s.name === d.name))
-                    .map((d) => d.name)
-                    .join("、")} 合成`
-                : ""}
-            </span>
-            {preview.skill.repo &&
-              (() => {
-                const url = skillRepoUrl(preview.skill);
-                return url ? (
+                  );
+                })()}
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {AGENTS.map((agent) => {
+                  const enabled = !!preview.skill.apps[agent.id];
+                  const key = `${preview.skill.id}:${agent.id}`;
+                  const notInstalled =
+                    agents.length > 0 &&
+                    !agents.some((a) => a.id === agent.id && a.binaryPath);
+                  const mode = enabled
+                    ? (preview.skill.appModes ?? {})[agent.id]
+                    : undefined;
+                  return (
+                    <button
+                      key={agent.id}
+                      type="button"
+                      onClick={() => void toggleApp(preview.skill, agent.id)}
+                      disabled={
+                        applying[key] ||
+                        applying[`${preview.skill.id}:__all__`]
+                      }
+                      title={
+                        enabled
+                          ? `${mode === "copy" ? "copy（有漂移检测）" : "symlink"}；点击取消应用${notInstalled ? "（本机未安装这个 CLI）" : ""}`
+                          : notInstalled
+                            ? `本机未安装 ${agent.label}，应用后也没有 CLI 读取；仍可点击预先分发`
+                            : `应用到 ${agent.label}`
+                      }
+                      className={`flex h-8.5 items-center gap-2 rounded-lg border px-2.5 text-xs transition-colors disabled:opacity-50 ${
+                        enabled
+                          ? "border-cta-bd bg-inset/80 font-medium text-l1"
+                          : notInstalled
+                            ? "border-hairline bg-canvas/50 text-l4 hover:bg-inset/60 hover:text-l3"
+                            : "border-hairline bg-canvas/70 text-l3 hover:bg-inset/60 hover:text-l1"
+                      }`}
+                    >
+                      <AgentMark
+                        agentId={agent.id}
+                        decorative
+                        className={`h-3 w-auto shrink-0 ${enabled ? "" : "opacity-55"}`}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-left">
+                        {agent.label}
+                      </span>
+                      {applying[key] ? (
+                        <span className="text-micro text-l4">…</span>
+                      ) : enabled ? (
+                        <span className="size-1.5 shrink-0 rounded-full bg-ok-text" aria-hidden="true" />
+                      ) : notInstalled ? (
+                        <span className="shrink-0 text-micro text-l4">未装</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 卡片 ③：SKILL.md 正文 */}
+            <div className="ccode-well rounded-xl border border-hairline p-3.5">
+              <div className="mb-3 flex items-center gap-2 border-b border-hairline pb-2.5">
+                <span className="font-mono text-xs font-semibold text-l2">SKILL.md</span>
+                <div className="ccode-seg-boxed is-sm inline-flex items-center">
                   <button
                     type="button"
-                    onClick={() => void openUrl(url)}
-                    className="ml-2 font-mono text-l2 underline decoration-white/20 underline-offset-2 hover:text-l1"
-                    title={`在浏览器打开 ${url}`}
+                    aria-pressed={!skillSourceView}
+                    onClick={() => setSkillSourceView(false)}
+                    className="ccode-seg-boxed-item text-micro"
                   >
-                    {preview.skill.repo}
-                    {preview.skill.repoSubdir ? `/${preview.skill.repoSubdir}` : ""}
+                    排版
                   </button>
-                ) : (
-                  <span
-                    className="ml-2 font-mono text-l2"
-                    title={preview.skill.repo}
+                  <button
+                    type="button"
+                    aria-pressed={skillSourceView}
+                    onClick={() => setSkillSourceView(true)}
+                    className="ccode-seg-boxed-item text-micro"
                   >
-                    {preview.skill.repo}
-                    {preview.skill.repoSubdir ? `/${preview.skill.repoSubdir}` : ""}
-                  </span>
-                );
-              })()}
-            {(preview.skill.staleCopies ?? []).length > 0 && (
-              <>
-                <span
-                  className="ml-2 text-warn-text"
-                  title={`分发给 Agent 的复制件过期：${(preview.skill.staleCopies ?? []).join("、")}。不是 GitHub 更新，点「同步副本」把库里的最新版重新拷过去。`}
-                >
-                  副本需同步
-                </span>
+                    源码
+                  </button>
+                </div>
                 <button
                   type="button"
-                  onClick={() => void onResync(preview.skill)}
-                  className="ml-2 flex h-7 items-center rounded-sm px-2 text-xs text-cta-text bg-cta hover:opacity-90"
+                  disabled={translating}
+                  onClick={() => void toggleTranslation()}
+                  className="ml-auto rounded-md border border-hairline bg-inset/60 px-2 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
                 >
-                  同步副本
+                  {translating
+                    ? "翻译中…"
+                    : translation
+                      ? showOriginal
+                        ? "显示译文"
+                        : "显示原文"
+                      : "◈ 翻译为中文"}
                 </button>
-              </>
-            )}
-            {updates[preview.skill.id]?.updateAvailable && (
-              <span
-                className="ml-2 text-warn-text"
-                title={updates[preview.skill.id].message}
-              >
-                GitHub 可更新
-              </span>
-            )}
-            {updates[preview.skill.id]?.updateAvailable && (
-              <button
-                type="button"
-                onClick={() => void onApplyUpdate(preview.skill)}
-                disabled={applyingUpdate === preview.skill.id}
-                className="ml-2 flex h-7 items-center rounded-sm px-2 text-xs text-cta-text bg-cta hover:opacity-90 disabled:opacity-50"
-              >
-                {applyingUpdate === preview.skill.id ? "正在更新…" : "应用更新"}
-              </button>
-            )}
-          </div>
-          <div className="border-b border-hairline bg-strip px-3 py-3">
-            <div className="mb-2 flex items-center gap-2">
-              <span className="text-sm font-medium text-l2">
-                应用到 Agent
-              </span>
-              {(() => {
-                const allKey = `${preview.skill.id}:__all__`;
-                // 与 applyAllAgents 同口径：检测数据就位时只数已安装的（未装的点了也会被跳过）
-                const installedIds = new Set(
-                  agents.filter((a) => a.binaryPath).map((a) => a.id),
-                );
-                const remaining = Object.keys(preview.skill.apps).filter(
-                  (a) =>
-                    !preview.skill.apps[a] &&
-                    (agents.length === 0 || installedIds.has(a)),
-                ).length;
-                if (remaining === 0) return null;
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void applyAllAgents(preview.skill)}
-                    disabled={applying[allKey]}
-                    title={`分发到剩余 ${remaining} 个未启用的 Agent`}
-                    className="flex h-7 items-center rounded-sm px-2 text-xs text-cta-text bg-cta hover:opacity-90 disabled:opacity-50"
-                  >
-                    {applying[allKey] ? "应用中…" : "一键应用"}
-                  </button>
-                );
-              })()}
-              <span
-                className="ml-auto text-xs text-l4"
-                title="已应用 / 全部 CLI"
-              >
-                {Object.values(preview.skill.apps).filter(Boolean).length}/
-                {AGENTS.length}
-              </span>
-            </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              {AGENTS.map((agent) => {
-                const enabled = !!preview.skill.apps[agent.id];
-                const key = `${preview.skill.id}:${agent.id}`;
-                // 本机没装的 CLI 降权显示：分发过去也没人读（已启用的仍照常显示，便于取消）
-                const notInstalled =
-                  agents.length > 0 &&
-                  !agents.some((a) => a.id === agent.id && a.binaryPath);
-                const mode = enabled
-                  ? (preview.skill.appModes ?? {})[agent.id]
-                  : undefined;
-                return (
-                  <button
-                    key={agent.id}
-                    type="button"
-                    onClick={() => void toggleApp(preview.skill, agent.id)}
-                    disabled={
-                      applying[key] ||
-                      applying[`${preview.skill.id}:__all__`]
-                    }
-                    title={
-                      enabled
-                        ? `${mode === "copy" ? "copy（有漂移检测）" : "symlink"}；点击取消应用${notInstalled ? "（本机未安装这个 CLI）" : ""}`
-                        : notInstalled
-                          ? `本机未安装 ${agent.label}，应用后也没有 CLI 读取；仍可点击预先分发`
-                          : `应用到 ${agent.label}`
-                    }
-                    className={`flex h-9 items-center gap-2 rounded-md border px-2 text-sm transition-colors disabled:opacity-50 ${
-                      enabled
-                        ? "border-cta-bd bg-inset text-l1"
-                        : notInstalled
-                          ? "border-hairline bg-canvas text-l4 hover:bg-inset hover:text-l3"
-                          : "border-hairline bg-canvas text-l3 hover:bg-inset hover:text-l1"
-                    }`}
-                  >
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${
-                        enabled ? "bg-ok-text" : "bg-l4"
-                      }`}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-left">
-                      {agent.label}
-                    </span>
-                    {notInstalled && !applying[key] && (
-                      <span className="shrink-0 text-micro text-l4">未安装</span>
-                    )}
-                    {applying[key] && <span className="text-l4">…</span>}
-                  </button>
-                );
-              })}
+              </div>
+              {skillSourceView ? (
+                <pre className="whitespace-pre-wrap break-all font-mono text-xs leading-6 text-l2">
+                  {shownSkillText}
+                </pre>
+              ) : (
+                <>
+                  {skillDoc.fields.length > 0 && (
+                    <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-lg border border-hairline bg-inset/55 px-3 py-2 text-xs">
+                      {skillDoc.fields.map((f) => (
+                        <div key={f.key} className="contents">
+                          <dt className="font-mono text-l4">{f.key}</dt>
+                          <dd className="min-w-0 break-words text-l2">{f.value || "—"}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+                  <div
+                    className="md-body"
+                    dangerouslySetInnerHTML={{ __html: skillDoc.html }}
+                  />
+                </>
+              )}
             </div>
           </div>
-          <div className="p-4">
-            <div className="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-l4">
-              SKILL.md
-              <button
-                type="button"
-                onClick={() => setSkillSourceView((v) => !v)}
-                title={skillSourceView ? "按 Markdown 排版显示" : "显示原文（含 YAML 头）"}
-                className="rounded-sm px-1.5 py-0.5 text-xs font-normal text-l3 hover:bg-hover hover:text-l1"
-              >
-                {skillSourceView ? "排版" : "源码"}
-              </button>
-              {/* 英文技能一键翻译（◈ ai_prompt 一次性调用，结果随会话缓存；不改动库文件） */}
-              <button
-                type="button"
-                disabled={translating}
-                onClick={() => void toggleTranslation()}
-                className="ml-auto rounded-sm px-1.5 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-              >
-                {translating
-                  ? "翻译中…"
-                  : translation
-                    ? showOriginal
-                      ? "显示译文"
-                      : "显示原文"
-                    : "◈ 翻译为中文"}
-              </button>
-            </div>
-            {skillSourceView ? (
-              <pre className="whitespace-pre-wrap break-all font-mono text-sm leading-6 text-l2">
-                {shownSkillText}
-              </pre>
-            ) : (
-              <>
-                {skillDoc.fields.length > 0 && (
-                  <dl className="mb-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md ccode-well px-3 py-2 text-xs">
-                    {skillDoc.fields.map((f) => (
-                      <div key={f.key} className="contents">
-                        <dt className="font-mono text-l4">{f.key}</dt>
-                        <dd className="min-w-0 break-words text-l2">{f.value || "—"}</dd>
-                      </div>
-                    ))}
-                  </dl>
-                )}
-                <div
-                  className="md-body"
-                  dangerouslySetInnerHTML={{ __html: skillDoc.html }}
-                />
-              </>
-            )}
-          </div>
-          </div>
-        </div>
+        </aside>
       )}
 
       {editor && (

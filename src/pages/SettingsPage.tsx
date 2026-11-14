@@ -363,7 +363,7 @@ function TerminalPreview({
 const fieldFixed = fieldClass
   .replace("w-full ", "")
   .replace("rounded-md", "rounded-lg")
-  .replace("bg-canvas", "bg-transparent")
+  .replace("bg-canvas", "bg-canvas/75")
   .replace("py-1.5", "h-8");
 
 /** 设置页按钮：细边按钮（同 Claude 设置页），行内操作与节标题动作统一一档 */
@@ -371,11 +371,10 @@ const ghostActionClass = paneOutlineButtonClass;
 const secondaryActionClass = paneOutlineButtonClass;
 const rowActionClass = paneOutlineButtonClass;
 
-/** 下拉宽度只留三档（2026-10-17）：原先跟最长选项走，终端页三个下拉宽度差一倍多，
- *  AI 专用配置更是顶出卡片右缘。短枚举 sm、一般 md、带配置名/字体说明的长选项 lg */
-const selectSm = `${fieldFixed} w-40 max-w-full`;
+/** 下拉宽度收敛为紧凑对齐的三档：短枚举 sm、常规设置 md、带连接名/字体栈的长选项 lg */
+const selectSm = `${fieldFixed} w-48 max-w-full`;
 const selectMd = `${fieldFixed} w-64 max-w-full`;
-const selectLg = `${fieldFixed} w-80 max-w-full`;
+const selectLg = `${fieldFixed} w-72 max-w-full`;
 
 /** 自定义定价表格的列：前缀 · 币种 · 输入 / 输出 / 缓存读 / 缓存写 · 删除（表头与每行共用） */
 const PRICING_GRID =
@@ -655,22 +654,20 @@ function Section({
   const nav = SETTING_NAV.find((n) => n.id === id);
   return (
     <section>
-      {/* 分区名不再画大标题（2026-10-29：页头「设置」+ 左栏选中项已说清在哪，Claude 设置页也没有这一层）；
-          h2 留给读屏，看得见的只剩一行灰说明，回答「这里管什么」 */}
-      <header className="mb-5">
-        <h2 className="sr-only">{nav?.label}</h2>
-        {nav?.description && <p className="pt-1.5 text-sm leading-5 text-l3">{nav.description}</p>}
+      <header className="mb-4 px-0.5">
+        <h2 className="text-base font-semibold text-l1">{nav?.label}</h2>
+        {nav?.description && <p className="mt-0.5 text-xs leading-5 text-l3">{nav.description}</p>}
       </header>
       <div>{groupRows(children)}</div>
     </section>
   );
 }
 
-/** 分区内的小节标题：只用留白和字重分组（Claude 设置页的 Appearance / Sessions 那一档） */
+/** 分区内的小节标题：紧贴下方圆角分组设置卡 */
 function SubHeading({ title, hint }: { title: string; hint?: string }) {
   return (
-    <div className="mb-1 mt-9 first:mt-0">
-      <h3 className="text-base font-semibold text-l1">{title}</h3>
+    <div className="mb-2 mt-6 px-0.5 first:mt-0">
+      <h3 className="text-xs font-semibold tracking-wide text-l2">{title}</h3>
       {hint && <p className="mt-0.5 text-xs leading-5 text-l3">{hint}</p>}
     </div>
   );
@@ -691,7 +688,7 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-/** 成组编辑器：头 = 标题 + 一句说明 + 右侧动作，下面放 CardRow 或自定义内容（2026-10-29 起不套卡，上下细线收边） */
+/** 成组编辑器：头 = 标题 + 一句说明 + 右侧动作，下面收进圆角 .ccode-well 卡片 */
 function Card({
   title,
   hint,
@@ -707,12 +704,12 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="mt-7 first:mt-0">
+    <div className="mt-6 first:mt-0">
       {(title || action) && (
-        <div className="mb-2 flex items-start justify-between gap-3">
+        <div className="mb-2 flex items-start justify-between gap-3 px-0.5">
           <div className="min-w-0">
             {title && (
-              <div className="flex items-center gap-1.5 text-base font-semibold text-l1">
+              <div className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-l2">
                 <span>{title}</span>
                 {hintTitle && <InfoTip text={hintTitle} />}
               </div>
@@ -722,7 +719,7 @@ function Card({
           {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
         </div>
       )}
-      <div className="border-t border-hairline pt-1">{children}</div>
+      <div className="ccode-well overflow-hidden rounded-xl border border-hairline px-4 py-1.5">{children}</div>
     </div>
   );
 }
@@ -740,9 +737,9 @@ function CardRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="group flex min-h-12 items-center justify-between gap-3 border-b border-hairline py-2">
+    <div className="group flex min-h-11 items-center justify-between gap-3 border-b border-hairline py-2.5 last:border-b-0">
       <div className="min-w-0" title={title}>
-        <div className="truncate text-sm text-l1">{label}</div>
+        <div className="truncate text-sm font-medium text-l1">{label}</div>
         {hint && <p className="mt-0.5 truncate text-xs leading-4 text-l3">{hint}</p>}
       </div>
       <div className="flex shrink-0 items-center gap-2">{children}</div>
@@ -772,21 +769,19 @@ function Row({
   disabled?: boolean;
   children: React.ReactNode;
 }) {
-  // 2026-10-18：行 = 左标题/说明 + 右控件靠右（Codex 设置页手感）；窄了控件自然折到标题下方。
-  // 行与行之间的发丝线、卡片外框由 RowGroup 给——Row 只管自己的内边距
   return (
     <div
       aria-disabled={disabled || undefined}
-      className={`flex flex-wrap gap-x-6 gap-y-2.5 py-3.5 ${
+      className={`flex flex-wrap gap-x-6 gap-y-2 py-3 ${
         align === "center" ? "items-center" : "items-start"
       } ${disabled ? "pointer-events-none opacity-50" : ""}`}
     >
-      <div className={`min-w-[12rem] flex-1 ${align === "start" ? "pt-1.5" : ""}`}>
-        <div className="flex items-center gap-1.5 text-base text-l1">
+      <div className={`min-w-[12rem] flex-1 ${align === "start" ? "pt-1" : ""}`}>
+        <div className="flex items-center gap-1.5 text-sm font-medium text-l1">
           <span>{label}</span>
           {labelTitle && <InfoTip text={labelTitle} />}
         </div>
-        {hint && <p className="mt-0.5 max-w-2xl text-sm leading-relaxed text-l3">{hint}</p>}
+        {hint && <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-l3">{hint}</p>}
       </div>
       <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">{children}</div>
       {extra && <div className="basis-full">{extra}</div>}
@@ -794,10 +789,13 @@ function Row({
   );
 }
 
-/** 连续的 Row 收成一组：上下细线 + 行间细线（2026-10-29 起不套卡）。Section 对直接子元素自动套用，
- *  页面代码照旧只写 <Row>，不必手包 */
+/** 连续的 Row 收进圆角 .ccode-well 设置分组卡，内部发丝线分隔 */
 function RowGroup({ children }: { children: React.ReactNode }) {
-  return <div className="mt-2 divide-y divide-hairline border-y border-hairline">{children}</div>;
+  return (
+    <div className="ccode-well mt-2 divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4">
+      {children}
+    </div>
+  );
 }
 
 /** Section 的直接子元素里，相邻的 Row 合成一个 RowGroup；其余（SubHeading / Card / 自定义块）原样。
@@ -2559,7 +2557,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       <PageHeader title="设置" meta="外观、终端、AI 与应用管理" />
       <PaneSplit>
         <PaneNav inline storageKey="ccode.settings.navWidth" label="调整设置分区栏宽度" defaultWidth={200} minWidth={168} maxWidth={320}>
-          <nav aria-label="设置分区" className="pb-4">
+          <nav aria-label="设置分区" className="rounded-xl bg-rail2/65 p-1.5 pb-3">
             <PaneSearch
               value={sectionQuery}
               onChange={setSectionQuery}
@@ -2581,7 +2579,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 if (items.length === 0) return null;
                 return (
                 <div key={group.id} className="min-w-0">
-                  <p id={`settings-group-${group.id}`} className="px-2.5 pb-1.5 pt-3 text-xs text-l4 @min-[48rem]/pane:pt-4">
+                  <p id={`settings-group-${group.id}`} className="px-2.5 pb-1.5 pt-3 text-micro font-medium text-l4 @min-[48rem]/pane:pt-3.5">
                     {group.label}
                   </p>
                   <ul aria-labelledby={`settings-group-${group.id}`} className="flex flex-wrap gap-0.5 @min-[48rem]/pane:flex-col">
@@ -2593,12 +2591,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                           aria-current={activeSection === id ? "page" : undefined}
                           aria-controls="settings-content"
                           onClick={() => setActiveSection(id)}
-                          className={`flex h-9 min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors @min-[48rem]/pane:w-full ${
+                          className={`relative flex h-8.5 min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors @min-[48rem]/pane:w-full ${
                             activeSection === id
-                              ? "bg-rail-sel text-l1"
+                              ? "bg-rail-sel font-medium text-l1"
                               : "text-l2 hover:bg-hover hover:text-l1"
                           }`}
                         >
+                          {activeSection === id && (
+                            <span
+                              aria-hidden="true"
+                              className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-nav-accent"
+                            />
+                          )}
                           {/* 图标随选中态变色（同侧栏）：扫一眼就能认出分区，不用逐字读 */}
                           <Icon
                             aria-hidden="true"
@@ -2634,18 +2638,17 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             id="settings-content"
             role="region"
             aria-labelledby={`settings-nav-${activeSection}`}
-            className="@container/settings min-w-0 scroll-mt-16"
+            className="@container/settings min-w-0 max-w-4xl scroll-mt-16"
           >
             {banners}
 
       <Section id="appearance" active={activeSection}>
         {/* 主题卡（2026-10-17 细化）：内置十四套七列深浅成对 →「我的配色」同一网格（另存色卡 +
-            自定义入口）→ 选中自定义或某张色卡时才展开调色条。取色块改成输入框形态，
-            不再与主题小窗同形，免得被看成又一排主题；没在用自定义时不占版面。 */}
-        <div className="mb-2">
+            自定义入口）→ 选中自定义或某张色卡时才展开调色条。 */}
+        <div className="ccode-well mb-4 rounded-xl border border-hairline p-4">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h3 className="text-base font-semibold text-l1">主题</h3>
+              <h3 className="text-sm font-semibold text-l1">主题</h3>
               <p className="mt-0.5 text-xs leading-5 text-l3">
                 {followSystem
                   ? isCustomThemeId(settings?.theme)
