@@ -11,6 +11,13 @@ interface State {
   error: Error | null;
 }
 
+function isModuleLoadError(error: Error | null): boolean {
+  const msg = String(error?.message ?? error ?? "");
+  return /Importing binding name|Failed to fetch dynamically imported module|Importing a module script failed|Unable to preload CSS/i.test(
+    msg,
+  );
+}
+
 /** 顶层错误边界：前端崩溃时显示错误而不是整窗白屏（webview 无控制台可看的定位手段） */
 export default class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null };
@@ -37,7 +44,13 @@ export default class ErrorBoundary extends Component<Props, State> {
             {String(this.state.error.stack ?? this.state.error)}
           </pre>
           <button
-            onClick={() => this.setState({ error: null })}
+            onClick={() => {
+              if (isModuleLoadError(this.state.error)) {
+                window.location.reload();
+                return;
+              }
+              this.setState({ error: null });
+            }}
             className={secondaryActionClass}
           >
             尝试恢复
