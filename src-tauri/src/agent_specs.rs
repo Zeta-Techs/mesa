@@ -1138,7 +1138,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }),
         }),
         model_switch: ModelSwitch::Direct("/model {model}"),
-        // 1.5.8 实测：--effort low|medium|high 仅启动参数，TUI 内无 /effort 斜杠命令；运行中经重开接回切换（switch-strategy.ts）
+        // 1.5.8 实测：内置 Gemini 模型在 TUI 内有 `/effort <档>` 与选择器，但会把变体模型写回用户 settings.json；
+        // 自定义模型（`mesa/*`）在 TUI 内 `/effort` 为 not adjustable。Mesa 侧统一经重开接回切换（switch-strategy.ts），不碰全局配置
         effort_levels: None,
         submit_csi_u: false,
         // 仅官方 Google 账号连接可执行「设为全局默认」（撤回 modelProvider/customModels 下的 mesa/ 项）；
@@ -1247,7 +1248,7 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
         "codex" => vec!["low", "medium", "high", "xhigh", "ultra", "max"],
         "opencode" => vec!["none", "minimal", "low", "medium", "high"],
         "grok" => GROK_REASONING_EFFORTS.to_vec(),
-        "agy" => vec!["low", "medium", "high"],
+        "agy" => vec!["low", "medium", "high", "xhigh"],
         // kimi 合法值随模型 catalog 漂移（low/medium/high/xhigh/max/on/off），env 通道无闭集
         // 校验且官方明确原样透传——自由输入反而更准，不给下拉
         _ => vec![],

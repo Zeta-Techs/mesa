@@ -32,9 +32,9 @@
 | 会话级设置 | `--settings <文件路径>` 叠加在用户 `settings.json` 之上，只管当次进程；其中 `customModelsConfig.customModels` 整键覆盖，合并时须带上用户原有项 | magpie + 沙箱实测 |
 | 首条提示词 | **不接受位置参数**（`rc=2`：`Prompts are read only from -p/--print, -i/--prompt-interactive, or stdin`）；交互首条用 `-i <提示词>`，无头用 `-p <提示词>`（总是落盘，无 `--ephemeral`） | 沙箱实测 |
 | 模式与只读 | `--mode accept-edits\|auto\|plan`、`--dangerously-skip-permissions`；实测 `--mode plan` 仍暴露 `write_file`/`edit_file`/`run_command` 全部 13 个工具，配合免审时 `write_file` 会真实写盘，无进程级只读保证 | 假网关 + 沙箱实测 |
-| 思考档位 | `--effort low\|medium\|high` 实测生效（发 `thinkingConfig: {includeThoughts: true, thinkingLevel: "LOW"\|"MEDIUM"\|"HIGH"}`）；`xhigh`、`max` 在 Gemini 模型上报不支持；`settings.json` 无对应键 | 假网关实测 |
+| 思考档位 | `--effort low\|medium\|high`（`gemini-4-hydrogen` 另支持 `xhigh`，`gemini-3.1-pro` 官方为 `low\|high`；非 Gemini 官方模型如 `claude-sonnet-4-6` 传 `--effort` 报 `rc=1`）。API 模式下对 6 个线路径原样透传的内置 Gemini 家族不加 `mesa/` 包装，直接解锁 TUI 内 `/effort` 与 `/model` 档位条；其余自定义模型在 `customModels` 条目写 `thinkingLevel` 并附带 `-low/-medium/-high` 变体 | 假网关 + 1.5.8 TUI 实测 |
 | 恢复与分叉 | `--conversation <id>`、`-c/--continue`；会话内 `/fork`（别名 `/branch`），无 CLI 级分叉参数 | 官方 + 实测 |
-| 斜杠命令 | `/model [name]`、`/clear`、`/fork`、`/plan`、`/help`（实测 1.5.8：`/model <name>` 会把模型写回全局 `settings.json`；TUI 内**无** `/effort` 命令，`--effort` 仅启动参数） | 内置文档 + 沙箱 PTY 实测 |
+| 斜杠命令 | `/model [name]`、`/effort [level]`、`/clear`、`/fork`、`/plan`、`/help`（实测 1.5.8：`/model` 与 `/effort` 都会写回全局 `settings.json`，且 `mesa/*` 自定义模型的 `/effort` 返回 `adjustable: false`，故 Mesa 内部统一走重开接回） | 内置文档 + 沙箱 PTY 实测 |
 | 程序状态 | 回应 `OSC 7501 ; ?`，上报 `app=antigravity` | 本机实测 |
 | hooks | `~/.gemini/config/hooks.json` 顶层为组名对象；`SessionStart`/`PreInvocation`/`PostInvocation`/`Stop` 为扁平 handler 数组，`PreToolUse`/`PostToolUse` 为 `[{"matcher": "*", "hooks": [...]}]`；实测 `matcher: "*"` 匹配全部工具，空 stdout `exit 0` 只记录、不拦截也不自动放行 | 沙箱实测 |
 | MCP | `~/.gemini/config/mcp_config.json`（首次启动可能生成 **0 字节空文件**），根键 `mcpServers`；远程写 `serverUrl`（读回兼容 `serverUrl` 与 `url`），只支持 Streamable HTTP，不支持 SSE | `agy mcp add` 实测 |
@@ -53,7 +53,7 @@
 | resume | `["--conversation", "{session}"]` | |
 | fork | `None` | `/fork` 仅会话内可用，无命令行分叉参数 |
 | `ModelSwitch` | `Direct("/model {model}")`（配合 `SWITCH_PERSISTS.agy` 走重开接回，不写全局 `settings.json`） | 会话内安全换模型 |
-| `effort_levels` | `None`（`reasoning_effort_options` 为 `["low", "medium", "high"]`，CLI 启动 `--effort <档>`，运行中走重开接回） | 1.5.8 TUI 无 `/effort` 命令；`xhigh`/`max` 在 Gemini 模型上报错 |
+| `effort_levels` | `None`（`reasoning_effort_options` 为 `["low", "medium", "high", "xhigh"]`，`combo.rs` 按具体模型收窄档表，CLI 启动 `--effort <档>`，Mesa 运行中走重开接回） | `/effort` 会写全局 `settings.json` 且自定义模型不可调 |
 | `config_root` | `~/.gemini/antigravity-cli` | `agent_config_root_with` 必加（否则 `sessions.rs` 断言 panic） |
 | PATH 候选目录 | Unix `~/.local/bin`；Windows `%LOCALAPPDATA%\agy\bin` | `binary_candidate_dirs` |
 | `mcp_write` | `Full` | 写 `~/.gemini/config/mcp_config.json`，§9 |

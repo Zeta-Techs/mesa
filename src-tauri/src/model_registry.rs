@@ -81,9 +81,10 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("deepseek-reasoner", caps(true, None)),
     ("deepseek-r1", caps(true, None)),
     ("deepseek-chat", caps(false, None)),
-    // OpenAI（gpt-5/gpt-6 全系 + o 系为 reasoning 模型；4o/4.1 不是）
+    // OpenAI（gpt-5/gpt-6 全系 + gpt-oss + o 系为 reasoning 模型；4o/4.1 不是）
     ("gpt-5", caps(true, None)),
     ("gpt-6", caps(true, None)),
+    ("gpt-oss", caps(true, None)),
     ("o1", caps(true, None)),
     ("o3", caps(true, None)),
     ("o4-mini", caps(true, None)),

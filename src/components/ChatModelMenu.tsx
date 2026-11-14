@@ -1095,15 +1095,16 @@ function EffortSlider({
   const idx = draft ?? knownIdx;
   const last = choices.length - 1;
   const pct = (i: number) => (last > 0 ? (i / last) * 100 : 0);
-  const label = idx >= 0 ? choices[idx].label : "未知";
+  const label = idx >= 0 ? choices[idx].label : "默认思考强度";
   const levels = choices.map((c) => c.value).filter(Boolean);
   const depth = idx >= 0 ? effortDepth(choices[idx].value, levels) : null;
-  function commit() {
-    if (draft === null || draft === knownIdx) {
+  function commit(rangeEl?: HTMLInputElement) {
+    const picked = draft ?? (knownIdx < 0 && rangeEl ? Number(rangeEl.value) : null);
+    if (picked === null || picked === knownIdx || !choices[picked]) {
       setDraft(null);
       return;
     }
-    onCommit(choices[draft].value);
+    onCommit(choices[picked].value);
     // 松手后回到真值：运行中要等 CLI 回显（中途换档会先弹确认，选 No 档位不变）；开聊前 current 会立刻跟上
     setDraft(null);
   }
@@ -1160,10 +1161,20 @@ function EffortSlider({
           aria-label="思考强度"
           aria-valuetext={label}
           disabled={disabled}
+          onPointerDown={(e) => {
+            if (disabled || e.button !== 0 || knownIdx >= 0) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pad = 10;
+            const span = Math.max(1, rect.width - pad * 2);
+            const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left - pad) / span));
+            setDraft(Math.round(ratio * last));
+          }}
           onChange={(e) => setDraft(Number(e.target.value))}
-          onPointerUp={commit}
+          onPointerUp={(e) => commit(e.currentTarget)}
           onKeyUp={(e) => {
-            if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") commit();
+            if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") {
+              commit(e.currentTarget);
+            }
           }}
           className="absolute inset-y-0 -right-2.5 -left-2.5 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default [&::-moz-range-thumb]:size-4 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none"
         />

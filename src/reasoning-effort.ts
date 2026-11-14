@@ -83,7 +83,13 @@ const PATH_HEAD = String.raw`(?:~|/|[A-Za-z]:[\\/])`;
  *   「Current reasoning effort: high」（中文界面这几句也不翻译）；0.25.1 起底栏「➜ 目录 · 模型 档位」也写档
  *   （2026-10-18 第三期实录：/effort low 后屏上只剩一个空的「●」，档位只在底栏变）
  * - Kimi Code 2.1：底栏「Kimi K3 thinking  ~/目录」= 开（Mesa 对 Kimi 只给 on/off 两档）
+ * - Antigravity CLI 1.5.8：底栏「accept-edits · Gemini 4 Carbon · medium」「plan · Gemini 4 Hydrogen · xhigh」
  */
+const AGY_FOOTER_EFFORT_RE =
+  /\b(?:accept-edits|auto-edit|bypass-permissions|yolo|plan|auto|ask|default)\s*·\s*[^·\r\n]{1,64}?\s*·\s*(low|medium|high|xhigh|max)\b/gi;
+const AGY_FOOTER_EFFORT_LINE_RE =
+  /\b(?:accept-edits|auto-edit|bypass-permissions|yolo|plan|auto|ask|default)\s*·\s*[^·\r\n]{1,64}?\s*·\s*(low|medium|high|xhigh|max)\b/i;
+
 const EFFORT_PATTERNS: Record<string, RegExp[]> = {
   "claude-code": [
     new RegExp(String.raw`\bwith\s+${LEVEL}\s+effort\b`, "gi"),
@@ -103,6 +109,10 @@ const EFFORT_PATTERNS: Record<string, RegExp[]> = {
     new RegExp(String.raw`\bCurrent reasoning effort:\s+${LEVEL}\b`, "gi"),
   ],
   kimi: [new RegExp(String.raw`\b(thinking)\s+${PATH_HEAD}`, "gi")],
+  agy: [
+    AGY_FOOTER_EFFORT_RE,
+    new RegExp(String.raw`\beffort(?:\s+level)?\s+(?:set\s+to|changed\s+to|:)\s*${LEVEL}\b`, "gi"),
+  ],
 };
 // CodeBuddy 是 Claude Code 的 fork，横幅/回显同形
 EFFORT_PATTERNS.codebuddy = EFFORT_PATTERNS["claude-code"]!;
@@ -115,6 +125,7 @@ const QUICK_KEYS: Record<string, string[]> = {
   grok: [")"],
   qwen: ["effort", "➜"],
   kimi: ["thinking"],
+  agy: ["·", "effort", "Effort"],
 };
 
 /**
@@ -199,22 +210,36 @@ const MODEL_SCREEN_PATTERNS: Record<string, RegExp> = {
   ),
 };
 
-/** 从可视区读底栏上的思考档（Codex 底栏「模型 档位 · 目录」）：输出流认不出差量重绘的底栏时靠它 */
+/** 底栏整行写着当前思考档但显示名带空格的家（如 Antigravity「accept-edits · Gemini 4 Carbon · medium」）：只读档位不覆盖模型 id */
+const EFFORT_SCREEN_PATTERNS: Record<string, RegExp> = {
+  agy: AGY_FOOTER_EFFORT_LINE_RE,
+};
+
+/** 从可视区读底栏上的思考档（Codex 底栏「模型 档位 · 目录」、Antigravity 底栏「权限 · 模型名 · 档位」）：输出流认不出差量重绘的底栏时靠它 */
 export function detectEffortOnScreen(lines: string[], agentId: string): string | null {
   const re = MODEL_SCREEN_PATTERNS[agentId];
-  if (!re) return null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = re.exec(lines[i]!);
-    if (m && plausibleModel(m[1]!)) {
-      const level = m[2]!.toLowerCase();
-      return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+  if (re) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = re.exec(lines[i]!);
+      if (m && plausibleModel(m[1]!)) {
+        const level = m[2]!.toLowerCase();
+        return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+      }
+    }
+    return null;
+  }
+  const effortRe = EFFORT_SCREEN_PATTERNS[agentId];
+  if (effortRe) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = effortRe.exec(lines[i]!);
+      if (m) return m[1]!.toLowerCase();
     }
   }
   return null;
 }
 
 export function modelOnScreenSupported(agentId: string): boolean {
-  return agentId in MODEL_SCREEN_PATTERNS;
+  return agentId in MODEL_SCREEN_PATTERNS || agentId in EFFORT_SCREEN_PATTERNS;
 }
 
 /** 从可视区读底栏上的模型：自下往上找第一行（底栏在对话记录下面） */

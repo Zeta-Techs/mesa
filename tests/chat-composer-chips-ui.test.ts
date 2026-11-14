@@ -1893,3 +1893,47 @@ test("不能持续回读权限的 CLI：运行中明确标为已选，启动前�
     assert.doesNotMatch(ui.el.textContent ?? "", /已选/);
   } finally { await ui.close(); }
 });
+
+test("Antigravity 运行中切思考档：官方空模型列表仍能读到 combo_surface，且未设初档时滑块首档（low）可直接选中", async () => {
+  const ui = await mount();
+  try {
+    const prevInvoke = (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke;
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke = async (command: string, args?: unknown) => {
+      if (command === "combo_surface") {
+        return {
+          showNativeEffort: false,
+          effortLevels: ["low", "medium", "high", "xhigh"],
+          launchEffort: null,
+          thinking: true,
+          mixedModelsNote: null,
+          injectEffortAllowed: true,
+        };
+      }
+      return prevInvoke(command, args);
+    };
+    const relaunched: unknown[] = [];
+    await ui.render(
+      ui.h(ui.Menu, {
+        kind: "runtime",
+        status: {
+          ...status({ agentId: "agy", model: null, modelSeen: null, effortSeen: null, effortOverride: null }),
+          profileId: "p-agy-official",
+        },
+        profileModels: [],
+        modelSwitch: { kind: "direct", command: "/model {model}" },
+        effort: null,
+        submitCsiU: false,
+        onTuiCommand: () => {},
+        onRelaunch: (patch: unknown) => relaunched.push(patch),
+      }),
+    );
+    await ui.click("模型 · 默认");
+    assert.match(ui.el.textContent ?? "", /默认思考强度/);
+    await slideEffort(ui, 0);
+    assert.deepEqual(relaunched, [{ effort: "low" }]);
+    await slideEffort(ui, 3);
+    assert.deepEqual(relaunched, [{ effort: "low" }, { effort: "xhigh" }]);
+  } finally {
+    await ui.close();
+  }
+});

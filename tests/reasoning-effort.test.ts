@@ -188,3 +188,20 @@ test("Antigravity CLI /model 回显：识别 Model set to 并剥掉 mesa/ 会话
   assert.equal(detectModelInOutput("  ⎿  Model set to mesa/gemini-2.5-pro", "agy"), "gemini-2.5-pro");
   assert.equal(detectModelInOutput("  ⎿  Model set to gemini-3.8-flash-high", "agy"), "gemini-3.8-flash-high");
 });
+
+test("Antigravity CLI 底栏思考档：输出流与可视区均能识别且不把带空格显示名当模型 id", () => {
+  assert.equal(
+    detectEffortInOutput("  accept-edits · Gemini 4 Carbon · medium\r\n", "agy"),
+    "medium",
+  );
+  assert.equal(
+    detectEffortInOutput("  plan · Gemini 4 Hydrogen · xhigh\r\n", "agy"),
+    "xhigh",
+  );
+  const screen = [
+    "● 已修改文件",
+    "  accept-edits · Gemini 4 Carbon · low",
+  ];
+  assert.equal(detectEffortOnScreen(screen, "agy"), "low");
+  assert.equal(detectModelOnScreen(screen, "agy"), null);
+});

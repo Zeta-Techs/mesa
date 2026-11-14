@@ -311,9 +311,14 @@ pub fn apply_to_profile(profile: &mut Profile, model: Option<&str>) {
         profile.gateway_id.as_deref(),
     );
     let probe_failed = |s: &str| s == "failed";
+    let agy_official_no_effort = profile.agent == "agy"
+        && profile.account_type == crate::profiles::AccountType::Official
+        && !model_name.is_empty()
+        && crate::agents::agy_official_effort_family(model_name).is_none();
     if !channel_carries(surface.channel_effort)
         || thinking_declared == Some(false)
         || probe_failed(surface.probe_effort)
+        || agy_official_no_effort
     {
         profile.request_policy.reasoning_effort = None;
     }
@@ -362,6 +367,40 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
                 .as_deref()
                 .and_then(crate::agent_specs::launch_reasoning_effort)
         });
+    let raw_gw_levels = gm
+        .and_then(|m| m.reasoning_effort.as_deref())
+        .map(crate::agent_specs::reasoning_effort_levels)
+        .unwrap_or_default();
+    let agy_model_cap: Option<&'static [&'static str]> = if profile.agent == "agy" {
+        if profile.account_type == crate::profiles::AccountType::Official {
+            if model.is_empty() {
+                Some(&["low", "medium", "high"])
+            } else {
+                crate::agents::agy_official_effort_family(model).map(|(_, lvs, _)| lvs)
+            }
+        } else if let Some((_, _, lvs, _)) = crate::agents::agy_builtin_gemini_family(model) {
+            Some(lvs)
+        } else {
+            Some(&["low", "medium", "high"])
+        }
+    } else {
+        None
+    };
+    let effective_levels: Vec<String> = match agy_model_cap {
+        Some(cap) if !raw_gw_levels.is_empty() => {
+            let filtered: Vec<String> = raw_gw_levels
+                .into_iter()
+                .filter(|lv| cap.contains(&lv.as_str()))
+                .collect();
+            if filtered.is_empty() {
+                cap.iter().map(|s| (*s).to_string()).collect()
+            } else {
+                filtered
+            }
+        }
+        Some(cap) => cap.iter().map(|s| (*s).to_string()).collect(),
+        None => raw_gw_levels,
+    };
     let mut surface = surface_for_agents(
         &[(profile.agent.as_str(), profile.protocol.as_deref())],
         model,
@@ -373,10 +412,32 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         stored_max,
         &profile.models,
         profile.slot_missing,
-        &gm.and_then(|m| m.reasoning_effort.as_deref())
-            .map(crate::agent_specs::reasoning_effort_levels)
-            .unwrap_or_default(),
+        &effective_levels,
     );
+    // 官方账号未显式指定模型（走 CLI 自带默认模型）时，一等/主流家的官方默认模型均支持思考档；
+    // 反过来 agy 官方账号选了非 Gemini 族模型（如 claude-sonnet-4-6）时 CLI 拒收 `--effort`，必须关掉注入开关。
+    if profile.account_type == crate::profiles::AccountType::Official && model.is_empty() {
+        if matches!(
+            profile.agent.as_str(),
+            "claude-code" | "codex" | "agy" | "kimi" | "qwen" | "grok"
+        ) {
+            surface.thinking = true;
+            let grok_blocks = profile.agent == "grok" && !crate::agents::grok_model_declares_effort(model);
+            let probe_ok = surface.probe_effort != "failed";
+            surface.inject_effort_allowed =
+                channel_ok(surface.channel_effort) && probe_ok && !grok_blocks;
+            let has_native = agent_specs::agent_spec(&profile.agent)
+                .and_then(|s| s.effort_levels)
+                .is_some_and(|(levels, _)| levels.len() > 1);
+            surface.show_native_effort = has_native && probe_ok && !grok_blocks;
+        }
+    } else if profile.agent == "agy" && agy_model_cap.is_none() {
+        surface.inject_effort_allowed = false;
+        surface.show_native_effort = false;
+        surface.effort_levels.clear();
+    } else if profile.agent == "agy" && !surface.thinking {
+        surface.effort_levels.clear();
+    }
     // 通道不通（不会思考 / 体检失败 / 该家无注入通道）时启动不会注入，开场档就是「不知道」
     if surface.inject_effort_allowed {
         surface.launch_effort = launch_effort;
@@ -868,5 +929,49 @@ mod tests {
         );
         assert_eq!(dto.probe_effort, "never");
         assert!(dto.inject_effort_allowed);
+    }
+
+    #[test]
+    fn agy_official_and_api_effort_surface() {
+        use crate::profiles::AccountType;
+        let make_profile = |account_type: AccountType, models: &[&str]| {
+            let mut p = profile_with("agy", models, None);
+            p.account_type = account_type;
+            if account_type == AccountType::Official {
+                p.base_url = None;
+            }
+            p
+        };
+
+        // 官方账号未列模型（走 CLI 默认 Gemini 模型）：放行思考档（low/medium/high）
+        let official_empty = make_profile(AccountType::Official, &[]);
+        let s_empty = surface_for_profile(&official_empty, None);
+        assert!(s_empty.thinking);
+        assert!(s_empty.inject_effort_allowed);
+        assert_eq!(s_empty.effort_levels, vec!["low", "medium", "high"]);
+
+        // 官方账号选带后缀的 Gemini 模型：可注入并给该族档位表
+        let s_flash = surface_for_profile(&official_empty, Some("gemini-3.8-flash-high"));
+        assert!(s_flash.inject_effort_allowed);
+        assert_eq!(s_flash.effort_levels, vec!["low", "medium", "high"]);
+
+        let s_pro = surface_for_profile(&official_empty, Some("gemini-3.1-pro-low"));
+        assert!(s_pro.inject_effort_allowed);
+        assert_eq!(s_pro.effort_levels, vec!["low", "high"]);
+
+        // 官方账号选非 Gemini 族（agy CLI 对 claude-sonnet-4-6 传 --effort 会 rc=1 报错）：禁用注入
+        let s_claude = surface_for_profile(&official_empty, Some("claude-sonnet-4-6"));
+        assert!(!s_claude.inject_effort_allowed);
+        assert!(s_claude.effort_levels.is_empty());
+
+        // API 连接：gemini-4-hydrogen 支持 xhigh 四档，gemini-4-carbon 支持三档
+        let api_prof = make_profile(AccountType::Api, &["gemini-4-carbon", "gemini-4-hydrogen"]);
+        let s_carbon = surface_for_profile(&api_prof, Some("gemini-4-carbon"));
+        assert!(s_carbon.inject_effort_allowed);
+        assert_eq!(s_carbon.effort_levels, vec!["low", "medium", "high"]);
+
+        let s_hydrogen = surface_for_profile(&api_prof, Some("gemini-4-hydrogen"));
+        assert!(s_hydrogen.inject_effort_allowed);
+        assert_eq!(s_hydrogen.effort_levels, vec!["low", "medium", "high", "xhigh"]);
     }
 }

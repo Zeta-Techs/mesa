@@ -1959,21 +1959,29 @@ export const TerminalView = memo(function TerminalView({
   const launchAgents = useAppStore((s) => s.agents);
   const effectiveLaunchModel = model.trim() || selectedProfile?.models[0] || "";
   const [launchEffortInjectable, setLaunchEffortInjectable] = useState(false);
+  const [launchComboLevels, setLaunchComboLevels] = useState<string[]>([]);
   useEffect(() => {
-    if (running || !profileId || !effectiveLaunchModel) {
+    if (running || !profileId) {
       setLaunchEffortInjectable(false);
+      setLaunchComboLevels([]);
       return;
     }
     let stale = false;
-    invoke<{ injectEffortAllowed?: boolean }>("combo_surface", {
+    invoke<{ injectEffortAllowed?: boolean; effortLevels?: string[] }>("combo_surface", {
       profileId,
-      model: effectiveLaunchModel,
+      model: effectiveLaunchModel || null,
     })
       .then((c) => {
-        if (!stale) setLaunchEffortInjectable(c.injectEffortAllowed === true);
+        if (!stale) {
+          setLaunchEffortInjectable(c.injectEffortAllowed === true);
+          setLaunchComboLevels(Array.isArray(c.effortLevels) ? c.effortLevels : []);
+        }
       })
       .catch(() => {
-        if (!stale) setLaunchEffortInjectable(false);
+        if (!stale) {
+          setLaunchEffortInjectable(false);
+          setLaunchComboLevels([]);
+        }
       });
     return () => {
       stale = true;
@@ -1991,12 +1999,13 @@ export const TerminalView = memo(function TerminalView({
   const [observedTier, setObservedTier] = useState<"ask" | "auto" | "full" | null>(null);
   const launchEffortLevels = useMemo(
     () => {
+      if (launchComboLevels.length > 0) return launchComboLevels;
       const levels = launchAgentDet?.effort?.levels;
       // 只有注入通道、没有原生档表的 agent（codex 配置注入）给通用三档（同开工弹层）
       return levels?.length ? levels : ["low", "medium", "high"];
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [launchAgentDet?.effort?.levels?.join(",")],
+    [launchComboLevels.join(","), launchAgentDet?.effort?.levels?.join(",")],
   );
   // 这家 CLI 本机默认权限（只读探查，cli_permission.rs）：如实告诉用户会不会先问
   const [cliPermissionNote, setCliPermissionNote] = useState<CliPermissionNote | null>(null);

@@ -3169,16 +3169,35 @@ fn session_resume_config_at(
             .unwrap_or_default();
         file_model = file_model.and_then(|alias| kimi_model_from_alias(&alias, &config));
     }
-    let mut model = file_model.or(launch_model);
+    let mut model = file_model.or(launch_model.clone());
+    let mut agy_inferred_effort: Option<String> = None;
     if agent == "agy" {
         model = model.and_then(|m| {
             let clean = m.trim().strip_prefix("mesa/").unwrap_or(m.trim()).trim();
-            (!clean.is_empty()).then(|| clean.to_string())
+            if clean.is_empty() {
+                return None;
+            }
+            if let Some((base, _, suf)) = crate::agents::agy_official_effort_family(clean) {
+                if let Some(eff) = suf {
+                    agy_inferred_effort = Some(eff.to_string());
+                }
+                return Some(base.to_string());
+            }
+            if let Some(lm) = launch_model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                let lm_clean = lm.strip_prefix("mesa/").unwrap_or(lm).trim();
+                for eff in ["low", "medium", "high"] {
+                    if clean == format!("{lm_clean}-{eff}") {
+                        agy_inferred_effort = Some(eff.to_string());
+                        return Some(lm_clean.to_string());
+                    }
+                }
+            }
+            Some(clean.to_string())
         });
     }
     SessionResumeConfigDto {
         model,
-        effort: file_effort.or(launch_effort),
+        effort: file_effort.or(agy_inferred_effort).or(launch_effort),
     }
 }
 

@@ -1373,9 +1373,100 @@ fn agy_user_settings_text(profile: &Profile) -> Option<String> {
     }
 }
 
+/// Antigravity CLI 1.5.8 在 `modelProvider="gemini"` + `GEMINI_API_KEY` 下原样保真请求路径、
+/// 且在 TUI 内原生开放 `/effort` 时间轴选择器（`adjustable=true`）的内置 Gemini 模型族（2026-11-14 假网关实测）：
+/// - 这六族直接传 `--model <base>`（不加 `mesa/` 前缀），线上请求 `/v1beta/models/<base>:streamGenerateContent` 一字不改，
+///   且 `transcript.jsonl` 直接落盘 `"model": "<base>-<effort>"`；
+/// - `gemini-3.1-pro` 在 API 模式下线上会被改写为 `gemini-3.1-pro-preview`，故不入此表（API 连接仍走 `mesa/gemini-3.1-pro` 保原名）。
+const AGY_BUILTIN_GEMINI_FAMILIES: &[(&str, &str, &[&str])] = &[
+    ("gemini-4-carbon", "Gemini 4 Carbon", &["low", "medium", "high"]),
+    ("gemini-4-hydrogen", "Gemini 4 Hydrogen", &["low", "medium", "high", "xhigh"]),
+    ("gemini-4-argon", "Gemini 4 Argon", &["low", "medium", "high"]),
+    ("gemini-3.8-flash", "Gemini 3.8 Flash", &["low", "medium", "high"]),
+    ("gemini-3.7-flash", "Gemini 3.7 Flash", &["low", "medium", "high"]),
+    ("gemini-3.6-flash", "Gemini 3.6 Flash", &["low", "medium", "high"]),
+];
+
+fn match_agy_family_slug<'a>(
+    model: &str,
+    base: &'static str,
+    levels: &'a [&'static str],
+) -> Option<(&'static str, &'a [&'static str], Option<&'static str>)> {
+    let trimmed = model.trim();
+    if trimmed.eq_ignore_ascii_case(base) {
+        return Some((base, levels, None));
+    }
+    for &lv in levels {
+        if trimmed.len() == base.len() + 1 + lv.len()
+            && trimmed[..base.len()].eq_ignore_ascii_case(base)
+            && trimmed.as_bytes()[base.len()] == b'-'
+            && trimmed[base.len() + 1..].eq_ignore_ascii_case(lv)
+        {
+            return Some((base, levels, Some(lv)));
+        }
+    }
+    None
+}
+
+pub(crate) fn agy_builtin_gemini_family(
+    model: &str,
+) -> Option<(&'static str, &'static str, &'static [&'static str], Option<&'static str>)> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() || trimmed.starts_with("mesa/") {
+        return None;
+    }
+    for &(base, display, levels) in AGY_BUILTIN_GEMINI_FAMILIES {
+        if let Some((b, lvs, suf)) = match_agy_family_slug(trimmed, base, levels) {
+            return Some((b, display, lvs, suf));
+        }
+    }
+    None
+}
+
+pub(crate) fn agy_official_effort_family(
+    model: &str,
+) -> Option<(&'static str, &'static [&'static str], Option<&'static str>)> {
+    if let Some((base, _, levels, suf)) = agy_builtin_gemini_family(model) {
+        return Some((base, levels, suf));
+    }
+    match_agy_family_slug(model, "gemini-3.1-pro", &["low", "high"])
+}
+
+fn agy_effort_display_cap(eff: &str) -> &'static str {
+    match eff {
+        "low" => "Low",
+        "high" => "High",
+        "xhigh" => "XHigh",
+        _ => "Medium",
+    }
+}
+
+fn agy_has_effort_suffix(id: &str) -> bool {
+    let lower = id.trim().to_ascii_lowercase();
+    ["-low", "-medium", "-high", "-xhigh", "-max", "-minimal", "-none"]
+        .iter()
+        .any(|suf| lower.ends_with(suf))
+}
+
+pub(crate) fn agy_effort_for_levels(raw: Option<&str>, levels: &[&'static str]) -> Option<&'static str> {
+    let picked = crate::agent_specs::launch_reasoning_effort(raw?)?;
+    let wanted: &[&str] = match picked.as_str() {
+        "none" | "minimal" | "low" => &["low"],
+        "medium" => &["medium", "high", "low"],
+        "high" => &["high", "medium", "low"],
+        "xhigh" | "ultra" | "max" => &["xhigh", "high", "medium", "low"],
+        _ => return None,
+    };
+    wanted
+        .iter()
+        .find_map(|w| levels.iter().copied().find(|lv| lv == w))
+}
+
 /// 生成 Antigravity CLI 会话级 `--settings` 内容（纯函数）：
-/// 保留用户 `~/.gemini/antigravity-cli/settings.json`（JSONC）里所有非 `mesa/` 自定义模型，
-/// 并入当前连接的 `mesa/<id>` 条目（`API_PROVIDER_GOOGLE_GEMINI`），钉住 `modelProvider="gemini"` 与 `model="mesa/<picked>"`。
+/// - 保留用户 `~/.gemini/antigravity-cli/settings.json`（JSONC）里所有非 `mesa/` 自定义模型；
+/// - 若模型属 `agy` 原生保真 Gemini 族（如 `gemini-4-carbon`、`gemini-4-hydrogen`、`gemini-3.8-flash`），
+///   直接走内置模型（不套 `mesa/` 前缀），使外部与内嵌终端 TUI 原生解锁 `/effort` 与 `/model` 档位切换；
+/// - 其余自定义/中转模型写入 `mesa/<id>`（带 `thinkingLevel`），并为可思考模型附带 `mesa/<id>-low/medium/high` 供外部终端 `/model` 切档。
 pub(crate) fn agy_session_settings_body(
     profile: &Profile,
     picked: &str,
@@ -1403,18 +1494,48 @@ pub(crate) fn agy_session_settings_body(
             ids.push(m);
         }
     }
-    for id in ids {
-        custom_models.insert(
-            format!("mesa/{id}"),
-            serde_json::json!({
-                "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
-                "modelName": id,
-            }),
-        );
+    let raw_eff = profile.request_policy.reasoning_effort.as_deref();
+    let custom_eff = agy_effort_for_levels(raw_eff, &["low", "medium", "high"]);
+    let gid = profile.gateway_id.as_deref();
+    for id in &ids {
+        if agy_builtin_gemini_family(id).is_some() {
+            continue;
+        }
+        let mut entry = serde_json::json!({
+            "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+            "modelName": id,
+        });
+        if *id == picked.trim() {
+            if let Some(eff) = custom_eff {
+                entry["thinkingLevel"] = serde_json::Value::String(eff.into());
+            }
+        }
+        custom_models.insert(format!("mesa/{id}"), entry);
+        if crate::model_registry::model_thinking_for(id, gid) && !agy_has_effort_suffix(id) {
+            for lv in ["low", "medium", "high"] {
+                let variant = format!("{id}-{lv}");
+                if !ids.iter().any(|x| x.eq_ignore_ascii_case(&variant)) {
+                    custom_models.insert(
+                        format!("mesa/{variant}"),
+                        serde_json::json!({
+                            "apiProvider": "API_PROVIDER_GOOGLE_GEMINI",
+                            "modelName": id,
+                            "thinkingLevel": lv,
+                        }),
+                    );
+                }
+            }
+        }
     }
+    let top_model = if let Some((_, display, levels, suf)) = agy_builtin_gemini_family(picked) {
+        let eff = agy_effort_for_levels(raw_eff, levels).or(suf).unwrap_or("medium");
+        format!("{display} ({})", agy_effort_display_cap(eff))
+    } else {
+        format!("mesa/{}", picked.trim())
+    };
     serde_json::json!({
         "modelProvider": "gemini",
-        "model": format!("mesa/{picked}"),
+        "model": top_model,
         "customModelsConfig": {
             "customModels": custom_models,
         },
@@ -1435,16 +1556,6 @@ pub(crate) fn normalize_agy_gemini_base_url(raw: &str) -> String {
         }
     }
     trimmed.to_string()
-}
-
-fn agy_effort_arg(raw: Option<&str>) -> Option<&'static str> {
-    let canonical = crate::agent_specs::canonical_reasoning_effort(raw?)?;
-    match canonical.as_str() {
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        _ => None,
-    }
 }
 
 /// Qwen 的系统设置覆盖层（`QWEN_CODE_SYSTEM_SETTINGS_PATH`，合并时排在用户 settings.json 之后）。
@@ -1729,11 +1840,21 @@ pub fn launch_plan(
                     let settings_file = write_agy_session_settings(profile, picked)?;
                     plan.args.push("--settings".into());
                     plan.args.push(settings_file);
-                    plan.args.push("--model".into());
-                    plan.args.push(format!("mesa/{picked}"));
-                    if let Some(eff) = agy_effort_arg(profile.request_policy.reasoning_effort.as_deref()) {
-                        plan.args.push("--effort".into());
-                        plan.args.push(eff.into());
+                    let raw_eff = profile.request_policy.reasoning_effort.as_deref();
+                    if let Some((base, _, levels, suf)) = agy_builtin_gemini_family(picked) {
+                        plan.args.push("--model".into());
+                        plan.args.push(base.into());
+                        if let Some(eff) = agy_effort_for_levels(raw_eff, levels).or(suf) {
+                            plan.args.push("--effort".into());
+                            plan.args.push(eff.into());
+                        }
+                    } else {
+                        plan.args.push("--model".into());
+                        plan.args.push(format!("mesa/{picked}"));
+                        if let Some(eff) = agy_effort_for_levels(raw_eff, &["low", "medium", "high"]) {
+                            plan.args.push("--effort".into());
+                            plan.args.push(eff.into());
+                        }
                     }
                 }
             }
@@ -3228,13 +3349,33 @@ fn apply_official_inject(
                 }
             }
             if profile.agent == "agy" {
-                if let Some(m) = model {
-                    plan.args.push("--model".into());
-                    plan.args.push(m.into());
-                }
-                if let Some(eff) = agy_effort_arg(profile.request_policy.reasoning_effort.as_deref()) {
-                    plan.args.push("--effort".into());
-                    plan.args.push(eff.into());
+                let raw_eff = profile.request_policy.reasoning_effort.as_deref();
+                match model {
+                    Some(m) => {
+                        // agy 1.5.8 实测：`--model gemini-3.8-flash-high --effort medium` 会报冲突 rc=1，
+                        // 必须剥成族基底 `--model gemini-3.8-flash --effort medium`；非 Gemini 官方模型
+                        //（如 `claude-sonnet-4-6`）传 `--effort` 会报 unsupported rc=1，仅注 `--model`。
+                        if let Some((base, levels, _)) = agy_official_effort_family(m) {
+                            if let Some(eff) = agy_effort_for_levels(raw_eff, levels) {
+                                plan.args.push("--model".into());
+                                plan.args.push(base.into());
+                                plan.args.push("--effort".into());
+                                plan.args.push(eff.into());
+                            } else {
+                                plan.args.push("--model".into());
+                                plan.args.push(m.into());
+                            }
+                        } else {
+                            plan.args.push("--model".into());
+                            plan.args.push(m.into());
+                        }
+                    }
+                    None => {
+                        if let Some(eff) = agy_effort_for_levels(raw_eff, &["low", "medium", "high"]) {
+                            plan.args.push("--effort".into());
+                            plan.args.push(eff.into());
+                        }
+                    }
                 }
             }
         }
@@ -4698,6 +4839,7 @@ fn open_external_profiled(
     provider: Option<&str>,
     base_url: Option<&str>,
     model: Option<&str>,
+    effort: Option<&str>,
     cwd: &str,
     resume_session_id: Option<&str>,
     prompt: Option<&str>,
@@ -4705,6 +4847,9 @@ fn open_external_profiled(
     full_access: Option<bool>,
 ) -> Result<(), String> {
     let mut profile = external_profile(store, agent_id, profile_id, provider, base_url, model)?;
+    if let Some(eff) = effort.map(str::trim).filter(|e| !e.is_empty()) {
+        profile.request_policy.reasoning_effort = Some(eff.to_string());
+    }
     let selected_model = model
         .map(str::trim)
         .filter(|m| !m.is_empty())
@@ -5200,6 +5345,7 @@ pub fn profile_terminal_command(
     full_access: Option<bool>,
     cwd: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
 ) -> Result<String, String> {
     let profile = store.get(&profile_id)?;
     if profile.slot_missing {
@@ -5220,6 +5366,13 @@ pub fn profile_terminal_command(
             extra.push(m.to_string());
         }
     }
+    if let Some(eff) = effort
+        .as_deref()
+        .and_then(crate::agent_specs::launch_reasoning_effort)
+    {
+        extra.push("--effort".into());
+        extra.push(eff);
+    }
     Ok(format_helper_launch_command_for(
         cfg!(windows),
         &helper,
@@ -5228,6 +5381,23 @@ pub fn profile_terminal_command(
         cwd.as_deref(),
         &extra,
     ))
+}
+
+fn bare_resume_effort_args(agent_id: &str, effort: Option<&str>) -> Vec<String> {
+    let Some(eff) = effort.and_then(crate::agent_specs::launch_reasoning_effort) else {
+        return Vec::new();
+    };
+    match agent_id {
+        "claude-code" | "codebuddy" => vec!["--effort".into(), eff],
+        "agy" => agy_effort_for_levels(Some(&eff), &["low", "medium", "high", "xhigh"])
+            .map(|e| vec!["--effort".into(), e.into()])
+            .unwrap_or_default(),
+        "codex" => vec!["-c".into(), format!("model_reasoning_effort=\"{eff}\"")],
+        "grok" if crate::agent_specs::GROK_REASONING_EFFORTS.contains(&eff.as_str()) => {
+            vec!["--reasoning-effort".into(), eff]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// 复制用：返回该会话的恢复命令行。
@@ -5243,6 +5413,8 @@ pub fn session_resume_command(
     provider: Option<String>,
     profile_id: Option<String>,
     full_access: Option<bool>,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<String, String> {
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
     let use_full_access = full_access.unwrap_or_else(|| {
@@ -5253,33 +5425,55 @@ pub fn session_resume_command(
     let mut extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
     // 外面续 Codex 老对话：不带 `-m` 发的是全局默认模型，换过默认连接后老渠道报「模型不存在」
     if agent_id == "codex" {
-        if let Some(m) = crate::sessions::codex_thread_model(session_id) {
+        if let Some(m) = model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| crate::sessions::codex_thread_model(session_id))
+        {
             extra.extend(["-m".into(), m]);
         }
     }
     if agent_id == "agy" {
         if let Some(pid) = profile_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            let is_api_profile = crate::profiles::ProfileStore::existing()
+            let api_prof = crate::profiles::ProfileStore::existing()
                 .and_then(|s| s.get(pid).ok())
-                .is_some_and(|p| {
+                .filter(|p| {
                     p.agent == "agy" && p.account_type != crate::profiles::AccountType::Official
                 });
-            if is_api_profile {
+            if let Some(p) = api_prof {
                 if let Some(helper) = crate::codex_continuity::stable_helper_for("launch") {
-                    let (_, mut resume) = resume_args(agent_id, session_id);
-                    resume.extend(extra);
+                    let mut helper_extra: Vec<String> = Vec::new();
+                    if let Some(m) = model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                        if p.models.first().map(String::as_str) != Some(m) {
+                            helper_extra.push("--model".into());
+                            helper_extra.push(m.to_string());
+                        }
+                    }
+                    if let Some(eff) = effort
+                        .as_deref()
+                        .and_then(crate::agent_specs::launch_reasoning_effort)
+                    {
+                        helper_extra.push("--effort".into());
+                        helper_extra.push(eff);
+                    }
+                    let (_, resume) = resume_args(agent_id, session_id);
+                    helper_extra.extend(resume);
+                    helper_extra.extend(extra);
                     return Ok(format_helper_launch_command_for(
                         cfg!(windows),
                         &helper,
                         pid,
                         use_full_access,
                         Some(cwd),
-                        &resume,
+                        &helper_extra,
                     ));
                 }
             }
         }
     }
+    extra.extend(bare_resume_effort_args(agent_id, effort.as_deref()));
     if use_full_access {
         if let Some(with_perm) = permission_launch_args(agent_id, &extra, "full") {
             extra = with_perm;
@@ -5298,13 +5492,20 @@ pub fn session_resume_command(
 }
 
 /// 解析 `mesa_helper launch [--full-access|--no-full-access] <连接> [-- <额外参数…>]` 的额外参数：
-/// 提取 `--` 之前的 `--full-access`/`--no-full-access` 开关，以及用户显式指定的 `--model/-m` 与恢复会话 ID，其余参数原样透传给底层 CLI。
+/// 提取 `--` 之前的 `--full-access`/`--no-full-access` 开关，以及用户显式指定的 `--model/-m`、`--effort` 与恢复会话 ID，其余参数原样透传给底层 CLI。
 pub(crate) fn parse_helper_extra_args(
     agent_id: &str,
     extra_args: &[String],
-) -> (Option<bool>, Option<String>, Option<String>, Vec<String>) {
+) -> (
+    Option<bool>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Vec<String>,
+) {
     let mut extra_full_access: Option<bool> = None;
     let mut user_model: Option<String> = None;
+    let mut user_effort: Option<String> = None;
     let mut user_resume: Option<String> = None;
     let mut passthrough: Vec<String> = Vec::new();
     let mut after_sep = false;
@@ -5341,6 +5542,24 @@ pub(crate) fn parse_helper_extra_args(
             i += 1;
             continue;
         }
+        if (cur == "--effort" || cur == "--reasoning-effort") && i + 1 < extra_args.len() {
+            let eff = extra_args[i + 1].trim();
+            if !eff.is_empty() {
+                user_effort = Some(eff.to_string());
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(eff) = cur
+            .strip_prefix("--effort=")
+            .or_else(|| cur.strip_prefix("--reasoning-effort="))
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
+            user_effort = Some(eff.to_string());
+            i += 1;
+            continue;
+        }
         if agent_id == "agy" {
             if cur == "--conversation" && i + 1 < extra_args.len() {
                 let sid = extra_args[i + 1].trim();
@@ -5365,7 +5584,13 @@ pub(crate) fn parse_helper_extra_args(
         passthrough.push(extra_args[i].clone());
         i += 1;
     }
-    (extra_full_access, user_model, user_resume, passthrough)
+    (
+        extra_full_access,
+        user_model,
+        user_effort,
+        user_resume,
+        passthrough,
+    )
 }
 
 fn find_temp_agy_settings_arg(args: &[String]) -> Option<PathBuf> {
@@ -5452,7 +5677,7 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
         }
     };
     let agent_id = profile.agent.clone();
-    let (extra_full_access, user_model, user_resume, passthrough) =
+    let (extra_full_access, user_model, user_effort, user_resume, passthrough) =
         parse_helper_extra_args(&agent_id, &args[target_idx + 1..]);
     let use_full_access = extra_full_access.or(lead_full_access).unwrap_or_else(|| {
         crate::settings::read_current()
@@ -5465,6 +5690,9 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
         {
             profile.models.insert(0, m.clone());
         }
+    }
+    if let Some(ref eff) = user_effort {
+        profile.request_policy.reasoning_effort = Some(eff.clone());
     }
     let selected_model = user_model.or_else(|| profile.models.first().cloned());
     crate::combo::apply_to_profile(&mut profile, selected_model.as_deref());
@@ -5605,6 +5833,7 @@ pub async fn resume_external_terminal(
     cwd: String,
     profile_id: Option<String>,
     model: Option<String>,
+    effort: Option<String>,
     provider: Option<String>,
     base_url: Option<String>,
     title: Option<String>,
@@ -5618,6 +5847,7 @@ pub async fn resume_external_terminal(
             provider.as_deref(),
             base_url.as_deref(),
             model.as_deref(),
+            effort.as_deref(),
             &cwd,
             Some(&session_id),
             None,
@@ -5636,6 +5866,7 @@ pub async fn new_external_terminal(
     cwd: String,
     profile_id: String,
     model: Option<String>,
+    effort: Option<String>,
     full_access: Option<bool>,
 ) -> Result<(), String> {
     open_external_off_main(app, move |store| {
@@ -5646,6 +5877,7 @@ pub async fn new_external_terminal(
             None,
             None,
             model.as_deref(),
+            effort.as_deref(),
             &cwd,
             None,
             None,
@@ -5746,6 +5978,7 @@ pub async fn digest_external_terminal(
             None,
             None,
             model.as_deref(),
+            None,
             &cwd,
             None,
             Some(&prompt),

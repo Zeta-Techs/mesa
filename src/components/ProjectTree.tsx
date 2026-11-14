@@ -770,6 +770,7 @@ export default function ProjectTree({
         initialCwd: s.cwd ?? s.projectPath,
         profile: profile ?? null,
         initialModel: model,
+        initialEffort: config?.effort ?? null,
         provider: s.provider ?? null,
         baseUrl: profile?.baseUrl ?? null,
         initialFullAccess,

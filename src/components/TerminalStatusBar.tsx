@@ -587,6 +587,28 @@ export default function TerminalStatusBar({
                   className="absolute bottom-full left-0 z-50 mb-1 min-w-32 rounded-md border p-1"
                   style={{ background: floatBg, borderColor: `${fg}33` }}
                 >
+                  {rt.effortByRelaunch && (
+                    <li key="__default__">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEffortMenuOpen(false);
+                          if (knownEffort !== null) rt.setEffortLevel("");
+                        }}
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1 text-left font-mono text-micro"
+                        style={{ color: knownEffort === null ? fg : dim }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = `${fg}1a`;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "transparent";
+                        }}
+                      >
+                        <span className="min-w-0 flex-1">默认</span>
+                        <span className="w-3 shrink-0 text-right">{knownEffort === null ? "✓" : ""}</span>
+                      </button>
+                    </li>
+                  )}
                   {levels.map((lv, i) => (
                     <li key={lv}>
                       <button

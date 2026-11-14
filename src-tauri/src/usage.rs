@@ -639,9 +639,13 @@ where
             continue;
         }
         let day = get_str(&v, "created_at").map(day_of_iso).unwrap_or_default();
+        let step_model = get_str(&v, "model")
+            .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("MODEL_UNSPECIFIED"))
+            .map(agy_normalize_model_selection)
+            .filter(|m| !m.is_empty());
         out.push(UsageEvent {
             day,
-            model: current_model.clone(),
+            model: step_model.unwrap_or_else(|| current_model.clone()),
             input: input.unwrap_or(0),
             output: output.unwrap_or(0),
             cache_read: cache_read.unwrap_or(0),

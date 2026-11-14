@@ -3718,11 +3718,34 @@ fn agy_api_launch_merges_jsonc_custom_models_strips_v1beta_and_passes_effort() {
         cm["mesa/gemini-2.5-pro"]["apiProvider"],
         "API_PROVIDER_GOOGLE_GEMINI"
     );
+    assert_eq!(cm["mesa/gemini-2.5-pro"]["thinkingLevel"], "high");
+    assert_eq!(cm["mesa/gemini-2.5-pro-low"]["thinkingLevel"], "low");
+    assert_eq!(cm["mesa/gemini-2.5-pro-medium"]["thinkingLevel"], "medium");
+    assert_eq!(cm["mesa/gemini-2.5-pro-high"]["thinkingLevel"], "high");
     assert_eq!(cm["mesa/gemini-2.5-flash"]["modelName"], "gemini-2.5-flash");
     let midx = plan.args.iter().position(|a| a == "--model").expect("--model");
     assert_eq!(plan.args[midx + 1], "mesa/gemini-2.5-pro");
     let eidx = plan.args.iter().position(|a| a == "--effort").expect("--effort");
     assert_eq!(plan.args[eidx + 1], "high");
+
+    // 内置保真 Gemini 模型（如 gemini-4-carbon / gemini-4-hydrogen）直接传裸模型名，不套 `mesa/`，
+    // 从而在外部与内嵌终端 TUI 原生解锁 `/effort` 选择器（`adjustable=true`）
+    let mut p_builtin = profile("agy", Some("https://relay.example.com/v1"));
+    p_builtin.models = vec!["gemini-4-carbon".into(), "gemini-4-hydrogen".into()];
+    p_builtin.request_policy.reasoning_effort = Some("low,medium,high,xhigh@xhigh".into());
+    let plan_c = launch_plan(&p_builtin, Some("sk-agy-secret".into()), Some("gemini-4-carbon")).unwrap();
+    let sc_idx = plan_c.args.iter().position(|a| a == "--settings").unwrap();
+    let sc_val: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan_c.args[sc_idx + 1]).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&plan_c.args[sc_idx + 1]);
+    assert_eq!(sc_val["model"], "Gemini 4 Carbon (High)", "carbon 不支持 xhigh，自动收窄到 high");
+    assert!(sc_val["customModelsConfig"]["customModels"].as_object().unwrap().is_empty());
+    assert!(plan_c.args.ends_with(&["--model".into(), "gemini-4-carbon".into(), "--effort".into(), "high".into()]));
+
+    let plan_h = launch_plan(&p_builtin, Some("sk-agy-secret".into()), Some("gemini-4-hydrogen")).unwrap();
+    let sh_idx = plan_h.args.iter().position(|a| a == "--settings").unwrap();
+    let _ = std::fs::remove_file(&plan_h.args[sh_idx + 1]);
+    assert!(plan_h.args.ends_with(&["--model".into(), "gemini-4-hydrogen".into(), "--effort".into(), "xhigh".into()]));
 }
 
 #[test]
@@ -3741,8 +3764,15 @@ fn agy_official_launch_and_models_parser_and_conflict_cleanup() {
     assert!(plan.env_remove.contains(&"GOOGLE_GEMINI_BASE_URL".into()));
     assert_eq!(
         plan.args,
-        vec!["--model", "gemini-3.8-flash-high", "--effort", "medium"]
+        vec!["--model", "gemini-3.8-flash", "--effort", "medium"]
     );
+
+    // 官方非 Gemini 模型不支持 `--effort`（CLI 传了报 rc=1）：仅传 `--model`
+    let plan_claude = launch_plan(&p, None, Some("claude-sonnet-4-6")).unwrap();
+    assert_eq!(plan_claude.args, vec!["--model", "claude-sonnet-4-6"]);
+    // 官方未选模型（走 CLI 默认模型）：正常注入 `--effort`
+    let plan_default = launch_plan(&p, None, None).unwrap();
+    assert_eq!(plan_default.args, vec!["--effort", "medium"]);
 
     let tmp = std::env::temp_dir().join(format!("mesa-agy-conflict-{}", uuid::Uuid::new_v4()));
     let cfg_dir = tmp.join("home/.gemini/antigravity-cli");
@@ -3948,10 +3978,12 @@ fn agy_official_model_mapping_and_helper_launch_formatting() {
         r"Set-Location 'C:\work\proj'; & 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' 'prof-1' --conversation 'conv-42'"
     );
 
-    let (fa, m, r, pass) = parse_helper_extra_args(
+    let (fa, m, eff, r, pass) = parse_helper_extra_args(
         "agy",
         &[
             "--full-access".into(),
+            "--effort".into(),
+            "high".into(),
             "--".into(),
             "--model".into(),
             "gemini-2.5-pro".into(),
@@ -3963,11 +3995,20 @@ fn agy_official_model_mapping_and_helper_launch_formatting() {
     );
     assert_eq!(fa, Some(true));
     assert_eq!(m.as_deref(), Some("gemini-2.5-pro"));
+    assert_eq!(eff.as_deref(), Some("high"));
     assert_eq!(r.as_deref(), Some("conv-99"));
     assert_eq!(pass, vec!["--conversation", "conv-99", "-p", "hi"]);
 
-    let (fa_off, _, _, pass_off) =
-        parse_helper_extra_args("agy", &["--no-full-access".into(), "--conversation".into(), "conv-1".into()]);
+    let (fa_off, _, eff_eq, _, pass_off) = parse_helper_extra_args(
+        "agy",
+        &[
+            "--no-full-access".into(),
+            "--effort=low".into(),
+            "--conversation".into(),
+            "conv-1".into(),
+        ],
+    );
     assert_eq!(fa_off, Some(false));
+    assert_eq!(eff_eq.as_deref(), Some("low"));
     assert_eq!(pass_off, vec!["--conversation", "conv-1"]);
 }

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "../store";
 import { toast } from "../toast";
-import { AGENTS, type Profile, type ProjectDto } from "../types";
+import { AGENTS, type ComboSurfaceDto, type Profile, type ProjectDto } from "../types";
 import { Modal } from "./Modal";
 import {
   InlineNotice,
@@ -25,6 +25,7 @@ export type ExternalTerminalTarget =
   | {
       kind: "new";
       profile: Profile;
+      initialEffort?: string | null;
       initialFullAccess?: boolean;
     }
   | {
@@ -35,6 +36,7 @@ export type ExternalTerminalTarget =
       initialCwd: string;
       profile: Profile | null;
       initialModel: string | null;
+      initialEffort?: string | null;
       provider: string | null;
       baseUrl: string | null;
       initialFullAccess?: boolean;
@@ -89,11 +91,18 @@ export function ExternalTerminalDialog({
 }) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const agents = useAppStore((s) => s.agents);
   const defaultFull = Boolean(settings?.externalTerminalFullAccess);
 
   const [cwd, setCwd] = useState("");
   const [cwdEdited, setCwdEdited] = useState(false);
   const [selectedModel, setSelectedModel] = useState("");
+  const [selectedEffort, setSelectedEffort] = useState("");
+  const [effortSurface, setEffortSurface] = useState<{
+    allowed: boolean;
+    levels: string[];
+    launchEffort: string | null;
+  }>({ allowed: false, levels: [], launchEffort: null });
   const [fullAccess, setFullAccess] = useState(false);
   const [rememberDefault, setRememberDefault] = useState(false);
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -108,6 +117,7 @@ export function ExternalTerminalDialog({
     setRememberDefault(false);
     setCwdEdited(false);
     setFullAccess(target.initialFullAccess ?? defaultFull);
+    setSelectedEffort(target.initialEffort?.trim().toLowerCase() ?? "");
 
     if (target.kind === "new") {
       const { cwd: lastCwd } = readLastLaunch();
@@ -132,6 +142,76 @@ export function ExternalTerminalDialog({
       cancelled = true;
     };
   }, [target, defaultFull]);
+
+  const activeProfile = target ? target.profile : null;
+  const activeAgentId = target ? (target.kind === "new" ? target.profile.agent : target.agentId) : "";
+
+  useEffect(() => {
+    if (!target) {
+      setEffortSurface({ allowed: false, levels: [], launchEffort: null });
+      return;
+    }
+    const detLevels = agents.find((a) => a.id === activeAgentId)?.effort?.levels ?? [];
+    if (!activeProfile) {
+      // 未匹配到连接卡的外部历史会话续聊：对官方/本机默认 CLI 按 Agent 与模型给出思考档位
+      const m = selectedModel.trim().toLowerCase();
+      if (activeAgentId === "agy") {
+        const nonGemini =
+          m && !m.startsWith("gemini-") && !m.startsWith("gpt-oss");
+        if (nonGemini) {
+          setEffortSurface({ allowed: false, levels: [], launchEffort: null });
+        } else {
+          const levels = m.includes("gemini-4-hydrogen")
+            ? ["low", "medium", "high", "xhigh"]
+            : m.includes("gemini-3.1-pro")
+              ? ["low", "high"]
+              : ["low", "medium", "high"];
+          setEffortSurface({ allowed: true, levels, launchEffort: null });
+        }
+      } else if (activeAgentId === "claude-code" || activeAgentId === "codex") {
+        setEffortSurface({
+          allowed: true,
+          levels: detLevels.length > 0 ? detLevels : ["low", "medium", "high"],
+          launchEffort: null,
+        });
+      } else {
+        setEffortSurface({ allowed: false, levels: [], launchEffort: null });
+      }
+      return;
+    }
+
+    let stale = false;
+    invoke<ComboSurfaceDto>("combo_surface", {
+      profileId: activeProfile.id,
+      model: selectedModel.trim() || null,
+    })
+      .then((c) => {
+        if (stale) return;
+        const allowed = c.injectEffortAllowed === true;
+        const levels =
+          c.effortLevels && c.effortLevels.length > 0
+            ? c.effortLevels
+            : detLevels.length > 0
+              ? detLevels
+              : ["low", "medium", "high"];
+        setEffortSurface({
+          allowed,
+          levels: allowed ? levels : [],
+          launchEffort: c.launchEffort ?? null,
+        });
+        if (allowed) {
+          setSelectedEffort((prev) => (prev && !levels.includes(prev) ? "" : prev));
+        } else {
+          setSelectedEffort("");
+        }
+      })
+      .catch(() => {
+        if (!stale) setEffortSurface({ allowed: false, levels: [], launchEffort: null });
+      });
+    return () => {
+      stale = true;
+    };
+  }, [target, activeProfile, activeAgentId, selectedModel, agents]);
 
   const modelOptions = useMemo(() => {
     if (!target) return [];
@@ -178,6 +258,10 @@ export function ExternalTerminalDialog({
       setError("请先选择或输入工作文件夹");
       return;
     }
+    const finalEffort =
+      effortSurface.allowed && selectedEffort && effortSurface.levels.includes(selectedEffort)
+        ? selectedEffort
+        : null;
     setBusy(true);
     setError(null);
     try {
@@ -189,6 +273,7 @@ export function ExternalTerminalDialog({
           cwd: finalCwd,
           profileId: target.profile.id,
           model: selectedModel.trim() || target.profile.models[0] || null,
+          effort: finalEffort,
           fullAccess,
         });
       } else {
@@ -199,6 +284,7 @@ export function ExternalTerminalDialog({
           cwd: finalCwd,
           profileId: target.profile?.id ?? null,
           model: selectedModel.trim() || null,
+          effort: finalEffort,
           provider: target.provider,
           baseUrl: target.baseUrl,
           title: target.title,
@@ -221,6 +307,10 @@ export function ExternalTerminalDialog({
       setError("请先选择或输入工作文件夹");
       return;
     }
+    const finalEffort =
+      effortSurface.allowed && selectedEffort && effortSurface.levels.includes(selectedEffort)
+        ? selectedEffort
+        : null;
     setError(null);
     try {
       await persistDefaultIfChecked();
@@ -231,6 +321,7 @@ export function ExternalTerminalDialog({
           fullAccess,
           cwd: finalCwd,
           model: selectedModel.trim() || null,
+          effort: finalEffort,
         });
         await navigator.clipboard.writeText(cmd);
         toast(
@@ -248,6 +339,8 @@ export function ExternalTerminalDialog({
           provider: target.provider,
           profileId: target.profile?.id ?? null,
           fullAccess,
+          model: selectedModel.trim() || null,
+          effort: finalEffort,
         });
         await navigator.clipboard.writeText(cmd);
         const needsCodexKey = target.agentId === "codex" && Boolean(target.baseUrl);
@@ -421,6 +514,50 @@ export function ExternalTerminalDialog({
                   {modelOptions[0]}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 2.5 思考档位 */}
+          {effortSurface.allowed && effortSurface.levels.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-baseline justify-between gap-2">
+                <label className="text-xs font-medium text-l1">思考档位</label>
+                <span className="text-micro text-l3">
+                  {agentId === "agy"
+                    ? "进入终端后也可输 /effort 或 /model 切换"
+                    : effortSurface.launchEffort
+                      ? `默认按连接策略（${effortSurface.launchEffort}）`
+                      : "不选则按连接或 CLI 默认"}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {[
+                  {
+                    value: "",
+                    label: effortSurface.launchEffort
+                      ? `默认（${effortSurface.launchEffort}）`
+                      : "默认",
+                  },
+                  ...effortSurface.levels.map((lv) => ({ value: lv, label: lv })),
+                ].map((opt) => {
+                  const active = selectedEffort === opt.value;
+                  return (
+                    <button
+                      key={opt.value || "__default__"}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setSelectedEffort(opt.value)}
+                      className={`rounded-md border px-2.5 py-1 font-mono text-xs transition-colors ${
+                        active
+                          ? "border-field bg-seg-sel font-medium text-l1"
+                          : "border-hairline text-l2 hover:border-field hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 

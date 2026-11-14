@@ -127,14 +127,14 @@ export function useRuntimeModelEffort(opts: {
   const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
   const [comboReady, setComboReady] = useState(false);
   useEffect(() => {
-    if (!profileId || !launchModel) {
+    if (!profileId) {
       setCombo(null);
       setComboReady(true);
       return;
     }
     let cancelled = false;
     setComboReady(false);
-    invoke<ComboSurfaceDto>("combo_surface", { profileId, model: launchModel })
+    invoke<ComboSurfaceDto>("combo_surface", { profileId, model: launchModel || null })
       .then((c) => {
         if (!cancelled) {
           setCombo(c);
@@ -192,6 +192,11 @@ export function useRuntimeModelEffort(opts: {
   const effortLabel = effortIdx >= 0 ? levels[effortIdx] : (knownEffort ?? "默认");
 
   function applyEffort(level: string) {
+    if (level === "" && effortByRelaunch) {
+      if (relaunchBlocked || knownEffort === null) return;
+      relaunch?.({ effort: null });
+      return;
+    }
     if (!levels.includes(level)) return;
     if (effortByRelaunch) {
       if (relaunchBlocked || level === knownEffort) return;

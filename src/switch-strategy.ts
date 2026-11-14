@@ -71,8 +71,8 @@ export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean
   grok: { model: true },
   qwen: { effort: true },
   kimi: { effort: true },
-  // Antigravity CLI 1.5.8 沙箱实测：/model 会把 mesa/<模型> 写进 ~/.gemini/antigravity-cli/settings.json，
-  // 且思考档只有启动参数 --effort（无 /effort 斜杠命令），统一走重开接回
+  // Antigravity CLI 1.5.8 沙箱实测：/model 与 /effort 会把选择写进 ~/.gemini/antigravity-cli/settings.json，
+  // 且自定义模型（mesa/<id>）的 /effort 不可调，Mesa 内部统一走重开接回（不改全局配置、内置与自定义模型都可换档）
   agy: { model: true, effort: true },
 };
 

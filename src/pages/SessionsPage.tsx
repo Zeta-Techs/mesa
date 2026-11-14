@@ -781,6 +781,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         initialCwd: s.cwd ?? s.projectPath,
         profile: prof,
         initialModel: resumeModel(s, config?.model) ?? null,
+        initialEffort: config?.effort ?? null,
         provider: s.provider ?? null,
         baseUrl: resumeBaseUrl(s) ?? null,
         initialFullAccess,
