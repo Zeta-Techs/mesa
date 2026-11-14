@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { build } from "esbuild";
 import { checkDraft, draftProgressParts, imageRefs, manuscriptCandidateDirs, manuscriptCitations, pickManuscript, styleAbbreviations, supersededWritingIds } from "../src/draft-check.ts";
 
 // 精简样例（虚构的稿件、键与题名）
@@ -244,6 +246,25 @@ test("证据面：只速读篇带数值的句子单独点出；仅摘要篇撑�
   });
   assert.doesNotMatch(mixed.find((i) => i.id === "draft-skim-Eve2018")?.title ?? "", /带数值/);
   assert.equal(mixed.find((i) => i.id === "draft-abstract-num-Abs2021")?.target?.line, 5);
+  // 电子轨道 B 1s、年代 2020s、Fig. 1A、C2h 点群不算带单位数值；并列后置引文各归各子句，不把后半句精读篇的 151 mV 扣到前半句速读篇头上
+  const orbitalAndClauses = checkDraft({
+    kind: "writing",
+    file: "m.md",
+    index,
+    text: [
+      "Negative B 1s XPS shifts since the 2020s in C2h borides (Fig. 1A) indicate electron transfer [@Ann2020; @Eve2018].",
+      "Electroless Fe–Co–2.3Ni–B coatings [@Eve2018] and amorphous NiVB nanoparticles (HER η~10~ = 151 mV in 1.0 M KOH) [@Ann2020] follow this pathway.",
+    ].join("\n\n"),
+  });
+  assert.doesNotMatch(orbitalAndClauses.find((i) => i.id === "draft-skim-Eve2018")?.title ?? "", /带数值/);
+  // 前置状语 According to [@键], η = 50 mV 后面无其他引文，仍归属该键
+  const introClause = checkDraft({
+    kind: "writing",
+    file: "m.md",
+    index,
+    text: "According to Eve et al. [@Eve2018], the overpotential reached 50 mV.",
+  });
+  assert.match(introClause.find((i) => i.id === "draft-skim-Eve2018")?.title ?? "", /1 句带数值$/);
 });
 
 test("定稿另拦占位；写作扫描里被取代的那两条只报一次", () => {
@@ -360,4 +381,71 @@ test("非 manuscript/ 的写作与定稿步：分析报告、开题报告、期�
   });
   assert.ok(outlineIssues.some((i) => i.id === "draft-ref-Missing2025" && i.status === "blocked"));
   assert.match(outlineIssues.find((i) => i.id === "draft-paper-outline-sections")?.title ?? "", /Methods \/ 方法.*Discussion \/ 讨论/);
+});
+
+test("loadDraftCheck / loadStepMesaChecks：工作副本与项目根同时有 references.bib 时取工作副本，不拼成两份误报重复键", async () => {
+  const compiled = await build({
+    stdin: {
+      contents: `export { loadDraftCheck, loadStepMesaChecks } from "./src/research-report-load";`,
+      resolveDir: process.cwd(),
+      loader: "ts",
+    },
+    bundle: true,
+    write: false,
+    format: "cjs",
+    platform: "node",
+    plugins: [
+      {
+        name: "tauri-stub",
+        setup(b) {
+          b.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({ path: "core", namespace: "stub" }));
+          b.onLoad({ filter: /.*/, namespace: "stub" }, () => ({
+            loader: "js",
+            contents: `export const invoke = (...args) => globalThis.__draftLoadInvoke(...args);`,
+          }));
+        },
+      },
+    ],
+  });
+  const mod = { exports: {} as Record<string, any> };
+  new Function("require", "module", "exports", compiled.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports);
+  const { loadDraftCheck, loadStepMesaChecks } = mod.exports;
+
+  const singleBib = `@article{Ann2020,\n  title = {A},\n  year = {2020}\n}\n@article{Bo2021,\n  title = {B},\n  year = {2021}\n}\n`;
+  let workHasBib = true;
+  (globalThis as any).__draftLoadInvoke = async (cmd: string, args: any) => {
+    if (cmd === "list_dir") {
+      if (args.path === "/work/manuscript") return [{ name: "draft.md", isDir: false }];
+      return [];
+    }
+    if (cmd === "read_file_preview") {
+      if (args.path === "/work/manuscript/draft.md") {
+        return { text: "# Review\n\n## Intro\n\nCatalysts work [@Ann2020; @Bo2021].\n", truncated: false, revision: "1" };
+      }
+      throw new Error("not found");
+    }
+    if (cmd === "read_research_ledger") {
+      if (args.path === "/work/references.bib") {
+        if (!workHasBib) throw new Error("not in worktree");
+        return { text: singleBib, truncated: false, revision: "1" };
+      }
+      if (args.path === "/repo/references.bib") {
+        return { text: singleBib, truncated: false, revision: "1" };
+      }
+      throw new Error("not found");
+    }
+    throw new Error(`unexpected ${cmd}`);
+  };
+  try {
+    const items = await loadDraftCheck(["/work", "/repo"], "writing", ["manuscript/draft.md"]);
+    assert.deepEqual(items.filter((i: any) => i.kind === "citation_duplicate"), []);
+    const stepItems = await loadStepMesaChecks(["/work", "/repo"], "writing", ["manuscript/draft.md"]);
+    assert.deepEqual(stepItems.filter((i: any) => i.status === "blocked"), []);
+    // 工作副本尚未拷入 references.bib 时回退项目根，也不漏检缺键
+    workHasBib = false;
+    const fallbackItems = await loadDraftCheck(["/work", "/repo"], "writing", ["manuscript/draft.md"]);
+    assert.deepEqual(fallbackItems.filter((i: any) => i.status === "blocked"), []);
+  } finally {
+    delete (globalThis as any).__draftLoadInvoke;
+  }
 });

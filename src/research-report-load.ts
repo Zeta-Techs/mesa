@@ -224,15 +224,14 @@ async function loadDraftCheckWithPrimary(
   if (text == null) return { items: [], file: null, text: null };
   const figRefs = imageRefs(text, file).filter((r) => r.path.startsWith("figures/")).map((r) => r.path);
   const existing = figRefs.length > 0 ? await probeExistingFiles(work, figRefs) : new Set<string>();
-  const [bibs, included, index, sections, styleSheet, outline] = await Promise.all([
-    Promise.all(roots.map((r) => readOptional(r, "references.bib"))),
+  const [bib, included, index, sections, styleSheet, outline] = await Promise.all([
+    firstOptional(roots, "references.bib"),
     firstOptional(roots, "papers/included.json"),
     firstOptional(roots, "notes/index.json"),
     readFirst(roots, "manuscript/sections.json"),
     readFirst(roots, "manuscript/style-sheet.md"),
     readFirst(roots, "outline.md"),
   ]);
-  const bib = bibs.filter(Boolean).join("\n") || null;
   return {
     items: checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: existing }),
     file,
@@ -374,7 +373,7 @@ export async function loadStepMesaChecks(
   const hasNonPrimaryCites = [...files.entries()].some(([rel, text]) => rel !== draft.file && /\.(md|qmd)$/i.test(rel) && text.includes("@"));
   const [existingPaths, bibs, indexes, included] = await Promise.all([
     pathsToProbe.size > 0 ? probeExistingFiles(work, [...pathsToProbe]) : Promise.resolve(null),
-    hasNonPrimaryCites ? Promise.all(roots.map((r) => readOptional(r, "references.bib"))) : Promise.resolve([]),
+    hasNonPrimaryCites ? firstOptional(roots, "references.bib").then((b) => (b ? [b] : [])) : Promise.resolve([]),
     hasNonPrimaryCites ? Promise.all(roots.map((r) => readOptional(r, "notes/index.json"))) : Promise.resolve([]),
     hasNonPrimaryCites ? firstOptional(roots, "papers/included.json") : Promise.resolve(null),
   ]);

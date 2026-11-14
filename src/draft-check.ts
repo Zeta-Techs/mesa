@@ -588,12 +588,16 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
 /** 一篇占带引用段落的比例到多少才报（2026-11-13 HER 初稿 10%、另一份定稿 4%） */
 const CONCENTRATION_SHARE = 0.08;
 const CONCENTRATION_MIN_PARAS = 10;
-/** 带单位的数值：75–84 mV、1.54 V、64 h、12%、0.06 eV、0.5 M、1000 cycles 等常见理化单位 */
+/** 带单位的数值：75–84 mV、1.54 V、64 h、12%、0.06 eV、0.5 M、1000 cycles 等常见理化单位；
+ *  单字母 ASCII 单位（V/A/J/W/F/M/L/g/h/s/K）要求与数字间留空，避开 B 1s 轨道、2020s 年代、Fig. 1A、C2h 点群 */
 const NUMERIC_VALUE =
-  /\d+(?:\.\d+)?\s*(?:[–—-]\s*\d+(?:\.\d+)?\s*)?(?:%|wt%|at%|ppm|ppb|cycles|mV|V|mA|A|eV|meV|kJ|J|mW|kW|W|mAh|Wh|mF|F|mmol|μmol|µmol|mol|mM|M|GPa|MPa|kPa|Pa|bar|mbar|GHz|MHz|kHz|Hz|mL|μL|µL|L|kg|mg|μg|µg|g|cm|nm|μm|µm|Å|h|min|s|K|°C|Ω)(?![\p{L}.])/u;
+  /\d+(?:\.\d+)?(?:\s*[–—-]\s*\d+(?:\.\d+)?)?(?:\s*(?:%|wt%|at%|°C|Å|Ω|ppm|ppb|cycles|mV|mA|eV|meV|kJ|mW|kW|mAh|Wh|mF|mmol|μmol|µmol|mol|mM|GPa|MPa|kPa|Pa|bar|mbar|GHz|MHz|kHz|Hz|mL|μL|µL|kg|mg|μg|µg|cm|nm|μm|µm|min)|\s+(?:V|A|J|W|F|M|L|g|h|s|K))(?![\p{L}]|\.\w)/u;
 const ABSTRACT_HEDGE = /\[待核实\]|\babstract\b|摘要/i;
 const ABBR_BEFORE_DOT =
   /(?:^|[\s([{"'])(?:Figs?|Eqs?|Secs?|Tabs?|Refs?|et\s+al|vs|ca|cf|e\.g|i\.e|approx|wt|at|vol|no|Nos?|Ch|Dr|Prof|St|Jr|Sr|[A-Z])\.$/i;
+/** 后置引文结句后再接并列 / 转折分句（coatings [@A] and nanoparticles (151 mV) [@B]）：无引文尾段并回前一块，不拆断 According to [@A], η = 50 mV */
+const CLAUSE_AFTER_CITE =
+  /(\[[^\]\n]*@[^\]\n]*\]\s*\)?[,;:，])\s*|(\[[^\]\n]*@[^\]\n]*\]\s*\)?)\s+(?=(?:[,;:]|\b(?:and|or|while|whereas|but|yet|to|versus|vs\.?)\b))/gi;
 
 /** 中英文分句：兼容中文句末标点与数字 / 希腊字母 / 化学前缀开头的英文句，同时避开 Fig. / et al. 与 [@a; @b] 括号内分号 */
 function splitSentences(text: string): string[] {
@@ -621,16 +625,48 @@ function splitSentences(text: string): string[] {
   return out;
 }
 
-/** 引了这个键、又带数值的句子所在行（表格行不算；hedge 命中的句子不算） */
+function splitCitationClauses(sentence: string): string[] {
+  const raw: string[] = [];
+  let start = 0;
+  for (const m of sentence.matchAll(CLAUSE_AFTER_CITE)) {
+    const idx = m.index ?? 0;
+    const head = m[1] ?? m[2] ?? "";
+    const piece = sentence.slice(start, idx + head.length).trim();
+    if (piece) raw.push(piece);
+    start = idx + m[0].length;
+  }
+  const tail = sentence.slice(start).trim();
+  if (tail) raw.push(tail);
+  if (raw.length <= 1) return raw;
+  const merged: string[] = [];
+  for (const part of raw) {
+    if (merged.length > 0 && manuscriptCitations(part).length === 0) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${part}`;
+    } else {
+      merged.push(part);
+    }
+  }
+  return merged;
+}
+
+/** 引了这个键、又带数值的句子所在行（表格行不算；hedge 命中的句子不算；并列后置引文按分句归属） */
 function numericSentenceLines(paras: readonly Para[], key: string, hedge?: RegExp): number[] {
   const out: number[] = [];
   for (const p of paras) {
     if (p.heading || p.text.startsWith("|")) continue;
+    let hit = false;
     for (const s of splitSentences(p.text)) {
-      if (!manuscriptCitations(s).some((c) => c.key === key)) continue;
-      if (!NUMERIC_VALUE.test(proseOnly(s)) || hedge?.test(s)) continue;
-      out.push(p.line);
-      break;
+      if (hedge?.test(s)) continue;
+      for (const clause of splitCitationClauses(s)) {
+        if (!manuscriptCitations(clause).some((c) => c.key === key)) continue;
+        if (!NUMERIC_VALUE.test(proseOnly(clause))) continue;
+        hit = true;
+        break;
+      }
+      if (hit) {
+        out.push(p.line);
+        break;
+      }
     }
   }
   return out;
