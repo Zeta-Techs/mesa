@@ -27,6 +27,7 @@ import {
   MessageSquare,
   MoreHorizontal,
   Pencil,
+  Plus,
   RefreshCw,
   SquareCheck,
   SquareTerminal,
@@ -259,6 +260,10 @@ export default function ProjectFilesView({
     isDir: boolean;
   } | null>(null);
   const [previewMoreMenu, setPreviewMoreMenu] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const [createMenu, setCreateMenu] = useState<{
     x: number;
     y: number;
   } | null>(null);
@@ -1253,8 +1258,12 @@ export default function ProjectFilesView({
       return (
         <li key={entry.path}>
           <div
-            className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
-              isPicked ? "bg-seg-sel" : selected ? "bg-hover" : "hover:bg-hover"
+            className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 transition-colors ${
+              isPicked
+                ? "bg-seg-sel text-l1"
+                : selected
+                  ? "bg-seg-sel/80 font-medium text-l1 before:absolute before:left-0.5 before:top-2 before:bottom-2 before:w-0.5 before:rounded-full before:bg-cta"
+                  : "hover:bg-hover"
             } ${entry.isDir && dropDir === entry.path ? "ring-1 ring-cta-bd" : ""}`}
             style={{ paddingLeft: 8 + depth * 16 }}
             data-drop-dir={entry.isDir ? entry.path : (parentDir(entry.path) ?? projectPath)}
@@ -1270,6 +1279,15 @@ export default function ProjectFilesView({
               });
             }}
           >
+            {depth > 0 &&
+              Array.from({ length: depth }, (_, i) => (
+                <span
+                  key={i}
+                  aria-hidden="true"
+                  className="pointer-events-none absolute top-0 bottom-0 w-px bg-hairline/70"
+                  style={{ left: 14 + i * 16 }}
+                />
+              ))}
             {entry.isDir ? (
               <button
                 type="button"
@@ -1357,8 +1375,9 @@ export default function ProjectFilesView({
           </div>
           {entry.isDir &&
             open &&
-            pathWithin(entry.path, projectPath, IS_WINDOWS) &&
-            renderEntries(entry.path, depth + 1)}
+            pathWithin(entry.path, projectPath, IS_WINDOWS) && (
+              <ul className="mt-0.5 space-y-0.5">{renderEntries(entry.path, depth + 1)}</ul>
+            )}
         </li>
       );
     });
@@ -1375,11 +1394,11 @@ export default function ProjectFilesView({
         {files.map((file) => (
           <li key={file.path}>
             <div
-              className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 ${
+              className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 transition-colors ${
                 picked.has(file.path)
-                  ? "bg-seg-sel"
+                  ? "bg-seg-sel text-l1"
                   : preview?.path === file.path
-                    ? "bg-hover"
+                    ? "bg-seg-sel/80 font-medium text-l1 before:absolute before:left-0.5 before:top-2 before:bottom-2 before:w-0.5 before:rounded-full before:bg-cta"
                     : "hover:bg-hover"
               }`}
               data-drop-dir={parentDir(file.path) ?? projectPath}
@@ -1543,64 +1562,79 @@ export default function ProjectFilesView({
 
   function previewChrome() {
     if (!preview) return null;
+    const rel = relativeProjectPath(projectPath, preview.path);
+    const parentRel = rel && rel !== preview.name ? rel.slice(0, Math.max(0, rel.length - preview.name.length - 1)) : "";
     return (
-      <div className="mb-2 flex shrink-0 items-center gap-1.5">
+      <div className="mb-2 flex shrink-0 items-center gap-2">
         <FileTypeMark path={preview.path} />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium text-l1" title={preview.path}>
-          {preview.name}
-        </span>
-        <button
-          type="button"
-          className={rowActionClass}
-          onClick={() => void stepPreview(-1)}
-          disabled={!prevFile}
-          title="上一个文件（↑）"
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          className={rowActionClass}
-          onClick={() => void stepPreview(1)}
-          disabled={!nextFile}
-          title="下一个文件（↓）"
-        >
-          ↓
-        </button>
-        <button
-          type="button"
-          className={`${rowActionClass} gap-1`}
-          onClick={() => {
-            // 开窗重挂编辑器（侧栏实例卸载、Modal 挂新实例）：没保存的修改寄存过去接着改（file-draft-handoff）
-            moveHost(true);
-          }}
-        >
-          <Maximize2 size={12} aria-hidden="true" />
-          窗口预览
-        </button>
-        <button
-          type="button"
-          className={iconActionClass}
-          title="在新窗口打开"
-          aria-label="在新窗口打开"
-          onClick={() => popOutEntryToWindow(preview, true)}
-        >
-          <AppWindow size={13} strokeWidth={1.8} />
-        </button>
-        <button
-          type="button"
-          className={iconActionClass}
-          title="更多文件操作"
-          aria-label="更多文件操作"
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setPreviewMoreMenu((cur) =>
-              cur ? null : { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) },
-            );
-          }}
-        >
-          <MoreHorizontal size={14} strokeWidth={1.8} />
-        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate text-sm font-medium text-l1" title={preview.path}>
+              {preview.name}
+            </span>
+            {parentRel && (
+              <span className="min-w-0 truncate font-mono text-micro text-l4" title={rel}>
+                {parentRel}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+          <button
+            type="button"
+            className={rowActionClass}
+            onClick={() => void stepPreview(-1)}
+            disabled={!prevFile}
+            title="上一个文件（↑）"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className={rowActionClass}
+            onClick={() => void stepPreview(1)}
+            disabled={!nextFile}
+            title="下一个文件（↓）"
+          >
+            ↓
+          </button>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+          <button
+            type="button"
+            className={`${rowActionClass} gap-1`}
+            onClick={() => {
+              // 开窗重挂编辑器（侧栏实例卸载、Modal 挂新实例）：没保存的修改寄存过去接着改（file-draft-handoff）
+              moveHost(true);
+            }}
+          >
+            <Maximize2 size={12} aria-hidden="true" />
+            窗口预览
+          </button>
+          <button
+            type="button"
+            className={iconActionClass}
+            title="在新窗口打开"
+            aria-label="在新窗口打开"
+            onClick={() => popOutEntryToWindow(preview, true)}
+          >
+            <AppWindow size={13} strokeWidth={1.8} />
+          </button>
+          <button
+            type="button"
+            className={iconActionClass}
+            title="更多文件操作"
+            aria-label="更多文件操作"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setPreviewMoreMenu((cur) =>
+                cur ? null : { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) },
+              );
+            }}
+          >
+            <MoreHorizontal size={14} strokeWidth={1.8} />
+          </button>
+        </div>
         <button
           type="button"
           className={ghostActionClass}
@@ -1683,12 +1717,15 @@ export default function ProjectFilesView({
     );
   }
 
+  const hasSplitHost =
+    Boolean(preview) || (!loading && (filtering ? filteredFiles.length > 0 : Boolean(cache[projectPath]?.length)));
+
   return (
     <>
       <div className="flex h-full min-h-0 overflow-hidden">
         <section
           className={`flex h-full min-h-0 shrink-0 flex-col ${
-            preview ? "w-full lg:w-[22rem] lg:pr-6" : "w-full"
+            hasSplitHost ? "w-full lg:w-[22rem] lg:pr-5" : "w-full"
           }`}
         >
           <div className="mb-2 flex shrink-0 flex-col gap-1.5">
@@ -1702,15 +1739,57 @@ export default function ProjectFilesView({
                   setFilter(filter === "recent" ? "all" : "recent")
                 }
               />
-              <button
-                type="button"
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
-                title="刷新"
-                aria-label="刷新"
-                onClick={() => refresh()}
-              >
-                <RefreshCw size={13} strokeWidth={1.8} />
-              </button>
+              <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+                <button
+                  type="button"
+                  className={iconActionClass}
+                  title="新建文件或文件夹"
+                  aria-label="新建"
+                  onClick={(e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    setCreateMenu((cur) =>
+                      cur ? null : { x: Math.round(rect.right), y: Math.round(rect.bottom + 4) },
+                    );
+                  }}
+                >
+                  <Plus size={14} strokeWidth={1.8} />
+                </button>
+                <button
+                  type="button"
+                  className={iconActionClass}
+                  title="刷新"
+                  aria-label="刷新"
+                  onClick={() => refresh()}
+                >
+                  <RefreshCw size={13} strokeWidth={1.8} />
+                </button>
+              </div>
+              {createMenu && (
+                <ContextMenu
+                  x={createMenu.x}
+                  y={createMenu.y}
+                  alignRight
+                  onClose={() => setCreateMenu(null)}
+                  items={[
+                    {
+                      label: "新建文件",
+                      icon: FilePlus,
+                      onSelect: () => startNameDraft({ kind: "file", dir: projectPath, value: "" }),
+                    },
+                    {
+                      label: "新建文件夹",
+                      icon: FolderPlus,
+                      onSelect: () => startNameDraft({ kind: "folder", dir: projectPath, value: "" }),
+                    },
+                    { separator: true },
+                    {
+                      label: "在此打开新终端",
+                      icon: SquareTerminal,
+                      onSelect: () => openShellAt(projectPath),
+                    },
+                  ]}
+                />
+              )}
             </div>
             <input
               type="search"
@@ -1776,8 +1855,8 @@ export default function ProjectFilesView({
               </div>
             )}
             {nameDraft && (
-              <div className="flex items-center gap-1">
-                <span className="max-w-[45%] shrink-0 truncate text-xs text-l4">
+              <div className="flex items-center gap-2 rounded-lg bg-inset px-2.5 py-1.5">
+                <span className="max-w-[45%] shrink-0 truncate text-xs font-medium text-l3">
                   {nameDraftPrompt(nameDraft).label}
                 </span>
                 <input
@@ -1793,7 +1872,7 @@ export default function ProjectFilesView({
                   }}
                   onBlur={() => void submitNameDraft()}
                   placeholder={nameDraftPrompt(nameDraft).placeholder}
-                  className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-xs text-l2 outline-none"
+                  className="min-w-0 flex-1 rounded-md border border-field bg-canvas px-2 py-0.5 text-xs text-l1 outline-none focus:border-cta-bd"
                 />
               </div>
             )}
@@ -1862,6 +1941,17 @@ export default function ProjectFilesView({
               />
             </div>
           </section>
+        )}
+        {!preview && !windowed && wide && hasSplitHost && (
+          <div
+            aria-hidden="true"
+            className={`ml-0 hidden h-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-6 text-center lg:flex ${projectWellClass}`}
+          >
+            <p className="text-xs font-medium text-l3">点选左侧文件查看或编辑</p>
+            <p className="mt-1.5 text-micro text-l4">
+              支持 ↑ / ↓ 连续翻看、{IS_MAC ? "⌘" : "Ctrl"} 点多选、拖入外部文件导入
+            </p>
+          </div>
         )}
       </div>
       {preview && !windowed && !wide && (
