@@ -1263,12 +1263,21 @@ export default function CodingProjectView({
         onSelect: () => void removeTree(w),
       });
     }
+    const isLive = activity !== "空闲";
     return (
-      <div className={projectWellClass}>
-        <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={`${projectWellClass} transition-colors ${
+          merging
+            ? "ring-1 ring-warn-text/35"
+            : isLive
+              ? "ring-1 ring-ok-text/25"
+              : ""
+        }`}
+      >
+        <div className="flex min-h-7 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
             <p
-              className="flex min-w-0 items-center gap-2 text-sm font-medium text-l1"
+              className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium text-l1"
               title={w.path}
             >
               <span className="min-w-0 truncate">{displayName}</span>
@@ -1279,23 +1288,30 @@ export default function CodingProjectView({
                 )}
               {w.isPrimary && <BranchLabel name={label} detached={w.detached} />}
               {w.isBase && (
-                <span className="shrink-0 rounded bg-inset px-1 text-micro font-normal text-l4">
+                <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro font-normal text-l3">
                   基准
                 </span>
               )}
-              {(!w.isPrimary || activity !== "空闲") && (
-                <span
-                  className={`shrink-0 text-micro font-normal ${
-                    activity === "空闲" ? "text-l4" : "text-l2"
-                  }`}
-                >
+              {merging && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text">
+                  <span className="size-1.5 rounded-full bg-warn-text" aria-hidden="true" />
+                  有冲突
+                </span>
+              )}
+              {!merging && isLive && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-micro font-medium text-ok-text">
+                  <span className="size-1.5 rounded-full bg-ok-text" aria-hidden="true" />
                   {activityText}
                 </span>
               )}
-              {merging && <span className="text-xs text-warn-text">有冲突</span>}
+              {!merging && !isLive && !w.isPrimary && (
+                <span className="shrink-0 text-micro font-normal text-l4">
+                  {activityText}
+                </span>
+              )}
             </p>
           </div>
-          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-0.5">
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1.5">
             {merging ? (
               <button
                 type="button"
@@ -1305,16 +1321,18 @@ export default function CodingProjectView({
                 去解决
               </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
-                  onClick={() => void enterTree(w, w.lane.name || label)}
-                >
-                  <Terminal size={13} strokeWidth={1.8} />
-                  进入
-                </button>
-                {!w.isPrimary && (
+              <button
+                type="button"
+                className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
+                onClick={() => void enterTree(w, w.lane.name || label)}
+              >
+                <Terminal size={13} strokeWidth={1.8} />
+                进入
+              </button>
+            )}
+            {((!merging && !w.isPrimary) || hostKind === "github" || moreItems.length > 0) && (
+              <div className="inline-flex items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+                {!merging && !w.isPrimary && (
                   <>
                     <IconBtn label="查看改动" onClick={() => openGit(w.path, label)}>
                       <GitCompare size={13} strokeWidth={1.8} />
@@ -1339,33 +1357,33 @@ export default function CodingProjectView({
                     </IconBtn>
                   </>
                 )}
-              </>
-            )}
-            {hostKind === "github" && (
-              <IconBtn
-                label={
-                  w.hasUpstream
-                    ? busy === `pr:${w.path}`
-                      ? "打开中…"
-                      : "打开 Pull Request"
-                    : "先推送才能开 PR"
-                }
-                disabled={!!busy || !w.hasUpstream}
-                onClick={() => void openPr(w.path)}
-              >
-                <GitPullRequest size={13} strokeWidth={1.8} />
-              </IconBtn>
-            )}
-            {moreItems.length > 0 && (
-              <button
-                type="button"
-                className={iconBtnClass}
-                aria-label={`更多操作：${label}`}
-                title="更多操作"
-                onClick={(e) => openMenu(e, moreItems)}
-              >
-                ⋯
-              </button>
+                {hostKind === "github" && (
+                  <IconBtn
+                    label={
+                      w.hasUpstream
+                        ? busy === `pr:${w.path}`
+                          ? "打开中…"
+                          : "打开 Pull Request"
+                        : "先推送才能开 PR"
+                    }
+                    disabled={!!busy || !w.hasUpstream}
+                    onClick={() => void openPr(w.path)}
+                  >
+                    <GitPullRequest size={13} strokeWidth={1.8} />
+                  </IconBtn>
+                )}
+                {moreItems.length > 0 && (
+                  <button
+                    type="button"
+                    className={iconBtnClass}
+                    aria-label={`更多操作：${label}`}
+                    title="更多操作"
+                    onClick={(e) => openMenu(e, moreItems)}
+                  >
+                    ⋯
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -1376,13 +1394,28 @@ export default function CodingProjectView({
             hostKind={hostKind}
             cleanLabel={w.isPrimary && !merging}
           />
-          {w.isPrimary && (
+          <div className="ml-auto flex flex-wrap items-center gap-2 text-l4">
             <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
-              <span className="text-l4">
+              <span>
                 {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
               </span>
             </TipWrap>
-          )}
+            {!w.isPrimary && (
+              <TipWrap text={w.path}>
+                <button
+                  type="button"
+                  className="inline-flex h-5 items-center gap-1 rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  aria-label={`打开工作树目录：${label}`}
+                  onClick={() =>
+                    void revealItemInDir(w.path).catch((e) => onError(String(e)))
+                  }
+                >
+                  <FolderOpen size={11.5} strokeWidth={1.8} />
+                  <span>目录</span>
+                </button>
+              </TipWrap>
+            )}
+          </div>
         </div>
         {groupingPath === w.path && (
           <form
@@ -1411,28 +1444,6 @@ export default function CodingProjectView({
               取消
             </button>
           </form>
-        )}
-        {!w.isPrimary && (
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-micro text-l4">
-            <TipWrap text={absTime(w.lastCommitAt ?? null)} up={false}>
-              <span>
-                {w.lastCommitAt ? `最近提交 ${relTime(w.lastCommitAt)}` : "还没有提交"}
-              </span>
-            </TipWrap>
-            <TipWrap text={w.path}>
-              <button
-                type="button"
-                className={`${ghostActionClass} gap-1`}
-                aria-label={`打开工作树目录：${label}`}
-                onClick={() =>
-                  void revealItemInDir(w.path).catch((e) => onError(String(e)))
-                }
-              >
-                <FolderOpen size={12} strokeWidth={1.8} />
-                目录
-              </button>
-            </TipWrap>
-          </div>
         )}
       </div>
     );
@@ -1521,13 +1532,13 @@ export default function CodingProjectView({
   }
 
   return (
-    <div className="space-y-5">
-      <div className="min-w-0 space-y-5">
+    <div className="space-y-4">
+      <div className="min-w-0 space-y-3.5">
         <section>
-          <p className="flex flex-wrap items-center gap-2 text-xs text-l3">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-l3">
             {origin ? (
               <span
-                className="truncate font-mono text-micro text-l3"
+                className="inline-flex max-w-full items-center gap-1.5 truncate rounded-md bg-inset/75 px-2 py-0.5 font-mono text-micro text-l2"
                 title={origin.url}
               >
                 {hostKind === "github"
@@ -1545,9 +1556,8 @@ export default function CodingProjectView({
                 </button>
               )
             )}
-            {origin && statusLine && <span className="text-l4">·</span>}
             {statusLine && <span className="text-micro text-l4">{statusLine}</span>}
-            <span className="ml-auto flex items-center gap-1">
+            <span className="ml-auto flex items-center gap-0.5">
               <PathActions path={repoPath} onError={onError} />
               {origin && (
                 <IconBtn
@@ -1571,7 +1581,7 @@ export default function CodingProjectView({
                 <RefreshCw size={13} strokeWidth={1.8} />
               </IconBtn>
             </span>
-          </p>
+          </div>
           {initNote && (
             <p className="mt-2 text-xs text-l3">
               这个仓库还没有提交，已自动写了一条空的初始提交，才能建工作树。
@@ -1587,14 +1597,15 @@ export default function CodingProjectView({
         {ov?.isRepo && (
           <>
             <section>
-              <div className="mb-2.5 flex items-center gap-2">
-                <GitBranch size={14} strokeWidth={1.8} className="text-l4" />
-                <h2 className="text-xs font-medium text-l2">分支与工作树</h2>
-              </div>
-              <div className="mb-4 flex flex-wrap items-center gap-2">
+              <div className={`${projectWellClass} mb-3.5 flex flex-wrap items-center gap-2 p-2 text-xs`}>
+                <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-inset/80 px-2.5 font-mono text-xs text-l3">
+                  <GitBranch size={13} strokeWidth={1.8} className="text-l4" />
+                  <span className="text-l2">{base || "基准"}</span>
+                  <span className="text-l4" aria-hidden="true">→</span>
+                </span>
                 <input
                   ref={branchInputRef}
-                  className={`${fieldClass} h-8 min-w-32 flex-1 py-0`}
+                  className="h-8 min-w-40 flex-1 rounded-lg border border-field bg-canvas px-2.5 text-xs text-l1 outline-none placeholder:text-l4 focus:border-cta-bd"
                   value={branchName}
                   placeholder="新分支名，如 feature/login"
                   aria-label="新分支名（从基准拉出）"
@@ -1629,7 +1640,7 @@ export default function CodingProjectView({
                 </button>
                 <button
                   type="button"
-                  className={`${ghostActionClass} shrink-0`}
+                  className={`${pickerOpen ? secondaryActionClass : ghostActionClass} shrink-0`}
                   aria-expanded={pickerOpen}
                   onClick={() => setPickerOpen((v) => !v)}
                 >
