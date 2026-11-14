@@ -3293,8 +3293,19 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   >({});
   // Collapse 收起过渡（200ms）期间保留最后一次结果快照，避免收起瞬间内容跳空
   const lastUpdateResultsRef = useRef<Record<string, AgentCmdResult>>({});
-  // 本次会话内已通过更新命令确认已是最新的版本（离线或无轻量查询口的渠道在 8s 提示收起后不再常驻「更新」）
-  const [confirmedLatest, setConfirmedLatest] = useState<Record<string, string>>({});
+  // 本次会话内已通过更新命令确认已是最新的版本（离线或无轻量查询口的渠道在 8s 提示收起及热重载后不再常驻「更新」）
+  const [confirmedLatest, setConfirmedLatest] = useState<Record<string, string>>(() => {
+    try {
+      const raw = sessionStorage.getItem("ccode.confirmedAgentLatest");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, string>)
+        : {};
+    } catch {
+      return {};
+    }
+  });
   // 首次 check_agent_updates 是否已返回：未返回前不在右上角提前闪出「更新」
   const [updateCheckReady, setUpdateCheckReady] = useState(false);
   // 更新成功提示 8s 自动收起（失败保留——输出要留着排错）；同一 Agent 的新结果覆盖旧计时
@@ -3321,7 +3332,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       res.versionAfter ??
       agents.find((a) => a.id === agentId)?.version ??
       "ok";
-    setConfirmedLatest((prev) => ({ ...prev, [agentId]: ver }));
+    setConfirmedLatest((prev) => {
+      const next = { ...prev, [agentId]: ver };
+      try {
+        sessionStorage.setItem("ccode.confirmedAgentLatest", JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
     updateResultTimersRef.current[agentId] = setTimeout(() => {
       setUpdateResults((prev) => {
         if (!prev[agentId]?.ok) return prev;
@@ -3343,7 +3362,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   );
 
   async function refreshUpdateInfo(force = false) {
-    if (force) setConfirmedLatest({});
+    if (force) {
+      setConfirmedLatest({});
+      try {
+        sessionStorage.removeItem("ccode.confirmedAgentLatest");
+      } catch {
+        /* ignore */
+      }
+    }
     try {
       const list = await invoke<AgentUpdateInfo[]>("check_agent_updates", {
         force,

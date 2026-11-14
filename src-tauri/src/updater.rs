@@ -1320,47 +1320,90 @@ fn winget_show_args(id: &str) -> Vec<&str> {
     args
 }
 
-/// 最新版查询口与 update_commands 同渠道（包管理器装的查包管理器）；
-/// 自更新渠道（claude/kimi 自更新、opencode 非 npm）没有轻量查询口，返回 None。
-/// brew 查询名单独声明（brew_latest）：opencode 升级用 tap 短名，brew info 会命中歧义，不查
-fn latest_version(agent_id: &str, method: &str, opencode_v2: bool) -> Option<String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LatestSource {
+    Brew { name: &'static str, cask: bool },
+    Npm(&'static str),
+    Winget(&'static str),
+    Plain(&'static str),
+    Script(&'static str),
+}
+
+/// 实际执行升级的首选渠道：官方脚本把独立二进制装进 `/opt/homebrew/bin/agy` 等目录时，
+/// `detect_method` 会因路径含 `homebrew` 判为 `"brew"`，但该 CLI 无 brew 包、实际升级走 `"self"`，
+/// 最新版查询口与 brew 上游滞后提示必须与 `update_commands_for` 首选渠道对齐。
+fn effective_update_method<'a>(
+    agent_id: &str,
+    detected_method: &'a str,
+    opencode_v2: bool,
+) -> &'a str {
+    update_commands_for(agent_id, detected_method, "", opencode_v2)
+        .first()
+        .map(|c| c.method)
+        .unwrap_or(detected_method)
+}
+
+/// 最新版查询口与实际升级渠道对齐（包管理器装的查包管理器，自更新渠道查各自的轻量清单）；
+/// brew 查询名单独声明（brew_latest）：opencode 1.x 升级用 tap 短名，brew info 会命中歧义，走下方 npm_update。
+fn latest_source(agent_id: &str, detected_method: &str, opencode_v2: bool) -> Option<LatestSource> {
     let p = &agent_spec(agent_id)?.packaging;
+    let method = effective_update_method(agent_id, detected_method, opencode_v2);
     if opencode_v2 {
-        return if method == "brew" { brew_latest(OPENCODE_V2_BREW, false) } else { npm_latest(OPENCODE_V2_NPM) };
+        return Some(if method == "brew" {
+            LatestSource::Brew {
+                name: OPENCODE_V2_BREW,
+                cask: false,
+            }
+        } else {
+            LatestSource::Npm(OPENCODE_V2_NPM)
+        });
     }
     if method == "brew" {
         if let Some(b) = &p.brew_latest {
-            return brew_latest(b.name, b.cask);
+            return Some(LatestSource::Brew {
+                name: b.name,
+                cask: b.cask,
+            });
         }
     }
     if method == "npm" {
         if let Some(pkg) = p.npm_update {
-            return npm_latest(pkg);
+            return Some(LatestSource::Npm(pkg));
         }
     }
     if method == "winget" {
         if let Some(id) = p.winget {
-            return winget_latest(id);
+            return Some(LatestSource::Winget(id));
         }
     }
-    // 自装且自更新渠道有自己的查询口（kimi）：只认它，查不到就不提示，不退回 npm（会和自更新对不上）
+    // 自更新渠道有自己的查询口（kimi / agy）：只认它，查不到就不提示，不退回 npm（会和自更新对不上）
     if method == "self" {
         if let Some(url) = p.self_update_latest {
-            return plain_latest(url);
+            return Some(LatestSource::Plain(url));
         }
     }
-    // 有 npm 包名即可作为 latest 查询口：自更新渠道（opencode）本身没有轻量查询口，
+    // 有 npm 包名即可作为 latest 查询口：自更新渠道（claude / opencode / grok）本身没有轻量查询口，
     // 但 npm registry 与自更新渠道同版本发布，自装方式也据此得到 latest 提示
     if let Some(pkg) = p.npm_update {
-        return npm_latest(pkg);
+        return Some(LatestSource::Npm(pkg));
     }
     // 安装脚本渠道（cursor）：脚本正文烙着当前版本，URL 本身就是查询口。
     // 版本比较按 semver_token 收敛到「年.月.日」层级——同日重打包（哈希变、日期不变）
     // 不提示新版，跨日发布正常提示。
     if let Some(url) = p.script_latest {
-        return script_latest(url);
+        return Some(LatestSource::Script(url));
     }
     None
+}
+
+fn latest_version(agent_id: &str, detected_method: &str, opencode_v2: bool) -> Option<String> {
+    match latest_source(agent_id, detected_method, opencode_v2)? {
+        LatestSource::Brew { name, cask } => brew_latest(name, cask),
+        LatestSource::Npm(pkg) => npm_latest(pkg),
+        LatestSource::Winget(id) => winget_latest(id),
+        LatestSource::Plain(url) => plain_latest(url),
+        LatestSource::Script(url) => script_latest(url),
+    }
 }
 
 fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
@@ -1374,6 +1417,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             let resolved = path.canonicalize().unwrap_or_else(|_| path.clone());
             let method = detect_method(&resolved.to_string_lossy());
             let opencode_v2 = opencode_v2_install(agent_id, &resolved.to_string_lossy(), installed.as_deref());
+            let effective_method = effective_update_method(agent_id, method, opencode_v2);
             let latest = latest_version(agent_id, method, opencode_v2);
             // 与 update_agent 同一套渠道判定：首条命令是交互式 TUI 自更新时给前端改路由
             interactive_update_command =
@@ -1381,7 +1425,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             // brew 渠道常滞后于上游 npm（如 gemini-cli brew 0.46 vs npm 0.53）：
             // 已查到 brew 最新版时顺带比一次上游版本，提示复用同一次检查、不新增轮询；
             // npm view 失败 → None → 静默不带提示
-            if method == "brew" {
+            if effective_method == "brew" {
                 if let Some(brew_v) = latest.as_deref() {
                     if let Some(pkg) = npm_package(agent_id, opencode_v2) {
                         if let Some(npm_v) = npm_latest(pkg) {
@@ -1526,6 +1570,30 @@ mod tests {
         assert!(!is_outdated(Some("2026.10.02-aaa111"), Some("2026.10.01-e373342")));
         assert!(!is_outdated(Some("2.6.1"), None));
         assert!(!is_outdated(None, Some("2.6.1")));
+    }
+
+    #[test]
+    fn latest_source_aligns_with_effective_update_channel_when_installed_in_homebrew_bin() {
+        // 实机踩坑：官方脚本把独立二进制装在 `/opt/homebrew/bin/agy` 时，detect_method 因路径含 homebrew 判为 "brew"，
+        // 但 agy / kimi 无 brew 包、实际升级走 "self"，必须按有效渠道走各自的 self_update_latest，不能漏成 None 或误查 npm
+        assert_eq!(detect_method("/opt/homebrew/bin/agy"), "brew");
+        assert_eq!(effective_update_method("agy", "brew", false), "self");
+        assert!(matches!(
+            latest_source("agy", detect_method("/opt/homebrew/bin/agy"), false),
+            Some(LatestSource::Plain(url)) if url.contains("antigravity-cli-auto-updater")
+        ));
+        assert_eq!(
+            latest_source("kimi", detect_method("/opt/homebrew/bin/kimi"), false),
+            Some(LatestSource::Plain("https://code.kimi.com/kimi-code/latest"))
+        );
+        // 真正有 brew 包的 CLI 仍查 brew_latest
+        assert_eq!(
+            latest_source("claude-code", "brew", false),
+            Some(LatestSource::Brew {
+                name: "claude-code",
+                cask: true
+            })
+        );
     }
 
     #[test]
