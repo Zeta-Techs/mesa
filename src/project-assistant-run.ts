@@ -495,6 +495,7 @@ export function planAsk(
 }
 
 const INSPECT_UNSUPPORTED = "INSPECT_UNSUPPORTED";
+export const ASSISTANT_CANCELLED = "ASSISTANT_CANCELLED";
 
 /** 只读查看文件时一并放开访问的目录：各步骤的工作副本 + 还没清理的在跑 / 待验收 / 失败目标的隔离副本 */
 async function inspectExtraDirs(projectPath: string): Promise<string[]> {
@@ -561,6 +562,8 @@ export async function askProjectAssistant(input: {
   images?: readonly string[];
   /** 用户此刻在看哪（assistant-dock.ts assistantWhere） */
   where?: string;
+  /** 本次流式问答标识（面板点「停止」时按它调 project_assistant_cancel） */
+  streamId?: string;
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
 }): Promise<AssistantTurn> {
@@ -597,7 +600,7 @@ export async function askProjectAssistant(input: {
       catalog,
     });
   const guideHeads = guide.map((g) => g.heading);
-  const streamId = crypto.randomUUID();
+  const streamId = input.streamId ?? crypto.randomUUID();
   const ask = async (profileId: string | null, model: string | null, connection: string, withInspect: boolean) => {
     // 先挂上监听再发：后端一开跑就推（只有 Claude Code / Codex 推得出来，别家整段一次给）
     const unlisten = input.onStream
@@ -631,6 +634,7 @@ export async function askProjectAssistant(input: {
     try {
       return await ask(profileId, model, connection, inspect);
     } catch (reason) {
+      if (String(reason).includes(ASSISTANT_CANCELLED)) throw reason;
       // 这家还不能只读查看项目文件：退回只看记录
       if (inspect && String(reason).includes(INSPECT_UNSUPPORTED)) return ask(profileId, model, connection, false);
       throw reason;
@@ -639,6 +643,7 @@ export async function askProjectAssistant(input: {
   try {
     return await askWithFallback(conn.profileId, conn.model, conn.line);
   } catch (reason) {
+    if (String(reason).includes(ASSISTANT_CANCELLED)) throw reason;
     if (!conn.profileId || conn.bound || !String(reason).includes("不支持无头调用")) throw reason;
     return askWithFallback(null, null, "设置里「AI 功能」的连接");
   }

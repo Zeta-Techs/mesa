@@ -11,8 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 const DIR: &str = "project-assistant";
 const ERRORS_FILE: &str = "mesa-errors.jsonl";
@@ -326,19 +328,45 @@ pub async fn assistant_log_read(project_root: String) -> Result<Vec<AssistantTur
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn assistant_log_clear(project_root: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let dir = project_dir(&project_root)?;
-        let path = dir.join(LOG_FILE);
-        with_lock(&dir, || match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+fn clear_log_sync(project_root: &str, keep_dispatches: bool, now: chrono::DateTime<chrono::FixedOffset>) -> Result<usize, String> {
+    let dir = project_dir(project_root)?;
+    let path = dir.join(LOG_FILE);
+    with_lock(&dir, || {
+        if keep_dispatches {
+            let rows: Vec<AssistantTurnDto> = read_jsonl(&path);
+            let open_ats: HashSet<String> = rows
+                .iter()
+                .filter(|r| {
+                    r.dispatched.as_ref().is_some_and(|rec| {
+                        !rec.echoed.as_deref().is_some_and(|e| ECHO_FINAL.contains(&e))
+                            && parse_at(&rec.at).is_some_and(|t| (now - t).num_days() < ECHO_WATCH_DAYS)
+                    })
+                })
+                .map(|r| r.at.clone())
+                .collect();
+            let kept: Vec<AssistantTurnDto> = rows
+                .into_iter()
+                .filter(|r| open_ats.contains(&r.at) || r.echo_of.as_ref().is_some_and(|t| open_ats.contains(t)))
+                .collect();
+            if !kept.is_empty() {
+                write_jsonl(&path, &kept)?;
+                return Ok(kept.len());
+            }
+        }
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
             Err(e) => Err(format!("清空失败：{e}")),
-        })
+        }
     })
-    .await
-    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn assistant_log_clear(project_root: String, keep_dispatches: Option<bool>) -> Result<usize, String> {
+    let keep = keep_dispatches.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || clear_log_sync(&project_root, keep, now_fixed()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 问答记录超过上限时丢最旧的普通问答；派过活的轮次与它的回音不丢（2026-11-05：派活单和后来的进度是审计线索，
@@ -536,6 +564,89 @@ pub fn assistant_guide_section(heading: String) -> Option<String> {
     guide_section(&heading)
 }
 
+pub const ASSISTANT_CANCELLED: &str = "ASSISTANT_CANCELLED";
+
+enum ActiveStream {
+    Pending,
+    Running(String),
+    Cancelled,
+}
+
+fn active_streams() -> &'static Mutex<HashMap<String, ActiveStream>> {
+    static MAP: OnceLock<Mutex<HashMap<String, ActiveStream>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct StreamGuard(Option<String>);
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        if let Some(id) = self.0.take() {
+            active_streams().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        }
+    }
+}
+
+/// 停止正在进行的项目助手无头提问（面板点「停止」）：按 stream_id 找对应 Run 停掉子进程，不落问答记录
+#[tauri::command]
+pub fn project_assistant_cancel(stream_id: String) -> bool {
+    let key = stream_id.trim();
+    if key.is_empty() {
+        return false;
+    }
+    let run_to_stop = {
+        let mut map = active_streams().lock().unwrap_or_else(|e| e.into_inner());
+        match map.get(key) {
+            Some(ActiveStream::Running(run_id)) => {
+                let run_id = run_id.clone();
+                map.insert(key.to_string(), ActiveStream::Cancelled);
+                Some(run_id)
+            }
+            Some(ActiveStream::Pending) => {
+                map.insert(key.to_string(), ActiveStream::Cancelled);
+                None
+            }
+            Some(ActiveStream::Cancelled) => return true,
+            None => return false,
+        }
+    };
+    if let Some(run_id) = run_to_stop {
+        let _ = crate::process::cancel_capture(&run_id);
+    }
+    true
+}
+
+fn missing_paths_sync(project_root: &str, paths: Vec<String>) -> Vec<String> {
+    let base = PathBuf::from(crate::sessions::expand_tilde(project_root));
+    if !base.is_dir() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for raw in paths.into_iter().take(30) {
+        let p = raw.trim().trim_start_matches("./").replace('\\', "/");
+        if p.is_empty()
+            || p.contains(['*', '?'])
+            || p.starts_with('/')
+            || p.starts_with('~')
+            || p.bytes().nth(1) == Some(b':')
+            || p.split('/').any(|seg| seg == "..")
+        {
+            continue;
+        }
+        if !base.join(p.trim_end_matches('/')).exists() && !out.contains(&raw) {
+            out.push(raw);
+        }
+    }
+    out
+}
+
+/// 派活单「依据材料」里哪些相对路径在项目下找不到（文件或目录都认；含通配符或非法路径跳过）
+#[tauri::command]
+pub async fn assistant_missing_paths(project_root: String, paths: Vec<String>) -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(move || missing_paths_sync(&project_root, paths))
+        .await
+        .unwrap_or_default()
+}
+
 /// 问一次：prompt 是前端拼好的（规矩 + 项目快照 + 最近几轮 + 这次的问题），这里整段脱敏后出站。
 /// profile_id 为空 = 设置里「AI 功能」的连接（fn_key = project-assistant）；model 为空 = 连接里的第一个
 #[tauri::command]
@@ -568,8 +679,14 @@ pub async fn project_assistant_ask(
         let effort = effort.filter(|e| matches!(e.as_str(), "minimal" | "low" | "medium"));
         // 边生成边推到面板：事件名 assistant-stream-<id>，载荷是到此为止的整段（脱敏后）与正在做的一步
         let root_text = crate::sessions::expand_tilde(&project_root);
-        let mut stream = stream_id
-            .filter(|id| !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        let valid_stream_id = stream_id
+            .filter(|id| !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        if let Some(id) = &valid_stream_id {
+            active_streams().lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), ActiveStream::Pending);
+        }
+        let _stream_guard = StreamGuard(valid_stream_id.clone());
+        let mut stream = valid_stream_id
+            .as_ref()
             .map(|id| (format!("assistant-stream-{id}"), StreamState::new(root_text.clone())));
         let mut on_line = |line: &str| {
             use tauri::Emitter;
@@ -592,39 +709,65 @@ pub async fn project_assistant_ask(
         if !asked.is_empty() && images.is_empty() {
             return Err("附的截图找不到了（粘贴的图存 7 天），重新粘贴一次再问".into());
         }
-        let raw = if inspect.unwrap_or(false) || !images.is_empty() {
-            let root = PathBuf::from(&root_text);
-            crate::ai::ai_inspect_readonly(
-                profiles,
-                profile_id,
-                model,
-                &root,
-                &extra_dirs.unwrap_or_default(),
-                prompt,
-                effort.as_deref(),
-                Some(&mut on_line),
-                Some(&mut cost),
-                &images,
-            )
-            .map_err(|e| {
-                if !images.is_empty() && e.starts_with(crate::ai::INSPECT_UNSUPPORTED) {
-                    "看截图要项目助手用 Claude Code 或 Codex 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
-                } else {
-                    e
+        let hook_id = valid_stream_id.clone();
+        let hook: Box<dyn Fn(&str)> = Box::new(move |run_id: &str| {
+            let Some(id) = &hook_id else { return };
+            let should_cancel = {
+                let mut map = active_streams().lock().unwrap_or_else(|e| e.into_inner());
+                match map.get(id) {
+                    Some(ActiveStream::Cancelled) => true,
+                    Some(_) => {
+                        map.insert(id.clone(), ActiveStream::Running(run_id.to_string()));
+                        false
+                    }
+                    None => false,
                 }
-            })?
-        } else {
-            crate::ai::ai_prompt_impl_full(
-                profiles,
-                profile_id,
-                model,
-                Some("project-assistant"),
-                prompt,
-                effort.as_deref(),
-                Some(&mut on_line),
-                Some(&mut cost),
-            )?
-        };
+            };
+            if should_cancel {
+                let _ = crate::process::cancel_capture(run_id);
+            }
+        });
+        let call_res = crate::ai::with_run_hook(hook, || {
+            if inspect.unwrap_or(false) || !images.is_empty() {
+                let root = PathBuf::from(&root_text);
+                crate::ai::ai_inspect_readonly(
+                    profiles,
+                    profile_id,
+                    model,
+                    &root,
+                    &extra_dirs.unwrap_or_default(),
+                    prompt,
+                    effort.as_deref(),
+                    Some(&mut on_line),
+                    Some(&mut cost),
+                    &images,
+                )
+                .map_err(|e| {
+                    if !images.is_empty() && e.starts_with(crate::ai::INSPECT_UNSUPPORTED) {
+                        "看截图要项目助手用 Claude Code 或 Codex 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
+                    } else {
+                        e
+                    }
+                })
+            } else {
+                crate::ai::ai_prompt_impl_full(
+                    profiles,
+                    profile_id,
+                    model,
+                    Some("project-assistant"),
+                    prompt,
+                    effort.as_deref(),
+                    Some(&mut on_line),
+                    Some(&mut cost),
+                )
+            }
+        });
+        if valid_stream_id.as_ref().is_some_and(|id| {
+            matches!(active_streams().lock().unwrap_or_else(|e| e.into_inner()).get(id), Some(ActiveStream::Cancelled))
+        }) {
+            return Err(ASSISTANT_CANCELLED.into());
+        }
+        let raw = call_res?;
         let answer = truncate(crate::sessions::redact_sensitive_text(raw.trim()).as_str(), ANSWER_CAP);
         if answer.is_empty() {
             return Err("AI 没有回答，换个说法再问一次".into());
@@ -710,6 +853,7 @@ impl StreamState {
         let mut reads: Vec<String> = Vec::new();
         let mut search: Option<String> = None;
         let mut list: Option<String> = None;
+        let mut note: Option<String> = None;
         for seg in command_segments(&inner) {
             match describe_segment(&seg) {
                 Some(CmdKind::Read(files)) => {
@@ -726,6 +870,9 @@ impl StreamState {
                 Some(CmdKind::List(dir)) => {
                     list.get_or_insert_with(|| dir.map(|d| self.short_path(&d)).unwrap_or_default());
                 }
+                Some(CmdKind::Note(n)) => {
+                    note.get_or_insert(n);
+                }
                 Some(CmdKind::Noise) => {}
                 None => return format!("查看：{}", clip(&inner)),
             }
@@ -740,7 +887,7 @@ impl StreamState {
         match list {
             Some(d) if !d.is_empty() && d != "." && d != "./" => format!("看目录 {d}"),
             Some(_) => "列项目文件".to_string(),
-            None => format!("查看：{}", clip(&inner)),
+            None => note.unwrap_or_else(|| format!("查看：{}", clip(&inner))),
         }
     }
 
@@ -838,6 +985,7 @@ enum CmdKind {
     Read(Vec<String>),
     Search(String),
     List(Option<String>),
+    Note(String),
     /// echo / sort 这类只是拼接输出的，不算一步
     Noise,
 }
@@ -958,26 +1106,34 @@ fn describe_segment(seg: &[String]) -> Option<CmdKind> {
     let prog = seg.first()?;
     let prog = prog.rsplit(['/', '\\']).next().unwrap_or(prog);
     let args = &seg[1..];
-    // 不带值的开关之外，下一词是开关值的那些（-n 20、-g '!.git'）
-    let takes_value = |prog: &str, flag: &str| match prog {
-        "head" | "tail" => matches!(flag, "-n" | "-c"),
-        "rg" | "grep" => matches!(
-            flag,
-            "-g" | "--glob" | "-t" | "--type" | "-T" | "--type-not" | "-m" | "--max-count" | "-A" | "-B" | "-C" | "--context" | "--max-depth" | "-d"
-        ),
-        "nl" => matches!(flag, "-b" | "-w" | "-s"),
-        _ => false,
+    // 不带值的开关之外，后面跟几个开关值的那些（-n 20、-g '!.git'、jq --arg k v）
+    let value_arity = |prog: &str, flag: &str| -> usize {
+        match prog {
+            "head" | "tail" if matches!(flag, "-n" | "-c") => 1,
+            "rg" | "grep"
+                if matches!(
+                    flag,
+                    "-g" | "--glob" | "-t" | "--type" | "-T" | "--type-not" | "-m" | "--max-count" | "-A" | "-B" | "-C" | "--context" | "--max-depth" | "-d"
+                ) =>
+            {
+                1
+            }
+            "nl" if matches!(flag, "-b" | "-w" | "-s") => 1,
+            "jq" if matches!(flag, "-f" | "--from-file" | "--indent") => 1,
+            "jq" if matches!(flag, "--arg" | "--argjson" | "--slurpfile" | "--rawfile") => 2,
+            _ => 0,
+        }
     };
     let operands = |prog: &str| {
         let mut v = Vec::new();
-        let mut skip = false;
+        let mut skip = 0usize;
         for a in args {
-            if skip {
-                skip = false;
+            if skip > 0 {
+                skip -= 1;
                 continue;
             }
             if a.starts_with('-') && a.len() > 1 {
-                skip = takes_value(prog, a);
+                skip = value_arity(prog, a);
                 continue;
             }
             v.push(a.clone());
@@ -989,13 +1145,21 @@ fn describe_segment(seg: &[String]) -> Option<CmdKind> {
             let files = operands(prog);
             Some(if files.is_empty() { CmdKind::Noise } else { CmdKind::Read(files) })
         }
-        "sed" | "awk" => {
-            // 第一个非开关参数是脚本，后面才是文件；没文件就是在管道里加工别人的输出
+        "sed" | "awk" | "jq" => {
+            // 第一个非开关参数是脚本 / 过滤式，后面才是文件；没文件就是在管道里加工别人的输出
             let mut ops = operands(prog);
             if !ops.is_empty() {
                 ops.remove(0);
             }
             Some(if ops.is_empty() { CmdKind::Noise } else { CmdKind::Read(ops) })
+        }
+        "python" | "python3" if args.first().is_some_and(|a| a == "-c") => {
+            let files: Vec<String> = args.iter().skip(2).filter(|a| !a.starts_with('-')).cloned().collect();
+            Some(if files.is_empty() {
+                CmdKind::Note("核对数据与字段".into())
+            } else {
+                CmdKind::Read(files)
+            })
         }
         "rg" | "grep" => {
             if args.iter().any(|a| a == "--files") {
@@ -1017,7 +1181,13 @@ fn describe_segment(seg: &[String]) -> Option<CmdKind> {
             }
             Some(CmdKind::List(args.first().filter(|a| !a.starts_with('-')).cloned()))
         }
-        "git" if args.first().is_some_and(|a| a == "ls-files") => Some(CmdKind::List(None)),
+        "git" => match args.first().map(String::as_str) {
+            Some("ls-files") => Some(CmdKind::List(None)),
+            Some("status") => Some(CmdKind::Note("看 Git 状态".into())),
+            Some("log") => Some(CmdKind::Note("看提交记录".into())),
+            Some("diff" | "show") => Some(CmdKind::Note("看改动差异".into())),
+            _ => None,
+        },
         "echo" | "printf" | "sort" | "uniq" | "true" | "cd" | "pwd" | "tr" | "cut" | "xargs" => Some(CmdKind::Noise),
         _ => None,
     }
@@ -1268,7 +1438,18 @@ const GUIDE_TOPICS: &[(&[&str], &[&str])] = &[
     (&["定时", "雷达"], &["5.2 新建定时任务", "5.1 文献雷达"]),
     (&["评审", "保存进项目", "采纳"], &["4.9 评审页"]),
     (&["用量", "花费", "余额", "费用"], &["12 用量页"]),
-    (&["手机"], &["8.4.2 从手机添加"]),
+    (&["飞书", "机器人", "手机问", "手机上用"], &["8.4.3 在手机上用项目助手"]),
+    (&["手机", "扫码", "传图", "拍照"], &["8.4.2 从手机添加", "8.4.3 在手机上用项目助手"]),
+    (&["桌宠", "桌面小人"], &["8.4.4 桌宠"]),
+    (&["研讨", "几家一起", "多模型"], &["7.4 研讨"]),
+    (&["接力", "换一家", "中途换"], &["聊到一半换一家 AI 接着做"]),
+    (&["我的任务", "任务包", "导入任务", "导出任务"], &["我的任务：把调顺的步骤存下来"]),
+    (&["批注", "word批注", "导师批注"], &["导师和合作者的 Word 批注"]),
+    (&["人工请求", "等我拍板"], &["在卡片上回答人工请求"]),
+    (&["代理", "翻墙", "网络测试", "线路"], &["13.6 网络"]),
+    (&["zotero", "endnote", "文献库", "bib"], &["14.3 引用与文献库"]),
+    (&["研究档案", "跨项目记忆"], &["13.12 研究档案"]),
+    (&["瘦身", "413", "bodytoolarge"], &["7.2 对话卡在"]),
     (&["添加项目", "新建项目", "加项目"], &["3.2 添加项目"]),
     (&["出图", "画图", "生成图片"], &["9.8 出图模型"]),
     (&["项目助手", "小桌"], &["**项目助手：看不懂、出错了，问它**"]),
@@ -1515,6 +1696,12 @@ mod tests {
         assert_eq!(say("ls -la notes"), "看目录 notes");
         assert_eq!(say("ls"), "列项目文件");
         assert_eq!(say("cat a.md b.md c.md d.md"), "读 a.md、b.md、c.md 等 4 份");
+        assert_eq!(say("jq '.items | length' papers/included.json"), "读 papers/included.json");
+        assert_eq!(say("python3 -c 'import json, sys; print(len(json.load(open(sys.argv[1]))))' data/a.json"), "读 data/a.json");
+        assert_eq!(say("python3 -c 'import json; print(1)'"), "核对数据与字段");
+        assert_eq!(say("git status -s"), "看 Git 状态");
+        assert_eq!(say("git diff --stat"), "看改动差异");
+        assert_eq!(say("git log -n 5 --oneline"), "看提交记录");
         // 认不出的照原样
         assert_eq!(say("/bin/zsh -lc 'python3 scripts/check.py'"), "查看：python3 scripts/check.py");
         assert_eq!(say("cat a.md | python3 x.py"), "查看：cat a.md | python3 x.py");
@@ -1665,5 +1852,89 @@ mod tests {
         assert_eq!(log.len(), 2);
         assert!(echo_sync("/p/echo", &at0, "weird", "").is_err());
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn clear_log_keeps_open_dispatches_and_echoes_when_requested() {
+        let tmp = std::env::temp_dir().join(format!("mesa-clear-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let _guard = crate::storage::redirect_config_root(&tmp);
+        let now = now_fixed();
+        let mk_turn = |at_s: &str, q: &str, dispatched: Option<DispatchRecordDto>, echo_of: Option<&str>| AssistantTurnDto {
+            at: at_s.into(),
+            question: q.into(),
+            answer: "a".into(),
+            connection: String::new(),
+            basis: String::new(),
+            cost_usd: None,
+            dispatched,
+            echo_of: echo_of.map(Into::into),
+        };
+        let mk_rec = |echoed: Option<&str>| DispatchRecordDto {
+            at: now.to_rfc3339(),
+            target: "goal".into(),
+            step: None,
+            title: "活".into(),
+            mode: "goal".into(),
+            mail_id: None,
+            task_id: Some("t1".into()),
+            worktree_path: None,
+            note: String::new(),
+            base_ahead: None,
+            echoed: echoed.map(Into::into),
+            echoed_at: None,
+        };
+        append_turn("/p/c", mk_turn("t-qa", "普通问题", None, None)).unwrap();
+        append_turn("/p/c", mk_turn("t-open", "在途派活", Some(mk_rec(Some("review"))), None)).unwrap();
+        append_turn("/p/c", mk_turn("t-echo", "", None, Some("t-open"))).unwrap();
+        append_turn("/p/c", mk_turn("t-done", "已验收派活", Some(mk_rec(Some("accepted"))), None)).unwrap();
+        append_turn("/p/c", mk_turn("t-done-echo", "", None, Some("t-done"))).unwrap();
+
+        let kept = clear_log_sync("/p/c", true, now).unwrap();
+        assert_eq!(kept, 2, "只留在途派活与对应回音");
+        let left: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/c").unwrap().join(LOG_FILE));
+        assert_eq!(left.iter().map(|r| r.at.as_str()).collect::<Vec<_>>(), vec!["t-open", "t-echo"]);
+
+        assert_eq!(clear_log_sync("/p/c", false, now).unwrap(), 0);
+        assert!(read_jsonl::<AssistantTurnDto>(&project_dir("/p/c").unwrap().join(LOG_FILE)).is_empty());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn missing_paths_accepts_files_and_dirs_and_ignores_unsafe_patterns() {
+        let tmp = std::env::temp_dir().join(format!("mesa-paths-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(tmp.join("data/raw")).unwrap();
+        fs::create_dir_all(tmp.join("papers")).unwrap();
+        fs::write(tmp.join("papers/included.md"), b"# ok").unwrap();
+        let root = tmp.to_string_lossy().to_string();
+        let missing = missing_paths_sync(
+            &root,
+            vec![
+                "papers/included.md".into(),
+                "data/raw/".into(),
+                "data/missing.csv".into(),
+                "lab/not_yet/".into(),
+                "papers/*.pdf".into(),
+                "../outside.md".into(),
+                "/abs/path.md".into(),
+            ],
+        );
+        assert_eq!(missing, vec!["data/missing.csv", "lab/not_yet/"]);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn cancel_marks_pending_stream_and_guard_cleans_up() {
+        let id = format!("stream-test-{}", uuid::Uuid::new_v4());
+        assert!(!project_assistant_cancel(id.clone()));
+        active_streams().lock().unwrap().insert(id.clone(), ActiveStream::Pending);
+        let guard = StreamGuard(Some(id.clone()));
+        assert!(project_assistant_cancel(id.clone()));
+        assert!(matches!(
+            active_streams().lock().unwrap().get(&id),
+            Some(ActiveStream::Cancelled)
+        ));
+        drop(guard);
+        assert!(!active_streams().lock().unwrap().contains_key(&id));
     }
 }

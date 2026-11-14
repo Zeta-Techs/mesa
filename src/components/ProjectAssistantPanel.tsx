@@ -1,7 +1,8 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowDown, ArrowRight, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Square, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
+import { confirmDialog } from "./ConfirmDialog";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
 import ChatMarkdown from "./ChatMarkdown";
 import MesaBuddy from "./MesaBuddy";
@@ -41,6 +42,7 @@ import { briefLines, quickAsks, SUMMARY_QUESTION, summaryDue, summaryFocus, type
 import { assistantDayLabel, sameLocalDay } from "../assistant-dock";
 import {
   askProjectAssistant,
+  ASSISTANT_CANCELLED,
   assistantConnection,
   gatherBriefInput,
   planAsk,
@@ -166,6 +168,16 @@ export default function ProjectAssistantPanel({
   /** 这一问附的截图（2026-11-05 用户：「有些问题可能需要截图去问」）：粘贴 / 拖进输入框，和聊天层同一条落盘通道 */
   const [images, setImages] = useState<AssistantImage[]>([]);
   const [imageNote, setImageNote] = useState<string | null>(null);
+  const blobUrlsRef = useRef<Set<string>>(new Set());
+  const streamIdRef = useRef<string | null>(null);
+  const cancelledRef = useRef(false);
+  useEffect(
+    () => () => {
+      for (const url of blobUrlsRef.current) URL.revokeObjectURL(url);
+      blobUrlsRef.current.clear();
+    },
+    [],
+  );
   async function addImageFile(file: File) {
     if (images.length >= MAX_ASSISTANT_IMAGES) {
       setImageNote(`一次最多附 ${MAX_ASSISTANT_IMAGES} 张截图`);
@@ -173,7 +185,16 @@ export default function ProjectAssistantPanel({
     }
     try {
       const path = await saveClipboardImage(await file.arrayBuffer(), imageExtFromMime(file.type));
-      setImages((cur) => (cur.length >= MAX_ASSISTANT_IMAGES ? cur : [...cur, { path, url: URL.createObjectURL(file) }]));
+      const url = URL.createObjectURL(file);
+      blobUrlsRef.current.add(url);
+      setImages((cur) => {
+        if (cur.length >= MAX_ASSISTANT_IMAGES) {
+          URL.revokeObjectURL(url);
+          blobUrlsRef.current.delete(url);
+          return cur;
+        }
+        return [...cur, { path, url }];
+      });
       setImageNote(null);
     } catch (reason) {
       setImageNote(`截图没贴上：${String(reason)}`);
@@ -291,10 +312,6 @@ export default function ProjectAssistantPanel({
     };
   }, [open, projectPath]);
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: "end" });
-  }, [turns.length, busy, error, liveText, liveStep]);
-
   // 往上翻过以后底部给「回到最新」：看末尾那个锚点还在不在视野里。
   // 锚点挂上才开始看（回调 ref）：外壳打开时晚一帧才渲染内容，按 open 去找锚点会扑空，
   // 上次关面板时留下的「不在末尾」就一直挂着（2026-11-08 用户截图：翻到底了还显示「回到最新」）
@@ -311,6 +328,15 @@ export default function ProjectAssistantPanel({
     io.observe(endEl);
     return () => io.disconnect();
   }, [endEl]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [turns.length, busy, error]);
+
+  // 流式出字 / 换步骤时只有本来就在底部才跟着滚；往上翻看旧记录时不抢滚动条
+  useEffect(() => {
+    if (atEnd) endRef.current?.scrollIntoView({ block: "end" });
+  }, [liveText, liveStep, atEnd]);
 
   useEffect(() => {
     if (!busy) return;
@@ -384,6 +410,9 @@ export default function ProjectAssistantPanel({
       attached.length && !forced && (planned.intent === "howto" || planned.intent === "general" || planned.intent === "chat")
         ? { ...planned, intent: "mixed" as const }
         : planned;
+    const streamId = crypto.randomUUID();
+    streamIdRef.current = streamId;
+    cancelledRef.current = false;
     setIntent(plan.intent);
     setInspecting(plan.inspect);
     setBusy(true);
@@ -407,23 +436,42 @@ export default function ProjectAssistantPanel({
         inspect: plan.inspect,
         images: attached.map((img) => img.path),
         where,
+        streamId,
         onStream: (update) => {
           if (update.text !== undefined) setLiveText(update.text);
           if (update.step) setLiveStep(update.step);
         },
       });
+      for (const img of attached) {
+        URL.revokeObjectURL(img.url);
+        blobUrlsRef.current.delete(img.url);
+      }
       setTurns((list) => [...list, turn]);
       setFreshAt(turn.at);
       setFocus(null);
     } catch (reason) {
-      setError(assistantErrorText(String(reason)));
-      setFailed({ question: q, focus: withFocus, images: attached });
+      if (cancelledRef.current || String(reason).includes(ASSISTANT_CANCELLED)) {
+        setDraft((cur) => cur || (question.trim() ? question : ""));
+        setFocus((cur) => cur ?? withFocus);
+        setImages((cur) => (cur.length ? cur : attached));
+      } else {
+        setError(assistantErrorText(String(reason)));
+        setFailed({ question: q, focus: withFocus, images: attached });
+      }
     } finally {
+      streamIdRef.current = null;
       setBusy(false);
       setPending(null);
       setLiveText("");
       setLiveStep(null);
     }
+  }
+
+  function stopAsk() {
+    const id = streamIdRef.current;
+    if (!busy || !id) return;
+    cancelledRef.current = true;
+    void invoke("project_assistant_cancel", { streamId: id }).catch(() => {});
   }
 
   // 带着问题打开：只问一次（同一个 nonce 不重问）
@@ -435,11 +483,35 @@ export default function ProjectAssistantPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, ask]);
 
+  const [onlyDispatches, setOnlyDispatches] = useState(false);
+  const hasDispatches = turns.some((t) => !!t.dispatched || !!t.echoOf);
+  const openDispatchCount = turns.filter((t) => t.dispatched && t.dispatched.echoed !== "accepted").length;
+  useEffect(() => {
+    setOnlyDispatches(false);
+  }, [projectPath]);
+  useEffect(() => {
+    if (!hasDispatches && onlyDispatches) setOnlyDispatches(false);
+  }, [hasDispatches, onlyDispatches]);
+
   async function clear() {
     if (!projectPath) return;
+    const ok = await confirmDialog(
+      openDispatchCount > 0
+        ? `清空项目助手的问答记录？\n\n普通问答：彻底清空\n在途派活与进展：保留 ${openDispatchCount} 条还没验收的派活记录，方便继续跟进度`
+        : "清空项目助手的问答记录？\n\n清空后不能恢复；已记进项目知识的规矩不受影响。",
+      { danger: true, confirmText: "清空记录" },
+    );
+    if (!ok) return;
     try {
-      await invoke("assistant_log_clear", { projectRoot: projectPath });
-      setTurns([]);
+      const kept = await invoke<number>("assistant_log_clear", { projectRoot: projectPath, keepDispatches: true });
+      setOnlyDispatches(false);
+      if (kept > 0) {
+        const list = await invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath });
+        setTurns(list);
+        toast(`已清空普通问答，保留了 ${openDispatchCount || kept} 条在途派活记录`, "info");
+      } else {
+        setTurns([]);
+      }
     } catch (reason) {
       toast(`清空失败：${String(reason)}`, "error");
     }
@@ -767,7 +839,11 @@ export default function ProjectAssistantPanel({
                 type="button"
                 className="absolute -right-1.5 -top-1.5 flex size-4 items-center justify-center rounded-full bg-raised text-l3 shadow-none ring-1 ring-hairline hover:text-l1"
                 aria-label={`去掉截图 ${i + 1}`}
-                onClick={() => setImages((cur) => cur.filter((x) => x.path !== img.path))}
+                onClick={() => {
+                  URL.revokeObjectURL(img.url);
+                  blobUrlsRef.current.delete(img.url);
+                  setImages((cur) => cur.filter((x) => x.path !== img.path));
+                }}
               >
                 <X size={10} strokeWidth={2} aria-hidden="true" />
               </button>
@@ -827,16 +903,18 @@ export default function ProjectAssistantPanel({
             }
           }}
         />
-        {/* 发送钮与聊天输入框同一块 M▁ 光标（App.css .ccode-send-block）：没字是淡箭头，有字亮琥珀，问着时半透明 */}
+        {/* 发送钮与聊天输入框同一块 M▁ 光标（App.css .ccode-send-block）：没字是淡箭头，有字亮琥珀，问着时变成停止钮 */}
         <button
-          type="submit"
+          type={busy ? "button" : "submit"}
           className="ccode-send-block mb-0.5"
-          data-state={busy ? "sending" : draft.trim() || images.length ? "ready" : "empty"}
-          disabled={busy || (!draft.trim() && images.length === 0)}
-          aria-label="发送"
-          title={busy ? "正在问…" : "Enter 发送 · Shift+Enter 换行"}
+          data-state={busy ? "stop" : draft.trim() || images.length ? "ready" : "empty"}
+          disabled={!busy && !draft.trim() && images.length === 0}
+          aria-label={busy ? "停止" : "发送"}
+          title={busy ? "停止这次提问（原问题放回输入框）" : "Enter 发送 · Shift+Enter 换行"}
+          onClick={busy ? stopAsk : undefined}
         >
           <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" className="ccode-send-arrow" />
+          <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" className="ccode-send-stop" />
         </button>
       </form>
       {/* 照对话输入框：下方右侧只写模型；连接全名与「跟随项目默认」进悬停，点了去 Agent 分工换 */}
@@ -844,6 +922,16 @@ export default function ProjectAssistantPanel({
         {turns.length > 0 && (
           <button type="button" className="shrink-0 text-l4 hover:text-l2 disabled:opacity-50" disabled={busy} onClick={() => void clear()}>
             <span className="text-micro">清空记录</span>
+          </button>
+        )}
+        {(onlyDispatches || (hasDispatches && turns.some((t) => !t.dispatched && !t.echoOf))) && (
+          <button
+            type="button"
+            className={`shrink-0 ${onlyDispatches ? "font-medium text-l2" : "text-l4 hover:text-l2"}`}
+            aria-pressed={onlyDispatches}
+            onClick={() => setOnlyDispatches((v) => !v)}
+          >
+            <span className="text-micro">{onlyDispatches ? "看全部记录" : "只看派活"}</span>
           </button>
         )}
         <button
@@ -909,23 +997,27 @@ export default function ProjectAssistantPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {turns.map((turn, i) => {
-            // 换天时先画一道分隔（本机时区）；同一天的不画
-            const divider =
-              turn.at && (i === 0 || !sameLocalDay(turns[i - 1].at, turn.at)) ? (
-                <div className="flex items-center gap-2 text-micro text-l4" role="separator" aria-label={assistantDayLabel(turn.at)}>
-                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-                  {assistantDayLabel(turn.at)}
-                  <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
-                </div>
-              ) : null;
-            return (
-              <Fragment key={`${turn.at}-${i}`}>
-                {divider}
-                {renderTurn(turn, i)}
-              </Fragment>
-            );
-          })}
+          {turns
+            .map((turn, i) => ({ turn, i }))
+            .filter(({ turn }) => !onlyDispatches || !!turn.dispatched || !!turn.echoOf)
+            .map(({ turn, i }, vi, visible) => {
+              // 换天时先画一道分隔（本机时区）；同一天的不画
+              const prev = vi > 0 ? visible[vi - 1].turn : null;
+              const divider =
+                turn.at && (!prev || !sameLocalDay(prev.at, turn.at)) ? (
+                  <div className="flex items-center gap-2 text-micro text-l4" role="separator" aria-label={assistantDayLabel(turn.at)}>
+                    <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+                    {assistantDayLabel(turn.at)}
+                    <span className="h-px flex-1 bg-hairline" aria-hidden="true" />
+                  </div>
+                ) : null;
+              return (
+                <Fragment key={`${turn.at}-${i}`}>
+                  {divider}
+                  {renderTurn(turn, i)}
+                </Fragment>
+              );
+            })}
           {briefCard}
           {busy && (
             <article className="flex flex-col gap-3">
