@@ -63,7 +63,7 @@
 | `official_account` | 登录命令 `Some(&["acp", "--login"])`，`auth_file_paths` 空，`detection_note` 说明凭证存系统钥匙串、Mesa 不主动读取以免触发钥匙串弹窗 | `cache/onboarding.json` 只代表首次引导完成，不当登录态 |
 | `packaging` | 更新渠道 `SelfUpdate`（`agy update`）；安装命令按平台给官方脚本 | §15 |
 | `request_policy` | 仅 `effort` 为 `inject`（`--effort`）；`temperature`、`top_p`、`max_tokens`、`headers` 均为 `unsupported` | `agy` 无采样参数与自定义请求头入口 |
-| `headless_write` / `headless_followup` | 支持 `-p <prompt>` 配合权限参数写盘，以及 `-p <prompt> --output-format stream-json` + `--conversation <id>` 分轮无头续跑；`inspect_readonly_args` 保持 `None` | `-p` 总是落盘，一次性无痕调用 `ai_prompt_impl` 不派给 agy |
+| `headless_write` / `headless_followup` | 支持 `-p <prompt>` 配合权限参数写盘，以及 `-p <prompt> --output-format stream-json` + `--conversation <id>` 分轮无头续跑；`inspect_readonly_args` 保持 `None` | `-p` 总是落盘：自动起名/翻译等后台自动回落跳过 `agy`，显式选定连接或研讨「只看材料」/ 项目助手只看记录可走 `ai_prompt_impl_full`（按 `conversation_id` 标 `internal`） |
 | `support_tier` | **一等支持**（进 `TIER1_AGENTS`：跨厂商复核、分轮续跑全量支持） | 2026-11-14 用户拍板升级 |
 
 能力清单 `capability_manifest.rs`：登记全局配置、MCP、技能、hooks 四类写入路径，通过 `every_agent_is_accounted_for` 守卫。
@@ -117,7 +117,7 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 - `cli_permission.rs`：只读解析 `~/.gemini/antigravity-cli/settings.json` 的 `agentMode` 与 `toolPermission`（`toolPermission == "always-proceed"` → `full`；`agentMode == "auto"` 或 `toolPermission == "proceed-in-sandbox"` → `auto`；其余有显式配置时按默认交互档）。
 - `grant.rs`：授权运行 `full` 传 `--dangerously-skip-permissions`；不默认加 `--sandbox`（1.4.4 起沙箱不可用时静默降级，不能当安全边界）。
-- **只读隔离边界**：沙箱实测证明 `--mode plan` 在免审设置下仍可执行 `write_file` 落盘，没有进程级工具白名单或沙箱只读保证。因此研讨（`group_consult`）、项目助手只读查文件（`inspect_readonly_args`）等硬只读场景**不纳入 `agy`**，仅在用户主动点交互聊天「先出方案」时传 `--mode plan`。
+- **只读隔离边界**：沙箱实测证明 `--mode plan` 在免审设置下仍可执行 `write_file` 落盘，没有进程级工具白名单或沙箱只读保证。因此研讨「能看项目」与项目助手只读查文件（`inspect_readonly_args`）等硬只读场景**不纳入 `agy`**（研讨中 `agy` 仅作为临时空目录下的「只看材料」成员参加），仅在用户主动点交互聊天「先出方案」时传 `--mode plan`。
 
 ## 6. 会话解析（`sessions.rs` + `sessions/agy.rs`）
 

@@ -674,7 +674,7 @@ pub async fn project_assistant_ask(
         }
         let prompt = crate::sessions::redact_sensitive_text(&prompt);
         let model = model.filter(|m| !m.trim().is_empty());
-        // 只读查看项目文件（问出错时）：在项目根跑、只读、不落盘；这家不支持时报 INSPECT_UNSUPPORTED，前端退回只看记录
+        // 只读查看项目文件（问出错时）：在项目根跑、进程级只读；这家不支持时报 INSPECT_UNSUPPORTED，前端退回只看记录
         // 思考档只接受固定几档；这里只会往低调（前端按问题类型给 low）
         let effort = effort.filter(|e| matches!(e.as_str(), "minimal" | "low" | "medium"));
         // 边生成边推到面板：事件名 assistant-stream-<id>，载荷是到此为止的整段（脱敏后）与正在做的一步
@@ -697,8 +697,8 @@ pub async fn project_assistant_ask(
             }
         };
         let mut cost: Option<f64> = None;
-        // 附图（2026-11-05 用户：「有些问题需要截图去问」）：只收 Mesa 自己存下的粘贴图，最多 4 张；带图一律走只读查看那条路
-        //（只有 Claude Code / Codex 能看图），别家明说换连接，不悄悄丢图
+        // 附图（2026-11-05 用户：「有些问题需要截图去问」，2026-11-14 补 Kimi / Grok）：只收 Mesa 自己存下的粘贴图，最多 4 张；
+        // 带图一律走只读查看那条路（Claude Code / Codex / Kimi Code / Grok Build 能看图），别家明说换连接，不悄悄丢图
         let asked = images.unwrap_or_default();
         let images: Vec<String> = asked
             .iter()
@@ -744,7 +744,7 @@ pub async fn project_assistant_ask(
                 )
                 .map_err(|e| {
                     if !images.is_empty() && e.starts_with(crate::ai::INSPECT_UNSUPPORTED) {
-                        "看截图要项目助手用 Claude Code 或 Codex 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
+                        "看截图要项目助手用 Claude Code、Codex、Kimi Code 或 Grok Build 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
                     } else {
                         e
                     }
@@ -833,14 +833,30 @@ impl StreamState {
     }
 
     fn tool_step(&self, name: &str, input: &serde_json::Value) -> String {
-        let s = |k: &str| input.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let pick = |keys: &[&str]| {
+            keys.iter()
+                .find_map(|k| input.get(*k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()))
+                .unwrap_or("")
+                .to_string()
+        };
         let clip = |t: String| t.chars().take(60).collect::<String>();
         match name {
-            "Read" => format!("读 {}", self.short_path(&s("file_path"))),
-            "Grep" => format!("搜「{}」", clip(s("pattern"))),
-            "Glob" => format!("找文件 {}", clip(s("pattern"))),
-            "LS" => format!("看目录 {}", self.short_path(&s("path"))),
-            "Bash" => self.command_step(&s("command")),
+            "Read" | "ReadMediaFile" | "read_file" | "view_file" => {
+                format!("读 {}", self.short_path(&pick(&["file_path", "path", "target_file", "AbsolutePath", "Path"])))
+            }
+            "Grep" | "grep" | "grep_search" => format!("搜「{}」", clip(pick(&["pattern", "query", "Query"]))),
+            "Glob" | "find_by_name" => format!("找文件 {}", clip(pick(&["pattern", "Pattern"]))),
+            "LS" | "list_dir" => {
+                let sp = self.short_path(&pick(&["path", "target_directory", "dir_path", "DirectoryPath"]));
+                if sp.is_empty() || sp == "." || sp == "./" {
+                    "列项目文件".to_string()
+                } else {
+                    format!("看目录 {sp}")
+                }
+            }
+            "Bash" | "run_terminal_command" | "run_command" => {
+                self.command_step(&pick(&["command", "CommandLine"]))
+            }
             other => format!("用 {other}"),
         }
     }
@@ -953,6 +969,84 @@ impl StreamState {
                         }
                     }
                     _ => {}
+                }
+            }
+            // Grok `streaming-json`
+            "text" => {
+                if let Some(d) = v.get("data").and_then(|t| t.as_str()) {
+                    if !d.is_empty() {
+                        self.text.push_str(d);
+                        text_changed = true;
+                    }
+                }
+            }
+            "tool_call" => {
+                if !self.text.is_empty() {
+                    self.text.clear();
+                    text_changed = true;
+                }
+                let name = v.get("toolName").or_else(|| v.get("name")).and_then(|n| n.as_str()).unwrap_or("");
+                let input = v.get("rawInput").or_else(|| v.get("input")).unwrap_or(&serde_json::Value::Null);
+                step = Some(self.tool_step(name, input));
+            }
+            "" => {
+                // Kimi `stream-json`：顶层无 type，按 role == "assistant" 识别
+                if v.get("role").and_then(|r| r.as_str()) == Some("assistant") {
+                    let calls = v
+                        .get("tool_calls")
+                        .or_else(|| v.get("toolCalls"))
+                        .and_then(|a| a.as_array())
+                        .filter(|a| !a.is_empty());
+                    if let Some(arr) = calls {
+                        if !self.text.is_empty() {
+                            self.text.clear();
+                            text_changed = true;
+                        }
+                        for tc in arr {
+                            let fn_obj = tc.get("function").unwrap_or(tc);
+                            let name = fn_obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                            let args_val = match fn_obj.get("arguments") {
+                                Some(serde_json::Value::String(s)) => {
+                                    serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
+                                }
+                                Some(other) => other.clone(),
+                                None => serde_json::Value::Null,
+                            };
+                            step = Some(self.tool_step(name, &args_val));
+                        }
+                    } else {
+                        let mut parts = Vec::new();
+                        match v.get("content") {
+                            Some(serde_json::Value::String(s)) => parts.push(s.as_str()),
+                            Some(serde_json::Value::Array(items)) => {
+                                for p in items {
+                                    let pk = p.get("type").and_then(|t| t.as_str()).unwrap_or("text");
+                                    if matches!(pk, "text" | "output_text") {
+                                        if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
+                                            parts.push(t);
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        let joined = parts.join("");
+                        if !joined.is_empty() {
+                            self.text = joined;
+                            text_changed = true;
+                        }
+                    }
+                } else if v.get("event").and_then(|e| e.as_str()) == Some("step_update") {
+                    // Antigravity CLI `stream-json`：嵌套或平铺 step_update，绝不收 user_input
+                    let su = v.get("step_update").unwrap_or(&v);
+                    if su.get("step_type").and_then(|t| t.as_str()) == Some("agent_response") {
+                        if let Some(delta) = su.get("text_delta").and_then(|t| t.as_str()) {
+                            if !delta.is_empty() {
+                                self.text.push_str(delta);
+                                text_changed = true;
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -1672,6 +1766,40 @@ mod tests {
         assert_eq!(st.handle_line(msg).unwrap().text.as_deref(), Some("报错出在第 3 行"));
         let secret = StreamState { root: "/".into(), text: String::new(), secrets: vec!["sk-abcdefgh12345678".into()], last_text_emit: None, last_step: None };
         assert!(!secret.redacted("key sk-abcdefgh12345678 here").contains("abcdefgh12345678"));
+    }
+
+    #[test]
+    fn stream_state_reads_kimi_grok_and_agy_events() {
+        // Kimi stream-json：读文件调工具会清掉过渡字并推出步骤，终局回答跳过 think
+        let mut ks = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let k_tool = r#"{"role":"assistant","content":[{"type":"think","think":"先看文件"},{"type":"text","text":"我先读"}],"tool_calls":[{"id":"c1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"/p/x/notes/a.md\"}"}}]}"#;
+        assert_eq!(ks.handle_line(k_tool).unwrap().step.as_deref(), Some("读 notes/a.md"));
+        let k_img = r#"{"role":"assistant","tool_calls":[{"id":"c2","type":"function","function":{"name":"ReadMediaFile","arguments":"{\"path\":\"/p/x/shot.png\"}"}}]}"#;
+        assert_eq!(ks.handle_line(k_img).unwrap().step.as_deref(), Some("读 shot.png"));
+        let k_ans = r#"{"role":"assistant","content":[{"type":"think","think":"核对完毕"},{"type":"text","text":"结论在第 5 行"}]}"#;
+        assert_eq!(ks.handle_line(k_ans).unwrap().text.as_deref(), Some("结论在第 5 行"));
+
+        // Grok streaming-json：工具前的过渡字清空，read_file / list_dir / grep 都转白话步骤
+        let mut gs = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        assert_eq!(gs.handle_line(r#"{"type":"text","data":"先查"}"#).unwrap().text.as_deref(), Some("先查"));
+        let g_tool = r#"{"type":"tool_call","toolName":"read_file","rawInput":{"target_file":"/p/x/data/clean.csv"}}"#;
+        let g_up = gs.handle_line(g_tool).unwrap();
+        assert_eq!(g_up.text.as_deref(), Some(""));
+        assert_eq!(g_up.step.as_deref(), Some("读 data/clean.csv"));
+        let g_dir = r#"{"type":"tool_call","toolName":"list_dir","rawInput":{"target_directory":"/p/x"}}"#;
+        assert_eq!(gs.handle_line(g_dir).unwrap().step.as_deref(), Some("列项目文件"));
+        assert_eq!(gs.handle_line(r#"{"type":"text","data":"核对通过"}"#).unwrap().text.as_deref(), Some("核对通过"));
+
+        // Antigravity CLI stream-json：跳过 user_input，只收 agent_response 的 text_delta
+        let mut ags = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        assert!(ags.handle_line(r#"{"event":"step_update","step_update":{"step_type":"user_input","text_delta":"问题"}}"#).is_none());
+        assert_eq!(
+            ags.handle_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Agy 回答"}}"#)
+                .unwrap()
+                .text
+                .as_deref(),
+            Some("Agy 回答")
+        );
     }
 
     #[test]

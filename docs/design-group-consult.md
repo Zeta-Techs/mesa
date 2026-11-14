@@ -147,8 +147,8 @@ ClawChat 没有、Mesa 要加的：**第一轮互相看不见**（防后答的�
 
 | 档 | 哪些连接 | 怎么跑 |
 |---|---|---|
-| 能看项目 | CLI 外壳是 Claude Code、Codex 的连接，不论模型（一期）；Kimi CLI 外壳在一期内实测后加 | `ai_inspect_readonly`：工作目录 = 项目根，进程级只读（Claude Code `--tools Read Grep Glob --strict-mcp-config`，Codex `-s read-only`），提示词里点名材料路径，让它自己读，也可以顺着依据去翻别的文件 |
-| 只看材料 | 外壳是其余几家 CLI 的连接 | `ai_prompt` 在临时目录跑（不碰项目）；Mesa 把材料摘录贴进提示词，有总长度上限；提示词写明「你看不到项目文件，只能依据下面的摘录，依据写摘录里的路径和位置」 |
+| 能看项目 | CLI 外壳是 Claude Code、Codex、Kimi Code、Grok Build 的连接，不论模型（2026-11-14 扩为四家） | `ai_inspect_readonly`：工作目录 = 项目根，进程级只读（Claude Code `--tools Read Grep Glob --strict-mcp-config`，Codex `-s read-only`，Kimi 0600 临时 `--agent-file` 锁定只读工具，Grok `dontAsk + read-only + --tools read_file,list_dir,grep + --deny use_tool`），提示词里点名材料路径，让它自己读，也可以顺着依据去翻别的文件 |
+| 只看材料 | 外壳是其余几家 CLI（含 Antigravity CLI）的连接 | `ai_prompt` 在临时目录跑（不碰项目）；Mesa 把材料摘录贴进提示词，有总长度上限；提示词写明「你看不到项目文件，只能依据下面的摘录，依据写摘录里的路径和位置」 |
 
 - 成员卡片和发起研讨弹层都写明是哪一档；「只看材料」的成员提的依据如果超出摘录范围，Mesa 照样查路径存不存在，并标「它没看到这份文件」。
 - 贴图：看图看的是**模型**（`model_registry` 的 vision，`model_supports_vision_for`），认不出的按看不了。能看图的模型、外壳又能看项目时走 `image_prompt_note` 同一套（Codex `--image`、Claude Code 点名路径 Read）；其余情况卡片上写「图没给它看」。
@@ -280,5 +280,5 @@ architecture §10 记本次拍板。
     ②开场写「不运行命令」，Codex 就一份材料都不读（它靠 shell 命令读文件），改成只禁改动类命令；③依据写成「（路径）」时括号被算进路径。
   - 没跑通的两条都是环境：Claude Code 官方账号登录过期；Codex 官方账号没写模型时沿用 `~/.codex/config.toml` 里的 `deepseek-v4-flash-0731`，ChatGPT 账号不认（项目助手只读查看同样会撞，另记待查）。
     Codex 在调度子线程里跑不了是测试替身（真实配置替身是线程局部）造成的，正式应用读磁盘不受影响；Codex 直调已通。
-- **Kimi Code 外壳只读实测**（2.5.2）：`-p` 与 `--plan` 不能同用（「Cannot combine --prompt with --plan」）；`-p` 默认不问就建文件、跑命令。没有只读的一次性调用，维持「只看材料」。
+- **Kimi Code / Grok Build 外壳只读实测**（2026-11-14，Kimi 2.6.1 / Grok 1.0.77）：Kimi `-p` 虽不能配 `--plan`，但传临时 `--agent-file` 可进程级白名单锁定 `Read / Glob / Grep / ReadMediaFile`（含屏蔽 MCP）；Grok 用 `dontAsk + read-only + --tools read_file,list_dir,grep + --deny use_tool`（不传 `--add-dir`），两家均升入「能看项目」。`agy` 1.5.8 保持「只看材料」，临时空目录走 `ai_prompt_impl_full` 已打通。
 - **仍未验收**：Mesa Dev 窗口里点界面（被打断卡片、评审页入口、停止按钮的手感）；Windows 待测。

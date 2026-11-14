@@ -39,12 +39,21 @@ const prof = (id: string, agent: string, models: string[], lastUsedAt: string | 
 
 test("候选：能看项目按 CLI 外壳定，与接的模型无关", () => {
   const opts = memberOptions(
-    [prof("cc", "claude-code", ["claude-opus-5-5", "glm-5.3"]), prof("gem", "gemini", ["gemini-3.8-flash"])],
+    [
+      prof("cc", "claude-code", ["claude-opus-5-5", "glm-5.3"]),
+      prof("km", "kimi", ["kimi-k2.5"]),
+      prof("gk", "grok", ["grok-4"]),
+      prof("ag", "agy", ["gemini-2.5-pro"]),
+      prof("gem", "gemini", ["gemini-3.8-flash"]),
+    ],
     [],
   );
   const glm = opts.find((o) => o.model === "glm-5.3")!;
   assert.equal(glm.canRead, true, "Claude Code 外壳接 GLM 也能看项目");
   assert.equal(glm.family, "zhipu");
+  assert.equal(opts.find((o) => o.agentId === "kimi")!.canRead, true);
+  assert.equal(opts.find((o) => o.agentId === "grok")!.canRead, true);
+  assert.equal(opts.find((o) => o.agentId === "agy")!.canRead, false);
   assert.equal(opts.find((o) => o.agentId === "gemini")!.canRead, false);
 });
 

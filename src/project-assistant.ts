@@ -235,8 +235,8 @@ export function mentionedStep(question: string, steps: readonly { name: string; 
   return hit;
 }
 
-/** 目前能只读查看项目文件的 Agent：不落盘 + 进程级只读两样都有的（后端 ai::inspect_readonly_args 同口径） */
-export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex"];
+/** 目前能只读查看项目文件的 Agent：进程级只读已实证的四家（后端 ai::inspect_readonly_args 同口径） */
+export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex", "kimi", "grok"];
 
 /** 等的时候那一行写什么 */
 export const INTENT_WAITING: Record<AssistantIntent, string> = {

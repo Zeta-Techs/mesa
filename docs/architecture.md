@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-14 · Kimi Code 与 Grok Build 升入研讨「能看项目」，修复 Antigravity CLI 研讨「只看材料」
+
+用户查看研讨成员选择菜单后询问还有哪几家可升为「能看项目」，听完实测边界后拍板「1 和 3 加 agy 修复」。定：① `INSPECT_AGENTS`（研讨与项目助手只读查看共用 `ai::ai_inspect_readonly`）扩为 `claude-code`、`codex`、`kimi`、`grok`——Kimi 2.x 经 0600 临时 `--agent-file` 白名单锁定 `Read / Glob / Grep / ReadMediaFile`（关子代理并天然排除用户 MCP），Grok 1.0.77 用 `--permission-mode dontAsk --sandbox read-only --disable-web-search --no-subagents --tools read_file,list_dir,grep --deny use_tool`（不传 `--add-dir` 防 1.0.77 拒建会话，`read-only` 下 `read_file` 原生可读工作副本与附图）；② `agy` 因无进程级只读工具锁保持「只看材料」，修复 `ai_prompt_impl_full` 此前一刀切拒掉 `agy` 导致研讨只看材料与项目助手只看记录报错的问题（对显式指定连接或 `consult / project-assistant` 放行，未指定连接的后台起名/翻译自动回落仍跳过 `agy`）；③ 落盘 CLI（`kimi`、`grok`、`agy`）按会话 id 标 `internal` + `set_session_profile`，单次花费回传界面展示而不写 `record_ephemeral_usage` 防双计。细则 pipeline.md「研讨」、matrix §6/§9/§9b。
+
 ### 2026-11-14 · Antigravity CLI 升为一等支持并补齐聊天层与外部会话链路
 
 用户要求「将 antigravity 也作为一等优化」，并指出聊天层流式显示异常与外部 Antigravity CLI 对话在 Mesa 内不显示。定：① `agy` 升为一等支持（`TIER1_AGENTS` 扩为 `claude-code`、`codex`、`kimi`、`agy`），接入跨厂商复核与定时任务分轮无头续跑（`-p ... --output-format stream-json` + `--conversation <id>` 锁原会话，只收 `result.response` / `agent_response` 增量，不误吃用户提示词）；进程级只读场景（研讨、项目助手只读查看）仍按能力表单独拦截；② 聊天层与一等 CLI 对齐：`program-status` 旁路只报状态不推正文，开放 xterm 实时流式预览与盲文转圈思考块提取（过滤 `⎿` 工具回显与 `└ Tip:`），补齐 `agy` PascalCase 工具卡片 / 差异对比 / 命令摘要 / 退出码状态、审批菜单按键提示剥离与回复中排队提示；③ 实测 `agy` 1.5.8 TUI `/model` 会写回全局 `settings.json` 且无 `/effort` 斜杠命令，运行中换模型与思考档统一走重开接回（`SWITCH_PERSISTS.agy` + `effort_levels: None`），保护全局配置零污染；④ 外部对话发现补齐 `conversation_summaries.db` 的 `conversations_fts` 纯文字会话解析（运行中生成 `transcript*.jsonl` 后无缝升级）及 `cc-switch` 等 `--gemini_dir` 隔离根目录扫描与续聊自动带目录。细则 AGENTS.md「CLI 支持分级」、`docs/design-agy-integration.md`、matrix §9b。

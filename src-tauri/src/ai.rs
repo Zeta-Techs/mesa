@@ -63,8 +63,8 @@ pub(crate) fn resolve_profile_from(
                 format!("profile 不存在: {id}（如来自设置页的 AI 专用配置，请到设置页重选）")
             });
     }
-    // 最近使用：先跳过官方账号（无头调用吃 OAuth，过期会甩一大段 401 日志）；
-    // 显式/专属/专用槽仍尊重官方账号。没有 API 配置才回落官方。
+    // 最近使用：先跳过官方账号（无头调用吃 OAuth，过期会甩一大段 401 日志）与 Antigravity CLI
+    //（每次无头调用都会写入会话记录库，后台自动起名/翻译不抢它）；显式/专属/专用槽仍照常尊重。
     let visible: Vec<&Profile> = profiles
         .iter()
         .filter(|p| !hidden_ids.contains(&p.id))
@@ -72,8 +72,15 @@ pub(crate) fn resolve_profile_from(
     visible
         .iter()
         .copied()
-        .filter(|p| p.account_type != crate::profiles::AccountType::Official)
+        .filter(|p| p.account_type != crate::profiles::AccountType::Official && p.agent != "agy")
         .max_by(|a, b| a.last_used_at.cmp(&b.last_used_at))
+        .or_else(|| {
+            visible
+                .iter()
+                .copied()
+                .filter(|p| p.account_type != crate::profiles::AccountType::Official)
+                .max_by(|a, b| a.last_used_at.cmp(&b.last_used_at))
+        })
         .or_else(|| {
             visible
                 .iter()
@@ -198,7 +205,34 @@ fn headless_oneshot_args(agent: &str, prompt: &str) -> Vec<String> {
             "read-only".into(),
             prompt.into(),
         ],
+        // Antigravity CLI：stream-json 输出 conversation_id（供标 internal）与 result.usage（供算单次花费）
+        "agy" => vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "stream-json".into(),
+        ],
         other => headless_args(other, prompt),
+    }
+}
+
+/// 边跑边出字的一次性调用参数（项目助手 / 研讨用）
+fn headless_oneshot_stream_args(agent: &str, prompt: &str) -> Vec<String> {
+    match agent {
+        "claude-code" => claude_stream_args(prompt),
+        "kimi" => vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "stream-json".into(),
+        ],
+        "grok" => vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "streaming-json".into(),
+        ],
+        _ => headless_oneshot_args(agent, prompt),
     }
 }
 
@@ -244,12 +278,12 @@ pub(crate) fn lower_effort(agent: &str, plan: &mut agents::LaunchPlan, level: &s
     }
 }
 
-/// 解析不落盘调用的 JSON 输出 → (正文, 用量事件)。格式 2026-10-17 本机实录：
-/// - claude `--output-format json`：单个对象，`result` 是正文，`is_error` 为真时 `result` 是错误句；
-///   用量优先 `modelUsage`（按模型分），没有就用顶层 `usage` 记在所选模型上
-/// - codex `exec --json`：JSONL 事件流，`item.completed` 且 `item.type=agent_message` 的 `text`
-///   是正文（取最后一条）；`turn.completed.usage` 是本轮用量；`type=error` 的 item 是告警
-///   （配置项过时之类），只有拿不到正文时才当错误原因
+/// 解析结构化无头输出 → (正文, 用量事件)。
+/// - claude `--output-format json` / `stream-json`：取末条 `type=result`；`modelUsage` 优先，回落顶层 `usage`
+/// - codex `exec --json`：`item.completed` 的 `agent_message` 取最后一条；`turn.completed.usage` 拆掉缓存读
+/// - kimi `--output-format stream-json`：只收 `role=assistant` 正文（带 `tool_calls` 的中间轮不拼进终局结论）
+/// - grok `--output-format json` / `streaming-json`：兼容单 JSON 对象与逐行事件流（工具调用前的过渡字清掉，保留终局轮正文）
+/// - agy `--output-format stream-json`：优先 `result.response`，回落 `step_update.text_delta`（跳过 `user_input`）；`result.usage.input_tokens` 已为未缓存输入
 pub(crate) fn parse_oneshot_output(
     agent: &str,
     raw: &str,
@@ -363,6 +397,224 @@ pub(crate) fn parse_oneshot_output(
                 Some(t) => Ok((t, events)),
                 None => Err(warning.unwrap_or_else(|| "AI 返回为空（无文本输出）".into())),
             }
+        }
+        "kimi" => {
+            fn extract_content(content: Option<&Value>) -> String {
+                let mut parts = Vec::new();
+                match content {
+                    Some(Value::String(s)) => parts.push(s.clone()),
+                    Some(Value::Array(items)) => {
+                        for part in items {
+                            let kind = part.get("type").and_then(Value::as_str).unwrap_or("text");
+                            if matches!(kind, "text" | "output_text") {
+                                if let Some(t) = part.get("text").and_then(Value::as_str) {
+                                    parts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                parts.join("")
+            }
+            let mut final_parts: Vec<String> = Vec::new();
+            let mut fallback_parts: Vec<String> = Vec::new();
+            let mut err_msg: Option<String> = None;
+            for line in raw.lines() {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if v.get("role").and_then(Value::as_str) == Some("assistant") {
+                    let has_tools = v
+                        .get("tool_calls")
+                        .or_else(|| v.get("toolCalls"))
+                        .and_then(Value::as_array)
+                        .is_some_and(|a| !a.is_empty());
+                    let text = extract_content(v.get("content"));
+                    if !text.trim().is_empty() {
+                        fallback_parts.push(text.clone());
+                        if !has_tools {
+                            final_parts.push(text);
+                        }
+                    }
+                    if has_tools {
+                        final_parts.clear();
+                    }
+                } else if v.get("type").and_then(Value::as_str) == Some("error") {
+                    err_msg = v
+                        .get("message")
+                        .or_else(|| v.get("content"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+            }
+            let joined = if !final_parts.is_empty() {
+                final_parts.join("")
+            } else {
+                fallback_parts.join("")
+            };
+            let trimmed = joined.trim().to_string();
+            if trimmed.is_empty() {
+                return Err(err_msg.unwrap_or_else(|| "AI 返回为空（无文本输出）".into()));
+            }
+            Ok((trimmed, Vec::new()))
+        }
+        "grok" => {
+            // 1) 单对象 JSON（`--output-format json`，可能跨多行格式化）
+            if let Ok(v) = serde_json::from_str::<Value>(raw.trim()) {
+                if v.get("type").is_none() && (v.get("text").is_some() || v.get("stopReason").is_some()) {
+                    let text = v.get("text").and_then(Value::as_str).unwrap_or("").trim().to_string();
+                    let mut events = Vec::new();
+                    if let Some(by_model) = v.get("modelUsage").and_then(Value::as_object) {
+                        for (m, u) in by_model {
+                            let cr = num(u, "cacheReadInputTokens").max(num(u, "cachedReadTokens"));
+                            let cw = num(u, "cacheCreationInputTokens").max(num(u, "cacheCreationTokens"));
+                            events.push(ev(
+                                m,
+                                crate::usage::uncached_input(num(u, "inputTokens"), cr, cw),
+                                num(u, "outputTokens"),
+                                cr,
+                                cw,
+                            ));
+                        }
+                    }
+                    if events.is_empty() {
+                        if let Some(u) = v.get("usage") {
+                            events.push(ev(
+                                model.unwrap_or(""),
+                                num(u, "input_tokens"),
+                                num(u, "output_tokens"),
+                                num(u, "cache_read_input_tokens").max(num(u, "cached_read_tokens")),
+                                num(u, "cache_creation_input_tokens"),
+                            ));
+                        }
+                    }
+                    events.retain(|e| e.input + e.output + e.cache_read + e.cache_write > 0);
+                    if text.is_empty() {
+                        let msg = v.get("error").or_else(|| v.get("message")).and_then(Value::as_str);
+                        return Err(msg.unwrap_or("AI 返回为空（无文本输出）").to_string());
+                    }
+                    return Ok((text, events));
+                }
+            }
+            // 2) 逐行事件流（`--output-format streaming-json`）
+            let mut turn_text = String::new();
+            let mut all_text = String::new();
+            let mut err_msg: Option<String> = None;
+            let mut end_usage: Option<Value> = None;
+            let mut turn_events = Vec::new();
+            for line in raw.lines() {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                match v.get("type").and_then(Value::as_str) {
+                    Some("text") => {
+                        if let Some(d) = v.get("data").and_then(Value::as_str) {
+                            turn_text.push_str(d);
+                            all_text.push_str(d);
+                        }
+                    }
+                    Some("tool_call") => {
+                        turn_text.clear();
+                    }
+                    Some("usage") => {
+                        if let Some(u) = v.get("usage") {
+                            turn_events.push(ev(
+                                model.unwrap_or(""),
+                                num(u, "input_tokens"),
+                                num(u, "output_tokens"),
+                                num(u, "cache_read_input_tokens").max(num(u, "cached_read_tokens")),
+                                num(u, "cache_creation_input_tokens"),
+                            ));
+                        }
+                    }
+                    Some("end") => {
+                        if let Some(u) = v.get("usage") {
+                            end_usage = Some(u.clone());
+                        }
+                    }
+                    Some("error") => {
+                        if let Some(m) = v.get("message").and_then(Value::as_str) {
+                            err_msg = Some(m.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut events = if let Some(u) = end_usage {
+                vec![ev(
+                    model.unwrap_or(""),
+                    num(&u, "input_tokens"),
+                    num(&u, "output_tokens"),
+                    num(&u, "cache_read_input_tokens").max(num(&u, "cached_read_tokens")),
+                    num(&u, "cache_creation_input_tokens"),
+                )]
+            } else {
+                turn_events
+            };
+            events.retain(|e| e.input + e.output + e.cache_read + e.cache_write > 0);
+            let picked = if !turn_text.trim().is_empty() { turn_text } else { all_text };
+            let trimmed = picked.trim().to_string();
+            if trimmed.is_empty() {
+                return Err(err_msg.unwrap_or_else(|| "AI 返回为空（无文本输出）".into()));
+            }
+            Ok((trimmed, events))
+        }
+        "agy" => {
+            let mut final_response: Option<String> = None;
+            let mut deltas = Vec::new();
+            let mut events = Vec::new();
+            for line in raw.lines() {
+                let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                match value.get("event").and_then(Value::as_str) {
+                    Some("result") => {
+                        if let Some(res) = value.get("result") {
+                            if let Some(status) = res.get("status").and_then(Value::as_str) {
+                                if !status.eq_ignore_ascii_case("SUCCESS") {
+                                    let msg = res
+                                        .get("error")
+                                        .or_else(|| res.get("message"))
+                                        .and_then(Value::as_str)
+                                        .unwrap_or(status);
+                                    return Err(format!("Antigravity CLI 执行未成功: {msg}"));
+                                }
+                            }
+                            if let Some(resp) = res.get("response").and_then(Value::as_str) {
+                                if !resp.trim().is_empty() {
+                                    final_response = Some(resp.trim().to_string());
+                                }
+                            }
+                            if let Some(u) = res.get("usage") {
+                                // agy 的 input_tokens 已是扣除缓存后的未缓存输入（见 usage::agy_events）
+                                events.push(ev(
+                                    model.unwrap_or(""),
+                                    num(u, "input_tokens"),
+                                    num(u, "output_tokens"),
+                                    num(u, "cache_read_tokens"),
+                                    num(u, "cache_creation_tokens"),
+                                ));
+                            }
+                        }
+                    }
+                    Some("step_update") => {
+                        let su = value.get("step_update").unwrap_or(&value);
+                        if su.get("step_type").and_then(Value::as_str) == Some("agent_response") {
+                            if let Some(delta) = su.get("text_delta").and_then(Value::as_str) {
+                                deltas.push(delta.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            events.retain(|e| e.input + e.output + e.cache_read + e.cache_write > 0);
+            let text = final_response.unwrap_or_else(|| deltas.join("").trim().to_string());
+            if text.is_empty() {
+                return Err("没有可读的 Antigravity CLI 回执文本".into());
+            }
+            Ok((text, events))
         }
         _ => Ok((raw.trim().to_string(), Vec::new())),
     }
@@ -879,8 +1131,11 @@ pub(crate) fn ai_prompt_impl_full(
         settings.ai_profile_id.as_deref(),
         settings.ai_model.as_deref(),
     );
-    if profile.agent == "agy" {
-        return Err("Antigravity CLI 每次无头调用都会写入会话记录，暂不用于后台标题/翻译；请在设置「AI 角色分工」改选 Claude Code 或 Codex".into());
+    // Antigravity CLI 每次 `-p` 都会写入会话摘要库，不用于高频静默后台调用（自动起名/翻译等）；
+    // 用户主动点名（研讨「只看材料」、项目助手、或显式指定 profile_id）照常放行
+    let user_directed_agy = explicit_id.is_some() || matches!(fn_key, Some("consult" | "project-assistant"));
+    if profile.agent == "agy" && !user_directed_agy {
+        return Err("Antigravity CLI 每次无头调用都会写入会话记录，暂不用于后台标题/翻译；请在设置「内置 AI 功能」改选其他 CLI".into());
     }
     let binary = agents::binary_for(&profile.agent)
         .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
@@ -899,7 +1154,7 @@ pub(crate) fn ai_prompt_impl_full(
     }
     let mut cmd = crate::process::background_command(&binary_path);
     let ephemeral = oneshot_is_ephemeral(&profile.agent);
-    let streaming = on_line.is_some() && profile.agent == "claude-code";
+    let streaming = on_line.is_some();
     // 不落盘就没有会话文件，锁会话 id / 标 internal 都无对象
     let (lock_id, lock_args) = if ephemeral {
         (None, Vec::new())
@@ -915,7 +1170,14 @@ pub(crate) fn ai_prompt_impl_full(
             selected.as_deref().map(|m| (m, "")),
         );
     }
-    let oneshot = if streaming { claude_stream_args(&prompt) } else { headless_oneshot_args(&profile.agent, &prompt) };
+    let oneshot = if streaming {
+        headless_oneshot_stream_args(&profile.agent, &prompt)
+    } else {
+        headless_oneshot_args(&profile.agent, &prompt)
+    };
+    let structured_output = ephemeral
+        || matches!(profile.agent.as_str(), "grok" | "agy")
+        || (streaming && profile.agent == "kimi");
     for a in compose_headless_args(&profile.agent, &plan.args, &oneshot) {
         cmd.arg(a);
     }
@@ -982,35 +1244,60 @@ pub(crate) fn ai_prompt_impl_full(
             feed_lines(&mut pending, bytes, *cb);
         }
     };
+    let mut session_id: Option<String> = None;
     let result = run_capture_with(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
         AI_TIMEOUT,
         Some(&run.id),
-        &mut None,
+        &mut session_id,
         Some(&mut feed),
     );
-    // 不落盘调用：JSON 里拆出正文与用量，用量直接记账（扫描不到会话文件，重建补不回来）
-    let result = if ephemeral {
+    if lock_id.is_none() {
+        if let Some(sid) = &session_id {
+            let _ = crate::sessions::set_session_profile(
+                &profile.agent,
+                sid,
+                &profile.id,
+                selected.as_deref().map(|m| (m, "")),
+            );
+        }
+    }
+    // 结构化 JSON 输出：拆出正文与单次用量（供研讨 / 项目助手显示花费）；
+    // 只有不落盘调用（ephemeral）才直接写 usage_daily——落盘 CLI 会由会话扫描入账，重复写会双计
+    let result = if structured_output {
         result.and_then(|raw| {
-            let (text, events) = parse_oneshot_output(
+            let today = crate::usage::today_local();
+            let (text, mut events) = parse_oneshot_output(
                 &profile.agent,
                 &raw,
                 selected.as_deref(),
-                &crate::usage::today_local(),
+                &today,
             )?;
+            if events.is_empty() && profile.agent == "kimi" {
+                if let Some(sid) = session_id.as_deref() {
+                    events = kimi_session_usage_events(
+                        sid,
+                        selected.as_deref(),
+                        &today,
+                        profile.extra_env.get("KIMI_CODE_HOME").map(String::as_str),
+                    );
+                }
+            }
             if let Some(out) = cost_out {
                 *out = crate::usage::events_cost_usd(&events);
             }
-            if let Err(e) = crate::usage::record_ephemeral_usage(
-                &profile.agent,
-                &format!("ephemeral-{}", run.id),
-                &cwd.to_string_lossy(),
-                profile.account_type == crate::profiles::AccountType::Official,
-                &events,
-            ) {
-                eprintln!("[ai] {e}");
+            if ephemeral {
+                if let Err(e) = crate::usage::record_ephemeral_usage(
+                    &profile.agent,
+                    &format!("ephemeral-{}", run.id),
+                    &cwd.to_string_lossy(),
+                    profile.account_type == crate::profiles::AccountType::Official,
+                    &events,
+                ) {
+                    eprintln!("[ai] {e}");
+                }
             }
             Ok(text)
         })
@@ -1036,28 +1323,126 @@ pub(crate) fn ai_prompt_impl_full(
     result
 }
 
-/// 项目助手「只读查看项目文件」（2026-11-04 用户拍板：问出错时让它自己打开脚本 / 日志 / 产物核对）。
-/// 目前只有 Claude Code 与 Codex：两家都能不落盘（花费从输出直接记账，不在项目里留内部会话、不登记项目级内部来源），
-/// 只读也有进程级保证（Claude 拿掉一切写 / 执行 / 联网工具、Codex `-s read-only`）。
-/// Claude 不用 plan 档：2026-11-04 实测 2.1.309 的 `-p --permission-mode plan` 会在 `~/.claude/plans/` 落一份计划文件
-/// （碰了 CLI 配置目录，违反「各 CLI 配置目录只读」）；改 default 档 + `--disallowedTools` 去掉写与执行，
-/// 同日实测让它「顺手把脚本改好」也只是把改法贴出来，项目与 ~/.claude/plans 都没多文件。别家返回以 INSPECT_UNSUPPORTED 开头的错，
-/// 前端退回只看记录。跑在项目根，工作副本经 `--add-dir`（Claude）带上；Codex 只读沙箱本就能读别处
+/// 项目助手 / 研讨「只读查看项目文件」（2026-11-04 立，2026-11-14 扩展到四家）：
+/// - Claude Code、Codex：不落盘（花费从输出直接记账）+ 进程级只读（Claude 白名单只读工具 + `--strict-mcp-config`，Codex `-s read-only`）
+/// - Kimi Code（2.x）：0600 临时 `--agent-file` 白名单锁定 `Read / Glob / Grep / ReadMediaFile`（自动屏蔽 Bash / Write / 子代理 / MCP）
+/// - Grok Build：`--permission-mode dontAsk --sandbox read-only --disable-web-search --no-subagents --tools read_file,list_dir,grep --deny use_tool`
+/// Kimi / Grok 的会话会落盘：按会话 id 标 `internal` 并记入 `set_session_profile`（不进项目聊天列表、用量由会话扫描单次入账不双计）。
 pub(crate) const INSPECT_UNSUPPORTED: &str = "INSPECT_UNSUPPORTED";
-/// 只读查看时 Claude 只给的内置工具（白名单，2026-11-06）：黑名单每个新版本都会漏——当日 2.1.318 实测 init 工具表里还有
-/// PowerShell（Windows，`CLAUDE_CODE_USE_POWERSHELL_TOOL=1` 时出现，设置里放行过的命令 -p 里不经审批）、EnterWorktree（在项目里建
-/// worktree）、CronCreate / SendMessage / Workflow 等。配 `--strict-mcp-config` 不加载用户的 MCP 服务器（MCP 工具同样能写）
 const CLAUDE_INSPECT_TOOLS: &str = "Read Grep Glob";
-/// `--tools` 白名单可靠的最低版本：2.1.186 起首次冷启动不再漏放特性开关后的工具（更新日志），2.1.162 起 Grep / Glob 才真生效
 const CLAUDE_INSPECT_TOOLS_MIN: (u32, u32, u32) = (2, 1, 186);
-/// 更老或读不到版本时退回的黑名单：改文件、跑命令（含 Windows 的 PowerShell）、建 worktree、联网、开子代理
 const CLAUDE_INSPECT_DISALLOWED: &str = "Edit Write MultiEdit NotebookEdit Bash PowerShell EnterWorktree WebFetch WebSearch Task";
+const GROK_INSPECT_TOOLS: &str = "read_file,list_dir,grep";
+const KIMI_INSPECT_AGENT_MD: &str = "\
+---
+name: mesa-readonly
+description: Mesa read-only project inspector
+tools:
+  - Read
+  - Glob
+  - Grep
+  - ReadMediaFile
+subagents: []
+---
+You are a read-only inspector. Never modify files or execute commands.
+";
 const INSPECT_TIMEOUT: Duration = Duration::from_secs(240);
 
-/// images：附图（项目助手粘贴的截图，2026-11-05）。Codex 用自带的 `--image=a,b` 附在这条消息上（写成一个参数：
-/// `-i` 后面能吃多个值，会把提示词也当成图）；Claude Code 没有附图参数，由调用方把图所在目录 `--add-dir`、提示词里点名路径，
-/// 它用 Read 工具打开（只读模式里 Read 本来就放行，实测 2.1.309 能读出截图里的报错）
-/// claude_version：本机 Claude Code 版本（`agents::cli_version`），够 `CLAUDE_INSPECT_TOOLS_MIN` 才用白名单
+struct TempFileGuard(PathBuf);
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+fn write_kimi_inspect_agent_file() -> Result<TempFileGuard, String> {
+    let path = std::env::temp_dir().join(format!("ccode-kimi-inspect-{}.md", uuid::Uuid::new_v4()));
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    use std::io::Write;
+    let mut file = opts.open(&path).map_err(|e| format!("创建只读 agent 定义失败: {e}"))?;
+    file.write_all(KIMI_INSPECT_AGENT_MD.as_bytes())
+        .and_then(|_| file.sync_all())
+        .map_err(|e| {
+            let _ = fs::remove_file(&path);
+            format!("写入只读 agent 定义失败: {e}")
+        })?;
+    Ok(TempFileGuard(path))
+}
+
+/// 从 Kimi 落盘的 `wire.jsonl` 提取本次会话的 `usage.record`，用于给研讨 / 项目助手显示当次花费（不写库）
+pub(crate) fn kimi_wire_usage_events(
+    wire_text: &str,
+    model: Option<&str>,
+    day: &str,
+) -> Vec<crate::usage::UsageEvent> {
+    let mut out = Vec::new();
+    for line in wire_text.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) != Some("usage.record") {
+            continue;
+        }
+        let Some(u) = v.get("usage") else {
+            continue;
+        };
+        let num = |k: &str| u.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        let input = num("inputOther");
+        let output = num("output");
+        let cache_read = num("inputCacheRead");
+        let cache_write = num("inputCacheCreation");
+        if input + output + cache_read + cache_write == 0 {
+            continue;
+        }
+        out.push(crate::usage::UsageEvent {
+            day: day.to_string(),
+            model: model.unwrap_or("").to_string(),
+            input,
+            output,
+            cache_read,
+            cache_write,
+            ..Default::default()
+        });
+    }
+    out
+}
+
+fn kimi_session_usage_events(
+    session_id: &str,
+    model: Option<&str>,
+    day: &str,
+    extra_kimi_home: Option<&str>,
+) -> Vec<crate::usage::UsageEvent> {
+    let kimi_root = extra_kimi_home
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(|| crate::sessions::SessionRoots::current().map(|r| r.kimi_code));
+    let Some(index_text) = kimi_root.and_then(|r| fs::read_to_string(r.join("session_index.jsonl")).ok()) else {
+        return Vec::new();
+    };
+    let session_dir = index_text.lines().rev().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        (v.get("sessionId").and_then(|s| s.as_str()) == Some(session_id))
+            .then(|| v.get("sessionDir").and_then(|s| s.as_str()).map(PathBuf::from))
+            .flatten()
+    });
+    let Some(wire_text) = session_dir
+        .and_then(|d| fs::read_to_string(d.join("agents").join("main").join("wire.jsonl")).ok())
+    else {
+        return Vec::new();
+    };
+    kimi_wire_usage_events(&wire_text, model, day)
+}
+
+/// images：附图（项目助手 / 研讨粘贴的截图）。Codex 用自带的 `--image=a,b` 附在这条消息上；
+/// Claude Code / Kimi Code / Grok Build 由提示词点名路径，各自用只读读文件/媒体工具打开
+///（Claude 与 Kimi 经 `--add-dir` 放行额外目录；Grok `--sandbox read-only` 本就能读别处，且 1.0.77 传 `--add-dir` 会拒建会话）
 pub(crate) fn inspect_readonly_args(
     agent: &str,
     prompt: &str,
@@ -1065,6 +1450,7 @@ pub(crate) fn inspect_readonly_args(
     stream: bool,
     images: &[String],
     claude_version: Option<(u32, u32, u32)>,
+    kimi_agent_file: Option<&str>,
 ) -> Option<Vec<String>> {
     match agent {
         "claude-code" => {
@@ -1106,20 +1492,60 @@ pub(crate) fn inspect_readonly_args(
             a.push(prompt.into());
             Some(a)
         }
+        "kimi" => {
+            let agent_file = kimi_agent_file?;
+            let mut a: Vec<String> = vec![
+                "--agent-file".into(),
+                agent_file.into(),
+                "-p".into(),
+                prompt.into(),
+                "--output-format".into(),
+                "stream-json".into(),
+            ];
+            for d in extra_dirs {
+                a.push("--add-dir".into());
+                a.push(d.clone());
+            }
+            Some(a)
+        }
+        "grok" => Some(vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            "streaming-json".into(),
+            "--permission-mode".into(),
+            "dontAsk".into(),
+            "--sandbox".into(),
+            "read-only".into(),
+            "--disable-web-search".into(),
+            "--no-subagents".into(),
+            "--tools".into(),
+            GROK_INSPECT_TOOLS.into(),
+            "--deny".into(),
+            "use_tool".into(),
+        ]),
         _ => None,
     }
 }
 
-/// 带图时提示词前面加的一段：Claude Code 要自己用 Read 打开（点名路径），Codex 图已附在消息上
+/// 带图时提示词前面加的一段：Claude / Kimi / Grok 要自己用读文件工具打开（点名路径），Codex 图已附在消息上
 pub(crate) fn image_prompt_note(agent: &str, images: &[String]) -> String {
     if images.is_empty() {
         return String::new();
     }
+    let list = images.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n");
     match agent {
         "claude-code" => format!(
-            "用户随问题附了 {} 张截图，回答前先用 Read 工具逐张打开看（图里的报错、界面状态是这次提问的关键）：\n{}\n\n",
-            images.len(),
-            images.iter().map(|p| format!("- {p}")).collect::<Vec<_>>().join("\n")
+            "用户随问题附了 {} 张截图，回答前先用 Read 工具逐张打开看（图里的报错、界面状态是这次提问的关键）：\n{list}\n\n",
+            images.len()
+        ),
+        "kimi" => format!(
+            "用户随问题附了 {} 张截图，回答前先用 ReadMediaFile 工具逐张打开看（图里的报错、界面状态是这次提问的关键）：\n{list}\n\n",
+            images.len()
+        ),
+        "grok" => format!(
+            "用户随问题附了 {} 张截图，回答前先用 read_file 工具逐张打开看（图里的报错、界面状态是这次提问的关键）：\n{list}\n\n",
+            images.len()
         ),
         _ => format!("用户随问题附了 {} 张截图（已附在这条消息里），回答前先看图，图里的报错、界面状态是这次提问的关键。\n\n", images.len()),
     }
@@ -1156,7 +1582,7 @@ pub(crate) fn ai_inspect_readonly(
         .take(8)
         .cloned()
         .collect();
-    // 附图所在目录也给 Claude 读（Codex 的只读沙箱本就能读别处，图又是作为附件传）
+    // 附图所在目录也给需要 `--add-dir` 的家读（Claude / Kimi）
     for img in images {
         if let Some(parent) = std::path::Path::new(img).parent().map(|p| p.to_string_lossy().into_owned()) {
             if !dirs.contains(&parent) {
@@ -1166,7 +1592,21 @@ pub(crate) fn ai_inspect_readonly(
     }
     let prompt = format!("{}{}", image_prompt_note(&profile.agent, images), prompt);
     let claude_version = (profile.agent == "claude-code").then(|| agents::cli_version("claude-code")).flatten();
-    let Some(mut args) = inspect_readonly_args(&profile.agent, &prompt, &dirs, on_line.is_some(), images, claude_version) else {
+    let kimi_guard = if profile.agent == "kimi" && agents::kimi_variant() != Some("legacy") {
+        Some(write_kimi_inspect_agent_file()?)
+    } else {
+        None
+    };
+    let kimi_agent_path = kimi_guard.as_ref().map(|g| g.0.to_string_lossy().into_owned());
+    let Some(mut args) = inspect_readonly_args(
+        &profile.agent,
+        &prompt,
+        &dirs,
+        on_line.is_some(),
+        images,
+        claude_version,
+        kimi_agent_path.as_deref(),
+    ) else {
         return Err(format!("{INSPECT_UNSUPPORTED}: {}", profile.agent));
     };
     // 问它一句（不打断，2026-11-11）：Claude Code 原生分叉——接上那段会话的记忆另起一份，配 --no-session-persistence 不落盘，
@@ -1190,8 +1630,26 @@ pub(crate) fn ai_inspect_readonly(
     if let Some(level) = effort {
         lower_effort(&profile.agent, &mut plan, level);
     }
+    let ephemeral = oneshot_is_ephemeral(&profile.agent);
+    let (lock_id, lock_args) = if ephemeral {
+        (None, Vec::new())
+    } else {
+        lock_headless_session(&profile.agent)
+    };
+    if let Some(id) = &lock_id {
+        let _ = crate::sessions::mark_session_internal(&profile.agent, id);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            id,
+            &profile.id,
+            selected.as_deref().map(|m| (m, "")),
+        );
+    }
     let mut cmd = crate::process::background_command(&binary_path);
     for a in compose_headless_args(&profile.agent, &plan.args, &args) {
+        cmd.arg(a);
+    }
+    for a in lock_args {
         cmd.arg(a);
     }
     for (k, v) in &plan.env {
@@ -1228,13 +1686,45 @@ pub(crate) fn ai_inspect_readonly(
             feed_lines(&mut pending, bytes, *cb);
         }
     };
-    let result = run_capture_with(Some(&profile.agent), host.as_deref(), &mut cmd, INSPECT_TIMEOUT, Some(&run.id), &mut None, Some(&mut feed))
-        .and_then(|raw| {
-            let (text, events) =
-                parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &crate::usage::today_local())?;
-            if let Some(out) = cost_out {
-                *out = crate::usage::events_cost_usd(&events);
+    let mut session_id: Option<String> = None;
+    let raw_result = run_capture_with(
+        Some(&profile.agent),
+        host.as_deref(),
+        &mut cmd,
+        INSPECT_TIMEOUT,
+        Some(&run.id),
+        &mut session_id,
+        Some(&mut feed),
+    );
+    drop(kimi_guard);
+    if lock_id.is_none() {
+        if let Some(sid) = &session_id {
+            let _ = crate::sessions::set_session_profile(
+                &profile.agent,
+                sid,
+                &profile.id,
+                selected.as_deref().map(|m| (m, "")),
+            );
+        }
+    }
+    let result = raw_result.and_then(|raw| {
+        let today = crate::usage::today_local();
+        let (text, mut events) = parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &today)?;
+        if events.is_empty() && profile.agent == "kimi" {
+            if let Some(sid) = session_id.as_deref() {
+                events = kimi_session_usage_events(
+                    sid,
+                    selected.as_deref(),
+                    &today,
+                    profile.extra_env.get("KIMI_CODE_HOME").map(String::as_str),
+                );
             }
+        }
+        if let Some(out) = cost_out {
+            *out = crate::usage::events_cost_usd(&events);
+        }
+        // 不落盘调用直接写 usage_daily；落盘会话（Kimi / Grok）已标 internal 并登记连接模型，由会话扫描单次入账
+        if ephemeral {
             if let Err(e) = crate::usage::record_ephemeral_usage(
                 &profile.agent,
                 &format!("ephemeral-{}", run.id),
@@ -1244,8 +1734,9 @@ pub(crate) fn ai_inspect_readonly(
             ) {
                 eprintln!("[ai] {e}");
             }
-            Ok(text)
-        });
+        }
+        Ok(text)
+    });
     let status = if result.is_ok() { "completed" } else { "failed" };
     let _ = crate::runs::close_run_with_result(
         &run.id,
@@ -1502,8 +1993,9 @@ pub(crate) fn followup_text(agent: &str, raw: &str) -> Result<String, String> {
                         }
                     }
                     Some("step_update") => {
-                        if value.get("step_type").and_then(|v| v.as_str()) == Some("agent_response") {
-                            if let Some(delta) = value.get("text_delta").and_then(|v| v.as_str()) {
+                        let su = value.get("step_update").unwrap_or(&value);
+                        if su.get("step_type").and_then(|v| v.as_str()) == Some("agent_response") {
+                            if let Some(delta) = su.get("text_delta").and_then(|v| v.as_str()) {
                                 deltas.push(delta.to_string());
                             }
                         }
@@ -3770,6 +4262,23 @@ mod tests {
     }
 
     #[test]
+    fn profile_resolution_last_used_skips_agy_when_other_api_exists() {
+        let agy = profile("agy1", "agy", Some("2026-11-14T10:00:00Z"));
+        let api = profile("api1", "kimi", Some("2026-11-01T00:00:00Z"));
+        let profiles = vec![agy.clone(), api];
+        let no_hidden = &Default::default();
+        // agy 更新，但未显式指定连接的后台起名/翻译跳过它
+        let p = resolve_profile_from(profiles.clone(), None, None, None, no_hidden).unwrap();
+        assert_eq!(p.id, "api1");
+        // 显式/功能槽/全局专用仍尊重 agy
+        assert_eq!(resolve_profile_from(profiles.clone(), Some("agy1".into()), None, None, no_hidden).unwrap().id, "agy1");
+        assert_eq!(resolve_profile_from(profiles.clone(), None, Some("agy1".into()), None, no_hidden).unwrap().id, "agy1");
+        assert_eq!(resolve_profile_from(profiles, None, None, Some("agy1".into()), no_hidden).unwrap().id, "agy1");
+        // 只有 agy 时回落 agy
+        assert_eq!(resolve_profile_from(vec![agy], None, None, None, no_hidden).unwrap().id, "agy1");
+    }
+
+    #[test]
     fn strip_known_cli_noise_removes_unrecognized_model_warning() {
         // claude-code ≥2.1.285 对网关模型（glm-* 等）在 -p 查询前打的良性 warn：
         // 整行过滤，其余行原样保留（含前导空格的变体也滤）
@@ -3883,6 +4392,20 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert_eq!(&codex[..2], &["exec", "--skip-git-repo-check"], "compose_headless_args 依赖前两项");
         assert!(codex.contains(&"--ephemeral".to_string()) && codex.contains(&"--json".to_string()));
         assert_eq!(headless_oneshot_args("kimi", "你好"), headless_args("kimi", "你好"));
+        assert_eq!(
+            headless_oneshot_args("agy", "你好"),
+            vec!["-p", "你好", "--output-format", "stream-json"]
+        );
+        assert_eq!(
+            headless_oneshot_stream_args("kimi", "你好"),
+            vec!["-p", "你好", "--output-format", "stream-json"]
+        );
+        assert_eq!(
+            headless_oneshot_stream_args("grok", "你好"),
+            vec!["-p", "你好", "--output-format", "streaming-json"]
+        );
+        assert!(oneshot_is_ephemeral("claude-code") && oneshot_is_ephemeral("codex"));
+        assert!(!oneshot_is_ephemeral("kimi") && !oneshot_is_ephemeral("grok") && !oneshot_is_ephemeral("agy"));
         // 定时任务不受影响：巡检运行事后要能回看
         assert!(!headless_task_args("claude-code", "你好").contains(&"--no-session-persistence".to_string()));
         assert!(!headless_task_args("codex", "你好").contains(&"--ephemeral".to_string()));
@@ -3935,6 +4458,57 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         // 没有正文：拿最后一条告警/失败当原因
         let failed = r#"{"type":"turn.failed","error":{"message":"401 Unauthorized"}}"#;
         assert_eq!(parse_oneshot_output("codex", failed, None, "d").unwrap_err(), "401 Unauthorized");
+    }
+
+    #[test]
+    fn parse_oneshot_kimi_grok_and_agy() {
+        // Kimi stream-json：中间带 tool_calls 的过渡文字不混入终局结论，think 块跳过
+        let kimi_raw = concat!(
+            r#"{"role":"assistant","content":[{"type":"think","think":"先找文件"},{"type":"text","text":"我先读一下"}],"tool_calls":[{"id":"c1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"a.md\"}"}}]}"#, "\n",
+            r#"{"role":"tool","tool_call_id":"c1","content":"正文"}"#, "\n",
+            r#"{"role":"assistant","content":[{"type":"think","think":"核对完毕"},{"type":"text","text":"  结论：通过  "}]}"#, "\n",
+            r#"{"type":"session.resume_hint","session_id":"session_12345678"}"#,
+        );
+        let (text, ev) = parse_oneshot_output("kimi", kimi_raw, Some("kimi-k2.5"), "2026-11-14").unwrap();
+        assert_eq!(text, "结论：通过");
+        assert!(ev.is_empty());
+        let wire = concat!(
+            r#"{"type":"metadata","protocol_version":"1.9"}"#, "\n",
+            r#"{"type":"usage.record","usage":{"inputOther":120,"output":35,"inputCacheRead":80,"inputCacheCreation":10}}"#, "\n",
+        );
+        let w_ev = kimi_wire_usage_events(wire, Some("kimi-k2.5"), "2026-11-14");
+        assert_eq!(w_ev.len(), 1);
+        assert_eq!((w_ev[0].model.as_str(), w_ev[0].input, w_ev[0].output, w_ev[0].cache_read, w_ev[0].cache_write), ("kimi-k2.5", 120, 35, 80, 10));
+
+        // Grok --output-format json（多行 JSON 对象）与 streaming-json（逐行事件流）
+        let grok_json = "{\n  \"text\": \"  结论：Grok JSON  \",\n  \"stopReason\": \"end_turn\",\n  \"modelUsage\": {\n    \"grok-4\": { \"inputTokens\": 100, \"outputTokens\": 20, \"cacheReadInputTokens\": 30, \"cacheCreationInputTokens\": 0 }\n  }\n}";
+        let (g_text, g_ev) = parse_oneshot_output("grok", grok_json, Some("grok-4"), "2026-11-14").unwrap();
+        assert_eq!(g_text, "结论：Grok JSON");
+        assert_eq!((g_ev[0].input, g_ev[0].output, g_ev[0].cache_read), (70, 20, 30));
+
+        let grok_stream = concat!(
+            r#"{"type":"text","data":"我先查一下"}"#, "\n",
+            r#"{"type":"tool_call","toolCallId":"t1","toolName":"read_file","rawInput":{"target_file":"/p/a.md"}}"#, "\n",
+            r#"{"type":"text","data":"结论："}"#, "\n",
+            r#"{"type":"text","data":"核对通过"}"#, "\n",
+            r#"{"type":"end","stopReason":"end_turn","usage":{"input_tokens":50,"output_tokens":12,"cache_read_input_tokens":8,"cache_creation_input_tokens":0}}"#,
+        );
+        let (gs_text, gs_ev) = parse_oneshot_output("grok", grok_stream, Some("grok-4"), "2026-11-14").unwrap();
+        assert_eq!(gs_text, "结论：核对通过");
+        assert_eq!((gs_ev[0].input, gs_ev[0].output, gs_ev[0].cache_read), (50, 12, 8));
+
+        // Antigravity CLI stream-json（1.5.8 实录：嵌套 step_update + result.usage）
+        let agy_raw = concat!(
+            r#"{"event":"init","conversation_id":"conv-1"}"#, "\n",
+            r#"{"event":"step_update","step_update":{"step_type":"user_input","items":[{"text":"不要把我当正文"}]}}"#, "\n",
+            r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"结论：Agy"}}"#, "\n",
+            r#"{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"  结论：Agy 终局  ","usage":{"input_tokens":42,"output_tokens":11,"thinking_tokens":0,"cache_read_tokens":6,"total_tokens":59}}}"#,
+        );
+        let (a_text, a_ev) = parse_oneshot_output("agy", agy_raw, Some("gemini-2.5-pro"), "2026-11-14").unwrap();
+        assert_eq!(a_text, "结论：Agy 终局");
+        assert_eq!((a_ev[0].input, a_ev[0].output, a_ev[0].cache_read), (42, 11, 6));
+        let agy_err = r#"{"event":"result","result":{"conversation_id":"conv-1","status":"ERROR","error":"quota exceeded"}}"#;
+        assert!(parse_oneshot_output("agy", agy_err, None, "d").unwrap_err().contains("quota exceeded"));
     }
 
     #[test]
@@ -4035,7 +4609,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
 
     #[test]
     fn inspect_readonly_args_are_read_only_and_ephemeral() {
-        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[], Some((2, 1, 318))).unwrap();
+        let claude = inspect_readonly_args("claude-code", "看看", &["/w/a".into()], false, &[], Some((2, 1, 318)), None).unwrap();
         assert!(claude.windows(2).any(|w| w == ["--permission-mode", "default"]), "不用 plan 档（会写 ~/.claude/plans）");
         // 新版：白名单正好三样只读工具、不加载 MCP，不再带黑名单
         assert!(claude.windows(2).any(|w| w == ["--tools", "Read Grep Glob"]));
@@ -4043,7 +4617,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(!claude.iter().any(|a| a == "--disallowedTools"));
         // 老版本 / 读不到版本：退回黑名单，Windows 的 PowerShell 与建 worktree 也要拿掉
         for old in [Some((2, 1, 185)), None] {
-            let a = inspect_readonly_args("claude-code", "看看", &[], false, &[], old).unwrap();
+            let a = inspect_readonly_args("claude-code", "看看", &[], false, &[], old, None).unwrap();
             assert!(!a.iter().any(|x| x == "--tools"));
             let disallowed = a.iter().position(|x| x == "--disallowedTools").map(|i| a[i + 1].clone()).unwrap();
             for tool in ["Edit", "Write", "Bash", "PowerShell", "EnterWorktree", "WebFetch"] {
@@ -4053,7 +4627,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(claude.iter().any(|a| a == "--no-session-persistence"));
         assert!(claude.windows(2).any(|w| w == ["--add-dir", "/w/a"]));
         assert!(!claude.iter().any(|a| a.contains("bypass")));
-        let codex = inspect_readonly_args("codex", "看看", &[], false, &[], None).unwrap();
+        let codex = inspect_readonly_args("codex", "看看", &[], false, &[], None, None).unwrap();
         assert!(codex.windows(2).any(|w| w == ["-s", "read-only"]));
         assert!(codex.iter().any(|a| a == "--ephemeral"));
         // plan 默认的 -s workspace-write 要被剥掉，只剩只读那一档
@@ -4061,15 +4635,32 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         let composed = compose_headless_args("codex", &plan, &codex);
         assert_eq!(composed.iter().filter(|a| *a == "-s").count(), 1);
         assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
-        assert!(inspect_readonly_args("kimi", "看看", &[], false, &[], None).is_none());
-        assert!(inspect_readonly_args("gemini", "看看", &[], false, &[], None).is_none());
-        assert!(inspect_readonly_args("agy", "看看", &[], false, &[], None).is_none());
-        // 附图（2026-11-05）：Codex 一个 --image= 参数、在提示词前面；Claude 不加参数，靠提示词点名 + --add-dir
-        let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()], None).unwrap();
+        // Kimi：必须配临时 --agent-file 才放行；带 --add-dir
+        assert!(inspect_readonly_args("kimi", "看看", &[], false, &[], None, None).is_none());
+        let kimi = inspect_readonly_args("kimi", "看看", &["/w/a".into()], true, &[], None, Some("/tmp/ro.md")).unwrap();
+        assert_eq!(
+            kimi,
+            vec!["--agent-file", "/tmp/ro.md", "-p", "看看", "--output-format", "stream-json", "--add-dir", "/w/a"]
+        );
+        // Grok：dontAsk + read-only + 只读工具白名单 + 封死 use_tool；不传 --add-dir（1.0.77 实测传了直接拒建会话）
+        let grok = inspect_readonly_args("grok", "看看", &["/w/a".into()], true, &[], None, None).unwrap();
+        assert!(grok.windows(2).any(|w| w == ["--output-format", "streaming-json"]));
+        assert!(grok.windows(2).any(|w| w == ["--permission-mode", "dontAsk"]));
+        assert!(grok.windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        assert!(grok.iter().any(|a| a == "--disable-web-search") && grok.iter().any(|a| a == "--no-subagents"));
+        assert!(grok.windows(2).any(|w| w == ["--tools", "read_file,list_dir,grep"]));
+        assert!(grok.windows(2).any(|w| w == ["--deny", "use_tool"]));
+        assert!(!grok.iter().any(|a| a == "--add-dir"));
+        assert!(inspect_readonly_args("gemini", "看看", &[], false, &[], None, None).is_none());
+        assert!(inspect_readonly_args("agy", "看看", &[], false, &[], None, None).is_none());
+        // 附图（2026-11-05，2026-11-14 补 Kimi / Grok）：Codex 一个 --image= 参数、在提示词前面；其余靠提示词点名各自工具打开
+        let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()], None, None).unwrap();
         assert_eq!(&with_img[with_img.len() - 2..], ["--image=/t/a.png,/t/b.png", "看看"]);
-        assert!(image_prompt_note("claude-code", &["/t/a.png".into()]).contains("Read 工具") );
+        assert!(image_prompt_note("claude-code", &["/t/a.png".into()]).contains("Read 工具"));
+        assert!(image_prompt_note("kimi", &["/t/a.png".into()]).contains("ReadMediaFile 工具"));
+        assert!(image_prompt_note("grok", &["/t/a.png".into()]).contains("read_file 工具"));
         assert!(image_prompt_note("codex", &[]).is_empty());
-        let streamed = inspect_readonly_args("claude-code", "看看", &[], true, &[], None).unwrap();
+        let streamed = inspect_readonly_args("claude-code", "看看", &[], true, &[], None, None).unwrap();
         assert!(streamed.windows(2).any(|w| w == ["--output-format", "stream-json"]));
         assert!(streamed.iter().any(|a| a == "--include-partial-messages") && streamed.iter().any(|a| a == "--verbose"));
         assert!(streamed.windows(2).any(|w| w == ["--permission-mode", "default"]));
@@ -4536,5 +5127,15 @@ mod followup_text_tests {
         assert_eq!(followup_text("kimi", raw).unwrap(), "好的");
         let only_user = "{\"role\":\"user\",\"content\":\"{\\\"state\\\":\\\"done\\\"}\"}\n";
         assert!(followup_text("kimi", only_user).is_err());
+    }
+
+    #[test]
+    fn agy_reads_nested_step_update_and_skips_user_input() {
+        let raw = concat!(
+            "{\"event\":\"init\",\"conversation_id\":\"c1\"}\n",
+            "{\"event\":\"step_update\",\"step_update\":{\"step_type\":\"user_input\",\"text_delta\":\"{\\\"state\\\":\\\"done\\\"}\"}}\n",
+            "{\"event\":\"step_update\",\"step_update\":{\"step_type\":\"agent_response\",\"text_delta\":\"已修好\"}}\n",
+        );
+        assert_eq!(followup_text("agy", raw).unwrap(), "已修好");
     }
 }

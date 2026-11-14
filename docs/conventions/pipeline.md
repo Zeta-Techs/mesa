@@ -1809,7 +1809,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **不按场景补功能**：科研需求（组会、周报、实验规划、数据异常、改图…）不做专门按钮 / 页面 / 入口，统一由项目助手按
   问 / 做 / 定 / 常做 / 改流程 / 范围外接住；具体做法沉淀为内置科研任务、我的任务、项目知识。新增一种科研需求时先问「通用链路缺什么」，不加场景入口。
 - **分流**：`classifyQuestion` 的 `request`（交代要做的事；问「为什么 / 报错」的仍是查错；只说「帮我看看」判不出）；上一轮回答带 `:::问` 时这一轮一律 request，
-  带未派的 `:::派活` 且这一句判不出别的类时接着 request（`previousTurnHint`）。request 带快照 + 项目地图 + 能力清单、最近 6 轮，起草前只读查看（只 Claude Code / Codex，`inspectRules(…, "intake")`）。
+  带未派的 `:::派活` 且这一句判不出别的类时接着 request（`previousTurnHint`）。request 带快照 + 项目地图 + 能力清单、最近 6 轮，起草前只读查看（Claude Code / Codex / Kimi Code / Grok Build，`inspectRules(…, "intake")`）。
 - **项目地图**：后端 `project_file_map` 只列文件（路径、大小、修改时间），不读内容；跳过隐藏项、依赖 / 缓存目录、符号链接，4000 条 / 8 层封顶。
   折叠与「新」标记在前端 `project-map.ts`（上次问的时间之后改过的标「新」）。
 - **问清楚**：回答末尾 `:::问` 块（问题 + 最多四个选项），一次一个、最多三问，余下写进「先定下的假设」；一次回答问题与派活单二选一。只有最后一轮的问题可点选作答。
@@ -1867,7 +1867,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 
 - **只看不动**：成员只读，不写文件、不跑命令、不联网、不开 MCP；不提供「项目内放手干」「完全放开」档。要动手只经项目助手起草派活单，研讨自己不出派活单。
 - **差别看模型族，能不能看项目看 CLI 外壳**：同一家「两位」按模型族判（`cross-review.ts modelFamily`，与跨厂商复核同口径），同族只提醒不拦；
-  「能看项目」只认 Claude Code、Codex 外壳（`consult.rs INSPECT_AGENTS` ↔ `consult.ts` 镜像），与接的模型无关；其余家临时目录 + Mesa 附的材料摘录。
+  「能看项目」认 Claude Code、Codex、Kimi Code、Grok Build 外壳（`consult.rs INSPECT_AGENTS` ↔ `consult.ts` 镜像），与接的模型无关；其余家（含 `agy`）在临时目录 + Mesa 附的材料摘录。
   默认挑法：discuss 槽连接打头，之后模型族互不相同、同族优先能看项目的，凑不满就少选、不拿同族补；不按问题内容挑模型（不做模型路由）。成员按模型族起名，头像是所选模型的厂商图标。
 - **第一轮看不到别人**：提示词只有开场（`prompt_round1`，单测钉住），第一轮回答原文不推前端，有人还在答时已答完的卡片不展开。
 - **Mesa 只排、只核，不判**：回答固定尾段「结论 / 依据 / 没把握的」；Mesa 排对照条（原话）、核对依据路径（missing / unseen 标黄），不投票、不出共识、不打分。
@@ -1875,7 +1875,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
 - **结论只经人**：「记进项目知识」复用 RememberCard，人改写后点了才写；不自动写任务书、项目知识，不自动开研讨（事件规则、定时任务都不能开）。
 - **每次被叫到 = 一次一次性只读无头调用**，不续 CLI 会话，记忆是 Mesa 拼的记录（超长先把最早的回答换成结论一句）；停单家经 `ai::with_run_hook` 拿 Run id 再 `process::cancel_capture`。调度在后端线程，不进前端。
 - **开答先写占位**（status=running，答完同 id 覆盖）：读出时占位对应的调用不在了 = Mesa 中途关了，出线标 interrupted「被打断了」、可重试；没跑完的交叉不自动补。不要改回只记内存。
-- **Kimi Code 外壳不进「能看项目」**（2026-11-11 实测 2.5.2）：`-p` 与 `--plan` 不能同用，`-p` 默认直接写文件、跑命令，没有只读开法。以后它出了只读的一次性调用（或经 ACP 能只读）再实测放开；Kimi 模型经 Claude Code 外壳照样能看项目。
+- **Kimi Code 与 Grok Build 进「能看项目」，Antigravity CLI 走「只看材料」**（2026-11-14 假网关实测，更新 11-11 结论）：Kimi 2.x 虽 `-p` 不能配 `--plan`，但可传 0600 临时 `--agent-file` 白名单锁定 `tools: [Read, Glob, Grep, ReadMediaFile]`、`subagents: []`（自动屏蔽 `$KIMI_CODE_HOME/mcp.json` 的 MCP 工具，越界调用 `Bash` 被进程级拒绝；旧版 Python 1.x `kimi_variant() == Some("legacy")` 仍拒）；Grok 1.0.77 用 `--permission-mode dontAsk --sandbox read-only --disable-web-search --no-subagents --tools read_file,list_dir,grep --deny use_tool`（**勿传 `--add-dir`**：1.0.77 传了直接报错 `additionalDirectories is not supported` 拒建会话；`read-only` 沙箱下 `read_file` 本就能读工作副本与贴图目录）。`agy` 无进程级只读白名单，保持「只看材料」；`ai_prompt_impl_full` 对显式指定连接或 `consult / project-assistant` 放行 `agy`（未指定连接的后台起名/翻译自动回落仍跳过 `agy`）。Kimi / Grok / Agy 无头调用均落盘会话：按会话 id 标 `internal` + `set_session_profile`，单次花费从输出或 `wire.jsonl` 现算回传前端，不调 `record_ephemeral_usage`（避免与会话扫描重复入账）。
 - **记录**：项目 `.ccode/consults/<id>.jsonl`，不进 git（gitignore 模板、`BOOTSTRAP_EXCLUDES`、`is_accumulation_ledger`、`isAccumulationLedgerPath` 四处同改，运行时另写 info/exclude），出 Rust 前脱敏；删除走回收站。
 - **评审页入口**：「请几家研讨」与「请 X 复核」并存不合并——复核是一家逐条核对引用、结论进核验清单；研讨是开放问题、几家各判。评审页发起带 `readRoot` = 这一步工作副本（产物还没带回项目根），记录仍写项目根。
 - **入口**：对话页栏头「研讨」、对话回放 ⋯「请几家研讨这个问题」（最后一句人话作问题，整段对话经 `consult_attach_session` 存成 `.ccode/consults/attachments/` 里的材料；只给属于已添加项目的对话）、项目助手动作 `[[研讨|问题]]`、评审页「请几家研讨」、步骤卡「继续讨论 · TASK.md · 请几家研讨」同一行（2026-11-11 用户拍板推翻「不上步骤卡」：要人拍板的步骤正是研讨最有用的地方，只占一个文字链接、不抢右缘主动作；只在 role 为 you / both 的步骤出，role=ai 不出）。
@@ -1899,7 +1899,7 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   行尾光标 `consultCaret`（在答 working、等你发话 idle、答完不挂）；看研讨时以它的项目为「现在在哪」，那个课题默认展开。不做成终端标签（没有进程，标签存档 / 键盘 / 分屏都按进程设计）。
   对话管理里研讨一组保留作翻历史，在那里点开仍就地看。
 - **图片材料**（2026-11-11 二期）：粘贴 / 拖进来的图先走 `save_clipboard_image`，`consult_create` 校验是 Mesa 粘贴目录里的图后拷进项目 `.ccode/consults/attachments/`（粘贴目录只留 7 天）；项目里的图片文件按扩展名记 kind=image。
-  只给 `sees_images` 的成员（外壳能看项目 + 能力库认得模型能看图；官方账号没写模型按能看），Codex 走 `--image`、Claude Code 点名路径自己 Read（工作副本发起时把 attachments 目录 `--add-dir`）；其余成员提示词里说有几张图看不到、别猜，摘录里图片写「看不到」不读字节。
+  只给 `sees_images` 的成员（外壳能看项目 + 能力库认得模型能看图；官方账号没写模型按能看），Codex 走 `--image`，Claude Code / Kimi Code / Grok Build 点名路径各自用 `Read` / `ReadMediaFile` / `read_file` 打开（工作副本发起时 Claude 与 Kimi 把 attachments 目录 `--add-dir`，Grok `read-only` 直接可读）；其余成员提示词里说有几张图看不到、别猜，摘录里图片写「看不到」不读字节。
 - **花费预估**（2026-11-11 二期）：`consult_cost_stats` 按「连接 × 模型」平均以往研讨里答成且记到花费的调用；弹层 `estimateCost` 每位用它的均值、没记录的用全体均值（标「按平均估」），一条记录都没有只写次数。只是提示，不拦。
 - **核验清单「请几家研讨这一条」**（2026-11-11 二期）：只在评审页、只给「待你判断」的条目（拦下与通过不给）；问题 = 标题 + 落点 + 摘录 + 说明 + 来源（`research-checks.ts checkConsultSeed`），材料 = 落点前后各 15 行 + 来源文件（存在才留），读工作副本。研讨不改核验结论、不写 `.ccode/checks/`。
 - **结论提升到研究档案**（2026-11-11 三期）：只经人点、可改写、选分类，走 `research_profile_update add`（与项目知识页提升同一个口子）；依据 = `consult.ts adoptionReason`（哪场研讨、采用谁的结论、答过话的各家模型与 CLI、记录路径）。

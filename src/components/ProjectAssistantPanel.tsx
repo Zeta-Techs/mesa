@@ -211,7 +211,7 @@ export default function ProjectAssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askedNonce = useRef<number | null>(null);
   const conn = assistantConnection(project);
-  // 能只读看文件与看图的只有 Claude Code / Codex；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
+  // 能只读看文件与看图的是 INSPECT_AGENTS 四家；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
   const imageCapable = conn.agentId === null || INSPECT_AGENTS.includes(conn.agentId);
   // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
@@ -894,7 +894,7 @@ export default function ProjectAssistantPanel({
           ))}
           {!imageCapable && (
             <span className="min-w-0 flex-1 text-micro text-warn-text">
-              现在的连接看不了图：到 Agent 分工给项目助手换成 Claude Code / Codex，或把图里的字打出来
+              现在的连接看不了图：到 Agent 分工给项目助手换成 Claude Code / Codex / Kimi Code / Grok Build，或把图里的字打出来
             </span>
           )}
         </div>

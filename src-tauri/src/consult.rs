@@ -46,7 +46,7 @@ pub struct Member {
     pub profile_id: String,
     #[serde(default)]
     pub model: String,
-    /// 能看项目：CLI 外壳支持进程级只读（Claude Code、Codex），与接的是哪个模型无关
+    /// 能看项目：CLI 外壳支持进程级只读（Claude Code、Codex、Kimi Code、Grok Build），与接的是哪个模型无关
     #[serde(default)]
     pub can_read_project: bool,
     /// 能看材料里的图：外壳能看项目、且所选模型认得出能看图（能力库；官方账号没写模型按能看）
@@ -842,8 +842,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Emitter;
 
-/// 能看项目的 CLI 外壳：进程级只读已实证的两家（ai::inspect_readonly_args；与前端 consult.ts INSPECT_AGENTS 镜像）
-pub(crate) const INSPECT_AGENTS: &[&str] = &["claude-code", "codex"];
+/// 能看项目的 CLI 外壳：进程级只读已实证的四家（ai::inspect_readonly_args；与前端 consult.ts INSPECT_AGENTS 镜像）
+pub(crate) const INSPECT_AGENTS: &[&str] = &["claude-code", "codex", "kimi", "grok"];
 pub const EVENT: &str = "consult-event";
 
 struct Call {
@@ -2035,7 +2035,12 @@ mod tests {
         let m = build_meta(
             "问题",
             vec![Material { path: "./notes/a.md".into(), range: " 1-2 ".into(), kind: String::new() }],
-            vec![input("Claude", "claude-code"), input("GPT", "codex"), input("Gemini", "gemini")],
+            vec![
+                input("Claude", "claude-code"),
+                input("Kimi", "kimi"),
+                input("Grok", "grok"),
+                input("Agy", "agy"),
+            ],
             1,
             None,
             None,
@@ -2043,9 +2048,9 @@ mod tests {
         )
         .unwrap();
         let ids: Vec<&str> = m.members.iter().map(|x| x.id.as_str()).collect();
-        assert_eq!(ids, ["m1", "m2", "m3"]);
+        assert_eq!(ids, ["m1", "m2", "m3", "m4"]);
         let reads: Vec<bool> = m.members.iter().map(|x| x.can_read_project).collect();
-        assert_eq!(reads, [true, true, false]);
+        assert_eq!(reads, [true, true, true, false]);
         assert_eq!(m.materials[0].path, "notes/a.md");
         assert_eq!(m.materials[0].range, "1-2");
         assert_eq!(m.relay_limit, DEFAULT_RELAY_LIMIT);

@@ -6,8 +6,8 @@
 import { reviewerOptions, type ReviewerProfile } from "./cross-review.ts";
 import type { VendorId } from "./vendor-icon.ts";
 
-/** 能看项目的 CLI 外壳（与后端 consult.rs INSPECT_AGENTS 镜像）：进程级只读已实证的两家 */
-export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex"];
+/** 能看项目的 CLI 外壳（与后端 consult.rs INSPECT_AGENTS 镜像）：进程级只读已实证的四家 */
+export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex", "kimi", "grok"];
 export const MIN_MEMBERS = 2;
 export const MAX_MEMBERS = 4;
 export const MAX_MATERIALS = 8;
