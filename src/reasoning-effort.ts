@@ -156,6 +156,7 @@ const MODEL_PATTERNS: Record<string, RegExp[]> = {
     /\bSet model to\s+`?([^\s`]+)/g,
   ],
   gemini: [/\bModel set to\s+`?([^\s`]+)/g],
+  agy: [/\bModel set to\s+`?([^\s`]+)/g],
   // 选择器选完的回显「• Model changed to gpt-6.1-sol low」（底栏写的是显示名 GPT-6.1-Sol，回显才是 id）
   codex: [/\bModel changed to\s+([^\s]+)/g],
 };
@@ -163,6 +164,7 @@ const MODEL_PATTERNS: Record<string, RegExp[]> = {
 const MODEL_QUICK: Record<string, string[]> = {
   "claude-code": ["Set model"],
   gemini: ["Model set"],
+  agy: ["Model set"],
   codex: ["Model changed"],
 };
 
@@ -181,7 +183,8 @@ export function detectModelInOutput(text: string, agentId = "claude-code"): stri
     re.lastIndex = 0;
     for (const m of plain.matchAll(re)) {
       const at = m.index ?? 0;
-      const model = m[1]!.replace(/\s*\(default\)\s*$/i, "").trim();
+      const rawModel = m[1]!.replace(/\s*\(default\)\s*$/i, "").trim();
+      const model = agentId === "agy" ? rawModel.replace(/^mesa\//, "") : rawModel;
       if (plausibleModel(model) && (!best || at >= best.at)) best = { at, model };
     }
   }

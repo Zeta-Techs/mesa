@@ -90,6 +90,7 @@ import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-wa
 import {
   channelAttention,
   channelCanAnswer,
+  channelDeliversLiveText,
   channelInfersApproval,
   channelLiveLines,
   channelRelink,
@@ -2928,9 +2929,9 @@ export const TerminalView = memo(function TerminalView({
   function scanLiveReplySoon() {
     if (!liveReplySupported(launchAgentRef.current)) return;
     if (liveHoldRef.current) return;
-    // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏
+    // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏；hooks 与 program-status 仍靠读屏展示流式正文与思考
     const ch = channelRef.current;
-    if (ch && ch.kind !== "hooks" && channelTurnOpen(ch)) return;
+    if (ch && channelDeliversLiveText(ch) && channelTurnOpen(ch)) return;
     if (liveScanTimerRef.current) return;
     const wait = Math.max(0, liveScanAtRef.current + 300 - Date.now());
     liveScanTimerRef.current = window.setTimeout(scanLiveReplyNow, wait);

@@ -138,6 +138,14 @@ export function sessionSwitchNote(source: string | null): string {
   return "已切到新的会话";
 }
 
+/** 旁路本身直接推送流式回复正文的家（Qwen / OpenCode / Codex）；hooks 与 program-status 只报回合/工具/审批状态，正文仍靠读屏实时预览 */
+export function channelDeliversLiveText(
+  snap: Pick<ChatChannelSnapshot, "kind" | "connection"> | null | undefined,
+): boolean {
+  if (!snap || snap.connection === "disconnected") return false;
+  return snap.kind === "qwen" || snap.kind === "opencode" || snap.kind === "codex";
+}
+
 /** 旁路送来的这一轮实时文字（Qwen / OpenCode / Codex）；回合结束后不再当预览 */
 export function channelLiveLines(snap: ChatChannelSnapshot | null): string[] | null {
   if (!snap?.liveText || !snap.turn || snap.connection === "disconnected") return null;

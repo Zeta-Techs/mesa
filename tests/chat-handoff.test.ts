@@ -413,6 +413,10 @@ test("斜杠命令的结果行（2026-11-11 实测屏）：认得出就收尾，
     slashResultLines("codex", "/model e2e-picked --reasoning low", ["• Model changed to e2e-picked low for this session only"], null),
     ["Model changed to e2e-picked low for this session only"],
   );
+  assert.deepEqual(
+    slashResultLines("agy", "/model mesa/gemini-2.5-pro", ["  ⎿  Model set to mesa/gemini-2.5-pro"], null),
+    ["Model set to mesa/gemini-2.5-pro"],
+  );
   assert.deepEqual(slashResultLines("kimi", "/status", kimi, null), [], "没登记的命令不认");
   assert.deepEqual(slashResultLines("grok", "/permission", kimi, null), [], "没登记的家不认");
   assert.deepEqual(slashResultLines("kimi", "/permission", ["AI 正文里写了 Permission mode: Never Ask 这几个字"], null), []);
@@ -422,6 +426,7 @@ test("这一轮结束时直接留记录的只有实测不排队、不写会话�
   const slash = cmdMsg("user", "text", "/permission", null);
   assert.equal(slashSettlesAtTurnEnd("kimi", slash), true);
   assert.equal(slashSettlesAtTurnEnd("codex", slash), true);
+  assert.equal(slashSettlesAtTurnEnd("agy", slash), true);
   assert.equal(slashSettlesAtTurnEnd("qwen", slash), false, "Qwen 生成中发的命令排队，这一轮结束后才执行");
   assert.equal(slashSettlesAtTurnEnd("claude-code", slash), false, "Claude 把命令写进会话文件");
   assert.equal(slashSettlesAtTurnEnd("kimi", cmdMsg("user", "text", "你好", null)), false);

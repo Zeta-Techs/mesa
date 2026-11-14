@@ -9,6 +9,7 @@ import {
   channelOutcome,
   isQuestionApproval,
   channelCanAnswer,
+  channelDeliversLiveText,
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
@@ -256,4 +257,14 @@ test("回合失败与中断如实说明；提问不当作工具批准", () => {
     assert.deepEqual(approvalPreview(a), { kind: "text", text: "选择哪一种？" });
   }
   assert.equal(isQuestionApproval(approval()), false);
+});
+
+test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hooks 只报状态，不挡 xterm 实时扫描", () => {
+  assert.equal(channelDeliversLiveText(null), false);
+  assert.equal(channelDeliversLiveText(snap({ kind: "hooks", turn: turn("running") })), false);
+  assert.equal(channelDeliversLiveText(snap({ agent: "agy", kind: "program-status", turn: turn("running") })), false);
+  assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "opencode", kind: "opencode", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "qwen", kind: "qwen", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", connection: "disconnected" })), false);
 });

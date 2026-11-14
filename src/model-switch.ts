@@ -44,7 +44,7 @@ export const MODEL_SWITCH: Record<string, ModelSwitchInfo> = {
   },
   agy: {
     max: null,
-    hint: "启动时经会话级 --settings 注入全部已配置模型（mesa/<id>），运行中可用 /model 切换",
+    hint: "启动时经会话级 --settings 注入全部已配置模型（mesa/<id>），运行中换模型或思考档会接回原对话生效、不改全局配置",
   },
 };
 

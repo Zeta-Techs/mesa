@@ -43,7 +43,7 @@ const NUMBERED = /^\s*(?:[❯›>▶●]\s*)?\d+[.)]\s/;
 // 这两家的菜单不用 ●（Claude 用 ❯、Kimi 用 ▶），● 不算选中标记
 const MARKED_NO_DOT = /^\s*(?:[❯›]\s*(?:\d+[.)]\s*)?|[>▶]\s*\d+[.)]\s*)(\S.*?)\s*$/;
 const NUMBERED_NO_DOT = /^\s*(?:[❯›>▶]\s*)?\d+[.)]\s/;
-const DOT_IS_BODY_LEAD = new Set(["claude-code", "kimi"]);
+const DOT_IS_BODY_LEAD = new Set(["claude-code", "kimi", "agy"]);
 // Grok 的单选写法「2 (●) Yes, proceed」「3 (○) No, reject」：先改写成「❯ 2. …」「  3. …」再认。
 // Windows 上 Grok 的选中点画成 •（2026-10-20 ConPTY 抓屏）
 const RADIO = /^(\s*)(\d+)\s+\(([●•○◉◯])\)\s+(.*)$/;
@@ -58,7 +58,7 @@ const ASK = /^(?:Do you want|Would you like|Allow|Switch|Select|Choose|Are you s
 // 菜单下面的按键提示「Enter to confirm · Esc to cancel」也是缩进行，不能当成一项。
 // 组合键开头的也是（Claude 方案确认「shift+tab to approve with this feedback」「ctrl+g to edit in Vim」，2026-10-26）：
 // 原先被当成上一项的折行，选项读成「Tell Claude what to change shift+tab to approve…」
-const KEY_HINT = /^\s*(?:(?:shift|ctrl|alt|option|cmd)\+\w+|Enter|Esc|Tab|Space|Press|↑|↓|←|→)\b.*\bto\b|·\s*Esc\b/i;
+const KEY_HINT = /^\s*(?:(?:shift|ctrl|alt|option|cmd)\+\w+|Enter|Esc|Tab|Space|Press|↑|↓|←|→)\b.*\bto\b|·\s*Esc\b|↑\/↓\s*Navigate\b/i;
 
 /**
  * 去掉方框的左右竖边和滚动条（Gemini 审批整个画在 ╭│╰ 框里、右边还有 █ 滚动条；Grok 审批左边一条 ┃），

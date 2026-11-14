@@ -25,6 +25,10 @@ test("这一轮说完才交的几家：Gemini 按 Esc、Grok 再按回车立即�
   assert.equal(kimi.sendNow?.keys, "\x1b[115;5u");
   assert.equal(kimi.sendNow?.label, "插进这一轮");
   assert.equal(midTurnSpec("kimi", { csiU: false }).sendNow?.keys, "\x13");
+  const agy = midTurnSpec("agy", { csiU: false });
+  assert.deepEqual(agy, { delivery: "after_turn", sendNow: null });
+  assert.equal(queuedNote(agy).text, "排队中 · 这一轮结束后处理");
+  assert.equal(queueSendHint(agy).label, "排队");
 });
 
 test("没核实过的家不给立即发送；气泡与占位字按真实行为写，不再一律「这一轮结束后处理」", () => {

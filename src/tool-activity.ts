@@ -74,17 +74,17 @@ const VERB: Record<ActivityKind, string> = {
 };
 
 const NAMES: Array<[ActivityKind, string[]]> = [
-  ["edit", ["edit", "multiedit", "replace", "strreplacefile", "strreplace", "editfile", "searchreplace", "notebookedit", "editnotebook"]],
+  ["edit", ["edit", "multiedit", "replace", "strreplacefile", "strreplace", "editfile", "replacefilecontent", "multireplacefilecontent", "searchreplace", "notebookedit", "editnotebook"]],
   ["write", ["write", "writefile", "createfile", "writetofile"]],
   ["delete", ["deletefile", "removefile", "delete"]],
   ["read", ["read", "readfile", "readmanyfiles", "viewimage", "view", "notebookread", "readnotebook"]],
-  ["search", ["grep", "glob", "searchfilecontent", "grepsearch", "codebasesearch", "filesearch", "find", "findfiles", "ripgrep", "search"]],
+  ["search", ["grep", "glob", "searchfilecontent", "grepsearch", "findbyname", "codebasesearch", "filesearch", "find", "findfiles", "ripgrep", "search"]],
   ["list", ["ls", "list", "listdirectory", "listdir", "listfiles"]],
-  ["run", ["bash", "shell", "runshellcommand", "execcommand", "commandexecution", "runterminalcmd", "runcommand", "runterminalcommand", "localshell", "monitor"]],
-  ["web", ["webfetch", "fetchurl", "fetch", "readurl", "websearch", "googlewebsearch", "searchweb"]],
-  ["task", ["task", "agent", "subagent", "dispatchagent"]],
+  ["run", ["bash", "shell", "runshellcommand", "execcommand", "commandexecution", "runterminalcmd", "runcommand", "runterminalcommand", "localshell", "monitor", "commandstatus", "managetask"]],
+  ["web", ["webfetch", "fetchurl", "fetch", "readurl", "readurlcontent", "websearch", "googlewebsearch", "searchweb"]],
+  ["task", ["task", "agent", "subagent", "dispatchagent", "invokesubagent", "definesubagent", "managesubagents", "sendmessage", "swarm", "schedule"]],
   ["todo", ["todowrite", "todoread", "settodolist", "updateplan", "taskcreate", "taskupdate", "writetodos"]],
-  ["ask", ["askuserquestion", "requestuserinput", "requestuserinputasync", "askuser", "askfollowupquestion"]],
+  ["ask", ["askuserquestion", "askquestion", "requestuserinput", "requestuserinputasync", "askuser", "askfollowupquestion"]],
   ["skill", ["skill"]],
 ];
 
@@ -224,11 +224,17 @@ function countDiff(lines: DiffLine[]): { added: number; removed: number } {
 /** 一处或多处替换（Claude MultiEdit edits[] / Kimi edit 可为数组）合成一份差异 */
 function editPairs(args: Args): Array<[string, string]> {
   const pick = (o: Args): [string, string] | null => {
-    const before = str(o, "old_string", "oldString", "old_str", "old", "search") ?? "";
-    const after = str(o, "new_string", "newString", "new_str", "new", "replace") ?? "";
+    const before = str(o, "old_string", "oldString", "old_str", "old", "search", "Target", "TargetContent") ?? "";
+    const after = str(o, "new_string", "newString", "new_str", "new", "replace", "Replacement", "ReplacementContent") ?? "";
     return before || after ? [before, after] : null;
   };
-  const list = Array.isArray(args.edits) ? args.edits : Array.isArray(args.edit) ? args.edit : null;
+  const list = Array.isArray(args.edits)
+    ? args.edits
+    : Array.isArray(args.edit)
+      ? args.edit
+      : Array.isArray(args.ReplacementChunks)
+        ? args.ReplacementChunks
+        : null;
   if (list) {
     return list
       .filter((e): e is Args => Boolean(e) && typeof e === "object")
@@ -285,7 +291,7 @@ function unescapeJs(s: string): string {
 /** shell 参数可能是数组（Codex shell：["bash","-lc","…"]；Windows 上 ["…\\pwsh.exe","-Command","…"]） */
 function commandOf(args: Args | null): string | null {
   if (!args) return null;
-  const c = args.command ?? args.cmd;
+  const c = args.command ?? args.cmd ?? args.CommandLine;
   if (typeof c === "string" && c.trim()) return c;
   if (Array.isArray(c) && c.every((x) => typeof x === "string")) {
     const parts = c as string[];
@@ -545,7 +551,7 @@ export function toolActivities(
   const kind = kindOf(name);
   const a = base(kind, name, input);
   const filePath =
-    str(args, "file_path", "filePath", "absolute_path", "path", "file", "filename", "target_file", "notebook_path") ??
+    str(args, "file_path", "filePath", "absolute_path", "path", "Path", "TargetFile", "DirectoryPath", "file", "filename", "target_file", "notebook_path") ??
     (Array.isArray(args?.paths) && typeof args?.paths[0] === "string" ? (args?.paths[0] as string) : null);
 
   switch (kind) {
@@ -560,12 +566,12 @@ export function toolActivities(
       return [diff.length ? { ...out, ...countDiff(diff), diff } : out];
     }
     case "write": {
-      const content = str(args, "content", "file_text", "contents", "text") ?? "";
+      const content = str(args, "content", "Content", "file_text", "contents", "text") ?? "";
       const out = filePath ? withPath(a, filePath, cwd, isWindows) : { ...a, target: name };
       return [{ ...out, added: lineCount(content), removed: null, diff: content ? lineDiff("", content) : null }];
     }
     case "read": {
-      const from = args?.offset ?? args?.line_offset ?? args?.start_line;
+      const from = args?.offset ?? args?.line_offset ?? args?.start_line ?? args?.StartLine;
       const line = typeof from === "number" && Number.isInteger(from) && from > 0 ? from : null;
       return [filePath ? { ...withPath(a, filePath, cwd, isWindows), line } : { ...a, target: name }];
     }
@@ -574,27 +580,28 @@ export function toolActivities(
     case "list":
       return [{ ...a, target: filePath ? shortPath(filePath, cwd, isWindows) || "." : "." }];
     case "search": {
-      const pattern = str(args, "pattern", "query", "regex", "glob", "q", "search") ?? name;
-      const where = str(args, "path", "dir_path", "directory", "include");
+      const pattern = str(args, "pattern", "Pattern", "query", "Query", "regex", "glob", "q", "search") ?? name;
+      const where = str(args, "path", "Path", "SearchPath", "SearchDirectory", "dir_path", "directory", "include");
       return [{ ...a, target: pattern, note: where ? shortPath(where, cwd, isWindows) || null : null }];
     }
     case "run": {
       const command = commandOf(args) ?? "";
-      const desc = str(args, "description");
+      const desc = str(args, "description", "toolSummary");
       const look = command ? lookActivity(a, command, cwd, desc, isWindows) : null;
       if (look) return [look];
       // 命令外面套的 `zsh -lc '…'` / PowerShell 外壳只是 CLI 的跑法（Codex 旁路报来的就是这样），显示时剥掉
+      const fallback = str(args, "Action", "TaskId");
       return [
         {
           ...a,
-          target: desc ?? (firstLine(unwrapShell(command)) || name),
-          note: desc ? firstLine(unwrapShell(command)) : null,
+          target: desc ?? (firstLine(unwrapShell(command)) || fallback || name),
+          note: desc && command ? firstLine(unwrapShell(command)) : null,
           command: command || null,
         },
       ];
     }
     case "web": {
-      const url = str(args, "url");
+      const url = str(args, "url", "Url");
       if (url) {
         let host = url;
         try {
@@ -604,10 +611,10 @@ export function toolActivities(
         }
         return [{ ...a, target: host, path: url }];
       }
-      return [{ ...a, verb: "搜索网页", target: str(args, "query", "q", "search") ?? name }];
+      return [{ ...a, verb: "搜索网页", target: str(args, "query", "q", "search") ?? name, note: str(args, "domain") }];
     }
     case "task":
-      return [{ ...a, target: str(args, "description", "prompt", "task") ?? name }];
+      return [{ ...a, target: str(args, "description", "Role", "Description", "Prompt", "brief", "Message", "prompt", "task", "Action", "action") ?? name }];
     case "todo": {
       const list = (args?.todos ?? args?.plan ?? args?.items) as unknown;
       const subject = str(args, "subject", "status");
@@ -689,13 +696,15 @@ export type ResultStatus = "ok" | "failed" | "denied" | "interrupted";
 export function resultStatus(text: string | null, isError = false): ResultStatus {
   if (!text) return isError ? "failed" : "ok";
   const head = text.slice(0, 400);
-  if (/doesn't want to proceed|tool use was rejected|user rejected|denied by (?:the )?user|用户拒绝/i.test(head)) return "denied";
+  if (/doesn't want to proceed|tool use was rejected|user rejected|denied by (?:the )?user|user denied permission|user declined the tool call|用户拒绝/i.test(head)) return "denied";
   if (/^\s*\[?(?:request )?interrupted/i.test(head) || /interrupted by user|已中断/i.test(head)) return "interrupted";
   const first = head.trimStart().split("\n")[0];
   if (
     /^<tool_use_error>/.test(first) ||
     /^(?:error|错误)\s*[:：]/i.test(first) ||
+    /^Encountered error in (?:step|tool) execution:/i.test(first) ||
     /^Exit code [1-9]\d*/.test(first) ||
+    /^Command exited with code [1-9]\d*/.test(first) ||
     /Process exited with code [1-9]\d*/.test(head) ||
     /"exit_code"\s*:\s*[1-9]\d*/.test(head) ||
     /permission denied|EACCES|command not found/i.test(first)

@@ -80,6 +80,9 @@ export function midTurnSpec(agentId: string | null | undefined, opts: { csiU: bo
           hint: "插进这一轮",
         },
       };
+    // Antigravity CLI 1.5.8：回复中发的消息进 user-queued 队列，当前回合结束后自动取出处理
+    case "agy":
+      return { delivery: "after_turn", sendNow: null };
     default:
       return { delivery: "unknown", sendNow: null };
   }

@@ -8,7 +8,7 @@
 ## 0. 结论
 
 - 作为第十家接入，内部 id `agy`，展示名 **Antigravity CLI**，二进制 `agy`。id 与二进制同名，和 magpie 一致，进 `.ccode/`、会话库、用量表后不再改。
-- 支持分级：**维护级**（AGENTS.md「CLI 支持分级」）。能启动、能注入连接、能看会话、能分发 MCP/技能/hooks、金丝雀不红；跨厂商复核、核验接入等需要进程级只读保证的场景不放开，走 AgentSpec 能力表写明原因。
+- 支持分级：**一等支持**（2026-11-14 用户拍板升级，AGENTS.md「CLI 支持分级」）。支持聊天层完整流式预览与思考提取、PascalCase 工具卡片与差异展示、重开接回安全换模型/思考档、跨厂商复核与定时任务 `stream-json` 分轮无头续跑；研讨、项目助手只读查文件等需要进程级只读硬保证的场景仍按 AgentSpec 能力表单独拦截并写明原因。
 - 最近的参照是 **Gemini CLI**：同属 Google，走 Gemini 协议，配置都在 `~/.gemini/` 下。会话格式、OSC 7501 状态旁路与会话级设置文件则参照 **Grok**。
 - 主线三条：
   1. **启动注入不碰用户的 `settings.json`，也不改 shell 配置**。API 密钥与第三方中转统一由 Mesa 生成 0600 会话级设置文件，经 `--settings <文件> --model mesa/<模型>` 交给当次会话，配合 `GEMINI_API_KEY` 与 `GOOGLE_GEMINI_BASE_URL` 注入。
@@ -34,7 +34,7 @@
 | 模式与只读 | `--mode accept-edits\|auto\|plan`、`--dangerously-skip-permissions`；实测 `--mode plan` 仍暴露 `write_file`/`edit_file`/`run_command` 全部 13 个工具，配合免审时 `write_file` 会真实写盘，无进程级只读保证 | 假网关 + 沙箱实测 |
 | 思考档位 | `--effort low\|medium\|high` 实测生效（发 `thinkingConfig: {includeThoughts: true, thinkingLevel: "LOW"\|"MEDIUM"\|"HIGH"}`）；`xhigh`、`max` 在 Gemini 模型上报不支持；`settings.json` 无对应键 | 假网关实测 |
 | 恢复与分叉 | `--conversation <id>`、`-c/--continue`；会话内 `/fork`（别名 `/branch`），无 CLI 级分叉参数 | 官方 + 实测 |
-| 斜杠命令 | `/model <name>`、`/effort <level>`、`/clear`、`/fork`、`/plan`、`/help` | 内置文档 + 二进制 |
+| 斜杠命令 | `/model [name]`、`/clear`、`/fork`、`/plan`、`/help`（实测 1.5.8：`/model <name>` 会把模型写回全局 `settings.json`；TUI 内**无** `/effort` 命令，`--effort` 仅启动参数） | 内置文档 + 沙箱 PTY 实测 |
 | 程序状态 | 回应 `OSC 7501 ; ?`，上报 `app=antigravity` | 本机实测 |
 | hooks | `~/.gemini/config/hooks.json` 顶层为组名对象；`SessionStart`/`PreInvocation`/`PostInvocation`/`Stop` 为扁平 handler 数组，`PreToolUse`/`PostToolUse` 为 `[{"matcher": "*", "hooks": [...]}]`；实测 `matcher: "*"` 匹配全部工具，空 stdout `exit 0` 只记录、不拦截也不自动放行 | 沙箱实测 |
 | MCP | `~/.gemini/config/mcp_config.json`（首次启动可能生成 **0 字节空文件**），根键 `mcpServers`；远程写 `serverUrl`（读回兼容 `serverUrl` 与 `url`），只支持 Streamable HTTP，不支持 SSE | `agy mcp add` 实测 |
@@ -52,8 +52,8 @@
 | `permission_args` | `auto` → `["--mode", "auto"]`；`full` → `["--dangerously-skip-permissions"]` | |
 | resume | `["--conversation", "{session}"]` | |
 | fork | `None` | `/fork` 仅会话内可用，无命令行分叉参数 |
-| `ModelSwitch` | `Direct("/model")` | 会话内换模型 |
-| `effort_levels` | `["low", "medium", "high"]`，CLI `--effort <档>`，TUI `/effort <档>` | `xhigh`/`max` 在 Gemini 模型上报错，开放通用三档 |
+| `ModelSwitch` | `Direct("/model {model}")`（配合 `SWITCH_PERSISTS.agy` 走重开接回，不写全局 `settings.json`） | 会话内安全换模型 |
+| `effort_levels` | `None`（`reasoning_effort_options` 为 `["low", "medium", "high"]`，CLI 启动 `--effort <档>`，运行中走重开接回） | 1.5.8 TUI 无 `/effort` 命令；`xhigh`/`max` 在 Gemini 模型上报错 |
 | `config_root` | `~/.gemini/antigravity-cli` | `agent_config_root_with` 必加（否则 `sessions.rs` 断言 panic） |
 | PATH 候选目录 | Unix `~/.local/bin`；Windows `%LOCALAPPDATA%\agy\bin` | `binary_candidate_dirs` |
 | `mcp_write` | `Full` | 写 `~/.gemini/config/mcp_config.json`，§9 |
@@ -63,8 +63,8 @@
 | `official_account` | 登录命令 `Some(&["acp", "--login"])`，`auth_file_paths` 空，`detection_note` 说明凭证存系统钥匙串、Mesa 不主动读取以免触发钥匙串弹窗 | `cache/onboarding.json` 只代表首次引导完成，不当登录态 |
 | `packaging` | 更新渠道 `SelfUpdate`（`agy update`）；安装命令按平台给官方脚本 | §15 |
 | `request_policy` | 仅 `effort` 为 `inject`（`--effort`）；`temperature`、`top_p`、`max_tokens`、`headers` 均为 `unsupported` | `agy` 无采样参数与自定义请求头入口 |
-| `headless_write` | 支持 `-p <prompt>` 配合权限参数；`inspect_readonly_args` 保持 `None` | `-p` 总是落盘，一次性无痕调用 `ai_prompt_impl` 不派给 agy |
-| `support_tier` | 维护级（不进 `TIER1_AGENTS`） | |
+| `headless_write` / `headless_followup` | 支持 `-p <prompt>` 配合权限参数写盘，以及 `-p <prompt> --output-format stream-json` + `--conversation <id>` 分轮无头续跑；`inspect_readonly_args` 保持 `None` | `-p` 总是落盘，一次性无痕调用 `ai_prompt_impl` 不派给 agy |
+| `support_tier` | **一等支持**（进 `TIER1_AGENTS`：跨厂商复核、分轮续跑全量支持） | 2026-11-14 用户拍板升级 |
 
 能力清单 `capability_manifest.rs`：登记全局配置、MCP、技能、hooks 四类写入路径，通过 `every_agent_is_accounted_for` 守卫。
 
@@ -185,9 +185,13 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 ## 12. 聊天层与前端能力表
 
-- 结构化旁路（`chat_channel.rs`）：Unix 上接入 `program_status.rs`（OSC 7501，`app=antigravity`，`PROGRAM_STATUS_MIN` 设为 `(1, 5, 8)`）；Windows 与 Grok/Kimi 一致不接 OSC 7501。
-- 前端必改表：`src/types.ts`、`src/chat-fidelity.ts`（含测试）、`src/terminal-tab-persistence.ts`（含测试）、`src/slash-commands.ts`、`src/session-title.ts`、`src/model-switch.ts`（含测试）、`src/reasoning-effort.ts`。
-- 依赖真机 TUI 抓屏的表（`live-reply.ts`、`mid-turn-send.ts`、`terminal-wait.ts`、`tui-menu.ts`）：按规范不编造假屏幕样张，先走会话文件 + OSC 7501 状态，后续抓真屏再补读屏兜底。
+- 结构化旁路（`chat_channel.rs`）：Unix 上接入 `program_status.rs`（OSC 7501，`app=antigravity`，`PROGRAM_STATUS_MIN` 设为 `(1, 5, 8)`）；Windows 与 Grok/Kimi 一致不接 OSC 7501。因 `program-status` 只报状态不带正文，`channelDeliversLiveText` 对其返回 `false`，回合进行中继续由 `live-reply.ts` 实时读屏推流。
+- 读屏流式与菜单交互（1.5.8 PTY 实录校准）：
+  - `src/live-reply.ts`：识别多行输入框顶框、跳过 `○/●` 工具行、`  ⎿` 工具输出与 `└ Tip:` 提示行；从非泛状态的盲文转圈行（`⣷  ...` 及 5 格续行）提取实时思考内容；
+  - `src/tool-activity.ts`：完整识别 `agy` 的工具名（`edit_file`、`multi_replace_file_content`、`write_file`、`read_file`、`run_command`、`grep_search`、`find_by_name`、`list_dir`、`read_url_content`、`invoke_subagent`、`ask_question` 等）与 PascalCase 参数键（`Path`、`Target`/`Replacement`、`TargetFile`/`ReplacementChunks`、`CommandLine`/`toolSummary` 等），渲染文件点击预览、行内红绿 diff、命令摘要与退出码/拒绝状态；
+  - `src/tui-menu.ts`：识别 `↑/↓ Navigate · tab Amend · ctrl+g ...` 底栏提示不混入最后一项，且正文 `● 1.` 编号清单不误判为审批菜单；
+  - `src/switch-strategy.ts` & `src/mid-turn-send.ts`：`SWITCH_PERSISTS.agy = { model: true, effort: true }` 使运行中换模型/思考档走重开接回（不污染全局 `settings.json`）；回复中发消息标记为 `after_turn`（「排队中 · 这一轮结束后处理」）。
+- 其余前端表：`src/types.ts`、`src/cross-review.ts`（`TIER1_AGENTS`）、`src/chat-fidelity.ts`、`src/terminal-tab-persistence.ts`、`src/slash-commands.ts`、`src/session-title.ts`、`src/model-switch.ts`、`src/reasoning-effort.ts`（识别 `Model set to ...` 并剥除 `mesa/` 前缀）、`src/chat-handoff.ts`。
 
 ## 13. 网关、连接片段与路由探测
 

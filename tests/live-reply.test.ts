@@ -1184,4 +1184,34 @@ test("Antigravity CLI 1.5.8：读出缩进两格的流式回复，审批菜单�
     "  2. No, cancel",
   ];
   assert.equal(extractLiveReply(approval, "agy"), null);
+  // 1.5.8 真实工具流 + 思考块 + 多行输入框草稿：工具输出（⎿）、Running 圆点行、└ Tip: 与盲文思考块均不混入回复
+  const withToolAndThink = [
+    RULE,
+    "> 帮我检查并总结",
+    "",
+    "○  Running (git status -s)",
+    "  ⎿  M src/live-reply.ts",
+    "●  Ran (git status -s)",
+    "  ⎿  Command exited with code 0.",
+    "⣷  先核对修改范围，再组织结论摘要",
+    "     顺便确认有没有遗漏边界情况",
+    "  这是整理后的第一句。",
+    "  这是整理后的第二句。",
+    "└ Tip: Press shift+tab to toggle plan mode",
+    RULE,
+    "> 下一条草稿第一行",
+    "  草稿第二行",
+    "  草稿第三行",
+    RULE,
+    "esc to cancel                                                                                            mesa/gemini-2.5-pro",
+  ];
+  assert.deepEqual(extractLiveReply(withToolAndThink, "agy")?.lines, [
+    "这是整理后的第一句。",
+    "这是整理后的第二句。",
+  ]);
+  assert.deepEqual(extractLiveThinking(withToolAndThink, "agy"), [
+    "先核对修改范围，再组织结论摘要顺便确认有没有遗漏边界情况",
+  ]);
+  // 泛状态行（Generating.../Working.../Thinking...）不当作思考正文
+  assert.equal(extractLiveThinking(streaming, "agy"), null);
 });

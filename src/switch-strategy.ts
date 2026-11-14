@@ -71,6 +71,9 @@ export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean
   grok: { model: true },
   qwen: { effort: true },
   kimi: { effort: true },
+  // Antigravity CLI 1.5.8 沙箱实测：/model 会把 mesa/<模型> 写进 ~/.gemini/antigravity-cli/settings.json，
+  // 且思考档只有启动参数 --effort（无 /effort 斜杠命令），统一走重开接回
+  agy: { model: true, effort: true },
 };
 
 export function switchPersists(agentId: string, kind: "model" | "effort", version?: string | null): boolean {
@@ -149,4 +152,4 @@ export function inSessionPermissionSwitch(
 }
 
 /** 在对话里只能用快捷键轮着换档的家（实测）：换权限要重开接回，菜单里写一句原因 */
-export const PERMISSION_CYCLE_ONLY = new Set(["claude-code", "gemini", "grok", "codebuddy"]);
+export const PERMISSION_CYCLE_ONLY = new Set(["claude-code", "gemini", "grok", "codebuddy", "agy"]);

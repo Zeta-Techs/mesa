@@ -1138,8 +1138,8 @@ static AGENT_SPECS: &[AgentSpec] = &[
             }),
         }),
         model_switch: ModelSwitch::Direct("/model {model}"),
-        // 1.5.8 假网关实测：low/medium/high 发 thinkingConfig.thinkingLevel，xhigh/max 在 Gemini 模型报错
-        effort_levels: Some((&["low", "medium", "high"], "/effort {level}")),
+        // 1.5.8 实测：--effort low|medium|high 仅启动参数，TUI 内无 /effort 斜杠命令；运行中经重开接回切换（switch-strategy.ts）
+        effort_levels: None,
         submit_csi_u: false,
         // 仅官方 Google 账号连接可执行「设为全局默认」（撤回 modelProvider/customModels 下的 mesa/ 项）；
         // API 密钥与第三方中转只从环境变量读凭证，Mesa 不改 shell 配置，前后端拒收并写明原因
@@ -1203,9 +1203,9 @@ pub struct AgentCapabilitiesDto {
     pub tier_note: &'static str,
 }
 
-/// 一等支持的 Agent（AGENTS.md「CLI 支持分级」）：跨厂商复核等新功能先在这三家做全。
+/// 一等支持的 Agent（AGENTS.md「CLI 支持分级」）：跨厂商复核、分轮无头续跑等新功能先在这四家做全。
 /// 前端 src/cross-review.ts TIER1_AGENTS 是镜像，tests/cross-review.test.ts 逐字比对
-pub(crate) const TIER1_AGENTS: [&str; 3] = ["claude-code", "codex", "kimi"];
+pub(crate) const TIER1_AGENTS: [&str; 4] = ["claude-code", "codex", "kimi", "agy"];
 
 pub(crate) fn support_tier(agent: &str) -> u8 {
     if TIER1_AGENTS.contains(&agent) {
@@ -1219,7 +1219,7 @@ fn tier_note(agent: &str) -> &'static str {
     if support_tier(agent) == 1 {
         "一等支持：新功能（核验接入、跨厂商复核等）先在这几家做全"
     } else {
-        "维护级：能启动、能注入连接、能看会话；新功能尽力而为，做不到的会写明。跨厂商复核从 Claude Code、Codex、Kimi Code 里挑"
+        "维护级：能启动、能注入连接、能看会话；新功能尽力而为，做不到的会写明。跨厂商复核从 Claude Code、Codex、Kimi Code、Antigravity CLI 里挑"
     }
 }
 
@@ -1453,7 +1453,7 @@ fn headless_write_cap(agent: &str) -> CapabilityFlagDto {
 }
 
 pub(crate) fn headless_followup_cap(agent: &str) -> CapabilityFlagDto {
-    flag(TIER1_AGENTS.contains(&agent), (!TIER1_AGENTS.contains(&agent)).then_some("分轮无头续跑只支持 Claude Code、Codex、Kimi；其他家仍可单轮执行"))
+    flag(TIER1_AGENTS.contains(&agent), (!TIER1_AGENTS.contains(&agent)).then_some("分轮无头续跑只支持 Claude Code、Codex、Kimi、Antigravity CLI；其他家仍可单轮执行"))
 }
 
 /// Windows 上 Codex 的 workspace-write 靠它自己的 Windows 沙箱（~/.codex/config.toml 的 `[windows] sandbox`）。
@@ -1821,7 +1821,7 @@ mod tests {
             .map(|c| (c.agent.to_string(), c.support_tier))
             .collect();
         for (agent, tier) in &tiers {
-            let want = if ["claude-code", "codex", "kimi"].contains(&agent.as_str()) { 1 } else { 2 };
+            let want = if ["claude-code", "codex", "kimi", "agy"].contains(&agent.as_str()) { 1 } else { 2 };
             assert_eq!(*tier, want, "{agent}");
         }
         assert_eq!(tiers.len(), 10);
@@ -2307,6 +2307,7 @@ mod tests {
         );
         assert_eq!(agent_spec("gemini").unwrap().effort_levels, None);
         assert_eq!(agent_spec("codex").unwrap().effort_levels, None);
+        assert_eq!(agent_spec("agy").unwrap().effort_levels, None);
         assert_eq!(
             agent_spec("grok")
                 .unwrap()

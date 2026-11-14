@@ -284,3 +284,55 @@ test("foldUnchanged：中段未改的长串也折成一个 ⋯", () => {
   const folded = foldUnchanged(lines, 1);
   assert.deepEqual(folded.map((line) => line.op + line.text), ["-1", "+X", " 2", "~", " 8", "-9", "+Y"]);
 });
+
+test("Antigravity CLI PascalCase 工具块与结果状态识别", () => {
+  const edit = one("edit_file", {
+    Path: `${CWD}/src/live-reply.ts`,
+    Target: "const a = 1;\nconst b = 2;",
+    Replacement: "const a = 1;\nconst b = 3;\nconst c = 4;",
+  });
+  assert.equal(edit.kind, "edit");
+  assert.equal(edit.target, "live-reply.ts");
+  assert.equal(edit.dir, "src/");
+  assert.equal(edit.added, 2);
+  assert.equal(edit.removed, 1);
+  assert.equal(activityFile(edit, CWD)?.path, `${CWD}/src/live-reply.ts`);
+
+  const multi = one("multi_replace_file_content", {
+    TargetFile: `${CWD}/src/a.ts`,
+    ReplacementChunks: [
+      { TargetContent: "x", ReplacementContent: "y\nz" },
+      { TargetContent: "m", ReplacementContent: "n" },
+    ],
+  });
+  assert.equal(multi.kind, "edit");
+  assert.equal(multi.added, 3);
+  assert.equal(multi.removed, 2);
+
+  const write = one("write_file", { Path: `${CWD}/notes/todo.md`, Content: "# 标题\n正文" });
+  assert.equal(write.kind, "write");
+  assert.equal(write.added, 2);
+
+  const read = one("read_file", { Path: `${CWD}/src/main.ts`, StartLine: 42, EndLine: 80 });
+  assert.equal(read.kind, "read");
+  assert.deepEqual(activityFile(read, CWD), { path: `${CWD}/src/main.ts`, root: CWD, line: 42 });
+
+  const cmd = one("run_command", { CommandLine: "cargo test --lib", toolSummary: "Run unit tests" });
+  assert.equal(cmd.kind, "run");
+  assert.equal(cmd.target, "Run unit tests");
+  assert.equal(cmd.note, "cargo test --lib");
+  assert.equal(cmd.command, "cargo test --lib");
+
+  const sub = one("invoke_subagent", { Role: "Codebase Researcher", Prompt: "查找会话目录" });
+  assert.equal(sub.kind, "task");
+  assert.equal(sub.target, "Codebase Researcher");
+
+  const ask = one("ask_question", { questions: [{ question: "选哪个方案？", options: ["A", "B"] }] });
+  assert.equal(ask.kind, "ask");
+  assert.equal(ask.target, "选哪个方案？");
+
+  assert.equal(resultStatus("Command exited with code 0.\n\nCommand output:\nok"), "ok");
+  assert.equal(resultStatus("Command exited with code 2.\n\nCommand output:\nerr"), "failed");
+  assert.equal(resultStatus("Encountered error in tool execution: file not found"), "failed");
+  assert.equal(resultStatus("The user denied permission to run this command."), "denied");
+});

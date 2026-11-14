@@ -13,6 +13,8 @@ test("会写回全局配置的切换改走重开接回；写不回去的照旧�
   assert.equal(switchByRelaunch("claude-code", "model", true), true);
   assert.equal(switchByRelaunch("claude-code", "effort", true), true);
   assert.equal(switchByRelaunch("codex", "model", true), true);
+  assert.equal(switchByRelaunch("agy", "model", true), true);
+  assert.equal(switchByRelaunch("agy", "effort", true), true);
   assert.equal(switchByRelaunch("grok", "model", true), true);
   assert.equal(switchByRelaunch("grok", "effort", true), false, "Grok /effort 不写配置，照旧中途切");
   assert.equal(switchByRelaunch("gemini", "model", true), false, "Gemini /model set 只管这一段");
@@ -46,7 +48,7 @@ test("会话里直接换权限只开给实测过的三家，带版本门槛；�
   assert.equal(inSessionPermissionSwitch("codex", "0.163.0"), null);
   assert.deepEqual(inSessionPermissionSwitch("qwen", "0.26.7")?.args, { ask: "default", auto: "auto", full: "yolo" });
   assert.equal(inSessionPermissionSwitch("qwen", null), null, "读不到版本按老版本");
-  for (const id of ["claude-code", "gemini", "grok", "codebuddy", "opencode", "cursor"]) {
+  for (const id of ["claude-code", "gemini", "grok", "codebuddy", "opencode", "cursor", "agy"]) {
     assert.equal(inSessionPermissionSwitch(id, "99.0.0"), null, id);
   }
 });

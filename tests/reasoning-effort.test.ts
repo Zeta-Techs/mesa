@@ -182,3 +182,9 @@ test("Codex 切档：回显句与可视区底栏都能认出新档位（差量�
   assert.equal(detectEffortOnScreen(["随便一行"], "codex"), null);
   assert.equal(detectEffortOnScreen(["  m high · /work"], "claude-code"), null);
 });
+
+test("Antigravity CLI /model 回显：识别 Model set to 并剥掉 mesa/ 会话前缀", () => {
+  assert.equal(modelReadbackSupported("agy"), true);
+  assert.equal(detectModelInOutput("  ⎿  Model set to mesa/gemini-2.5-pro", "agy"), "gemini-2.5-pro");
+  assert.equal(detectModelInOutput("  ⎿  Model set to gemini-3.8-flash-high", "agy"), "gemini-3.8-flash-high");
+});

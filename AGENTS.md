@@ -67,8 +67,8 @@ Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用�
 - 应用展示名 **Mesa**（内部身份仍 `ccode`，见上）；十个 agent 全部支持（CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 见 matrix §7/§8/§9/§9b；grok：MCP 只读不分发、技能强制 copy；「设为全局默认」2026-09-01 起支持，写 ~/.grok/config.toml；agy：启动生成会话级 `--settings` 文件合入用户自定义模型、仅官方 Google 账号支持「设为全局默认」、MCP/技能/hooks 写 `~/.gemini/config/` 不碰 Gemini CLI 的 `~/.gemini/skills/`、暂不进进程级只读场景）
 - **OpenCode 1.x / 2.x 两版都支持（2026-11-04）**：按 `--version` 大版本分开走（`agents::opencode_v2`），以 2.x 为主、不做共存；2.x 启动与无头调用一律私有服务，
   禁止连它的共享后台服务（注入的密钥会留在服务里）。细则 matrix §5「OpenCode 2」行、safety.md 旁路条
-- **CLI 支持分级（2026-11-02）**：一等 Claude Code、Codex、Kimi——新功能（跨厂商复核、核验接入等）先在这三家做全；其余七家维护级：能启动、能注入连接、能看会话、
-  金丝雀不红，新功能尽力而为，做不到的在界面写明原因（走 AgentSpec 能力表，不硬编码）。不删任何一家
+- **CLI 支持分级（2026-11-02，2026-11-14 补入 agy）**：一等 Claude Code、Codex、Kimi、Antigravity CLI——新功能（跨厂商复核、分轮续跑、核验接入等）先在这四家做全；其余六家维护级：能启动、能注入连接、能看会话、
+  金丝雀不红，新功能尽力而为，做不到的在界面写明原因（走 AgentSpec 能力表，不硬编码；进程级只读仍按能力表单独判定）。不删任何一家
 - **核验与研究记录（2026-11-02）**：核验结果只有通过 / 拦下 / 待你判断三档，要读懂内容的检查永不自动通过、不打总分；Run 事实与核验记录落项目 `.ccode/`
   （与验收账本同口径不进 git）；不做「降 AI 率」。设计稿 `docs/design-research-moat.md`，细则 pipeline.md「核验记录」
 - **少占注意力（2026-11-02）**：人工请求按固定字段写进 `.ccode/help-wanted.md`，收件箱卡片点选即答、经原对话送达；只有七类必须停下来问；

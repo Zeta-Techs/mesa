@@ -9,7 +9,7 @@ import { vendorForModel, vendorForOfficialAgent } from "./vendor-icon.ts";
 import { isManuscriptHelper } from "./manuscript-files.ts";
 
 /** 一等支持的 Agent（AGENTS.md「CLI 支持分级」，2026-11-02）；默认复核先从这几家挑 */
-export const TIER1_AGENTS = ["claude-code", "codex", "kimi"] as const;
+export const TIER1_AGENTS = ["claude-code", "codex", "kimi", "agy"] as const;
 
 export const CROSS_REVIEW_FILE = ".ccode/checks/cross-review.jsonl";
 

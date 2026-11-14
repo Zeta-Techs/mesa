@@ -523,3 +523,32 @@ test("Kimi 思考档横排选择器：方括号是当前高亮，标题下的按
   assert.equal(parseKimiEffortPicker(screen.slice(3)), null, "没有标题不认");
   assert.equal(parseKimiEffortPicker(["  Select thinking effort", "   [ On ]  [ Off ]"]), null, "两个高亮不认");
 });
+
+test("Antigravity CLI 审批菜单与正文列表区分：↑/↓ Navigate 提示行不混入选项，● 1. 正文不当菜单", () => {
+  const approval = parseTuiMenu(
+    [
+      "●  Run command (rm -f /tmp/probe)",
+      "Allow this command to run?",
+      "❯ 1. Yes, allow once",
+      "  2. Always allow in this workspace",
+      "  3. No, deny",
+      "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+    ],
+    undefined,
+    "agy",
+  );
+  assert.ok(approval);
+  assert.deepEqual(approval.options, ["Yes, allow once", "Always allow in this workspace", "No, deny"]);
+  assert.equal(approval.selected, 0);
+
+  const bodyList = parseTuiMenu(
+    [
+      "  下面是步骤清单：",
+      "● 1. 先检查配置文件",
+      "  2. 再验证终端启动",
+    ],
+    undefined,
+    "agy",
+  );
+  assert.equal(bodyList, null);
+});

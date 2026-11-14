@@ -591,11 +591,23 @@ pub(crate) fn extract_headless_session_id(detail: &str) -> Option<String> {
     None
 }
 
+fn extract_stream_json_session_id(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("session_id")
+        .or_else(|| value.get("sessionId"))
+        .or_else(|| value.get("thread_id"))
+        .or_else(|| value.get("conversation_id"))
+        .or_else(|| value.get("result").and_then(|r| r.get("conversation_id")))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 fn remember_headless_session(agent: &str, out: &str, err: &str) -> Option<String> {
     let id = extract_headless_session_id(&format!("{out}\n{err}")).or_else(|| {
         out.lines().find_map(|line| {
             let value: serde_json::Value = serde_json::from_str(line).ok()?;
-            value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id"))?.as_str().map(str::to_owned)
+            extract_stream_json_session_id(&value).map(str::to_owned)
         })
     })?;
     let _ = crate::sessions::mark_session_internal(agent, &id);
@@ -1424,7 +1436,7 @@ fn followup_args(agent: &str, mut args: Vec<String>, session: Option<String>) ->
             }
             args.insert(1, "--json".into());
         }
-        "kimi" => args.extend(["--output-format".into(), "stream-json".into()]),
+        "kimi" | "agy" => args.extend(["--output-format".into(), "stream-json".into()]),
         _ => return Err("该 Agent 不支持分轮无头续跑".into()),
     }
     Ok(args)
@@ -1459,6 +1471,53 @@ pub(crate) fn followup_text(agent: &str, raw: &str) -> Result<String, String> {
                 }
             }
             if parts.is_empty() { Err("没有可读的 Kimi 回执文本".into()) } else { Ok(parts.join("")) }
+        }
+        "agy" => {
+            // Antigravity CLI 1.5.8 `--output-format stream-json` 实测：
+            // 首行 {"event":"init","conversation_id":"..."}；过程行 step_update（user_input / agent_response text_delta）；
+            // 末行 {"event":"result","result":{"conversation_id":"...","status":"SUCCESS","response":"..."}}。
+            // 绝不收 step_type == "user_input"，避免提示词里的回执示例被误当成助手回执。
+            let mut final_response: Option<String> = None;
+            let mut deltas = Vec::new();
+            for line in raw.lines() {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                match value.get("event").and_then(|v| v.as_str()) {
+                    Some("result") => {
+                        if let Some(res) = value.get("result") {
+                            if let Some(status) = res.get("status").and_then(|v| v.as_str()) {
+                                if !status.eq_ignore_ascii_case("SUCCESS") {
+                                    let msg = res
+                                        .get("error")
+                                        .or_else(|| res.get("message"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or(status);
+                                    return Err(format!("Antigravity CLI 执行未成功: {msg}"));
+                                }
+                            }
+                            if let Some(resp) = res.get("response").and_then(|v| v.as_str()) {
+                                if !resp.trim().is_empty() {
+                                    final_response = Some(resp.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Some("step_update") => {
+                        if value.get("step_type").and_then(|v| v.as_str()) == Some("agent_response") {
+                            if let Some(delta) = value.get("text_delta").and_then(|v| v.as_str()) {
+                                deltas.push(delta.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(resp) = final_response {
+                Ok(resp)
+            } else if !deltas.is_empty() {
+                Ok(deltas.join(""))
+            } else {
+                Err("没有可读的 Antigravity CLI 回执文本".into())
+            }
         }
         _ => Err("没有该 Agent 的分轮输出解析器".into()),
     }
@@ -1560,7 +1619,7 @@ pub(crate) fn run_agent_task_granted(
     let mut on_output = |bytes: &[u8]| feed_lines(&mut pending, bytes, &mut |line| {
         if FOLLOWUP_OUTPUT.with(|value| value.get()) {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(session) = value.get("session_id").or_else(|| value.get("sessionId")).or_else(|| value.get("thread_id")).and_then(|value| value.as_str()) {
+                if let Some(session) = extract_stream_json_session_id(&value) {
                     if recorded_stream_session.as_deref() != Some(session) {
                         recorded_stream_session = Some(session.to_string());
                         let _ = crate::sessions::mark_session_internal(&profile.agent, session);
@@ -3442,8 +3501,25 @@ mod tests {
             let (session, args) = lock_headless_session("claude-code");
             assert_eq!(session.as_deref(), Some("original"));
             assert_eq!(args, ["-r", "original"]);
+            let (agy_session, agy_args) = lock_headless_session("agy");
+            assert_eq!(agy_session.as_deref(), Some("original"));
+            assert_eq!(agy_args[..2], ["--conversation", "original"]);
         });
         assert!(!FOLLOWUP_OUTPUT.with(|value| value.get()));
+        let agy_args = followup_args("agy", headless_task_args("agy", "第二轮"), Some("conv-1".into())).unwrap();
+        assert_eq!(
+            agy_args,
+            vec!["--dangerously-skip-permissions", "-p", "第二轮", "--output-format", "stream-json"]
+        );
+        let agy_stream = concat!(
+            r#"{"event":"init","conversation_id":"conv-1","init":{}}"#, "\n",
+            r#"{"event":"step_update","step_type":"user_input","text_delta":"示例回执 MESA_FOLLOWUP_RECEIPT"}"#, "\n",
+            r#"{"event":"step_update","step_type":"agent_response","text_delta":"真实助手"}"#, "\n",
+            r#"{"event":"result","result":{"conversation_id":"conv-1","status":"SUCCESS","response":"真实助手回复"}}"#, "\n"
+        );
+        assert_eq!(followup_text("agy", agy_stream).unwrap(), "真实助手回复");
+        let init_val: serde_json::Value = serde_json::from_str(r#"{"event":"init","conversation_id":"conv-1"}"#).unwrap();
+        assert_eq!(extract_stream_json_session_id(&init_val), Some("conv-1"));
     }
 
     #[test]

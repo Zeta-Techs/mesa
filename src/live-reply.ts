@@ -216,21 +216,24 @@ const LAYOUTS: Record<string, Layout> = {
     indent: 3,
   },
   agy: {
-    // Antigravity CLI 1.5.8 抓屏：输入框包在上下两条 ──── 横线中间（`>` 或 `> 草稿`），审批菜单时输入框收起（`> 1. Yes…` 下方无横线）
+    // Antigravity CLI 1.5.8 抓屏：输入框包在上下两条 ──── 横线中间（`>` 或多行草稿），审批菜单时输入框收起（`> 1. Yes…` 下方无横线）；
+    // 工具行 `○  Running (...)` / `●  Ran (...)` 下跟 `  ⎿  ...` 缩进输出，思考与等待态是 `  ⣷  思考摘要`（续行缩进 5 格），正上方偶挂 `  └ Tip:`
     boxTop: (rows) =>
       lastBox(rows, (i) =>
         i > 0 &&
-        i + 1 < rows.length &&
         /^>(?:\s|$)/.test(rows[i]) &&
         BORDER.test(rows[i - 1].trim()) &&
-        BORDER.test(rows[i + 1].trim())
+        rows.slice(i + 1, i + 12).some((line) => BORDER.test(line.trim()))
           ? i - 1
           : -1,
       ),
     echo: /^>\s+\S/,
     lead: null,
-    tool: /^\s*●\s/,
-    skip: /^─{8,}$|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)/,
+    tool: /^\s*[●○]\s/,
+    skip: /^─{8,}$|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)|^\s*└\s*Tip:/,
+    wrapSkip: /^\s*(?:⎿|└\s*Tip:)/,
+    thinkBlock: /^\s*[\u2800-\u28ff]\s+/,
+    thinkGutter: /^ {4,}/,
     indent: 2,
   },
 };
@@ -291,6 +294,16 @@ export function extractLiveThinking(lines: readonly string[], agentId: string): 
     if (layout.echo.test(rows[i])) return null;
   }
   if (at < 0) return null;
+  if (agentId === "agy") {
+    const first = rows[at].replace(/^\s*[\u2800-\u28ff]\s+/, "").trim();
+    if (!first || /^(?:Generating|Working|Thinking|Running|Loading)\.{0,3}$/i.test(first)) return null;
+    const agyBody = [first];
+    for (let j = at + 1; j < boxTop && /^ {4,}\S/.test(rows[j]) && !SPINNER.test(rows[j]) && !layout.skip.test(rows[j]); j++) {
+      const part = rows[j].trim();
+      if (part && part !== "…") agyBody.push(part);
+    }
+    return unwrapLines(agyBody);
+  }
   const body: string[] = [];
   // Kimi 2.5 在「thinking…」和思考原文之间空一行（2026-11-11 用户截图：聊天层一会只有「思考中」、一会带内容）；
   // 框里的行不含转圈和提示（还没出原文时，空行下面就是缩进的「⠏ Working…」）

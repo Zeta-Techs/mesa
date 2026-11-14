@@ -246,6 +246,7 @@ const SLASH_RESULT_LINES: Record<string, { cmd: RegExp; line: RegExp }[]> = {
     { cmd: /^\/permissions\b/, line: /^Permissions updated to / },
   ],
   qwen: [{ cmd: /^\/approval-mode\b/, line: /^Approval mode set to / }],
+  agy: [{ cmd: /^\/model\b/, line: /^Model set to / }],
 };
 
 /** 屏上一行去掉行首的装饰（● • ⎿ ℹ ✓ 与缩进）再比 */
@@ -285,7 +286,7 @@ export function slashResultLines(
  * 这一轮结束时还没收尾的斜杠命令，这几家直接留成记录、不再挂着（实测过不写会话文件、发出就执行，不排队）。
  * 排队的家（Qwen 生成中发的命令这一轮结束后才执行）、会把命令写进会话文件的家不在里面
  */
-const SLASH_SETTLES_AT_TURN_END = new Set(["kimi", "codex"]);
+const SLASH_SETTLES_AT_TURN_END = new Set(["kimi", "codex", "agy"]);
 export function slashSettlesAtTurnEnd(agentId: string, sent: Pick<ChatMessageDto, "blocks">): boolean {
   if (!SLASH_SETTLES_AT_TURN_END.has(agentId)) return false;
   return /^[/!]\S/.test((sent.blocks[0]?.text ?? "").trim());

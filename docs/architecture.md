@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-14 · Antigravity CLI 升为一等支持并补齐聊天层与外部会话链路
+
+用户要求「将 antigravity 也作为一等优化」，并指出聊天层流式显示异常与外部 Antigravity CLI 对话在 Mesa 内不显示。定：① `agy` 升为一等支持（`TIER1_AGENTS` 扩为 `claude-code`、`codex`、`kimi`、`agy`），接入跨厂商复核与定时任务分轮无头续跑（`-p ... --output-format stream-json` + `--conversation <id>` 锁原会话，只收 `result.response` / `agent_response` 增量，不误吃用户提示词）；进程级只读场景（研讨、项目助手只读查看）仍按能力表单独拦截；② 聊天层与一等 CLI 对齐：`program-status` 旁路只报状态不推正文，开放 xterm 实时流式预览与盲文转圈思考块提取（过滤 `⎿` 工具回显与 `└ Tip:`），补齐 `agy` PascalCase 工具卡片 / 差异对比 / 命令摘要 / 退出码状态、审批菜单按键提示剥离与回复中排队提示；③ 实测 `agy` 1.5.8 TUI `/model` 会写回全局 `settings.json` 且无 `/effort` 斜杠命令，运行中换模型与思考档统一走重开接回（`SWITCH_PERSISTS.agy` + `effort_levels: None`），保护全局配置零污染；④ 外部对话发现补齐 `conversation_summaries.db` 的 `conversations_fts` 纯文字会话解析（运行中生成 `transcript*.jsonl` 后无缝升级）及 `cc-switch` 等 `--gemini_dir` 隔离根目录扫描与续聊自动带目录。细则 AGENTS.md「CLI 支持分级」、`docs/design-agy-integration.md`、matrix §9b。
+
 ### 2026-11-14 · 接入第十家 Agent：Antigravity CLI（agy）
 
 用户拍板接入 Antigravity CLI 作为第十家 Agent（内部 id `agy`，展示名 `Antigravity CLI`，归维护级），方案见 `docs/design-agy-integration.md`。定：① 中转 / API 连接不改用户的 `~/.gemini/antigravity-cli/settings.json`、也不往 shell 配置写包装函数，每次启动在 `<config_root>/agy-settings/` 生成 0600 会话级设置文件（原样合并用户非 `mesa/` 自定义模型，注册 `mesa/<模型>`），经 `--settings` + `--model mesa/<模型>` 与 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL` 注入；② 会话与用量只读解析 `brain/<id>/.system_generated/logs/transcript_full.jsonl`（回落 `transcript.jsonl`），工作目录只读查 `conversation_summaries.db` 且限定 `app_data_dir = 'antigravity-cli'`（排除桌面版对话与子 Agent），不解析 protobuf，暂不支持会话包导出；③ `agy` 只从环境变量读端点与密钥，「设为全局默认」仅支持官方 Google 账号（撤 `mesa/*` 条目与 `modelProvider: "gemini"`，保 JSONC 注释），API / 中转连接置灰并写明原因；④ MCP、技能、hooks 均写 `~/.gemini/config/`（MCP 远程用 `serverUrl`、拒写 SSE；技能不写 `~/.gemini/skills/` 以免与 Gemini CLI 互串；聊天层取数用 OSC 7501 程序状态加可选 `mesa-attention` hooks）；⑤ plan 模式仅靠提示词约束、无进程级只读保证，研讨、项目助手只读查看等进程级只读场景暂不纳入 `agy`。细则 matrix §9b、profiles.md §12、safety.md。
