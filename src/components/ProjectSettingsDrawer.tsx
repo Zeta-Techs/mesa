@@ -1,11 +1,11 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { X } from "lucide-react";
 import ResearchRecordPanel from "./ResearchRecordPanel";
 import AcceptanceLogList from "./AcceptanceLogList";
 import ProjectInjectionPanel from "./ProjectInjectionPanel";
 import ProjectMemoryPanel from "./ProjectMemoryPanel";
 import ProjectRulesPanel from "./ProjectRulesPanel";
-import { inlineActionClass } from "./PageFrame";
 import { useExitRender } from "../exit-animation";
 import type { AcceptanceLogEntryDto } from "../types";
 
@@ -168,6 +168,16 @@ export function SettingsDrawerShell({
   );
 
   function renderInner() {
+    const closeBtn = (
+      <button
+        type="button"
+        className="-mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+        onClick={onClose}
+        aria-label={`关闭${title}`}
+      >
+        <X size={15} strokeWidth={1.8} aria-hidden="true" />
+      </button>
+    );
     return (
       <>
         {titleIcon ? (
@@ -185,9 +195,7 @@ export function SettingsDrawerShell({
               )}
             </div>
             {headerExtra}
-            <button type="button" className={inlineActionClass} onClick={onClose} aria-label={`关闭${title}`}>
-              ✕
-            </button>
+            {closeBtn}
           </header>
         ) : fillBody ? (
           <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3.5 py-2">
@@ -202,46 +210,46 @@ export function SettingsDrawerShell({
               )}
             </div>
             {headerExtra}
-            <button
-              type="button"
-              className={inlineActionClass}
-              onClick={onClose}
-              aria-label={`关闭${title}`}
-            >
-              ✕
-            </button>
+            {closeBtn}
+          </header>
+        ) : headerActions ? (
+          <header className="ccode-drawer-head shrink-0 border-b border-field/75 px-5 pb-3.5 pt-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h2
+                  id={titleId}
+                  className="line-clamp-2 break-words text-base font-semibold leading-snug tracking-tight text-l1"
+                  title={title}
+                >
+                  {title}
+                </h2>
+                {subtitle && (
+                  <p className="mt-0.5 truncate text-xs text-l3" title={subtitle}>
+                    {subtitle}
+                  </p>
+                )}
+              </div>
+              {headerExtra}
+              {closeBtn}
+            </div>
+            <div className="mt-3">{headerActions}</div>
           </header>
         ) : (
-        <header className={`flex shrink-0 items-center gap-2 px-5 ${headerActions ? "min-h-12 flex-wrap py-3" : "h-12"}`}>
-          <h2
-            id={titleId}
-            className={`min-w-0 text-base font-semibold text-l1 ${headerActions ? "line-clamp-2 flex-1 break-words" : "shrink truncate"}`}
-            title={headerActions ? title : undefined}
-          >
-            {title}
-          </h2>
-          {!headerActions && (
+          <header className="flex h-12 shrink-0 items-center gap-2 px-5">
+            <h2 id={titleId} className="min-w-0 shrink truncate text-base font-semibold text-l1">
+              {title}
+            </h2>
             <span className="min-w-0 flex-1 truncate text-micro text-l4" title={subtitle}>
               {subtitle}
             </span>
-          )}
-          {headerExtra}
-          <button
-            type="button"
-            className={inlineActionClass}
-            onClick={onClose}
-            aria-label={`关闭${title}`}
-          >
-            ✕
-          </button>
-          {headerActions && subtitle && <p className="w-full break-words text-xs text-l3">{subtitle}</p>}
-        </header>
+            {headerExtra}
+            {closeBtn}
+          </header>
         )}
-        {headerActions && <div className="shrink-0 border-b border-hairline px-5 pb-3">{headerActions}</div>}
         {fillBody ? (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
         ) : (
-          <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions || titleIcon ? "pt-4" : ""}`}>
+          <div className={`min-h-0 flex-1 overflow-auto px-5 pb-6 ${headerActions ? "space-y-4 pt-4" : titleIcon ? "space-y-5 pt-4" : "space-y-5"}`}>
             {children}
           </div>
         )}

@@ -4516,10 +4516,16 @@ select:focus-visible {
 }
 .ccode-workbench-detail-backdrop { top: var(--ccode-titlebar-h); }
 .ccode-workbench-detail {
-  width: min(400px, 100%);
+  width: min(436px, 94vw);
   max-width: 100%;
   border-left: 1px solid var(--color-field);
-  background: var(--color-strip);
+  background: var(--color-canvas);
+}
+.ccode-workbench-detail:not(.ccode-docked-panel) {
+  box-shadow: -20px 0 48px -12px rgba(0, 0, 0, 0.36);
+}
+.ccode-drawer-head {
+  background: color-mix(in oklab, var(--color-strip) 52%, var(--color-canvas));
 }
 /* 常驻侧栏（项目助手放进主区右边）：与主区同一档圆角卡片，靠行容器的缝分开，不再画左边线 */
 .ccode-docked-panel {

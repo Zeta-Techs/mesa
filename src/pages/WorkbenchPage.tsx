@@ -1296,50 +1296,81 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   if (openCard && openCardTask && panelData) {
     const ref = openCardTask.ref;
     const live = openCardTask.live;
-    const act = (label: string, run: () => void) =>
+    const act = (
+      label: string,
+      run: () => void,
+      opts?: { tone?: TaskPanelAction["tone"]; icon?: TaskPanelAction["icon"] },
+    ) =>
       panelActions.push({
         label,
+        tone: opts?.tone,
+        icon: opts?.icon,
         onClick: () => {
           closeTaskPanel();
           run();
         },
       });
     if (live) {
-      act("回到对话", () => {
-        if (live.runId) openRun(live.runId, live.tabId);
-        else {
-          setFocusTabReq(live.tabId);
-          setPage("terminal");
-        }
-      });
+      act(
+        "回到对话",
+        () => {
+          if (live.runId) openRun(live.runId, live.tabId);
+          else {
+            setFocusTabReq(live.tabId);
+            setPage("terminal");
+          }
+        },
+        { tone: "primary", icon: "chat" },
+      );
     } else if (ref.kind !== "schedule" && panelData.pastRuns[0]) {
       const last = panelData.pastRuns[0];
-      act("接着上次的对话", () => openRun(last.id));
+      act("接着上次的对话", () => openRun(last.id), { tone: "primary", icon: "chat" });
     }
     if (ref.kind === "goal" && ref.status === "pending_review") {
-      act("去验收", () => {
-        setSelectProjectReq(openCard.path);
-        setTaskReviewReq({ projectRoot: openCard.path, taskId: ref.taskId });
-        setPage("workspaces");
-      });
+      act(
+        "去验收",
+        () => {
+          setSelectProjectReq(openCard.path);
+          setTaskReviewReq({ projectRoot: openCard.path, taskId: ref.taskId });
+          setPage("workspaces");
+        },
+        { tone: panelActions.length === 0 ? "primary" : "secondary", icon: "check" },
+      );
     }
     const reviewPath = ref.kind === "step" ? ref.worktreePath : ref.kind === "branch" ? ref.path : null;
     if (reviewPath) {
-      act("看改动", () => {
-        setWorkspaceReviewRequest({
-          worktreePath: reviewPath,
-          runId: panelData.pastRuns[0]?.id ?? null,
-          requestId: crypto.randomUUID(),
-        });
-        setPage("terminal");
+      act(
+        "看改动",
+        () => {
+          setWorkspaceReviewRequest({
+            worktreePath: reviewPath,
+            runId: panelData.pastRuns[0]?.id ?? null,
+            requestId: crypto.randomUUID(),
+          });
+          setPage("terminal");
+        },
+        { tone: "secondary", icon: "diff" },
+      );
+    }
+    if (ref.kind === "schedule") {
+      act("去定时任务页", () => openProjectSchedules(openCard.path), {
+        tone: panelActions.length === 0 ? "primary" : "secondary",
+        icon: "clock",
       });
     }
-    if (ref.kind === "schedule") act("去定时任务页", () => openProjectSchedules(openCard.path));
     if (openCard.registered) {
-      act(ref.kind === "goal" && ref.status !== "pending_review" && !live ? "去项目页开始" : "在项目页打开", () => {
-        setSelectProjectReq(openCard.path);
-        setPage("workspaces");
-      });
+      const startGoal = ref.kind === "goal" && ref.status !== "pending_review" && !live;
+      act(
+        startGoal ? "去项目页开始" : "在项目页打开",
+        () => {
+          setSelectProjectReq(openCard.path);
+          setPage("workspaces");
+        },
+        {
+          tone: startGoal && panelActions.length === 0 ? "primary" : panelActions.length === 0 ? "secondary" : "ghost",
+          icon: "external",
+        },
+      );
     }
   }
   // ===== 任务行实时状态与详情花费 =====
@@ -1420,7 +1451,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
     const meta = live ? liveMeta(live) : null;
     if (!meta?.activity && !meta?.elapsed && !total) return null;
     return (
-      <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+      <dl className="grid grid-cols-[4.25rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
         {meta?.activity && (
           <>
             <dt className="text-l3">此刻</dt>
@@ -1430,13 +1461,13 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
         {meta?.elapsed && (
           <>
             <dt className="text-l3">这一轮</dt>
-            <dd className="text-l1">已跑 {meta.elapsed}</dd>
+            <dd className="tabular-nums text-l1">已跑 {meta.elapsed}</dd>
           </>
         )}
         {total && (
           <>
             <dt className="text-l3">花费</dt>
-            <dd className="text-l1" title="这件事历次对话按会话去重合计；≥ 表示部分数据未读到或模型未计价，仅列已知花费">
+            <dd className="font-mono tabular-nums text-l1" title="这件事历次对话按会话去重合计；≥ 表示部分数据未读到或模型未计价，仅列已知花费">
               {total}
             </dd>
           </>

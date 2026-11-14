@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { compactFieldClass, inlineActionClass } from "./PageFrame";
+import { compactFieldClass, rowActionClass } from "./PageFrame";
 import { changeLine, CHANGES_SHOWN } from "../peek";
 import { mailStatusText } from "../project-mail";
 import type { ChangedFileDto, ProjectMailDto } from "../types";
@@ -100,101 +100,112 @@ export default function TaskPanelPeek({
   return (
     <>
       <section>
-        <h3 className="mb-1.5 text-xs font-medium text-l3">改了哪些文件</h3>
-        {filesError ? (
-          <p className="text-xs text-l3">{filesError}</p>
-        ) : files === null ? (
-          <p className="text-xs text-l3">读取中…</p>
-        ) : files.length === 0 ? (
-          <p className="text-xs text-l3">还没改动</p>
-        ) : (
-          <>
-            <ul className="space-y-0.5">
-              {shown.map((f) => (
-                <li key={f.path} className="flex items-baseline gap-2 text-xs">
-                  <span className="min-w-0 flex-1 break-all font-mono text-micro text-l2">{f.path}</span>
-                  <span className="shrink-0 tabular-nums text-l3">{changeLine(f)}</span>
-                </li>
-              ))}
-            </ul>
-            {files.length > CHANGES_SHOWN && (
-              <button type="button" className="mt-1 text-xs text-l3 hover:text-l1" onClick={() => setShowAll((v) => !v)}>
-                {showAll ? "收起" : `还有 ${files.length - CHANGES_SHOWN} 个`}
-              </button>
-            )}
-          </>
-        )}
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-xs font-medium text-l3">改了哪些文件</h3>
+          {files && files.length > 0 && <span className="tabular-nums text-micro text-l4">{files.length} 个</span>}
+        </div>
+        <div className="rounded-lg ccode-well px-3.5 py-2.5">
+          {filesError ? (
+            <p className="text-xs text-l3">{filesError}</p>
+          ) : files === null ? (
+            <p className="text-xs text-l3">读取中…</p>
+          ) : files.length === 0 ? (
+            <p className="text-xs text-l3">还没改动</p>
+          ) : (
+            <>
+              <ul className="divide-y divide-hairline/55">
+                {shown.map((f) => (
+                  <li key={f.path} className="flex items-baseline justify-between gap-2 py-1 text-xs first:pt-0 last:pb-0">
+                    <span className="min-w-0 flex-1 break-all font-mono text-micro text-l2">{f.path}</span>
+                    <span className="shrink-0 font-mono text-micro tabular-nums text-l3">{changeLine(f)}</span>
+                  </li>
+                ))}
+              </ul>
+              {files.length > CHANGES_SHOWN && (
+                <button type="button" className="mt-1.5 text-xs text-l3 hover:text-l1" onClick={() => setShowAll((v) => !v)}>
+                  {showAll ? "收起" : `还有 ${files.length - CHANGES_SHOWN} 个`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </section>
       <section>
-        <h3 className="mb-1.5 text-xs font-medium text-l3">给它留话</h3>
-        <form
-          className="flex flex-wrap items-center gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <input
-            className={`${compactFieldClass} min-w-0 flex-1`}
-            placeholder="比如：样本 3 号剔掉，后面别再用"
-            value={text}
-            disabled={sending}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <button type="submit" className={inlineActionClass} disabled={sending || !text.trim()}>
-            <span className="text-xs">{sending ? "记下中…" : "留话"}</span>
-          </button>
-        </form>
-        <p className="mt-1 text-micro text-l4">它空闲、你也没在它输入框里打字时送进对话；没送到前在项目分组「留话」里能撤回。</p>
-        {error && <p className="mt-1 text-xs text-err-text">{error}</p>}
-        {mails.length > 0 && (
-          <ul className="mt-1.5 space-y-0.5">
-            {mails.slice(0, 5).map((m) => (
-              <li key={m.id} className="text-xs text-l2">
-                <span className="text-l3">{mailStatusText(m)}：</span>
-                {m.text.length > 60 ? `${m.text.slice(0, 60)}…` : m.text}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-      {canAsk && (
-        <section>
-          <h3 className="mb-1.5 text-xs font-medium text-l3">问它一句（不打断）</h3>
+        <h3 className="mb-2 text-xs font-medium text-l3">给它留话</h3>
+        <div className="rounded-lg ccode-well p-3">
           <form
-            className="flex flex-wrap items-center gap-2"
+            className="flex items-center gap-2"
             onSubmit={(e) => {
               e.preventDefault();
-              void askAside();
+              void send();
             }}
           >
             <input
               className={`${compactFieldClass} min-w-0 flex-1`}
-              placeholder="比如：做到哪了？为什么把列名改了？"
-              value={ask}
-              disabled={asking}
-              onChange={(e) => setAsk(e.target.value)}
+              placeholder="比如：样本 3 号剔掉，后面别再用"
+              value={text}
+              disabled={sending}
+              onChange={(e) => setText(e.target.value)}
             />
-            <button type="submit" className={inlineActionClass} disabled={asking || !ask.trim()}>
-              <span className="text-xs">{asking ? "在想…" : "问"}</span>
+            <button type="submit" className={rowActionClass} disabled={sending || !text.trim()}>
+              {sending ? "记下中…" : "留话"}
             </button>
           </form>
-          <p className="mt-1 text-micro text-l4">
-            {agentId === "claude-code"
-              ? "接上它的记忆另起一份只读分身来答，答完就丢，它手上的活和对话都不受影响。"
-              : "把它到现在的对话记录交给同一条连接只读回答，答完就丢，它手上的活和对话都不受影响。"}
-            要它照做，用上面的留话。
+          <p className="mt-1.5 text-micro leading-relaxed text-l4">
+            它空闲、你也没在它输入框里打字时送进对话；没送到前在项目分组「留话」里能撤回。
           </p>
-          {askError && <p className="mt-1 text-xs text-err-text">{askError}</p>}
-          {answer && (
-            <div className="mt-1.5 rounded-md bg-inset px-2.5 py-1.5 text-xs leading-5 text-l2">
-              <div className="mb-0.5 text-micro text-l4">
-                你问：{answer.q}
-                {answer.costUsd != null && answer.costUsd > 0 ? ` · 约 $${answer.costUsd.toFixed(3)}` : ""}
-              </div>
-              <div className="whitespace-pre-wrap">{answer.text}</div>
-            </div>
+          {error && <p className="mt-1.5 text-xs text-err-text">{error}</p>}
+          {mails.length > 0 && (
+            <ul className="mt-2 space-y-1 border-t border-hairline/70 pt-2">
+              {mails.slice(0, 5).map((m) => (
+                <li key={m.id} className="text-xs text-l2">
+                  <span className="text-l3">{mailStatusText(m)}：</span>
+                  {m.text.length > 60 ? `${m.text.slice(0, 60)}…` : m.text}
+                </li>
+              ))}
+            </ul>
           )}
+        </div>
+      </section>
+      {canAsk && (
+        <section>
+          <h3 className="mb-2 text-xs font-medium text-l3">问它一句（不打断）</h3>
+          <div className="rounded-lg ccode-well p-3">
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void askAside();
+              }}
+            >
+              <input
+                className={`${compactFieldClass} min-w-0 flex-1`}
+                placeholder="比如：做到哪了？为什么把列名改了？"
+                value={ask}
+                disabled={asking}
+                onChange={(e) => setAsk(e.target.value)}
+              />
+              <button type="submit" className={rowActionClass} disabled={asking || !ask.trim()}>
+                {asking ? "在想…" : "问"}
+              </button>
+            </form>
+            <p className="mt-1.5 text-micro leading-relaxed text-l4">
+              {agentId === "claude-code"
+                ? "接上它的记忆另起一份只读分身来答，答完就丢，它手上的活和对话都不受影响。"
+                : "把它到现在的对话记录交给同一条连接只读回答，答完就丢，它手上的活和对话都不受影响。"}
+              要它照做，用上面的留话。
+            </p>
+            {askError && <p className="mt-1.5 text-xs text-err-text">{askError}</p>}
+            {answer && (
+              <div className="mt-2 rounded-md bg-inset px-2.5 py-2 text-xs leading-5 text-l2">
+                <div className="mb-0.5 text-micro text-l4">
+                  你问：{answer.q}
+                  {answer.costUsd != null && answer.costUsd > 0 ? ` · 约 $${answer.costUsd.toFixed(3)}` : ""}
+                </div>
+                <div className="whitespace-pre-wrap">{answer.text}</div>
+              </div>
+            )}
+          </div>
         </section>
       )}
     </>
