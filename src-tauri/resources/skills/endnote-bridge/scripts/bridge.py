@@ -407,7 +407,7 @@ def _load(path):
             'TI':'title', 'T1':'title', 'JO':'journal', 'JF':'journal', 'T2':'journal',
             'JA':'journalAbbreviation', 'J2':'journalAbbreviation', 'J1':'journalAbbreviation',
             'PY':'year', 'Y1':'year', 'DA':'date', 'DO':'doi', 'VL':'volume', 'IS':'number',
-            'SP':'pages', 'UR':'url', 'ID':'id', 'SN':'issn', 'AB':'abstract', 'N2':'abstract',
+            'SP':'pages', 'UR':'url', 'ID':'id', 'LB':'id', 'SN':'issn', 'AB':'abstract', 'N2':'abstract',
             'N1':'notes', 'M3':'articleType', 'LA':'language', 'ET':'epubDate',
         }
         for line in text.splitlines():
@@ -517,12 +517,14 @@ def _formula_parts(word):
             parts.append(('paren', ch))
             i += 1
             continue
-        if ch == 'x' and parts and parts[-1][0] in ('el', 'paren', 'num') and (i + 1 >= len(word) or not word[i + 1].islower()):
+        if ch == 'x' and parts and (parts[-1][0] in ('el', 'num') or parts[-1] == ('paren', ')')) and (i + 1 >= len(word) or not word[i + 1].islower()):
             parts.append(('x', ch))
             i += 1
             continue
         num = re.match(r'\d{1,2}(?:\.\d+)?(?!\d)', word[i:])
-        if num and parts and parts[-1][0] in ('el', 'paren'):
+        # 右括号后才能接计量数（Ni(OH)2）；左括号后紧跟数字是散文括注（(80 to 100%)、(30 mV/dec)）。
+        # 单独整数 0 不是化学计量（开放获取纯文本常把零价金属 Co⁰ 压成 Co0，收下标会颠倒成 Co₀）。
+        if num and num.group(0) != '0' and parts and (parts[-1][0] == 'el' or parts[-1] == ('paren', ')')):
             parts.append(('num', num.group(0)))
             i += len(num.group(0))
             continue
@@ -557,8 +559,8 @@ def _is_formula(word):
     elements = sum(1 for kind, _ in parts if kind == 'el')
     has_num = any(kind == 'num' for kind, _ in parts)
     has_x = any(kind == 'x' for kind, _ in parts)
-    # 有计量数就算；只有计量 x 的（MoSx、NiOx）要两个以上元素，Lux、Nox 这类单元素加 x 的是普通词
-    return has_num or (has_x and elements >= 2)
+    # 至少含一个元素符号；有计量数就算，只有计量 x 的（MoSx、NiOx）要两个以上元素，Lux、Nox 这类单元素加 x 的是普通词
+    return elements >= 1 and (has_num or (has_x and elements >= 2))
 
 
 def _subscript_formulas(text):
@@ -666,12 +668,19 @@ def clean(value):
         # MoS2、TiO2、NiFe2O4 这类多元素式子中间那几位漏掉，Figure S2、B3LYP、Lux 反被下标
         # （2026-10-23 HER 导出核查：界面显示 MoS₂，导出仍是 MoS2）
         text = _subscript_formulas(text)
-        # 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉。
-        # 正常散文里不会出现 Unicode 上下标字符，此规则只命中被旧版污染过的题录。
+        # 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉；
+        # 左括号紧接下标数字/ₓ（(₃₀、(₆₀.₂₅、(ₓ = 0–1）与英文小词粘连 ₓ（forₓ = 0.7）还原。
         text = re.sub(r'(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])', '', text)
+        text = re.sub(
+            r'\(([₀₁₂₃₄₅₆₇₈₉]+(?:[.\u2024][₀₁₂₃₄₅₆₇₈₉]+)?)',
+            lambda m: '(' + m.group(1).replace('\u2024', '.').translate(_DIGIT_FOLD),
+            text,
+        )
+        text = re.sub(r'\(ₓ(?![A-Za-z])', '(x', text)
+        text = re.sub(r'\b([a-z]{2,})ₓ(?=\s*[=<>≤≥≈∼])', r'\1 x', text)
         # 位数收到 1–2 位：化学计量鲜有 3 位以上，而「In 2020,」「At 300 K」这类散文高频句式
         # 会被 3+ 位整段下标（2026-10-11 对抗审查实证）。页码 A257 也靠「1–2 位+后视断言」自然豁免。
-        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)) if m.group(1) == ')' or m.group(1) in _ELEMENTS else m.group(0), text)
+        text = re.sub(r'([A-Z][a-z]?|\))[ \t]+(\d{1,2}(?:\.\d+)?)(?![0-9+])', lambda m: m.group(1) + sub_num(m.group(2)) if m.group(2) != '0' and (m.group(1) == ')' or m.group(1) in _ELEMENTS) else m.group(0), text)
         # 下标后隔空格的式子后半截接上（Crossref 的 Co₂ B、CF₃ SO₃）；下一个是普通词就不接（Ti₃C₂Tₓ MXene）
         text = _SPLIT_FORMULA.sub(_join_formula_word, text)
         text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧ])[ \t]+\)', r'\1)', text)
@@ -680,19 +689,26 @@ def clean(value):
     text = re.sub(r'([A-Z][a-z]?)(\d+)-([A-Z]{2,4})B(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) + '₋ₓ' + m.group(3) + 'ₓB' + sub_num(m.group(4)), text)
     text = re.sub(r'([A-Z][a-z]?)x([A-Z][a-z]?)yB', lambda m: m.group(1) + 'ₓ' + m.group(2) + 'ᵧB', text)
     # CO2RR 这类缩略词里的式子；字母拆不成元素的（PM2.5、MOF5 里的 MOF）不动
-    text = re.sub(r'([A-Z]{2,3})(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) if _formula_parts(m.group(1)) else m.group(0), text)
+    text = re.sub(r'([A-Z]{2,3})(\d+)', lambda m: m.group(1) + sub_num(m.group(2)) if m.group(2) != '0' and _formula_parts(m.group(1)) else m.group(0), text)
     text = re.sub(r'([A-Z][a-z]?) (\d+)(?= -\d)', lambda m: m.group(1) + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)', lambda m: m.group(1) + 'T' + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[–−-]ₓ', r'\1₋ₓ', text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])[–−-]x(?![A-Za-z])', r'\1₋ₓ', text)
-    text = re.sub(r'[ \t]+x(?![A-Za-z])', 'ₓ', text)
+
+    def _sub_spaced_x(m):
+        lead = m.group(1)
+        if lead.endswith(')') or re.search(r'[₀₁₂₃₄₅₆₇₈₉]', lead) or _is_formula(lead + 'x'):
+            return lead + 'ₓ'
+        return m.group(0)
+
+    text = re.sub(r'([A-Za-z0-9₀₁₂₃₄₅₆₇₈₉ₓᵧ()]+)[ \t]+x(?![A-Za-z]|\s*[=<>≤≥≈∼]|-[a-z])', _sub_spaced_x, text)
     text = re.sub(r'([A-Z][a-z]?) n[ \t]*\+[ \t]*1', r'\1ₙ₊₁', text)
     text = re.sub(r'([A-Z][a-z]?) n(?![A-Za-z])', r'\1ₙ', text)
     text = re.sub(r'TMB (\d+)', lambda m: 'TMB' + sub_num(m.group(1)), text)
-    text = re.sub(r'\)(\d+)', lambda m: ')' + sub_num(m.group(1)), text)
+    text = re.sub(r'\)(\d+)', lambda m: ')' + sub_num(m.group(1)) if m.group(1) != '0' else m.group(0), text)
     # 单位上标：µA cm −2、mA cm–2、mA cm−2 都收成 cm⁻²。旧规则只认数字紧邻 A 的写法，
     # µA（µ 不进 \d）和不带空格的 cm−2 全部漏掉。后面不能再跟字母数字（cm-2D 是二维材料）。
-    text = re.sub(r'cm ?[−–-]2(?![0-9A-Za-z])', 'cm⁻²', text)
+    text = re.sub(r'cm ?[−–-] ?2(?![0-9A-Za-z])', 'cm⁻²', text)
     text = re.sub(r'(?<=\bh) -(?=[A-Z])', '-', text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])\.(\d)', lambda m: m.group(1) + '\u2024' + sub_num(m.group(2)), text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉])/(\d+)', lambda m: m.group(1) + '/' + sub_num(m.group(2)), text)
@@ -700,6 +716,10 @@ def clean(value):
     text = re.sub(r'T[ \t]+z(?![A-Za-z])', 'Tz', text)
     text = re.sub(r'([₀₁₂₃₄₅₆₇₈₉ₓᵧⁿ])[ \t]+([-–])(?=[A-Za-z0-9])', r'\1\2', text)
     text = re.sub(r'([ₙ₊₁])[ \t]+(?=[A-Z])', r'\1', text)
+    # JATS 标签剥掉后留下的标点/括号内侧排版空格（MoB₂ :、cm⁻² ,、( x = 0–1 )）收掉，先于放回标识符
+    text = re.sub(r'[ \t\u00a0]+([,.;:!?])', r'\1', text)
+    text = re.sub(r'\([ \t\u00a0]+', '(', text)
+    text = re.sub(r'[ \t\u00a0]+\)', ')', text)
     # 放回标识符原文（只折空白与上下标数字）
     text = re.sub('[-]', lambda m: plain_id(parked[ord(m.group(0)) - 0xE000]), text)
     # Crossref 的刊名、标题常带 &amp;（Journal of Materials Science &amp; Technology）。标签已经剥完再还原，
@@ -782,16 +802,20 @@ def render(records, suffix):
             put('ref-type', code, {'name': type_name.get(code, 'Generic')})
             for author in r.get('authors', []): put('contributors/authors/author', family_comma(author))
             if r.get('title'): put('titles/title', title_text(r['title']))
-            if r.get('journal'): put('titles/secondary-title', clean(r['journal']))
+            full_journal = clean(r.get('journal') or '')
+            if full_journal: put('titles/secondary-title', full_journal)
             short, alt = journal_abbreviations(r)
-            if short:
+            has_short = bool(short and short.casefold() != full_journal.casefold())
+            if has_short or alt:
                 # EndNote.dtd 里期刊缩写在 periodical/abbr-1。EndNote 2025 期刊类型的
                 # 「其他形式的期刊名」是 Field 29（Generic 的 Alternate Title = titles/alt-title）。
-                # 两处都写：XML 导入认 abbr-1，界面字段认 alt-title。另一种写法进 abbr-2。
-                put('periodical/abbr-1', short)
+                # 与全称不同才写缩写，免得一词刊名（Small）重复填进 alt-title；另一种写法进 abbr-2。
+                if has_short:
+                    put('periodical/abbr-1', short)
                 if alt:
                     put('periodical/abbr-2', alt)
-                put('titles/alt-title', short)
+                if has_short:
+                    put('titles/alt-title', short)
             # EndNote.dtd 的 record 子元素顺序：pages → volume → number → keywords → dates
             # → isbn → abstract → notes → work-type → urls → electronic-resource-num → language。
             # 插错顺序时 EndNote 会整份拒绝。
@@ -835,22 +859,24 @@ def render(records, suffix):
         result = []
         for r in records:
             result.append(line('TY', {'article':'JOUR','book':'BOOK','incollection':'CHAP','inproceedings':'CONF','phdthesis':'THES'}.get(r.get('type'), 'JOUR')))
-            # RIS Reference ID 载 citation key（XML 走 <label>、.enw 走 %F 的同一职责）：
-            # 不写这条，键出了 RIS 就丢，回程只能重生成 ref<hash>，--existing 也接不上。
+            # RIS Reference ID 与 Label 同载 citation key（XML 走 <label>、.enw 走 %F）：
+            # EndNote RefMan RIS 过滤器忽略 ID、只把 LB 映进 Label 字段；回程脚本两行都认。
             # 键是标识符，不过 clean()
             result.append(f'ID  - {r["id"]}')
+            result.append(f'LB  - {r["id"]}')
             # 一位作者一行。逗号串进同一条 AU 会被 EndNote 当成一个人。
             for author in r.get('authors', []):
                 result.append(line('AU', family_comma(author)))
             if r.get('title'):
                 result.append(line('TI', strip_title_prefix(r['title'])))
-            # EndNote 2025 RefMan RIS：期刊全称 T2，缩写 J2。
+            # EndNote 2025 RefMan RIS：期刊全称 T2，缩写 J2（与全称不同才写）。
             # 不再写 JO/JF/JA。Zotero 会把 JO 放进期刊缩写；这份只给 EndNote。
-            if r.get('journal'):
-                result.append(line('T2', r['journal']))
+            full_journal = clean(r.get('journal') or '')
+            if full_journal:
+                result.append(f'T2  - {full_journal}')
             # 另一种写法 RIS 没有地方放（EndNote 的期刊只有一格缩写），进期刊术语表（--journal-terms）
             short, _alt = journal_abbreviations(r)
-            if short:
+            if short and short.casefold() != full_journal.casefold():
                 result.append(line('J2', short))
             if r.get('year'):
                 result.append(line('PY', r['year']))
@@ -892,7 +918,7 @@ def render(records, suffix):
                 result.append(f'UR  - {plain_id(r["url"])}')
             for attachment in r.get('attachments', []):
                 result.append(f'L1  - {plain_id(attachment)}')
-            # 「同步到文献库」带 PDF / 笔记：路径原样写（文件名里的双空格不能折），笔记已是一行
+            # 「同步到文献库」带 PDF / 笔记：EndNote RefMan RIS 会把连续空格折成单空格，双空格 PDF 由 Rust 侧硬链到单空格路径
             if r.get('attachPdf'):
                 result.append(f'L1  - {r["attachPdf"]}')
             if r.get('attachNote'):
@@ -914,10 +940,11 @@ def render(records, suffix):
                 result.append('%8 ' + clean(r['date']))
             if r.get('title'):
                 result.append('%T ' + title_text(r['title']))
-            if r.get('journal'):
-                result.append('%J ' + clean(r['journal']))
+            full_journal = clean(r.get('journal') or '')
+            if full_journal:
+                result.append('%J ' + full_journal)
             short, _alt = journal_abbreviations(r)
-            if short:
+            if short and short.casefold() != full_journal.casefold():
                 result.append('%B ' + clean(short))
             if r.get('volume'):
                 result.append('%V ' + plain_id(r['volume']))

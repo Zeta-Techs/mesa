@@ -585,6 +585,31 @@ z.commit()
     assert.match(noDoiReport, /Cn2020.*按题名与年份对上记录 30/);
     assert.match(noDoiReport, /Twin2019.*2 条，未绑定/);
     assert.match(fldData(noDoi).stdout, /<rec-number>30<\/rec-number><foreign-keys><key app="EN" db-id="x9dbid0001"/);
+    // EndNote 2025 开库期间实时改写 .Data/sdb/sdb.eni，.enl 停在开库前快照：优先读更新的 sdb.eni（2026-11-14 HER 实证）
+    const liveEnl = join(root, "live.enl");
+    const liveSdbDir = join(root, "live.Data", "sdb");
+    mkdirSync(liveSdbDir, { recursive: true });
+    const liveSdb = join(liveSdbDir, "sdb.eni");
+    const seedLive = `
+import os, sqlite3, sys
+enl, sdb = sys.argv[1], sys.argv[2]
+for p, rows in [(enl, []), (sdb, [(501, 0, '10.1000/only', 1700009999)])]:
+    c = sqlite3.connect(p)
+    c.execute("CREATE TABLE misc(code INTEGER, subcode INTEGER, value BLOB, PRIMARY KEY(code, subcode))")
+    c.execute("INSERT INTO misc VALUES (14, 0, ?)", (b"livedbid9999",))
+    c.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, trash_state INTEGER NOT NULL DEFAULT 0, electronic_resource_number TEXT NOT NULL DEFAULT '', added_to_library INTEGER)")
+    c.executemany("INSERT INTO refs VALUES (?, ?, ?, ?)", rows)
+    c.commit()
+    c.close()
+os.utime(enl, (1700000000, 1700000000))
+os.utime(sdb, (1700010000, 1700010000))
+`;
+    assert.equal(spawnSync(python, ["-c", seedLive, liveEnl, liveSdb], { encoding: "utf8" }).status, 0);
+    const viaLive = join(root, "via-live.docx");
+    result = run(citeDocx, ["--input", md, "--bib", bib, "--output", viaLive, "--report", join(root, "live.md"), "--endnote-library", liveEnl]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(readFileSync(join(root, "live.md"), "utf8"), /已绑定 1 条/);
+    assert.match(fldData(viaLive).stdout, /<rec-number>501<\/rec-number><foreign-keys><key app="EN" db-id="livedbid9999" timestamp="1700009999">501<\/key>/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

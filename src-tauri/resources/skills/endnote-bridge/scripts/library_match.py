@@ -164,10 +164,22 @@ def endnote_index(path: Path) -> tuple[dict[str, list[int]], dict[int, int], str
     return index, stamps, db_id, ""
 
 
+def _endnote_sqlite_path(path: Path) -> Path:
+    """EndNote 20/21/2025 开库期间实时改写同名 .Data/sdb/sdb.eni，关库才拷回 .enl；有更新的 sdb.eni 时读它。"""
+    if path.suffix.lower() == ".enl":
+        sdb = path.with_suffix(".Data") / "sdb" / "sdb.eni"
+        try:
+            if sdb.is_file() and (not path.is_file() or sdb.stat().st_mtime >= path.stat().st_mtime):
+                return sdb
+        except OSError:
+            pass
+    return path
+
+
 def _endnote_sqlite_rows(path: Path) -> tuple[list, str, str]:
-    """EndNote 20 起的库：.enl 本身是 SQLite。返回 (行, 库编号, 错误)。"""
+    """EndNote 20 起的库：.enl / .Data/sdb/sdb.eni 是 SQLite。返回 (行, 库编号, 错误)。"""
     try:
-        conn, copied = open_library_copy(path)
+        conn, copied = open_library_copy(_endnote_sqlite_path(path))
     except (OSError, sqlite3.Error) as exc:
         return [], "", f"EndNote 库打不开（只读副本）：{exc}"
     error = ""
@@ -178,17 +190,17 @@ def _endnote_sqlite_rows(path: Path) -> tuple[list, str, str]:
             blob = raw[0]
             db_id = blob.decode("utf-8", "replace").strip() if isinstance(blob, bytes) else str(blob).strip()
         try:
+            # 不在 SQL 里写 electronic_resource_number != ''：EndNote 2025 给该列挂自定义排序规则 ENCI_Base，
+            # 一旦走索引比较，标准 sqlite3 会报 no such collation sequence: ENCI_Base；空串留在 Python 侧过滤。
             rows = conn.execute(
-                "SELECT id, trash_state, electronic_resource_number, added_to_library FROM refs "
-                "WHERE electronic_resource_number != ''"
+                "SELECT id, trash_state, electronic_resource_number, added_to_library FROM refs"
             ).fetchall()
         except sqlite3.Error:
             # 老库没有 added_to_library 列：外键 timestamp 退回生成时刻。
             rows = [
                 (rec_id, trash, doi, 0)
                 for rec_id, trash, doi in conn.execute(
-                    "SELECT id, trash_state, electronic_resource_number FROM refs "
-                    "WHERE electronic_resource_number != ''"
+                    "SELECT id, trash_state, electronic_resource_number FROM refs"
                 ).fetchall()
             ]
     except sqlite3.Error as exc:
@@ -223,7 +235,7 @@ def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
                 rows.append((int(num), _xml_text(rec.find("titles/title")), _xml_text(rec.find("dates/year"))))
     else:
         try:
-            conn, copied = open_library_copy(path)
+            conn, copied = open_library_copy(_endnote_sqlite_path(path))
         except (OSError, sqlite3.Error):
             return {}
         try:
@@ -483,7 +495,7 @@ def endnote_stale_records(path: Path | None) -> tuple[list[str], str]:
                 hits.append(f"记录 {rec_id}（{which}）｜{title[:44]}")
         return hits, ""
     try:
-        conn, copied = open_library_copy(path)
+        conn, copied = open_library_copy(_endnote_sqlite_path(path))
     except (OSError, sqlite3.Error) as exc:
         return [], f"EndNote 库打不开（只读副本）：{exc}"
     try:

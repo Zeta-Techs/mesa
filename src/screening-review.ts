@@ -356,7 +356,7 @@ function formulaCovers(text: string): boolean {
       }
     }
     const num = /^(?:\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?/.exec(rest);
-    if (num && (pos === 0 || /[A-Za-z)\u2013\u2212/-]/.test(text[pos - 1] ?? ""))) {
+    if (num && num[0] !== "0" && (pos === 0 || /[A-Za-z)\u2013\u2212/-]/.test(text[pos - 1] ?? ""))) {
       pos += num[0].length;
       continue;
     }
@@ -420,7 +420,7 @@ export function isFormulaToken(token: string): boolean {
   if (/^[A-Z][a-z]?x$/.test(core)) return false;
   // \u7eaf\u6570\u5b57 token \u53ea\u8ba4 1\u20132 \u4f4d\uff08\u5316\u5b66\u8ba1\u91cf\uff09\uff1a3 \u4f4d\u4ee5\u4e0a\u662f\u5e74\u4efd/\u6e29\u5ea6/\u9875\u7801\u4e00\u7c7b\u7684\u6563\u6587\u6570\u5b57\uff0c
   // \u4e0d\u80fd\u5f53\u5f0f\u5b50\u6210\u5206\u53c2\u4e0e\u7c98\u63a5\uff08\u300cIn 2020,\u300d\u4f1a\u88ab\u62fc\u6210 In2020\uff0c2026-10-11 \u5bf9\u6297\u5ba1\u67e5\u5b9e\u8bc1\uff09
-  if (/^(?:\d{1,2}(?:\.\d+)?)(?:\/\d{1,2}(?:\.\d+)?)?(?:[\u2013\u2212-]x?)?$/.test(core)) return true;
+  if (core !== "0" && /^(?:\d{1,2}(?:\.\d+)?)(?:\/\d{1,2}(?:\.\d+)?)?(?:[\u2013\u2212-]x?)?$/.test(core)) return true;
   if (/^\d{1,2}\.\d{1,2}$/.test(core)) return true;
   // 三个以上全大写是缩写（HCP）。两个全大写且能拆成元素才算式子（BO）。
   if (/^[A-Z][a-z]?\d/.test(core) && formulaCovers(core) && hasRealElement(core)) return true;
@@ -490,7 +490,7 @@ function markFormulaDigits(formula: string): string {
       }
       const gap = /^[ \t]+/.exec(after)?.[0].length ?? 0;
       const num = coefficient.exec(after.slice(gap));
-      if (num && (gap > 0 || !/[a-z]/.test(chars[i + el[1].length] ?? ""))) {
+      if (num && num[1] !== "0" && (gap > 0 || !/[a-z]/.test(chars[i + el[1].length] ?? ""))) {
         out.push(el[1] + shiftMarks(num[1], SUB_MARKS));
         i += el[1].length + gap + num[1].length;
         continue;
@@ -582,20 +582,26 @@ export function displayCitationTitle(title: string): string {
     // 电荷上标常以连字符形容词收尾：Mg2+-Conducting、Li+-based。'-' 不在豁免之列；
     // 负电荷不吞双连字符（C60--covered 不是 C⁶⁰⁻）。
     .replace(/([A-Za-z])(\d{1,2}\+|\d{1,2}-(?!-))(?![A-Za-z0-9])/g, (_m, atom: string, charge: string) => atom + shiftMarks(charge, SUP_MARKS))
-    // 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉。
-    // 正常散文不含 Unicode 上下标字符，此规则只命中被旧版污染过的题录。
-    .replace(/(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])/g, "");
+    // 存量已损坏形态的愈合：老产物里「字母+空格+上下标字」（MgCl ₂、cm ⁻²）把空格吃掉；
+    // 左括号紧接下标数字/ₓ（(₃₀、(₆₀.₂₅、(ₓ = 0–1）与英文小词粘连 ₓ（forₓ = 0.7）还原。
+    .replace(/(?<=[A-Za-z0-9)\]])[ \t ]+(?=[₀₁₂₃₄₅₆₇₈₉⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻])/g, "")
+    .replace(/\(([₀₁₂₃₄₅₆₇₈₉]+(?:[.\u2024][₀₁₂₃₄₅₆₇₈₉]+)?)/g, (_m, sub: string) =>
+      "(" + [...sub.replace(/\u2024/g, ".")].map((ch) => UNSUB[ch] ?? ch).join(""),
+    )
+    .replace(/\(ₓ(?![A-Za-z])/g, "(x")
+    .replace(/\b([a-z]{2,})ₓ(?=\s*[=<>≤≥≈∼])/g, "$1 x");
   const text = prepared.replace(/[ \u00A0]+([,.;:!?])/g, "$1");
-  const raw = text.split(/(\s+|[()[\]])/).flatMap((part) => {
-    if (/^\s+$/.test(part) || /^[()[\]]$/.test(part)) return [part];
-    return part.match(/\d+(?:\.\d+)?[\u2013\u2212-]?|[\u2013\u2212-]|[^\s()[\]]+/g) ?? [part];
+  const raw = text.split(/(\s+|[()[\],;:!?]|\.(?!\d))/).flatMap((part) => {
+    if (!part) return [];
+    if (/^\s+$/.test(part) || /^[()[\],.;:!?]$/.test(part)) return [part];
+    return part.match(/\d+(?:\.\d+)?[\u2013\u2212-]?|[\u2013\u2212-]|[^\s()[\],;:!?]+/g) ?? [part];
   });
   const out: string[] = [];
   let i = 0;
   while (i < raw.length) {
     const token = raw[i] ?? "";
     // 图表编号（Figure S2、Table S1、Eq. 3）不是式子（与 bridge.py _REF_WORD 同一份词表）
-    const lastWord = [...out].reverse().find((piece) => !/^\s+$/.test(piece)) ?? "";
+    const lastWord = [...out].reverse().find((piece) => /[A-Za-z0-9]/.test(piece)) ?? "";
     if (!isFormulaToken(token) || REF_WORD.test(lastWord)) {
       out.push(token);
       i += 1;
@@ -663,14 +669,15 @@ export function displayCitationTitle(title: string): string {
       isElementSymbol(el) ? `${el}${shiftMarks(a, SUB_MARKS)}₋ₓ${tm}ₓB${shiftMarks(b, SUB_MARKS)}` : _m,
     )
     .replace(/([A-Z][a-z]?)(\d+)(?=[/B])/g, (_m, el: string, digits: string) =>
-      isElementSymbol(el) ? el + shiftMarks(digits, SUB_MARKS) : _m,
+      digits !== "0" && isElementSymbol(el) ? el + shiftMarks(digits, SUB_MARKS) : _m,
     )
     .replace(/([₀₁₂₃₄₅₆₇₈₉])[ \t]*[A-Z][ \t]+(\d+(?:\.\d+)?)/g, (_m, lead: string, rest: string) => `${lead}T${shiftMarks(rest, SUB_MARKS)}`)
     .replace(/([₀₁₂₃₄₅₆₇₈₉])[–−-]ₓ/g, "$1₋ₓ")
-    .replace(/([A-Z][a-z]?) x(?![A-Za-z])/g, (match, element: string) =>
-      isElementSymbol(element) ? `${element}ₓ` : match,
-    )
-    .replace(/([A-Z]) x(?![A-Za-z])/g, "$1ₓ")
+    .replace(/([A-Za-z0-9₀₁₂₃₄₅₆₇₈₉ₓᵧ()]+)[ \t]+x(?![A-Za-z]|\s*[=<>≤≥≈∼]|-[a-z])/g, (match, lead: string) => {
+      if (lead.endsWith(")") || /[₀₁₂₃₄₅₆₇₈₉]/.test(lead)) return `${lead}ₓ`;
+      if (formulaCovers(lead + "x") && hasRealElement(lead) && !/^[A-Z][a-z]?$/.test(lead)) return `${lead}ₓ`;
+      return match;
+    })
     .replace(/([A-Z][a-z]?)x([A-Z][a-z]?)yB/g, (match, left: string, right: string) =>
       isElementSymbol(left) && isElementSymbol(right) ? `${left}ₓ${right}ᵧB` : match,
     )
@@ -681,22 +688,22 @@ export function displayCitationTitle(title: string): string {
       isElementSymbol(element) ? `${element}ₙ` : match,
     )
     .replace(/([A-Z][a-z]?) (\d+)(?= -\d)/g, (match, element: string, digits: string) =>
-      isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
+      digits !== "0" && isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
     )
     .replace(/TMB (\d+)/g, (_m, digits: string) => `TMB${shiftMarks(digits, SUB_MARKS)}`)
-    .replace(/\)(\d+)/g, (_m, digits: string) => `)${shiftMarks(digits, SUB_MARKS)}`)
-    .replace(/\)[ \t]+(\d{1,2})(?![0-9+])/g, (_m, digits: string) => `)${shiftMarks(digits, SUB_MARKS)}`)
+    .replace(/\)(\d+)/g, (_m, digits: string) => (digits !== "0" ? `)${shiftMarks(digits, SUB_MARKS)}` : _m))
+    .replace(/\)[ \t]+(\d{1,2})(?![0-9+])/g, (_m, digits: string) => (digits !== "0" ? `)${shiftMarks(digits, SUB_MARKS)}` : _m))
     .replace(/([A-Z][a-z]?)(\d+)-x(?![a-z])/g, (match, element: string, digits: string) =>
       isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}₋ₓ` : match,
     )
     .replace(/TMx(?=[A-Z])/g, "TMₓ")
-    .replace(/(\d+)A cm [−-]2(?![0-9A-Za-z])/g, (_m, amount: string) => `${amount} A cm⁻²`)
-    .replace(/cm ?[−–-]2(?![0-9A-Za-z])/g, "cm⁻²")
+    .replace(/(\d+)A cm ?[−–-] ?2(?![0-9A-Za-z])/g, (_m, amount: string) => `${amount} A cm⁻²`)
+    .replace(/cm ?[−–-] ?2(?![0-9A-Za-z])/g, "cm⁻²")
     .replace(/([a-z]) -(?=[A-Z])/g, "$1-")
-    .replace(/[ \t]+ₓ/g, "ₓ")
+    .replace(/(?<![a-z])[ \t]+ₓ/g, "ₓ")
     .replace(/([₀₁₂₃₄₅₆₇₈₉])\.(\d)/g, (_m, lead: string, tail: string) => `${lead}\u2024${shiftMarks(tail, SUB_MARKS)}`)
     .replace(/([A-Z][a-z]?)(\d+)(?=@|([A-Z][a-z]?))/g, (match, element: string, digits: string, next: string | undefined) =>
-      isElementSymbol(element) && (next === undefined || isElementSymbol(next) || next === "T")
+      digits !== "0" && isElementSymbol(element) && (next === undefined || isElementSymbol(next) || next === "T")
         ? element + shiftMarks(digits, SUB_MARKS)
         : match,
     )
@@ -708,13 +715,13 @@ export function displayCitationTitle(title: string): string {
     .replace(/([₀₁₂₃₄₅₆₇₈₉])T([xz])(?![A-Za-z])/g, (_m, lead: string, end: string) => `${lead}T${end === "x" ? "ₓ" : "z"}`)
     .replace(/T[ \t]+z(?![A-Za-z])/g, "Tz")
     .replace(/([₀₁₂₃₄₅₆₇₈₉ₓᵧ])([A-Z][a-z]?)(\d+)/g, (_m, lead: string, element: string, digits: string) =>
-      isElementSymbol(element) ? `${lead}${element}${shiftMarks(digits, SUB_MARKS)}` : _m,
+      digits !== "0" && isElementSymbol(element) ? `${lead}${element}${shiftMarks(digits, SUB_MARKS)}` : _m,
     )
     .replace(/([A-Z]{2,3})(\d+)/g, (match, mark: string, digits: string) =>
-      formulaCovers(mark) ? `${mark}${shiftMarks(digits, SUB_MARKS)}` : match,
+      digits !== "0" && formulaCovers(mark) ? `${mark}${shiftMarks(digits, SUB_MARKS)}` : match,
     )
     .replace(/([A-Z][a-z]?)(\d+)(?=-)/g, (match, element: string, digits: string) =>
-      isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
+      digits !== "0" && isElementSymbol(element) ? `${element}${shiftMarks(digits, SUB_MARKS)}` : match,
     )
     // 放回停车的标识符原文
     .replace(/[\uE000-\uE3FF]/g, (hit) => parked[hit.charCodeAt(0) - 0xe000] ?? hit);

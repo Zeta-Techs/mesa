@@ -179,13 +179,13 @@ def write_library_ris(
             lines.append(f"AU  - {bridge.family_comma(author)}")
         if rec.get("year"):
             lines.append(f"PY  - {rec['year']}")
-        journal = rec.get("journal") or ""
+        journal = bridge.clean(rec.get("journal") or "")
         if journal:
-            lines.append(f"T2  - {bridge.clean(journal)}")
+            lines.append(f"T2  - {journal}")
         # 缩写与 EndNote 份同一套：引文库里有就用，没有查 JabRef 表 + Mesa 兜底（原先只查 Mesa 兜底，
         # 从 Zotero 导进来的条目在 Zotero 这份里全没有缩写，EndNote 那份却有）
         short, alt = bridge.journal_abbreviations(rec)
-        if short and short.lower() != journal.lower():
+        if short and short.casefold() != journal.casefold():
             lines.append(f"J2  - {short}")
         if alt:
             lines.append(f"M2  - ISO 4 abbreviation: {alt}")
@@ -350,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         if rec["journal"]:
             ris_lines.append(f"T2  - {rec['journal']}")
         short = journal_short(rec["journal"], rec["journalabbreviation"])
-        if short:
+        if short and short.casefold() != rec["journal"].strip().casefold():
             ris_lines.append(f"J2  - {short}")
         if rec["volume"]:
             ris_lines.append(f"VL  - {rec['volume']}")

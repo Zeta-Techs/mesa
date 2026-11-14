@@ -121,19 +121,125 @@ pub fn write_plan(
     mode: AttachMode,
     dest: &Path,
 ) -> Result<Option<AttachPlan>, String> {
+    write_plan_inner(root, bib, mode, dest, false)
+}
+
+/// EndNote 专用：RefMan RIS 过滤器会把 L1 里的连续空格折成单空格导致找文件失败并污染 Notes，
+/// 含双空格的 PDF 先在系统临时目录建单空格硬链再写进计划
+pub fn write_endnote_plan(
+    root: &Path,
+    bib: &Path,
+    mode: AttachMode,
+    dest: &Path,
+) -> Result<Option<AttachPlan>, String> {
+    write_plan_inner(root, bib, mode, dest, true)
+}
+
+fn write_plan_inner(
+    root: &Path,
+    bib: &Path,
+    mode: AttachMode,
+    dest: &Path,
+    endnote_single_space_pdf: bool,
+) -> Result<Option<AttachPlan>, String> {
     if mode == AttachMode::Items {
         return Ok(None);
     }
     let root = crate::paths::canonicalize_plain(root).map_err(|e| format!("项目目录无效: {e}"))?;
     let text = std::fs::read_to_string(bib).map_err(|e| format!("读不了引文库: {e}"))?;
-    let map = plan_map(&root, &text, mode, |items| {
+    let mut map = plan_map(&root, &text, mode, |items| {
         crate::lit_watch::match_papers_pdfs_readonly(&root, items)
     });
+    if endnote_single_space_pdf {
+        for attach in map.values_mut() {
+            if let Some(pdf) = attach.pdf.as_deref() {
+                attach.pdf = Some(stage_endnote_pdf_if_needed(pdf));
+            }
+        }
+    }
     let pdfs = map.values().filter(|a| a.pdf.is_some()).count();
     let notes = map.values().filter(|a| a.note.is_some()).count();
     let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
     crate::storage::atomic_write(dest, json.as_bytes(), true)?;
     Ok(Some(AttachPlan { file: dest.to_path_buf(), pdfs, notes }))
+}
+
+fn collapse_spaces(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut prev_space = false;
+    for ch in raw.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                out.push(' ');
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn prune_stale_stage_dirs(base: &Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    let Some(cutoff) = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(24 * 3600))
+    else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|mtime| mtime < cutoff);
+        if stale {
+            let _ = std::fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
+/// EndNote 2025 的 RefMan RIS 过滤器开启 Delete Multiple Spaces：L1 路径含连续空格（如标题冒号清洗出的
+/// `MoB₂  Extraordinary.pdf`）时按单空格找文件失败，既漏挂 PDF 又把残路径写进 Notes（2026-11-14 HER 实证）。
+/// 这里只对含连续空格的路径在系统临时目录建单空格硬链（跨盘退回复制），不碰项目工作树。
+fn stage_endnote_pdf_if_needed(raw_path: &str) -> String {
+    if !raw_path.contains("  ") {
+        return raw_path.to_string();
+    }
+    let src = Path::new(raw_path);
+    let Some(name) = src.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return raw_path.to_string();
+    };
+    let clean_name = collapse_spaces(&name).trim().to_string();
+    if clean_name.is_empty() {
+        return raw_path.to_string();
+    }
+    let base = std::env::temp_dir().join("ccode-endnote-attach");
+    prune_stale_stage_dirs(&base);
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(raw_path.as_bytes());
+    let digest = hasher.finalize();
+    let short: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+    let dir = base.join(short);
+    if std::fs::create_dir_all(&dir).is_err() {
+        return raw_path.to_string();
+    }
+    let staged = dir.join(clean_name);
+    if staged.to_string_lossy().contains("  ") {
+        return raw_path.to_string();
+    }
+    let _ = std::fs::remove_file(&staged);
+    if std::fs::hard_link(src, &staged)
+        .or_else(|_| std::fs::copy(src, &staged).map(|_| ()))
+        .is_ok()
+    {
+        staged.to_string_lossy().into_owned()
+    } else {
+        raw_path.to_string()
+    }
 }
 
 /// 纯计算：键 → 要挂的东西。找 PDF 的那一步由调用方给（测试里不扫下载登记）
@@ -355,7 +461,15 @@ mod tests {
         let (ris, note) = crate::endnote::export_ris_only(&dir, AttachMode::PdfNotes).expect("endnote ris");
         let text = std::fs::read_to_string(ris).unwrap();
         assert!(note.contains("带上 1 篇全文 PDF、1 篇精读笔记"), "{note}");
-        assert!(text.contains(&format!("L1  - {}", dir.join("papers/Co  B.pdf").display())), "{text}");
+        // EndNote RefMan RIS 会把 L1 里的连续空格折成单空格：含双空格的 Co  B.pdf 须经单空格硬链路径写出且文件可读
+        let l1 = text
+            .lines()
+            .find_map(|l| l.trim_end_matches('\r').strip_prefix("L1  - "))
+            .expect("endnote L1 line");
+        assert!(!l1.contains("  "), "EndNote L1 still has double space: {l1}");
+        assert!(l1.ends_with("Co B.pdf"), "{l1}");
+        assert_eq!(std::fs::read(l1).unwrap(), b"%PDF-1.4");
+        assert!(text.contains("LB  - keep\r\n"), "{text}");
         assert!(text.contains("RN  - Co2B 【一句话总结】 · 非晶 Co2B 很好\r\n"), "{text}");
         assert!(!text.contains("Removed borate"), "{text}");
 

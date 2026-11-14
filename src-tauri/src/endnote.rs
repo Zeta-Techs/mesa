@@ -201,9 +201,9 @@ pub fn export_ris_only(
         }
     };
     let terms = papers.join(JOURNAL_TERMS);
-    // 带 PDF / 笔记：按引文库算出每条挂什么（只读），写临时 JSON 交给 bridge
+    // 带 PDF / 笔记：按引文库算出每条挂什么（只读），写临时 JSON 交给 bridge；双空格 PDF 走单空格硬链防 EndNote 漏挂
     let attach_file = std::env::temp_dir().join(format!("ccode-endnote-attach-{stamp}.json"));
-    let attach = match crate::library_attach::write_plan(&root, &bib, mode, &attach_file) {
+    let attach = match crate::library_attach::write_endnote_plan(&root, &bib, mode, &attach_file) {
         Ok(plan) => plan,
         Err(e) => {
             let _ = std::fs::remove_file(&script);

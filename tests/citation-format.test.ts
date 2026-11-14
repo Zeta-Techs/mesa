@@ -43,6 +43,12 @@ const TITLES: [string, string][] = [
   ["MoS2 As Catalyst", "MoS₂ As Catalyst"],
   ["COVID-19 and SARS-CoV-2", "COVID-19 and SARS-CoV-2"],
   ["A549 cells", "A549 cells"],
+  // 2026-11-14 HER 同步核查：左括号后括注数字、散文方程里的 x、纯文本零价金属 Co0 不收成下标；已污染文本自动还原；标点前排版空格收掉
+  ["Tafel slope (30 mV/decade) and (60.25 mV dec−1)", "Tafel slope (30 mV/decade) and (60.25 mV dec−1)"],
+  ["V1-xMoxB2 ( x = 0–1; for x = 0.7 )", "V₁₋ₓMoₓB₂ (x = 0–1; for x = 0.7)"],
+  ["via the potentially existed Co0 state and S<sup>0</sup>", "via the potentially existed Co0 state and S⁰"],
+  ["Single-Atom-Modified MoB2 : Extraordinary Catalyst , Fast at 10 mA cm − 2", "Single-Atom-Modified MoB₂: Extraordinary Catalyst, Fast at 10 mA cm⁻²"],
+  ["Healed (₃₀ mV) and (₆₀.₂₅ mV) and (ₓ = 0–1; forₓ = 0.7)", "Healed (30 mV) and (60.25 mV) and (x = 0–1; for x = 0.7)"],
 ];
 
 function pythonClean(inputs: string[]): string[] {
@@ -87,7 +93,9 @@ const BIB =
   "@article{Xu2017,\n title={19~.Cobalt nickel boride},\n author={Xu, Ning}, year={2017},\n" +
   " journal={Journal of Materials Chemistry A}, journalabbreviation={J. Mater. Chem.A}, volume={5}\n}\n" +
   "@article{Liang2022,\n title={Two-dimensional titanium carbonitride MXene},\n author={Liang, Kun}, year={2022},\n" +
-  " journal={Materials Reports: Energy}, journalabbreviation={Mater. Rep.: Energy}\n}\n";
+  " journal={Materials Reports: Energy}, journalabbreviation={Mater. Rep.: Energy}\n}\n" +
+  "@article{Kim2025,\n title={Amorphous cobalt boride},\n author={Kim, Min}, year={2025},\n" +
+  " journal={Small}, journalabbreviation={Small}\n}\n";
 
 test("EndNote 份：题名去编号前缀，缩写收拾写法，ACS 与 ISO 4 两种缩写都给（XML 缩写 2、期刊术语表）", () => {
   const dir = syncDir();
@@ -97,18 +105,23 @@ test("EndNote 份：题名去编号前缀，缩写收拾写法，ACS 与 ISO 4 �
     let r = spawnSync(python, [bridge, "--input", join(dir, "references.bib"), "--output", join(dir, "lib.ris"), "--report", join(dir, "r.json"), "--journal-terms", join(dir, "terms.txt")], { encoding: "utf8", timeout: 60_000 });
     assert.equal(r.status, 0, r.stderr);
     const ris = readFileSync(join(dir, "lib.ris"), "utf8");
+    assert.match(ris, /ID  - Wang2021\r\nLB  - Wang2021\r\n/, "EndNote RefMan RIS 靠 LB 填 Label 字段");
     assert.match(ris, /TI  - Single atom Ru doping 2H-MoS₂\r\n/);
     assert.match(ris, /TI  - Cobalt nickel boride\r\n/);
     assert.match(ris, /J2  - Appl\. Catal\., B\r\n/);
     assert.match(ris, /J2  - J\. Mater\. Chem\. A\r\n/, "Chem.A 补空格");
     assert.match(ris, /J2  - Mater\. Rep\. Energy\r\n/, "ISO 4 不留冒号");
+    assert.match(ris, /T2  - Small\r\n/);
+    assert.doesNotMatch(ris, /J2  - Small\r\n/, "一词刊名缩写等于全称时不重复写 J2");
     const terms = readFileSync(join(dir, "terms.txt"), "utf8");
     assert.match(terms, /^Applied Catalysis B: Environmental\tAppl\. Catal\., B\tAppl\. Catal\. B Environ\.\tAppl Catal, B\r\n/m);
     assert.match(terms, /^Journal of Materials Chemistry A\tJ\. Mater\. Chem\. A\tJ\. Mater\. Chem\. A\tJ Mater Chem A\r\n/m, "没有另一种写法时缩写 2 同缩写 1");
+    assert.match(terms, /^Small\tSmall\tSmall\tSmall\r\n/m, "术语表仍保留一词刊名四列");
     r = spawnSync(python, [bridge, "--input", join(dir, "references.bib"), "--output", join(dir, "lib.xml"), "--report", join(dir, "x.json")], { encoding: "utf8", timeout: 60_000 });
     assert.equal(r.status, 0, r.stderr);
     const xml = readFileSync(join(dir, "lib.xml"), "utf8");
     assert.match(xml, /<abbr-1>Appl\. Catal\., B<\/abbr-1><abbr-2>Appl\. Catal\. B Environ\.<\/abbr-2>/);
+    assert.doesNotMatch(xml, /<abbr-1>Small<\/abbr-1>/);
     assert.match(xml, /<title>Single atom Ru doping 2H-MoS₂<\/title>/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
