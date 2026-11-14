@@ -120,7 +120,11 @@ import {
   modelOnScreenSupported,
   outputTail,
 } from "../reasoning-effort";
-import { QUICK_CHAT_KEY_PREFIX, codexSandboxCoversHome } from "../quick-chat";
+import {
+  QUICK_CHAT_KEY_PREFIX,
+  codexSandboxCoversHome,
+  normalizeSpawnReuseKey,
+} from "../quick-chat";
 import {
   chatPermissionMemoryApplies,
   profilePermissionMode,
@@ -6049,6 +6053,10 @@ export const TerminalView = memo(function TerminalView({
         cols: size.cols,
         rows: size.rows,
       };
+      const projectRootsForSpawn =
+        reuseKey && (reuseKey.startsWith("lane:") || reuseKey.startsWith("wt:"))
+          ? (await invoke<ProjectDto[]>("list_projects").catch(() => [])).map((p) => p.path)
+          : [];
       const res = await invoke<{
         ptyId: string;
         sessionHint: string | null;
@@ -6100,7 +6108,10 @@ export const TerminalView = memo(function TerminalView({
                 ? "full"
                 : null)),
         // 离开了原目标的目录：不再按那个目标的复用键 / Task 登记（工作区键会被判成步骤、在主仓里写盘被拒）
-        reuseKey: leftTaskDir && isTaskReuseKey(reuseKey) ? null : (reuseKey ?? null),
+        reuseKey:
+          leftTaskDir && isTaskReuseKey(reuseKey)
+            ? null
+            : normalizeSpawnReuseKey(reuseKey, cwd, projectRootsForSpawn, IS_WINDOWS),
         runId: freshRun ? null : (runId ?? initialRunId ?? null),
         taskId: leftTaskDir ? null : (taskId ?? null),
         cols: size.cols,

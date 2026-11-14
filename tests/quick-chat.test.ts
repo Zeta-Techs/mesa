@@ -6,6 +6,7 @@ import {
   isNewChatKey,
   isScratchCwd,
   isThrowawayTab,
+  normalizeSpawnReuseKey,
   codexSandboxCoversHome,
   pickQuickChatDefault,
   profileCanAutoStart,
@@ -204,14 +205,42 @@ test("连接页「新对话」：跳过名单里的空白项取第一个有内�
 
 test("「新对话」开的空白标签：快速开聊与项目行 ＋（每次一把带 uuid 的键）都算，切走时没说话就收", () => {
   assert.equal(isNewChatKey("quickchat:1b2c"), true);
+  assert.equal(isNewChatKey("project-chat:coding:/Users/u/Ccode:project:1b2c"), true);
+  assert.equal(isNewChatKey("project-chat:coding:C:\\repo:project:1b2c"), true);
   assert.equal(isNewChatKey("research:/Users/u/测试项目:project:1b2c"), true);
   assert.equal(isNewChatKey("coding:C:\\repo:project:1b2c"), true);
   // 2026-10-24 前的项目对话键（同一项目共用一把）、问 AI、阅读：不算
+  assert.equal(isNewChatKey("project-chat:coding:/Users/u/Ccode:project"), false);
   assert.equal(isNewChatKey("research:/Users/u/测试项目:project"), false);
   assert.equal(isNewChatKey("office:/p:notes/a.docx"), false);
   assert.equal(isNewChatKey(undefined), false);
-  const blank = { reuseKey: "research:/p:project:1b2c" };
+  const blank = { reuseKey: "project-chat:coding:/p:project:1b2c" };
   assert.equal(isThrowawayTab(blank, null, false), true);
   assert.equal(isThrowawayTab(blank, null, true), false, "输入框里有字");
   assert.equal(isThrowawayTab(blank, { running: true }, false), false, "说过话了");
+});
+
+test("pty_spawn 复用键归一：编程主仓新对话与主仓直接进入不触发隔离车道拦截，隔离工作树原样保留", () => {
+  const roots = ["/Users/u/Documents/Ccode"];
+  assert.equal(
+    normalizeSpawnReuseKey("project-chat:coding:/Users/u/Documents/Ccode:project:1b2c", "/Users/u/Documents/Ccode", roots),
+    "project-chat:coding:/Users/u/Documents/Ccode:project:1b2c",
+  );
+  assert.equal(
+    normalizeSpawnReuseKey("coding:/Users/u/Documents/Ccode:project:1b2c", "/Users/u/Documents/Ccode", roots),
+    "project-chat:coding:/Users/u/Documents/Ccode:project:1b2c",
+  );
+  assert.equal(
+    normalizeSpawnReuseKey("lane:/Users/u/Documents/Ccode", "/Users/u/Documents/Ccode", roots),
+    "primary:/Users/u/Documents/Ccode",
+  );
+  assert.equal(
+    normalizeSpawnReuseKey("lane:/Users/u/ccode/worktrees/Ccode/feat-agy", "/Users/u/ccode/worktrees/Ccode/feat-agy", roots),
+    "lane:/Users/u/ccode/worktrees/Ccode/feat-agy",
+  );
+  // 隔离工作树的键误回落到主仓目录：保持 lane: 让后端继续拦下
+  assert.equal(
+    normalizeSpawnReuseKey("lane:/Users/u/ccode/worktrees/Ccode/feat-agy", "/Users/u/Documents/Ccode", roots),
+    "lane:/Users/u/ccode/worktrees/Ccode/feat-agy",
+  );
 });

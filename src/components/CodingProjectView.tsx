@@ -22,7 +22,6 @@ import {
   GitBranch,
   GitBranchPlus,
   GitCompare,
-  GitCompareArrows,
   GitMerge,
   GitPullRequest,
   Layers,
@@ -123,8 +122,7 @@ export async function loadCodingOverview(
 
 function chipToneClass(tone: CodingFactChip["tone"]): string {
   if (tone === "ok") return "text-ok-text";
-  if (tone === "warn") return "text-warn-text";
-  return "text-l4";
+  return "text-l3";
 }
 
 function BranchLabel({
@@ -174,25 +172,39 @@ function FactMarkIcon({
   return <CloudOff {...props} />;
 }
 
-/** 事实行：图标承担语义色，正文中性（不铺底色胶囊，避免整行琥珀色）。 */
+/** 事实胶囊：统一用克制的深灰中性底色（不铺刺眼黄色），仅靠文案与图标表达状态。 */
 function FactChipView({ chip }: { chip: CodingFactChip }) {
   const ref = useRef<HTMLSpanElement>(null);
   const { tip, show, hide } = useHoverTip(ref);
+  if (chip.mark === "noUpstream") {
+    return (
+      <span
+        ref={ref}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        aria-label={chip.label}
+        className="inline-flex items-center rounded-md border border-hairline px-1.5 py-0.5 text-micro text-l4"
+      >
+        <span>仅本地</span>
+        <HoverTip tip={tip} text={chip.tip} />
+      </span>
+    );
+  }
   return (
     <span
       ref={ref}
       onMouseEnter={show}
       onMouseLeave={hide}
-      className="inline-flex items-center gap-1 text-micro text-l3"
+      className="inline-flex items-center gap-1 rounded-md border border-hairline bg-inset/70 px-1.5 py-0.5 text-micro tabular-nums text-l2"
     >
       <FactMarkIcon mark={chip.mark} className={chipToneClass(chip.tone)} />
-      <span className="tabular-nums">{chip.label}</span>
+      <span>{chip.label}</span>
       <HoverTip tip={tip} text={chip.tip} />
     </span>
   );
 }
 
-/** 相对基准的领先/落后：数字加重，落后数（需要同步的那部分）用警示色。 */
+/** 相对基准的领先/落后：紧凑等宽胶囊（如 main ↑1 · ↓58），悬停保留完整中文说明。 */
 function BaseDelta({
   ahead,
   behind,
@@ -208,36 +220,24 @@ function BaseDelta({
   const b = Math.max(0, behind);
   if (a === 0 && b === 0) return null;
   const base = baseBranch.trim() || "基准";
+  const pillClass =
+    a > 0
+      ? "border-cta-bd/35 bg-cta/12 text-l1"
+      : "border-hairline bg-inset/70 text-l3";
   return (
     <span
       ref={ref}
       onMouseEnter={show}
       onMouseLeave={hide}
       aria-label={codingDivergenceLabel(a, b, base)}
-      className="inline-flex min-w-0 items-center gap-1 text-micro text-l3"
+      className={`inline-flex min-w-0 items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-micro tabular-nums ${pillClass}`}
     >
-      <GitCompareArrows
-        size={12}
-        strokeWidth={1.8}
-        className={`shrink-0 ${b > 0 ? "text-warn-text" : "text-ok-text"}`}
-      />
-      <span className="min-w-0">
-        比 <span className="font-mono text-l2">{base}</span>
-        {a > 0 && (
-          <>
-            {" 领先 "}
-            <span className="font-medium tabular-nums text-l1">{a}</span>
-          </>
-        )}
-        {a > 0 && b > 0 && <span className="text-l4">{" · "}</span>}
-        {b > 0 && (
-          <>
-            {a > 0 ? "落后 " : " 落后 "}
-            <span className="font-medium tabular-nums text-warn-text">{b}</span>
-          </>
-        )}
-        {" 个提交"}
-      </span>
+      <span className="font-sans text-l3">{base}</span>
+      {a > 0 && <span className="font-semibold text-l1">↑{a}</span>}
+      {a > 0 && b > 0 && <span className="text-l4">·</span>}
+      {b > 0 && (
+        <span className={a > 0 ? "text-l3" : "text-l2"}>↓{b}</span>
+      )}
       <HoverTip tip={tip} text={codingDivergenceTip(a, b, base)} />
     </span>
   );
@@ -315,11 +315,12 @@ function FactChips({
 const CARD_NODE_Y = 26; // 卡片 p-3(12) + 首行 h-7 一半(14)
 const ROW_NODE_Y = 16; // 轻行首行 min-h-8 一半
 
-type RailTone = "idle" | "active" | "conflict";
+type RailTone = "idle" | "active" | "conflict" | "ready";
 
 function railToneClass(tone: RailTone): string {
-  if (tone === "conflict") return "text-warn-text";
+  if (tone === "conflict") return "text-err-text";
   if (tone === "active") return "text-ok-text";
+  if (tone === "ready") return "text-cta-bd";
   return "text-l3";
 }
 
@@ -331,7 +332,12 @@ function RailNode({
   kind: "base" | "tree" | "loose";
   tone?: RailTone;
 }) {
-  const halo = tone === "active" ? "ring-[3px] ring-ok-text/20" : "";
+  const halo =
+    tone === "active"
+      ? "ring-[3px] ring-ok-text/20"
+      : tone === "ready"
+        ? "ring-[3px] ring-cta-bd/20"
+        : "";
   if (kind === "base") {
     return (
       <span
@@ -531,6 +537,24 @@ export default function CodingProjectView({
     onChromeConsumed?.();
   }, [chromeReq, project, onChromeConsumed]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!pickerOpen) return;
+    function onDocDown(e: globalThis.MouseEvent) {
+      if (pickerWrapRef.current && !pickerWrapRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    }
+    function onKey(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") setPickerOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [pickerOpen]);
   /** 未检出分支折叠：null = 未手动切过，按数量给默认（少则展开、多则收起） */
   const [looseOpenPick, setLooseOpenPick] = useState<boolean | null>(null);
   const [groupingPath, setGroupingPath] = useState<string | null>(null);
@@ -678,7 +702,7 @@ export default function CodingProjectView({
       cwd: w.path,
       extraEnv: {},
       title,
-      reuseKey: `lane:${w.path}`,
+      reuseKey: w.isPrimary ? `primary:${w.path}` : `lane:${w.path}`,
       ...launch,
       initialPrompt: pack,
     });
@@ -1082,6 +1106,15 @@ export default function CodingProjectView({
         merging: ov.merging,
       })
     : "";
+  const aheadTreeCount = ov
+    ? ov.worktrees.filter((w) => !w.isBase && w.ahead > 0).length
+    : 0;
+  const pullableTreeCount = ov
+    ? ov.worktrees.filter((w) => w.hasUpstream && (w.upstreamBehind ?? 0) > 0).length
+    : 0;
+  const dirtyOrUnpushedCount = ov
+    ? ov.worktrees.filter((w) => w.dirty || w.unpushed > 0).length
+    : 0;
   const origin = ov?.origin ?? null;
   const hostKind = (origin?.hostKind === "github" ? "github" : origin ? "other" : null) as
     | "github"
@@ -1134,9 +1167,11 @@ export default function CodingProjectView({
 
   function treeTone(w: LaneTree): RailTone {
     if (ov?.merging && ov.mergingCwd === w.path) return "conflict";
-    return laneActivityLabel(w.path, terminalRunInputs, IS_WINDOWS) === "空闲"
-      ? "idle"
-      : "active";
+    if (laneActivityLabel(w.path, terminalRunInputs, IS_WINDOWS) !== "空闲") {
+      return "active";
+    }
+    if (!w.isBase && w.ahead > 0) return "ready";
+    return "idle";
   }
 
   function treeCard(w: LaneTree) {
@@ -1148,7 +1183,7 @@ export default function CodingProjectView({
         : (AGENTS.find((a) => a.id === activity)?.label ?? activity);
     const merging = !!ov?.merging && ov.mergingCwd === w.path;
     const moreItems: ContextMenuItem[] = [];
-    if (w.isPrimary && !merging) {
+    if (!merging) {
       moreItems.push(
         {
           icon: FileDiff,
@@ -1168,6 +1203,14 @@ export default function CodingProjectView({
           onSelect: () => void runRemote("coding_push", w.path, "已推送"),
         },
       );
+      if (hostKind === "github" && !w.isBase && !w.hasUpstream) {
+        moreItems.push({
+          icon: GitPullRequest,
+          label: "先推送才能开 PR",
+          disabled: true,
+          onSelect: () => {},
+        });
+      }
     }
     if (merging) {
       moreItems.push({
@@ -1264,6 +1307,9 @@ export default function CodingProjectView({
       });
     }
     const isLive = activity !== "空闲";
+    const hasAheadToMerge = !w.isBase && !w.detached && w.ahead > 0 && !merging;
+    const upstreamBehind = w.hasUpstream ? (w.upstreamBehind ?? 0) : 0;
+    const showPrBtn = hostKind === "github" && !w.isBase && w.hasUpstream;
     const compactPrimary =
       w.isPrimary &&
       !merging &&
@@ -1272,7 +1318,11 @@ export default function CodingProjectView({
       w.ahead === 0 &&
       w.behind === 0 &&
       w.unpushed === 0 &&
-      (w.upstreamBehind ?? 0) === 0;
+      upstreamBehind === 0;
+    const softActionBtnClass =
+      "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-inset/80 px-2.5 text-xs font-medium tabular-nums text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+    const infoSoftBtnClass =
+      "inline-flex h-7 items-center gap-1 rounded-md border border-cta-bd/35 bg-cta/12 px-2.5 text-xs font-medium tabular-nums text-l1 transition-colors hover:bg-cta/20 disabled:cursor-not-allowed disabled:opacity-50";
     return (
       <div
         className={`${projectWellClass} transition-colors ${
@@ -1282,7 +1332,9 @@ export default function CodingProjectView({
             ? "border-l-[2.5px] border-l-err-text ring-1 ring-warn-text/30"
             : isLive
               ? "border-l-[2.5px] border-l-ok-text ring-1 ring-ok-text/20"
-              : ""
+              : hasAheadToMerge
+                ? "border-l-[2.5px] border-l-cta-bd"
+                : ""
         }`}
       >
         <div className="flex min-h-7 flex-wrap items-center gap-2">
@@ -1291,7 +1343,11 @@ export default function CodingProjectView({
               className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium text-l1"
               title={w.path}
             >
-              {!w.isPrimary && <span className="min-w-0 truncate">{displayName}</span>}
+              {!w.isPrimary && (
+                <span className="min-w-0 truncate font-mono text-xs font-medium text-l1">
+                  {displayName}
+                </span>
+              )}
               {!w.isPrimary &&
                 w.lane.branch &&
                 w.lane.branch !== displayName && (
@@ -1300,7 +1356,7 @@ export default function CodingProjectView({
               {w.isPrimary && <BranchLabel name={label} detached={w.detached} strong />}
               {w.isBase && (
                 <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro font-normal text-l3">
-                  基准
+                  {w.isPrimary ? "基准 · 主仓" : "基准"}
                 </span>
               )}
               {compactPrimary && (
@@ -1330,9 +1386,9 @@ export default function CodingProjectView({
                   {activityText}
                 </span>
               )}
-              {!merging && !isLive && !w.isPrimary && (
-                <span className="shrink-0 text-micro font-normal text-l4">
-                  {activityText}
+              {!merging && !isLive && hasAheadToMerge && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-cta-bd/35 bg-cta/12 px-2 py-0.5 font-mono text-micro font-medium tabular-nums text-l1">
+                  ↑{w.ahead} 待合入
                 </span>
               )}
             </div>
@@ -1347,52 +1403,110 @@ export default function CodingProjectView({
                 去解决
               </button>
             ) : (
-              <button
-                type="button"
-                className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
-                onClick={() => void enterTree(w, w.lane.name || label)}
-              >
-                <Terminal size={13} strokeWidth={1.8} />
-                进入
-              </button>
+              <>
+                {w.isPrimary && w.dirty && (
+                  <button
+                    type="button"
+                    className={softActionBtnClass}
+                    aria-label="查看改动"
+                    onClick={() => openGit(w.path, label)}
+                  >
+                    <GitCompare size={12} strokeWidth={1.8} className="text-l3" />
+                    <span>
+                      查看改动{(w.dirtyCount ?? 0) > 0 ? ` · ${w.dirtyCount}` : ""}
+                    </span>
+                  </button>
+                )}
+                {upstreamBehind > 0 && (
+                  <button
+                    type="button"
+                    className={softActionBtnClass}
+                    aria-label="拉取"
+                    disabled={!!busy}
+                    onClick={() => void runRemote("coding_pull", w.path, "已拉取")}
+                  >
+                    <ArrowDownToLine size={12} strokeWidth={1.8} className="text-l3" />
+                    <span>拉取 · {upstreamBehind}</span>
+                  </button>
+                )}
+                {w.hasUpstream && w.unpushed > 0 && (
+                  <button
+                    type="button"
+                    className={softActionBtnClass}
+                    aria-label={
+                      w.isPrimary
+                        ? "推送"
+                        : `推送到 origin/${w.branch || "HEAD"}`
+                    }
+                    disabled={!!busy}
+                    onClick={() => void runRemote("coding_push", w.path, "已推送")}
+                  >
+                    <ArrowUpToLine size={12} strokeWidth={1.8} className="text-l3" />
+                    <span>推送 · {w.unpushed}</span>
+                  </button>
+                )}
+                {!w.isPrimary &&
+                  upstreamBehind === 0 &&
+                  hasAheadToMerge &&
+                  !w.dirty &&
+                  w.branch && (
+                    <button
+                      type="button"
+                      className={infoSoftBtnClass}
+                      disabled={!!busy}
+                      onClick={() => void mergeBranch(w.branch)}
+                    >
+                      <GitMerge size={12} strokeWidth={1.8} />
+                      <span>合并进 {base || "基准"}</span>
+                    </button>
+                  )}
+                <button
+                  type="button"
+                  className={`${w.isPrimary ? ghostActionClass : rowActionClass} gap-1`}
+                  onClick={() => void enterTree(w, w.lane.name || label)}
+                >
+                  <Terminal size={13} strokeWidth={1.8} />
+                  进入
+                </button>
+              </>
             )}
-            {((!merging && !w.isPrimary) || hostKind === "github" || moreItems.length > 0) && (
+            {((!merging && !w.isPrimary) || showPrBtn || moreItems.length > 0) && (
               <div className="inline-flex items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
                 {!merging && !w.isPrimary && (
                   <>
                     <IconBtn label="查看改动" onClick={() => openGit(w.path, label)}>
                       <GitCompare size={13} strokeWidth={1.8} />
                     </IconBtn>
-                    <IconBtn
-                      label="拉取"
-                      disabled={!!busy}
-                      onClick={() => void runRemote("coding_pull", w.path, "已拉取")}
-                    >
-                      <ArrowDownToLine size={13} strokeWidth={1.8} />
-                    </IconBtn>
-                    <IconBtn
-                      label={
-                        w.hasUpstream
-                          ? `推送到 origin/${w.branch || "HEAD"}`
-                          : "第一次会推到 origin 并设上游"
-                      }
-                      disabled={!!busy}
-                      onClick={() => void runRemote("coding_push", w.path, "已推送")}
-                    >
-                      <ArrowUpToLine size={13} strokeWidth={1.8} />
-                    </IconBtn>
+                    {w.hasUpstream && upstreamBehind === 0 && (
+                      <IconBtn
+                        label="拉取"
+                        disabled={!!busy}
+                        onClick={() => void runRemote("coding_pull", w.path, "已拉取")}
+                      >
+                        <ArrowDownToLine size={13} strokeWidth={1.8} />
+                      </IconBtn>
+                    )}
+                    {(!w.hasUpstream || w.unpushed === 0) && (
+                      <IconBtn
+                        label={
+                          w.hasUpstream
+                            ? `推送到 origin/${w.branch || "HEAD"}`
+                            : "第一次会推到 origin 并设上游"
+                        }
+                        disabled={!!busy}
+                        onClick={() => void runRemote("coding_push", w.path, "已推送")}
+                      >
+                        <ArrowUpToLine size={13} strokeWidth={1.8} />
+                      </IconBtn>
+                    )}
                   </>
                 )}
-                {hostKind === "github" && (
+                {showPrBtn && (
                   <IconBtn
                     label={
-                      w.hasUpstream
-                        ? busy === `pr:${w.path}`
-                          ? "打开中…"
-                          : "打开 Pull Request"
-                        : "先推送才能开 PR"
+                      busy === `pr:${w.path}` ? "打开中…" : "打开 Pull Request"
                     }
-                    disabled={!!busy || !w.hasUpstream}
+                    disabled={!!busy}
                     onClick={() => void openPr(w.path)}
                   >
                     <GitPullRequest size={13} strokeWidth={1.8} />
@@ -1414,7 +1528,7 @@ export default function CodingProjectView({
           </div>
         </div>
         {!compactPrimary && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro">
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro">
             <FactChips
               facts={w}
               baseBranch={base}
@@ -1562,162 +1676,243 @@ export default function CodingProjectView({
   return (
     <div className="space-y-4">
       <div className="min-w-0 space-y-3.5">
-        <section>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-l3">
-            {origin ? (
-              <span
-                className="inline-flex max-w-full items-center gap-1.5 truncate rounded-md bg-inset/75 px-2 py-0.5 font-mono text-micro text-l2"
-                title={origin.url}
-              >
-                {hostKind === "github"
-                  ? origin.display.replace(/^(?:ssh\.)?github\.com\//, "")
-                  : origin.display}
-              </span>
-            ) : (
-              ov?.isRepo && (
-                <button
-                  type="button"
-                  className={ghostActionClass}
-                  onClick={() => setOriginOpen(true)}
-                >
-                  还没连上远程 · 连接远程
-                </button>
-              )
-            )}
-            {statusLine && <span className="text-micro text-l4">{statusLine}</span>}
-            <span className="ml-auto flex items-center gap-0.5">
-              <PathActions path={repoPath} onError={onError} />
-              {origin && (
+        {!ov?.isRepo && (
+          <section>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-l3">
+              {statusLine && <span className="text-micro text-l4">{statusLine}</span>}
+              <span className="ml-auto flex items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+                <PathActions path={repoPath} onError={onError} />
                 <IconBtn
-                  label={hostKind === "github" ? "从 GitHub 更新" : "从远程更新"}
+                  label="刷新"
                   disabled={loading || !!busy}
-                  onClick={() =>
-                    void runRemote("coding_fetch", repoPath, "已更新引用")
-                  }
+                  onClick={() => {
+                    setLoading(true);
+                    void reload();
+                  }}
                 >
-                  <ArrowDownToLine size={13} strokeWidth={1.8} />
+                  <RefreshCw size={13} strokeWidth={1.8} />
                 </IconBtn>
-              )}
-              <IconBtn
-                label="刷新"
-                disabled={loading || !!busy}
-                onClick={() => {
-                  setLoading(true);
-                  void reload();
-                }}
-              >
-                <RefreshCw size={13} strokeWidth={1.8} />
-              </IconBtn>
-            </span>
-          </div>
-          {initNote && (
-            <p className="mt-2 text-xs text-l3">
-              这个仓库还没有提交，已自动写了一条空的初始提交，才能建工作树。
-            </p>
-          )}
-        </section>
-
-        {loading && !ov && <p className="text-xs text-l4">读取工作树…</p>}
-        {ov && !ov.isRepo && (
-          <p className="text-sm text-l3">还不是 git 仓库。</p>
+              </span>
+            </div>
+            {loading && !ov && <p className="mt-2 text-xs text-l4">读取工作树…</p>}
+            {ov && !ov.isRepo && (
+              <p className="mt-2 text-sm text-l3">还不是 git 仓库。</p>
+            )}
+          </section>
         )}
 
         {ov?.isRepo && (
           <>
             <section>
-              <div className={`${projectWellClass} mb-3.5 flex flex-wrap items-center gap-2 p-2 text-xs`}>
-                <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-inset/80 px-2.5 font-mono text-xs text-l3">
-                  <GitBranch size={13} strokeWidth={1.8} className="text-l4" />
-                  <span className="text-l2">{base || "基准"}</span>
-                  <span className="text-l4" aria-hidden="true">→</span>
-                </span>
-                <input
-                  ref={branchInputRef}
-                  className="h-8 min-w-40 flex-1 rounded-lg border border-field bg-canvas px-2.5 text-xs text-l1 outline-none placeholder:text-l4 focus:border-cta-bd"
-                  value={branchName}
-                  placeholder="新分支名，如 feature/login"
-                  aria-label="新分支名（从基准拉出）"
-                  onChange={(e) => setBranchName(e.target.value)}
-                  onCompositionStart={lockIme}
-                  onCompositionUpdate={lockIme}
-                  onCompositionEnd={unlockImeAfterFrame}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    if (
-                      imeBlocksEnter({
-                        isComposing: e.nativeEvent.isComposing,
-                        keyCode: e.nativeEvent.keyCode,
-                        composingLock: composingLockRef.current,
-                      })
-                    ) {
-                      return;
-                    }
-                    e.preventDefault();
-                    void createTree(branchName, { kind: "fromBase" });
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${primaryActionClass} shrink-0`}
-                  disabled={creating || !branchName.trim()}
-                  onClick={() =>
-                    void createTree(branchName, { kind: "fromBase" })
-                  }
-                >
-                  {creating ? "…" : `从 ${base || "基准"} 开工`}
-                </button>
-                <button
-                  type="button"
-                  className={`${pickerOpen ? secondaryActionClass : ghostActionClass} shrink-0`}
-                  aria-expanded={pickerOpen}
-                  onClick={() => setPickerOpen((v) => !v)}
-                >
-                  已有分支
-                </button>
-              </div>
-              {pickerOpen && (
-                <div className="mb-3 rounded-lg ccode-well p-2">
-                  <input
-                    className={`${fieldClass} mb-2 h-8 py-0`}
-                    value={pickerQuery}
-                    placeholder="搜索分支"
-                    onChange={(e) => setPickerQuery(e.target.value)}
-                  />
-                  <ul className="max-h-48 space-y-0.5 overflow-auto">
-                    {pickerRows.length === 0 ? (
-                      <li className="px-2 py-1 text-xs text-l4">没有可开工的分支</li>
-                    ) : (
-                      pickerRows.map((row) => (
-                        <li key={row.key}>
-                          <button
-                            type="button"
-                            disabled={row.disabled || creating}
-                            title={
-                              row.occupiedPath
-                                ? `已在 ${row.occupiedPath} 检出`
-                                : undefined
-                            }
-                            className="flex h-8 w-full items-center rounded-md px-2 text-left text-xs text-l2 hover:bg-hover disabled:opacity-40"
-                            onClick={() =>
-                              void createTree(
-                                row.name,
-                                row.source === "remote"
-                                  ? {
-                                      kind: "remote",
-                                      remote: row.remote ?? "origin",
-                                    }
-                                  : { kind: "local" },
-                              )
-                            }
-                          >
-                            {row.label}
-                          </button>
-                        </li>
-                      ))
+              <div className={`${projectWellClass} relative mb-3.5 p-2.5 text-xs`}>
+                <div className="mb-2.5 flex flex-wrap items-center gap-1.5 border-b border-hairline pb-2 text-xs text-l3">
+                  {origin ? (
+                    <span
+                      className="inline-flex h-6 max-w-full items-center gap-1.5 truncate rounded-md border border-hairline bg-inset/80 px-2 font-mono text-micro text-l2"
+                      title={origin.url}
+                    >
+                      {hostKind === "github"
+                        ? origin.display.replace(/^(?:ssh\.)?github\.com\//, "")
+                        : origin.display}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={ghostActionClass}
+                      onClick={() => setOriginOpen(true)}
+                    >
+                      还没连上远程 · 连接远程
+                    </button>
+                  )}
+                  <span className="inline-flex h-6 items-center rounded-md border border-hairline bg-inset/70 px-2 text-micro tabular-nums text-l3">
+                    {ov.worktrees.length} 棵工作树
+                  </span>
+                  {ov.merging && (
+                    <span className="inline-flex h-6 items-center rounded-md border border-warn-text/25 bg-warn px-2 text-micro font-medium text-warn-text">
+                      有合并冲突
+                    </span>
+                  )}
+                  {aheadTreeCount > 0 && (
+                    <span className="inline-flex h-6 items-center rounded-md border border-cta-bd/35 bg-cta/12 px-2 text-micro font-medium tabular-nums text-l1">
+                      {aheadTreeCount} 棵有新提交待合入
+                    </span>
+                  )}
+                  {pullableTreeCount > 0 && (
+                    <span className="inline-flex h-6 items-center rounded-md border border-hairline bg-inset/75 px-2 text-micro tabular-nums text-l2">
+                      {pullableTreeCount} 棵远程可拉取
+                    </span>
+                  )}
+                  {!ov.merging &&
+                    aheadTreeCount === 0 &&
+                    pullableTreeCount === 0 &&
+                    dirtyOrUnpushedCount === 0 && (
+                      <span className="text-micro text-l4">全部已同步</span>
                     )}
-                  </ul>
+                  <span className="ml-auto flex items-center gap-1">
+                    {origin && (
+                      <button
+                        type="button"
+                        aria-label={hostKind === "github" ? "从 GitHub 更新" : "从远程更新"}
+                        title="git fetch 更新远程分支引用"
+                        disabled={loading || !!busy}
+                        onClick={() =>
+                          void runRemote("coding_fetch", repoPath, "已更新引用")
+                        }
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-inset/75 px-2 text-micro font-medium text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <ArrowDownToLine size={12} strokeWidth={1.8} />
+                        <span>更新远程</span>
+                      </button>
+                    )}
+                    <span className="inline-flex items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
+                      <PathActions path={repoPath} onError={onError} />
+                      <IconBtn
+                        label="刷新"
+                        disabled={loading || !!busy}
+                        onClick={() => {
+                          setLoading(true);
+                          void reload();
+                        }}
+                      >
+                        <RefreshCw size={13} strokeWidth={1.8} />
+                      </IconBtn>
+                    </span>
+                  </span>
                 </div>
-              )}
+
+                {initNote && (
+                  <p className="mb-2 text-xs text-l3">
+                    这个仓库还没有提交，已自动写了一条空的初始提交，才能建工作树。
+                  </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-hairline bg-inset/80 px-2.5 font-mono text-xs text-l3">
+                    <GitBranch size={13} strokeWidth={1.8} className="text-l4" />
+                    <span className="text-l2">{base || "基准"}</span>
+                    <span className="text-l4" aria-hidden="true">→</span>
+                  </span>
+                  <div className="flex h-8 min-w-44 flex-1 items-center gap-1.5 rounded-lg border border-field bg-canvas pl-2.5 pr-1.5 focus-within:border-cta-bd">
+                    <input
+                      ref={branchInputRef}
+                      className="min-w-20 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
+                      value={branchName}
+                      placeholder="输入新分支名拉出独立工作树，如 feat/login"
+                      aria-label="新分支名（从基准拉出）"
+                      onChange={(e) => setBranchName(e.target.value)}
+                      onCompositionStart={lockIme}
+                      onCompositionUpdate={lockIme}
+                      onCompositionEnd={unlockImeAfterFrame}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        if (
+                          imeBlocksEnter({
+                            isComposing: e.nativeEvent.isComposing,
+                            keyCode: e.nativeEvent.keyCode,
+                            composingLock: composingLockRef.current,
+                          })
+                        ) {
+                          return;
+                        }
+                        e.preventDefault();
+                        void createTree(branchName, { kind: "fromBase" });
+                      }}
+                    />
+                    {!branchName.trim() && (
+                      <span className="hidden items-center gap-1 sm:inline-flex">
+                        {(["feat/", "fix/", "refactor/"] as const).map((prefix) => (
+                          <button
+                            key={prefix}
+                            type="button"
+                            onClick={() => {
+                              setBranchName(prefix);
+                              branchInputRef.current?.focus();
+                            }}
+                            className="rounded border border-hairline bg-inset/80 px-1.5 py-0.5 font-mono text-micro text-l3 transition-colors hover:border-field hover:text-l1"
+                          >
+                            {prefix}
+                          </button>
+                        ))}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className={`${primaryActionClass} shrink-0`}
+                    disabled={creating || !branchName.trim()}
+                    onClick={() =>
+                      void createTree(branchName, { kind: "fromBase" })
+                    }
+                  >
+                    {creating ? "…" : `从 ${base || "基准"} 开工`}
+                  </button>
+                  <div ref={pickerWrapRef} className="relative shrink-0">
+                    <button
+                      type="button"
+                      className={pickerOpen ? secondaryActionClass : ghostActionClass}
+                      aria-expanded={pickerOpen}
+                      onClick={() => setPickerOpen((v) => !v)}
+                    >
+                      已有分支
+                    </button>
+                    {pickerOpen && (
+                      <div className="absolute right-0 top-full z-30 mt-1.5 w-80 max-w-[calc(100vw-2.5rem)] rounded-xl border border-field bg-raised p-2 shadow-xl">
+                        <input
+                          className={`${fieldClass} mb-2 h-8 py-0`}
+                          value={pickerQuery}
+                          placeholder="搜索未检出的本地或远程分支…"
+                          autoFocus
+                          onChange={(e) => setPickerQuery(e.target.value)}
+                        />
+                        <ul className="max-h-52 space-y-0.5 overflow-auto">
+                          {pickerRows.length === 0 ? (
+                            <li className="px-2 py-1.5 text-xs text-l4">
+                              没有可开工的分支
+                            </li>
+                          ) : (
+                            pickerRows.map((row) => (
+                              <li key={row.key}>
+                                <button
+                                  type="button"
+                                  disabled={row.disabled || creating}
+                                  title={
+                                    row.occupiedPath
+                                      ? `已在 ${row.occupiedPath} 检出`
+                                      : undefined
+                                  }
+                                  className="flex h-8 w-full items-center justify-between gap-2 rounded-md px-2 text-left text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-40"
+                                  onClick={() =>
+                                    void createTree(
+                                      row.name,
+                                      row.source === "remote"
+                                        ? {
+                                            kind: "remote",
+                                            remote: row.remote ?? "origin",
+                                          }
+                                        : { kind: "local" },
+                                    )
+                                  }
+                                >
+                                  <span className="min-w-0 truncate font-mono">
+                                    {row.name}
+                                  </span>
+                                  <span className="shrink-0 rounded border border-hairline bg-inset/80 px-1.5 py-0.5 text-micro text-l4">
+                                    {row.occupiedPath
+                                      ? "已检出"
+                                      : row.source === "remote"
+                                        ? (row.remote ?? "origin")
+                                        : "本地"}
+                                  </span>
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
               <ul className="flex flex-col" aria-label="分支地图">
                 {branchMap.root && (
                   <RailRow

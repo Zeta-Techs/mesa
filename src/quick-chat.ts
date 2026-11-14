@@ -127,11 +127,47 @@ export function isThrowawayTab(
   return isNewChatKey(tab.reuseKey) && isBlankChatTab(tab, status);
 }
 
-/** 「新对话」入口开的空白标签：快速开聊（`quickchat:<uuid>`）与项目行「＋ 新对话」（`<类型>:<项目>:project:<uuid>`，
- *  2026-10-24 起每次 ＋ 都是一段新对话）。别的入口开的空白标签（问 AI、阅读、步骤…）不算 */
+/** 「新对话」入口开的空白标签：快速开聊（`quickchat:<uuid>`）与项目行「＋ 新对话」（`project-chat:<类型>:<项目>:project:<uuid>`，
+ *  兼容旧前缀 `<类型>:<项目>:project:<uuid>`；2026-10-24 起每次 ＋ 都是一段新对话）。别的入口开的空白标签（问 AI、阅读、步骤…）不算 */
 export function isNewChatKey(key: string | null | undefined): boolean {
   if (!key) return false;
-  return key.startsWith(QUICK_CHAT_KEY_PREFIX) || /^(?:office|coding|research):.+:project:[^:]+$/.test(key);
+  return (
+    key.startsWith(QUICK_CHAT_KEY_PREFIX) ||
+    /^(?:project-chat:)?(?:office|coding|research):.+:project:[^:]+$/.test(key)
+  );
+}
+
+/** pty_spawn 前归一复用键：
+ *  - 旧版项目级「＋ 新对话」键 `<类型>:<项目>:project:<uuid>` 补上 `project-chat:` 前缀，
+ *    免得 `coding:` 前缀被后端当成隔离工作树（coding_lane）拦下主仓写盘；
+ *  - 主仓直接进入或看改动时的 `lane:<主仓>` 改为 `primary:<主仓>`，隔离工作树仍保留 `lane:`。 */
+export function normalizeSpawnReuseKey(
+  reuseKey: string | null | undefined,
+  cwd: string,
+  projectRoots: readonly string[],
+  isWindows = false,
+): string | null {
+  if (!reuseKey) return null;
+  if (
+    isNewChatKey(reuseKey) &&
+    !reuseKey.startsWith("project-chat:") &&
+    !reuseKey.startsWith(QUICK_CHAT_KEY_PREFIX)
+  ) {
+    return `project-chat:${reuseKey}`;
+  }
+  const lanePath = reuseKey.startsWith("lane:")
+    ? reuseKey.slice(5)
+    : reuseKey.startsWith("wt:")
+      ? reuseKey.slice(3)
+      : null;
+  if (
+    lanePath &&
+    pathKey(lanePath, isWindows) === pathKey(cwd, isWindows) &&
+    projectRoots.some((root) => pathKey(root, isWindows) === pathKey(cwd, isWindows))
+  ) {
+    return `primary:${lanePath}`;
+  }
+  return reuseKey;
 }
 
 /** Windows 上 Codex 在主目录启动、又跑在沙箱里（非「完全访问」）时要先提醒：Codex 的 Windows 沙箱跑命令前

@@ -225,11 +225,11 @@ test("办公文件行进行中：只认这份文件的活标签", () => {
   assert.equal(officeFileInProgress(file, []), false);
 });
 
-test("项目新对话复用键按工作方式分开", () => {
-  assert.equal(projectChatReuseKey("office", "/p"), "office:/p:project");
-  assert.equal(projectChatReuseKey("coding", "/p"), "coding:/p:project");
-  assert.equal(projectChatReuseKey("research", "/p"), "research:/p:project");
-  assert.equal(officeProjectReuseKey("/p"), "office:/p:project");
+test("项目新对话复用键按工作方式分开且不占任务隔离前缀", () => {
+  assert.equal(projectChatReuseKey("office", "/p"), "project-chat:office:/p:project");
+  assert.equal(projectChatReuseKey("coding", "/p"), "project-chat:coding:/p:project");
+  assert.equal(projectChatReuseKey("research", "/p"), "project-chat:research:/p:project");
+  assert.equal(officeProjectReuseKey("/p"), "project-chat:office:/p:project");
 });
 
 test("编程事实芯片：干净已推送不占位，只亮异常", () => {

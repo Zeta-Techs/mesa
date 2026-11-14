@@ -350,11 +350,12 @@ export function officeFileReuseKey(repoPath: string, rel: string): string {
   return `office:${repoPath}:${rel.replace(/\\/g, "/")}`;
 }
 
+/** 项目级「＋ 新对话」标签复用键前缀（不占 coding:/research:/office: 任务前缀，避免编程主仓开新对话被判成隔离车道拦下） */
 export function projectChatReuseKey(
   kind: "office" | "coding" | "research",
   repoPath: string,
 ): string {
-  return `${kind}:${repoPath}:project`;
+  return `project-chat:${kind}:${repoPath}:project`;
 }
 
 export function officeProjectReuseKey(repoPath: string): string {

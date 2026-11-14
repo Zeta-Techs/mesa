@@ -93,6 +93,7 @@ test("连接定了 / 换了之后的权限档：记过的带上完全访问，�
 test("只有聊天对话按连接记权限：新对话、项目新对话、接着聊；步骤、阅读、商量不算", () => {
   assert.equal(chatPermissionMemoryApplies(null), true);
   assert.equal(chatPermissionMemoryApplies("quickchat:abc"), true);
+  assert.equal(chatPermissionMemoryApplies("project-chat:coding:/p/proj:project:abc"), true);
   assert.equal(chatPermissionMemoryApplies("research:/p/proj:project:abc"), true);
   assert.equal(chatPermissionMemoryApplies("resume:codex:s1"), true);
   assert.equal(chatPermissionMemoryApplies("ws:/w/1"), false);

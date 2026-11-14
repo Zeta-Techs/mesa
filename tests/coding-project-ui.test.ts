@@ -129,15 +129,21 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     await render();
     const main = row("主仓 master");
     const work = row("工作树 test");
-    assert.match(main.textContent!, /基准/);
+    assert.match(main.textContent!, /基准 · 主仓/);
     assert.match(main.textContent!, /无未提交改动/);
     assert.match(main.textContent!, /最近提交/);
     assert.equal(main.querySelectorAll("button").length, 2);
-    assert.match(work.textContent!, /空闲/);
-    assert.match(work.textContent!, /比 master 落后 1 个提交/);
-    assert.match(work.textContent!, /未关联远程分支/);
+    assert.doesNotMatch(work.textContent!, /空闲/);
+    assert.match(work.textContent!, /master\s*↓1/);
+    assert.ok(work.querySelector('[aria-label="比 master 落后 1 个提交"]'));
+    assert.match(work.textContent!, /仅本地/);
+    assert.ok(work.querySelector('[aria-label="未关联远程分支"]'));
     assert.ok(button("进入", work));
     assert.equal(container.querySelector('button[aria-label="再开一条"]'), null);
+    // 快捷前缀填充新分支输入框
+    await click("feat/");
+    const kickoffInput = container.querySelector<HTMLInputElement>('input[aria-label="新分支名（从基准拉出）"]')!;
+    assert.equal(kickoffInput.value, "feat/");
     // 地图：基准（主仓 master）是根，已检出的分支只出现一次，全部检出时没有折叠头
     const map = container.querySelector('ul[aria-label="分支地图"]')!;
     assert.equal(map.firstElementChild, main);
@@ -168,8 +174,13 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     await click("进入", main);
     assert.match(confirmations.at(-1)!, /仍要在主仓直接改/);
     assert.equal(pending.length, 0);
+    hostState.confirm = true;
+    await click("进入", main);
+    assert.equal((pending.at(-1) as { reuseKey?: string } | undefined)?.reuseKey, "primary:/project");
+    hostState.confirm = false;
     await click("进入", work);
     assert.equal(pending.at(-1)?.cwd, "/worktrees/test");
+    assert.equal((pending.at(-1) as { reuseKey?: string } | undefined)?.reuseKey, "lane:/worktrees/test");
     await click("打开工作树目录：test", work);
     assert.deepEqual(commands.at(-1)?.args, { paths: ["/worktrees/test"] });
     revealError = true;
@@ -178,15 +189,21 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     revealError = false;
 
     await render({
-      worktrees: [tree("master", true), { ...tree("test"), dirty: true, dirtyCount: 2 }],
+      worktrees: [
+        { ...tree("master", true), dirty: true, dirtyCount: 3, unpushed: 38 },
+        { ...tree("test"), dirty: true, dirtyCount: 2 },
+      ],
       branches: [{ name: "waiting", worktreePath: null, isPrimary: false, isBase: false,
         dirty: false, ahead: 3, behind: 0, unpushed: 0, hasUpstream: false }],
     });
+    assert.match(button("查看改动", row("主仓 master")).textContent!, /查看改动 · 3/);
+    assert.match(button("推送", row("主仓 master")).textContent!, /推送 · 38/);
     assert.equal(row("工作树 test").textContent!.match(/2 个文件未提交/g)?.length, 1);
     const fold = [...container.querySelectorAll("button")].find((b) => /未检出的分支/.test(b.textContent ?? ""))!;
     assert.match(fold.textContent!, /未检出的分支\s*1/);
     assert.equal(fold.getAttribute("aria-expanded"), "true");
-    assert.match(row("本地分支 waiting").textContent!, /比 master 领先 3 个提交/);
+    assert.match(row("本地分支 waiting").textContent!, /master\s*↑3/);
+    assert.ok(row("本地分支 waiting").querySelector('[aria-label="比 master 领先 3 个提交"]'));
     assert.ok(button("建工作树", row("本地分支 waiting")));
     await act(async () => fold.click());
     assert.equal(container.querySelector('li[aria-label="本地分支 waiting"]'), null);
@@ -194,11 +211,22 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     store.terminalRunInputs = [{ cwd: "/worktrees/test", agentId: "codex", running: true }];
     await render({
       origin: { name: "origin", url: "https://github.com/example/project.git", display: "example/project", hostKind: "github" },
+      worktrees: [
+        tree("master", true),
+        { ...tree("test"), ahead: 1, hasUpstream: false },
+        { ...tree("pushed"), ahead: 2, behind: 0, hasUpstream: true },
+      ],
     });
     assert.match(row("工作树 test").textContent!, /Codex/);
     assert.doesNotMatch(row("工作树 test").textContent!, /空闲/);
-    assert.equal(button("先推送才能开 PR", row("工作树 test")).disabled, true);
-    assert.equal(button("打开 Pull Request", row("主仓 master")).disabled, false);
+    // 未关联远程的工作树卡片不再摆禁用的 PR 图标，改放进更多菜单；已推送的非基准分支露出 PR 按钮，基准主仓不露 PR
+    assert.equal(row("工作树 test").querySelector('button[aria-label="先推送才能开 PR"]'), null);
+    await click("更多操作：test", row("工作树 test"));
+    assert.equal(button("先推送才能开 PR").disabled, true);
+    assert.equal(button("打开 Pull Request", row("工作树 pushed")).disabled, false);
+    assert.match(row("工作树 pushed").textContent!, /↑2 待合入/);
+    assert.ok(button("合并进 master", row("工作树 pushed")));
+    assert.equal(row("主仓 master").querySelector('button[aria-label="打开 Pull Request"]'), null);
 
     await render({ merging: true, mergingCwd: "/worktrees/test" });
     assert.match(row("工作树 test").textContent!, /有冲突/);
@@ -228,7 +256,8 @@ test("编程页：分支地图以基准为根、分支不重复、菜单原操�
     assert.match(baseRoot.textContent!, /未检出/);
     assert.match(baseRoot.textContent!, /GitHub 有 3 个新提交/);
     assert.ok(button("建工作树", baseRoot));
-    assert.match(row("主仓 feat/chat").textContent!, /比 dev 领先 2 · 落后 33 个提交/);
+    assert.match(row("主仓 feat/chat").textContent!, /dev\s*↑2\s*·\s*↓33/);
+    assert.ok(row("主仓 feat/chat").querySelector('[aria-label="比 dev 领先 2 · 落后 33 个提交"]'));
     assert.doesNotMatch(container.textContent!, /主仓不在基准/);
     assert.deepEqual(errors, []);
     assert.ok(!commands.some((call) => /^(coding_create|coding_remove|coding_merge|coding_delete)/.test(call.command)));

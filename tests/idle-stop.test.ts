@@ -6,6 +6,7 @@ const idle = { running: true, shell: false, attention: "done" as const };
 
 test("只收普通对话：新对话、从列表接回的、没带复用键的；步骤 / 车道 / 阅读 / 自定义运行时不收", () => {
   assert.equal(isPlainChatTab({ id: "a", reuseKey: "quickchat:1" }), true);
+  assert.equal(isPlainChatTab({ id: "a", reuseKey: "project-chat:coding:/p:project:1" }), true);
   assert.equal(isPlainChatTab({ id: "a", reuseKey: "research:/p:project:1" }), true);
   assert.equal(isPlainChatTab({ id: "a", reuseKey: "resume:claude-code:s1" }), true);
   assert.equal(isPlainChatTab({ id: "a" }), true);
