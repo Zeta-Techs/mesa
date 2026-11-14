@@ -6,9 +6,10 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "./store";
-import { pathWithin, samePath } from "./path-utils";
+import { samePath } from "./path-utils";
 import { IS_WINDOWS } from "./hotkeys";
 import { confirmDialog } from "./components/ConfirmDialog";
+import { openFileInWindow, resolveFileWindowTarget } from "./file-window-open";
 import type { ProjectFilePaneReq } from "./project-file-pane";
 
 export type OpenProjectFileInput = Omit<ProjectFilePaneReq, "nonce" | "root" | "name"> & {
@@ -31,38 +32,16 @@ export async function confirmDiscardProjectFile(): Promise<boolean> {
   return ok;
 }
 
-function resolveOpenTarget(input: OpenProjectFileInput) {
-  // 读盘根：不给就用项目根；文件不在项目里（工作副本）退到它所在的文件夹
-  const dir = input.path.replace(/[\\/][^\\/]*$/, "") || input.path;
-  const root = input.root ?? (pathWithin(input.path, input.projectRoot, IS_WINDOWS) ? input.projectRoot : dir);
-  const name = input.name ?? input.path.split(/[\\/]/).pop() ?? input.path;
-  return { root, name };
-}
-
 /** 在独立系统窗口打开或更新文件预览（笔记本窄屏、双屏对照审查意见时主窗口全宽看条目） */
 export async function openProjectFileInWindow(input: OpenProjectFileInput): Promise<void> {
-  const { root, name } = resolveOpenTarget(input);
-  await invoke("file_viewer_open", {
-    state: {
-      projectRoot: input.projectRoot,
-      root,
-      path: input.path,
-      name,
-      rel: input.rel,
-      list: input.list,
-      line: input.line,
-      showList: input.showList,
-      from: input.from,
-      nonce: 0,
-    },
-  });
+  await openFileInWindow(input);
 }
 
 export async function showProjectFile(input: OpenProjectFileInput): Promise<void> {
   if (!input.versions && !input.askAi) {
     const externalOpen = await invoke<boolean>("file_viewer_is_open").catch(() => false);
     if (externalOpen) {
-      await openProjectFileInWindow(input);
+      await openFileInWindow(input);
       return;
     }
   }
@@ -75,6 +54,6 @@ export async function showProjectFile(input: OpenProjectFileInput): Promise<void
   ) {
     return;
   }
-  const { root, name } = resolveOpenTarget(input);
+  const { root, name } = resolveFileWindowTarget(input);
   st.openProjectFile({ ...input, root, name });
 }

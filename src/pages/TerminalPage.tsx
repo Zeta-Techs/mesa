@@ -10,7 +10,7 @@ import {
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import "@xterm/xterm/css/xterm.css";
 import { sessionRuntimeKey, useAppStore, type PendingTerminal } from "../store";
 import type { ProjectSurfaceTab } from "../project-surface";
@@ -37,7 +37,7 @@ import {
 } from "../chat-mismatch";
 import { AGENTS } from "../types";
 import { channelSourceNote, channelTurnOpen, type ChannelReplyDecision } from "../chat-channel";
-import { normSep, pathWithin as pathWithinDialect, samePath, stripVerbatim } from "../path-utils";
+import { normSep, pathWithin as pathWithinDialect, revealFolderLabel, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
 import { normalizeWorkMode } from "../work-mode";
@@ -77,13 +77,22 @@ import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
 import { organizePdfExcerpt as organizePdfExcerptShared } from "../pdf-organize";
 import { isPreviewableImagePath } from "../file-icons";
+import { openFileInWindow, popOutFileToWindow } from "../file-window-open";
 import { DEFAULT_THEME_ID } from "../themes";
 import { runtimeModelSwitch } from "../model-switch";
 import {
+  AppWindow,
+  BookOpen,
   Columns2,
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
+  FolderOpen,
   FolderTree,
+  History,
+  Maximize2,
+  Minimize2,
   PanelTopOpen,
   RefreshCw,
   Search,
@@ -902,6 +911,58 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setFilesViewPref("tree");
   }
 
+  const [previewMoreMenu, setPreviewMoreMenu] = useState<{ x: number; y: number } | null>(null);
+
+  async function togglePreviewVersions() {
+    if (!preview) return;
+    if (previewVersionsPath === preview.path) {
+      setPreviewVersionsPath(null);
+      setFilesViewPref("preview");
+      return;
+    }
+    if (
+      previewDirty &&
+      !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", {
+        danger: true,
+        confirmText: "查看历史",
+        focusCancel: true,
+      }))
+    ) {
+      return;
+    }
+    setPreviewDirty(false);
+    setPreviewVersionsPath(preview.path);
+    setFilesViewPref("preview");
+  }
+
+  async function popOutPreviewToWindow() {
+    if (!preview) return;
+    const baseRoot = preview.root ?? activeCwd;
+    const list =
+      previewFiles.length > 1
+        ? previewFiles.map((f) => ({ path: f.path, name: f.name, root: baseRoot }))
+        : undefined;
+    const line =
+      previewReveal && previewReveal.path === preview.path ? previewReveal.line : undefined;
+    const wasDirty = previewDirty;
+    await popOutFileToWindow({
+      projectRoot: baseRoot,
+      root: baseRoot,
+      path: preview.path,
+      name: preview.name,
+      list,
+      line,
+      dirty: wasDirty,
+      onBeforeOpen: () => {
+        setPreview(null);
+        setPreviewFiles([]);
+        setPreviewDirty(false);
+        setPreviewVersionsPath(null);
+        setFilesViewPref("tree");
+      },
+    }).catch((e) => toast(`无法打开独立窗口：${String(e)}`, "error"));
+  }
+
   /** 文件窗格「树与预览左右并排」开关；右栏还窄时顺手拉宽（并排至少要放下树栏 + 预览栏） */
   function toggleFilesSplit() {
     const next = !filesSplit;
@@ -1180,11 +1241,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
    *  目录——cwd 之外的路径不被「超出项目根」守卫拒；根级文件目录为空时用 / 兜底。 */
   const handleTerminalOpenPath = useCallback(
     (path: string, line: number | null) => {
-      const dir = path.replace(/[\\/][^\\/]*$/, "");
-      openPreview(path, basename(path), dir || "/");
-      setPreviewReveal(line && line > 0 ? { path, line } : null);
+      void (async () => {
+        if (!rightOpen || !preview) {
+          const externalOpen = await invoke<boolean>("file_viewer_is_open").catch(() => false);
+          if (externalOpen) {
+            await openFileInWindow({
+              path,
+              line: line && line > 0 ? line : undefined,
+            }).catch(() => {});
+            return;
+          }
+        }
+        const dir = path.replace(/[\\/][^\\/]*$/, "");
+        openPreview(path, basename(path), dir || "/");
+        setPreviewReveal(line && line > 0 ? { path, line } : null);
+      })();
     },
-    [openPreview],
+    [openPreview, preview, rightOpen],
   );
 
   const switchPreview = useCallback(
@@ -4148,8 +4221,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       >
                         {preview.name}
                       </button>
-                      {/* 看版本时标签上的「文件版本」原位变「返回文件」，版本面板不再另起一行放它 */}
-                      {previewVersionsPath === preview.path ? (
+                      {/* 看版本时标签上显示「返回文件」；平时文件版本收进工具条与 ⋯ 更多菜单，给文件名留足宽度 */}
+                      {previewVersionsPath === preview.path && (
                         <button
                           type="button"
                           onClick={() => {
@@ -4161,11 +4234,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         >
                           返回文件
                         </button>
-                      ) : (
-                        <FileVersionsButton root={preview.root ?? activeCwd} path={preview.path} refreshKey={String(refreshKey)} onOpen={async () => {
-                          if (previewDirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
-                          setPreviewDirty(false); setPreviewVersionsPath(preview.path); setFilesViewPref("preview");
-                        }} />
                       )}
                       {previewDirty && (
                         <span className="shrink-0 text-l3" title="有未保存的修改">
@@ -4205,8 +4273,19 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   )}
                 </span>
               )}
-              {/* 右侧动作区：（文件窗格）树与预览并排 + 专注内容 + 收起。 */}
-              <span className="ml-auto flex min-w-0 items-center gap-1 pl-1">
+              {/* 右侧动作区：打开文件时保留高频「新窗口」「并排」与「⋯ 更多菜单」；未打开预览时保留「并排 / 铺满 / 收起」。 */}
+              <span className="ml-auto flex min-w-0 items-center gap-0.5 pl-1">
+                {rightTab === "preview" && preview && (
+                  <button
+                    type="button"
+                    onClick={() => void popOutPreviewToWindow()}
+                    title="在新窗口打开：拆成独立系统窗口对照查看（未保存修改自动带过去）"
+                    aria-label="在新窗口打开"
+                    className="flex size-7 shrink-0 items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l1"
+                  >
+                    <AppWindow size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                )}
                 {rightTab === "preview" && (
                   <button
                     type="button"
@@ -4225,18 +4304,37 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     <Columns2 size={14} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={toggleRightExpanded}
-                  title={
-                    rightExpanded
-                      ? "退出铺满（Esc）"
-                      : "右栏铺满（对话只留一窄条，Esc 退出）"
-                  }
-                  className={`flex size-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                >
-                  {rightExpanded ? "⇲" : "⇱"}
-                </button>
+                {rightTab === "preview" && preview ? (
+                  <button
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={previewMoreMenu !== null}
+                    aria-label="更多文件操作"
+                    title="更多操作（右栏铺满、文件版本、用系统默认应用打开、复制路径…）"
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setPreviewMoreMenu((cur) => (cur ? null : { x: r.right, y: r.bottom + 4 }));
+                    }}
+                    className={`flex size-7 shrink-0 items-center justify-center rounded-sm hover:bg-hover ${
+                      previewMoreMenu ? "bg-hover text-l1" : "text-l4 hover:text-l1"
+                    }`}
+                  >
+                    <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={toggleRightExpanded}
+                    title={
+                      rightExpanded
+                        ? "退出铺满（Esc）"
+                        : "右栏铺满（对话只留一窄条，Esc 退出）"
+                    }
+                    className={`flex size-7 shrink-0 items-center justify-center rounded-sm text-xs text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                  >
+                    {rightExpanded ? "⇲" : "⇱"}
+                  </button>
+                )}
                 <button
                   onClick={closeRightPanel}
                   title="收起右栏"
@@ -4246,6 +4344,67 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   ×
                 </button>
               </span>
+              {previewMoreMenu && preview && (
+                <ContextMenu
+                  x={previewMoreMenu.x}
+                  y={previewMoreMenu.y}
+                  alignRight
+                  onClose={() => setPreviewMoreMenu(null)}
+                  items={[
+                    {
+                      label: "在新窗口打开",
+                      icon: AppWindow,
+                      onSelect: () => void popOutPreviewToWindow(),
+                    },
+                    {
+                      label: rightExpanded ? "退出右栏铺满" : "右栏铺满",
+                      icon: rightExpanded ? Minimize2 : Maximize2,
+                      onSelect: toggleRightExpanded,
+                    },
+                    {
+                      label: previewVersionsPath === preview.path ? "返回文件预览" : "文件版本",
+                      icon: History,
+                      onSelect: () => void togglePreviewVersions(),
+                    },
+                    ...(/\.(pdf|md|markdown)$/i.test(preview.path)
+                      ? [
+                          {
+                            label: "沉浸阅读",
+                            icon: BookOpen,
+                            onSelect: () =>
+                              void (/\.pdf$/i.test(preview.path)
+                                ? openReaderForPdf(preview.path)
+                                : openReaderForNote(preview.path)),
+                          },
+                        ]
+                      : []),
+                    { separator: true },
+                    {
+                      label: "用系统默认应用打开",
+                      icon: ExternalLink,
+                      onSelect: () =>
+                        void invoke("open_in_system", {
+                          path: preview.path,
+                          root: preview.root ?? activeCwd,
+                        }).catch((e) => toast(String(e), "error")),
+                    },
+                    {
+                      label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+                      icon: FolderOpen,
+                      onSelect: () =>
+                        void revealItemInDir(preview.path).catch((e) => toast(String(e), "error")),
+                    },
+                    {
+                      label: "复制路径",
+                      icon: Copy,
+                      onSelect: () =>
+                        void navigator.clipboard
+                          .writeText(preview.path)
+                          .catch(() => toast("复制路径失败", "error")),
+                    },
+                  ]}
+                />
+              )}
             </div>
             {/* 文件窗格：树和预览都保持挂载（树的展开状态、预览编辑器的撤销栈不因切换丢）；
                 默认一次只显示一个，开了「左右并排」就是左树右预览 */}
@@ -4370,6 +4529,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     <FilePreviewEditor
                       path={preview.path}
                       root={preview.root ?? activeCwd}
+                      hideFileName
+                      trailing={
+                        <FileVersionsButton
+                          root={preview.root ?? activeCwd}
+                          path={preview.path}
+                          refreshKey={String(refreshKey)}
+                          onOpen={togglePreviewVersions}
+                        />
+                      }
                       revealLine={
                         previewReveal && previewReveal.path === preview.path
                           ? previewReveal.line

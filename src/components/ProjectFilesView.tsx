@@ -9,12 +9,14 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AppWindow,
   BookOpen,
   BookmarkPlus,
   ChevronRight,
   Columns2,
   Copy,
   CopyPlus,
+  ExternalLink,
   FilePlus,
   Folder,
   FolderInput,
@@ -23,6 +25,7 @@ import {
   Locate,
   Maximize2,
   MessageSquare,
+  MoreHorizontal,
   Pencil,
   RefreshCw,
   SquareCheck,
@@ -30,7 +33,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath as openPathWithSystem, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
 import { beginAskAi } from "./AskAiModal";
 import type { DirEntryDto, SearchResultDto } from "./FileTree";
@@ -78,7 +81,7 @@ import ProjectFilePreview from "./ProjectFilePreview";
 import { cachedNotePaired, checkNotePaired, isMarkdownNote } from "../note-pdf-pair";
 import { Modal } from "./Modal";
 import { armDraftHandoff } from "../file-draft-handoff";
-import { openProjectFileInWindow } from "../project-file-open";
+import { openFileInWindow, popOutFileToWindow } from "../file-window-open";
 import { organizePdfExcerpt } from "../pdf-organize";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
@@ -254,6 +257,10 @@ export default function ProjectFilesView({
     y: number;
     path: string;
     isDir: boolean;
+  } | null>(null);
+  const [previewMoreMenu, setPreviewMoreMenu] = useState<{
+    x: number;
+    y: number;
   } | null>(null);
   /** 顶上名字输入行：新建文件 / 新建文件夹 / 重命名（file-ops.ts） */
   const [nameDraft, setNameDraft] = useState<NameDraft | null>(null);
@@ -1167,6 +1174,10 @@ export default function ProjectFilesView({
   }, [projectPath]);
 
   useEffect(() => {
+    setPreviewMoreMenu(null);
+  }, [preview?.path]);
+
+  useEffect(() => {
     if (!preview) return;
     const node = listRef.current?.querySelector(
       `[data-file-path="${CSS.escape(preview.path)}"]`,
@@ -1184,7 +1195,7 @@ export default function ProjectFilesView({
         // 右键菜单、全局确认框开着时不换文件。别的 Modal（问 AI 等）打开时让位，
         // 但窗口预览是自己的 Modal——大窗里 ↑/↓ 步进正是它的用法，放行
         if (event.ctrlKey || event.metaKey || event.altKey) return;
-        if (inTypingContext(target) || menu || confirmDialogOpen()) return;
+        if (inTypingContext(target) || menu || previewMoreMenu || confirmDialogOpen()) return;
         if (!windowed && document.querySelector(".ccode-modal-backdrop")) return;
         const next = neighborFile(
           visibleFilesRef.current,
@@ -1214,6 +1225,7 @@ export default function ProjectFilesView({
           inTypingContext(target) ||
           windowed ||
           menu ||
+          previewMoreMenu ||
           confirmDialogOpen() ||
           document.querySelector(".ccode-modal-backdrop") ||
           target?.closest("[data-project-file-preview]")
@@ -1226,7 +1238,7 @@ export default function ProjectFilesView({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [preview, menu, windowed]);
+  }, [preview, menu, previewMoreMenu, windowed]);
 
   function goalMarkFor(absPath: string) {
     return markForProjectFile(relativeProjectPath(projectPath, absPath), goalMarks);
@@ -1455,6 +1467,40 @@ export default function ProjectFilesView({
       organizePdfExcerpt({ pdfPath, text, page, fileName, onLaunch: () => setPage("terminal") });
   }
 
+  /** 把文件拆进独立新窗口（带上当前可见文件队列，窗口内也能 ↑/↓ 翻篇；正在看的预览带走未保存草稿） */
+  function popOutEntryToWindow(entry: { path: string; name: string }, closeInline: boolean) {
+    const list = visibleFilesRef.current.map((f) => ({
+      path: f.path,
+      name: f.name,
+      root: projectPath,
+    }));
+    if (closeInline) {
+      const dirty =
+        preview !== null && samePath(preview.path, entry.path, IS_WINDOWS) && dirtyRef.current;
+      if (dirty) dirtyRef.current = false;
+      void popOutFileToWindow({
+        path: entry.path,
+        name: entry.name,
+        root: projectPath,
+        projectRoot: projectPath,
+        list,
+        dirty,
+        onBeforeOpen: () => {
+          setPreview(null);
+          setWindowed(false);
+        },
+      });
+      return;
+    }
+    void openFileInWindow({
+      path: entry.path,
+      name: entry.name,
+      root: projectPath,
+      projectRoot: projectPath,
+      list,
+    });
+  }
+
   /** 对照栏：左边钉住的那份（只在宽屏侧栏与窗口预览里出现） */
   function comparePane(extraClass = "") {
     if (!compare) return null;
@@ -1484,6 +1530,7 @@ export default function ProjectFilesView({
             key={`cmp:${compare.path}`}
             path={compare.path}
             root={projectPath}
+            hideFileName
             onOrganize={organizeFor(compare.path)}
             onDirtyChange={(d) => {
               compareDirtyRef.current = d;
@@ -1497,9 +1544,9 @@ export default function ProjectFilesView({
   function previewChrome() {
     if (!preview) return null;
     return (
-      <div className="mb-2 flex shrink-0 items-center gap-2">
+      <div className="mb-2 flex shrink-0 items-center gap-1.5">
         <FileTypeMark path={preview.path} />
-        <span className="min-w-0 flex-1 truncate text-sm text-l1" title={preview.path}>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-l1" title={preview.path}>
           {preview.name}
         </span>
         <button
@@ -1520,28 +1567,6 @@ export default function ProjectFilesView({
         >
           ↓
         </button>
-        {filtering && (
-          <button
-            type="button"
-            className={`${rowActionClass} gap-1`}
-            onClick={() => void locateInTree(preview.path)}
-            title="在目录树中显示（展开所在文件夹并退回目录视图）"
-          >
-            <Locate size={12} aria-hidden="true" />
-            定位
-          </button>
-        )}
-        {(wide || windowed) && !compare && (
-          <button
-            type="button"
-            className={`${rowActionClass} gap-1`}
-            onClick={() => setCompare(preview)}
-            title="把这份钉在左边，再点列表里另一份文件，两份并排对照"
-          >
-            <Columns2 size={12} aria-hidden="true" />
-            对照
-          </button>
-        )}
         <button
           type="button"
           className={`${rowActionClass} gap-1`}
@@ -1555,28 +1580,26 @@ export default function ProjectFilesView({
         </button>
         <button
           type="button"
-          className={rowActionClass}
-          title="拆成独立系统窗口打开这份文件"
-          onClick={() => {
-            if (!preview) return;
-            const snapshot = preview;
-            if (dirtyRef.current) {
-              armDraftHandoff(snapshot.path);
-              dirtyRef.current = false;
-            }
-            setPreview(null);
-            setWindowed(false);
-            setTimeout(() => {
-              void openProjectFileInWindow({
-                projectRoot: projectPath,
-                root: projectPath,
-                path: snapshot.path,
-                name: snapshot.name,
-              });
-            }, 0);
+          className={iconActionClass}
+          title="在新窗口打开"
+          aria-label="在新窗口打开"
+          onClick={() => popOutEntryToWindow(preview, true)}
+        >
+          <AppWindow size={13} strokeWidth={1.8} />
+        </button>
+        <button
+          type="button"
+          className={iconActionClass}
+          title="更多文件操作"
+          aria-label="更多文件操作"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setPreviewMoreMenu((cur) =>
+              cur ? null : { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) },
+            );
           }}
         >
-          新窗口
+          <MoreHorizontal size={14} strokeWidth={1.8} />
         </button>
         <button
           type="button"
@@ -1586,6 +1609,76 @@ export default function ProjectFilesView({
         >
           ×
         </button>
+        {previewMoreMenu && (
+          <ContextMenu
+            x={previewMoreMenu.x}
+            y={previewMoreMenu.y}
+            onClose={() => setPreviewMoreMenu(null)}
+            items={[
+              {
+                label: "问 AI",
+                icon: MessageSquare,
+                onSelect: () => askAi(preview),
+              },
+              {
+                label: "在新窗口打开",
+                icon: AppWindow,
+                onSelect: () => popOutEntryToWindow(preview, true),
+              },
+              ...((wide || windowed) && !compare
+                ? [
+                    {
+                      label: "两份并排对照",
+                      icon: Columns2,
+                      onSelect: () => setCompare(preview),
+                    },
+                  ]
+                : []),
+              ...(filtering
+                ? [
+                    {
+                      label: "在目录树中定位",
+                      icon: Locate,
+                      onSelect: () => void locateInTree(preview.path),
+                    },
+                  ]
+                : []),
+              ...(supportsImmersiveReader(preview.name)
+                ? [
+                    {
+                      label: "沉浸阅读",
+                      icon: BookOpen,
+                      onSelect: () => openImmersive(preview),
+                    },
+                  ]
+                : []),
+              { separator: true },
+              {
+                label: "用系统默认应用打开",
+                icon: ExternalLink,
+                onSelect: () => {
+                  void openPathWithSystem(preview.path).catch((e) => onError(String(e)));
+                },
+              },
+              {
+                label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+                icon: FolderOpen,
+                onSelect: () => {
+                  void revealItemInDir(preview.path).catch((e) => onError(String(e)));
+                },
+              },
+              {
+                label: "复制路径",
+                icon: Copy,
+                onSelect: () => {
+                  void navigator.clipboard
+                    .writeText(preview.path)
+                    .catch(() => onError("复制路径失败"));
+                },
+              },
+            ]}
+          />
+        )}
       </div>
     );
   }
@@ -1755,6 +1848,7 @@ export default function ProjectFilesView({
                 key={preview.path}
                 path={preview.path}
                 root={projectPath}
+                hideFileName
                 onOpenFile={(p) => void openPath(p)}
                 onOpenReader={
                   supportsImmersiveReader(preview.name)
@@ -1781,6 +1875,7 @@ export default function ProjectFilesView({
               key={preview.path}
               path={preview.path}
               root={projectPath}
+              hideFileName
               onOpenFile={(p) => void openPath(p)}
               onOpenReader={
                 supportsImmersiveReader(preview.name)
@@ -1828,6 +1923,15 @@ export default function ProjectFilesView({
             )}
             <button
               type="button"
+              className={`${rowActionClass} gap-1`}
+              onClick={() => popOutEntryToWindow(preview, true)}
+              title="拆成独立新窗口打开"
+            >
+              <AppWindow size={12} aria-hidden="true" />
+              在新窗口打开
+            </button>
+            <button
+              type="button"
               className={`${rowActionClass} ml-auto`}
               onClick={() => void stepPreview(-1)}
               disabled={!prevFile}
@@ -1849,6 +1953,7 @@ export default function ProjectFilesView({
             key={preview.path}
             path={preview.path}
             root={projectPath}
+            hideFileName
             onOpenFile={(p) => void openPath(p)}
             onOpenReader={
               supportsImmersiveReader(preview.name)
@@ -1920,7 +2025,15 @@ export default function ProjectFilesView({
                   },
                   { separator: true },
                 ]
-              : []),
+              : [
+                  {
+                    label: "在新窗口打开",
+                    icon: AppWindow,
+                    onSelect: () =>
+                      popOutEntryToWindow({ path: menu.path, name: baseName(menu.path) }, false),
+                  },
+                  { separator: true },
+                ]),
             ...(samePath(menu.path, projectPath, IS_WINDOWS)
               ? []
               : [

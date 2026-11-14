@@ -114,6 +114,7 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
     });
   }
   const reads: string[] = [];
+  const openedWindows: Record<string, unknown>[] = [];
   const officeDocs = [
     {
       path: `${ROOT}/papers/c.md`,
@@ -196,6 +197,10 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
           return [{ title: "Boride catalysts for hydrogen evolution" }];
         if (command === "list_reading_list_entries") return [];
         if (command === "watch_dir") return "w1";
+        if (command === "file_viewer_open") {
+          openedWindows.push(payload?.state as Record<string, unknown>);
+          return null;
+        }
         return null;
       },
       transformCallback: () => 1,
@@ -362,6 +367,21 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
       new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
     );
   });
+  assert.ok(body.querySelector('[aria-label="在新窗口打开"]'), "预览顶栏提供新窗口按钮");
+  const moreBtn = body.querySelector<HTMLButtonElement>('[aria-label="更多文件操作"]')!;
+  assert.ok(moreBtn, "预览顶栏将低频操作收进更多菜单");
+  await act(async () => {
+    moreBtn.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  assert.ok(body.textContent!.includes("两份并排对照"));
+  assert.ok(body.textContent!.includes("用系统默认应用打开"));
+  await act(async () => {
+    moreBtn.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
   const windowBtn = [...body.querySelectorAll("button")].find((b) =>
     b.textContent!.includes("窗口预览"),
   )!;
@@ -398,7 +418,7 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
   });
   assert.ok(!body.querySelector('[role="dialog"]'));
 
-  // 右键文件行 → 菜单（复制路径 / 删除）
+  // 右键文件行 → 菜单（在新窗口打开 / 复制路径 / 删除）
   await act(async () => {
     rowA.dispatchEvent(
       new dom.window.MouseEvent("contextmenu", {
@@ -407,17 +427,17 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
       }),
     );
   });
+  assert.ok(body.textContent!.includes("在新窗口打开"));
   assert.ok(body.textContent!.includes("复制路径"));
   assert.ok(body.textContent!.includes("删除文件"));
+  const ctxOpenWin = [...body.querySelectorAll("button")].find((b) =>
+    b.textContent!.includes("在新窗口打开"),
+  )!;
   await act(async () => {
-    dom.window.dispatchEvent(
-      new dom.window.KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+    ctxOpenWin.click();
   });
+  assert.equal(openedWindows.length, 1);
+  assert.equal(openedWindows[0]?.path, `${ROOT}/a.md`);
 
   // 「最近」视图：officeDocs 按修改时间降序平铺，rel 与 name 不同时带目录上下文
   const recentBtn = [

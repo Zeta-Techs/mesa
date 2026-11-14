@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "../store";
-import { pathWithin, samePath } from "../path-utils";
-import { IS_WINDOWS } from "../hotkeys";
+import { pathWithin, revealFolderLabel, samePath } from "../path-utils";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { supportsImmersiveReader } from "../project-files";
-import { armDraftHandoff } from "../file-draft-handoff";
+import { popOutFileToWindow } from "../file-window-open";
 import {
   clampFilePaneWidth,
   dockedFilePaneWidth,
@@ -20,11 +21,22 @@ import {
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import {
   confirmDiscardProjectFile as confirmDiscard,
-  openProjectFileInWindow,
   setProjectFilePaneDirty,
   showProjectFile,
 } from "../project-file-open";
-import { BookOpen, ExternalLink, FolderSearch } from "lucide-react";
+import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
+import {
+  AppWindow,
+  BookOpen,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  FolderSearch,
+  FolderTree,
+  History,
+  MessageSquare,
+  MoreHorizontal,
+} from "lucide-react";
 import { ghostActionClass, LoadingRows } from "./PageFrame";
 
 // 预览按需加载：App 启动包不能静态带上 pdfjs（entry-guard 守着）
@@ -96,15 +108,19 @@ export default function ProjectFilePaneHost() {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     setError(null);
+    setMoreMenu(null);
   }, [pane?.path]);
   useEffect(() => {
     if (!pane) {
       setProjectFilePaneDirty(false);
       setDirty(false);
       setListOpen(false);
+      setMoreMenu(null);
     }
   }, [pane]);
   useEffect(() => {
@@ -165,12 +181,16 @@ export default function ProjectFilePaneHost() {
   async function popOutToWindow() {
     if (!pane) return;
     const snapshot = { ...pane, showList: listOpen };
-    if (dirty) armDraftHandoff(pane.path);
-    setProjectFilePaneDirty(false);
-    setDirty(false);
-    closePane();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    await openProjectFileInWindow(snapshot).catch((reason) => setError(String(reason)));
+    const wasDirty = dirty;
+    await popOutFileToWindow({
+      ...snapshot,
+      dirty: wasDirty,
+      onBeforeOpen: () => {
+        setProjectFilePaneDirty(false);
+        setDirty(false);
+        closePane();
+      },
+    }).catch((reason) => setError(String(reason)));
   }
 
   async function step(delta: -1 | 1) {
@@ -230,36 +250,94 @@ export default function ProjectFilePaneHost() {
   const treePaths = pane.list ? pane.list.map((item) => itemTreeRel(item, pane)) : [];
   const selectedTreeRel = index >= 0 ? treePaths[index] ?? rel.replace(/\\/g, "/") : rel.replace(/\\/g, "/");
 
-  // 一行放进标题行（2026-11-11 用户：「这一行是不是可以放在顶部」）：文件名 · 来处 · 文件树 · ↑↓ · 图标动作 · 切换 · ✕
+  // 标题栏只保留高频导航与拆窗图标，次级操作收进 ⋯ 更多菜单，给左侧两行文件名与路径留足宽度
   const iconAction = `${ghostActionClass} w-7 px-0`;
+  const stepAction = `${ghostActionClass} w-6 px-0`;
+  const moreItems: ContextMenuItem[] = !pane.versions
+    ? [
+        {
+          label: "在新窗口打开",
+          icon: AppWindow,
+          onSelect: () => void popOutToWindow(),
+        },
+        ...(pane.askAi
+          ? [
+              {
+                label: "问 AI",
+                icon: MessageSquare,
+                onSelect: () => pane.askAi?.(pane.path),
+              },
+            ]
+          : []),
+        ...(supportsImmersiveReader(pane.name)
+          ? [
+              {
+                label: "沉浸阅读",
+                icon: BookOpen,
+                onSelect: () => void openImmersive(),
+              },
+            ]
+          : []),
+        {
+          label: "文件版本",
+          icon: History,
+          onSelect: () =>
+            void showProjectFile({
+              projectRoot: pane.projectRoot,
+              root: pane.root,
+              path: pane.path,
+              list: pane.list,
+              versions: { root: pane.root },
+              from: "文件版本",
+            }),
+        },
+        ...(inProject
+          ? [
+              {
+                label: "在「文件」页签中查看",
+                icon: FolderSearch,
+                onSelect: () => void revealInFilesTab(),
+              },
+            ]
+          : []),
+        { separator: true },
+        {
+          label: "用系统默认应用打开",
+          icon: ExternalLink,
+          onSelect: openExternal,
+        },
+        {
+          label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+          icon: FolderOpen,
+          onSelect: () => void revealItemInDir(pane.path).catch((reason) => setError(String(reason))),
+        },
+        {
+          label: "复制路径",
+          icon: Copy,
+          onSelect: () => void navigator.clipboard.writeText(pane.path).catch(() => setError("复制路径失败")),
+        },
+      ]
+    : [];
+
   const actions = (
     <div className="flex shrink-0 items-center gap-0.5">
       {!pane.versions && total > 1 && (
         <button
           type="button"
           aria-expanded={listOpen}
-          className={`${ghostActionClass} ${listOpen ? "bg-seg-sel text-l1" : ""}`}
+          aria-label={listOpen ? "收起文件树" : "展开文件树"}
+          className={`${iconAction} ${listOpen ? "bg-seg-sel text-l1" : ""}`}
           onClick={() => setListOpen((v) => !v)}
-          title={listOpen ? "收起左侧文件列表，让预览更宽" : "展开文件列表，在抽屉里切换要查看的文件"}
+          title={listOpen ? "收起左侧文件列表，让预览更宽" : "展开文件列表，在栏内切换文件"}
         >
-          文件树
-        </button>
-      )}
-      {!pane.versions && (
-        <button
-          type="button"
-          className={ghostActionClass}
-          onClick={() => void popOutToWindow()}
-          title="在新窗口打开：拆成独立窗口对照查看，主窗口保留全宽看意见；点意见里的行号会同步定位"
-        >
-          新窗口
+          <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
         </button>
       )}
       {!pane.versions && total > 1 && index >= 0 && (
         <>
           <button
             type="button"
-            className={iconAction}
+            className={stepAction}
             onClick={() => void step(-1)}
             disabled={index <= 0}
             title="上一个文件"
@@ -269,7 +347,7 @@ export default function ProjectFilePaneHost() {
           </button>
           <button
             type="button"
-            className={iconAction}
+            className={stepAction}
             onClick={() => void step(1)}
             disabled={index >= total - 1}
             title="下一个文件"
@@ -277,45 +355,37 @@ export default function ProjectFilePaneHost() {
           >
             ↓
           </button>
-          <span className="px-1 text-micro tabular-nums text-l4">
+          <span className="px-0.5 text-micro tabular-nums text-l4">
             {index + 1}/{total}
           </span>
         </>
       )}
-      {!pane.versions && pane.askAi && (
-        <button type="button" className={ghostActionClass} onClick={() => pane.askAi?.(pane.path)}>
-          问 AI
-        </button>
-      )}
-      {!pane.versions && <button
-        type="button"
-        className={iconAction}
-        onClick={openExternal}
-        title="外部打开：用系统默认应用打开（PDF 阅读器、Word、Excel、图片查看器）"
-        aria-label="外部打开"
-      >
-        <ExternalLink size={14} strokeWidth={1.8} aria-hidden="true" />
-      </button>}
-      {!pane.versions && supportsImmersiveReader(pane.name) && (
+      {!pane.versions && (
         <button
           type="button"
           className={iconAction}
-          onClick={() => void openImmersive()}
-          title="沉浸阅读：PDF 与笔记左右对照着读"
-          aria-label="沉浸阅读"
+          onClick={() => void popOutToWindow()}
+          title="在新窗口打开：拆成独立系统窗口对照查看，主窗口保留全宽看意见；点意见里的行号会同步定位"
+          aria-label="在新窗口打开"
         >
-          <BookOpen size={14} strokeWidth={1.8} aria-hidden="true" />
+          <AppWindow size={14} strokeWidth={1.8} aria-hidden="true" />
         </button>
       )}
-      {!pane.versions && inProject && (
+      {!pane.versions && (
         <button
+          ref={moreBtnRef}
           type="button"
-          className={iconAction}
-          onClick={() => void revealInFilesTab()}
-          title="在文件页签里看：切到项目的「文件」页签，在目录里找到它"
-          aria-label="在文件页签里看"
+          aria-haspopup="menu"
+          aria-expanded={moreMenu !== null}
+          aria-label="更多操作"
+          title="更多操作（沉浸阅读、文件版本、用系统默认应用打开、复制路径…）"
+          className={`${iconAction} ${moreMenu ? "bg-hover text-l1" : ""}`}
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setMoreMenu((cur) => (cur ? null : { x: rect.right, y: rect.bottom + 4 }));
+          }}
         >
-          <FolderSearch size={14} strokeWidth={1.8} aria-hidden="true" />
+          <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
         </button>
       )}
       {assistantOpen && <DockSwitch front="file" onSwitch={setDockFront} />}
@@ -346,8 +416,10 @@ export default function ProjectFilePaneHost() {
           : null
       }
     >
-      {error && <p className="mb-2 shrink-0 break-words px-2 text-micro text-err-text">{error}</p>}
-      <Suspense fallback={<LoadingRows />}>
+      {error && (
+        <p className="shrink-0 break-words border-b border-hairline px-3.5 py-1.5 text-micro text-err-text">{error}</p>
+      )}
+      <Suspense fallback={<div className="px-3.5 py-3"><LoadingRows /></div>}>
       {pane.versions ? <FileVersionsPanel
         key={`${pane.versions.root}|${pane.versions.workspaceId ?? pane.path}`}
         root={pane.versions.root}
@@ -357,7 +429,7 @@ export default function ProjectFilePaneHost() {
       /> : (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           {listOpen && total > 1 && (
-            <aside className="flex min-h-0 w-40 shrink-0 flex-col border-r border-hairline pr-1">
+            <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline px-1 py-1">
               <FileSelectionTree
                 paths={treePaths}
                 selected={selectedTreeRel}
@@ -383,6 +455,7 @@ export default function ProjectFilePaneHost() {
               key={pane.path}
               path={pane.path}
               root={pane.root}
+              hideFileName
               revealLine={pane.line ?? null}
               revealNonce={pane.nonce}
               onOpenFile={(p) =>
@@ -398,6 +471,20 @@ export default function ProjectFilePaneHost() {
         </div>
       )}
       </Suspense>
+      {moreMenu &&
+        createPortal(
+          <ContextMenu
+            x={moreMenu.x}
+            y={moreMenu.y}
+            alignRight
+            items={moreItems}
+            onClose={() => {
+              setMoreMenu(null);
+              moreBtnRef.current?.focus();
+            }}
+          />,
+          document.body,
+        )}
     </SettingsDrawerShell>
   );
   // 常驻时轮到项目助手 / 离开项目页只藏起来（不卸载，没保存的改动还在）

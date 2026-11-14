@@ -1003,6 +1003,8 @@ function TextFilePreviewEditor({
   onOpenReader,
   modeTick,
   leading,
+  trailing,
+  hideFileName,
   mainRepoIsHome,
   compact,
   onPdfRef,
@@ -1052,6 +1054,10 @@ function TextFilePreviewEditor({
   modeTick?: number;
   /** 审阅笔记列表收起后的展开按钮。放进标题栏，不另占一列。 */
   leading?: ReactNode;
+  /** 工具条右侧附加入口（如「文件版本」或「新窗口」），与查找/保存同排，免另起一行 */
+  trailing?: ReactNode;
+  /** 外层宿主头已展示文件名时隐藏工具条里的重复文件名 */
+  hideFileName?: boolean;
 }) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   // 编辑器宿主节点独立于 React 渲染树：沉浸编辑切换只移动 DOM 节点，
@@ -1917,7 +1923,7 @@ function TextFilePreviewEditor({
       {/* 工具条：h-8 + 底部 hairline 与阅读区三栏的顶条规格统一（栏间严丝合缝） */}
       {(!hideReadOnlyToolbar || !readOnlyReason || mode === "edit") && <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
         {leading}
-        <span className="truncate text-l3">{path.split(/[\\/]/).pop()}</span>
+        {!hideFileName && <span className="truncate text-l3">{path.split(/[\\/]/).pop()}</span>}
         {ctx?.kind === "worktree" && (
           <span
             className="flex shrink-0 items-center gap-1 text-l3"
@@ -2095,6 +2101,7 @@ function TextFilePreviewEditor({
               {saving ? "保存中…" : ctx?.kind === "main" && !mainRepoIsHome ? "保存到主仓库" : "保存"}
             </button>
           )}
+          {trailing}
         </div>
       </div>}
       {diskChange && dirty && !mergeOpen && (

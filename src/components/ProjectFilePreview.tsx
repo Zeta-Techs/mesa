@@ -22,6 +22,8 @@ function PreviewContent({
   onOpenFile,
   onOpenReader,
   leading,
+  trailing,
+  hideFileName,
   onAnnotate,
   onDirtyChange,
   onOrganize,
@@ -37,6 +39,10 @@ function PreviewContent({
   onOpenReader?: () => void;
   /** 文本预览标题栏左侧。审阅里用来放收起后的展开按钮。 */
   leading?: ReactNode;
+  /** 预览工具条右侧附加操作（如「文件版本」「新窗口」） */
+  trailing?: ReactNode;
+  /** 宿主头已显示文件名时不重复显示文件名 */
+  hideFileName?: boolean;
   /** 审阅划选：把选段和批注追加进意见框。只对 md 阅读态生效。 */
   onAnnotate?: ReviewAnnotate;
   /** PDF 选段「整理为笔记」（项目文件页接线，pdf-organize.ts） */
@@ -133,6 +139,8 @@ function PreviewContent({
           hideImmersive
           onOpenReader={onOpenReader}
           leading={leading}
+          trailing={trailing}
+          hideFileName={hideFileName}
           onAnnotate={onAnnotate}
           onDirtyChange={onDirtyChange}
           readOnly={readOnly}
@@ -143,6 +151,8 @@ function PreviewContent({
   );
 }
 
+const BINARY_PREVIEW_KINDS = new Set(["pdf", "docx", "xlsx", "image", "slides", "legacy-doc"]);
+
 export default function ProjectFilePreview(props: ComponentProps<typeof PreviewContent>) {
   const [versionsPath, setVersionsPath] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -150,10 +160,24 @@ export default function ProjectFilePreview(props: ComponentProps<typeof PreviewC
     if (dirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
     setDirty(false); props.onDirtyChange?.(false); setVersionsPath(props.path);
   }
+  const kind = projectFilePreviewKind(props.path);
+  const isBinary = BINARY_PREVIEW_KINDS.has(kind);
+  const versionsBtn = !props.readOnly && !props.hideVersions
+    ? <FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} />
+    : null;
+  const combinedTrailing = versionsBtn || props.trailing ? <>{versionsBtn}{props.trailing}</> : undefined;
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
     {versionsPath === props.path && !props.readOnly ? <FileVersionsPanel root={props.root} path={props.path} onClose={() => setVersionsPath(null)} /> : <>
-      {!props.readOnly && !props.hideVersions && <div className="flex shrink-0 justify-end px-2"><FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} /></div>}
-      <PreviewContent {...props} onDirtyChange={(value) => { setDirty(value); props.onDirtyChange?.(value); }} />
+      {isBinary && combinedTrailing && (
+        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-hairline bg-strip px-3 py-1 text-xs empty:hidden">
+          {combinedTrailing}
+        </div>
+      )}
+      <PreviewContent
+        {...props}
+        trailing={isBinary ? undefined : combinedTrailing}
+        onDirtyChange={(value) => { setDirty(value); props.onDirtyChange?.(value); }}
+      />
     </>}
   </div>;
 }

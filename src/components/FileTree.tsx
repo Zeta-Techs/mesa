@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AppWindow,
   BookOpen,
   Copy,
   CopyPlus,
@@ -19,6 +20,7 @@ import {
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { openFileInWindow } from "../file-window-open";
 import { FoldMark, LoadingRows } from "./PageFrame";
 import { isScratchCwd } from "../quick-chat";
 import {
@@ -758,8 +760,29 @@ function FileTree({
                     icon: FolderPlus,
                     onSelect: () => startNameDraft({ kind: "folder", dir: menu.path, value: "" }),
                   },
+                  { separator: true },
                 ]
-              : []),
+              : [
+                  {
+                    label: "在新窗口打开",
+                    icon: AppWindow,
+                    onSelect: () => {
+                      const list = visibleFiles.map((entry) => ({
+                        path: entry.path,
+                        name: entry.name,
+                        root,
+                      }));
+                      void openFileInWindow({
+                        projectRoot: root,
+                        root,
+                        path: menu.path,
+                        name: basenameOf(menu.path),
+                        list: list.length > 1 ? list : undefined,
+                      }).catch((e) => setError(String(e)));
+                    },
+                  },
+                  { separator: true },
+                ]),
             {
               label: "重命名",
               icon: Pencil,

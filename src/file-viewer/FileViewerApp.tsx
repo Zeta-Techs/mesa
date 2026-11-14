@@ -1,12 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { ExternalLink } from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { Copy, ExternalLink, FolderOpen, FolderTree, History, MoreHorizontal } from "lucide-react";
 import { ConfirmDialogHost, confirmDialog } from "../components/ConfirmDialog";
+import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { ghostActionClass, LoadingRows } from "../components/PageFrame";
-import { IS_WINDOWS } from "../hotkeys";
-import { pathWithin, samePath } from "../path-utils";
+import { IS_MAC, IS_WINDOWS } from "../hotkeys";
+import { pathWithin, revealFolderLabel, samePath } from "../path-utils";
 import { neighborFile, type ProjectFilePaneFile } from "../project-file-pane";
 import { DEFAULT_THEME_ID, isCustomThemeId, isLightTheme } from "../themes";
 import {
@@ -20,6 +23,9 @@ import {
 
 // 预览组件按需加载：入口块不静态打包 monaco / pdfjs / mermaid / mammoth / xlsx（entry-guard 守卫）
 const ProjectFilePreview = lazy(() => import("../components/ProjectFilePreview"));
+const FileVersionsPanel = lazy(() =>
+  import("../components/FileVersions").then((m) => ({ default: m.FileVersionsPanel })),
+);
 const FileSelectionTree = lazy(() =>
   import("../components/FileTree").then((m) => ({ default: m.FileSelectionTree })),
 );
@@ -81,6 +87,9 @@ function itemTreeRel(item: ProjectFilePaneFile, state: FileViewerState): string 
 export default function FileViewerApp() {
   const [state, setState] = useState<FileViewerState | null>(null);
   const [listOpen, setListOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string | null>(null);
   const dirtyRef = useRef(false);
   const stateRef = useRef<FileViewerState | null>(null);
@@ -133,6 +142,8 @@ export default function FileViewerApp() {
         return;
       }
       setError(null);
+      setVersionsOpen(false);
+      setMoreMenu(null);
       setState(incoming);
       if (incoming.showList !== undefined) {
         setListOpen(incoming.showList);
@@ -214,31 +225,68 @@ export default function FileViewerApp() {
   const treePaths = state.list ? state.list.map((item) => itemTreeRel(item, state)) : [];
   const selectedTreeRel = index >= 0 ? treePaths[index] ?? rel.replace(/\\/g, "/") : rel.replace(/\\/g, "/");
   const iconAction = `${ghostActionClass} w-7 px-0`;
+  const stepAction = `${ghostActionClass} w-6 px-0`;
+
+  const moreItems: ContextMenuItem[] = [
+    {
+      label: versionsOpen ? "返回文件预览" : "文件版本",
+      icon: History,
+      onSelect: async () => {
+        if (!versionsOpen && !(await confirmLoseDirty("有未保存的编辑，查看历史将放弃这些编辑，继续？"))) {
+          return;
+        }
+        setVersionsOpen((v) => !v);
+      },
+    },
+    { separator: true },
+    {
+      label: "用系统默认应用打开",
+      icon: ExternalLink,
+      onSelect: openExternal,
+    },
+    {
+      label: revealFolderLabel(IS_MAC, IS_WINDOWS),
+      icon: FolderOpen,
+      onSelect: () => void revealItemInDir(state.path).catch((reason) => setError(String(reason))),
+    },
+    {
+      label: "复制路径",
+      icon: Copy,
+      onSelect: () => void navigator.clipboard.writeText(state.path).catch(() => setError("复制路径失败")),
+    },
+  ];
 
   return (
     <div data-surface="canvas" className="flex h-full w-full flex-col bg-canvas text-l1">
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-4">
-        <h1 className="shrink truncate text-sm font-semibold text-l1">{state.name}</h1>
-        <span className="min-w-0 flex-1 truncate text-micro text-l4" title={subtitle}>
-          {subtitle}
-        </span>
+      <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3.5 py-2">
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-sm font-semibold leading-5 text-l1" title={state.name}>
+            {versionsOpen ? `文件版本 · ${state.name}` : state.name}
+          </h1>
+          {subtitle && (
+            <p className="truncate text-micro leading-4 text-l4" title={subtitle}>
+              {subtitle}
+            </p>
+          )}
+        </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {total > 1 && (
+          {!versionsOpen && total > 1 && (
             <button
               type="button"
               aria-expanded={listOpen}
-              className={`${ghostActionClass} ${listOpen ? "bg-seg-sel text-l1" : ""}`}
+              aria-label={listOpen ? "收起文件树" : "展开文件树"}
+              className={`${iconAction} ${listOpen ? "bg-seg-sel text-l1" : ""}`}
               onClick={() => setListOpen((v) => !v)}
               title={listOpen ? "收起左侧文件列表，让预览更宽" : "展开左侧文件列表"}
             >
-              文件树
+              <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
-          {total > 1 && index >= 0 && (
+          {!versionsOpen && total > 1 && index >= 0 && (
             <>
               <button
                 type="button"
-                className={iconAction}
+                className={stepAction}
                 onClick={() => void step(-1)}
                 disabled={index <= 0}
                 title="上一个文件"
@@ -248,7 +296,7 @@ export default function FileViewerApp() {
               </button>
               <button
                 type="button"
-                className={iconAction}
+                className={stepAction}
                 onClick={() => void step(1)}
                 disabled={index >= total - 1}
                 title="下一个文件"
@@ -256,65 +304,106 @@ export default function FileViewerApp() {
               >
                 ↓
               </button>
-              <span className="px-1 text-micro tabular-nums text-l4">
+              <span className="px-0.5 text-micro tabular-nums text-l4">
                 {index + 1}/{total}
               </span>
             </>
           )}
+          {versionsOpen && (
+            <button
+              type="button"
+              className={ghostActionClass}
+              onClick={() => setVersionsOpen(false)}
+            >
+              返回文件
+            </button>
+          )}
           <button
+            ref={moreBtnRef}
             type="button"
-            className={iconAction}
-            onClick={openExternal}
-            title="外部打开：用系统默认应用打开"
-            aria-label="外部打开"
+            aria-haspopup="menu"
+            aria-expanded={moreMenu !== null}
+            aria-label="更多操作"
+            title="更多操作（文件版本、用系统默认应用打开、复制路径…）"
+            className={`${iconAction} ${moreMenu ? "bg-hover text-l1" : ""}`}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setMoreMenu((cur) => (cur ? null : { x: rect.right, y: rect.bottom + 4 }));
+            }}
           >
-            <ExternalLink size={14} strokeWidth={1.8} aria-hidden="true" />
+            <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
       </header>
-      {error && <p className="shrink-0 break-words px-4 pt-2 text-micro text-err-text">{error}</p>}
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden px-3 pb-3 pt-2">
-        <Suspense fallback={<LoadingRows />}>
-          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-            {listOpen && total > 1 && (
-              <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline pr-1.5">
-                <FileSelectionTree
-                  paths={treePaths}
-                  selected={selectedTreeRel}
-                  label="对照文件树"
-                  expandAll
-                  onSelect={(pickedRel) => {
-                    const picked = state.list?.find((item) => itemTreeRel(item, state) === pickedRel);
-                    if (picked) void switchFile(picked);
+      {error && (
+        <p className="shrink-0 break-words border-b border-hairline px-3.5 py-1.5 text-micro text-err-text">{error}</p>
+      )}
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <Suspense fallback={<div className="px-3.5 py-3"><LoadingRows /></div>}>
+          {versionsOpen ? (
+            <FileVersionsPanel
+              key={`${state.root}|${state.path}`}
+              root={state.root}
+              path={state.path}
+              onClose={() => setVersionsOpen(false)}
+            />
+          ) : (
+            <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+              {listOpen && total > 1 && (
+                <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline px-1 py-1">
+                  <FileSelectionTree
+                    paths={treePaths}
+                    selected={selectedTreeRel}
+                    label="对照文件树"
+                    expandAll
+                    onSelect={(pickedRel) => {
+                      const picked = state.list?.find((item) => itemTreeRel(item, state) === pickedRel);
+                      if (picked) void switchFile(picked);
+                    }}
+                  />
+                </aside>
+              )}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <ProjectFilePreview
+                  key={state.path}
+                  path={state.path}
+                  root={state.root}
+                  hideFileName
+                  revealLine={state.line ?? null}
+                  revealNonce={state.nonce}
+                  onOpenFile={(absPath) => {
+                    const name = absPath.split(/[\\/]/).pop() ?? absPath;
+                    const dir = absPath.replace(/[\\/][^\\/]*$/, "") || absPath;
+                    const nextRoot = pathWithin(absPath, state.root, IS_WINDOWS)
+                      ? state.root
+                      : pathWithin(absPath, state.projectRoot, IS_WINDOWS)
+                        ? state.projectRoot
+                        : dir;
+                    void switchFile({ path: absPath, name, root: nextRoot });
+                  }}
+                  onDirtyChange={(d) => {
+                    dirtyRef.current = d;
                   }}
                 />
-              </aside>
-            )}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <ProjectFilePreview
-                key={state.path}
-                path={state.path}
-                root={state.root}
-                revealLine={state.line ?? null}
-                revealNonce={state.nonce}
-                onOpenFile={(absPath) => {
-                  const name = absPath.split(/[\\/]/).pop() ?? absPath;
-                  const dir = absPath.replace(/[\\/][^\\/]*$/, "") || absPath;
-                  const nextRoot = pathWithin(absPath, state.root, IS_WINDOWS)
-                    ? state.root
-                    : pathWithin(absPath, state.projectRoot, IS_WINDOWS)
-                      ? state.projectRoot
-                      : dir;
-                  void switchFile({ path: absPath, name, root: nextRoot });
-                }}
-                onDirtyChange={(d) => {
-                  dirtyRef.current = d;
-                }}
-              />
+              </div>
             </div>
-          </div>
+          )}
         </Suspense>
       </div>
+      {moreMenu &&
+        createPortal(
+          <ContextMenu
+            x={moreMenu.x}
+            y={moreMenu.y}
+            alignRight
+            items={moreItems}
+            onClose={() => {
+              setMoreMenu(null);
+              moreBtnRef.current?.focus();
+            }}
+          />,
+          document.body,
+        )}
       <ConfirmDialogHost />
     </div>
   );

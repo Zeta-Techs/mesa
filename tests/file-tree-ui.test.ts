@@ -45,6 +45,7 @@ async function renderTree(cwd: string) {
   // JSDOM 没有 scrollIntoView
   (dom.window.HTMLElement.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
   const listed: string[] = [];
+  const openedWindows: Record<string, unknown>[] = [];
   let cb = 1;
   Object.assign(dom.window, {
     __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener: () => {} },
@@ -56,6 +57,10 @@ async function renderTree(cwd: string) {
         if (command === "list_dir") {
           listed.push(String(args.path));
           return dirs[String(args.path)] ?? [];
+        }
+        if (command === "file_viewer_open") {
+          openedWindows.push(args.state as Record<string, unknown>);
+          return null;
         }
         if (command === "path_context") return { kind: "other", workspaceName: null, branch: null };
         if (command === "git_status_map") return {};
@@ -95,6 +100,7 @@ async function renderTree(cwd: string) {
     host,
     act,
     listed,
+    openedWindows,
     settle,
     close: async () => {
       await act(async () => root.unmount());
@@ -141,6 +147,34 @@ test("搜到的文件：从根逐级展开到它所在的文件夹，不换根",
     assert.ok(text.startsWith("随手聊"), "根没换");
     assert.ok(text.includes("2026") && text.includes("smith.pdf"), "逐级展开到了那一项");
     assert.ok(view.listed.includes(`${ROOT}/papers`) && view.listed.includes(`${ROOT}/papers/2026`));
+  } finally {
+    await view.close();
+  }
+});
+
+test("右键文件项支持「在新窗口打开」，调起独立文件窗口并附带同目录文件队列", async () => {
+  const view = await renderTree(ROOT);
+  try {
+    const fileRow = Array.from(view.host.querySelectorAll<HTMLElement>("div[title]")).find((el) =>
+      el.getAttribute("title")?.startsWith(`${ROOT}/plan.txt`),
+    )!;
+    assert.ok(fileRow, "找到了 plan.txt 文件行");
+    await view.act(async () => {
+      fileRow.dispatchEvent(
+        new view.dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+      );
+    });
+    const openWinBtn = Array.from(view.dom.window.document.body.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("在新窗口打开"),
+    );
+    assert.ok(openWinBtn, "右键菜单含「在新窗口打开」");
+    await view.act(async () => {
+      openWinBtn!.click();
+    });
+    await view.settle();
+    assert.equal(view.openedWindows.length, 1);
+    assert.equal(view.openedWindows[0]?.path, `${ROOT}/plan.txt`);
+    assert.equal(view.openedWindows[0]?.root, ROOT);
   } finally {
     await view.close();
   }

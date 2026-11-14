@@ -33,12 +33,14 @@ import {
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
 import { stepSlotKey, taskBindingLaunch } from "../project-agents";
 import ProjectFilePreview from "./ProjectFilePreview";
+import { openFileInWindow } from "../file-window-open";
 import { REVIEW_SAVE, reviewSavePrimaryLabel } from "../review-save-copy";
 import WatchRunReview from "./WatchRunReview";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  AppWindow,
   Archive,
   ArrowLeft,
   Check,
@@ -663,6 +665,27 @@ function DeliveryReviewPane({
                 ›
               </button>
             ) : null
+          }
+          trailing={
+            <button
+              type="button"
+              onClick={() => {
+                void openFileInWindow({
+                  path: absUnderRoot(root, current),
+                  root,
+                  list: paths.map((p) => ({
+                    path: absUnderRoot(root, p),
+                    name: reviewFileChip(p),
+                    root,
+                  })),
+                });
+              }}
+              title="在新窗口打开"
+              aria-label="在新窗口打开"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+            >
+              <AppWindow size={13} strokeWidth={1.8} />
+            </button>
           }
           onAnnotate={onAnnotate}
           hideVersions

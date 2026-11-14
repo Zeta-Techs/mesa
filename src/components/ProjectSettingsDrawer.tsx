@@ -189,6 +189,28 @@ export function SettingsDrawerShell({
               ✕
             </button>
           </header>
+        ) : fillBody ? (
+          <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3.5 py-2">
+            <div className="min-w-0 flex-1">
+              <h2 id={titleId} className="truncate text-sm font-semibold leading-5 text-l1" title={title}>
+                {title}
+              </h2>
+              {subtitle && (
+                <p className="truncate text-micro leading-4 text-l4" title={subtitle}>
+                  {subtitle}
+                </p>
+              )}
+            </div>
+            {headerExtra}
+            <button
+              type="button"
+              className={inlineActionClass}
+              onClick={onClose}
+              aria-label={`关闭${title}`}
+            >
+              ✕
+            </button>
+          </header>
         ) : (
         <header className={`flex shrink-0 items-center gap-2 px-5 ${headerActions ? "min-h-12 flex-wrap py-3" : "h-12"}`}>
           <h2
@@ -217,7 +239,7 @@ export function SettingsDrawerShell({
         )}
         {headerActions && <div className="shrink-0 border-b border-hairline px-5 pb-3">{headerActions}</div>}
         {fillBody ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-2">{children}</div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</div>
         ) : (
           <div className={`min-h-0 flex-1 space-y-5 overflow-auto px-5 pb-6 ${headerActions || titleIcon ? "pt-4" : ""}`}>
             {children}
