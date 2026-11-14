@@ -47,13 +47,15 @@ export default function VendorIcon({
   name: string;
   className?: string;
 }) {
-  const box = `inline-flex h-4 w-4 shrink-0 items-center justify-center ${className}`;
+  const hasSize = /\b(h-|w-|size-)/.test(className);
+  const hasColor = /\btext-/.test(className);
+  const box = `inline-flex ${hasSize ? "" : "h-4 w-4"} shrink-0 items-center justify-center ${className}`;
   if (!vendor) {
     const ch = Array.from(name.trim())[0]?.toUpperCase() ?? "·";
     return (
       <span
         aria-hidden
-        className={`${box} rounded-sm border border-hairline text-micro font-medium leading-none text-l4`}
+        className={`${box} rounded-sm border border-hairline text-micro font-medium leading-none ${hasColor ? "" : "text-l4"}`}
       >
         {ch}
       </span>
@@ -62,7 +64,7 @@ export default function VendorIcon({
   if (isMonoVendor(vendor)) {
     const url = `url("${SRC[vendor]}")`;
     return (
-      <span aria-hidden className={`${box} text-l2`}>
+      <span aria-hidden className={`${box} ${hasColor ? "" : "text-l2"}`}>
         <span
           className="block h-full w-full bg-current"
           style={{

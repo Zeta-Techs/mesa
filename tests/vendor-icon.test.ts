@@ -94,3 +94,13 @@ test("vendorForModel：按模型家族认厂商，认不出给 null", async () =
   assert.equal(vendorForModel(""), null);
   assert.equal(vendorForModel(null), null);
 });
+
+test("全部内置服务商预设（含智谱/Kimi/百炼/MiniMax 国内/OpenRouter/Ollama）都能解析出官方厂商图标", async () => {
+  const { PROVIDER_PRESETS } = await import("../src/presets.ts");
+  for (const preset of PROVIDER_PRESETS) {
+    assert.ok(
+      vendorForSlots(preset.slots) !== null,
+      `内置预设「${preset.name}」未能从槽位地址识别出厂商图标`,
+    );
+  }
+});

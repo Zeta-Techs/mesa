@@ -30,6 +30,7 @@ const SUFFIX_RULES: [string, VendorId][] = [
   ["moonshot.cn", "kimi"],
   ["moonshot.ai", "kimi"],
   ["kimi.com", "kimi"],
+  ["minimax.cn", "minimax"],
   ["minimax.io", "minimax"],
   ["minimaxi.com", "minimax"],
   ["aliyuncs.com", "alibaba"],
@@ -113,8 +114,8 @@ export function vendorForOfficialAgent(agent: string): VendorId | null {
   return OFFICIAL_VENDOR[agent] ?? null;
 }
 
-/** 网关：按协议槽顺序取第一个认得出的厂商 */
-export function vendorForSlots(slots: ProtocolSlots): VendorId | null {
+/** 网关 / 预设：按协议槽顺序取第一个认得出的厂商 */
+export function vendorForSlots(slots: Partial<Record<keyof ProtocolSlots, string | null>>): VendorId | null {
   for (const key of SLOT_ORDER) {
     const v = vendorForUrl(slots[key]);
     if (v) return v;

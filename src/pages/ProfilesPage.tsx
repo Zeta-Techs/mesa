@@ -84,7 +84,7 @@ import VendorIcon from "../components/VendorIcon";
 import AgentIcon from "../components/AgentIcon";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
-import { vendorForGateway, vendorForModel, vendorForOfficialAgent, vendorForProfile } from "../vendor-icon";
+import { vendorForGateway, vendorForModel, vendorForOfficialAgent, vendorForProfile, vendorForSlots } from "../vendor-icon";
 import {
   loadAgentGroupOrder,
   loadProfileOrder,
@@ -1396,6 +1396,7 @@ export function ProfileModal({
                       options={agentPresets.map((p) => ({
                         value: p.name,
                         short: p.name,
+                        icon: <VendorIcon vendor={vendorForSlots(p.provider.slots)} name={p.name} className="size-3.5" />,
                         label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
                           p.confidence === "official"
                             ? " · 官方"

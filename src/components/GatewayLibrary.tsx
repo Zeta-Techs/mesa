@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
-import { vendorForGateway } from "../vendor-icon";
+import { vendorForGateway, vendorForSlots } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import AgentIcon from "./AgentIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
@@ -1597,20 +1597,26 @@ export default function GatewayLibrary({
                     {quickPresets.map((p) => {
                       const active = presetName === p.name;
                       const shortLabel = p.name.replace(/（.*）$/, "");
+                      const vendor = vendorForSlots(p.slots);
                       return (
                         <button
                           key={p.name}
                           type="button"
                           aria-pressed={active}
                           onClick={() => applyProviderPreset(p)}
-                          className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
+                          className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
                             active
                               ? "border-cta bg-cta-pill font-medium text-cta-pill-text"
                               : "border-hairline bg-canvas text-l2 hover:border-field hover:text-l1"
                           }`}
                         >
-                          {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                          <VendorIcon
+                            vendor={vendor}
+                            name={shortLabel}
+                            className={active ? "size-3.5 text-cta-pill-text" : "size-3.5"}
+                          />
                           <span>{shortLabel}</span>
+                          {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
                         </button>
                       );
                     })}
@@ -1623,6 +1629,7 @@ export default function GatewayLibrary({
                       options={PROVIDER_PRESETS.map((p) => ({
                         value: p.name,
                         short: p.name,
+                        icon: <VendorIcon vendor={vendorForSlots(p.slots)} name={p.name} className="size-3.5" />,
                         label: `${p.name}${p.models?.length ? " · 含推荐模型" : ""}${p.confidence === "official" ? " · 官方" : ""}`,
                       }))}
                       onChange={(v) => {

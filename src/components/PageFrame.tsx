@@ -179,7 +179,7 @@ export function MenuSelect({
   value: string;
   onChange: (value: string) => void;
   /** short：选中后框里显示的短名（选项文字带说明时用，免得框里一长串被截断） */
-  options: { value: string; label: string; short?: string; disabled?: boolean }[];
+  options: { value: string; label: string; short?: string; icon?: ReactNode; disabled?: boolean }[];
   placeholder?: string;
   disabled?: boolean;
   "aria-label"?: string;
@@ -236,8 +236,11 @@ export function MenuSelect({
         }`}
         onClick={() => setOpen((next) => !next)}
       >
-        <span className="min-w-0 truncate">
-          {current?.short ?? current?.label ?? placeholder ?? "请选择"}
+        <span className="flex min-w-0 items-center gap-2 truncate">
+          {current?.icon}
+          <span className="truncate">
+            {current?.short ?? current?.label ?? placeholder ?? "请选择"}
+          </span>
         </span>
         <ChevronDown
           size={14}
@@ -266,7 +269,7 @@ export function MenuSelect({
                     role="option"
                     aria-selected={selected}
                     disabled={item.disabled}
-                    className={`flex h-8 w-full items-center px-2.5 text-left text-sm disabled:opacity-40 ${
+                    className={`flex h-8 w-full items-center gap-2 px-2.5 text-left text-sm disabled:opacity-40 ${
                       selected
                         ? "bg-hover text-l1"
                         : "text-l2 hover:bg-hover hover:text-l1"
@@ -277,6 +280,7 @@ export function MenuSelect({
                       setOpen(false);
                     }}
                   >
+                    {item.icon}
                     <span className="truncate">{item.label}</span>
                   </button>
                 </li>
