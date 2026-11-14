@@ -1031,7 +1031,7 @@ mod tests {
         let all = read_items(None, None).unwrap();
         let all_pdf = all.iter().filter(|i| i.pdf_path.is_some()).count();
         eprintln!("整库 {} 条，其中带 PDF {} 条", all.len(), all_pdf);
-        for i in all.iter().filter(|i| i.pdf_path.is_some()).take(3) {
+        for i in all.iter().filter(|i| i.pdf_path.as_deref().is_some()).take(3) {
             let p = i.pdf_path.as_deref().unwrap();
             eprintln!("  pdf: {p}");
             assert!(
@@ -1040,6 +1040,36 @@ mod tests {
             );
         }
         assert!(all.len() >= items.len(), "整库不该少于单个分类");
+    }
+
+    #[test]
+    fn stage_zotero_import_uses_project_name_as_collection_stem() {
+        let dir = std::env::temp_dir().join(format!("ccode-zot-stage-{}", uuid::Uuid::new_v4()));
+        let proj = dir.join("HER催化综述");
+        fs::create_dir_all(proj.join("papers")).unwrap();
+        let src = proj.join("papers/zotero-library.ris");
+        fs::write(&src, "TY  - JOUR\r\nTI  - Test\r\nER  - \r\n").unwrap();
+        let (staged, name) = stage_zotero_import_named(&src, &proj, "ris").unwrap();
+        assert_eq!(name, "HER催化综述");
+        assert!(staged.ends_with("HER催化综述.ris"));
+        assert_eq!(fs::read_to_string(&staged).unwrap(), "TY  - JOUR\r\nTI  - Test\r\nER  - \r\n");
+        let _ = fs::remove_dir_all(&dir);
+        if let Some(slot) = staged.parent() {
+            let _ = fs::remove_dir_all(slot);
+        }
+    }
+
+    #[test]
+    fn clean_zotero_sync_health_hides_clean_notice_and_keeps_dirty_warning() {
+        let ok = "带上 31 篇全文 PDF、23 篇精读笔记。\n\
+                  本次交给 Zotero 33 条（其中 33 条库里已有同一 DOI，导入后在 Zotero「重复条目」里挑着合并）。\n\
+                  库体检：库里没有旧版导出的脏记录。";
+        assert_eq!(
+            clean_zotero_sync_health(ok),
+            "带上 31 篇全文 PDF、23 篇精读笔记。\n本次交给 Zotero 33 条（33 条库内已有同 DOI，可在「重复条目」合并）。"
+        );
+        let dirty = "本次交给 Zotero 2 条。\n库体检：检出 1 条旧版导出的脏记录：\n- Bad item";
+        assert!(clean_zotero_sync_health(dirty).contains("检出 1 条旧版导出的脏记录"));
     }
 }
 
@@ -1860,29 +1890,94 @@ pub async fn zotero_open_import(
                     .map(|p| p.to_string_lossy().replace('\\', "/"))
                     .unwrap_or_else(|_| path_c.display().to_string());
                 let mut message = zotero_too_old_message(&version, &shown);
-                if !health.is_empty() {
+                let cleaned = clean_zotero_sync_health(&health);
+                if !cleaned.is_empty() {
                     message.push_str("\n\n");
-                    message.push_str(&health);
+                    message.push_str(&cleaned);
                 }
                 return Ok(message);
             }
         }
-        hand_file_to_zotero(&path_c)?;
-        let mut message = if mode == crate::library_attach::AttachMode::Items {
-            "已交给 Zotero。确认导入后，点「打开 papers」，把 PDF 拖到对应条目上。".to_string()
-        } else {
-            "已交给 Zotero。确认导入后，全文复制进 Zotero 自己的存储，挂在对应条目下。\
-             没带上全文的篇，点「打开 papers」把 PDF 拖到对应条目上。"
-                .to_string()
-        };
-        if !health.is_empty() {
-            message.push_str("\n\n");
-            message.push_str(&health);
+        // Zotero 勾选「导入到新分类」时按导入文件名（不含扩展名）给新分类起名（见 Zotero fileInterface.js）：
+        // 仓库内保留 papers/zotero-library.ris，转交 Zotero 时复制成 <课题名>.ris，避免建出叫 zotero-library 的分类
+        let (staged_path, collection_name) = stage_zotero_import_named(&path_c, &root_c, &ext)?;
+        hand_file_to_zotero(&staged_path)?;
+        let mut lines = vec![format!(
+            "已交给 Zotero：弹窗勾「导入到新分类」即新建「{collection_name}」分类。{}",
+            if mode == crate::library_attach::AttachMode::Items {
+                "全文可点「打开 papers」拖入条目。"
+            } else {
+                ""
+            }
+        )];
+        let cleaned = clean_zotero_sync_health(&health);
+        if !cleaned.is_empty() {
+            lines.push(cleaned);
         }
-        Ok(message)
+        Ok(lines.join("\n"))
     })
     .await
     .map_err(|e| format!("{e}"))?
+}
+
+/// 按课题文件夹名在临时目录放一份 `<课题名>.ris` 给 Zotero 打开，使「导入到新分类」直接建成课题名分类。
+fn stage_zotero_import_named(
+    source: &Path,
+    project_root: &Path,
+    ext: &str,
+) -> Result<(PathBuf, String), String> {
+    let raw_name = project_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文献导入");
+    let collection_name =
+        crate::paths::sanitize_fs_name(raw_name).unwrap_or_else(|_| "文献导入".to_string());
+    let base = std::env::temp_dir().join("ccode-zotero-import");
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(Duration::from_secs(24 * 3600))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    if let Ok(entries) = fs::read_dir(&base) {
+        for entry in entries.flatten() {
+            let stale = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .map(|t| t < cutoff)
+                .unwrap_or(false);
+            if stale {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in crate::paths::path_key(&project_root.to_string_lossy()).as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let slot = base.join(format!("{:012x}", hash & 0xffff_ffff_ffff));
+    fs::create_dir_all(&slot).map_err(|e| format!("无法准备导入副本: {e}"))?;
+    let clean_ext = if ext.is_empty() { "ris" } else { ext };
+    let staged = slot.join(format!("{collection_name}.{clean_ext}"));
+    fs::copy(source, &staged).map_err(|e| format!("无法写入导入副本: {e}"))?;
+    Ok((staged, collection_name))
+}
+
+/// 精简界面上的同步提示：库干净时不报无异议体检行，只保留条数、附件与真实异常。
+fn clean_zotero_sync_health(raw: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed == "库体检：库里没有旧版导出的脏记录。" {
+            continue;
+        }
+        let compact = trimmed.replace(
+            "条库里已有同一 DOI，导入后在 Zotero「重复条目」里挑着合并）",
+            "条库内已有同 DOI，可在「重复条目」合并）",
+        ).replace("（其中 ", "（");
+        if !out.contains(&compact) {
+            out.push(compact);
+        }
+    }
+    out.join("\n")
 }
 
 /// 探一次 POST：只读接口立刻停，避免 20 篇各报一遍解码失败。

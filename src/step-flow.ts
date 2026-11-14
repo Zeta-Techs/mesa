@@ -267,8 +267,8 @@ export function buildStepFlow(args: {
       section: "optional",
       label: "同步到文献库",
       hint: runStatus === "done"
-        ? "每点一次都整份再导一遍，同一个库同步一次就够。"
-        : "先保存进项目，才可以同步。",
+        ? "同一个库同步一次即可。Zotero 弹窗勾「导入到新分类」建课题分类；EndNote 进 Imported References。"
+        : "先保存进项目，再同步文献库。",
       done: false,
       skipCurrent: true,
       afterSave: true,
@@ -321,7 +321,7 @@ export const LIBRARY_SYNC_ATTACH: { id: LibrarySyncAttach; label: string; title:
 ];
 /** 选了带笔记才出现：只告知，不替人解决（用户原话：「告知用户这个问题就行了，至于怎么解决让用户自己决定」） */
 export const LIBRARY_SYNC_NOTES_CAVEAT =
-  "笔记导进去的是副本：之后在 Mesa 里改笔记，库里那份不跟着变；再同步一次，笔记也会多出一份。";
+  "笔记按副本导入，后续修改不自动同步，重导会多出一份。";
 
 /** 能接回本步上次商量会话时改「继续讨论」，否则「跟 AI 商量一下」。 */
 export function discussChatLabel(discussed: boolean): string {

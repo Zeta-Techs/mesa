@@ -276,18 +276,25 @@ pub fn export_ris_only(
     });
     let terms_note = if has_alt {
         format!(
-            "期刊两种缩写（如 Appl. Catal., B 与 ISO 4 的 Appl. Catal. B Environ.）在 papers/{JOURNAL_TERMS}：\
-             EndNote「工具 → 打开术语表 → 期刊术语表 → 列表 → 导入列表」导入一次，样式里选缩写 1 / 缩写 2 就能切换。"
+            "双缩写表已生成在 papers/{JOURNAL_TERMS}（EndNote「工具 → 打开术语表 → 期刊术语表」导入一次即可切换）。"
         )
     } else {
         String::new()
     };
-    let note = [filled, dropped, attached, terms_note, health]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok((ris, note))
+    let mut lines: Vec<String> = Vec::new();
+    for block in [filled, dropped, attached, terms_note, health] {
+        for line in block.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed == "库体检：库里没有旧版导出的脏记录。" {
+                continue;
+            }
+            let owned = trimmed.to_string();
+            if !lines.contains(&owned) {
+                lines.push(owned);
+            }
+        }
+    }
+    Ok((ris, lines.join("\n")))
 }
 
 pub fn export_xml(project_root: &Path) -> Result<PathBuf, String> {
@@ -881,21 +888,26 @@ pub async fn endnote_export_xml(
         let health_note = if health.is_empty() {
             String::new()
         } else {
-            format!("\n\n{health}")
+            format!("\n{health}")
         };
         match launch_endnote_with_file(&ris) {
             // 每次同步都是整份导入：同一个库点两次就是两份（2026-10-24 HER：27 篇里 18 篇在库里有 3 条，
-            // Word 里 Update 后只有 8 条挂上库）。导完提醒去重，并引向「选这个 EndNote 库」
-            Ok(()) => Ok(format!(
-                "已交给 EndNote，导入当前打开的库。{pdf_note}\
-                 每次同步都会把全部文献再导一遍：同一个库以前导过的，导完在 EndNote 用 References → Find Duplicates 去重，\
-                 不然定稿的 EndNote 版 Word 对不上这些条目。导完点下面「选这个 EndNote 库」指一下用的是哪个库。{health_note}",
-                pdf_note = if mode == crate::library_attach::AttachMode::Items {
-                    "PDF 用「打开 papers」拖到对应条目。"
-                } else {
-                    "没带上全文的篇，PDF 用「打开 papers」拖到对应条目。"
-                },
-            )),
+            // Word 里 Update 后只有 8 条挂上库）。精简为两行要点，不再与下方「选这个 EndNote 库」重复罗嗦
+            Ok(()) => {
+                let mut lines = vec![format!(
+                    "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。{}",
+                    if mode == crate::library_attach::AttachMode::Items {
+                        "全文可点「打开 papers」拖入条目。"
+                    } else {
+                        ""
+                    }
+                )];
+                lines.push("若此前已导过，请用 References → Find Duplicates 去重。".to_string());
+                if !health.is_empty() {
+                    lines.push(health);
+                }
+                Ok(lines.join("\n"))
+            }
             Err(e) => Ok(format!(
                 "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
             )),

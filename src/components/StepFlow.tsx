@@ -1146,10 +1146,11 @@ export default function StepFlow({
     return () => un?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectPath]);
-  /** 按 references.bib 重写 to-fetch.ris，再交给 Zotero。不依赖待获取清单是否已展开。 */
+  /** 按 references.bib 重写 zotero-library.ris 并按课题名转交 Zotero。不依赖待获取清单是否已展开。 */
   async function syncToZotero() {
     setZoteroSyncing(true);
-    setZoteroSyncResult({ line: "正在按引文库生成…" });
+    setEndnoteSyncResult(null);
+    setZoteroSyncResult({ line: "正在生成并打开 Zotero…" });
     try {
       const line = await invoke<string>("zotero_open_import", {
         path: `${projectPath.replace(/[\\/]+$/, "")}/papers/to-fetch.ris`,
@@ -1256,8 +1257,8 @@ export default function StepFlow({
   async function openEndnoteImport() {
     if (endnoteSyncing) return;
     setEndnoteSyncing(true);
-    const note = "正在交给 EndNote…";
-    setEndnoteSyncResult(note);
+    setZoteroSyncResult(null);
+    setEndnoteSyncResult("正在生成并打开 EndNote…");
     try {
       const msg = await invoke<string>("endnote_export_xml", {
         projectRoot: projectPath,
@@ -2061,6 +2062,7 @@ export default function StepFlow({
               type="button"
               disabled={!action.enabled || zoteroSyncing}
               onClick={() => void syncToZotero()}
+              title="在 Zotero 弹窗勾选「导入到新分类」，会自动新建与课题同名的分类"
               className={`${outline} disabled:opacity-50`}
             >
               {zoteroSyncing ? "打开中…" : "同步到 Zotero"}
@@ -2069,7 +2071,7 @@ export default function StepFlow({
               type="button"
               disabled={!action.enabled || endnoteSyncing}
               onClick={() => void openEndnoteImport()}
-              title="导入 EndNote 当前打开的库；开着几个库时进最前面那个，同步前只开着要导入的那个"
+              title="导入 EndNote 当前打开的库（进 Imported References）；开着几个库时只留目标库在前台"
               className={`${outline} disabled:opacity-50`}
             >
               {endnoteSyncing ? "打开中…" : "同步到 EndNote"}
@@ -2701,9 +2703,15 @@ export default function StepFlow({
             node.key === "endnote-export" ||
             node.key === "continue-notes") &&
           node.hint && (
-          <p className="mt-1 pl-6 text-micro leading-5 text-l4">
+          <p
+            className={`mt-1 pl-6 text-micro leading-5 ${
+              node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
+                ? "whitespace-pre-line text-l3"
+                : "text-l4"
+            }`}
+          >
             {node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
-              ? [zoteroSyncResult?.line, endnoteSyncResult].filter(Boolean).join(" ")
+              ? zoteroSyncResult?.line || endnoteSyncResult
               : node.hint}
           </p>
         )}
@@ -2742,14 +2750,14 @@ export default function StepFlow({
                 </span>
                 {endnoteLib.legacy ? (
                   <>
-                    。这是 EndNote X9 及更早版本的库，Mesa 读不到里面的记录，Word 只能对上一部分条目。在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存到项目的 papers 文件夹，再
+                    （X9 旧版库需在 EndNote 用 File → Export 导出 XML 到 papers/，再
                     <button type="button" onClick={() => void browseEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
                       选导出的 XML
                     </button>
-                    ，然后回定稿对话让 AI 重出 EndNote 版。
+                    后回定稿重出）
                   </>
                 ) : (
-                  "。定稿出的 EndNote 版 Word 按它对上库里的条目，在 Word 里点 Update 即可。"
+                  "（定稿 Word 点 Update 即可刷新）"
                 )}
                 <button type="button" onClick={() => void pickEndnoteLibrary()} className="ml-1 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1">
                   换一个
@@ -2757,11 +2765,16 @@ export default function StepFlow({
               </>
             ) : (
               <>
-                用 EndNote 的话，导入后
-                <button type="button" onClick={() => void pickEndnoteLibrary()} className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1">
+                用 EndNote 时，导入后
+                <button
+                  type="button"
+                  onClick={() => void pickEndnoteLibrary()}
+                  title="不选也能出 Word，但引文只留在文档自带的漫游库里，不连你的个人库"
+                  className="mx-1 rounded-sm bg-inset px-1.5 py-0.5 text-l2 hover:bg-hover hover:text-l1"
+                >
                   选这个 EndNote 库（.enl）
                 </button>
-                ：定稿出的 EndNote 版 Word 才能和库里的条目对上。不选也能用，只是条目只在这份 Word 文件自带的漫游库里，不连着你的库。Zotero 不用选。
+                以关联定稿 Word（Zotero 无需选）。
               </>
             )}
             {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}
