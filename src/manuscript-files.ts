@@ -40,7 +40,7 @@ export function isManuscriptBody(path: string): boolean {
   return /(^|\/)(manuscript|submission|proposal|chapters)\/.+\.(md|qmd|tex)$/i.test(p) && !isManuscriptHelper(p);
 }
 
-const MAIN_NAME = /^(review-final|paper-final|thesis-final|draft|main|formatted|proposal)\.(md|qmd|tex)$|-draft\.(md|qmd)$/i;
+const MAIN_NAME = /^(review-final|paper-final|thesis-final|draft|main|formatted|proposal|analysis-report)\.(md|qmd|tex)$|-draft\.(md|qmd)$/i;
 
 /** 这一步要扫的主稿：先认主稿名（draft.md、*-final.md…），再是其余正文稿件（按路径排序），都没有时退回大纲 outline.md。
  *  不按传进来的顺序取第一个——原先会挑中排在前面的 changelog.md、section-status.md */

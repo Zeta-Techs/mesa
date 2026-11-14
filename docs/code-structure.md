@@ -1144,12 +1144,14 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   excludedIncludedIds：included.json 里 decision=excluded 的篇不进进度分母
   draft-check.ts             # 初稿 / 定稿核对（2026-11-11）：主稿 ↔ 引文库 / 纳入清单 / 笔记索引 / figures / sections.json / 写作规范 / 大纲 → 核验项（checker=mesa）；
                              #   键解析、库里重复键、标题编号、图表编号、图注出处移植自 cite_check.py / ms_check.py，规则一致（tests/draft-check.test.ts 跑脚本对照）；
-                             #   pickManuscript 挑主稿，supersededWritingIds 去掉写作扫描里同一件事
+                             #   pickManuscript 支持 manuscript/、proposal/、chapters/、submission/formatted.md、analysis-report.md 及论文大纲 manuscript/outline.md，supersededWritingIds 去掉写作扫描里同一件事
+  step-checks.ts             # 其余科研步骤与跨步台账的 Mesa 核对（2026-11-14）：检索 included.json 结构/重号、数据登记与清洗台账及 same-ids 对账、实验设计与执行矩阵/manifest 对账、
+                             #   结果分析 JSON/manifest/断链图、返修意见编号对账、verification-decisions 待裁决、numbers.json 数字追溯与 CI 算术自洽（tests/step-checks.test.ts 跑脚本对照）
   notes-check.ts             # 精读核对（2026-11-11）：笔记索引 ↔ 笔记文件 / 引文库 / 纳入清单 / 抽取表 / 速读表对不上的 → 核验项（checker=mesa，只拦下 / 待你判断）；
-                             #   完整笔记按八段标题数（FULL_NOTE_MIN=6），「写完了」用 notes-progress isReviewedRow 同一份判断（tests/notes-check.test.ts）
+                             #   完整笔记按八段标题数（FULL_NOTE_MIN=6）且排除阅读区空骨架（isUntouchedNote）与雷达日常笔记，「写完了」用 notes-progress isReviewedRow 同一份判断（tests/notes-check.test.ts）
   outline-check.ts           # 大纲核对（2026-11-11 综述回路三期）：outline.md + 笔记索引 + 引文库 + 纳入清单 → 覆盖检查每节 Mesa 数的可写正文 / 仅线索 / 最新年份
                              #   （与 AI 写的并排）与核验项（键不在引文库、引了已排除的 = 拦下；分档与笔记不符、重复列键、同块子图两用、拼图用了综述的图（reviewKeys 按 kind=review）、篇数对不上 = 待你判断；不出通过，
-                             #   checker=mesa）；outlineThinStatus = 步骤卡「薄 n 节 / 补料已到」；mergeMesaChecks 把核对项排进核验清单前面。只算不读文件（tests/outline-check.test.ts）
+                             #   checker=mesa）；outlineThinStatus = 步骤卡「薄 n 节 / 补料已到」；mergeMesaChecks 把核对项排进核验清单前面并去重脚本同类错项。只算不读文件（tests/outline-check.test.ts）
   spot-check.ts              # 抽查核对档纯逻辑：SpotCheckSession（readerReq.spotCheck 外形）、问题单按 base 记 localStorage、
                              #   spotCheckFocus 每篇要看什么、buildSpotCheckPrompt 交回这一步 AI 的消息（按篇分组带出处，tests/spot-check.test.ts）
   stepper-status.ts          # 步进器圆下状态小字的文案与色（待开始/检查中不写，进行中按终端注意力细分等你确认/等你查看；最近一次运行出错且没人在干活写「出错了」、原因放 title；
@@ -1161,7 +1163,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法、checkConsultSeed（待你判断一条带进研讨的问题与材料）；不汇总打分，tests/research-checks.test.ts）
   research-report.ts         # 研究报告节抽取/相对路径解析（只认显式报告节，不认 TASK 指令或推断结论）
-  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger；loadOutlineCheck / outlineThinWithNotes 给大纲核对取数，loadNotesCheck 给精读核对取数（notes/ 两处取并集、工作副本优先），loadDraftCheck 给初稿 / 定稿核对取数
+  research-report-load.ts    # 研究文件读取：readResearchFile（256 KB 预览通道）/ readResearchLedger·saveResearchLedger；loadOutlineCheck / outlineThinWithNotes 给大纲核对取数，loadNotesCheck 给精读核对取数，loadDraftCheck / loadStepMesaChecks 给其余各步 Mesa 核对统一取数
                              #   （纳入清单、待获取、RIS、笔记索引、引文库整份读写，见 fs_tree.rs 台账白名单）+ 报告扫描
                              #   + 全文篇数对照 papers/：searchCountLineWithFiles / missingToFetchWithFiles（经 to_fetch_progress，
                              #   步骤卡、评审清单两处同一口径，台账 pdf 字段只在脚本跑时写、不能单靠它）

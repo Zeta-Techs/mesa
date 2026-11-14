@@ -10,7 +10,7 @@
 import type { CheckItem } from "./research-checks.ts";
 import { excludedKeys, MESA_CHECKER, noteStates } from "./outline-check.ts";
 import { placeholderFigureLines, writingScanSourcePath } from "./draft-review.ts";
-import { isManuscriptHelper } from "./manuscript-files.ts";
+import { isManuscriptBody, isManuscriptHelper } from "./manuscript-files.ts";
 
 // ---------- 从脚本移植的正则（改这里先改脚本，对照测试会拦） ----------
 
@@ -278,14 +278,15 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     });
   }
 
-  // ②c 引用集中在一篇上（待你判断，只列不判）：正文带引用的段落里，被引最多的一篇占比
+  // ②c 引用集中在一篇上（待你判断，只列不判）：正文带引用的段落里，被引最多的一篇占比（论文大纲精简列点，不计集中度）
+  const isPaperOutline = /(^|\/)outline\.md$/i.test(file);
   const citedParas = paras.filter((p) => !p.heading && !p.text.startsWith("|") && !p.text.startsWith("!") && /@/.test(p.text));
   const paraKeys = citedParas.map((p) => new Set(manuscriptCitations(p.text).map((c) => c.key)));
   const perKey = new Map<string, number[]>();
   paraKeys.forEach((ks, i) => ks.forEach((k) => perKey.set(k, [...(perKey.get(k) ?? []), citedParas[i].line])));
   const ranked = [...perKey].sort((a, b) => b[1].length - a[1].length);
   const top = ranked[0];
-  if (top && citedParas.length >= 30 && top[1].length >= CONCENTRATION_MIN_PARAS && top[1].length / citedParas.length >= CONCENTRATION_SHARE) {
+  if (!isPaperOutline && top && citedParas.length >= 30 && top[1].length >= CONCENTRATION_MIN_PARAS && top[1].length / citedParas.length >= CONCENTRATION_SHARE) {
     const chapters = [...new Set(top[1].map((l) => (sec.at(l) || sec.title(l)).split(".")[0]).filter(Boolean))];
     const pct = (n: number) => `${Math.round((n / citedParas.length) * 100)}%`;
     push(items, {
@@ -411,6 +412,28 @@ export function checkDraft(input: DraftCheckInput): CheckItem[] {
     }
     if (title) {
       push(items, { id: "draft-sections", kind: "draft-structure", status: "needs_human", title, target: { file: "manuscript/sections.json" }, evidence: { detail: `${detail}引言与结论不在 sections.json 里，不算。` } });
+    }
+  }
+
+  // ⑧b 论文大纲（manuscript/outline.md）：核对核心结构节是否齐全
+  if (isPaperOutline && heads.length > 0) {
+    const joined = heads.map((h) => h.text).join("\n");
+    const core: [string, RegExp][] = [
+      ["Introduction / 引言", /\bintroduction\b|\bbackground\b|引言|绪论|前言|研究背景/i],
+      ["Methods / 方法", /\bmethods?\b|\bmethodology\b|\bexperimental\b|\bmaterials\b|方法|实验/i],
+      ["Results / 结果", /\bresults?\b|\bfindings?\b|结果/i],
+      ["Discussion / 讨论", /\bdiscussion\b|讨论/i],
+    ];
+    const missingCore = core.filter(([, re]) => !re.test(joined)).map(([label]) => label);
+    if (missingCore.length > 0) {
+      push(items, {
+        id: "draft-paper-outline-sections",
+        kind: "draft-structure",
+        status: "needs_human",
+        title: `论文大纲没认出核心节：${missingCore.join("、")}`,
+        target: { file, line: heads[0].line },
+        evidence: { detail: "研究论文大纲通常含引言、方法、结果、讨论（合写 Results and Discussion 也算）；若本学科结构不同请确认。" },
+      });
     }
   }
 
@@ -680,15 +703,37 @@ export function styleAbbreviations(text: string): { abbr: string; full: string; 
   return out;
 }
 
-/** 这一步的主稿：步骤要交的 manuscript/ 下 md / qmd 排前，再是工作副本 manuscript/ 里列出来的；只取真在的，
- *  按 writingScanSourcePath 同口径挑（draft.md / manuscript/ 优先）。挑不出返回 null */
+/** 这一步的主稿：步骤要交的正文 md / qmd（manuscript/、submission/、proposal/、chapters/、analysis-report.md；
+ *  步骤显式交 manuscript/outline.md 时也认论文大纲）排前，再是工作副本里列出来的；只取真在的，
+ *  按 writingScanSourcePath 同口径挑。挑不出返回 null */
 export function pickManuscript(artifacts: readonly string[], listed: readonly string[]): string | null {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
-  // 过程文件、写作规范这类写作配套文件不是稿件：名单只在 manuscript-files.ts（与核验脚本同一份）
-  const ok = (p: string) => /^manuscript\/.+\.(md|qmd)$/i.test(p) && !/[*?]/.test(p) && !isManuscriptHelper(p);
+  const normArts = artifacts.map(norm);
+  const allowPaperOutline = normArts.includes("manuscript/outline.md");
+  // 过程文件、写作规范这类写作配套文件不是稿件：名单只在 manuscript-files.ts（与核验脚本同一份）；
+  // submission/ 下只有 formatted.(md|qmd) 是正文稿件（其余 target-journal、cover-letter、pre-review 等都是投稿材料）
+  const ok = (p: string) =>
+    /\.(md|qmd)$/i.test(p) &&
+    !/[*?]/.test(p) &&
+    ((isManuscriptBody(p) && !isManuscriptHelper(p) && (!/^submission\//i.test(p) || /^submission\/formatted\.(md|qmd)$/i.test(p))) ||
+      /^analysis-report\.(md|qmd)$/i.test(p) ||
+      (allowPaperOutline && /^manuscript\/outline\.md$/i.test(p)));
   const have = new Set(listed.map(norm));
-  const ordered = [...new Set([...artifacts.map(norm), ...listed.map(norm)])].filter((p) => ok(p) && have.has(p));
+  const ordered = [...new Set([...normArts, ...listed.map(norm)])].filter((p) => ok(p) && have.has(p));
   return writingScanSourcePath(ordered);
+}
+
+/** 挑主稿要列举的相对目录（manuscript 默认总查；其余按步骤产物补 submission / proposal / chapters / 根目录 "."） */
+export function manuscriptCandidateDirs(artifacts: readonly string[]): string[] {
+  const dirs = new Set<string>(["manuscript"]);
+  for (const raw of artifacts) {
+    const p = raw.replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!/\.(md|qmd)$/i.test(p)) continue;
+    const idx = p.lastIndexOf("/");
+    const dir = idx < 0 ? "." : p.slice(0, idx);
+    if (!dir.includes("*")) dirs.add(dir);
+  }
+  return [...dirs];
 }
 
 /** 写作扫描里被核对项取代的那几条（同一件事只报一次）：定稿占位、number-sections 下手写编号 */

@@ -5,8 +5,10 @@ import { searchPdfProbes, searchProgress, searchProgressParts } from "./notes-pr
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
-import { checkDraft, draftProgressParts, imageRefs, pickManuscript, supersededWritingIds, type DraftStepKind } from "./draft-check";
+import { checkDraft, draftProgressParts, imageRefs, manuscriptCandidateDirs, pickManuscript, supersededWritingIds, type DraftStepKind } from "./draft-check";
 import { scanWritingReview, writingHitChecks } from "./draft-review";
+import { checkStepArtifacts } from "./step-checks";
+import type { StepKind } from "./step-kind";
 import type { CheckItem } from "./research-checks";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
@@ -112,74 +114,282 @@ async function firstOptional(roots: readonly string[], rel: string): Promise<str
   return null;
 }
 
-/** 精读核对的取数（notes-check.ts 只算）：工作副本和项目根都读、以工作副本为准（同 notes-progress 口径）；
- *  notes/ 下的文件两处取并集，笔记内容按文件先工作副本后项目根读。roots 首位是工作副本。没有笔记索引返回空 */
+/** 精读核对的取数（notes-check.ts 只算）：笔记索引与 notes/ 文件取同一处根（工作副本优先），
+ *  避免项目根里尚未并入本工作副本的下游补读/雷达笔记跨根串入旧索引；引文库多处取并集。没有笔记索引返回空 */
 const NOTE_FILE_CAP = 400;
 export async function loadNotesCheck(roots: readonly string[]): Promise<CheckItem[]> {
-  const index = await firstOptional(roots, "notes/index.json");
-  if (index == null) return [];
-  const listings = await Promise.all(
-    roots.map((root) =>
-      invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, "notes"), showHidden: false, root }).catch(() => [] as DirEntryDto[]),
-    ),
-  );
-  const names = [...new Set(listings.flat().filter((e) => !e.isDir).map((e) => e.name))];
+  let index: string | null = null;
+  let indexRoot = roots[0] ?? "";
+  for (const root of roots) {
+    const text = await readOptional(root, "notes/index.json");
+    if (text != null) {
+      index = text;
+      indexRoot = root;
+      break;
+    }
+  }
+  if (index == null || !indexRoot) return [];
+  const noteRoots = indexRoot === roots[0] ? [indexRoot] : [indexRoot, ...roots.filter((r) => r !== indexRoot)];
+  const listing = await invoke<DirEntryDto[]>("list_dir", {
+    path: researchAbsolutePath(indexRoot, "notes"),
+    showHidden: false,
+    root: indexRoot,
+  }).catch(() => [] as DirEntryDto[]);
+  const names = [...new Set(listing.filter((e) => !e.isDir).map((e) => e.name))];
   const md = names.filter((n) => /\.md$/i.test(n)).slice(0, NOTE_FILE_CAP);
-  const [bib, included, extraction, notes, skims] = await Promise.all([
-    firstOptional(roots, "references.bib"),
+  const [bibs, included, extraction, notes, skims] = await Promise.all([
+    Promise.all(roots.map((r) => readOptional(r, "references.bib"))),
     firstOptional(roots, "papers/included.json"),
-    readFirst(roots, "notes/extraction.md"),
+    readFirst(noteRoots, "notes/extraction.md"),
     Promise.all(md.map(async (n): Promise<NoteFile | null> => {
-      const text = await readFirst(roots, `notes/${n}`);
+      const text = await readFirst(noteRoots, `notes/${n}`);
       return text == null ? null : { path: `notes/${n}`, text };
     })),
-    Promise.all(md.filter((n) => /^skim.*\.md$/i.test(n)).map((n) => readFirst(roots, `notes/${n}`))),
+    Promise.all(md.filter((n) => /^skim.*\.md$/i.test(n)).map((n) => readFirst(noteRoots, `notes/${n}`))),
   ]);
   return checkNotes({
     index,
     files: names.map((n) => `notes/${n}`),
     notes: notes.filter((n): n is NoteFile => !!n),
-    bib,
+    bibs,
     included,
     extraction,
     skim: skims.filter(Boolean).join("\n"),
   });
 }
 
-/** 初稿 / 定稿核对的取数（draft-check.ts 只算）：主稿只在工作副本里找（这一步的产物），台账、写作规范、大纲先工作副本后项目根；
- *  稿件引的图按所在目录列一次，看在不在。找不到主稿返回空 */
-export async function loadDraftCheck(roots: readonly string[], kind: DraftStepKind, artifacts: readonly string[]): Promise<CheckItem[]> {
-  const [work] = roots;
-  if (!work) return [];
-  const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, "manuscript"), showHidden: false, root: work }).catch(() => [] as DirEntryDto[]);
-  const file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
-  if (!file) return [];
-  const text = await readFirst([work], file);
-  if (text == null) return [];
-  const dirs = [...new Set(imageRefs(text, file).map((r) => r.path.split("/").slice(0, -1).join("/")).filter((d) => d.startsWith("figures")))];
+async function listCandidateManuscripts(root: string, artifacts: readonly string[]): Promise<string[]> {
+  const dirs = manuscriptCandidateDirs(artifacts);
+  const rows = await Promise.all(
+    dirs.map(async (dir) => {
+      const entries = await invoke<DirEntryDto[]>("list_dir", {
+        path: researchAbsolutePath(root, dir),
+        showHidden: false,
+        root,
+      }).catch(() => [] as DirEntryDto[]);
+      return entries.filter((e) => !e.isDir).map((e) => (dir === "." ? e.name : `${dir}/${e.name}`));
+    }),
+  );
+  return [...new Set(rows.flat())];
+}
+
+async function probeExistingFiles(root: string, relPaths: readonly string[]): Promise<Set<string> | null> {
+  const dirs = [
+    ...new Set(
+      relPaths
+        .map((p) => p.replace(/\\/g, "/").replace(/^\.\//, ""))
+        .filter((p) => p && !p.startsWith("/") && !p.startsWith("..") && !/^[A-Za-z]:\//.test(p))
+        .map((p) => {
+          const idx = p.lastIndexOf("/");
+          return idx < 0 ? "." : p.slice(0, idx);
+        }),
+    ),
+  ];
+  if (dirs.length === 0) return new Set();
   const existing = new Set<string>();
   let listed = true;
   for (const dir of dirs) {
-    const rows = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, dir), showHidden: false, root: work }).catch(() => null);
+    const rows = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, dir), showHidden: false, root }).catch(() => null);
     if (rows === null) {
-      // 目录本身不在：里面引的图都不在；列不出来的别的原因当没查
-      const exists = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(work, dir.split("/").slice(0, -1).join("/") || "."), showHidden: false, root: work })
-        .then((up) => up.some((e) => e.isDir && e.name === dir.split("/").pop()))
+      if (dir === ".") {
+        listed = false;
+        continue;
+      }
+      const parent = dir.split("/").slice(0, -1).join("/") || ".";
+      const base = dir.split("/").pop();
+      const exists = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, parent), showHidden: false, root })
+        .then((up) => up.some((e) => e.isDir && e.name === base))
         .catch(() => null);
       if (exists !== false) listed = false;
       continue;
     }
-    for (const e of rows) if (!e.isDir) existing.add(`${dir}/${e.name}`);
+    for (const e of rows) {
+      if (!e.isDir) existing.add(dir === "." ? e.name : `${dir}/${e.name}`);
+    }
   }
-  const [bib, included, index, sections, styleSheet, outline] = await Promise.all([
-    firstOptional(roots, "references.bib"),
+  return listed ? existing : null;
+}
+
+async function loadDraftCheckWithPrimary(
+  roots: readonly string[],
+  kind: DraftStepKind,
+  artifacts: readonly string[],
+): Promise<{ items: CheckItem[]; file: string | null; text: string | null }> {
+  const [work] = roots;
+  if (!work) return { items: [], file: null, text: null };
+  const listed = await listCandidateManuscripts(work, artifacts);
+  const file = pickManuscript(artifacts, listed);
+  if (!file) return { items: [], file: null, text: null };
+  const text = await readFirst([work], file);
+  if (text == null) return { items: [], file: null, text: null };
+  const figRefs = imageRefs(text, file).filter((r) => r.path.startsWith("figures/")).map((r) => r.path);
+  const existing = figRefs.length > 0 ? await probeExistingFiles(work, figRefs) : new Set<string>();
+  const [bibs, included, index, sections, styleSheet, outline] = await Promise.all([
+    Promise.all(roots.map((r) => readOptional(r, "references.bib"))),
     firstOptional(roots, "papers/included.json"),
     firstOptional(roots, "notes/index.json"),
     readFirst(roots, "manuscript/sections.json"),
     readFirst(roots, "manuscript/style-sheet.md"),
     readFirst(roots, "outline.md"),
   ]);
-  return checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: listed ? existing : null });
+  const bib = bibs.filter(Boolean).join("\n") || null;
+  return {
+    items: checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: existing }),
+    file,
+    text,
+  };
+}
+
+/** 初稿 / 定稿核对的取数（draft-check.ts 只算）：主稿只在工作副本里找（这一步的产物），台账、写作规范、大纲先工作副本后项目根；
+ *  稿件引的图按所在目录列一次，看在不在。找不到主稿返回空 */
+export async function loadDraftCheck(roots: readonly string[], kind: DraftStepKind, artifacts: readonly string[]): Promise<CheckItem[]> {
+  return (await loadDraftCheckWithPrimary(roots, kind, artifacts)).items;
+}
+
+const TEXT_STEP_ARTIFACT = /\.(md|qmd|json|csv)$/i;
+
+/** 除大纲外所有步骤的 Mesa 核对统一取数入口（评审页与项目助手共用同一份）：
+ *  - notes → 精读核对（loadNotesCheck）
+ *  - writing / final → 主稿核对（loadDraftCheck） + 附属文件 / 数字追溯 / 存疑裁决 / 置信区间自洽
+ *  - search / clean / design / experiment / analysis / other → 台账对账、分析与实验核对、投稿材料与返修核对 */
+export async function loadStepMesaChecks(
+  roots: readonly string[],
+  kind: StepKind,
+  artifacts: readonly string[],
+): Promise<CheckItem[]> {
+  if (kind === "outline") return [];
+  if (kind === "notes") return loadNotesCheck(roots);
+  const [work] = roots;
+  if (!work) return [];
+  if (kind === "search") {
+    const [inc, screening] = await Promise.all([
+      readOptional(work, "papers/included.json"),
+      readFirst([work], "papers/screening.md"),
+    ]);
+    const files = new Map<string, string>();
+    if (inc != null) files.set("papers/included.json", inc);
+    if (screening != null) files.set("papers/screening.md", screening);
+    return checkStepArtifacts({ kind, artifacts, files });
+  }
+  const draft =
+    kind === "writing" || kind === "final"
+      ? await loadDraftCheckWithPrimary(roots, kind, artifacts)
+      : { items: [] as CheckItem[], file: null, text: null };
+  const files = new Map<string, string>();
+  if (draft.file && draft.text != null) files.set(draft.file, draft.text);
+
+  const normArts = artifacts.map((a) => a.replace(/\\/g, "/").replace(/^\.\//, ""));
+  const workTargets = new Set<string>(
+    normArts.filter((a) => TEXT_STEP_ARTIFACT.test(a) && !/[*?]/.test(a) && a !== draft.file),
+  );
+  if (kind === "analysis") {
+    for (const p of ["analysis/results.json", "analysis/summary-stats.json", "figures/manifest.json", "analysis/findings.md", "analysis/results-table.md", "eda-report.md", "chapters/results.md"]) {
+      if (normArts.includes(p) || normArts.some((a) => a.startsWith("figures/"))) workTargets.add(p);
+    }
+  }
+  await Promise.all(
+    [...workTargets].map(async (rel) => {
+      const t = await readFirst([work], rel);
+      if (t != null) files.set(rel, t);
+    }),
+  );
+
+  // 跨步对账的上游参考台账（本步已产出对应下游 JSON 且工作副本没有上游台账时，回退项目根）
+  const upstreamRefs: string[] = [];
+  if (files.has("cleaning/fields.json") && !files.has("data/fields.json")) upstreamRefs.push("data/fields.json");
+  if ((files.has("results/run-manifest.json") || files.has("results/matrix.json")) && !files.has("experiments/matrix.json")) {
+    upstreamRefs.push("experiments/matrix.json");
+  }
+  await Promise.all(
+    upstreamRefs.map(async (rel) => {
+      const t = await readFirst(roots, rel);
+      if (t != null) files.set(rel, t);
+    }),
+  );
+
+  // numbers.json 引到的结果文件与目标正文：按需补读并收集待查存在性的路径
+  const pathsToProbe = new Set<string>();
+  for (const numPath of ["manuscript/numbers.json", "analysis/numbers.json"]) {
+    const raw = files.get(numPath);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      const list: unknown[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.numbers) ? parsed.numbers : [];
+      const extraReads = new Set<string>();
+      for (const e of list) {
+        if (!e || typeof e !== "object") continue;
+        const src = String((e as Record<string, unknown>).source ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "");
+        if (src && !src.startsWith("/") && !src.startsWith("..")) {
+          pathsToProbe.add(src);
+          if (/\.(json|csv)$/i.test(src) && !files.has(src)) extraReads.add(src);
+        }
+        const loc = String((e as Record<string, unknown>).location ?? "").trim().replace(/:\d+$/, "").replace(/\\/g, "/").replace(/^\.\//, "");
+        if (loc && /\.(md|qmd)$/i.test(loc) && !files.has(loc)) extraReads.add(loc);
+      }
+      await Promise.all(
+        [...extraReads].slice(0, 24).map(async (rel) => {
+          const t = await readFirst(roots, rel);
+          if (t != null) files.set(rel, t);
+        }),
+      );
+    } catch {
+      /* 非法 JSON 交给 checkStepArtifacts 报拦下 */
+    }
+  }
+
+  for (const [rel, text] of files) {
+    if (rel !== draft.file && /\.(md|qmd)$/i.test(rel)) {
+      for (const r of imageRefs(text, rel)) {
+        if (r.path && !r.path.startsWith("..")) pathsToProbe.add(r.path);
+      }
+    }
+  }
+  const dsRaw = files.get("data/datasets.json");
+  if (dsRaw) {
+    try {
+      const parsed = JSON.parse(dsRaw);
+      const rows: unknown[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.datasets) ? parsed.datasets : Array.isArray(parsed?.records) ? parsed.records : [];
+      for (const r of rows) {
+        if (r && typeof r === "object" && typeof (r as Record<string, unknown>).path === "string") {
+          pathsToProbe.add(String((r as Record<string, unknown>).path));
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  const figRaw = files.get("figures/manifest.json");
+  if (figRaw) {
+    try {
+      const parsed = JSON.parse(figRaw);
+      const rows: unknown[] = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.figures) ? parsed.figures : Array.isArray(parsed?.items) ? parsed.items : [];
+      for (const r of rows) {
+        if (!r || typeof r !== "object") continue;
+        for (const f of ["file", "path", "script", "spec"]) {
+          const v = (r as Record<string, unknown>)[f];
+          if (typeof v === "string" && v.trim()) pathsToProbe.add(v.trim());
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  const hasNonPrimaryCites = [...files.entries()].some(([rel, text]) => rel !== draft.file && /\.(md|qmd)$/i.test(rel) && text.includes("@"));
+  const [existingPaths, bibs, indexes, included] = await Promise.all([
+    pathsToProbe.size > 0 ? probeExistingFiles(work, [...pathsToProbe]) : Promise.resolve(null),
+    hasNonPrimaryCites ? Promise.all(roots.map((r) => readOptional(r, "references.bib"))) : Promise.resolve([]),
+    hasNonPrimaryCites ? Promise.all(roots.map((r) => readOptional(r, "notes/index.json"))) : Promise.resolve([]),
+    hasNonPrimaryCites ? firstOptional(roots, "papers/included.json") : Promise.resolve(null),
+  ]);
+
+  const extra = checkStepArtifacts({
+    kind,
+    artifacts,
+    files,
+    existingPaths,
+    bibs,
+    indexes,
+    included,
+    primaryManuscript: draft.file,
+  });
+  return [...draft.items, ...extra];
 }
 
 /** 大纲 / 初稿 / 定稿的写作扫描核验项（与评审页 WorkspaceReviewView 同口径，供项目助手取数共用） */
@@ -194,8 +404,8 @@ export async function loadStepWritingChecks(
   if (kind === "outline") {
     file = "outline.md";
   } else if (kind === "writing" || kind === "final") {
-    const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(worktree, "manuscript"), showHidden: false, root: worktree }).catch(() => [] as DirEntryDto[]);
-    file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
+    const listed = await listCandidateManuscripts(worktree, artifacts);
+    file = pickManuscript(artifacts, listed);
   }
   if (!file) return [];
   const text = await readFirst([worktree], file);
@@ -212,9 +422,9 @@ export async function loadStepWritingChecks(
  *  没有 md / qmd 主稿（Word、LaTeX 载体）返回 null，不出统计行 */
 export async function loadDraftProgress(roots: readonly string[], artifacts: readonly string[]): Promise<string[] | null> {
   for (const root of roots) {
-    const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(root, "manuscript"), showHidden: false, root }).catch(() => null);
-    if (!listing) continue;
-    const file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
+    const listed = await listCandidateManuscripts(root, artifacts);
+    if (!listed.length) continue;
+    const file = pickManuscript(artifacts, listed);
     if (!file) continue;
     const text = await readFirst([root], file);
     if (text == null) continue;

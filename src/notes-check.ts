@@ -30,6 +30,8 @@ export interface NotesCheckInput {
   /** notes/ 下 .md 的内容（判断完整笔记、缺哪几段、仅摘要；可以只给一部分，没给内容的不查这几项） */
   notes: readonly NoteFile[];
   bib?: string | null;
+  /** 多处 references.bib（工作副本、项目根取并集；与 bib 同时给时合并） */
+  bibs?: readonly (string | null | undefined)[];
   included?: string | null;
   extraction?: string | null;
   /** notes/skim.md 与分路速读表 skim-*.md，拼在一起给 */
@@ -58,6 +60,14 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
+function normDocId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//, "")
+    .replace(/^doi:\s*/, "");
+}
+
 /** notePath 统一成相对路径：去掉 ./、反斜杠；绝对路径取最后一个 notes/ 起的那段 */
 export function normNotePath(p: string): string {
   const s = p.trim().replace(/\\/g, "/").replace(/^\.\//, "");
@@ -65,25 +75,75 @@ export function normNotePath(p: string): string {
   return s.startsWith("/") || /^[A-Za-z]:\//.test(s) ? (at >= 0 ? s.slice(at + 1) : s) : s;
 }
 
-/** 笔记里出现了八段里的哪几段（## 标题，允许前面带序号、后面带说明） */
+/** 阅读区自动建的空骨架（与 reader.rs note_is_untouched 同口径）：只有标题、来源行、小节标题与空行，还没写过正文 */
+export function isUntouchedNote(text: string): boolean {
+  const lines = text.split(/\r?\n/);
+  return (
+    lines.some((l) => l.trim() !== "") &&
+    lines.every((l) => {
+      const t = l.trim();
+      return t === "" || /^#{1,3}\s/.test(t) || /^>\s*来源/.test(t);
+    })
+  );
+}
+
+/** 笔记里出现了八段里的哪几段（## 标题，允许前面带中英文序号/加粗、后面带说明，跳过代码块） */
 export function noteSections(text: string): string[] {
-  const heads = [...text.matchAll(/^#{2,3}\s+(.+?)\s*$/gm)].map((m) => m[1].replace(/^[\d.、\s]+/, ""));
+  const heads: string[] = [];
+  let fenced = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    const m = line.match(/^#{2,3}\s+(.+?)\s*$/);
+    if (!m) continue;
+    const h = m[1]
+      .replace(/\s*\{[#.][^}]*\}\s*$/, "")
+      .replace(/^(?:\*\*|__)?\s*(?:[（(][\d一二三四五六七八九十]+[)）][\s、.．]*|[一二三四五六七八九十]+[、.．)\s]+|[\d.、\s]+)/, "")
+      .replace(/(?:\*\*|__)\s*$/, "")
+      .trim();
+    heads.push(h);
+  }
   return NOTE_SECTIONS.filter((s) => heads.some((h) => h.startsWith(s)));
 }
 
 /** 笔记开头（标题下前几行，来源锚点之后的状态行）写的是全文还是仅摘要；没写返回 null。
- *  「仅摘要·待全文」算仅摘要（含「全文」二字但说的是还没有） */
+ *  「仅摘要·待全文」「全文状态：abstract-only」「无全文」算仅摘要，「待补全文」算未定 */
 export function noteFulltextClaim(text: string): "fulltext" | "abstract" | null {
   const lines = text.split(/\r?\n/);
   const first = lines.findIndex((l) => /^##\s/.test(l));
   const head = lines.slice(0, first < 0 ? 12 : Math.min(first, 12)).filter((l) => !/^#\s/.test(l) && !/^>\s*来源/.test(l)).join("\n");
-  if (/仅摘要|只有摘要|仅按摘要/.test(head)) return "abstract";
-  if (/全文/.test(head)) return "fulltext";
+  if (/abstract[-_\s]*only|unavailable|仅摘要|只有摘要|仅按摘要|无全文|缺全文|未获[^\n]*全文|全文[^\n。；;]{0,6}(?:无|缺|未|不可得|不公开)/i.test(head)) {
+    return "abstract";
+  }
+  if (/待补全文|全文待补/.test(head)) return null;
+  if (/\bfull[-_\s]*text\b|全文/i.test(head)) return "fulltext";
   return null;
 }
 
 function titleNorm(s: string): string {
-  return s.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function sameNoteTitle(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const shorter = a.length < b.length ? a : b;
+  return shorter.length >= 12 && (a.startsWith(b.slice(0, 40)) || b.startsWith(a.slice(0, 40)));
+}
+
+function skimTableKeys(text: string): Set<string> {
+  const out = new Set(citedKeys(text));
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim().startsWith("|") || /^\s*\|(\s*:?-{2,}:?\s*\|)+\s*$/.test(line)) continue;
+    for (const cell of line.split("|")) {
+      const m = cell.trim().match(/^@?([A-Za-z_][A-Za-z0-9_:.+-]*(?:18|19|20)\d{2}[a-z]?)$/);
+      if (m) out.add(m[1]);
+    }
+  }
+  return out;
 }
 
 function joinKeys(keys: readonly string[], cap = 10): string {
@@ -93,13 +153,25 @@ function joinKeys(keys: readonly string[], cap = 10): string {
 
 export function checkNotes(input: NotesCheckInput): CheckItem[] {
   const items: CheckItem[] = [];
+  const push = (item: Omit<CheckItem, "checker">) => items.push({ ...item, checker: MESA_CHECKER });
+  if (input.index != null && input.index.trim() !== "" && parseJson(input.index) === null) {
+    push({
+      id: "notes-bad-index",
+      kind: "notes-index",
+      status: "blocked",
+      title: "notes/index.json 不是合法 JSON，进度和大纲都读不出来",
+      target: { file: "notes/index.json" },
+      evidence: { detail: "修好 JSON 语法（括号、引号或末尾逗号），再重新核对。" },
+    });
+    return items;
+  }
   const index = rows(parseJson(input.index));
   const files = new Set(input.files.map(normNotePath));
   const texts = new Map(input.notes.map((n) => [normNotePath(n.path), n.text]));
-  const bibKnown = !!input.bib;
-  const bib = bibEntries([input.bib]);
-  const excluded = excludedKeys(input.included, [input.index], [input.bib]);
-  const push = (item: Omit<CheckItem, "checker">) => items.push({ ...item, checker: MESA_CHECKER });
+  const allBibs = [input.bib, ...(input.bibs ?? [])];
+  const bibKnown = allBibs.some((b) => !!b);
+  const bib = bibEntries(allBibs);
+  const excluded = excludedKeys(input.included, [input.index], allBibs);
 
   // ---- 索引自身 ----
   const keyCount = new Map<string, number>();
@@ -152,8 +224,20 @@ export function checkNotes(input: NotesCheckInput): CheckItem[] {
     }
     const text = exists ? texts.get(path) : undefined;
     if (text === undefined) continue;
+    const untouched = isUntouchedNote(text);
+    if (reviewed && untouched) {
+      push({
+        id: `notes-empty-${key}`,
+        kind: "notes-index",
+        status: "blocked",
+        title: `@${key} 标了已精读，笔记 ${path} 还是空模板`,
+        target: { file: path },
+        evidence: { detail: "笔记里只有标题和小节名，没有正文；写完笔记再标 reviewed，或把索引改回 pending。" },
+      });
+      continue;
+    }
     const found = noteSections(text);
-    if (!reviewed && found.length >= FULL_NOTE_MIN) {
+    if (!reviewed && !untouched && found.length >= FULL_NOTE_MIN) {
       push({
         id: `notes-unmarked-${key}`,
         kind: "notes-index",
@@ -193,18 +277,28 @@ export function checkNotes(input: NotesCheckInput): CheckItem[] {
     }
   }
 
-  // ---- 没有索引指向的笔记（只查长得像单篇笔记的；已排除的篇的笔记照旧留着，不报） ----
-  const excludedTitles = rows(parseJson(input.included))
+  // ---- 没有索引指向的笔记（只查长得像单篇笔记的；已排除的篇、阅读区空骨架、雷达日常积累笔记不报） ----
+  const includedRows = rows(parseJson(input.included));
+  const excludedTitles = includedRows
     .filter((r) => /^exclude/.test(str(r.decision).toLowerCase()))
     .map((r) => titleNorm(str(r.title)))
-    .filter((t) => t.length >= 12);
+    .filter((t) => t.length >= 6);
+  const activeTitles = includedRows
+    .filter((r) => !/^exclude/.test(str(r.decision).toLowerCase()))
+    .map((r) => titleNorm(str(r.title)))
+    .filter((t) => t.length >= 6);
   for (const n of input.notes) {
     const path = normNotePath(n.path);
-    if (pointed.has(path) || noteSections(n.text).length < NOTE_LIKE_MIN) continue;
+    if (pointed.has(path) || isUntouchedNote(n.text) || noteSections(n.text).length < NOTE_LIKE_MIN) continue;
     const name = titleNorm(path.split("/").pop()!.replace(/\.md$/i, ""));
     const h1 = titleNorm(n.text.match(/^#\s+(.+)$/m)?.[1] ?? "");
-    const ofExcluded = excludedTitles.some((t) => (name.length >= 12 && t.startsWith(name.slice(0, 40))) || (h1.length >= 12 && (t.startsWith(h1.slice(0, 40)) || h1.startsWith(t.slice(0, 40)))));
+    const ofExcluded = excludedTitles.some((t) => sameNoteTitle(t, name) || sameNoteTitle(t, h1));
     if (ofExcluded) continue;
+    // 阅读区 / 定时雷达建的日常积累笔记（「> 来源：… · 开始阅读 …」），若不在纳入清单里，按双台账规则本就不进 notes/index.json
+    const isReaderNote = /^>\s*来源[：:][^\n]*·\s*开始阅读(?:\s|$)/m.test(n.text);
+    if (isReaderNote && includedRows.length > 0 && !activeTitles.some((t) => sameNoteTitle(t, name) || sameNoteTitle(t, h1))) {
+      continue;
+    }
     push({
       id: `notes-orphan-${path}`,
       kind: "notes-index",
@@ -216,13 +310,18 @@ export function checkNotes(input: NotesCheckInput): CheckItem[] {
   }
 
   // ---- 纳入了却既没笔记、也没进速读表 ----
-  const byId = new Map(index.map((r) => [str(r.id).toLowerCase(), r]));
-  const skimKeys = new Set(citedKeys(input.skim ?? ""));
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const r of index) {
+    for (const k of [normDocId(str(r.id)), normDocId(str(r.doi))]) {
+      if (k && !byId.has(k)) byId.set(k, r);
+    }
+  }
+  const skimKeys = skimTableKeys(input.skim ?? "");
   const missing: string[] = [];
-  for (const rec of rows(parseJson(input.included))) {
+  for (const rec of includedRows) {
     const decision = str(rec.decision).toLowerCase();
     if (decision !== "included" && decision !== "include") continue;
-    const row = byId.get(str(rec.id).toLowerCase());
+    const row = byId.get(normDocId(str(rec.id))) ?? byId.get(normDocId(str(rec.doi)));
     const key = row ? str(row.bibKey) : "";
     const path = row ? normNotePath(str(row.notePath)) : "";
     if ((path && files.has(path)) || (key && skimKeys.has(key))) continue;

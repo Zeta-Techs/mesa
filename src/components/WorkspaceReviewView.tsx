@@ -124,9 +124,10 @@ import CoachTip from "./CoachTip";
 import CheckList from "./CheckList";
 import OutlineCoverageCompare from "./OutlineCoverageCompare";
 import { mergeMesaChecks, type OutlineCheckResult } from "../outline-check";
-import { loadDraftCheck, loadNotesCheck, loadOutlineCheck } from "../research-report-load";
+import { loadOutlineCheck, loadStepMesaChecks } from "../research-report-load";
 import { supersededWritingIds } from "../draft-check";
-import { stepKind } from "../step-kind";
+import { stepKind, type StepKind } from "../step-kind";
+import { useSkillProvides } from "../skill-slots";
 import {
   crossReviewPrompt,
   crossReviewReuseKey,
@@ -1214,8 +1215,10 @@ function LiveWorkspaceReviewView({
     });
     return () => setReviewingStep(null);
   }, [researchContext]);
+  const skillProvides = useSkillProvides();
+  const currentStepKind = researchContext ? stepKind(researchContext.step, skillProvides) : null;
   const outlineRoots =
-    researchContext && stepKind(researchContext.step, undefined) === "outline"
+    researchContext && currentStepKind === "outline"
       ? `${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
       : null;
   useEffect(() => {
@@ -1234,21 +1237,22 @@ function LiveWorkspaceReviewView({
     return () => {
       stale = true;
     };
-  }, [outlineRoots, revision]);
-  // 精读 / 初稿 / 定稿的 Mesa 核对（2026-11-11）：同大纲核对，打开评审时现算、合并进核验清单，不写文件
+  }, [outlineRoots, revision, evidenceTick]);
+  // 其余各步的 Mesa 核对（精读、初稿/定稿、检索台账、数据登记/清洗、实验设计/执行、结果分析、投稿材料与返修）：打开评审时现算、合并进核验清单，不写文件
   const [stepMesaChecks, setStepMesaChecks] = useState<CheckItem[]>([]);
-  const mesaStep = researchContext ? `${stepKind(researchContext.step, undefined)}\n${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}` : null;
+  const mesaStep =
+    researchContext && currentStepKind && currentStepKind !== "outline"
+      ? `${currentStepKind}\n${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
+      : null;
   useEffect(() => {
-    const [kind, ...roots] = mesaStep?.split("\n") ?? [];
-    const artifacts = researchContext?.step.expectedArtifacts ?? [];
-    const load =
-      kind === "notes" ? loadNotesCheck(roots) : kind === "writing" || kind === "final" ? loadDraftCheck(roots, kind, artifacts) : null;
-    if (!load) {
+    if (!mesaStep) {
       setStepMesaChecks([]);
       return;
     }
+    const [kind, ...roots] = mesaStep.split("\n");
+    const artifacts = researchContext?.step.expectedArtifacts ?? [];
     let stale = false;
-    load
+    loadStepMesaChecks(roots, kind as StepKind, artifacts)
       .then((value) => {
         if (!stale) setStepMesaChecks(value);
       })
@@ -1258,7 +1262,7 @@ function LiveWorkspaceReviewView({
     return () => {
       stale = true;
     };
-  }, [mesaStep, revision]);
+  }, [mesaStep, revision, evidenceTick]);
   const [artifacts, setArtifacts] = useState<{
     produced: number;
     total: number;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { checkNotes, noteFulltextClaim, noteSections, normNotePath, NOTE_SECTIONS } from "../src/notes-check.ts";
+import { checkNotes, isUntouchedNote, noteFulltextClaim, noteSections, normNotePath, NOTE_SECTIONS } from "../src/notes-check.ts";
 
 // 精简样例（虚构的键、题名与笔记）
 const full = (title: string, status: string, skip: string[] = []) =>
@@ -96,6 +96,31 @@ test("待你判断：纳入了却没笔记也不在速读表；抽取表引了�
   assert.deepEqual(ex, ["抽取表引了不在 references.bib 里的 @Nope2020@5", "抽取表引了已排除的 @Zed2023@4"].sort());
 });
 
-test("没有索引、引文库时不乱报", () => {
+test("没有索引、引文库时不乱报；索引损坏时拦下；阅读区空骨架与雷达日常积累笔记不误报孤儿", () => {
   assert.deepEqual(checkNotes({ index: null, files: [], notes: [] }), []);
+  const bad = checkNotes({ index: "{broken json", files: [], notes: [] });
+  assert.equal(bad.length, 1);
+  assert.equal(bad[0].id, "notes-bad-index");
+  assert.equal(bad[0].status, "blocked");
+
+  assert.equal(noteFulltextClaim("# T\n> 来源：x.pdf\n全文状态：abstract-only\n## 一句话总结"), "abstract");
+  assert.equal(noteFulltextClaim("# T\n> 来源：x.pdf\n全文：无\n## 一句话总结"), "abstract");
+  assert.equal(noteFulltextClaim("# T\n> 来源：x.pdf\n待补全文\n## 一句话总结"), null);
+  assert.deepEqual(noteSections("## 一、一句话总结\n## **（2）方法** {#sec-m}"), ["一句话总结", "方法"]);
+
+  const skeleton = ["# Radar Paper", "", "> 来源：papers/Radar Paper.pdf · 开始阅读 2026-10-13", "", ...NOTE_SECTIONS.map((s) => `## ${s}\n`)].join("\n");
+  assert.equal(isUntouchedNote(skeleton), true);
+  const radarWritten = ["# Unrelated Radar Paper", "", "> 来源：papers/Unrelated Radar Paper.pdf · 开始阅读 2026-10-13", "", ...NOTE_SECTIONS.map((s) => `## ${s}\n正文笔记内容\n`)].join("\n");
+  assert.equal(isUntouchedNote(radarWritten), false);
+
+  const extra = run({
+    files: [...NOTES.map((n) => n.path), "notes/skeleton.md", "notes/radar.md"],
+    notes: [...NOTES, { path: "notes/skeleton.md", text: skeleton }, { path: "notes/radar.md", text: radarWritten }],
+    bibs: [BIB, "@article{Ghost2023,\n year={2023}\n}"],
+    skim: "| 键 | 年份 |\n|---|---|\n| Eve2018 | 2018 |",
+  });
+  assert.ok(!extra.some((i) => i.id.includes("skeleton.md")), "阅读区空模板骨架不报孤儿");
+  assert.ok(!extra.some((i) => i.id.includes("radar.md")), "不在纳入清单里的雷达日常笔记不催进 index.json");
+  assert.ok(!extra.some((i) => i.id === "notes-missing-bib"), "多处 references.bib 合并后不再误报缺键");
+  assert.equal(extra.find((i) => i.id === "notes-uncovered")?.title, "纳入的 1 篇既没有笔记、也不在速读表里", "速读表裸写键名 Eve2018 也能识别");
 });

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { checkDraft, draftProgressParts, imageRefs, manuscriptCitations, pickManuscript, styleAbbreviations, supersededWritingIds } from "../src/draft-check.ts";
+import { checkDraft, draftProgressParts, imageRefs, manuscriptCandidateDirs, manuscriptCitations, pickManuscript, styleAbbreviations, supersededWritingIds } from "../src/draft-check.ts";
 
 // 精简样例（虚构的稿件、键与题名）
 const DRAFT = [
@@ -330,4 +330,34 @@ test("初稿统计行：章级标题下有正文才算已写，sections.json 里
   // 写满了只写总数；没引用、没待定标记就不列
   assert.deepEqual(draftProgressParts("# T\n## A\ntext\n## B\nmore"), ["已写 2 节"]);
   assert.equal(draftProgressParts("no headings here"), null);
+});
+
+test("非 manuscript/ 的写作与定稿步：分析报告、开题报告、期刊格式适配、研究论文大纲都能挑中并核对", () => {
+  assert.deepEqual(manuscriptCandidateDirs(["analysis-report.md", "output/analysis-report.pdf"]).sort(), [".", "manuscript"]);
+  assert.equal(pickManuscript(["analysis-report.md"], ["analysis-report.md", "eda-report.md"]), "analysis-report.md");
+  assert.equal(
+    pickManuscript(["proposal/proposal.md", "chapters/literature-review.md"], ["proposal/proposal.md", "chapters/literature-review.md"]),
+    "proposal/proposal.md",
+  );
+  assert.equal(
+    pickManuscript(["submission/review-report.md", "submission/formatted.md", "submission/target-journal.md"], ["submission/review-report.md", "submission/formatted.md", "submission/target-journal.md"]),
+    "submission/formatted.md",
+  );
+  // 格式适配尚未产出 formatted.md 时，不能把 target-journal.md 当成正文稿件
+  assert.equal(
+    pickManuscript(["submission/formatted.md", "submission/target-journal.md"], ["submission/target-journal.md"]),
+    null,
+  );
+  // 只有显式交 manuscript/outline.md 的「论文大纲」步才挑 outline.md；初稿步即使目录里有上游 outline.md 也不误挑
+  assert.equal(pickManuscript(["manuscript/outline.md"], ["manuscript/outline.md"]), "manuscript/outline.md");
+  assert.equal(pickManuscript(["manuscript/draft.md"], ["manuscript/outline.md"]), null);
+
+  const outlineIssues = checkDraft({
+    kind: "writing",
+    file: "manuscript/outline.md",
+    text: "# Paper Outline\n\n## Introduction\nSee [@Missing2025].\n\n## Results\nDone.\n",
+    bib: "@article{Real2024,\n year={2024}\n}",
+  });
+  assert.ok(outlineIssues.some((i) => i.id === "draft-ref-Missing2025" && i.status === "blocked"));
+  assert.match(outlineIssues.find((i) => i.id === "draft-paper-outline-sections")?.title ?? "", /Methods \/ 方法.*Discussion \/ 讨论/);
 });

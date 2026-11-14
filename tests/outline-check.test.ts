@@ -68,6 +68,9 @@ test("键：认带字母后缀的键，括号注释不吃键，句末点不进�
   assert.deepEqual(citedKeys("[@Bo2021a]（仅摘要）、[@Kim2025]（点名）"), ["Bo2021a", "Kim2025"]);
   assert.deepEqual(citedKeys("见 @Lee2021。另 WB₂@WS₂ 与 Ni@C、邮件 a@b.com"), ["Lee2021"]);
   assert.deepEqual(citedKeys("[@smith; @jones2020, p. 3]"), ["smith", "jones2020"]);
+  // 化学式里的单数字（@MoS2、@TiO2、@Ni2P）、交叉引用（@fig-1、[@tbl-2]）、行内代码和代码块都不算引用键
+  assert.deepEqual(citedKeys("负载在 @MoS2 与 (Pt)@TiO2、@Ni2P 上，见 @fig-1 和 [@tbl-2] 以及 `[@Fake2020]`"), []);
+  assert.deepEqual(citedKeys("```markdown\n[@CodeBlock2024]\n```\n正文 [@Real2024]"), ["Real2024"]);
 });
 
 test("排除的篇：没进引文库的按第一作者姓 + 年份推键；同键已在引文库的不算", () => {
@@ -161,6 +164,7 @@ test("笔记合并取最靠前的状态；Mesa 核对排在核验文件前面", 
   // Mesa 核对已覆盖的确定性规则（DUP / REF / HEAD-NUM / CAP-NUM / CAP-SRC）去掉核验脚本里的重复条，其余（DOI、通过项等）照留
   const mesaDup: Parameters<typeof mergeMesaChecks>[1] = [
     { id: "draft-ref-Ghost2022", kind: "citation_resolve", status: "blocked", title: "t1", target: { file: "manuscript/draft.md", line: 3 }, checker: MESA_CHECKER },
+    { id: "outline-missing-bib-OutlineGhost2021", kind: "outline-cite", status: "blocked", title: "t1b", target: { file: "outline.md", line: 4 }, checker: MESA_CHECKER },
     { id: "draft-excluded-Zed2023", kind: "citation_excluded", status: "blocked", title: "t2", target: { file: "manuscript/draft.md", line: 5 }, checker: MESA_CHECKER },
     { id: "draft-bib-dup-Ann2020", kind: "citation_duplicate", status: "blocked", title: "t3", target: { file: "references.bib" }, checker: MESA_CHECKER },
     { id: "draft-heading-number", kind: "headings", status: "blocked", title: "t4", target: { file: "manuscript/draft.md", line: 10 }, checker: MESA_CHECKER },
@@ -169,6 +173,7 @@ test("笔记合并取最靠前的状态；Mesa 核对排在核验文件前面", 
   ];
   const scriptItems = [
     { id: "REF-Ghost2022", kind: "citation_resolve", status: "blocked" as const, title: "dup ref", checker: "script:cite_check" },
+    { id: "REF-OutlineGhost2021", kind: "citation_resolve", status: "blocked" as const, title: "dup outline ref", checker: "script:cite_check" },
     { id: "REF-Zed2023", kind: "citation_resolve", status: "blocked" as const, title: "dup excluded ref", checker: "script:cite_check" },
     { id: "REF-Bo2021a", kind: "citation_resolve", status: "passed" as const, title: "ok ref", checker: "script:cite_check" },
     { id: "DUP-Ann2020", kind: "citation_duplicate", status: "blocked" as const, title: "dup bib", checker: "script:cite_check" },

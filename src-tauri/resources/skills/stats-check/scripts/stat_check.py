@@ -28,7 +28,7 @@ def load_common():
 
 C = load_common()
 CHECKER = "script:stat_check"
-SKIP = re.compile(r"(citation-check|review-report|verification-decisions|declarations|checklist|stats-check)", re.I)
+SKIP = re.compile(C.MANUSCRIPT_HELPER_RE.pattern + "|stats-check", re.I)
 
 
 # ---------------- 分布函数（Numerical Recipes 口径） ----------------
@@ -175,7 +175,13 @@ def scan(root, files=None):
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
+        fenced = False
         for no, text in enumerate(lines, 1):
+            if text.lstrip().startswith(("```", "~~~")):
+                fenced = not fenced
+                continue
+            if fenced or text.lstrip().startswith("<!--"):
+                continue
             one_tailed = bool(re.search(r"one-?tailed|单侧", text, re.I))
             for kind, pat in PATTERNS:
                 for m in pat.finditer(text):

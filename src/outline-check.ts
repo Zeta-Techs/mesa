@@ -28,24 +28,44 @@ const TIER_WORD: Record<Exclude<NoteTier, "fulltext">, string> = {
 
 /** Pandoc 引用键：裸写的 @键 成稿时也会被当成引用。前面不能是字母数字（WB₂@WS₂、a@b.com 不算），
  *  键里可带 : . - 但不以它们结尾（句末的点不吃进来）；括号注释、顿号都在键外 */
-const KEY_RE = /(?<![\p{L}\p{N}_.@])@([A-Za-z_][A-Za-z0-9_]*(?:[:.\-][A-Za-z0-9_]+)*)/gu;
+const KEY_RE = /(?<![\p{L}\p{N}_.@\\])@([A-Za-z_][A-Za-z0-9_]*(?:[:.\-][A-Za-z0-9_]+)*)/gu;
+const CROSSREF_PREFIXES = ["fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-"];
+
+function maskInlineNonProse(line: string): string {
+  return line
+    .replace(/`[^`]*`/g, (m) => " ".repeat(m.length))
+    .replace(/<!--[\s\S]*?-->/g, (m) => " ".repeat(m.length))
+    .replace(/\]\([^)\n]*\)/g, (m) => `]${" ".repeat(m.length - 1)}`);
+}
 
 function keyMatches(line: string): { key: string; index: number }[] {
+  const clean = maskInlineNonProse(line);
   const out: { key: string; index: number }[] = [];
-  for (const m of line.matchAll(KEY_RE)) {
+  for (const m of clean.matchAll(KEY_RE)) {
     const key = m[1];
+    if (/^\d+$/.test(key) || CROSSREF_PREFIXES.some((p) => key.toLowerCase().startsWith(p))) continue;
     const at = m.index ?? 0;
-    const before = line.slice(0, at).replace(/\s+$/, "");
-    // 方括号里的（[@键]、[@甲; @乙]、[-@键]）一律算；裸写的要带年份才算，免得把「@邮箱名」一类当成键
+    const before = clean.slice(0, at).replace(/\s+$/, "");
+    // 方括号里的（[@键]、[@甲; @乙]、[-@键]）一律算；裸写的要带四位年份才算，免得把 @MoS2、@TiO2、@邮箱名 当成键
     const bracketed = /[[;\-]$/.test(before);
-    if (!bracketed && !/\d/.test(key)) continue;
+    if (!bracketed && !/(?:18|19|20)\d{2}/.test(key)) continue;
     out.push({ key, index: at });
   }
   return out;
 }
 
 export function citedKeys(text: string): string[] {
-  return keyMatches(text).map((m) => m.key);
+  const out: string[] = [];
+  let fenced = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) continue;
+    for (const m of keyMatches(line)) out.push(m.key);
+  }
+  return out;
 }
 
 // ---------- 台账 ----------
@@ -215,7 +235,7 @@ const LOG_HEADING = /改了什么|修改记录|变更记录|改动记录/;
 
 function headingOf(line: string): { title: string; level: number } | null {
   const h = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
-  if (h) return { title: h[2].trim(), level: h[1].length };
+  if (h) return { title: h[2].replace(/\s*\{[#.][^}]*\}\s*$/, "").trim(), level: h[1].length };
   // 加粗独占一行当小节标题（「**2.1 碱性 HER 动力学**」）
   const b = line.trim().match(/^\*\*([^*]+)\*\*$/);
   if (b && /^\s*§?\d/.test(b[1])) return { title: b[1].trim(), level: 7 };
@@ -241,14 +261,25 @@ function splitTiers(line: string): { writable: string[]; hint: string[] } | null
   return out;
 }
 
-function parseOutline(text: string): { lines: string[]; sections: Section[]; cites: CiteLine[]; logRanges: [number, number][] } {
+function parseOutline(text: string): { lines: string[]; sections: Section[]; cites: CiteLine[]; logRanges: [number, number][]; fencedLines: Set<number> } {
   const lines = text.split(/\r?\n/);
   const sections: Section[] = [];
   const cites: CiteLine[] = [];
   const logRanges: [number, number][] = [];
+  const fencedLines = new Set<number>();
   let current: Section | null = null;
   let logStart: { line: number; level: number } | null = null;
+  let fenced = false;
   lines.forEach((raw, i) => {
+    if (/^\s*(```|~~~)/.test(raw)) {
+      fenced = !fenced;
+      fencedLines.add(i);
+      return;
+    }
+    if (fenced) {
+      fencedLines.add(i);
+      return;
+    }
     const h = headingOf(raw);
     if (h) {
       if (logStart && h.level <= logStart.level) {
@@ -265,7 +296,7 @@ function parseOutline(text: string): { lines: string[]; sections: Section[]; cit
     if (tiers) cites.push({ section: current, line: i + 1, ...tiers });
   });
   if (logStart) logRanges.push([(logStart as { line: number }).line, lines.length]);
-  return { lines, sections, cites, logRanges };
+  return { lines, sections, cites, logRanges, fencedLines };
 }
 
 // ---------- 用图计划 ----------
@@ -384,7 +415,7 @@ function joinKeys(keys: readonly string[], cap = 12): string {
 
 export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
   const file = input.outlinePath ?? "outline.md";
-  const { lines, cites, logRanges } = parseOutline(input.outline);
+  const { lines, cites, logRanges, fencedLines } = parseOutline(input.outline);
   const notes = noteStates(input.indexes ?? []);
   const bibs = input.bibs ?? [];
   const bibKnown = bibs.some((b) => !!b);
@@ -404,11 +435,11 @@ export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
   const target = (line: number) => ({ file, line });
   const where = (linesHit: number[]) => (linesHit.length > 1 ? `出现在第 ${linesHit.slice(0, 8).join("、")} 行${linesHit.length > 8 ? " 等" : ""}` : "");
 
-  // ① 键：不在引文库 / 已排除（拦下）。改动记录一节不查
+  // ① 键：不在引文库 / 已排除（拦下）。改动记录一节与代码块不查
   const inLog = (i: number) => logRanges.some(([a, b]) => i >= a && i < b);
   const seen = new Map<string, number[]>();
   lines.forEach((raw, i) => {
-    if (inLog(i) || headingOf(raw)) return;
+    if (fencedLines.has(i) || inLog(i) || headingOf(raw)) return;
     for (const { key } of keyMatches(raw)) seen.set(key, [...(seen.get(key) ?? []), i + 1]);
   });
   for (const [key, hit] of seen) {
@@ -658,23 +689,33 @@ export function mergeMesaChecks(dto: ChecksDto | null, mesa: readonly CheckItem[
   const headNumFiles = new Set<string>();
   const capNums = new Set<string>();
   const capSrcs = new Set<string>();
+  const ciLines = new Set<string>();
+  const numIds = new Set<string>();
   for (const item of mesa) {
     const file = normFile(item.target?.file);
     if (item.id.startsWith("draft-bib-dup-")) dupKeys.add(item.id.slice("draft-bib-dup-".length));
+    else if (item.id.startsWith("step-bib-dup-")) dupKeys.add(item.id.slice("step-bib-dup-".length));
     else if (item.id.startsWith("draft-ref-")) citeKeys.add(item.id.slice("draft-ref-".length));
     else if (item.id.startsWith("draft-excluded-")) citeKeys.add(item.id.slice("draft-excluded-".length));
+    else if (item.id.startsWith("step-ref-")) citeKeys.add(item.id.slice("step-ref-".length));
+    else if (item.id.startsWith("step-excluded-")) citeKeys.add(item.id.slice("step-excluded-".length));
+    else if (item.id.startsWith("outline-missing-bib-")) citeKeys.add(item.id.slice("outline-missing-bib-".length));
     else if (item.id.startsWith("outline-missing-")) citeKeys.add(item.id.slice("outline-missing-".length));
     else if (item.id.startsWith("outline-excluded-")) citeKeys.add(item.id.slice("outline-excluded-".length));
     else if (item.id === "draft-heading-number" && file) headNumFiles.add(file);
     else if (item.id.startsWith("draft-cap-num-") && file) capNums.add(`${item.id.slice("draft-cap-num-".length)}@${file}`);
     else if (item.id.startsWith("draft-cap-src-") && file) capSrcs.add(`${item.id.slice("draft-cap-src-".length)}@${file}`);
+    else if (item.kind === "ci_consistency" && file && item.target?.line) ciLines.add(`${file}:${item.target.line}`);
+    else if (item.id.startsWith("step-num-")) numIds.add(`N-${item.id.slice("step-num-".length)}`);
   }
   const isSuperseded = (item: CheckItem): boolean => {
     const c = item.checker ?? "";
     if (c === "mesa" || c.startsWith("agent") || c.startsWith("pack:")) return false;
     if (item.id.startsWith("DUP-") && dupKeys.has(item.id.slice(4))) return true;
     if (item.id.startsWith("REF-") && citeKeys.has(item.id.slice(4))) return true;
+    if (item.status !== "passed" && numIds.has(item.id)) return true;
     const file = normFile(item.target?.file);
+    if (item.status !== "passed" && item.kind === "ci_consistency" && file && item.target?.line && ciLines.has(`${file}:${item.target.line}`)) return true;
     const baseId = item.id.includes("@") ? item.id : file ? `${item.id}@${file}` : item.id;
     if (baseId.startsWith("HEAD-NUM@") && headNumFiles.has(baseId.slice("HEAD-NUM@".length))) return true;
     if (baseId.startsWith("CAP-NUM-") && capNums.has(baseId.slice("CAP-NUM-".length))) return true;

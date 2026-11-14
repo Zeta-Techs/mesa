@@ -111,16 +111,17 @@
   挑主稿 `manuscriptSourcePath` 按主稿名优先、不按传入顺序）、`mesa_checks.py` 的 `MANUSCRIPT_HELPERS`（随包脚本共用）、`cite_check.py`（单独分发，自带一份），
   `tests/manuscript-files.test.ts` 逐条比对。**新增写作配套文件先加 fixture**，不在调用处各写正则。
   引用计数（`citation.rs`）是另一回事：只跳过含写法说明「[@bib键]」的文件（TASK.md、help-wanted、review-notes、style-sheet），其余 md 里的引用照数。
-- **Mesa 核对**（2026-11-11，第四种来源，`checker=mesa`）：数得清的事实由 Mesa 在评审页打开时现算、`mergeMesaChecks` 合并进清单，**不写 `.ccode/checks/` 文件**、
-  不靠 AI 跑脚本；只出拦下 / 待你判断，不出通过；项目助手（`project-assistant-run.ts stepChecks`）按同一函数再算一遍。按 `stepKind` 分：大纲 `outline-check.ts`
-  （见「按大纲的节转回路」③）；精读 `notes-check.ts`——工作副本与项目根都读、以工作副本为准，「写完了」与进度行同一份判断（`isReviewedRow`），
-  完整笔记 = 八段标题（lit-notes 技能）出现 6 段以上，不看文件大小；已排除篇留下的笔记（文件名或 # 标题对上 included.json 里 excluded 的题名）不报「没有索引指向」；
-  只查长得像单篇笔记的文件（八段出现 3 段以上）。检索暂缓（检索评审页已有待确认清单）。
-  初稿 / 定稿 `draft-check.ts`：主稿只在工作副本找（步骤要交的 manuscript/ 下 md / qmd 排前，过程文件与 style-sheet.md 不算，`writingScanSourcePath` 同口径挑；LaTeX 不查）。
-  **从脚本移植的几条规则与脚本一致**：`cite_check.py refs` 的键解析（PANDOC_KEY、去尾标点、纯数字与 @fig- 一类不算）与库里重复键、`ms_check.py` 的 number-sections 下手写编号、
-  图注 / 表题编号重复跳号、图注「Adapted from」无引文——改规则先改脚本，`tests/draft-check.test.ts` 拿同一份样例跑两边对照。联网核 DOI、重跑出图、对原文摘录不移植。
-  定稿另拦图的占位（与写作扫描共用 `draft-review.ts placeholderFigureLines`）；同一件事只报一次（`supersededWritingIds` 去掉写作扫描的那条）。
-  大纲的拼图计划只认「拼图 N（论点）= …」写法，「拼图 7 张」一类小结不算；稿件里的图按 `figures/figN` 与图注编号认。
+- **Mesa 核对**（2026-11-11，2026-11-14 补齐其余步骤；第四种来源，`checker=mesa`）：数得清的事实由 Mesa 在评审页打开时现算、`mergeMesaChecks` 合并进清单，**不写 `.ccode/checks/` 文件**、
+  不靠 AI 跑脚本；只出拦下 / 待你判断，不出通过；项目助手（`project-assistant-run.ts stepChecks`）经 `loadStepMesaChecks` 按同一函数再算一遍。按 `stepKind` 与步骤产物分：
+  - 大纲 `outline-check.ts`（见「按大纲的节转回路」③；裸写 `@键` 要求带四位年份，跳过代码块、行内代码与 `@fig-` 等交叉引用）。
+  - 精读 `notes-check.ts`：笔记索引与 `notes/` 文件取同一处根（工作副本优先，防未并入的下游/雷达笔记串入旧索引），引文库多处取并集；「写完了」与进度行同一份判断（`isReviewedRow`），
+    完整笔记 = 八段标题（lit-notes 技能）出现 6 段以上且非阅读区空骨架（`isUntouchedNote`）；已排除篇留下的笔记、阅读区空骨架、不在纳入清单里的雷达日常笔记不报「没有索引指向」。
+  - 初稿 / 定稿 `draft-check.ts`：主稿在工作副本按步骤产物挑（支持 `manuscript/`、`proposal/`、`chapters/`、`submission/formatted.md`、`analysis-report.md`，以及显式交 `manuscript/outline.md` 的论文大纲步；过程文件与 `style-sheet.md` 不算；LaTeX 不查）。
+    **从脚本移植的规则与脚本一致**：`cite_check.py refs` 的键解析与库里重复键、`ms_check.py` 的 number-sections 下手写编号、图注 / 表题编号重复跳号、图注「Adapted from」无引文——改规则先改脚本，`tests/draft-check.test.ts` 跑两边对照。
+    定稿另拦图的占位（与写作扫描共用 `draft-review.ts placeholderFigureLines`）；同一件事只报一次（`supersededWritingIds` 去掉写作扫描的那条）。
+  - 其余步骤与跨步骤附属台账 `step-checks.ts`：检索步不重复待确认清单，只核对隐藏在过程组里的 `papers/included.json` JSON 损坏 / id 重号 / 已定条目缺必填字段及 `screening.md` 检索日期；
+    数据登记、清洗、实验设计、实验执行核对各自 JSON 台账必填字段、唯一 id、跨步 `same-ids` 对账与失败/待确认项；结果分析核对结果 JSON、`figures/manifest.json` 文件存在性、报告断链图片与引用；
+    跨步骤共用 `numbers.json` 数字追溯（与 `num_check.py` 一致）、置信区间算术自洽（与 `stat_check.py` CI 规则一致，合并时自动去重）、`verification-decisions*.md` / `rule-decisions.md` 待裁决提醒及返修意见编号对账（`tests/step-checks.test.ts`）。
 - **三种来源**（`research_record::check_source`，2026-11-03）：内置核验脚本的七个固定文件里才允许「通过」；`pack-` 开头的是任务包脚本，
   检查器一律记成 `pack:<文件名>`（不认脚本自报的，防冒用内置脚本名），「通过」降为待你判断、「拦下」照收；其余文件都是 Agent 的判断（同前）。
 - **研究记录**：Run 关闭时（含崩溃补收）由 Mesa 把运行事实追加进项目 `.ccode/record.jsonl`（只追加、按 runId 去重、持 `record.lock`），

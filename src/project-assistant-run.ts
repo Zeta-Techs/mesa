@@ -34,8 +34,9 @@ import {
 } from "./project-assistant";
 import type { CheckItem, ChecksDto } from "./research-checks";
 import { mergeMesaChecks } from "./outline-check";
-import { loadDraftCheck, loadNotesCheck, loadOutlineCheck, loadStepWritingChecks } from "./research-report-load";
+import { loadOutlineCheck, loadStepMesaChecks, loadStepWritingChecks } from "./research-report-load";
 import { stepKind } from "./step-kind";
+import { loadSkillProvides, type SkillProvides } from "./skill-slots";
 import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
@@ -105,23 +106,20 @@ function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
   return p.then((v) => v ?? fallback).catch(() => fallback);
 }
 
-/** 一步的核验项：核验文件里的 + 大纲那一步 Mesa 自己核对的（与评审页同一个纯函数，评审页不写文件，这里再算一遍） */
+/** 一步的核验项：核验文件里的 + Mesa 自己核对的（与评审页同一个纯函数，评审页不写文件，这里再算一遍） */
 async function stepChecks(
   step: { skills?: readonly string[]; expectedArtifacts?: readonly string[] },
   worktree: string,
   projectPath: string,
+  skillProvides?: SkillProvides,
 ): Promise<CheckItem[]> {
-  // 大纲、精读、初稿、定稿另有 Mesa 核对（2026-11-11）：与评审页同一个函数现算
-  const kind = stepKind(step, undefined);
+  const provides = skillProvides ?? (await safe(loadSkillProvides(), undefined));
+  const kind = stepKind(step, provides);
   const roots = [worktree, projectPath];
   const mesa: Promise<CheckItem[]> =
     kind === "outline"
       ? loadOutlineCheck(roots).then((r) => r?.items ?? [])
-      : kind === "notes"
-        ? loadNotesCheck(roots)
-        : kind === "writing" || kind === "final"
-          ? loadDraftCheck(roots, kind, step.expectedArtifacts ?? [])
-          : Promise.resolve([]);
+      : loadStepMesaChecks(roots, kind, step.expectedArtifacts ?? []);
   const [file, own] = await Promise.all([
     safe(invoke<ChecksDto>("research_checks_read", { path: worktree }), null as ChecksDto | null),
     mesa.catch(() => [] as CheckItem[]),
@@ -579,20 +577,21 @@ async function inspectExtraDirs(projectPath: string): Promise<string[]> {
 /** 问「这一轮怎么样 / 有没有问题 / 帮我看看」时看哪一步：问题里点名的，没点名就是评审页正开着的那一步。
  *  找到且开过工的，带上这一步的核验项（含 Mesa 核对）做成这次的重点，只读打开它的主要产物；找不到返回 null，照原来的问法走 */
 async function reviewAskFocus(projectPath: string, question: string): Promise<AssistantFocus | null> {
-  const [read, workspaces] = await Promise.all([
+  const [read, workspaces, skillProvides] = await Promise.all([
     safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
     safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(loadSkillProvides(), undefined),
   ]);
   const steps = read?.config.steps ?? [];
   if (!steps.length) return null;
   const open = reviewingStep();
   const viewing = open && samePath(open.projectRoot, projectPath, IS_WINDOWS) ? open : null;
-  const n = mentionedStep(question, steps.map((s) => ({ name: s.name, kind: stepKind(s, undefined) }))) ?? viewing?.n ?? null;
+  const n = mentionedStep(question, steps.map((s) => ({ name: s.name, kind: stepKind(s, skillProvides) }))) ?? viewing?.n ?? null;
   const step = n ? steps[n - 1] : undefined;
   if (!n || !step) return null;
   const ws = workspaces.find((w) => w.name === step.workspaceName && w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS));
   if (!ws) return null;
-  const checks = await stepChecks(step, ws.worktreePath, projectPath);
+  const checks = await stepChecks(step, ws.worktreePath, projectPath, skillProvides);
   return reviewRoundFocus(n, step.name, { worktree: ws.worktreePath, artifacts: step.expectedArtifacts }, checks);
 }
 

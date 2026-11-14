@@ -41,11 +41,12 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     if(command==='check_citation_health')return {bibFound:true,totalRefs:1,resolved:1,missing:[]};
     if(command==='research_checks_read'){assert.equal(args.path,'/tree');return {items:[{id:'Q-1',kind:'quote_in_source',status:'blocked',title:'[@a] 原文里找不到这段摘录',target:{file:'manuscript/draft.md',line:4},evidence:{quote:'编的句子'}},{id:'REF-a',kind:'citation_resolve',status:'passed',title:'[@a] 在引文库里'},{id:'Q-2',kind:'quote_in_source',status:'needs_human',title:'[@b] 只有摘要'}],files:['cite-quotes.jsonl'],skipped:1};}
     if(command==='workspace_settings')return {run:[],runMode:'nonconcurrent'};
-    if(command==='list_human_task_states'||command==='list_dir')return [];
+    if(command==='list_human_task_states'||command==='list_dir'||command==='list_skills')return [];
     if(command==='research_get_acceptance')return null;
     if(command==='research_get_run')throw new Error('no run');
     if(command==='read_file_preview'){
       assert.equal(args.root,'/tree');assert.equal(args.requireWithinRoot,true);
+      if(args.path.endsWith('.json'))throw new Error('no json');
       return args.path.endsWith('.py')?{text:'print("test")',revision:'script',truncated:false}:{text:'# 实验结果\n## 验收摘要\n- 回答：执行记录齐全\n- 未决问题：独立复算待完成\n- 质量状态：待审\n## 实验\n正文',revision:'report',truncated:false};
     }
     throw new Error(command);
