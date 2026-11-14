@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { italicLine, lineCells, type ScreenCell } from "../src/screen-cells.ts";
+import { terminalHasInputBox } from "../src/live-reply.ts";
+import {
+  activeScreenCells,
+  activeScreenLines,
+  italicLine,
+  lineCells,
+  type BufferLineSource,
+  type ScreenCell,
+} from "../src/screen-cells.ts";
+import { waitScreenOf } from "../src/terminal-wait.ts";
 
 const cell = (ch: string, italic?: boolean): ScreenCell => ({ ch, dim: false, inverse: false, bg: false, ...(italic === undefined ? {} : { italic }) });
 const row = (text: string, italic?: boolean) => [...text].map((ch) => cell(ch, ch === " " ? false : italic));
@@ -31,4 +40,71 @@ test("lineCells：来源给得出斜体时带上 italic", () => {
     lineCells(line).map((c) => c.italic),
     [true, false],
   );
+});
+
+function fakeBufferLine(text: string, dim = false): BufferLineSource {
+  const chars = [...text];
+  return {
+    length: chars.length,
+    translateToString: (trimRight) => (trimRight ? text.trimEnd() : text),
+    getCell: (x) =>
+      x < chars.length
+        ? {
+            getChars: () => chars[x],
+            getWidth: () => 1,
+            isDim: () => (dim ? 1 : 0),
+            isInverse: () => 0,
+            isBgDefault: () => true,
+          }
+        : undefined,
+  };
+}
+
+test("activeScreenLines / activeScreenCells：读 baseY 当前屏，不跟停在回滚历史里的 viewportY 走", () => {
+  const rule = "─".repeat(60);
+  // 2026-11-14 agy 恢复会话实录：content-visibility: hidden 期间 viewportY 卡在旧轮次（第 2 行），
+  // 当前屏（baseY = 6，4 行高）已经画出了空闲输入框。
+  const all = [
+    "上一轮正文",
+    rule,
+    "> 再来一段",
+    "",
+    "  好的，再来一段包含长段落、流式表格和嵌套结构的测试内容：",
+    "本次流式输出测试结束。",
+    rule,
+    "> ",
+    rule,
+    "? for shortcuts                                  mesa/gemini-4-carbon",
+  ];
+  const term = {
+    rows: 4,
+    buffer: {
+      active: {
+        baseY: 6,
+        viewportY: 2,
+        getLine: (y: number) => (y < all.length ? fakeBufferLine(all[y], y === 9) : undefined),
+      },
+    },
+  };
+
+  // 若错读 viewportY（2..5），既认不出输入框，又会把旧回复冒号结尾行当成「终端在等你」标题
+  const staleViewport = all.slice(2, 6);
+  assert.equal(terminalHasInputBox(staleViewport, "agy"), false);
+  assert.equal(
+    waitScreenOf(staleViewport)?.title,
+    "好的，再来一段包含长段落、流式表格和嵌套结构的测试内容：",
+  );
+
+  // activeScreenLines 恒读 baseY（6..9），认出空闲输入框，不会误报「终端在等你」
+  const live = activeScreenLines(term);
+  assert.deepEqual(live, [
+    rule,
+    ">",
+    rule,
+    "? for shortcuts                                  mesa/gemini-4-carbon",
+  ]);
+  assert.equal(terminalHasInputBox(live, "agy"), true);
+  assert.equal(activeScreenCells(term, 3)[0]?.dim, true);
+  assert.deepEqual(activeScreenLines(null), []);
+  assert.deepEqual(activeScreenCells(undefined, 0), []);
 });

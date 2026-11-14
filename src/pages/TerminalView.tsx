@@ -170,7 +170,7 @@ import { inSessionPermissionSwitch, kimiEffortPickLevel } from "../switch-strate
 import { askAfter, askAnswerKeys, askFinishes, askMenu, parseClaudeAsk, type AskAction } from "../tui-ask";
 import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
-import { italicLine, lineCells } from "../screen-cells";
+import { activeScreenCells, activeScreenLines, italicLine } from "../screen-cells";
 import { type MesaCommand } from "../composer-assist";
 import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
@@ -1560,7 +1560,25 @@ export const TerminalView = memo(function TerminalView({
   }, []);
 
   // 终端被聊天盖住时也收起查找，避免浮层留在聊天搜索上方。
+  const coveredByChatRef = useRef(coveredByChat);
+  const chatCoverPinnedBottomRef = useRef(true);
   useEffect(() => {
+    const wasCovered = coveredByChatRef.current;
+    coveredByChatRef.current = coveredByChat;
+    if (!wasCovered && coveredByChat) {
+      const buf = termRef.current?.buffer.active;
+      chatCoverPinnedBottomRef.current = !buf || buf.viewportY >= buf.baseY;
+    } else if (wasCovered && !coveredByChat) {
+      // content-visibility: hidden 期间 xterm RenderService 暂停，Viewport 可能把 ydisp 卡在半路；
+      // 揭开后重新 fit，盖住前本来就在底部的恢复贴底。
+      const stickBottom = chatCoverPinnedBottomRef.current;
+      requestAnimationFrame(() => {
+        try {
+          fitRef.current?.fit();
+        } catch {}
+        if (stickBottom) termRef.current?.scrollToBottom();
+      });
+    }
     if (!visible || coveredByChat) {
       setSearchOpen(false);
       setTerminalActionMenu(null);
@@ -2499,11 +2517,7 @@ export const TerminalView = memo(function TerminalView({
       }
       const term = termRef.current;
       if (!term || ptyKindRef.current !== "agent") return;
-      const buf = term.buffer.active;
-      const lines: string[] = [];
-      for (let i = 0; i < term.rows; i++) {
-        lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
-      }
+      const lines = screenLines();
       const next = parseTrustPrompt(lines);
       if (next) trustOptionsRef.current = next.options;
       // 画出了输入框、或这一轮已经开始干活：启动阶段过了
@@ -2566,12 +2580,9 @@ export const TerminalView = memo(function TerminalView({
   function screenMenu(): TuiMenu | null {
     return parseScreenMenu(screenLines());
   }
-  /** 可视区第 row 行每个字的样子（灰字 / 反色 / 底色；screen-cells.ts） */
+  /** 当前屏第 row 行每个字的样子（灰字 / 反色 / 底色；screen-cells.ts） */
   function screenCells(row: number) {
-    const term = termRef.current;
-    if (!term) return [];
-    const buf = term.buffer.active;
-    return lineCells(buf.getLine(buf.viewportY + row));
+    return activeScreenCells(termRef.current, row);
   }
   /** 可视区第 row 行整行是斜体（Kimi 收起的思考，live-reply.ts Layout.thinkItalic） */
   function screenItalicRow(row: number) {
@@ -3000,14 +3011,7 @@ export const TerminalView = memo(function TerminalView({
   const connBaselineRef = useRef<Map<string, number>>(new Map());
   const connScanTimerRef = useRef<number | null>(null);
   function screenLines(): string[] {
-    const term = termRef.current;
-    if (!term) return [];
-    const buf = term.buffer.active;
-    const lines: string[] = [];
-    for (let i = 0; i < term.rows; i++) {
-      lines.push(buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
-    }
-    return lines;
+    return activeScreenLines(termRef.current);
   }
   // 底栏上的模型（Codex「模型 档位 · 目录」）：差量重绘只重画变了的格子，输出流里档位前面不一定是模型名，
   // 只能从画好的屏上读（reasoning-effort.ts detectModelOnScreen）。节流 500ms
@@ -4557,6 +4561,7 @@ export const TerminalView = memo(function TerminalView({
       return;
     }
     const term = termRef.current;
+    chatCoverPinnedBottomRef.current = true;
     if (opts?.reset) {
       term.reset();
       void invoke("drop_terminal_replay", { tabId }).catch(() => {});
@@ -4647,26 +4652,33 @@ export const TerminalView = memo(function TerminalView({
         if (host.text) {
           // 带清回滚区（ESC[3J）的整屏重画（Ink 回复超一屏时每帧「清屏 + 整段历史重打」）：用户正往上翻着时，
           // xterm 清掉回滚区后把视口钉在新历史的最顶端、此后每帧都回到顶，往下滚也被拽回去，看着像滚轮反了。
-          // 历史是从头原样重打的，按原来的行号把视口放回去，用户看的还是那一段
+          // 历史是从头原样重打的，按原来的行号把视口放回去，用户看的还是那一段。
+          // 聊天层从头盖着时（content-visibility: hidden）viewportY 小于 baseY 是 xterm Viewport 自己卡住，不是用户翻的
           const buf = term.buffer.active;
-          const keepLine =
-            host.text.includes("\x1b[3J") && buf.viewportY < buf.baseY ? buf.viewportY : null;
-          if (keepLine === null) term.write(host.text, () => ackDrawn(payload.length));
-          else
-            term.write(host.text, () => {
+          const userScrolled =
+            buf.viewportY < buf.baseY && (!coveredByChatRef.current || !chatCoverPinnedBottomRef.current);
+          const keepLine = host.text.includes("\x1b[3J") && userScrolled ? buf.viewportY : null;
+          // term.write 走 WriteBuffer 异步分片解析：读屏必须在这一块落进 buffer 之后排，
+          // 否则多块回放分片 >250ms 时定时器在半截画面上跑完，尾块落完却没人再触发扫屏
+          term.write(host.text, () => {
+            if (keepLine !== null) {
               term.scrollToLine(Math.min(keepLine, term.buffer.active.baseY));
-              ackDrawn(payload.length);
-            });
+            }
+            ackDrawn(payload.length);
+            if (kind === "agent" && mountedRef.current && ptyIdRef.current === ptyId) {
+              lastDrawAtRef.current = Date.now();
+              scanTrustPromptSoon();
+              scanMenuSoon();
+              scanLiveReplySoon();
+              scanConnIssueSoon();
+              scanSuggestionSoon();
+              scanFooterModelSoon();
+            }
+          });
         } else {
           ackDrawn(payload.length);
         }
         if (kind === "agent" && host.text) {
-          lastDrawAtRef.current = Date.now();
-          scanTrustPromptSoon();
-          scanMenuSoon();
-          scanLiveReplySoon();
-          scanConnIssueSoon();
-          scanSuggestionSoon();
           if (ptyQuietRef.current) {
             ptyQuietRef.current = false;
             setPtyQuiet(false);
@@ -4683,7 +4695,6 @@ export const TerminalView = memo(function TerminalView({
           if (seen) setEffortSeen((prev) => (prev === seen ? prev : seen));
           const seenModel = detectModelInOutput(scan, launchAgentRef.current);
           if (seenModel) setModelSeen((prev) => (prev === seenModel ? prev : seenModel));
-          scanFooterModelSoon();
         }
         // PTY 出字即活动：静默计时器量的是真实输出，与「这帧算不算 working」分开——
         // 切聊天/点输入框引发的焦点重绘有 300ms 抑制窗，窗内的 TUI 重绘若不计入活动，

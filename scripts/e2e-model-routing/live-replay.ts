@@ -45,7 +45,7 @@ for (const c of chunks) {
     continue;
   }
   const buf = term.buffer.active;
-  const lines = Array.from({ length: term.rows }, (_, i) => buf.getLine(buf.viewportY + i)?.translateToString(true) ?? "");
+  const lines = Array.from({ length: term.rows }, (_, i) => buf.getLine(buf.baseY + i)?.translateToString(true) ?? "");
   const read = lr.extractLiveReply(lines, cap.agent);
   if (!read) continue;
   reads++;

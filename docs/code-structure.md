@@ -947,7 +947,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # 卡片在 components/ChatDecisionCard.tsx AskCard（tests/tui-ask.test.ts）
   prompt-suggestion.ts       # Claude「猜你下一句」：输入框那一行除第一个字外全是灰字才算（readPromptSuggestion），排除 Try "…" 等固定提示；
                              # 聊天输入框空着时当占位字显示、Tab 填入（tests/prompt-suggestion.test.ts）
-  screen-cells.ts            # xterm 一行转成每个字的样子（灰 / 反色 / 底色 / 字色 / 斜体，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行、Kimi 收起的思考 italicLine）
+  screen-cells.ts            # xterm 当前屏按 baseY 取文字与单元格样式（activeScreenLines / activeScreenCells，不跟回滚位置 viewportY 走）+ 一行转成每个字的样子（灰 / 反色 / 底色 / 字色 / 斜体，lineCells）：只看文字认不出的读屏用（猜的下一句、提问表单当前题、Kimi 选择器的说明行、Kimi 收起的思考 italicLine；tests/screen-cells.test.ts）
   cli-notices.ts             # 认得出的 CLI 中途通知：classifierBillingNotice（Claude auto mode 分类器计费说明，取网关名）+ 中文说明 + 「以后自动略过」开关（localStorage，只这一条；ChatSurface 出卡、TerminalView 扫屏替按、SettingsPage 开关；tests/kickoff-permission.test.ts）
   tui-panel.ts               # parseTuiNotice：没有输入框 + 「Enter to continue」= 要按回车才继续的通知（Claude 中途弹的计费说明），
                              #   聊天层给「继续」卡（回车），认出时不再当面板；

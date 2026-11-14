@@ -38,6 +38,18 @@ export interface LineSource {
   readonly length: number;
   getCell(x: number): CellSource | undefined;
 }
+export interface BufferLineSource extends LineSource {
+  translateToString(trimRight?: boolean): string;
+}
+export interface ActiveScreenSource {
+  readonly rows: number;
+  readonly buffer: {
+    readonly active: {
+      readonly baseY: number;
+      getLine(y: number): BufferLineSource | undefined;
+    };
+  };
+}
 
 export function lineCells(line: LineSource | undefined): ScreenCell[] {
   if (!line) return [];
@@ -59,6 +71,28 @@ export function lineCells(line: LineSource | undefined): ScreenCell[] {
     out.push(item);
   }
   return out;
+}
+
+/**
+ * 读终端当前屏（baseY 起的 rows 行，不跟回滚位置 viewportY 走）：
+ * TUI 的输入框、审批菜单、流式正文和状态行都在当前屏上；聊天层盖住（content-visibility: hidden）
+ * 时 xterm Viewport 会把 viewportY 卡在回滚历史里，用户往上翻看旧输出时 viewportY 也会离开底部，
+ * 按 viewportY 读会把旧对话当成当前屏。
+ */
+export function activeScreenLines(term: ActiveScreenSource | null | undefined): string[] {
+  if (!term) return [];
+  const buf = term.buffer.active;
+  const out: string[] = [];
+  for (let i = 0; i < term.rows; i++) {
+    out.push(buf.getLine(buf.baseY + i)?.translateToString(true) ?? "");
+  }
+  return out;
+}
+
+export function activeScreenCells(term: ActiveScreenSource | null | undefined, row: number): ScreenCell[] {
+  if (!term) return [];
+  const buf = term.buffer.active;
+  return lineCells(buf.getLine(buf.baseY + row));
 }
 
 /**
