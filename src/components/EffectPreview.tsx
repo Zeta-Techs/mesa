@@ -38,7 +38,7 @@ export function EffectPreview({
   return (
     <details
       open={open}
-      className="mb-4 rounded-md border border-hairline px-3 py-2"
+      className="mb-4 rounded-lg border border-hairline ccode-well px-3.5 py-2.5"
       onToggle={(e) => {
         // 表下「原始参数与文件改动」也是 <details>，它的 toggle 会沿 React 树冒到这里：
         // 不拦的话外层当成自己展开、重新取数，整张表重挂，里面那层刚展开就被收回（2026-11-01 用户：点了没反应）

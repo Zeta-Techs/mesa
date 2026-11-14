@@ -135,7 +135,7 @@ export function ClaudeModelMapping({
           <span className="text-xs">全部跟默认</span>
         </button>
       </div>
-      <div className="rounded-md border border-hairline px-3 py-2.5">
+      <div className="rounded-lg border border-hairline ccode-well px-3.5 py-3">
         <div className="grid grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 text-xs">
           <span className="text-micro text-l3">角色</span>
           <span className="text-micro text-l3">实际请求模型</span>

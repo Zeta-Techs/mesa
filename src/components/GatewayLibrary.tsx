@@ -8,7 +8,7 @@ import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import AgentIcon from "./AgentIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, quietActionClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, compactFieldClass, fieldClass, FoldMark, ghostActionClass, MenuSelect, PaneSearch, primaryActionClass, quietActionClass, RowAction, rowActionClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, Check, ChevronRight, RefreshCw, Trash2, Zap } from "lucide-react";
 import PagePanel, { PAGE_PANEL_SLIDE_MS } from "./PagePanel";
 import GatewayAutoConfig from "./GatewayAutoConfig";
@@ -113,9 +113,14 @@ function looksLocalEndpoint(raw: string): boolean {
   );
 }
 
-/** 编辑网关页的分段标题：只用留白和字重分组，不画线不铺底（同设置页 SubHeading 口径） */
-function GroupHeading({ children }: { children: ReactNode }) {
-  return <h3 className="pt-5 text-sm font-semibold text-l1">{children}</h3>;
+/** 编辑网关页的分段标题：只用留白和字重分组，右侧可挂轻量说明 */
+function GroupHeading({ children, meta }: { children: ReactNode; meta?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-2 pt-2">
+      <h3 className="text-xs font-semibold tracking-wide text-l2">{children}</h3>
+      {meta && <span className="text-micro text-l4">{meta}</span>}
+    </div>
+  );
 }
 
 function ModelClassFilter({
@@ -136,10 +141,10 @@ function ModelClassFilter({
 }) {
   const groups = groupModelsByVendor(ids);
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <div className="flex items-center gap-2">
         <input
-          className={`${searchFieldClass} min-w-0 flex-1`}
+          className={`${compactFieldClass} h-8 min-w-0 flex-1 px-2.5`}
           placeholder="筛选模型名…"
           value={filter}
           onChange={(e) => onFilter(e.target.value)}
@@ -157,8 +162,8 @@ function ModelClassFilter({
             type="button"
             role="radio"
             aria-checked={vendor === "all"}
-            className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
-              vendor === "all" ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+            className={`flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
+              vendor === "all" ? "bg-seg-sel font-medium text-l1" : "text-l3 hover:bg-hover hover:text-l1"
             }`}
             onClick={() => onVendor("all")}
           >
@@ -173,8 +178,8 @@ function ModelClassFilter({
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
-                  selected ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                className={`flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs ${
+                  selected ? "bg-seg-sel font-medium text-l1" : "text-l3 hover:bg-hover hover:text-l1"
                 }`}
                 onClick={() => onVendor(group.vendor)}
               >
@@ -551,8 +556,8 @@ export default function GatewayLibrary({
     setEditing(g);
     setName(g.name);
     setNoAuth(g.noAuth);
-    // 还没有任何绑定的网关直接展开 Agent 配置区——打开就是为了接着绑，不必再找折叠项
-    setShowBind(profiles.filter((p) => p.gatewayId === g.id).length === 0);
+    // 默认展开连接列表（卡片内部限高滚动，不会撑爆页面），方便进编辑页直接核对与跳转各 CLI 连接
+    setShowBind(true);
     const next = {
       anthropic: g.slots.anthropic ?? "",
       openai: g.slots.openai ?? "",
@@ -1604,54 +1609,60 @@ export default function GatewayLibrary({
       )}
       <div>
         {editing ? (
-          <div className="space-y-3">
-            {editing === "new" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2 text-xs text-l3">
-                  <span>常用服务商快速预设（点选自动填好地址、协议槽与推荐模型）</span>
+          <div className="space-y-4">
+            <GroupHeading
+              meta={editing === "new" ? "点选常用预设自动填好地址与推荐模型" : "修改密钥或地址后所有绑定连接同步生效"}
+            >
+              {editing === "new" ? "服务商预设与接口凭证" : "接口凭证"}
+            </GroupHeading>
+            <div className="space-y-3.5 rounded-lg border border-hairline ccode-well p-4">
+              {editing === "new" && (
+                <div className="space-y-2 border-b border-hairline pb-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {quickPresets.map((p) => {
+                      const active = presetName === p.name;
+                      const shortLabel = p.name.replace(/（.*）$/, "");
+                      return (
+                        <button
+                          key={p.name}
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => applyProviderPreset(p)}
+                          className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
+                            active
+                              ? "border-cta bg-cta-pill font-medium text-cta-pill-text"
+                              : "border-hairline bg-canvas text-l2 hover:border-field hover:text-l1"
+                          }`}
+                        >
+                          {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                          <span>{shortLabel}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <span className="block text-sm">
+                    <MenuSelect
+                      aria-label="服务商"
+                      value={presetName}
+                      placeholder="更多服务商预设，或直接在下方手填自定义地址…"
+                      options={PROVIDER_PRESETS.map((p) => ({
+                        value: p.name,
+                        short: p.name,
+                        label: `${p.name}${p.models?.length ? " · 含推荐模型" : ""}${p.confidence === "official" ? " · 官方" : ""}`,
+                      }))}
+                      onChange={(v) => {
+                        const preset = PROVIDER_PRESETS.find((p) => p.name === v);
+                        if (preset) applyProviderPreset(preset);
+                      }}
+                    />
+                  </span>
+                  {presetName && (
+                    <span className="block text-micro text-l3">
+                      已套用「{presetName}」预设，地址与模型均可继续修改
+                    </span>
+                  )}
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {quickPresets.map((p) => {
-                    const active = presetName === p.name;
-                    const shortLabel = p.name.replace(/（.*）$/, "");
-                    return (
-                      <button
-                        key={p.name}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => applyProviderPreset(p)}
-                        className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
-                          active
-                            ? "border-cta bg-cta-pill text-cta-pill-text font-medium"
-                            : "border-hairline bg-inset text-l2 hover:border-field hover:text-l1"
-                        }`}
-                      >
-                        {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                        <span>{shortLabel}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <span className="block text-sm">
-                  <MenuSelect
-                    aria-label="服务商"
-                    value={presetName}
-                    placeholder="更多服务商预设，或直接在下方手填自定义地址…"
-                    options={PROVIDER_PRESETS.map((p) => ({
-                      value: p.name,
-                      short: p.name,
-                      label: `${p.name}${p.models?.length ? " · 含推荐模型" : ""}${p.confidence === "official" ? " · 官方" : ""}`,
-                    }))}
-                    onChange={(v) => {
-                      const preset = PROVIDER_PRESETS.find((p) => p.name === v);
-                      if (preset) applyProviderPreset(preset);
-                    }}
-                  />
-                </span>
-                {presetName && <span className="block text-micro text-l3">已套用「{presetName}」预设，地址与模型均可继续修改</span>}
-              </div>
-            )}
-            <div className="space-y-3 rounded-lg border border-hairline ccode-well p-3.5">
+              )}
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
                 <label className="block text-sm text-l2">
                   <span className="text-xs text-l3">网关名称</span>
@@ -1667,7 +1678,11 @@ export default function GatewayLibrary({
                   <input
                     className={`${fieldClass} mt-1 w-full font-mono text-xs`}
                     value={masterUrl}
-                    placeholder="https://…（多协议同址时只填这里）"
+                    placeholder={
+                      !masterUrl && Object.values(slots).filter((v) => v?.trim()).length > 1
+                        ? "已按下方多协议独立地址分别配置（填此处会统一覆盖）"
+                        : "https://…（多协议同址时只填这里）"
+                    }
                     title="空槽与仍等于主输入的槽一起改；某个槽手填即脱离"
                     onChange={(e) => {
                       onMasterChange(e.target.value);
@@ -1727,12 +1742,18 @@ export default function GatewayLibrary({
                   </div>
                 </div>
               )}
-              <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-l3">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline pt-2.5 text-micro text-l3">
                 <div className="flex flex-wrap items-center gap-2">
-                  {primaryProbe?.lastOk != null && (
-                    <span className={`font-mono ${primaryProbe.lastOk ? "text-ok-text" : "text-err-text"}`}>
+                  {primaryProbe?.lastOk != null ? (
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-px font-mono ${
+                        primaryProbe.lastOk ? "bg-ok text-ok-text" : "bg-err text-err-text"
+                      }`}
+                    >
                       {probeSummaryText(primaryProbe)}
                     </span>
+                  ) : (
+                    <span className="text-l4">尚未测速</span>
                   )}
                   {editing !== "new" && catalogAge(editing.catalogFetchedAt) && (
                     <span>
@@ -1743,7 +1764,7 @@ export default function GatewayLibrary({
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <button
                     type="button"
                     className={ghostActionClass}
@@ -1765,25 +1786,164 @@ export default function GatewayLibrary({
                 </div>
               </div>
             </div>
-            {/* 分三段（2026-11-07）：接入（每次都填）→ 模型与连接（常改）→ 高级（一年碰一次的协议槽、Header、余额令牌，全部折叠） */}
-            <GroupHeading>模型与连接</GroupHeading>
-            <div className="text-sm text-l2">
+
+            <GroupHeading
+              meta={editing === "new" ? "保存网关时可一步建好连接" : "点连接直接改模型顺序，点下方目录设温度与思考档"}
+            >
+              关联连接与模型池
+            </GroupHeading>
+
+            {/* 新建网关即闭环：直接勾选已安装且协议兼容的 CLI，保存时同步创建连接（免去建完 0 连接再点一轮） */}
+            {editing === "new" && (
+              <div className="rounded-lg border border-hairline ccode-well p-3.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-l1">保存后顺便给这些 CLI 建连接（可选）</span>
+                  <span className="text-micro text-l3">
+                    {compatibleNewBindAgents.length > 0
+                      ? "按已填协议地址自动筛出本机已安装且兼容的 CLI"
+                      : "填好接口地址后自动列出兼容的已安装 CLI"}
+                  </span>
+                </div>
+                {compatibleNewBindAgents.length > 0 && (
+                  <>
+                    <div className="mt-2.5 flex flex-wrap gap-1.5">
+                      {compatibleNewBindAgents.map((ag) => {
+                        const on = activeNewBindAgents.includes(ag.id);
+                        return (
+                          <button
+                            key={ag.id}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() =>
+                              setNewBindAgents((cur) =>
+                                on ? cur.filter((x) => x !== ag.id) : [...cur, ag.id],
+                              )
+                            }
+                            className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
+                              on
+                                ? "border-cta bg-cta-pill font-medium text-cta-pill-text"
+                                : "border-hairline bg-canvas text-l2 hover:border-field hover:text-l1"
+                            }`}
+                          >
+                            <AgentIcon agent={ag.id} label={ag.label} size={14} />
+                            <span>{ag.label}</span>
+                            {on && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-2 text-micro text-l3">
+                      将为勾选的 CLI 自动挑目录里最匹配的对话模型（未拉目录时保留空名单供后续勾选），保存后在连接页立即可用。
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* 用这个网关的连接：放在模型目录上方并收进独立卡片，避免几百个模型把已绑连接挤出视野 */}
+            {editing !== "new" && (
+              <div
+                ref={bindSectionRef}
+                className="scroll-mt-4 overflow-hidden rounded-lg border border-hairline ccode-well"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5">
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    onClick={() => setShowBind((v) => !v)}
+                  >
+                    <FoldMark open={showBind} />
+                    <span className="text-sm font-medium text-l1">用这个网关的连接</span>
+                    <span className="rounded-full bg-inset px-2 py-px text-micro tabular-nums text-l2">
+                      {boundAgents.length} 条
+                    </span>
+                    {!showBind && boundAgents.length > 0 && (
+                      <span className="truncate text-micro text-l3">{boundAgentSummary}</span>
+                    )}
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {onAddConnection && (
+                      <button
+                        type="button"
+                        className={rowActionClass}
+                        onClick={() => void goAddConnection(editing.id)}
+                      >
+                        ＋ 添加连接
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={rowActionClass}
+                      title="给每个装了的 CLI 各建一条连接"
+                      onClick={() => setAutoConfigFor(editing.id)}
+                    >
+                      配齐各 CLI…
+                    </button>
+                  </div>
+                </div>
+                {showBind && (
+                  <div className="border-t border-hairline">
+                    {boundAgents.length === 0 ? (
+                      <p className="px-3.5 py-3 text-xs text-l3">
+                        还没有 CLI 连接绑定这个网关。点右上角「＋ 添加连接」或「配齐各 CLI…」即可接入。
+                      </p>
+                    ) : (
+                      <div className="max-h-56 divide-y divide-hairline overflow-y-auto">
+                        {boundAgents.map((p) => {
+                          const agLabel = AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              disabled={!onEditProfile}
+                              className="group flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-xs transition-colors hover:bg-hover disabled:cursor-default"
+                              onClick={() => void goEditProfile(p)}
+                            >
+                              <AgentIcon agent={p.agent} label={agLabel} size={15} />
+                              <span className="w-28 shrink-0 truncate text-l3">{agLabel}</span>
+                              <span className="min-w-0 flex-1 truncate font-medium text-l1">{p.name}</span>
+                              <span className="max-w-[14rem] shrink-0 truncate rounded border border-hairline bg-canvas px-1.5 py-px font-mono text-micro text-l2">
+                                {p.models[0] ?? "未选模型"}
+                              </span>
+                              {p.models.length > 1 && (
+                                <span className="shrink-0 text-micro text-l4">+{p.models.length - 1}</span>
+                              )}
+                              {onEditProfile && (
+                                <ChevronRight
+                                  className="size-3.5 shrink-0 text-l4 transition-transform group-hover:translate-x-0.5 group-hover:text-l1"
+                                  aria-hidden="true"
+                                />
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="overflow-hidden rounded-lg border border-hairline ccode-well text-sm text-l2">
               <button
                 type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left"
+                className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left transition-colors hover:bg-hover/60"
                 onClick={() => setShowModels((v) => !v)}
               >
                 <FoldMark open={showModels} />
-                <span className="flex-1">模型</span>
-                <span className="text-micro text-l3">
-                  {models.length} 个
-                  {models.some(modelHasPolicy) ? ` · ${models.filter(modelHasPolicy).length} 个设了参数` : ""}
+                <span className="flex-1 text-sm font-medium text-l1">模型目录与逐模型参数</span>
+                {models.some(modelHasPolicy) && (
+                  <span className="rounded-full bg-cta-pill px-2 py-px text-micro text-cta-pill-text">
+                    {models.filter(modelHasPolicy).length} 个已设参数
+                  </span>
+                )}
+                <span className="rounded-full bg-inset px-2 py-px text-micro tabular-nums text-l2">
+                  {models.length} 个模型
                 </span>
               </button>
               {showModels && (
-                <div className="mt-1 space-y-1">
-                  {/* 手填：拉不到 /models 的端点（如智谱 api/v1）靠它建目录。目录有模型时收成筛选框旁的「＋ 手填模型」，
-                      常用的筛选放最上面（原先两个输入框叠着，手填在上、样式还不一样，2026-11-07） */}
+                <div className="space-y-2.5 border-t border-hairline px-3.5 py-3">
+                  {/* 手填：拉不到 /models 的端点（如智谱 api/v1）靠它建目录。目录有模型时收成筛选框旁的「＋ 手填模型」 */}
                   {models.length === 0 && manualRow}
                   {models.length > 0 && (
                     <>
@@ -1796,7 +1956,7 @@ export default function GatewayLibrary({
                         trailing={
                           <button
                             type="button"
-                            className={`${ghostActionClass} shrink-0`}
+                            className={`${rowActionClass} shrink-0`}
                             aria-expanded={showManual}
                             onClick={() => setShowManual((v) => !v)}
                           >
@@ -1808,6 +1968,7 @@ export default function GatewayLibrary({
                       {models.some(modelHasPolicy) && (
                         <Checkbox className="text-xs text-l3" checked={onlySet} onChange={setOnlySet} label="只看设了参数的" />
                       )}
+                      <div className="max-h-[380px] overflow-y-auto rounded-md border border-hairline bg-canvas/70 px-3 py-1.5">
                       <VendorModelSections
                         ids={modelIds}
                         vendor={policyVendor}
@@ -2079,286 +2240,193 @@ export default function GatewayLibrary({
                     );
                     }}
                       />
+                      </div>
                     </>
                   )}
                 </div>
               )}
             </div>
-            {/* 新建网关即闭环：直接勾选已安装且协议兼容的 CLI，保存时同步创建连接（免去建完 0 连接再点一轮） */}
-            {editing === "new" && (
-              <div className="rounded-lg border border-hairline ccode-well p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-l1">保存后顺便给这些 CLI 建连接（可选）</span>
-                  <span className="text-micro text-l3">
-                    {compatibleNewBindAgents.length > 0
-                      ? "按已填协议地址自动筛出本机已安装且兼容的 CLI"
-                      : "填好接口地址后自动列出兼容的已安装 CLI"}
-                  </span>
-                </div>
-                {compatibleNewBindAgents.length > 0 && (
-                  <>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {compatibleNewBindAgents.map((ag) => {
-                        const on = activeNewBindAgents.includes(ag.id);
-                        return (
-                          <button
-                            key={ag.id}
-                            type="button"
-                            aria-pressed={on}
-                            onClick={() =>
-                              setNewBindAgents((cur) =>
-                                on ? cur.filter((x) => x !== ag.id) : [...cur, ag.id],
-                              )
-                            }
-                            className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
-                              on
-                                ? "border-cta bg-cta-pill text-cta-pill-text font-medium"
-                                : "border-hairline bg-canvas text-l2 hover:border-field hover:text-l1"
-                            }`}
-                          >
-                            <AgentIcon agent={ag.id} label={ag.label} size={14} />
-                            <span>{ag.label}</span>
-                            {on && <Check className="size-3 shrink-0" aria-hidden="true" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="mt-1.5 text-micro text-l3">
-                      将为勾选的 CLI 自动挑目录里最匹配的对话模型（未拉目录时保留空名单供后续勾选），保存后在连接页立即可用。
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-            {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
-                已绑的点一下直接编辑 */}
-            {editing !== "new" && (
-              <div ref={bindSectionRef} className="scroll-mt-4">
-                <button
-                  type="button"
-                  className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                  onClick={() => setShowBind((v) => !v)}
-                >
-                  <FoldMark open={showBind} />
-                  <span className="flex-1 text-sm">用这个网关的连接</span>
-                  <span className="min-w-0 truncate text-micro text-l3">
-                    {boundAgents.length ? `${boundAgents.length} 条${showBind ? "" : ` · ${boundAgentSummary}`}` : "还没有"}
-                  </span>
-                </button>
-                {showBind && (
-                  <div className="space-y-1 pt-1 text-sm">
-                    {boundAgents.map((p) => (
-                      <button
-                        key={p.id}
-                        type="button"
-                        disabled={!onEditProfile}
-                        className="group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-hover"
-                        onClick={() => void goEditProfile(p)}
-                      >
-                        <span className="w-24 shrink-0 truncate text-xs text-l3">
-                          {AGENTS.find((a) => a.id === p.agent)?.label ?? p.agent}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-l1">{p.name}</span>
-                        <span className="truncate font-mono text-micro text-l3">{p.models[0] ?? "未选模型"}</span>
-                        {/* 整行可点进编辑：悬停露出箭头，不然看不出能点 */}
-                        {onEditProfile && (
-                          <ChevronRight className="size-3.5 shrink-0 text-l3 opacity-0 group-hover:opacity-100" aria-hidden="true" />
-                        )}
-                      </button>
-                    ))}
-                    {/* 两个建连接的入口并排放在连接区里（原先「一键配置」单独一行、带魔棒图标，和上面的折叠行长得不一样，2026-11-07） */}
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
-                      {onAddConnection && (
-                        <button type="button" className={secondaryActionClass} onClick={() => void goAddConnection(editing.id)}>
-                          ＋ 为此网关添加连接
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className={secondaryActionClass}
-                        title="给每个装了的 CLI 各建一条连接"
-                        onClick={() => setAutoConfigFor(editing.id)}
-                      >
-                        一键配置各 CLI…
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-            <GroupHeading>高级</GroupHeading>
-            <div>
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                onClick={() => setShowSlots((v) => !v)}
-              >
-                <FoldMark open={showSlots} />
-                <span className="flex-1 text-sm">协议槽</span>
-                <span className="text-micro text-l3">{slotsTogether ? "跟随上面的地址" : "有独立地址"}</span>
-              </button>
-              {showSlots && (
-                <div className="space-y-2 pt-1">
-                  {SLOT_LABELS.map(({ key, label }) => {
-                    const follows = !slots[key]?.trim() && !!masterUrl.trim();
-                    const testable = key !== "cursor" && key !== "gemini";
-                    return (
-                      <div key={key} className="text-sm text-l2">
-                        <span className="flex items-center justify-between gap-2">
-                          <span>
-                            {label}
-                            {follows && <span className="ml-1.5 text-micro text-l3">跟随上面的地址</span>}
-                          </span>
-                          <span className="font-mono text-micro text-l3">{testable ? probeSummaryText(slotSum(key)) : "不支持测试"}</span>
-                        </span>
-                        {/* 测试钮与输入框同一行（原先各占一行，五个槽拉得很长） */}
-                        <span className="mt-1 flex items-center gap-2">
-                          <input
-                            aria-label={`${label} 地址`}
-                            className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
-                            value={slots[key] ?? ""}
-                            placeholder={follows ? masterUrl : "https://…"}
-                            title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
-                            onChange={(e) => setSlots((cur) => ({ ...cur, [key]: e.target.value }))}
-                          />
-                          {testable && (
-                            <button
-                              type="button"
-                              className={`${rowActionClass} shrink-0`}
-                              disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
-                              onClick={() => void probeOne(key, false)}
-                            >
-                              {probingSlot === key ? "测试中…" : "测试"}
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  <button type="button" className={secondaryActionClass} disabled={probingAll} onClick={() => void probeAll()}>
-                    {probingAll ? "测试中…" : "测试全部槽"}
-                  </button>
-                </div>
-              )}
-            </div>
-            <div>
-              <button
-                type="button"
-                className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                onClick={() => setShowAdvanced((v) => !v)}
-              >
-                <FoldMark open={showAdvanced} />
-                <span className="flex-1 text-sm">Header 与兼容选项</span>
-                {(compatTimeout.trim() || compatNoBetas || compatNoThinking) && !showAdvanced && (
-                  <span className="text-micro text-l3">已开兼容选项</span>
-                )}
-              </button>
-              {showAdvanced && (
-                <div className="space-y-2 pt-1 text-sm text-l2">
-                  <label className="block">
-                    Header：名=环境变量名，每行一条
-                    <textarea
-                      className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
-                      value={headerText}
-                      onChange={(e) => setHeaderText(e.target.value)}
-                    />
-                  </label>
-                  {/* 兼容选项：这家中转的毛病跟着网关走，绑到它的 Agent 启动和「设为全局」都会带上 */}
-                  <p className="text-micro text-l3">兼容选项：这家中转有下面的毛病时再开，绑到它的连接启动和设为全局都会带上</p>
-                  <label className="flex items-center gap-2">
-                    <span className="w-28 shrink-0">请求超时</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={3600}
-                      placeholder="默认"
-                      className={`${fieldClass} w-24`}
-                      value={compatTimeout}
-                      onChange={(e) => setCompatTimeout(e.target.value)}
-                    />
-                    <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
-                  </label>
-                  <Checkbox
-                    checked={compatNoBetas}
-                    onChange={setCompatNoBetas}
-                    label={
-                      <span>
-                        不发实验性请求头
-                        <span className="ml-2 text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
-                      </span>
-                    }
-                  />
-                  <Checkbox
-                    checked={compatNoThinking}
-                    onChange={setCompatNoThinking}
-                    label={
-                      <span>
-                        不发思考参数
-                        <span className="ml-2 text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
-                      </span>
-                    }
-                  />
-                </div>
-              )}
-            </div>
-            {/* 查余额：设一次就不再动，和协议槽、Header 同样收成折叠行（原先带框常驻，比密钥还显眼） */}
-            {showWalletFields && (
+
+            <GroupHeading meta="按需展开配置分协议地址、请求头与站点额度令牌">高级选项</GroupHeading>
+            <div className="divide-y divide-hairline overflow-hidden rounded-lg border border-hairline ccode-well">
               <div>
                 <button
                   type="button"
-                  className="flex min-h-7 w-full items-center gap-2 text-left text-sm text-l2"
-                  onClick={() => setShowWallet((v) => !v)}
+                  className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-sm text-l2 transition-colors hover:bg-hover/60"
+                  onClick={() => setShowSlots((v) => !v)}
                 >
-                  <FoldMark open={showWallet} />
-                  <span className="flex-1 text-sm">查余额（New API 站点）</span>
-                  <span className="text-micro text-l3">
-                    {walletToken.trim()
-                      ? "已填，保存后生效"
-                      : editing !== "new" && editing.walletKeyHint
-                        ? `已设令牌 ${editing.walletKeyHint}`
-                        : "未设置"}
-                  </span>
+                  <FoldMark open={showSlots} />
+                  <span className="flex-1 text-sm font-medium text-l1">多协议独立地址（协议槽）</span>
+                  <span className="text-micro text-l3">{slotsTogether ? "跟随主接口地址" : "已设独立地址"}</span>
                 </button>
-                {showWallet && (
-              <div className="space-y-3 pt-1">
-                <p className="text-micro text-l3">
-                  查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
-                </p>
-                <div className="text-sm text-l2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label htmlFor={walletInputId}>系统访问令牌</label>
-                    {editing !== "new" && editing.walletKeyHint && (
-                      <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearWalletToken()}>
-                        清除系统访问令牌
-                      </button>
-                    )}
+                {showSlots && (
+                  <div className="space-y-2.5 border-t border-hairline bg-canvas/40 px-3.5 py-3">
+                    {SLOT_LABELS.map(({ key, label }) => {
+                      const follows = !slots[key]?.trim() && !!masterUrl.trim();
+                      const testable = key !== "cursor" && key !== "gemini";
+                      return (
+                        <div key={key} className="text-sm text-l2">
+                          <span className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-l1">
+                              {label}
+                              {follows && <span className="ml-1.5 text-micro text-l3">跟随主地址</span>}
+                            </span>
+                            <span className="font-mono text-micro text-l3">
+                              {testable ? probeSummaryText(slotSum(key)) : "不支持测试"}
+                            </span>
+                          </span>
+                          <span className="mt-1 flex items-center gap-2">
+                            <input
+                              aria-label={`${label} 地址`}
+                              className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
+                              value={slots[key] ?? ""}
+                              placeholder={follows ? masterUrl : "https://…"}
+                              title={follows ? "留空 = 跟随上面的地址；填入即脱离跟随" : undefined}
+                              onChange={(e) => setSlots((cur) => ({ ...cur, [key]: e.target.value }))}
+                            />
+                            {testable && (
+                              <button
+                                type="button"
+                                className={`${rowActionClass} shrink-0`}
+                                disabled={!!probingSlot || !effectiveSlotUrl(slots, key, masterUrl)}
+                                onClick={() => void probeOne(key, false)}
+                              >
+                                {probingSlot === key ? "测试中…" : "测试"}
+                              </button>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <button type="button" className={secondaryActionClass} disabled={probingAll} onClick={() => void probeAll()}>
+                      {probingAll ? "测试中…" : "测试全部槽"}
+                    </button>
                   </div>
-                  <input
-                    id={walletInputId}
-                    className={`${fieldClass} mt-1 w-full`}
-                    type="password"
-                    value={walletToken}
-                    onChange={(e) => setWalletToken(e.target.value)}
-                    placeholder={
-                      editing !== "new" && editing.walletKeyHint
-                        ? `已保存 ${editing.walletKeyHint}，输入新令牌即替换`
-                        : "不是 sk- 推理密钥"
-                    }
-                  />
-                </div>
-                <label className="block text-sm text-l2">
-                  用户 ID（一般不用填）
-                  <input
-                    className={`${fieldClass} mt-1 w-full font-mono text-xs`}
-                    value={walletUserId}
-                    onChange={(e) => setWalletUserId(e.target.value)}
-                    placeholder="老站点才要"
-                  />
-                </label>
-              </div>
                 )}
               </div>
-            )}
+
+              <div>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-sm text-l2 transition-colors hover:bg-hover/60"
+                  onClick={() => setShowAdvanced((v) => !v)}
+                >
+                  <FoldMark open={showAdvanced} />
+                  <span className="flex-1 text-sm font-medium text-l1">Header 与中转兼容选项</span>
+                  {!showAdvanced && (
+                    <span className="text-micro text-l3">
+                      {compatTimeout.trim() || compatNoBetas || compatNoThinking || headerText.trim()
+                        ? "已开启自定义"
+                        : "默认"}
+                    </span>
+                  )}
+                </button>
+                {showAdvanced && (
+                  <div className="space-y-2.5 border-t border-hairline bg-canvas/40 px-3.5 py-3 text-sm text-l2">
+                    <label className="block text-xs text-l2">
+                      Header：名=环境变量名，每行一条
+                      <textarea
+                        className={`${fieldClass} mt-1 h-20 w-full font-mono text-xs`}
+                        value={headerText}
+                        onChange={(e) => setHeaderText(e.target.value)}
+                      />
+                    </label>
+                    <p className="text-micro text-l3">兼容选项：这家中转有下面的毛病时再开，绑到它的连接启动和设为全局都会带上</p>
+                    <label className="flex items-center gap-2 text-xs">
+                      <span className="w-24 shrink-0 text-l2">请求超时</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={3600}
+                        placeholder="默认"
+                        className={`${fieldClass} w-24`}
+                        value={compatTimeout}
+                        onChange={(e) => setCompatTimeout(e.target.value)}
+                      />
+                      <span className="text-micro text-l3">秒。中转慢、长思考常超时时调大（Claude Code、Codex）</span>
+                    </label>
+                    <Checkbox
+                      checked={compatNoBetas}
+                      onChange={setCompatNoBetas}
+                      label={
+                        <span className="text-xs">
+                          不发实验性请求头
+                          <span className="ml-2 text-micro text-l3">中转见到 anthropic-beta 就鉴权失败或 400 时开（Claude Code）</span>
+                        </span>
+                      }
+                    />
+                    <Checkbox
+                      checked={compatNoThinking}
+                      onChange={setCompatNoThinking}
+                      label={
+                        <span className="text-xs">
+                          不发思考参数
+                          <span className="ml-2 text-micro text-l3">中转不收 thinking 字段、一开思考就报错时开（Claude Code）</span>
+                        </span>
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+
+              {showWalletFields && (
+                <div>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-sm text-l2 transition-colors hover:bg-hover/60"
+                    onClick={() => setShowWallet((v) => !v)}
+                  >
+                    <FoldMark open={showWallet} />
+                    <span className="flex-1 text-sm font-medium text-l1">查余额（New API 站点）</span>
+                    <span className="text-micro text-l3">
+                      {walletToken.trim()
+                        ? "已填，保存后生效"
+                        : editing !== "new" && editing.walletKeyHint
+                          ? `已设令牌 ${editing.walletKeyHint}`
+                          : "未设置"}
+                    </span>
+                  </button>
+                  {showWallet && (
+                    <div className="space-y-3 border-t border-hairline bg-canvas/40 px-3.5 py-3">
+                      <p className="text-micro text-l3">
+                        查钱包余额用系统访问令牌，不是上面的推理密钥。打开站点钱包页登录后，在个人设置里生成。
+                      </p>
+                      <div className="text-sm text-l2">
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <label htmlFor={walletInputId}>系统访问令牌</label>
+                          {editing !== "new" && editing.walletKeyHint && (
+                            <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearWalletToken()}>
+                              清除系统访问令牌
+                            </button>
+                          )}
+                        </div>
+                        <input
+                          id={walletInputId}
+                          className={`${fieldClass} mt-1 w-full`}
+                          type="password"
+                          value={walletToken}
+                          onChange={(e) => setWalletToken(e.target.value)}
+                          placeholder={
+                            editing !== "new" && editing.walletKeyHint
+                              ? `已保存 ${editing.walletKeyHint}，输入新令牌即替换`
+                              : "不是 sk- 推理密钥"
+                          }
+                        />
+                      </div>
+                      <label className="block text-xs text-l2">
+                        用户 ID（一般不用填）
+                        <input
+                          className={`${fieldClass} mt-1 w-full font-mono text-xs`}
+                          value={walletUserId}
+                          onChange={(e) => setWalletUserId(e.target.value)}
+                          placeholder="老站点才要"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div className="@container space-y-3">
@@ -2371,7 +2439,6 @@ export default function GatewayLibrary({
                     ["openai", "OpenAI"],
                     ["responses", "Responses"],
                     ["gemini", "Gemini"],
-                    ["cursor", "Cursor"],
                   ] as const
                 )
                   .map(([key, label]) => ({
@@ -2382,7 +2449,7 @@ export default function GatewayLibrary({
                   .filter((item) => item.count > 0),
               ];
               return (
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-0.5">
                   <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-hairline bg-inset p-0.5">
                     {protoTabs.map((tab) => {
                       const active = protoFilter === tab.key;
@@ -2403,13 +2470,12 @@ export default function GatewayLibrary({
                       );
                     })}
                   </div>
-                  <input
-                    type="search"
-                    aria-label="搜索网关"
-                    placeholder="搜网关名 / 地址 / 密钥尾号…"
+                  <PaneSearch
+                    className="w-64 max-w-full"
                     value={gwSearch}
-                    onChange={(e) => setGwSearch(e.target.value)}
-                    className={`${searchFieldClass} w-56 max-w-full`}
+                    onChange={setGwSearch}
+                    placeholder="搜网关名 / 域名 / 密钥尾号"
+                    label="搜索网关"
                   />
                 </div>
               );
@@ -2454,186 +2520,204 @@ export default function GatewayLibrary({
               }
 
               return (
-                <ul className="divide-y divide-hairline overflow-hidden rounded-lg border border-hairline">
-                  {filteredRows.map((row) => {
-                    const g = gateways.find((item) => item.id === row.id);
-                    if (!g) return null;
-                    const boundProfiles = profiles.filter((p) => p.gatewayId === g.id);
-                    const n = boundProfiles.length;
-                    const distinctAgents = [...new Set(boundProfiles.map((p) => p.agent))];
-                    const usage = usageLine(g);
-                    const health = gatewayHealth(g);
-                    const busy = rowProbingId === g.id || listFetchingId === g.id;
-                    const hosts = gatewayHosts(g.slots);
-                    const hostText = hosts.length ? hosts.join(" / ") : "未填端点";
-                    const keyLabel = g.noAuth
-                      ? "本地免密"
-                      : g.keyHint?.trim()
-                        ? `密钥 ${g.keyHint.trim()}`
-                        : "缺密钥";
-                    const filledSlots = gatewayFilledSlots(g.slots);
-                    const activeModelCount = g.models.filter((m) => m.status !== "stale").length;
-                    const needsKeyFix = health.tone === "err" || health.tone === "warn";
+                <div className="overflow-hidden rounded-lg border border-hairline">
+                  <div className="hidden items-center gap-x-4 border-b border-hairline bg-rail2/70 px-3.5 py-1.5 text-micro text-l4 @3xl:flex">
+                    <span className="w-4 shrink-0" aria-hidden="true" />
+                    <span className="min-w-[11rem] flex-1 @4xl:w-[17rem] @4xl:flex-none">网关与密钥</span>
+                    <span className="min-w-0 flex-1">支持协议与模型池</span>
+                    <span className="w-28 shrink-0 text-right">已绑 CLI</span>
+                    <span className="hidden w-28 shrink-0 text-right @4xl:block">近 30 天</span>
+                    <span className="w-24 shrink-0 text-right">操作</span>
+                  </div>
+                  <ul className="divide-y divide-hairline">
+                    {filteredRows.map((row) => {
+                      const g = gateways.find((item) => item.id === row.id);
+                      if (!g) return null;
+                      const boundProfiles = profiles.filter((p) => p.gatewayId === g.id);
+                      const n = boundProfiles.length;
+                      const distinctAgents = [...new Set(boundProfiles.map((p) => p.agent))];
+                      const usage = usageLine(g);
+                      const health = gatewayHealth(g);
+                      const busy = rowProbingId === g.id || listFetchingId === g.id;
+                      const hosts = gatewayHosts(g.slots);
+                      const hostText = hosts.length ? hosts.join(" / ") : "未填端点";
+                      const keyLabel = g.noAuth
+                        ? "本地免密"
+                        : g.keyHint?.trim()
+                          ? `密钥 ${g.keyHint.trim()}`
+                          : "缺密钥";
+                      const displaySlots = gatewayFilledSlots(g.slots).filter((s) => s !== "Cursor");
+                      const activeModelCount = g.models.filter((m) => m.status !== "stale").length;
+                      const needsKeyFix = health.tone === "err" || health.tone === "warn";
 
-                    return (
-                      <li
-                        key={g.id}
-                        className={`group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-2.5 transition-colors hover:bg-hover ${
-                          health.tone === "err" ? "bg-err/5" : ""
-                        }`}
-                        onClick={() => openEdit(g)}
-                      >
-                        <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
+                      return (
+                        <li
+                          key={g.id}
+                          className={`group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-2.5 transition-colors hover:bg-hover ${
+                            health.tone === "err" ? "bg-err/5" : ""
+                          }`}
+                          onClick={() => openEdit(g)}
+                        >
+                          <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
 
-                        {/* 第一列：名称 + 健康胶囊 + 主机与密钥尾号直接外露 */}
-                        <span className="min-w-[12rem] flex-1 @4xl:w-64 @4xl:flex-none">
-                          <span className="flex items-center gap-2">
+                          {/* 第一列：名称 + 健康胶囊 + 主机与密钥尾号直接外露 */}
+                          <span className="min-w-[11rem] flex-1 @4xl:w-[17rem] @4xl:flex-none">
+                            <span className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="truncate text-sm font-medium text-l1"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEdit(g);
+                                }}
+                              >
+                                {row.name}
+                              </button>
+                              <span
+                                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-micro ${
+                                  health.tone === "ok"
+                                    ? "bg-ok text-ok-text"
+                                    : health.tone === "err"
+                                      ? "bg-err text-err-text"
+                                      : health.tone === "warn"
+                                        ? "bg-warn text-warn-text"
+                                        : "bg-inset text-l3"
+                                }`}
+                                title={[health.label, health.detail].filter(Boolean).join("；")}
+                              >
+                                <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
+                                <span>{busy ? "处理中…" : health.tone === "ok" ? "正常" : health.label}</span>
+                              </span>
+                            </span>
+                            <span className="mt-0.5 flex min-w-0 items-center font-mono text-micro text-l3" title={row.detail}>
+                              <span className="truncate">{hostText}</span>
+                              <span className="mx-1 shrink-0 font-sans text-l4">·</span>
+                              <span className={`shrink-0 ${health.tone === "warn" || health.tone === "err" ? "text-err-text" : "text-l2"}`}>
+                                {keyLabel}
+                              </span>
+                            </span>
+                          </span>
+
+                          {/* 第二列：已开通协议槽胶囊 + 模型数 */}
+                          <span className="hidden min-w-0 flex-1 items-center gap-1 whitespace-nowrap @3xl:flex">
+                            {displaySlots.slice(0, 4).map((slotName) => (
+                              <span
+                                key={slotName}
+                                className="shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2"
+                              >
+                                {slotName}
+                              </span>
+                            ))}
+                            <span className="ml-1.5 shrink-0 text-xs tabular-nums text-l3">
+                              {activeModelCount > 0 ? `${activeModelCount} 个模型` : "未拉目录"}
+                            </span>
+                          </span>
+
+                          {/* 第三列：已绑 CLI 图标簇与连接数 */}
+                          <span className="hidden w-28 shrink-0 items-center justify-end gap-1.5 @2xl:flex">
+                            {n > 0 ? (
+                              <>
+                                <span className="flex items-center -space-x-1">
+                                  {distinctAgents.slice(0, 3).map((agId) => {
+                                    const agLabel = AGENTS.find((a) => a.id === agId)?.label ?? agId;
+                                    return (
+                                      <span key={agId} className="rounded-full bg-canvas p-0.5" title={agLabel}>
+                                        <AgentIcon agent={agId} label={agLabel} size={14} />
+                                      </span>
+                                    );
+                                  })}
+                                </span>
+                                <span className="text-xs tabular-nums text-l2">{n} 连接</span>
+                              </>
+                            ) : (
+                              <span className="rounded-full bg-warn px-2 py-px text-micro text-warn-text">
+                                暂未绑 CLI
+                              </span>
+                            )}
+                          </span>
+
+                          {/* 第四列：近 30 天用量 */}
+                          <span className="hidden w-28 shrink-0 truncate text-right text-xs tabular-nums text-l3 @4xl:block">
+                            {usage ? (
+                              <button
+                                type="button"
+                                className="hover:text-l1"
+                                title="去用量页看这个网关"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onJumpUsage?.(g.id);
+                                }}
+                              >
+                                {usage.replace(/^近 30 天 /, "")}
+                              </button>
+                            ) : (
+                              "—"
+                            )}
+                          </span>
+
+                          {/* 第五列：显性主操作 + 悬停辅助图标（不占空白位）+ 右侧直达编辑箭头 */}
+                          <span className="ml-auto flex min-w-[6rem] shrink-0 items-center justify-end gap-1">
+                            <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                              <span className="hidden items-center group-focus-within:flex group-hover:flex">
+                                <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
+                                <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
+                                <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
+                              </span>
+                              {needsKeyFix ? (
+                                <button
+                                  type="button"
+                                  className={`${rowActionClass} text-err-text`}
+                                  onClick={() => openEdit(g)}
+                                >
+                                  去修密钥
+                                </button>
+                              ) : n === 0 ? (
+                                <button
+                                  type="button"
+                                  className={rowActionClass}
+                                  title="基于这个网关快速为已安装的 CLI 创建连接"
+                                  onClick={() =>
+                                    activeModelCount > 0
+                                      ? setAutoConfigFor(g.id)
+                                      : onAddConnection
+                                        ? void goAddConnection(g.id)
+                                        : setAutoConfigFor(g.id)
+                                  }
+                                >
+                                  一键绑 CLI
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={rowActionClass}
+                                  title="一键配置各 CLI：给每个装了的 CLI 各建一条连接"
+                                  onClick={() => setAutoConfigFor(g.id)}
+                                >
+                                  配齐 CLI
+                                </button>
+                              )}
+                            </span>
                             <button
                               type="button"
-                              className="truncate text-sm font-medium text-l1"
+                              aria-label={`编辑 ${row.name}`}
+                              title="编辑网关与模型参数"
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-l3 transition-colors hover:bg-hover hover:text-l1"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 openEdit(g);
                               }}
                             >
-                              {row.name}
+                              <ChevronRight
+                                aria-hidden="true"
+                                className="size-4 transition-transform group-hover:translate-x-0.5"
+                              />
                             </button>
-                            <span
-                              className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-micro ${
-                                health.tone === "ok"
-                                  ? "bg-ok text-ok-text"
-                                  : health.tone === "err"
-                                    ? "bg-err text-err-text"
-                                    : health.tone === "warn"
-                                      ? "bg-warn text-warn-text"
-                                      : "bg-inset text-l3"
-                              }`}
-                              title={[health.label, health.detail].filter(Boolean).join("；")}
-                            >
-                              <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
-                              <span>{busy ? "处理中…" : health.tone === "ok" ? "正常" : health.label}</span>
-                            </span>
                           </span>
-                          <span className="mt-0.5 block truncate font-mono text-micro text-l3" title={row.detail}>
-                            {hostText}
-                            <span className="mx-1 font-sans text-l4">·</span>
-                            <span className={health.tone === "warn" || health.tone === "err" ? "text-err-text" : "text-l2"}>
-                              {keyLabel}
-                            </span>
-                          </span>
-                        </span>
-
-                        {/* 第二列：已开通协议槽胶囊 + 模型数 */}
-                        <span className="hidden min-w-0 flex-1 flex-wrap items-center gap-1 @3xl:flex">
-                          {filledSlots.slice(0, 3).map((slotName) => (
-                            <span
-                              key={slotName}
-                              className="rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2"
-                            >
-                              {slotName}
-                            </span>
-                          ))}
-                          {filledSlots.length > 3 && (
-                            <span
-                              className="rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l3"
-                              title={filledSlots.join("、")}
-                            >
-                              +{filledSlots.length - 3}
-                            </span>
-                          )}
-                          <span className="ml-1 text-xs text-l3">
-                            {activeModelCount > 0 ? `${activeModelCount} 个模型` : "未拉目录"}
-                          </span>
-                        </span>
-
-                        {/* 第三列：已绑 CLI 图标簇与连接数 */}
-                        <span className="hidden w-28 shrink-0 items-center justify-end gap-1.5 @2xl:flex">
-                          {n > 0 ? (
-                            <>
-                              <span className="flex items-center -space-x-1">
-                                {distinctAgents.slice(0, 3).map((agId) => {
-                                  const agLabel = AGENTS.find((a) => a.id === agId)?.label ?? agId;
-                                  return (
-                                    <span key={agId} className="rounded-full bg-canvas p-0.5" title={agLabel}>
-                                      <AgentIcon agent={agId} label={agLabel} size={14} />
-                                    </span>
-                                  );
-                                })}
-                              </span>
-                              <span className="text-xs text-l2">{n} 连接</span>
-                            </>
-                          ) : (
-                            <span className="rounded-full bg-warn px-2 py-px text-micro text-warn-text">
-                              暂未绑 CLI
-                            </span>
-                          )}
-                        </span>
-
-                        {/* 第四列：近 30 天用量 */}
-                        <span className="hidden w-32 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
-                          {usage ? (
-                            <button
-                              type="button"
-                              className="hover:text-l1"
-                              title="去用量页看这个网关"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onJumpUsage?.(g.id);
-                              }}
-                            >
-                              {usage.replace(/^近 30 天 /, "")}
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </span>
-
-                        {/* 第五列：按状态给显性主操作 + 悬停辅助图标 */}
-                        <span className="ml-auto flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          {needsKeyFix ? (
-                            <button
-                              type="button"
-                              className={`${rowActionClass} text-err-text`}
-                              onClick={() => openEdit(g)}
-                            >
-                              去修密钥
-                            </button>
-                          ) : n === 0 ? (
-                            <button
-                              type="button"
-                              className={rowActionClass}
-                              title="基于这个网关快速为已安装的 CLI 创建连接"
-                              onClick={() =>
-                                activeModelCount > 0
-                                  ? setAutoConfigFor(g.id)
-                                  : onAddConnection
-                                    ? void goAddConnection(g.id)
-                                    : setAutoConfigFor(g.id)
-                              }
-                            >
-                              一键绑 CLI
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              className={`${ghostActionClass} ${hoverRevealClass}`}
-                              title="一键配置各 CLI：给每个装了的 CLI 各建一条连接"
-                              onClick={() => setAutoConfigFor(g.id)}
-                            >
-                              配齐 CLI
-                            </button>
-                          )}
-                          <span className={`flex items-center ${hoverRevealClass}`}>
-                            <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
-                            <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
-                            <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
-                          </span>
-                          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-l4" />
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               );
             })()}
           </div>

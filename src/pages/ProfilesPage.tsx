@@ -135,14 +135,13 @@ import {
   PaneSearch,
   SegTabs,
   Checkbox,
+  compactFieldClass,
   fieldClass,
   FoldMark,
   MenuSelect,
   ghostActionClass,
-  hoverRevealClass,
   primaryActionClass,
   rowActionClass,
-  searchFieldClass,
   secondaryActionClass,
   InlineNotice,
 } from "../components/PageFrame";
@@ -230,7 +229,7 @@ export function ProfileModal({
   // 「同时绑到」勾选的额外 Agent：保存时用同一份网关一次建多条绑定
   const [extraAgents, setExtraAgents] = useState<string[]>([]);
   const [bindMode, setBindMode] = useState<"new" | "existing">(
-    opening?.gateway ? "existing" : "new",
+    opening?.gateway || gateways.length > 0 ? "existing" : "new",
   );
   const [bindGatewayId, setBindGatewayId] = useState(opening?.gateway?.id ?? "");
   // 选中网关后收起列表，只留选中的那一行 +「更换」（2026-10-31 用户：选中的时候自动折叠起来）
@@ -922,11 +921,38 @@ export function ProfileModal({
         ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
         : null;
   const editGwHealth = editGateway ? gatewayHealth(editGateway) : null;
+  const editIsDefault = Boolean(initial && modalSettings?.defaultProfiles?.[initial.agent] === initial.id);
+  const editIsGlobal = Boolean(initial && modalSettings?.activeGlobalProfiles?.[initial.agent] === initial.id);
+  const extraEnvLineCount = form.extraEnvText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#")).length;
   return (
     <PagePanel
       hidden={hidden}
       title={initial ? "编辑连接" : "添加连接"}
-      subtitle={initial ? `${initial.name} · ${agentLabel}` : "选目标 CLI，复用网关钥匙或一键接入新密钥"}
+      subtitle={
+        initial ? (
+          <span className="inline-flex flex-wrap items-center gap-1.5">
+            <AgentIcon agent={initial.agent} label={agentLabel} size={14} />
+            <span className="font-medium text-l2">{initial.name}</span>
+            <span className="text-l4">·</span>
+            <span>{agentLabel}</span>
+            {editIsDefault && (
+              <span className="rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
+                默认
+              </span>
+            )}
+            {editIsGlobal && (
+              <span className="rounded-full bg-ok px-1.5 py-px text-micro text-ok-text">
+                ● 全局默认
+              </span>
+            )}
+          </span>
+        ) : (
+          "选目标 CLI，复用已有网关钥匙或一键填入新密钥"
+        )
+      }
       backLabel={backLabel}
       onBack={() => void guardedClose()}
       actions={
@@ -934,7 +960,7 @@ export function ProfileModal({
           <SegTabs
             items={[
               { id: "form", label: "连接设置" },
-              { id: "snippet", label: "配置与预览" },
+              { id: "snippet", label: "注入与全局预览" },
             ]}
             value={view}
             onChange={(id) => void switchView(id as "form" | "snippet")}
@@ -1020,11 +1046,12 @@ export function ProfileModal({
                 setGlobalReason={effectSetGlobalReason}
               />
             )}
-            <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border border-hairline ccode-well">
               {snippet && (
-                <div className="flex items-center gap-3">
-                  <p className="min-w-0 flex-1 truncate text-xs text-l3" title={snippet.file}>
-                    {snippet.format === "toml" ? "TOML" : "JSON"} · 对应 {snippet.file}
+                <div className="flex items-center gap-3 border-b border-hairline px-3.5 py-2">
+                  <p className="min-w-0 flex-1 truncate text-xs text-l2" title={snippet.file}>
+                    <span className="font-medium text-l1">{snippet.format === "toml" ? "TOML" : "JSON"}</span>
+                    <span className="text-l3"> · 对应 {snippet.file}</span>
                   </p>
                   {snippetFileTag(form.agent) && (
                     <button
@@ -1033,12 +1060,12 @@ export function ProfileModal({
                       title="打开真实的配置文件（里面是现在全局生效的配置，不一定是这条连接）；密钥显示为占位，保存前自动备份"
                       onClick={() => setRealFileOpen(true)}
                     >
-                      打开文件
+                      打开真实文件
                     </button>
                   )}
                 </div>
               )}
-              <div className="h-[min(56vh,620px)] overflow-hidden rounded-md border border-hairline">
+              <div className="h-[min(52vh,560px)] overflow-hidden">
                 <Suspense fallback={<p className="p-3 text-xs text-l3">◌ 正在打开编辑器…</p>}>
                   <MonacoField
                     value={snippetText}
@@ -1048,8 +1075,8 @@ export function ProfileModal({
                   />
                 </Suspense>
               </div>
-              {snippetError && <InlineNotice tone="err">{snippetError}</InlineNotice>}
-              <p className="text-micro leading-5 text-l3">
+              {snippetError && <div className="border-t border-hairline p-2.5"><InlineNotice tone="err">{snippetError}</InlineNotice></div>}
+              <p className="border-t border-hairline px-3.5 py-2 text-micro leading-5 text-l3">
                 这就是「设为全局」会写进这家配置文件的那几项；配置文件里放不下的连接设置在 mesa 小节。地址、密钥、请求头和温度、思考档等请求参数属于网关，这里只显示，要改去「网关库」。
                 这里只收这条连接的设置，别的 CLI 设置到连接页这家 Agent 的 ⋯「编辑配置文件」里改。切回连接设置或保存时会检查并写回表单。
               </p>
@@ -1080,13 +1107,19 @@ export function ProfileModal({
                 }}
                 className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   form.accountType === "api" && bindMode === "existing"
-                    ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] text-l1"
-                    : "border-hairline text-l2 hover:bg-hover hover:text-l1"
+                    ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_10%,var(--color-inset))] text-l1"
+                    : "border-hairline bg-inset/70 text-l2 hover:border-field hover:bg-hover hover:text-l1"
                 }`}
               >
                 <span className="flex w-full items-center justify-between gap-1.5">
                   <span className="text-xs font-medium text-l1">选用已有网关</span>
-                  <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l3">
+                  <span
+                    className={`rounded-full px-1.5 py-px text-micro tabular-nums ${
+                      form.accountType === "api" && bindMode === "existing" && gateways.length > 0
+                        ? "bg-cta-pill text-cta-pill-text"
+                        : "bg-canvas/70 text-l3"
+                    }`}
+                  >
                     {gateways.length > 0 ? `推荐 · ${gateways.length}` : "0"}
                   </span>
                 </span>
@@ -1104,8 +1137,8 @@ export function ProfileModal({
                 }}
                 className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${
                   form.accountType === "api" && bindMode === "new"
-                    ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] text-l1"
-                    : "border-hairline text-l2 hover:bg-hover hover:text-l1"
+                    ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_10%,var(--color-inset))] text-l1"
+                    : "border-hairline bg-inset/70 text-l2 hover:border-field hover:bg-hover hover:text-l1"
                 }`}
               >
                 <span className="text-xs font-medium text-l1">填入新 API 密钥</span>
@@ -1122,8 +1155,8 @@ export function ProfileModal({
                   }}
                   className={`flex flex-col items-start gap-1 rounded-lg border px-3 py-2.5 text-left transition-colors ${
                     form.accountType === "official"
-                      ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_8%,transparent)] text-l1"
-                      : "border-hairline text-l2 hover:bg-hover hover:text-l1"
+                      ? "border-cta bg-[color-mix(in_oklab,var(--color-cta)_10%,var(--color-inset))] text-l1"
+                      : "border-hairline bg-inset/70 text-l2 hover:border-field hover:bg-hover hover:text-l1"
                   }`}
                 >
                   <span className="text-xs font-medium text-l1">官方账号</span>
@@ -1131,6 +1164,17 @@ export function ProfileModal({
                 </button>
               )}
             </div>
+            {form.accountType === "official" && (
+              <div className="mt-3 flex items-center gap-2.5 rounded-lg border border-hairline ccode-well px-3.5 py-2.5 text-xs">
+                <VendorIcon vendor={vendorForOfficialAgent(form.agent)} name={agentLabel} />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium text-l1">使用 {agentLabel} 官方登录态</span>
+                  <span className="mt-0.5 block text-micro text-l3">
+                    启动时不注入第三方地址与密钥，直接走 CLI 自身账号认证；也可一键把外部终端切回官方账号。
+                  </span>
+                </span>
+              </div>
+            )}
           </div>
         )}
 
@@ -1295,7 +1339,7 @@ export function ProfileModal({
                             )}
                           </span>
                           <span className="block truncate text-micro text-l3" title={row.detail}>
-                            {gw ? gatewayHostLine(gw, row.detail) : row.detail}
+                            {gw ? gatewayHostLine(gw, "") : row.detail}
                             {gw?.keyHint ? ` · 密钥 ${gw.keyHint}` : gw?.noAuth ? " · 本地免密" : ""}
                             {gw ? ` · ${activeModelsCount} 个模型` : ""}
                           </span>
@@ -1315,88 +1359,92 @@ export function ProfileModal({
         )}
 
         {showGatewayFields && (
-          <div className="mb-4 rounded-lg border border-hairline ccode-well p-3">
+          <div className="mb-4 rounded-lg border border-hairline ccode-well p-3.5">
         {(() => {
           const agentPresets = presetsForAgent(form.agent);
-          if (initial) return null;
-          if (agentPresets.length === 0) {
-            const reason = NO_PRESET_REASON[form.agent];
-            return reason ? (
-              <p className="mb-3 text-xs text-l3">{reason}</p>
-            ) : null;
-          }
+          const hasMultiProtocol = Boolean(
+            AGENT_PROTOCOLS[form.agent] && AGENT_PROTOCOLS[form.agent].options.length > 1,
+          );
+          const showPresets = !initial && agentPresets.length > 0;
+          const noPresetReason = !initial && agentPresets.length === 0 ? NO_PRESET_REASON[form.agent] : undefined;
           return (
-          <label className="mb-3 block text-sm">
-            <span className="mb-1 block text-xs text-l3">服务商预设</span>
-            <MenuSelect
-              aria-label="服务商"
-              value={presetName}
-              placeholder={form.baseUrl.trim() ? "自定义地址（也可以再选一家服务商）" : "选一家服务商，自动填地址和推荐模型…"}
-              options={agentPresets.map((p) => ({
-                value: p.name,
-                short: p.name,
-                label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
-                  p.confidence === "official"
-                    ? " · 官方"
-                    : p.confidence === "verified-compatible"
-                      ? " · 已验证兼容"
-                      : p.confidence === "address-only"
-                        ? " · 仅填地址"
-                        : ""
-                }${p.note ? `（${p.note}）` : ""}`,
-              }))}
-              onChange={(name) => {
-                const preset = agentPresets.find((p) => p.name === name);
-                if (preset) {
-                  setAppliedPreset(preset.provider);
-                  setPresetName(preset.name);
-                  setAgentSwitchNote(null);
-                  setForm({
-                    ...form,
-                    baseUrl: preset.baseUrl,
-                    protocol: preset.protocol ?? form.protocol,
-                    // 预设推荐模型直接预填（精选清单，非整份目录）；「验证并获取」后与实际目录求交
-                    models: preset.provider.models ? [...preset.provider.models] : [],
-                    noAuth: preset.provider.noAuth ?? false,
-                  });
-                  setTestResult(null);
-                  setFetchError(null);
-                  setFetchedModels(null);
-                  if (preset.provider.models?.length) setPickerOpen(false);
-                }
-              }}
-            />
-          </label>
+            <>
+              {noPresetReason && (
+                <p className="mb-3 text-xs text-l3">{noPresetReason}</p>
+              )}
+              {agentSwitchNote && <p className="mb-2 text-xs text-warn-text">{agentSwitchNote}</p>}
+              {hasMultiProtocol && (
+                <label className="mb-3 block text-sm">
+                  <span className="mb-1 block text-xs text-l3">接口协议（地址按这个协议填）</span>
+                  <MenuSelect
+                    aria-label="接口协议"
+                    value={form.protocol ?? AGENT_PROTOCOLS[form.agent].default}
+                    options={AGENT_PROTOCOLS[form.agent].options.map((p) => ({ value: p, label: protocolLabel(p) }))}
+                    onChange={(protocol) => setForm({ ...form, protocol })}
+                  />
+                </label>
+              )}
+              <div className={showPresets && !hasMultiProtocol ? "mb-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]" : "space-y-3 mb-3"}>
+                {showPresets && (
+                  <label className="block text-sm">
+                    <span className="mb-1 block text-xs text-l3">服务商预设</span>
+                    <MenuSelect
+                      aria-label="服务商"
+                      value={presetName}
+                      placeholder={form.baseUrl.trim() ? "自定义地址（也可重选）" : "选服务商自动填地址…"}
+                      options={agentPresets.map((p) => ({
+                        value: p.name,
+                        short: p.name,
+                        label: `${p.name}${p.provider.models?.length ? " · 含推荐模型" : ""}${
+                          p.confidence === "official"
+                            ? " · 官方"
+                            : p.confidence === "verified-compatible"
+                              ? " · 已验证兼容"
+                              : p.confidence === "address-only"
+                                ? " · 仅填地址"
+                                : ""
+                        }${p.note ? `（${p.note}）` : ""}`,
+                      }))}
+                      onChange={(name) => {
+                        const preset = agentPresets.find((p) => p.name === name);
+                        if (preset) {
+                          setAppliedPreset(preset.provider);
+                          setPresetName(preset.name);
+                          setAgentSwitchNote(null);
+                          setForm({
+                            ...form,
+                            baseUrl: preset.baseUrl,
+                            protocol: preset.protocol ?? form.protocol,
+                            models: preset.provider.models ? [...preset.provider.models] : [],
+                            noAuth: preset.provider.noAuth ?? false,
+                          });
+                          setTestResult(null);
+                          setFetchError(null);
+                          setFetchedModels(null);
+                          if (preset.provider.models?.length) setPickerOpen(false);
+                        }
+                      }}
+                    />
+                  </label>
+                )}
+                <label className="block text-sm">
+                  <span className="mb-1 block text-xs text-l3">地址</span>
+                  <input
+                    className={fieldClass}
+                    placeholder="https://api.example.com"
+                    value={form.baseUrl}
+                    onChange={(e) => {
+                      setForm({ ...form, baseUrl: e.target.value });
+                      setAgentSwitchNote(null);
+                      if (appliedPreset) setAppliedPreset(null);
+                      setPresetName("");
+                    }}
+                  />
+                </label>
+              </div>
+            </>
           );
         })()}
-        {agentSwitchNote && <p className="mb-2 text-xs text-warn-text">{agentSwitchNote}</p>}
-        {/* Qwen / Kimi：协议决定地址填进网关的哪个槽，新建时放在地址上面（原先藏在高级设置里） */}
-        {AGENT_PROTOCOLS[form.agent] && AGENT_PROTOCOLS[form.agent].options.length > 1 && (
-          <label className="mb-3 block text-sm">
-            <span className="mb-1 block text-xs text-l3">接口协议（地址按这个协议填）</span>
-            <MenuSelect
-              aria-label="接口协议"
-              value={form.protocol ?? AGENT_PROTOCOLS[form.agent].default}
-              options={AGENT_PROTOCOLS[form.agent].options.map((p) => ({ value: p, label: protocolLabel(p) }))}
-              onChange={(protocol) => setForm({ ...form, protocol })}
-            />
-          </label>
-        )}
-        <label className="mb-3 block text-sm">
-          <span className="mb-1 block text-xs text-l3">地址</span>
-          <input
-            className={fieldClass}
-            placeholder="https://api.example.com"
-            value={form.baseUrl}
-            onChange={(e) => {
-              setForm({ ...form, baseUrl: e.target.value });
-              setAgentSwitchNote(null);
-              // 手改地址即脱离预设推荐语境，避免「验证并获取」再按旧预设改写名单
-              if (appliedPreset) setAppliedPreset(null);
-              setPresetName("");
-            }}
-          />
-        </label>
         {(form.agent === "claude-code" || form.protocol === "anthropic") &&
           form.baseUrl.trim().replace(/\/+$/, "").endsWith("/v1") && (
           <p className="-mt-2 mb-3 text-xs text-warn-text">
@@ -1475,141 +1523,147 @@ export function ProfileModal({
               </p>
             );
           })()}
-          <div className="rounded-lg border border-hairline p-2.5">
-            {form.accountType === "api" && !form.models.some((m) => m.trim()) && pickerModels.length > 0 && (
-              <p className="mb-2 text-xs text-warn-text">
-                还没选模型：在下方目录里点选，不选就用 CLI 自己的默认模型（多半不在这个网关上）。
-              </p>
-            )}
-            {/* 上半区：已选有序模型槽（#1 默认启动） */}
-            {(() => {
-              const max = MODEL_SWITCH[form.agent]?.max ?? null;
-              const filled = form.models.filter((m) => m.trim()).length;
-              const slots = [...form.models];
-              const manualSlot = pickerModels.length === 0 || manualSlotOpen;
-              if (manualSlot && (slots.length === 0 || slots[slots.length - 1].trim() !== ""))
-                slots.push("");
-              const firstFilled = slots.findIndex((m) => m.trim());
-              const claudeMapped = form.agent === "claude-code" && form.accountType === "api";
-              if (slots.length === 0) return null;
-              return (
-                <div className="space-y-0.5">
-                  {max != null && filled > max && (
-                    <div className="mb-1 flex items-center gap-2 text-xs text-warn-text">
-                      <span>选择器只显示前 {max} 个，另有 {filled - max} 个不会进 CLI</span>
+          <div className="overflow-hidden rounded-lg border border-hairline ccode-well">
+            <div className="p-2.5">
+              {form.accountType === "api" && !form.models.some((m) => m.trim()) && pickerModels.length > 0 && (
+                <p className="mb-2 px-1 text-xs text-warn-text">
+                  还没选模型：在下方目录里点选，不选就用 CLI 自己的默认模型（多半不在这个网关上）。
+                </p>
+              )}
+              {/* 上半区：已选有序模型槽（#1 默认启动） */}
+              {(() => {
+                const max = MODEL_SWITCH[form.agent]?.max ?? null;
+                const filled = form.models.filter((m) => m.trim()).length;
+                const slots = [...form.models];
+                const manualSlot = pickerModels.length === 0 || manualSlotOpen;
+                if (manualSlot && (slots.length === 0 || slots[slots.length - 1].trim() !== ""))
+                  slots.push("");
+                const firstFilled = slots.findIndex((m) => m.trim());
+                const claudeMapped = form.agent === "claude-code" && form.accountType === "api";
+                if (slots.length === 0) return null;
+                return (
+                  <div className="space-y-1.5">
+                    {max != null && filled > max && (
+                      <div className="mb-1 flex items-center gap-2 px-1 text-xs text-warn-text">
+                        <span>选择器只显示前 {max} 个，另有 {filled - max} 个不会进 CLI</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              models: form.models
+                                .map((m) => m.trim())
+                                .filter(Boolean)
+                                .slice(0, max),
+                            })
+                          }
+                          className="text-l3 hover:text-l1"
+                        >
+                          只保留前 {max} 个
+                        </button>
+                      </div>
+                    )}
+                    {slots.map((m, i) => {
+                      const isTrailingEmpty = !m.trim() && i === slots.length - 1;
+                      const isPrimary = i === firstFilled && !claudeMapped && Boolean(m.trim());
+                      return (
+                        <div
+                          key={i}
+                          title={(() => {
+                            const c = capabilities.find(
+                              (item) => item.model === m.trim(),
+                            );
+                            if (!m.trim() || !c) return undefined;
+                            const flags = [
+                              c.thinking ? "思考" : null,
+                              c.tools === true
+                                ? "工具"
+                                : c.tools === false
+                                  ? "无工具"
+                                  : "工具未知",
+                              c.vision === true
+                                ? "图像"
+                                : c.vision === false
+                                  ? "无图像"
+                                  : "图像未知",
+                            ].filter(Boolean);
+                            const ctx = contextLabel(c.context);
+                            return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
+                          })()}
+                          className={`group flex items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors ${
+                            isTrailingEmpty
+                              ? "border-dashed border-hairline bg-canvas/40 hover:border-field focus-within:border-solid focus-within:border-field focus-within:bg-canvas"
+                              : isPrimary
+                                ? "border-[color-mix(in_oklab,var(--color-cta)_32%,var(--color-hairline))] bg-canvas focus-within:border-field"
+                                : "border-hairline bg-canvas hover:border-field focus-within:border-field"
+                          }`}
+                        >
+                          <span className="w-5 shrink-0 text-right font-mono text-micro tabular-nums text-l4">
+                            {isTrailingEmpty ? <Plus aria-hidden="true" className="ml-auto size-3" /> : `#${i + 1}`}
+                          </span>
+                          <input
+                            aria-label={`第 ${i + 1} 个模型`}
+                            className={`min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs outline-none placeholder:font-sans placeholder:text-l3 ${
+                              isPrimary ? "font-medium text-l1" : "text-l2"
+                            }`}
+                            placeholder={isTrailingEmpty && filled > 0 ? "再手填一个模型 ID" : `输入或从下方挑选${modelPlaceholder}`}
+                            autoFocus={manualSlotOpen && isTrailingEmpty}
+                            value={m}
+                            onChange={(e) => setModelSlot(i, e.target.value)}
+                          />
+                          {nonChatReason(m.trim()) && (
+                            <span
+                              className="shrink-0 text-micro text-caution-text"
+                              title={nonChatReason(m.trim()) ?? undefined}
+                            >
+                              不能对话
+                            </span>
+                          )}
+                          {claudeMapped ? null : isPrimary ? (
+                            <span className="shrink-0 rounded-full bg-cta-pill px-2 py-px text-micro text-cta-pill-text">
+                              默认启动
+                            </span>
+                          ) : (
+                            m.trim() && (
+                              <button
+                                type="button"
+                                onClick={() => setDefaultModel(m)}
+                                className="shrink-0 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                              >
+                                设为默认
+                              </button>
+                            )
+                          )}
+                          <button
+                            type="button"
+                            aria-label={m.trim() ? `移除 ${m}` : "清空此行"}
+                            onClick={() => removeModelSlot(i)}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-l4 transition-colors hover:bg-hover hover:text-err-text"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                    {max != null && filled >= max && manualSlot && (
                       <button
                         type="button"
                         onClick={() =>
-                          setForm({
-                            ...form,
-                            models: form.models
-                              .map((m) => m.trim())
-                              .filter(Boolean)
-                              .slice(0, max),
-                          })
+                          setForm({ ...form, models: [...form.models, ""] })
                         }
-                        className="text-l3 hover:text-l1"
+                        className="px-2 py-1 text-xs text-l3 hover:text-l1"
                       >
-                        只保留前 {max} 个
+                        ＋ 仍要添加（选择器只显示前 {max} 个）
                       </button>
-                    </div>
-                  )}
-                  {slots.map((m, i) => (
-                    <div
-                      key={i}
-                      title={(() => {
-                        const c = capabilities.find(
-                          (item) => item.model === m.trim(),
-                        );
-                        if (!m.trim() || !c) return undefined;
-                        const flags = [
-                          c.thinking ? "思考" : null,
-                          c.tools === true
-                            ? "工具"
-                            : c.tools === false
-                              ? "无工具"
-                              : "工具未知",
-                          c.vision === true
-                            ? "图像"
-                            : c.vision === false
-                              ? "无图像"
-                              : "图像未知",
-                        ].filter(Boolean);
-                        const ctx = contextLabel(c.context);
-                        return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
-                      })()}
-                      className={`group flex items-center gap-2 rounded-md px-2 focus-within:bg-hover ${
-                        !m.trim() && i === slots.length - 1
-                          ? "mt-1 border border-dashed border-hairline py-1 hover:border-field focus-within:border-solid focus-within:border-field"
-                          : i === firstFilled && !claudeMapped
-                            ? "bg-[color-mix(in_oklab,var(--color-cta)_6%,transparent)] py-1 hover:bg-hover"
-                            : "py-0.5 hover:bg-hover"
-                      }`}
-                    >
-                      <span className="w-4 shrink-0 text-right text-micro tabular-nums text-l3">
-                        {!m.trim() && i === slots.length - 1 ? <Plus aria-hidden="true" className="ml-auto size-3" /> : i + 1}
-                      </span>
-                      <input
-                        aria-label={`第 ${i + 1} 个模型`}
-                        className={`min-w-0 flex-1 bg-transparent py-0.5 font-mono text-xs outline-none placeholder:font-sans placeholder:text-l3 ${
-                          i === firstFilled && !claudeMapped ? "font-medium text-l1" : "text-l2"
-                        }`}
-                        placeholder={!m.trim() && i === slots.length - 1 && filled > 0 ? "再手填一个模型 ID" : `输入或从下方挑选${modelPlaceholder}`}
-                        autoFocus={manualSlotOpen && !m.trim() && i === slots.length - 1}
-                        value={m}
-                        onChange={(e) => setModelSlot(i, e.target.value)}
-                      />
-                      {nonChatReason(m.trim()) && (
-                        <span
-                          className="shrink-0 text-micro text-caution-text"
-                          title={nonChatReason(m.trim()) ?? undefined}
-                        >
-                          不能对话
-                        </span>
-                      )}
-                      {claudeMapped ? null : i === firstFilled ? (
-                        <span className="shrink-0 rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text">
-                          默认启动
-                        </span>
-                      ) : (
-                        m.trim() && (
-                          <button
-                            type="button"
-                            onClick={() => setDefaultModel(m)}
-                            className={`shrink-0 text-micro text-l3 hover:text-l1 ${hoverRevealClass}`}
-                          >
-                            设为默认
-                          </button>
-                        )
-                      )}
-                      <button
-                        type="button"
-                        aria-label={m.trim() ? `移除 ${m}` : "清空此行"}
-                        onClick={() => removeModelSlot(i)}
-                        className={`flex h-6 w-6 shrink-0 items-center justify-center text-l4 hover:text-err-text ${hoverRevealClass}`}
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {max != null && filled >= max && manualSlot && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setForm({ ...form, models: [...form.models, ""] })
-                      }
-                      className="px-2 py-1 text-xs text-l3 hover:text-l1"
-                    >
-                      ＋ 仍要添加（选择器只显示前 {max} 个）
-                    </button>
-                  )}
-                </div>
-              );
-            })()}
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
 
             {/* 下半区：目录增删工具栏与厂商折叠抽屉（与上方有序模型槽合成一体工作台） */}
             {showGatewayFields && fetchedModels && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-hairline pt-2 empty:hidden">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline px-3 py-2 empty:hidden">
                 {fetchedModels.length > 0 && (
                   <button
                     type="button"
@@ -1620,12 +1674,12 @@ export function ProfileModal({
                       }
                       setPickerOpen(!pickerOpen);
                     }}
-                    className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-l2 transition-colors hover:text-l1"
                   >
-                    <span className="truncate text-l3">
-                      从目录 {pickerModels.length} 个可对话模型中增删…
-                    </span>
                     <FoldMark open={pickerOpen} />
+                    <span className="truncate">
+                      从目录 <span className="font-medium text-l1">{pickerModels.length}</span> 个可对话模型中增删
+                    </span>
                   </button>
                 )}
                 {fetchedModels.length > 0 && (
@@ -1641,7 +1695,7 @@ export function ProfileModal({
                       </span>
                     )}
                     {fetchedCapabilityCount > 0 && (
-                      <span className="shrink-0 text-xs text-l3">
+                      <span className="shrink-0 text-micro text-l3">
                         {catalogCapabilityNote(
                           fetchedModels.length,
                           fetchedCapabilityCount,
@@ -1656,8 +1710,8 @@ export function ProfileModal({
               </div>
             )}
             {!showGatewayFields && catalogGatewayId && form.accountType === "api" && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-hairline pt-2">
-                {gatewayCatalog && gatewayCatalog.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline px-3 py-2">
+                {gatewayCatalog && gatewayCatalog.length > 0 ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -1667,13 +1721,17 @@ export function ProfileModal({
                       }
                       setPickerOpen(!pickerOpen);
                     }}
-                    className={`${fieldClass} flex min-w-0 flex-1 items-center justify-between gap-2 text-left`}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-l2 transition-colors hover:text-l1"
                   >
-                    <span className="truncate text-l3">
-                      从网关目录 {pickerModels.length} 个可对话模型中增删…
-                    </span>
                     <FoldMark open={pickerOpen} />
+                    <span className="truncate">
+                      从网关目录 <span className="font-medium text-l1">{pickerModels.length}</span> 个可对话模型中增删
+                    </span>
                   </button>
+                ) : (
+                  <span className="min-w-0 flex-1 text-micro text-l3">
+                    还没有目录，点右侧「获取目录」拉取，或在上方直接手填。
+                  </span>
                 )}
                 <button
                   type="button"
@@ -1688,11 +1746,6 @@ export function ProfileModal({
                       ? "刷新目录"
                       : "获取目录"}
                 </button>
-                {(!gatewayCatalog || gatewayCatalog.length === 0) && (
-                  <span className="text-micro text-l3">
-                    还没有目录，点「获取目录」拉取，或在上方直接手填。
-                  </span>
-                )}
                 {fetchError && (
                   <InlineNotice tone="err" className="basis-full">{fetchError}</InlineNotice>
                 )}
@@ -1739,11 +1792,11 @@ export function ProfileModal({
                 ...groups.map((g) => ({ vendor: g.vendor, n: g.models.length })),
               ];
               return (
-                <div className="mt-2 rounded-md ccode-well p-1">
-                  <div className="flex items-center gap-2 p-1">
+                <div className="space-y-2 border-t border-hairline bg-canvas/35 px-3 py-2.5">
+                  <div className="flex items-center gap-2">
                     <input
                       autoFocus
-                      className={`${searchFieldClass} min-w-0 flex-1`}
+                      className={`${compactFieldClass} min-w-0 flex-1`}
                       placeholder="筛选模型名…"
                       value={pickerFilter}
                       onChange={(e) => setPickerFilter(e.target.value)}
@@ -1751,7 +1804,7 @@ export function ProfileModal({
                     <span className="shrink-0 text-micro text-l3">已选 {form.models.filter((m) => m.trim()).length} 个</span>
                   </div>
                   {!searching && chips.length > 2 && (
-                    <div className="flex max-h-[3.75rem] flex-wrap gap-1 overflow-y-auto px-1 pb-1" role="radiogroup" aria-label="按厂商看">
+                    <div className="flex max-h-[3.75rem] flex-wrap gap-1 overflow-y-auto pb-0.5" role="radiogroup" aria-label="按厂商看">
                       {chips.map((c) => (
                         <button
                           key={c.vendor}
@@ -1759,7 +1812,7 @@ export function ProfileModal({
                           role="radio"
                           aria-checked={active === c.vendor}
                           onClick={() => setPickerVendor(c.vendor)}
-                          className={`flex h-6 shrink-0 items-center gap-1 rounded-full px-2 ${
+                          className={`flex h-6 shrink-0 items-center gap-1 rounded-full px-2.5 transition-colors ${
                             active === c.vendor ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
                           }`}
                         >
@@ -1770,13 +1823,13 @@ export function ProfileModal({
                     </div>
                   )}
                   {pickerHidden.length > 0 && (
-                    <p className="px-2 pb-1 text-micro text-l3" title={pickerHidden.join("\n")}>
+                    <p className="text-micro text-l3" title={pickerHidden.join("\n")}>
                       已隐藏 {pickerHidden.length} 个出图、向量等不能对话的模型
                     </p>
                   )}
-                  <div className="max-h-48 overflow-y-auto">
+                  <div className="grid max-h-48 gap-1 overflow-y-auto sm:grid-cols-2">
                     {list.length === 0 ? (
-                      <p className="px-2 py-1 text-xs text-l3">没有匹配的模型，换个词或清除筛选。</p>
+                      <p className="col-span-full py-1 text-xs text-l3">没有匹配的模型，换个词或清除筛选。</p>
                     ) : (
                       list.map((m) => {
                         const added = form.models.some((x) => x.trim() === m);
@@ -1787,7 +1840,11 @@ export function ProfileModal({
                             aria-pressed={added}
                             title={added ? "再点一下从名单去掉" : "点一下加进名单"}
                             onClick={() => toggleModelInList(m)}
-                            className={`flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1 text-left font-mono text-micro hover:bg-hover ${added ? "text-l1" : "text-l2"}`}
+                            className={`flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left font-mono text-micro transition-colors ${
+                              added
+                                ? "bg-[color-mix(in_oklab,var(--color-cta)_12%,transparent)] text-l1 hover:bg-[color-mix(in_oklab,var(--color-cta)_16%,transparent)]"
+                                : "text-l2 hover:bg-hover hover:text-l1"
+                            }`}
                           >
                             <span className="truncate">{m}</span>
                             {added && <Check aria-hidden="true" className="size-3.5 shrink-0 text-cta" />}
@@ -1830,9 +1887,9 @@ export function ProfileModal({
           const mainLabel = `跟主模型（${listed[0]}）`;
           return (
             <div className="mb-4">
-              <span className="mb-1 block text-xs text-l3">模型分工</span>
-              <div className="rounded-md border border-hairline">
-                <div className="space-y-2.5 px-3 py-2.5">
+              <span className="mb-1.5 block text-xs text-l3">模型分工</span>
+              <div className="rounded-lg border border-hairline ccode-well">
+                <div className="space-y-2.5 px-3.5 py-3">
                   {rolesFor(form.agent).map((r) => (
                     <div key={r.key} className="grid grid-cols-[6.5rem_1fr] items-start gap-x-3">
                       <span className="pt-1.5 text-xs text-l2">{r.label}</span>
@@ -1903,23 +1960,35 @@ export function ProfileModal({
             </div>
           );
         })()}
-        <label className="mb-3 block text-sm">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="text-xs text-l3">连接名称</span>
-            {!initial && !nameTouched && autoName && (
-              <span className="text-micro text-l3">已按网关和模型自动起名，可直接改</span>
-            )}
-          </div>
-          <input
-            className={fieldClass}
-            placeholder={initial ? "这条连接叫什么" : "选好网关和模型后自动起，也可以自己改"}
-            value={initial || nameTouched ? form.name : autoName}
-            onChange={(e) => {
-              setNameTouched(true);
-              setForm({ ...form, name: e.target.value });
-            }}
-          />
-        </label>
+        <div className={!initial && !sameNameTaken(effectiveName) ? "mb-4 grid gap-3 sm:grid-cols-[minmax(0,1.25fr)_auto] sm:items-end" : "mb-3"}>
+          <label className="block text-sm">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs text-l3">连接名称</span>
+              {!initial && !nameTouched && autoName && (
+                <span className="text-micro text-l3">已自动起名，可直接改</span>
+              )}
+            </div>
+            <input
+              className={fieldClass}
+              placeholder={initial ? "这条连接叫什么" : "选好网关和模型后自动起，也可以自己改"}
+              value={initial || nameTouched ? form.name : autoName}
+              onChange={(e) => {
+                setNameTouched(true);
+                setForm({ ...form, name: e.target.value });
+              }}
+            />
+          </label>
+          {!initial && !sameNameTaken(effectiveName) && (
+            <div className="flex h-8 items-center">
+              <Checkbox
+                className="text-xs text-l2"
+                checked={makeDefaultOnCreate}
+                onChange={setMakeDefaultOnCreate}
+                label={`设为 ${agentLabel} 默认连接`}
+              />
+            </div>
+          )}
+        </div>
         {/* 同名提示带一键改名（原先只给一句建议，要自己照着敲）；放在 label 外，按钮不被当成输入框的标签 */}
         {sameNameTaken(effectiveName) && (() => {
           const first = form.models.find((m) => m.trim())?.trim();
@@ -1927,7 +1996,7 @@ export function ProfileModal({
           const usable = suggestion && !sameNameTaken(suggestion) ? suggestion : null;
           return (
             // 提示一行、改名按钮另起一行做成正经按钮（原先跟在黄字后面像普通文字，看不出能点）
-            <div className="-mt-2 mb-3 space-y-1.5">
+            <div className="-mt-1 mb-3 space-y-1.5">
               <p className="text-xs text-warn-text">这个 Agent 下已有同名连接，启动栏里会分不清{usable ? "。" : "，建议加上模型或用途。"}</p>
               {usable && (
                 <button
@@ -1944,24 +2013,29 @@ export function ProfileModal({
             </div>
           );
         })()}
-        {!initial && (
+        {!initial && sameNameTaken(effectiveName) && (
           <Checkbox
             className="mb-4 text-xs text-l2"
             checked={makeDefaultOnCreate}
             onChange={setMakeDefaultOnCreate}
-            label={`设为 ${agentLabel} 的默认连接（Mesa 启动栏自动预选）`}
+            label={`设为 ${agentLabel} 默认连接（Mesa 启动栏自动预选）`}
           />
         )}
         <details
-          className="mb-2 border-t border-hairline pt-3"
+          className="mb-2 overflow-hidden rounded-lg border border-hairline ccode-well"
           onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
         >
           {/* 折叠指示统一 FoldMark（设计系统禁手写 ▸/▾；原生 summary 三角也算） */}
-          <summary className="flex cursor-pointer list-none select-none items-center gap-1 text-xs font-medium text-l2 [&::-webkit-details-marker]:hidden">
-            <FoldMark open={advancedOpen} />
-            高级设置
+          <summary className="flex cursor-pointer list-none select-none items-center justify-between gap-2 px-3.5 py-2.5 text-xs font-medium text-l1 transition-colors hover:bg-hover/60 [&::-webkit-details-marker]:hidden">
+            <span className="flex items-center gap-1.5">
+              <FoldMark open={advancedOpen} />
+              <span>高级设置</span>
+            </span>
+            <span className="truncate text-micro font-normal text-l3">
+              {extraEnvLineCount > 0 ? `已设 ${extraEnvLineCount} 项环境变量` : "附加环境变量等"}
+            </span>
           </summary>
-          <div className="mt-3">
+          <div className="border-t border-hairline px-3.5 py-3">
             {(showGatewayFields || (form.accountType === "api" && !(initial && !showGatewayFields))) && (
               <p className="mb-2 text-micro font-medium text-l2">跟着网关走<span className="ml-1.5 font-normal text-l3">用这个网关的其他连接也一样</span></p>
             )}
@@ -1973,7 +2047,7 @@ export function ProfileModal({
                 label="本地端点无密钥"
               />
             )}
-            {(form.accountType === "api" || !initial) && (
+            {(showGatewayFields || (form.accountType === "api" && !(initial && !showGatewayFields))) && (
               <p className="mb-2 mt-3 border-t border-hairline pt-3 text-micro font-medium text-l2">只对这条连接</p>
             )}
             {AGENT_PROTOCOLS[form.agent] && !showGatewayFields && (
@@ -2209,7 +2283,7 @@ const displayHost = endpointHost;
 /** 连接行网格（2026-10-29 起）：窄 = 图标 | 名称 / 端点 · 模型 / 说明 | 状态 | 操作；
  *  容器宽 ≥60rem = 图标 | 名称 / 说明 | 端点 · 模型 | 状态 | 操作。出图模型行共用，上下对齐、不出横向滚动 */
 export const PROFILE_ROW_GRID =
-  "grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto_auto] content-center items-center gap-x-3 px-3 py-2.5 text-sm @min-[60rem]/rows:grid-cols-[auto_minmax(0,18rem)_minmax(0,1fr)_auto_auto] @min-[60rem]/rows:gap-x-4";
+  "grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto_auto] content-center items-center gap-x-3 px-3 py-2.5 text-sm @min-[60rem]/rows:grid-cols-[auto_minmax(12rem,14.5rem)_minmax(0,1fr)_auto_auto] @min-[60rem]/rows:gap-x-4";
 
 /** 状态列配色：纯状态 = 中性字 + 语义色小圆点；例外（缺/失败）字也着色，扫一眼就能挑出来 */
 const STATUS_TONE: Record<ProfileStatusTone, { text: string; dot: string | null }> = {
@@ -4160,11 +4234,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     }
   }
 
-  const [gatewayFilter, setGatewayFilter] = useState<string | null>(null);
   const [uninstalledNavOpen, setUninstalledNavOpen] = useState(false);
-  const activeGwFilter =
-    gatewayFilter && gateways.some((g) => g.id === gatewayFilter) ? gatewayFilter : null;
-  const filteredGwObj = activeGwFilter ? gateways.find((g) => g.id === activeGwFilter) : undefined;
   const gwIssueCount = gateways.filter((g) => {
     const t = gatewayHealth(g).tone;
     return t === "err" || t === "warn";
@@ -4172,15 +4242,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
 
   const q = search.trim().toLowerCase();
   const matchProfile = (p: Profile) =>
-    (!activeGwFilter || p.gatewayId === activeGwFilter) &&
-    (!q || [p.name, p.baseUrl ?? "", ...p.models].join("\n").toLowerCase().includes(q));
+    !q || [p.name, p.baseUrl ?? "", ...p.models].join("\n").toLowerCase().includes(q);
   const orderedAgents = orderAgentIds(
     AGENTS.map((a) => a.id),
     groupOrder,
   ).map((id) => AGENTS.find((a) => a.id === id)!);
-  // 实际画出来的组（搜索或网关筛选时没命中的组不画）：拖动排序只在这些组之间挪
+  // 实际画出来的组（搜索时没命中的组不画）：拖动排序只在这些组之间挪
   const shownAgents = orderedAgents.filter(
-    (a) => (!q && !activeGwFilter) || profiles.some((p) => p.agent === a.id && matchProfile(p)),
+    (a) => !q || profiles.some((p) => p.agent === a.id && matchProfile(p)),
   );
   const shownIds: string[] = shownAgents.map((a) => a.id);
   // 右边实际看的：存下的选中项还在就用它；搜索把它筛掉了 / 第一次打开时，落到第一个有连接的 Agent
@@ -4191,21 +4260,20 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         shownIds[0] ??
         "all");
   // 未安装且 0 连接的 CLI 默认折叠进底部「未安装 CLI」，不抢主视野
-  const foldedUninstalledAgents =
-    !q && !activeGwFilter
-      ? shownAgents.filter(
-          (a) =>
-            !agents.find((x) => x.id === a.id)?.binaryPath &&
-            !profiles.some((p) => p.agent === a.id) &&
-            activePane !== a.id,
-        )
-      : [];
+  const foldedUninstalledAgents = !q
+    ? shownAgents.filter(
+        (a) =>
+          !agents.find((x) => x.id === a.id)?.binaryPath &&
+          !profiles.some((p) => p.agent === a.id) &&
+          activePane !== a.id,
+      )
+    : [];
   const foldedUninstalledIds = new Set(foldedUninstalledAgents.map((a) => a.id));
   const primaryNavAgents = shownAgents.filter((a) => !foldedUninstalledIds.has(a.id));
   const primaryNavIds = primaryNavAgents.map((a) => a.id);
   const paneAgents =
     activePane === "all"
-      ? !q && !activeGwFilter && !uninstalledNavOpen
+      ? !q && !uninstalledNavOpen
         ? primaryNavAgents
         : shownAgents
       : shownAgents.filter((a) => a.id === activePane);
@@ -4519,11 +4587,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 icon={<LayoutList size={15} strokeWidth={1.8} aria-hidden="true" />}
                 label="全部"
                 count={<span className="tabular-nums">{profiles.filter(matchProfile).length}</span>}
-                selected={activePane === "all" && !activeGwFilter}
-                onClick={() => {
-                  if (activeGwFilter) setGatewayFilter(null);
-                  selectPane("all");
-                }}
+                selected={activePane === "all"}
+                onClick={() => selectPane("all")}
               />
             </div>
             <PaneNavGroup label="Agent" />
@@ -4670,44 +4735,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 )}
               </div>
             )}
-            {gateways.length > 0 && (
-              <>
-                <PaneNavGroup label="按网关筛选" />
-                <div className="flex flex-col gap-0.5">
-                  {gateways.map((gw) => {
-                    const gwCount = profiles.filter((p) => p.gatewayId === gw.id).length;
-                    const health = gatewayHealth(gw);
-                    const dotCls =
-                      health.tone === "ok"
-                        ? "bg-ok-text"
-                        : health.tone === "err"
-                          ? "bg-err-text"
-                          : health.tone === "warn"
-                            ? "bg-warn-text"
-                            : "bg-l4";
-                    const active = activeGwFilter === gw.id;
-                    return (
-                      <PaneNavItem
-                        key={gw.id}
-                        icon={<span className={`size-2 shrink-0 rounded-full ${dotCls}`} aria-hidden="true" />}
-                        label={gw.name}
-                        count={<span className="tabular-nums">{gwCount}</span>}
-                        selected={active}
-                        title={`${gw.name} · ${health.label} · 关联 ${gwCount} 条连接（再点一下取消筛选）`}
-                        onClick={() => {
-                          if (active) {
-                            setGatewayFilter(null);
-                          } else {
-                            setGatewayFilter(gw.id);
-                            if (activePane === "image") selectPane("all");
-                          }
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-              </>
-            )}
             <PaneNavGroup label="其他" />
             <PaneNavItem
               icon={
@@ -4762,39 +4789,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             ]}
           />
         </div>
-        {filteredGwObj && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-hairline ccode-well px-3 py-2 text-xs">
-            <span className="flex min-w-0 items-center gap-2 text-l2">
-              <VendorIcon vendor={vendorForGateway(filteredGwObj)} name={filteredGwObj.name} />
-              <span className="truncate">
-                正在按网关筛选：<span className="font-medium text-l1">{filteredGwObj.name}</span>
-                {" · "}
-                关联 {profiles.filter((p) => p.gatewayId === filteredGwObj.id).length} 条连接
-              </span>
-            </span>
-            <span className="flex shrink-0 items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setGwFocus(filteredGwObj.id);
-                  setGwBack(false);
-                  setGwNew(false);
-                  setGwLib(true);
-                }}
-                className={rowActionClass}
-              >
-                在网关库打开 ↗
-              </button>
-              <button
-                type="button"
-                onClick={() => setGatewayFilter(null)}
-                className={ghostActionClass}
-              >
-                取消筛选 ×
-              </button>
-            </span>
-          </div>
-        )}
         {error && <NoticeBar tone="err" className="mt-4" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         {/* npm 渠道不可用（无 Node.js）时的一键安装出口：渠道由依赖体检判定，
             渠道不允许（无 brew/winget）时保持纯文案不画按钮 */}
@@ -4834,11 +4828,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         {/* agent 分组：左栏选一家只画这一家；选「全部」九家连排（可折叠、可拖组头排序）。列标题行已去掉（2026-10-25 用户拍板） */}
         {activePane !== "image" && paneAgents.length === 0 && (
           <p className="py-10 text-center text-sm text-l3">
-            {q
-              ? `没有匹配「${search.trim()}」的连接`
-              : filteredGwObj
-                ? `「${filteredGwObj.name}」还没有绑定任何 Agent 连接`
-                : "还没有连接"}
+            {q ? `没有匹配「${search.trim()}」的连接` : "还没有连接"}
           </p>
         )}
         <div data-agent-group-list>
@@ -5424,11 +5414,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   <StatusPill tone="muted" tip="已停用：不会被恢复会话和 AI 功能自动挑中；启动栏下拉里沉到「已停用」分组，仍可手选">已停用</StatusPill>
                                 ) : null}
                               </span>
-                              {/* 第二行：来源网关 + 端点 · 启动模型徽章 + 备选折叠 */}
-                              <span className="col-start-2 row-start-2 mt-0.5 flex min-w-0 items-center gap-1.5 text-xs @min-[60rem]/rows:col-start-3 @min-[60rem]/rows:row-span-2 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:mt-0 @min-[60rem]/rows:self-center">
-                                  {(profile.accountType !== "official" || officialPlan) && (
+                              {/* 第二行（宽屏中间列）：统一格式「端点或认证说明 · 启动默认模型徽章 + 备选」，不夹带冗余网关名以保持全列对齐 */}
+                              <span className="col-start-2 row-start-2 mt-0.5 flex min-w-0 items-center gap-2 text-xs @min-[60rem]/rows:col-start-3 @min-[60rem]/rows:row-span-2 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:mt-0 @min-[60rem]/rows:self-center">
                                   <span
-                                    className={`min-w-0 max-w-[46%] shrink-0 truncate ${profile.baseUrl || gw ? "text-l3" : "text-l4"}`}
+                                    className={`min-w-0 max-w-[44%] shrink-0 truncate @min-[60rem]/rows:w-40 @min-[60rem]/rows:max-w-none ${
+                                      profile.accountType !== "official" && profile.baseUrl
+                                        ? "font-mono text-micro text-l3"
+                                        : "text-xs text-l3"
+                                    }`}
                                     title={
                                       profile.accountType === "official"
                                         ? `${officialEmail ? `账号：${officialEmail}\n` : ""}${officialPlan ? `套餐：${officialPlan}\n` : ""}官方账号登录（CLI 自身认证，不注入端点/密钥）`
@@ -5437,16 +5430,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   >
                                     {profile.accountType === "official"
                                       ? officialPlan
-                                      : gw && gw.name.trim() && gw.name.trim() !== profile.name.trim()
-                                        ? `来自 ${gw.name} · ${profile.baseUrl ? displayHost(profile.baseUrl) : "默认端点"}`
-                                        : profile.baseUrl
-                                          ? displayHost(profile.baseUrl)
-                                          : "默认端点"}
+                                        ? `官方 · ${officialPlan}`
+                                        : "CLI 官方认证"
+                                      : profile.baseUrl
+                                        ? displayHost(profile.baseUrl)
+                                        : "默认端点"}
                                   </span>
-                                  )}
-                                  {(profile.accountType !== "official" || officialPlan) && (
-                                    <span className="shrink-0 text-l4" aria-hidden="true">·</span>
-                                  )}
+                                  <span className="shrink-0 text-l4" aria-hidden="true">·</span>
                                   <span
                                     className="flex min-w-0 items-center gap-1.5 overflow-hidden"
                                     title={
@@ -5469,11 +5459,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                           return (
                                           <span
                                             key={m}
-                                            className={`shrink-0 font-mono text-micro ${
+                                            className={`font-mono text-micro ${
+                                              i === 0 ? "shrink-0" : "min-w-0 truncate"
+                                            } ${
                                               goneModels.includes(m)
                                                 ? "text-warn-text line-through"
                                                 : i === 0
-                                                  ? "rounded border border-hairline bg-inset px-1.5 py-px text-l1"
+                                                  ? "rounded-md border border-hairline bg-inset px-1.5 py-0.5 text-l1"
                                                   : "text-l3"
                                             }`}
                                             title={
@@ -5496,14 +5488,14 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       </>
                                     ) : (
                                       <span
-                                        className="text-xs text-l3"
+                                        className="rounded-md border border-hairline bg-inset px-1.5 py-0.5 text-micro text-l2"
                                         title={
                                           profile.accountType === "official"
                                             ? "这家 CLI 没有可读的官方模型名单，启动时用它自己的默认模型；要换在 CLI 里用 /model"
                                             : undefined
                                         }
                                       >
-                                        {profile.accountType === "official" ? "CLI 默认模型" : "未指定模型"}
+                                        {profile.accountType === "official" ? "CLI 默认" : "未指定模型"}
                                       </span>
                                     )}
                                   </span>
@@ -5599,13 +5591,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       onClick={() => void probeRow(profile)}
                                       title="用这条官方账号发一句话试试（走 CLI 自己的登录，会用一点官方额度），结果写在这里"
                                       aria-label={`测试官方账号：${labelOf(profile.agent)}`}
-                                      className={`${ghostActionClass} ${hoverRevealClass}`}
+                                      className="hidden h-7 items-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 focus-visible:inline-flex md:group-hover:inline-flex"
                                     >
                                       测试
                                     </button>
                                   );
                                 }
-                                // 能测的行悬停都给「测试」（2026-10-31：测试通过不常驻后，测过的行原来靠点「测试通过」重测，入口跟着没了）
+                                // 能测的行悬停都给「测试」（不占静止行宽，避免窄窗挤裁模型名）
                                 return canProbeProfile(profile) ? (
                                   <button
                                     type="button"
@@ -5616,7 +5608,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                         : "这条连接还没测过。点一下用它的启动模型发一次请求，结果写在这里"
                                     }
                                     aria-label={`测试连接：${profile.name}`}
-                                    className={`${ghostActionClass} ${hoverRevealClass}`}
+                                    className="hidden h-7 items-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 focus-visible:inline-flex md:group-hover:inline-flex"
                                   >
                                     测试
                                   </button>
@@ -5639,30 +5631,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   去网关修
                                 </button>
                               )}
-                              {/* 主验证动作「新对话」保留图标+短文案，与右侧纯图标次动作拉开主次 */}
-                              <button
-                                type="button"
-                                onClick={() => openChatWith(profile)}
-                                title="新对话：用这个连接开一段新对话，发一句话就能看出它能不能用"
-                                aria-label={`新对话：${profile.name}`}
-                                className={`inline-flex h-7 items-center gap-1 rounded-sm px-2 text-xs text-l2 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                              >
-                                <NAV_ICONS.quickChat size={13} strokeWidth={1.8} aria-hidden="true" />
-                                <span>新对话</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => useExternalWith(profile)}
-                                title={
-                                  settings?.externalTerminalFullAccess
-                                    ? "外部终端：选择工作文件夹与权限，在外部终端新开会话（当前默认完全访问）"
-                                    : "外部终端：选择工作文件夹与权限，在外部终端新开会话"
-                                }
-                                aria-label={`外部终端打开：${profile.name}`}
-                                className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
-                              >
-                                <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
-                              </button>
                               {imageGenPick && profile.gatewayId && !imageGenDone && (
                                 <button
                                   type="button"
@@ -5684,6 +5652,20 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
+                              {/* 次要图标动作（外部终端 / 设为全局）悬停展开且平时不占宽度 */}
+                              <button
+                                type="button"
+                                onClick={() => useExternalWith(profile)}
+                                title={
+                                  settings?.externalTerminalFullAccess
+                                    ? "外部终端：选择工作文件夹与权限，在外部终端新开会话（当前默认完全访问）"
+                                    : "外部终端：选择工作文件夹与权限，在外部终端新开会话"
+                                }
+                                aria-label={`外部终端打开：${profile.name}`}
+                                className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                              >
+                                <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                              </button>
                               {!isGlobal && canQuickGlobal(profile) ? (
                                 <button
                                   type="button"
@@ -5695,8 +5677,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       : `设为全局：把外部 ${labelOf(profile.agent)} 切到这条连接（直接写，提示里可撤销）`
                                   }
                                   aria-label={`设为全局：${profile.name}`}
-                                  className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50 ${
-                                    globalBusy === profile.id ? "" : hoverRevealClass
+                                  className={`h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50 ${
+                                    globalBusy === profile.id ? "flex" : "hidden group-focus-within:flex md:group-hover:flex"
                                   }`}
                                 >
                                   {globalBusy === profile.id ? (
@@ -5715,16 +5697,26 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   disabled
                                   title={AGY_API_GLOBAL_REASON}
                                   aria-label={`不可设为全局：${profile.name}`}
-                                  className={`flex h-7 w-7 cursor-not-allowed items-center justify-center rounded-sm text-l4 opacity-50 ${hoverRevealClass}`}
+                                  className="hidden h-7 w-7 cursor-not-allowed items-center justify-center rounded-lg text-l4 opacity-50 group-focus-within:flex md:group-hover:flex"
                                 >
                                   <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
                                 </button>
                               ) : null}
-                              {/* 编辑悬停才出（键盘聚焦也出）；点整行空白处同样是编辑 */}
+                              {/* 右缘常驻轻量操作，保证宽屏左中右视觉平衡且窄窗不藏幽灵占位 */}
+                              <button
+                                type="button"
+                                onClick={() => openChatWith(profile)}
+                                title="新对话：用这个连接开一段新对话，发一句话就能看出它能不能用"
+                                aria-label={`新对话：${profile.name}`}
+                                className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                              >
+                                <NAV_ICONS.quickChat size={13} strokeWidth={1.8} aria-hidden="true" />
+                                <span>新对话</span>
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => setModal({ initial: profile })}
-                                className={`${ghostActionClass} ${hoverRevealClass}`}
+                                className={ghostActionClass}
                               >
                                 编辑
                               </button>
@@ -5740,7 +5732,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   });
                                 }}
                                 aria-label={`更多操作：${profile.name}`}
-                                className={`flex h-7 w-7 items-center justify-center rounded-sm text-sm text-l4 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                                className="flex h-7 w-7 items-center justify-center rounded-lg text-sm text-l3 transition-colors hover:bg-hover hover:text-l1"
                               >
                                 ⋯
                               </button>
@@ -5756,7 +5748,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             );
           })}
         </div>
-        {activePane === "all" && !q && !activeGwFilter && foldedUninstalledAgents.length > 0 && (
+        {activePane === "all" && !q && foldedUninstalledAgents.length > 0 && (
           <div className="my-4">
             <button
               type="button"
@@ -5774,7 +5766,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         )}
         {/* 出图模型（2026-10-24 用户「连接这里配置生图模型」）：不属于哪个 Agent 的对话连接，单独一块；
             长相与 Agent 分组一致、行与连接行同一网格（PROFILE_ROW_GRID）。编辑处只此一处，设置页只显示现状并跳过来 */}
-        {(activePane === "image" || (activePane === "all" && !q && !activeGwFilter)) && (
+        {(activePane === "image" || (activePane === "all" && !q)) && (
           <ImageGenPanel gridClass={PROFILE_ROW_GRID} sectionRef={imageGenRef} />
         )}
         </div>
@@ -5895,6 +5887,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       )}
       {modal && (
         <ProfileModal
+          key={modal.initial?.id ?? `new-${modal.presetGatewayId ?? ""}-${modal.presetAgent ?? ""}`}
           initial={modal.initial}
           backLabel={modal.backToGateway ? "返回网关库" : "返回连接"}
           hidden={!visible}
