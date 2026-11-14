@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FoldMark } from "./PageFrame";
 import type { EffectCellDto, EffectPreviewDto } from "../types";
@@ -9,8 +9,16 @@ import type { EffectCellDto, EffectPreviewDto } from "../types";
  * 左列在 Mesa 里启动时落在哪、右列设为全局后外面直接用时落在哪，两边不一致的行标出来。
  * 数据来自 preview_effect（effect_preview.rs），按**已保存**的连接算；命令行原文与文件改动收在表下折叠行。
  */
-export function EffectPreview({ profileId, setGlobalReason }: { profileId: string; setGlobalReason: string | null }) {
-  const [open, setOpen] = useState(false);
+export function EffectPreview({
+  profileId,
+  setGlobalReason,
+  defaultOpen = false,
+}: {
+  profileId: string;
+  setGlobalReason: string | null;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<EffectPreviewDto | string | null>(null);
 
   async function load() {
@@ -22,8 +30,14 @@ export function EffectPreview({ profileId, setGlobalReason }: { profileId: strin
     }
   }
 
+  useEffect(() => {
+    if (defaultOpen) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultOpen, profileId]);
+
   return (
     <details
+      open={open}
       className="mb-4 rounded-md border border-hairline px-3 py-2"
       onToggle={(e) => {
         // 表下「原始参数与文件改动」也是 <details>，它的 toggle 会沿 React 树冒到这里：

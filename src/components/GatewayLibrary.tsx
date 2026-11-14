@@ -6,12 +6,15 @@ import { AGENTS } from "../types";
 import { PROVIDER_PRESETS, type ProviderPreset } from "../presets";
 import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
+import AgentIcon from "./AgentIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
 import { Checkbox, fieldClass, FoldMark, ghostActionClass, hoverRevealClass, quietActionClass, MenuSelect, primaryActionClass, RowAction, rowActionClass, searchFieldClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
-import { Activity, ChevronRight, RefreshCw, Trash2, Wand2 } from "lucide-react";
+import { Activity, Check, ChevronRight, RefreshCw, Trash2, Zap } from "lucide-react";
 import PagePanel, { PAGE_PANEL_SLIDE_MS } from "./PagePanel";
 import GatewayAutoConfig from "./GatewayAutoConfig";
-import { gatewayHealth, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
+import { gatewayHealth, gatewayMissingSlot, manualModelError, modelHasPolicy, probeHint, SLOT_LABEL } from "../connection-form";
+import { planAutoConfig, roleModelsFor, rowModels } from "../gateway-autoconfig";
+import { splitChatModels } from "../model-kinds";
 import { parseReasoningEffort, reasoningEffortValue } from "../reasoning-effort";
 import { confirmDialog } from "./ConfirmDialog";
 import { toast } from "../toast";
@@ -42,7 +45,7 @@ import {
   zhipuOpenAiSlotBillingHint,
   slotsFollowMaster,
 } from "../gateway-draft";
-import { gatewayHostLine, gatewayPickerRows } from "../gateway-option";
+import { gatewayFilledSlots, gatewayHosts, gatewayPickerRows } from "../gateway-option";
 import { gatewayHasWallet } from "../gateway-balance";
 import type {
   ComboSurfaceDto,
@@ -332,12 +335,19 @@ export default function GatewayLibrary({
 }) {
   const gateways = useAppStore((s) => s.gateways);
   const profiles = useAppStore((s) => s.profiles);
+  const agents = useAppStore((s) => s.agents);
+  const bindGateway = useAppStore((s) => s.bindGateway);
   const keyInputId = useId();
   const walletInputId = useId();
   const loadGateways = useAppStore((s) => s.loadGateways);
   const saveGateway = useAppStore((s) => s.saveGateway);
   const removeGateway = useAppStore((s) => s.removeGateway);
   const [editing, setEditing] = useState<Gateway | "new" | null>(null);
+  const [protoFilter, setProtoFilter] = useState<"all" | keyof ProtocolSlots>("all");
+  const [gwSearch, setGwSearch] = useState("");
+  const [probingListAll, setProbingListAll] = useState(false);
+  const [newBindAgents, setNewBindAgents] = useState<string[]>([]);
+  const [verifyingNew, setVerifyingNew] = useState(false);
   const [name, setName] = useState("");
   const [noAuth, setNoAuth] = useState(false);
   const [slots, setSlots] = useState<ProtocolSlots>(emptySlots());
@@ -520,6 +530,7 @@ export default function GatewayLibrary({
     setManualModel("");
     setShowManual(false);
     setOnlySet(false);
+    setNewBindAgents([]);
     if (g === "new") {
       setEditing("new");
       setName("");
@@ -749,6 +760,31 @@ export default function GatewayLibrary({
     return (editing.slotProbes ?? []).find((s) => s.slot === key);
   }
 
+  const draftEffectiveSlots = useMemo<ProtocolSlots>(
+    () => ({
+      anthropic: effectiveSlotUrl(slots, "anthropic", masterUrl) || undefined,
+      openai: effectiveSlotUrl(slots, "openai", masterUrl) || undefined,
+      responses: effectiveSlotUrl(slots, "responses", masterUrl) || undefined,
+      gemini: effectiveSlotUrl(slots, "gemini", masterUrl) || undefined,
+      cursor: effectiveSlotUrl(slots, "cursor", masterUrl) || undefined,
+    }),
+    [slots, masterUrl],
+  );
+
+  const compatibleNewBindAgents = useMemo(() => {
+    const hasAnySlot = Object.values(draftEffectiveSlots).some((v) => Boolean(v?.trim()));
+    if (!hasAnySlot) return [];
+    return AGENTS.filter((a) => {
+      const isInst = agents.some((d) => d.id === a.id && d.binaryPath);
+      return isInst && gatewayMissingSlot(draftEffectiveSlots, a.id) === null;
+    });
+  }, [agents, draftEffectiveSlots]);
+
+  const activeNewBindAgents = useMemo(
+    () => newBindAgents.filter((id) => compatibleNewBindAgents.some((a) => a.id === id)),
+    [newBindAgents, compatibleNewBindAgents],
+  );
+
   async function save() {
     const savedSnapshot = formSnapshot;
     setSaving(true);
@@ -784,15 +820,56 @@ export default function GatewayLibrary({
     try {
       const saved = await saveGateway(id, input);
       // store 刷新后的列表元素带 slotProbes，比 command 返回值更完整；id 以返回值为准不猜末位
-      const fresh = useAppStore
-        .getState()
-        .gateways.find((g) => g.id === saved.id);
-      if (fresh) setEditing(fresh);
+      const fresh =
+        useAppStore.getState().gateways.find((g) => g.id === saved.id) ?? saved;
+      setEditing(fresh);
       setBaseline(savedSnapshot);
-      // 新建即绑：保存后直接展开 Agent 配置区（此时 editing 已切到保存后的网关），
-      // 消除「保存 → 重新找入口 → 展开折叠 → 选 Agent」的往返。保存钮在表单最底下，
-      // 结果提示在吸顶的头部里（原先在表单顶上，点完保存看不见），绑定区滚进视野
-      if (!id) {
+      if (!id && activeNewBindAgents.length > 0) {
+        const planned = planAutoConfig({
+          gateway: fresh,
+          installed: activeNewBindAgents,
+          profiles: useAppStore.getState().profiles,
+          presets: PROVIDER_PRESETS,
+          prices: {},
+        });
+        const chatFallback = splitChatModels(
+          fresh.models.filter((m) => m.status !== "stale").map((m) => m.id),
+        ).chat.slice(0, 2);
+        let made = 0;
+        const bindFailed: string[] = [];
+        for (const agId of activeNewBindAgents) {
+          const row = planned.find((r) => r.agent === agId && !r.skip);
+          const pickedModels = row
+            ? (row.defaultModel ? rowModels(row, row.defaultModel) : row.options)
+            : chatFallback;
+          try {
+            await bindGateway({
+              agent: agId,
+              name: fresh.name,
+              gatewayId: fresh.id,
+              kind: "api",
+              protocol: row?.protocol ?? null,
+              models: pickedModels,
+              roleModels: row ? roleModelsFor(row, pickedModels) : {},
+              extraEnv: {},
+            });
+            made += 1;
+          } catch (e) {
+            const label = AGENTS.find((a) => a.id === agId)?.label ?? agId;
+            bindFailed.push(`${label}：${String(e)}`);
+          }
+        }
+        setNewBindAgents([]);
+        if (bindFailed.length > 0) {
+          setShowBind(true);
+          setError(
+            `网关「${saved.name}」已保存${made ? `，已建 ${made} 条连接` : ""}；未建成：${bindFailed.join("；")}`,
+          );
+        } else {
+          toast(`网关「${saved.name}」已保存，并创建 ${made} 条 CLI 连接`, "success");
+          setEditing(null);
+        }
+      } else if (!id) {
         setShowBind(true);
         setNotice(`网关「${saved.name}」已保存。接着点下方「＋ 为此网关添加连接」，选 Agent 和模型。`);
         requestAnimationFrame(() =>
@@ -1151,6 +1228,160 @@ export default function GatewayLibrary({
     if (expanded === id) setExpanded(null);
   }
 
+  /** 列表页一键测速全部已存网关（跳过缺密钥或没有可测协议槽的网关） */
+  async function probeAllListed() {
+    const targets = gateways.filter((g) => {
+      if (!g.noAuth && !g.keyHint) return false;
+      const slot = primaryProbeSlot(g.slots, "", g.catalogFromSlot);
+      return Boolean(slot && slot !== "cursor" && slot !== "gemini");
+    });
+    if (targets.length === 0) {
+      setError("没有可测速的网关（需填好支持体检的协议地址与密钥）");
+      return;
+    }
+    setProbingListAll(true);
+    setError(null);
+    setNotice(null);
+    let okCount = 0;
+    const failedNames: string[] = [];
+    try {
+      for (const g of targets) {
+        const slot = primaryProbeSlot(g.slots, "", g.catalogFromSlot);
+        if (!slot) continue;
+        setRowProbingId(g.id);
+        try {
+          const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
+            gatewayId: g.id,
+            slot,
+            model: gatewayProbeModel(g.models, slot, profiles.filter((p) => p.gatewayId === g.id)),
+            basicOnly: true,
+            baseUrl: g.slots[slot] ?? null,
+            apiKey: null,
+            noAuth: g.noAuth,
+          });
+          if (dto.ok) okCount += 1;
+          else failedNames.push(g.name);
+        } catch {
+          failedNames.push(g.name);
+        }
+      }
+      await loadGateways();
+      if (failedNames.length === 0) {
+        setNotice(`全部测速完成：${okCount} 个网关均连通正常`);
+      } else {
+        setError(`测速完成：${okCount} 个正常，${failedNames.length} 个失败（${failedNames.join("、")}）`);
+      }
+    } finally {
+      setRowProbingId(null);
+      setProbingListAll(false);
+    }
+  }
+
+  /** 表单一键「验证连通并拉取模型」：拉取 /models 目录并对主协议槽做真实请求体检，合二为一减少二次点击 */
+  async function verifyAndFetchGateway() {
+    const prefer = editing !== null && editing !== "new" ? editing.catalogFromSlot : null;
+    const startSlot = catalogFetchSlot(slots, masterUrl, prefer);
+    const pSlot = primaryProbeSlot(slots, masterUrl, prefer);
+    if (!startSlot && !pSlot) {
+      setError("先填地址或某个协议槽");
+      return;
+    }
+    setVerifyingNew(true);
+    setError(null);
+    setNotice(null);
+    const gatewayId = editing !== null && editing !== "new" ? editing.id : null;
+    let fetchedCount: number | null = null;
+    let fetchedSlot: GatewaySlotName | null = null;
+    let catalogErr: string | null = null;
+
+    try {
+      if (startSlot) {
+        setFetchingCatalog(true);
+        try {
+          for (const slot of catalogSlotWalkOrder(prefer)) {
+            const baseUrl = effectiveSlotUrl(slots, slot, masterUrl);
+            if (!baseUrl) continue;
+            try {
+              const result = await invoke<FetchModelsResultDto>(
+                "fetch_models",
+                fetchModelsInvokeArgs({ baseUrl, apiKey, noAuth, slot, gatewayId }),
+              );
+              if (result.models.length === 0) {
+                catalogErr = `${slot} 槽返回空目录`;
+                continue;
+              }
+              setModels((cur) => applyFetchedCatalog(cur, result, slot, mergeGatewayCatalog));
+              fetchedCount = result.models.length;
+              fetchedSlot = slot;
+              catalogErr = null;
+              break;
+            } catch (e) {
+              catalogErr = String(e);
+            }
+          }
+        } finally {
+          setFetchingCatalog(false);
+        }
+      }
+
+      let probeOk: boolean | null = null;
+      let probeErr: string | null = null;
+      if (pSlot && pSlot !== "cursor" && pSlot !== "gemini") {
+        const baseUrl = effectiveSlotUrl(slots, pSlot, masterUrl);
+        if (baseUrl) {
+          setProbingSlot(pSlot);
+          try {
+            const dto = await invoke<GatewayProbeDto>("probe_gateway_slot", {
+              gatewayId,
+              slot: pSlot,
+              model: probeModelFor(pSlot),
+              basicOnly: false,
+              baseUrl,
+              apiKey: noAuth ? null : apiKey.trim() || null,
+              noAuth,
+            });
+            setDraftProbes((cur) => ({ ...cur, [pSlot]: probeDtoToSummary(pSlot, dto) }));
+            probeOk = dto.ok;
+            if (!dto.ok) {
+              const failed = dto.checks.find((c) => c.status === "failed");
+              probeErr = failed ? `${failed.message}${probeHint(failed.message)}` : "测试失败，请检查地址和密钥";
+            } else if (gatewayId) {
+              await loadGateways();
+            }
+          } catch (e) {
+            probeOk = false;
+            probeErr = `${String(e)}${probeHint(String(e))}`;
+          } finally {
+            setProbingSlot(null);
+          }
+        }
+      }
+
+      if (probeOk === false && fetchedCount === null) {
+        setError(probeErr ?? catalogErr ?? "验证失败，请检查地址与密钥");
+      } else if (probeOk === false && fetchedCount !== null) {
+        setNotice(`已拉取 ${fetchedCount} 个模型（${SLOT_LABEL[fetchedSlot!] ?? fetchedSlot}）`);
+        setError(`连通体检未通过：${probeErr}`);
+      } else if (fetchedCount !== null) {
+        const slotNote = fetchedSlot ? `${SLOT_LABEL[fetchedSlot] ?? fetchedSlot} 协议` : "";
+        setNotice(
+          `✓ ${probeOk ? "连通正常 · " : ""}${slotNote ? `${slotNote} · ` : ""}已拉取 ${fetchedCount} 个模型，确认无误后点保存。`,
+        );
+        setShowModels(true);
+      } else if (probeOk) {
+        setNotice(
+          catalogErr
+            ? `✓ 连通正常（目录未拉到：${catalogErr}，可在下方手填模型名）`
+            : "✓ 连通正常，可以保存",
+        );
+      } else if (catalogErr) {
+        setError(`${catalogErr}${probeHint(catalogErr)}`);
+      }
+    } finally {
+      setVerifyingNew(false);
+    }
+  }
+
   /** 列表行上直接测一次主协议槽（用已存的地址和密钥），结果写进行状态点 */
   async function probeListed(g: Gateway) {
     const slot = primaryProbeSlot(g.slots, "", g.catalogFromSlot);
@@ -1257,12 +1488,33 @@ export default function GatewayLibrary({
     </div>
   );
 
+  const listHealthStats = useMemo(() => {
+    let ok = 0;
+    let issue = 0;
+    let unbound = 0;
+    for (const g of gateways) {
+      const h = gatewayHealth(g);
+      if (h.tone === "ok") ok += 1;
+      if (h.tone === "err" || h.tone === "warn") issue += 1;
+      if (!profiles.some((p) => p.gatewayId === g.id)) unbound += 1;
+    }
+    return { ok, issue, unbound };
+  }, [gateways, profiles]);
+
+  const quickPresets = useMemo(
+    () =>
+      ["DeepSeek", "智谱 GLM Coding Plan（套餐）", "Kimi For Coding（套餐）", "阿里云百炼（兼容模式）", "OpenRouter", "Ollama 本地"]
+        .map((n) => PROVIDER_PRESETS.find((p) => p.name === n))
+        .filter((p): p is ProviderPreset => Boolean(p)),
+    [],
+  );
+
   return (
     // 整页面板（2026-11-01，取代 10-31 的统一弹层）：‹ 返回 / Esc 走 closeLibrary 或回列表（有没保存的修改先问）
     <PagePanel
       hidden={hidden}
       title={editing ? (editing === "new" ? "新建网关" : `编辑「${editingName}」`) : "网关库"}
-      subtitle={editing ? "网关库" : undefined}
+      subtitle={editing ? "保存一次密钥与模型池，多 CLI 共享" : gateways.length > 0 ? `${gateways.length} 个网关` : undefined}
       backLabel={editing ? "返回网关库" : "返回连接"}
       animate={animate}
       wide={!editing}
@@ -1272,17 +1524,32 @@ export default function GatewayLibrary({
       }}
       footerNote={
         editing ? (
-          dirty && <span className="text-l3">有没保存的修改</span>
+          <span className="text-xs text-l3">
+            {editing === "new" && activeNewBindAgents.length > 0
+              ? `保存网关后将同步创建 ${activeNewBindAgents.length} 条 CLI 连接`
+              : dirty
+                ? "有没保存的修改"
+                : null}
+          </span>
         ) : (
-          /* 少用的恢复动作：降为带说明的文字钮 */
-          <button
-            type="button"
-            className={`${quietActionClass} -ml-3`}
-            title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
-            onClick={() => void undoMerge()}
-          >
-            撤销自动合并
-          </button>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-l3">
+            {gateways.length > 0 && (
+              <span>
+                共 {gateways.length} 个网关
+                {listHealthStats.ok > 0 && <span className="text-ok-text"> · {listHealthStats.ok} 正常</span>}
+                {listHealthStats.issue > 0 && <span className="text-err-text"> · {listHealthStats.issue} 待处理</span>}
+                {listHealthStats.unbound > 0 && <span> · {listHealthStats.unbound} 未绑 CLI</span>}
+              </span>
+            )}
+            <button
+              type="button"
+              className={quietActionClass}
+              title="把旧版本升级时自动合并到同一网关的连接拆回各自的网关（只在合并结果不对时用）"
+              onClick={() => void undoMerge()}
+            >
+              撤销自动合并
+            </button>
+          </div>
         )
       }
       footer={
@@ -1298,42 +1565,78 @@ export default function GatewayLibrary({
               取消
             </button>
             <button type="button" className={primaryActionClass} disabled={saving} onClick={() => void save()}>
-              {saving ? "保存中…" : "保存网关"}
+              {saving
+                ? "保存中…"
+                : editing === "new" && activeNewBindAgents.length > 0
+                  ? `保存网关并建 ${activeNewBindAgents.length} 条连接`
+                  : "保存网关"}
             </button>
           </>
-        ) : (
-          <button type="button" className={secondaryActionClass} onClick={() => void closeLibrary()}>
-            关闭
-          </button>
-        )
+        ) : undefined
       }
       actions={
-        /* 列表页的新建与 MCP / 技能页同位：标题栏右侧主按钮；底栏只留关闭（2026-11-04 用户） */
         !editing && (
-          <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
-            ＋ 新建网关
-          </button>
+          <div className="flex items-center gap-2">
+            {gateways.length > 0 && (
+              <button
+                type="button"
+                className={secondaryActionClass}
+                disabled={probingListAll || rowProbingId !== null}
+                title="对已填好协议地址与密钥的网关逐个做一次连通测速"
+                onClick={() => void probeAllListed()}
+              >
+                {probingListAll ? "测速中…" : "全部测速"}
+              </button>
+            )}
+            <button type="button" className={primaryActionClass} onClick={() => openEdit("new")}>
+              ＋ 新建网关
+            </button>
+          </div>
         )
       }
     >
       {/* 结果提示固定在内容顶上（不随表单滚走） */}
       {(error || notice) && (
-        <div className="mb-2 shrink-0 space-y-2">
+        <div className="mb-3 shrink-0 space-y-2">
           {error && <NoticeBar tone="err" onDismiss={() => setError(null)}>{error}</NoticeBar>}
           {notice && <NoticeBar onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
         </div>
       )}
       <div>
         {editing ? (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {editing === "new" && (
-              <div className="text-sm text-l2">
-                服务商
-                <span className="mt-1 block">
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2 text-xs text-l3">
+                  <span>常用服务商快速预设（点选自动填好地址、协议槽与推荐模型）</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {quickPresets.map((p) => {
+                    const active = presetName === p.name;
+                    const shortLabel = p.name.replace(/（.*）$/, "");
+                    return (
+                      <button
+                        key={p.name}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => applyProviderPreset(p)}
+                        className={`inline-flex h-7 items-center gap-1 rounded-md border px-2.5 text-xs transition-colors ${
+                          active
+                            ? "border-cta bg-cta-pill text-cta-pill-text font-medium"
+                            : "border-hairline bg-inset text-l2 hover:border-field hover:text-l1"
+                        }`}
+                      >
+                        {active && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                        <span>{shortLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="block text-sm">
                   <MenuSelect
                     aria-label="服务商"
                     value={presetName}
-                    placeholder="选一家服务商，自动填地址、协议槽和推荐模型…"
+                    placeholder="更多服务商预设，或直接在下方手填自定义地址…"
                     options={PROVIDER_PRESETS.map((p) => ({
                       value: p.name,
                       short: p.name,
@@ -1345,91 +1648,122 @@ export default function GatewayLibrary({
                     }}
                   />
                 </span>
-                {presetName && <span className="mt-1 block text-micro text-l3">已按「{presetName}」填好地址和推荐模型</span>}
+                {presetName && <span className="block text-micro text-l3">已套用「{presetName}」预设，地址与模型均可继续修改</span>}
               </div>
             )}
-            <label className="block text-sm text-l2">
-              名称
-              <input className={`${fieldClass} mt-1 w-full`} value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="block text-sm text-l2">
-              地址
-              <input
-                className={`${fieldClass} mt-1 w-full font-mono text-xs`}
-                value={masterUrl}
-                placeholder="https://…（各协议同址时只填这里）"
-                title="空槽与仍等于主输入的槽一起改；某个槽手填即脱离"
-                onChange={(e) => {
-                  onMasterChange(e.target.value);
-                  setPresetName("");
-                }}
-              />
-            </label>
-            {responsesUrlWarn && <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>}
-            {openaiBillingHint && <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>}
-            {/* 「无密钥」只对本机 / 局域网端点有意义：远端 https 地址不出这个勾选，免得夹在地址和密钥中间打断（2026-11-07 打磨） */}
-            {(noAuth || looksLocalEndpoint(masterUrl)) && (
-              <Checkbox className="text-sm text-l2" checked={noAuth} onChange={setNoAuth} label="无密钥（本地端点）" />
-            )}
-            {/* 先填密钥、再测试：原先「测试」排在密钥框前面，从上往下填会先测出 401 */}
-            {noAuth ? (
-              <p className="text-micro text-l3">本地端点不需要密钥，测试和启动都不带密钥。</p>
-            ) : (
-              // 「清除」是低频危险动作：标签行右侧灰色小字、悬停才变红，点了还要确认（2026-11-07 由常驻红字降级）。
-              // 不能放进 <label> 里：label 会把按钮当成它关联的控件，输入框就没了标签
-              <div className="text-sm text-l2">
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor={keyInputId}>密钥</label>
-                  {editing !== "new" && editing.keyHint && (
-                    <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearKey()}>
-                      清除本地密钥
+            <div className="space-y-3 rounded-lg border border-hairline ccode-well p-3.5">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+                <label className="block text-sm text-l2">
+                  <span className="text-xs text-l3">网关名称</span>
+                  <input
+                    className={`${fieldClass} mt-1 w-full`}
+                    placeholder="好认的名字，如 DeepSeek 官方"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+                <label className="block text-sm text-l2">
+                  <span className="text-xs text-l3">主接口地址</span>
+                  <input
+                    className={`${fieldClass} mt-1 w-full font-mono text-xs`}
+                    value={masterUrl}
+                    placeholder="https://…（多协议同址时只填这里）"
+                    title="空槽与仍等于主输入的槽一起改；某个槽手填即脱离"
+                    onChange={(e) => {
+                      onMasterChange(e.target.value);
+                      setPresetName("");
+                    }}
+                  />
+                </label>
+              </div>
+              {responsesUrlWarn && <InlineNotice tone="warn" size="micro">{responsesUrlWarn}</InlineNotice>}
+              {openaiBillingHint && <InlineNotice tone="warn" size="micro">{openaiBillingHint}</InlineNotice>}
+              {(noAuth || looksLocalEndpoint(masterUrl)) && (
+                <Checkbox className="text-sm text-l2" checked={noAuth} onChange={setNoAuth} label="无密钥（本地端点）" />
+              )}
+              {noAuth ? (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-micro text-l3">本地端点不需要密钥，测试和启动都不带密钥。</p>
+                  <button
+                    type="button"
+                    className={`${secondaryActionClass} shrink-0`}
+                    disabled={verifyingNew || fetchingCatalog || !!probingSlot}
+                    onClick={() => void verifyAndFetchGateway()}
+                  >
+                    <Zap className="mr-1 size-3.5" aria-hidden="true" />
+                    {verifyingNew ? "验证中…" : "验证连通并拉取模型"}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-sm text-l2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label htmlFor={keyInputId} className="text-xs text-l3">API 密钥</label>
+                    {editing !== "new" && editing.keyHint && (
+                      <button type="button" className={`${dangerGhostClass} -my-1`} onClick={() => void onClearKey()}>
+                        清除本地密钥
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      id={keyInputId}
+                      className={`${fieldClass} min-w-0 flex-1`}
+                      type="password"
+                      autoComplete="new-password"
+                      value={apiKey}
+                      placeholder={editing !== "new" && editing.keyHint ? `已保存 ${editing.keyHint}，输入新密钥即替换` : "sk-…（仅保存在本机 0600 文件）"}
+                      onChange={(e) => setApiKey(e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className={`${secondaryActionClass} shrink-0 whitespace-nowrap`}
+                      disabled={verifyingNew || fetchingCatalog || !!probingSlot}
+                      title="一次完成主协议槽连通体检与模型目录拉取"
+                      onClick={() => void verifyAndFetchGateway()}
+                    >
+                      <Zap className="mr-1 size-3.5" aria-hidden="true" />
+                      {verifyingNew ? "验证中…" : "验证连通并拉取模型"}
                     </button>
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-micro text-l3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {primaryProbe?.lastOk != null && (
+                    <span className={`font-mono ${primaryProbe.lastOk ? "text-ok-text" : "text-err-text"}`}>
+                      {probeSummaryText(primaryProbe)}
+                    </span>
+                  )}
+                  {editing !== "new" && catalogAge(editing.catalogFetchedAt) && (
+                    <span>
+                      模型目录{catalogAge(editing.catalogFetchedAt)}
+                      {editing.catalogFromSlot
+                        ? ` · ${SLOT_LABEL[editing.catalogFromSlot as GatewaySlotName] ?? editing.catalogFromSlot} 协议`
+                        : ""}
+                    </span>
                   )}
                 </div>
-                <input
-                  id={keyInputId}
-                  className={`${fieldClass} mt-1 w-full`}
-                  type="password"
-                  autoComplete="new-password"
-                  value={apiKey}
-                  placeholder={editing !== "new" && editing.keyHint ? `已保存 ${editing.keyHint}，输入新密钥即替换` : undefined}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    disabled={!!probingSlot || probingAll || !primarySlot || verifyingNew}
+                    title={primarySlot ? "仅测试主协议槽连通性，不重拉模型目录" : "先填地址"}
+                    onClick={() => primarySlot && void probeOne(primarySlot, false)}
+                  >
+                    {probingSlot && probingSlot === primarySlot && !verifyingNew ? "测试中…" : "仅测连通"}
+                  </button>
+                  <button
+                    type="button"
+                    className={ghostActionClass}
+                    disabled={fetchingCatalog || verifyingNew}
+                    title="仅拉取模型目录"
+                    onClick={() => void fetchCatalog()}
+                  >
+                    {fetchingCatalog && !verifyingNew ? "获取中…" : "仅拉模型"}
+                  </button>
+                </div>
               </div>
-            )}
-            {/* 测试结果就挂在测试钮旁边（原先在地址标签右上角，点完要往上找） */}
-            <div className="flex flex-wrap items-center gap-2 pb-2 pt-1">
-              <button
-                type="button"
-                className={secondaryActionClass}
-                disabled={!!probingSlot || probingAll || !primarySlot}
-                title={primarySlot ? "用当前填写的地址和密钥测试，不必先保存" : "先填地址"}
-                onClick={() => primarySlot && void probeOne(primarySlot, false)}
-              >
-                {probingSlot && probingSlot === primarySlot ? "测试中…" : "测试"}
-              </button>
-              <button
-                type="button"
-                className={secondaryActionClass}
-                disabled={fetchingCatalog}
-                title="用当前填写的地址和密钥拉目录，确认后再保存"
-                onClick={() => void fetchCatalog()}
-              >
-                {fetchingCatalog ? "获取中…" : "获取模型"}
-              </button>
-              {primaryProbe?.lastOk != null && (
-                <span className={`font-mono text-micro ${primaryProbe.lastOk ? "text-l3" : "text-err-text"}`}>
-                  {probeSummaryText(primaryProbe)}
-                </span>
-              )}
-              {editing !== "new" && catalogAge(editing.catalogFetchedAt) && (
-                <span className="text-micro text-l3">
-                  模型目录{catalogAge(editing.catalogFetchedAt)}
-                  {editing.catalogFromSlot
-                    ? ` · ${SLOT_LABEL[editing.catalogFromSlot as GatewaySlotName] ?? editing.catalogFromSlot} 协议`
-                    : ""}
-                </span>
-              )}
             </div>
             {/* 分三段（2026-11-07）：接入（每次都填）→ 模型与连接（常改）→ 高级（一年碰一次的协议槽、Header、余额令牌，全部折叠） */}
             <GroupHeading>模型与连接</GroupHeading>
@@ -1750,6 +2084,52 @@ export default function GatewayLibrary({
                 </div>
               )}
             </div>
+            {/* 新建网关即闭环：直接勾选已安装且协议兼容的 CLI，保存时同步创建连接（免去建完 0 连接再点一轮） */}
+            {editing === "new" && (
+              <div className="rounded-lg border border-hairline ccode-well p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-l1">保存后顺便给这些 CLI 建连接（可选）</span>
+                  <span className="text-micro text-l3">
+                    {compatibleNewBindAgents.length > 0
+                      ? "按已填协议地址自动筛出本机已安装且兼容的 CLI"
+                      : "填好接口地址后自动列出兼容的已安装 CLI"}
+                  </span>
+                </div>
+                {compatibleNewBindAgents.length > 0 && (
+                  <>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {compatibleNewBindAgents.map((ag) => {
+                        const on = activeNewBindAgents.includes(ag.id);
+                        return (
+                          <button
+                            key={ag.id}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() =>
+                              setNewBindAgents((cur) =>
+                                on ? cur.filter((x) => x !== ag.id) : [...cur, ag.id],
+                              )
+                            }
+                            className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
+                              on
+                                ? "border-cta bg-cta-pill text-cta-pill-text font-medium"
+                                : "border-hairline bg-canvas text-l2 hover:border-field hover:text-l1"
+                            }`}
+                          >
+                            <AgentIcon agent={ag.id} label={ag.label} size={14} />
+                            <span>{ag.label}</span>
+                            {on && <Check className="size-3 shrink-0" aria-hidden="true" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="mt-1.5 text-micro text-l3">
+                      将为勾选的 CLI 自动挑目录里最匹配的对话模型（未拉目录时保留空名单供后续勾选），保存后在连接页立即可用。
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
             {/* 用这个网关的连接（2026-10-31 用户拍板 C）：库内不再另有一套建连接表单，统一走添加连接弹层（预选好这个网关），
                 已绑的点一下直接编辑 */}
             {editing !== "new" && (
@@ -1981,113 +2361,282 @@ export default function GatewayLibrary({
             )}
           </div>
         ) : (
-          // 2026-10-31 简化：每个网关一张可点的行卡（点了就是编辑），状态点挨着名字；测试 / 获取模型 / 删除悬停才出（图标钮）。
-          // 原先每行一个状态字 + 四颗文字按钮，同一层控件太多
-          // 宽的时候（容器 ≥ 56rem）第二行拆成右边对齐的几列：地址与密钥 / 连接数 / 近 30 天花费；窄的时候照旧两行
-          <ul className="@container space-y-0.5">
-            {gateways.length === 0 && (
-              <li className="py-8 text-center text-sm text-l3">还没有网关。点右上角「＋ 新建网关」，或在添加连接时新建。</li>
-            )}
-            {/* 宽的时候拆成几列，给一行列头（原先「没有连接」「—」单看不知道是哪一列）；占位宽度与下面行里各列一一对应 */}
-            {gateways.length > 0 && (
-              <li aria-hidden="true" className="hidden items-center gap-3 px-2.5 pb-1 text-micro text-l4 @4xl:flex @4xl:gap-6">
-                <span className="w-4 shrink-0" />
-                <span className="w-60 shrink-0">网关</span>
-                <span className="min-w-0 flex-1">地址</span>
-                <span className="w-14 shrink-0 text-right">连接</span>
-                <span className="w-40 shrink-0 text-right">近 30 天</span>
-                <span className="w-28 shrink-0" />
-                <span className="w-4 shrink-0" />
-              </li>
-            )}
-            {gatewayPickerRows(gateways).map((row) => {
-              const g = gateways.find((item) => item.id === row.id);
-              if (!g) return null;
-              const n = profiles.filter((p) => p.gatewayId === g.id).length;
-              const usage = usageLine(g);
-              const health = gatewayHealth(g);
-              const busy = rowProbingId === g.id || listFetchingId === g.id;
+          <div className="@container space-y-3">
+            {gateways.length >= 2 && (() => {
+              const protoTabs: Array<{ key: "all" | keyof ProtocolSlots; label: string; count: number }> = [
+                { key: "all", label: "全部", count: gateways.length },
+                ...(
+                  [
+                    ["anthropic", "Anthropic"],
+                    ["openai", "OpenAI"],
+                    ["responses", "Responses"],
+                    ["gemini", "Gemini"],
+                    ["cursor", "Cursor"],
+                  ] as const
+                )
+                  .map(([key, label]) => ({
+                    key,
+                    label,
+                    count: gateways.filter((g) => Boolean(g.slots[key]?.trim())).length,
+                  }))
+                  .filter((item) => item.count > 0),
+              ];
               return (
-                <li
-                  key={g.id}
-                  className="group flex cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2 hover:bg-hover @4xl:gap-6"
-                  onClick={() => openEdit(g)}
-                >
-                  <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
-                  {/* 宽的时候名字列定宽、地址列吃剩余宽度（原先名字列 flex-1，网关和地址之间空一大片、右边几列挤在一起） */}
-                  <span className="min-w-0 flex-1 @4xl:w-60 @4xl:flex-none">
-                    <span className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="truncate text-sm font-medium text-l1"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openEdit(g);
-                        }}
-                      >
-                        {row.name}
-                      </button>
-                      <span
-                        className="flex shrink-0 items-center gap-1 text-micro text-l3"
-                        title={[health.label, health.detail].filter(Boolean).join("；")}
-                      >
-                        <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
-                        {/* 通过 / 未测只亮点，出问题才写字 */}
-                        {(health.tone === "err" || health.tone === "warn") && health.label}
-                        {busy && "处理中…"}
-                      </span>
-                    </span>
-                    {/* 第二行只放地址、几个连接、花费；协议与模型数进悬停（原先一行塞不下，后半截总被截掉） */}
-                    <span className="mt-0.5 block truncate text-micro text-l3 @4xl:hidden" title={row.detail}>
-                      {gatewayHostLine(g, row.detail)}
-                      {` · ${n ? `${n} 个连接` : "没有连接"}`}
-                      {usage && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                  <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-hairline bg-inset p-0.5">
+                    {protoTabs.map((tab) => {
+                      const active = protoFilter === tab.key;
+                      return (
                         <button
+                          key={tab.key}
                           type="button"
-                          className="ml-1 hover:text-l1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onJumpUsage?.(g.id);
-                          }}
+                          aria-pressed={active}
+                          onClick={() => setProtoFilter(tab.key)}
+                          className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+                            active
+                              ? "bg-seg-sel font-medium text-l1"
+                              : "text-l3 hover:text-l1"
+                          }`}
                         >
-                          · {usage}
+                          {tab.label} ({tab.count})
                         </button>
-                      )}
-                    </span>
-                  </span>
-                  <span className="hidden min-w-0 flex-1 truncate text-xs text-l3 @4xl:block" title={row.detail}>
-                    {gatewayHostLine(g, row.detail)}
-                  </span>
-                  <span className="hidden w-14 shrink-0 text-right text-xs text-l3 @4xl:block">{n ? `${n} 个` : "—"}</span>
-                  <span className="hidden w-40 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
-                    {usage ? (
-                      <button
-                        type="button"
-                        className="hover:text-l1"
-                        title="去用量页看这个网关"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onJumpUsage?.(g.id);
-                        }}
-                      >
-                        {/* 列头已写「近 30 天」，格子里不再重复 */}
-                        {usage.replace(/^近 30 天 /, "")}
-                      </button>
-                    ) : (
-                      "—"
-                    )}
-                  </span>
-                  <span className={`flex w-28 shrink-0 items-center ${hoverRevealClass}`} onClick={(e) => e.stopPropagation()}>
-                    <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
-                    <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
-                    <RowAction icon={<Wand2 className="size-3.5" />} tip="一键配置各 CLI：每个装了的 CLI 用目录里各家最新的模型" label={`用 ${row.name} 一键配置各 CLI`} onClick={() => setAutoConfigFor(g.id)} />
-                    <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
-                  </span>
-                  <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-l4" />
-                </li>
+                      );
+                    })}
+                  </div>
+                  <input
+                    type="search"
+                    aria-label="搜索网关"
+                    placeholder="搜网关名 / 地址 / 密钥尾号…"
+                    value={gwSearch}
+                    onChange={(e) => setGwSearch(e.target.value)}
+                    className={`${searchFieldClass} w-56 max-w-full`}
+                  />
+                </div>
               );
-            })}
-          </ul>
+            })()}
+
+            {gateways.length === 0 ? (
+              <p className="py-10 text-center text-sm text-l3">还没有网关。点右上角「＋ 新建网关」，或在添加连接时新建。</p>
+            ) : (() => {
+              const q = gwSearch.trim().toLowerCase();
+              const filteredRows = gatewayPickerRows(gateways).filter((row) => {
+                const g = gateways.find((item) => item.id === row.id);
+                if (!g) return false;
+                if (protoFilter !== "all" && !g.slots[protoFilter]?.trim()) return false;
+                if (!q) return true;
+                const hay = [
+                  g.name,
+                  ...gatewayHosts(g.slots),
+                  g.keyHint ?? "",
+                  ...g.models.map((m) => m.id),
+                ]
+                  .join("\n")
+                  .toLowerCase();
+                return hay.includes(q);
+              });
+
+              if (filteredRows.length === 0) {
+                return (
+                  <p className="py-8 text-center text-sm text-l3">
+                    没有匹配的网关。
+                    <button
+                      type="button"
+                      className="ml-1.5 text-cta hover:underline"
+                      onClick={() => {
+                        setProtoFilter("all");
+                        setGwSearch("");
+                      }}
+                    >
+                      清空筛选
+                    </button>
+                  </p>
+                );
+              }
+
+              return (
+                <ul className="divide-y divide-hairline overflow-hidden rounded-lg border border-hairline">
+                  {filteredRows.map((row) => {
+                    const g = gateways.find((item) => item.id === row.id);
+                    if (!g) return null;
+                    const boundProfiles = profiles.filter((p) => p.gatewayId === g.id);
+                    const n = boundProfiles.length;
+                    const distinctAgents = [...new Set(boundProfiles.map((p) => p.agent))];
+                    const usage = usageLine(g);
+                    const health = gatewayHealth(g);
+                    const busy = rowProbingId === g.id || listFetchingId === g.id;
+                    const hosts = gatewayHosts(g.slots);
+                    const hostText = hosts.length ? hosts.join(" / ") : "未填端点";
+                    const keyLabel = g.noAuth
+                      ? "本地免密"
+                      : g.keyHint?.trim()
+                        ? `密钥 ${g.keyHint.trim()}`
+                        : "缺密钥";
+                    const filledSlots = gatewayFilledSlots(g.slots);
+                    const activeModelCount = g.models.filter((m) => m.status !== "stale").length;
+                    const needsKeyFix = health.tone === "err" || health.tone === "warn";
+
+                    return (
+                      <li
+                        key={g.id}
+                        className={`group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-2.5 transition-colors hover:bg-hover ${
+                          health.tone === "err" ? "bg-err/5" : ""
+                        }`}
+                        onClick={() => openEdit(g)}
+                      >
+                        <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
+
+                        {/* 第一列：名称 + 健康胶囊 + 主机与密钥尾号直接外露 */}
+                        <span className="min-w-[12rem] flex-1 @4xl:w-64 @4xl:flex-none">
+                          <span className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="truncate text-sm font-medium text-l1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openEdit(g);
+                              }}
+                            >
+                              {row.name}
+                            </button>
+                            <span
+                              className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-micro ${
+                                health.tone === "ok"
+                                  ? "bg-ok text-ok-text"
+                                  : health.tone === "err"
+                                    ? "bg-err text-err-text"
+                                    : health.tone === "warn"
+                                      ? "bg-warn text-warn-text"
+                                      : "bg-inset text-l3"
+                              }`}
+                              title={[health.label, health.detail].filter(Boolean).join("；")}
+                            >
+                              <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
+                              <span>{busy ? "处理中…" : health.tone === "ok" ? "正常" : health.label}</span>
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block truncate font-mono text-micro text-l3" title={row.detail}>
+                            {hostText}
+                            <span className="mx-1 font-sans text-l4">·</span>
+                            <span className={health.tone === "warn" || health.tone === "err" ? "text-err-text" : "text-l2"}>
+                              {keyLabel}
+                            </span>
+                          </span>
+                        </span>
+
+                        {/* 第二列：已开通协议槽胶囊 + 模型数 */}
+                        <span className="hidden min-w-0 flex-1 flex-wrap items-center gap-1 @3xl:flex">
+                          {filledSlots.slice(0, 3).map((slotName) => (
+                            <span
+                              key={slotName}
+                              className="rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2"
+                            >
+                              {slotName}
+                            </span>
+                          ))}
+                          {filledSlots.length > 3 && (
+                            <span
+                              className="rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l3"
+                              title={filledSlots.join("、")}
+                            >
+                              +{filledSlots.length - 3}
+                            </span>
+                          )}
+                          <span className="ml-1 text-xs text-l3">
+                            {activeModelCount > 0 ? `${activeModelCount} 个模型` : "未拉目录"}
+                          </span>
+                        </span>
+
+                        {/* 第三列：已绑 CLI 图标簇与连接数 */}
+                        <span className="hidden w-28 shrink-0 items-center justify-end gap-1.5 @2xl:flex">
+                          {n > 0 ? (
+                            <>
+                              <span className="flex items-center -space-x-1">
+                                {distinctAgents.slice(0, 3).map((agId) => {
+                                  const agLabel = AGENTS.find((a) => a.id === agId)?.label ?? agId;
+                                  return (
+                                    <span key={agId} className="rounded-full bg-canvas p-0.5" title={agLabel}>
+                                      <AgentIcon agent={agId} label={agLabel} size={14} />
+                                    </span>
+                                  );
+                                })}
+                              </span>
+                              <span className="text-xs text-l2">{n} 连接</span>
+                            </>
+                          ) : (
+                            <span className="rounded-full bg-warn px-2 py-px text-micro text-warn-text">
+                              暂未绑 CLI
+                            </span>
+                          )}
+                        </span>
+
+                        {/* 第四列：近 30 天用量 */}
+                        <span className="hidden w-32 shrink-0 truncate text-right text-xs text-l3 @4xl:block">
+                          {usage ? (
+                            <button
+                              type="button"
+                              className="hover:text-l1"
+                              title="去用量页看这个网关"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onJumpUsage?.(g.id);
+                              }}
+                            >
+                              {usage.replace(/^近 30 天 /, "")}
+                            </button>
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+
+                        {/* 第五列：按状态给显性主操作 + 悬停辅助图标 */}
+                        <span className="ml-auto flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          {needsKeyFix ? (
+                            <button
+                              type="button"
+                              className={`${rowActionClass} text-err-text`}
+                              onClick={() => openEdit(g)}
+                            >
+                              去修密钥
+                            </button>
+                          ) : n === 0 ? (
+                            <button
+                              type="button"
+                              className={rowActionClass}
+                              title="基于这个网关快速为已安装的 CLI 创建连接"
+                              onClick={() =>
+                                activeModelCount > 0
+                                  ? setAutoConfigFor(g.id)
+                                  : onAddConnection
+                                    ? void goAddConnection(g.id)
+                                    : setAutoConfigFor(g.id)
+                              }
+                            >
+                              一键绑 CLI
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className={`${ghostActionClass} ${hoverRevealClass}`}
+                              title="一键配置各 CLI：给每个装了的 CLI 各建一条连接"
+                              onClick={() => setAutoConfigFor(g.id)}
+                            >
+                              配齐 CLI
+                            </button>
+                          )}
+                          <span className={`flex items-center ${hoverRevealClass}`}>
+                            <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
+                            <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
+                            <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
+                          </span>
+                          <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-l4" />
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()}
+          </div>
         )}
       </div>
       {(() => {
