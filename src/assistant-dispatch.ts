@@ -21,6 +21,7 @@ import { builtinTaskMethod, findBuiltinTask } from "./builtin-tasks";
 import { goalTextFromPack } from "./task-packs";
 import { bringLatest, incomingFor, stepBusy, type ConfirmFn } from "./step-latest";
 import { withLatestNote } from "./step-loop";
+import { stepDispatchStatus } from "./assistant-echo";
 import { confirmDialog } from "./components/ConfirmDialog";
 import type { ProjectConfigReadDto, ProjectDto, ProjectMailDto, RunDto, SkillDto, TaskDto, TaskPackDto, WorkspaceDto } from "./types";
 
@@ -30,6 +31,8 @@ export interface DispatchResult {
   mailId?: string;
   taskId?: string;
   worktreePath?: string;
+  /** 派出时工作副本已有的领先提交数（含并入最新内容产生的合并提交） */
+  baseAhead?: number | null;
 }
 
 export async function dispatchWorkOrder(input: {
@@ -86,9 +89,11 @@ async function dispatchToStep(order: WorkOrder, projectPath: string, opts: Order
   const n = order.step ?? 0;
   const { step, ws } = await stepWorkspace(projectPath, n);
   const sent = await sendToWorkspace(projectPath, ws, step.name, workOrderMessage(order, opts), { latest: true, confirm });
+  const health = await invoke<{ ahead: number }>("workspace_health", { id: ws.id }).catch(() => null);
+  const baseAhead = health?.ahead ?? 0;
   return sent.mode === "mail"
-    ? { note: `已留话给第 ${n} 步的 AI，它空闲时送到`, mode: "mail", mailId: sent.mailId, worktreePath: ws.worktreePath }
-    : { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath };
+    ? { note: `已留话给第 ${n} 步的 AI，它空闲时送到`, mode: "mail", mailId: sent.mailId, worktreePath: ws.worktreePath, baseAhead }
+    : { note: `已让第 ${n} 步的 AI 接着做，做完照常去评审`, mode: "resume", worktreePath: ws.worktreePath, baseAhead };
 }
 
 /**
@@ -249,6 +254,8 @@ export interface DispatchRecord {
   taskId?: string | null;
   worktreePath?: string | null;
   note: string;
+  /** 派出那一刻工作副本已有的领先提交数 */
+  baseAhead?: number | null;
   /** 派活回音补到哪个阶段了（后端 assistant_echo 记） */
   echoed?: string | null;
   echoedAt?: string | null;
@@ -297,11 +304,13 @@ export async function dispatchStatus(
   const ws = (await invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[])).find((w) => samePath(w.worktreePath, path, IS_WINDOWS));
   if (!ws) return { text: "工作副本不在了（可能已保存进项目并归档）", tone: "idle" };
   const health = await invoke<{ ahead: number; uncommitted: boolean }>("workspace_health", { id: ws.id }).catch(() => null);
-  if (health && health.ahead > 0) return { text: "做完了，等你评审、保存进项目", tone: "done", phase: "review" };
-  // 派出之后又保存过才算（接回的是已保存的步骤时，旧的保存时间不能当成这件活做完了，2026-11-06）
-  const savedAfter = !!ws.mergedAt && Date.parse(ws.mergedAt) > Date.parse(rec.at);
-  if (savedAfter && health?.ahead === 0) return { text: "已保存进项目", tone: "idle", phase: "accepted" };
-  return { text: live ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
+  return stepDispatchStatus({
+    dispatchedAt: rec.at,
+    baseAhead: rec.baseAhead,
+    ahead: health ? health.ahead : null,
+    mergedAt: ws.mergedAt ?? null,
+    liveOpen: !!live,
+  });
 }
 
 /**

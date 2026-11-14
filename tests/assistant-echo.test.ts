@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { echoInboxItems, echoText, type OpenDispatch } from "../src/assistant-echo.ts";
+import { echoInboxItems, echoText, stepDispatchStatus, type OpenDispatch } from "../src/assistant-echo.ts";
 
 const goal = { target: "goal", step: null, title: "组会汇报", mode: "goal" } as const;
 const step = { target: "step", step: 2, title: "修列名", mode: "mail" } as const;
@@ -35,4 +35,25 @@ test("收件箱：只收补过回音、没看过的；打开过那个项目的�
   assert.equal(items[0].text, "课题 A · 项目助手派的「组会汇报」做完了");
   assert.deepEqual(items[0].action, { type: "assistant", projectRoot: "/p/a" });
   assert.equal(echoInboxItems(open, {}, () => "x").length, 2);
+});
+
+test("步骤派活进度判定：派出前已有的领先提交不提前报做完，新增提交或保存后再提交才报评审", () => {
+  const at = "2026-11-14T10:00:00+08:00";
+  // 派出前工作副本已有 2 个没保存的提交：不提前报 review
+  assert.equal(stepDispatchStatus({ dispatchedAt: at, baseAhead: 2, ahead: 2, mergedAt: null, liveOpen: true }).phase, undefined);
+  assert.equal(stepDispatchStatus({ dispatchedAt: at, baseAhead: 2, ahead: 2, mergedAt: null, liveOpen: true }).text, "这一轮说完了，等你看");
+  // AI 又交了新提交（ahead = 3 > baseAhead = 2）：报 review
+  assert.equal(stepDispatchStatus({ dispatchedAt: at, baseAhead: 2, ahead: 3, mergedAt: null, liveOpen: false }).phase, "review");
+  // 派出后保存进项目（ahead 归 0）：报 accepted
+  assert.equal(
+    stepDispatchStatus({ dispatchedAt: at, baseAhead: 2, ahead: 0, mergedAt: "2026-11-14T10:30:00+08:00", liveOpen: false }).phase,
+    "accepted",
+  );
+  // 派出后保存过一次，接着又交了 1 个新提交（ahead = 1）：基线归零，仍报 review
+  assert.equal(
+    stepDispatchStatus({ dispatchedAt: at, baseAhead: 2, ahead: 1, mergedAt: "2026-11-14T10:30:00+08:00", liveOpen: false }).phase,
+    "review",
+  );
+  // 旧记录没记 baseAhead：默认按 0
+  assert.equal(stepDispatchStatus({ dispatchedAt: at, ahead: 1, mergedAt: null, liveOpen: false }).phase, "review");
 });

@@ -102,6 +102,7 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
       taskId: result.taskId ?? null,
       worktreePath: result.worktreePath ?? null,
       note: result.note,
+      baseAhead: result.baseAhead ?? null,
     };
     await invoke("assistant_mark_dispatched", { projectRoot: project.path, turnAt: last.at, record }).catch(() => {});
     useAppStore.getState().bumpAssistantEchoTick();

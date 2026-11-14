@@ -202,6 +202,7 @@ export default function ProjectAssistantPanel({
       taskId: result.taskId ?? null,
       worktreePath: result.worktreePath ?? null,
       note: result.note,
+      baseAhead: result.baseAhead ?? null,
     });
   }
   /** 派出去的单子记在那一轮上（派活单、补料单共用；不再派第二次，回音巡视按它补进展） */

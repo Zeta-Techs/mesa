@@ -3,8 +3,28 @@
  * 项目助手在那个项目的问答里补一条，同时进收件箱「项目助手」；不弹窗（少占注意力）。已验收是人自己点的，只记不说。
  * 纯逻辑，配 tests/assistant-echo.test.ts；巡视（调 invoke）在 assistant-echo-watch.ts。
  */
-import type { DispatchPhase, DispatchRecord } from "./assistant-dispatch";
-import type { InboxItem } from "./store";
+import type { DispatchPhase, DispatchRecord, DispatchTone } from "./assistant-dispatch.ts";
+import type { InboxItem } from "./store.ts";
+
+/** 交给步骤的派活已送达后，按工作副本领先提交数与保存时间判状态：
+ *  派出时工作副本已有的领先提交（baseAhead）不算这件活做完；派出后保存进项目过（mergedAt > dispatchedAt）则基线归零 */
+export function stepDispatchStatus(input: {
+  dispatchedAt: string;
+  baseAhead?: number | null;
+  ahead: number | null;
+  mergedAt?: string | null;
+  liveOpen: boolean;
+}): { text: string; tone: DispatchTone; phase?: DispatchPhase } {
+  const savedAfter = !!input.mergedAt && Date.parse(input.mergedAt) > Date.parse(input.dispatchedAt);
+  const baseline = savedAfter ? 0 : (input.baseAhead ?? 0);
+  if (input.ahead !== null && input.ahead > baseline) {
+    return { text: "做完了，等你评审、保存进项目", tone: "done", phase: "review" };
+  }
+  if (savedAfter && input.ahead === 0) {
+    return { text: "已保存进项目", tone: "idle", phase: "accepted" };
+  }
+  return { text: input.liveOpen ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
+}
 
 export function echoText(rec: Pick<DispatchRecord, "target" | "step" | "title" | "mode">, phase: DispatchPhase): string {
   const what = rec.target === "step" ? `派给第 ${rec.step} 步的「${rec.title}」` : `派出去的「${rec.title}」`;

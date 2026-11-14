@@ -106,9 +106,11 @@ export default function ReworkOrderCard({
         confirm: confirmDialog,
       });
       if (!rework) return;
-      const ws = (await invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[])).find(
-        (w) => w.id === rework.toWorkspaceId,
-      );
+      const [wsList, health] = await Promise.all([
+        invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]),
+        invoke<{ ahead: number }>("workspace_health", { id: rework.toWorkspaceId }).catch(() => null),
+      ]);
+      const ws = wsList.find((w) => w.id === rework.toWorkspaceId);
       await onSent({
         at: new Date().toISOString(),
         target: "step",
@@ -117,6 +119,7 @@ export default function ReworkOrderCard({
         mode: "resume",
         worktreePath: ws?.worktreePath ?? null,
         note: `在「${to.name}」另开了一轮，只${word}单上列的`,
+        baseAhead: health?.ahead ?? null,
       });
       setOpen(false);
     } catch (reason) {

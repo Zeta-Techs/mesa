@@ -99,6 +99,9 @@ pub struct DispatchRecordDto {
     /// 派出去时给人看的那句
     #[serde(default)]
     pub note: String,
+    /// 派出那一刻工作副本已领先主分支的提交数（留话或接回时旧提交不算这件活做完）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_ahead: Option<u32>,
     /// 派活回音补到哪个阶段了（review / failed / stopped / accepted）；accepted 后不再跟
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echoed: Option<String>,
@@ -1592,9 +1595,12 @@ mod tests {
             task_id: None,
             worktree_path: Some("/w/s2".into()),
             note: "已留话".into(),
+            base_ahead: Some(2),
             echoed: None,
             echoed_at: None,
         };
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("\"baseAhead\":2"), "DTO 序列化保持 camelCase: {json}");
         let at0 = read_jsonl::<AssistantTurnDto>(&project_dir("/p/one").unwrap().join(LOG_FILE))[0].at.clone();
         mark_dispatched_sync("/p/one", &at0, rec.clone()).unwrap();
         let turns: Vec<AssistantTurnDto> = read_jsonl(&project_dir("/p/one").unwrap().join(LOG_FILE));
@@ -1634,6 +1640,7 @@ mod tests {
             task_id: Some("t1".into()),
             worktree_path: None,
             note: String::new(),
+            base_ahead: None,
             echoed: None,
             echoed_at: None,
         });

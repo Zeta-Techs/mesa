@@ -257,6 +257,7 @@ async function dispatchTurn(project: ProjectDto, turn: AssistantTurn): Promise<v
       taskId: result.taskId ?? null,
       worktreePath: result.worktreePath ?? null,
       note: result.note,
+      baseAhead: result.baseAhead ?? null,
     };
     await invoke("assistant_mark_dispatched", { projectRoot: project.path, turnAt: turn.at, record }).catch(() => {});
     useAppStore.getState().bumpAssistantEchoTick();
