@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { ExternalLink, GripVertical } from "lucide-react";
-import { rowActionClass } from "./PageFrame";
+import { ExternalLink, GripVertical, RotateCw } from "lucide-react";
+import { FoldMark, iconActionClass } from "./PageFrame";
+import FileTypeMark from "./FileTypeMark";
 import type { DirEntryDto } from "./FileTree";
 import { absTime, relTime } from "../rel-time";
 import { useAppStore } from "../store";
@@ -160,8 +161,48 @@ export async function loadArtifactRows(
   );
 }
 
+/** 常见科研流程产物的简短用途标签（4–6 字），帮用户扫一眼区分 10+ 个英文文件名 */
+function artifactRoleHint(name: string): string | null {
+  const lower = name.toLowerCase();
+  if (lower === "endnote.docx") return "EndNote 引文域";
+  if (lower === "zotero.docx") return "Zotero 引文域";
+  if (lower.endsWith("-final.pdf") || lower === "manuscript.pdf") return "PDF 成稿";
+  if (lower.endsWith("-final.docx") || lower === "manuscript.docx") return "Word 成稿";
+  if (lower.endsWith("-final.md") || lower === "manuscript.md") return "定稿源文";
+  if (lower === "declarations.md") return "作者与声明";
+  if (lower === "figure-permissions.md") return "配图许可";
+  if (lower === "changelog.md") return "修改对照";
+  if (lower === "review-report.md") return "审查报告";
+  if (lower === "citation-check.md") return "引文核查";
+  if (lower === "verification-decisions.md") return "核验裁决";
+  if (lower === "evidence.json") return "核验台账";
+  if (lower === "endnote-cite-report.md") return "EndNote 体检";
+  if (lower === "zotero-cite-report.md") return "Zotero 体检";
+  if (lower === "screening.md") return "筛选记录";
+  if (lower === "included.md" || lower === "included.json") return "纳入清单";
+  if (lower === "to-fetch.md" || lower === "to-fetch.ris") return "待获取清单";
+  if (lower === "references.bib") return "BibTeX 库";
+  if (lower === "outline.md") return "大纲正文";
+  return null;
+}
+
+function isFinalDeliverableFile(name: string): boolean {
+  return /\.(pdf|docx|pptx|html)$/i.test(name);
+}
+
+function isAuditArtifactFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    lower === "citation-check.md" ||
+    lower === "verification-decisions.md" ||
+    lower === "evidence.json" ||
+    lower === "review-report.md" ||
+    lower.endsWith("-cite-report.md")
+  );
+}
+
 /**
- * 步骤产物核验清单（RX2b → v3.45 起挂在任务行下）：挂载时拉取一次 + 手动 ⟳ 刷新，不进轮询。
+ * 步骤产物核验清单（RX2b → v3.45 起挂在任务行下）：挂载时拉取一次 + 手动刷新，不进轮询。
  * 步骤从 project.toml 按 workspaceName 反查；定位根由调用方按状态给定——已合并读项目根（main），其余读工作树。
  */
 export default function ArtifactChecklist({
@@ -169,6 +210,7 @@ export default function ArtifactChecklist({
   workspaceName,
   root,
   rootLabel,
+  embedded = false,
 }: {
   /** 读 project.toml 找绑定步骤（注册项目路径） */
   projectPath: string;
@@ -178,6 +220,8 @@ export default function ArtifactChecklist({
   root: string;
   /** 根来源小字：「工作区」/「主文件夹（已保存进项目）」 */
   rootLabel: string;
+  /** 嵌在工作区卡内时不重复套外层标题与同底色盒 */
+  embedded?: boolean;
 }) {
   // 正在文件栏里看的那个：清单里同一行标浅底（2026-11-11 文件统一开在项目页右侧文件栏）
   const activePath = useAppStore((s) => s.projectFilePane?.path ?? null);
@@ -188,6 +232,7 @@ export default function ArtifactChecklist({
   const [loading, setLoading] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -228,25 +273,46 @@ export default function ArtifactChecklist({
     };
   }, [projectPath, workspaceName, root, refreshTick]);
 
+  const producedCount = rows ? rows.filter((r) => r.files.length > 0).length : 0;
+  const totalCount = rows ? rows.length : 0;
+
   return (
-    <div className="mt-2 rounded-md ccode-well p-2">
-      <div className="mb-1 flex items-center gap-2">
-        <span className="text-xs text-l2">
-          「{stepName ?? workspaceName}」本步文件
+    <div
+      className={
+        embedded
+          ? "mt-3 rounded-lg bg-canvas/45 px-3 py-2.5 text-xs"
+          : "mt-2 rounded-lg ccode-well p-3 text-xs"
+      }
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className="font-medium text-l2">
+          {embedded ? "本步产出" : `「${stepName ?? workspaceName}」本步文件`}
         </span>
+        {rows && totalCount > 0 && (
+          <span className="font-mono text-micro tabular-nums text-l4">
+            {producedCount}/{totalCount}
+          </span>
+        )}
         <span
-          className="min-w-0 truncate font-mono text-micro text-l4"
+          className="min-w-0 truncate rounded-sm bg-inset/75 px-1.5 py-0.5 font-mono text-micro text-l4"
           title={root}
         >
           {rootLabel}
         </span>
         <button
           type="button"
-          className={`${rowActionClass} ml-auto shrink-0`}
+          className={`${iconActionClass} ml-auto`}
           disabled={loading}
+          title="刷新本步文件"
+          aria-label="刷新本步文件"
           onClick={() => setRefreshTick((v) => v + 1)}
         >
-          ⟳ 刷新
+          <RotateCw
+            size={13.5}
+            strokeWidth={1.8}
+            className={loading ? "animate-spin" : undefined}
+            aria-hidden="true"
+          />
         </button>
       </div>
       {loading || !rows ? (
@@ -259,106 +325,219 @@ export default function ArtifactChecklist({
         <p className="text-xs text-l4">
           该步骤未登记预期产物，可在「编辑研究流程」中补充。
         </p>
-      ) : (
-        <>
-        <ul className="space-y-0.5">
-          {rows.map((row) => {
-            const produced = row.files.length > 0;
-            // 单文件产物：行本身可点击预览；目录产物：行只表状态，文件逐个列在下方
-            const single = row.files.length === 1 ? row.files[0] : null;
-            // 一律开在项目页右侧文件栏（2026-11-11 用户拍板）：不弹窗、不跳对话页；清单顺序给栏头 ↑↓
-            const openFile = (f: DirEntryDto) => {
-              void showProjectFile({
-                projectRoot: projectPath,
-                root,
-                path: f.path,
-                name: f.name,
-                list: (rows ?? []).flatMap((r) => r.files.map((x) => ({ path: x.path, name: x.name }))),
-                from: `${stepName ?? workspaceName} · 本步文件`,
-              });
-            };
-            const isActive = (f: DirEntryDto) =>
-              !!activePath && samePath(activePath, f.path, IS_WINDOWS);
-            const fileMeta = (f: DirEntryDto) => (
-              <>
-                <span
-                  className="shrink-0 text-micro text-l4"
-                  title={absTime(f.modified)}
-                >
-                  {relTime(f.modified)}
+      ) : (() => {
+        // 一律开在项目页右侧文件栏（2026-11-11 用户拍板）：不弹窗、不跳对话页；清单顺序给栏头 ↑↓
+        const allFilesList = rows.flatMap((r) =>
+          r.files.map((x) => ({ path: x.path, name: x.name })),
+        );
+        const openFile = (f: DirEntryDto) => {
+          void showProjectFile({
+            projectRoot: projectPath,
+            root,
+            path: f.path,
+            name: f.name,
+            list: allFilesList,
+            from: `${stepName ?? workspaceName} · 本步文件`,
+          });
+        };
+        const isActive = (f: DirEntryDto) =>
+          !!activePath && samePath(activePath, f.path, IS_WINDOWS);
+        const fileMeta = (f: DirEntryDto) => (
+          <span className="flex shrink-0 items-center gap-2 font-mono text-micro tabular-nums text-l4">
+            <span title={absTime(f.modified)}>{relTime(f.modified)}</span>
+            <span>{formatSize(f.size)}</span>
+          </span>
+        );
+        const fileTitle = (f: DirEntryDto) => `在右侧打开 ${f.path}`;
+
+        // 成稿交付物（单文件 .pdf / .docx / .pptx / .html）置顶卡片化；核验与引文检查在条目较多时归组折叠
+        const deliverableRows = rows.filter(
+          (r) => r.files.length === 1 && isFinalDeliverableFile(r.files[0].name),
+        );
+        const deliverableEntries = new Set(deliverableRows.map((r) => r.entry));
+        const restProduced = rows.filter(
+          (r) => r.files.length > 0 && !deliverableEntries.has(r.entry),
+        );
+        const shouldFoldAudit =
+          producedCount >= 6 &&
+          restProduced.filter(
+            (r) => r.files.length === 1 && isAuditArtifactFile(r.files[0].name),
+          ).length >= 2;
+        const auditRows = shouldFoldAudit
+          ? restProduced.filter(
+              (r) => r.files.length === 1 && isAuditArtifactFile(r.files[0].name),
+            )
+          : [];
+        const auditEntries = new Set(auditRows.map((r) => r.entry));
+        const mainRows = restProduced.filter((r) => !auditEntries.has(r.entry));
+        const missingRows = rows.filter((r) => r.files.length === 0);
+
+        const renderFileLine = (f: DirEntryDto, showCheck: boolean) => {
+          const hint = artifactRoleHint(f.name);
+          return (
+            <button
+              type="button"
+              className={`group/file flex h-7 w-full items-center gap-2 rounded-md px-1.5 text-left text-xs transition-colors hover:bg-hover hover:text-l1 ${
+                isActive(f) ? "bg-hover font-medium text-l1" : "text-l2"
+              }`}
+              aria-current={isActive(f) || undefined}
+              title={fileTitle(f)}
+              onClick={() => openFile(f)}
+            >
+              {showCheck ? (
+                <span className="shrink-0 text-done">✓</span>
+              ) : (
+                <FileTypeMark path={f.name} />
+              )}
+              <span className="min-w-0 truncate font-mono">{f.name}</span>
+              {hint && (
+                <span className="shrink-0 rounded-sm bg-inset/75 px-1.5 py-0.5 text-micro text-l3">
+                  {hint}
                 </span>
-                <span className="shrink-0 text-micro text-l4">
-                  {formatSize(f.size)}
-                </span>
-              </>
-            );
-            const fileTitle = (f: DirEntryDto) => `在右侧打开 ${f.path}`;
-            return (
-              <li key={row.entry}>
-                {!produced ? (
-                  <div className="flex h-7 items-center gap-2 rounded-sm px-1 text-xs">
-                    <span className="shrink-0 text-l4">—</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-l4">
+              )}
+              <span aria-hidden="true" className="min-w-0 flex-1" />
+              <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/file:opacity-100 focus-within:opacity-100">
+                <OpenExternalHandle path={f.path} root={root} onError={setOpenError} />
+                <DragOutHandle path={f.path} />
+              </span>
+              {fileMeta(f)}
+            </button>
+          );
+        };
+
+        const renderStandardRow = (row: ArtifactRow) => {
+          const single = row.files.length === 1 ? row.files[0] : null;
+          return (
+            <li key={row.entry}>
+              {single ? (
+                renderFileLine(single, true)
+              ) : (
+                <>
+                  <div className="flex h-7 items-center gap-2 rounded-md px-1.5 text-xs">
+                    <span className="shrink-0 text-done">✓</span>
+                    <span className="min-w-0 flex-1 truncate font-mono text-l2">
                       {row.entry}
                     </span>
-                    <span className="shrink-0 text-l4">尚未产出</span>
-                  </div>
-                ) : single ? (
-                  <button
-                    type="button"
-                    className={`flex h-7 w-full items-center gap-2 rounded-sm px-1 text-left text-xs hover:bg-hover hover:text-l1 ${isActive(single) ? "bg-hover text-l1" : "text-l2"}`}
-                    aria-current={isActive(single) || undefined}
-                    title={fileTitle(single)}
-                    onClick={() => openFile(single)}
-                  >
-                    <span className="shrink-0 text-done">✓</span>
-                    <span className="min-w-0 flex-1 truncate font-mono">
-                      {single.name}
+                    <span className="shrink-0 text-micro text-l4">
+                      {row.files.length} 个文件
                     </span>
-                    <OpenExternalHandle path={single.path} root={root} onError={setOpenError} />
-                    <DragOutHandle path={single.path} />
-                    {fileMeta(single)}
-                  </button>
-                ) : (
-                  <>
-                    <div className="flex h-7 items-center gap-2 rounded-sm px-1 text-xs">
-                      <span className="shrink-0 text-done">✓</span>
-                      <span className="min-w-0 flex-1 truncate font-mono text-l2">
-                        {row.entry}
-                      </span>
-                      <span className="shrink-0 text-micro text-l4">
-                        {row.files.length} 个文件
-                      </span>
-                    </div>
-                    <ul className="pl-5">
-                      {row.files.map((f) => (
-                        <li key={f.path}>
-                          <button
-                            type="button"
-                            className={`flex h-7 w-full items-center gap-2 rounded-sm px-1 text-left text-xs hover:bg-hover hover:text-l1 ${isActive(f) ? "bg-hover text-l1" : "text-l2"}`}
-                            aria-current={isActive(f) || undefined}
-                            title={fileTitle(f)}
-                            onClick={() => openFile(f)}
-                          >
-                            <span className="min-w-0 flex-1 truncate font-mono">
+                  </div>
+                  <ul className="space-y-0.5 pl-5">
+                    {row.files.map((f) => (
+                      <li key={f.path}>{renderFileLine(f, false)}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </li>
+          );
+        };
+
+        return (
+          <div className="space-y-2.5">
+            {deliverableRows.length > 0 && (
+              <div>
+                <div className="mb-1.5 px-1 text-micro font-medium text-l4">
+                  成稿文件
+                </div>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {deliverableRows.map((row) => {
+                    const f = row.files[0];
+                    const hint = artifactRoleHint(f.name);
+                    return (
+                      <button
+                        key={row.entry}
+                        type="button"
+                        onClick={() => openFile(f)}
+                        aria-current={isActive(f) || undefined}
+                        title={fileTitle(f)}
+                        className={`group/file flex min-w-0 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                          embedded ? "ccode-well" : "bg-canvas/55"
+                        } ${
+                          isActive(f)
+                            ? "ring-1 ring-cta-bd text-l1"
+                            : "text-l1 hover:bg-hover"
+                        }`}
+                      >
+                        <FileTypeMark path={f.name} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="truncate font-mono text-xs font-medium text-l1">
                               {f.name}
                             </span>
-                            <OpenExternalHandle path={f.path} root={root} onError={setOpenError} />
-                            <DragOutHandle path={f.path} />
-                            {fileMeta(f)}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
+                            {hint && (
+                              <span className="shrink-0 rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
+                                {hint}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 font-mono text-micro tabular-nums text-l4">
+                            <span title={absTime(f.modified)}>{relTime(f.modified)}</span>
+                            <span>·</span>
+                            <span>{formatSize(f.size)}</span>
+                          </div>
+                        </div>
+                        <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/file:opacity-100 focus-within:opacity-100">
+                          <OpenExternalHandle path={f.path} root={root} onError={setOpenError} />
+                          <DragOutHandle path={f.path} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {mainRows.length > 0 && (
+              <div>
+                {deliverableRows.length > 0 && (
+                  <div className="mb-1 px-1 text-micro font-medium text-l4">
+                    稿件与清单
+                  </div>
                 )}
-              </li>
-            );
-          })}
-        </ul>
-        {openError && <p className="mt-1 px-1 text-micro text-err-text">{openError}</p>}
-        </>
-      )}
+                <ul className="space-y-0.5">
+                  {mainRows.map(renderStandardRow)}
+                </ul>
+              </div>
+            )}
+            {auditRows.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  aria-expanded={auditOpen}
+                  onClick={() => setAuditOpen((v) => !v)}
+                  className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  <FoldMark open={auditOpen} />
+                  <span>核验与引文检查（{auditRows.length}）</span>
+                </button>
+                {auditOpen && (
+                  <ul className="mt-0.5 space-y-0.5 pl-2">
+                    {auditRows.map(renderStandardRow)}
+                  </ul>
+                )}
+              </div>
+            )}
+            {missingRows.length > 0 && (
+              <ul className="space-y-0.5">
+                {missingRows.map((row) => (
+                  <li key={row.entry}>
+                    <div className="flex h-7 items-center gap-2 rounded-md px-1.5 text-xs">
+                      <span className="shrink-0 text-l4">—</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-l4">
+                        {row.entry}
+                      </span>
+                      <span className="shrink-0 text-micro text-l4">尚未产出</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {openError && (
+              <p className="mt-1 px-1 text-micro text-err-text">{openError}</p>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

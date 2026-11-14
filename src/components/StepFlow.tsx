@@ -2640,7 +2640,7 @@ export default function StepFlow({
                   void toggle(human, true);
                 }}
                 title="沿用现在的引用样式，进入下一项"
-                className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
               >
                 保持当前，不换
               </button>
@@ -2885,7 +2885,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => setToolEditing(node.key)}
-                  className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+                  className="rounded-md bg-inset/75 px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
                   title="这一轮已按这个写法开工；改了要下次重新开工这一步才生效"
                 >
                   更改
@@ -2899,7 +2899,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => setToolEditing(null)}
-                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className="ml-1.5 rounded-sm px-1 py-0.5 text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   不改了
                 </button>
@@ -2944,7 +2944,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => setLitSourceEditing(true)}
-                  className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+                  className="rounded-md bg-inset/75 px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
                   title="这一轮已按这个来源开工；改了要下次重新开工这一步才生效"
                 >
                   更改
@@ -2959,7 +2959,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => setLitSourceEditing(false)}
-                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className="ml-1.5 rounded-sm px-1 py-0.5 text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   不改了
                 </button>
@@ -2997,7 +2997,7 @@ export default function StepFlow({
                     type="button"
                     onClick={() => onOpenResources(cur.focus)}
                     title={cur.hint}
-                    className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                    className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                   >
                     {cur.action}
                   </button>
@@ -3031,7 +3031,7 @@ export default function StepFlow({
             <button
               type="button"
               onClick={() => setSettleEditing(true)}
-              className="rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2"
+              className="rounded-md bg-inset/75 px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
               title="这一轮已按当时的任务书开工；改了要下次重新开工这一步才生效"
             >
               {decisions.length > 0 ? "更改" : "展开"}
@@ -3048,7 +3048,7 @@ export default function StepFlow({
                 <button
                   type="button"
                   onClick={() => setSettleEditing(false)}
-                  className="ml-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  className="ml-1.5 rounded-sm px-1 py-0.5 text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   收起
                 </button>
@@ -3089,7 +3089,7 @@ export default function StepFlow({
                         )
                       }
                       title="未拍板的一律取第一个选项（推荐值）写进草稿；已选过的不动"
-                      className="shrink-0 rounded-sm px-1 py-0.5 text-micro text-l4 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l2 disabled:opacity-50"
+                      className="shrink-0 rounded-md bg-inset/75 px-2 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
                     >
                       全部用推荐值
                     </button>
@@ -3130,7 +3130,7 @@ export default function StepFlow({
                             className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
                               on
                                 ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
-                                : "bg-strip text-l3 hover:bg-hover hover:text-l1"
+                                : "bg-inset text-l3 hover:bg-hover hover:text-l1"
                             }`}
                           >
                             {opt}
@@ -3255,7 +3255,7 @@ export default function StepFlow({
             {/* 预置话题：「跟 AI 商量」的现成话头，点了就带着这个问题开商量（2026-11-11 起不再建话题卡）。
                 只列还没开聊过的（老话题卡已在下面的清单里） */}
             {(openSeeds ?? []).length > 0 && (
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs text-l4">或直接聊：</span>
                 {(openSeeds ?? []).map((seed) => (
                   <button
@@ -3263,7 +3263,7 @@ export default function StepFlow({
                     type="button"
                     onClick={() => void chatDraft(seed)}
                     title="就这个问题跟 AI 商量，聊定了它直接写进 TASK.md"
-                    className="rounded-full bg-strip px-2 py-0.5 text-xs text-l3 hover:bg-hover hover:text-l1"
+                    className="rounded-full bg-inset px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                   >
                     {seed}
                   </button>
@@ -3347,7 +3347,7 @@ export default function StepFlow({
           isAcademicMcpTaskTitle(human.title) &&
           !node.done &&
           !dense && (
-            <div className="mt-1 flex flex-wrap items-center gap-2 pl-6">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-6">
               {ACADEMIC_MCP_PRESETS.map((preset) => (
                 <button
                   key={preset.name}
@@ -3361,7 +3361,7 @@ export default function StepFlow({
                       ? `${preset.what}。分发后先在终端登录，Mesa 体检未连通也正常`
                       : `${preset.what}。在 MCP 页填 API 密钥，Mesa 注入 ${preset.envVar}`
                   }
-                  className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                  className="shrink-0 rounded-full bg-inset px-2.5 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   {preset.label}
                 </button>
@@ -3384,7 +3384,7 @@ export default function StepFlow({
                   setPage("terminal");
                 }}
                 title="开讨论会话并带上 mcp login 指令；登录成功后请新开「开始」，不要在这个会话检索"
-                className="shrink-0 rounded-sm px-1 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
               >
                 去终端登录
               </button>
@@ -3843,7 +3843,7 @@ export default function StepFlow({
                     void toggle(human, true);
                   }}
                   title="先跳过这一项，进入下一步；之后随时可取消勾选再回来处理"
-                  className="shrink-0 rounded-sm px-1.5 py-0.5 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:bg-hover hover:text-l1"
+                  className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   {skipLabel}
                 </button>
@@ -3902,7 +3902,7 @@ export default function StepFlow({
               <button
                 type="button"
                 onClick={() => setUnhandedTitle(null)}
-                className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                className="rounded-md px-1.5 py-0.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l2"
               >
                 不用更新成稿
               </button>
@@ -3924,21 +3924,22 @@ export default function StepFlow({
           .filter((n) => n.section === "main")
           .map((node) => renderNode(node, false))}
       </ol>
-      {/* 可选补充：沉到分隔线下，与主干拉开层级——它们不做也能跑完这一步，
+      {/* 可选补充：沉到下方独立分区，与主干拉开层级——它们不做也能跑完这一步，
           和「定方向 / agent 执行 / 评审」平铺在一起会让人以为样样都得做。
-          保存进项目之后才用得上的收尾（继续精读、同步到文献库、导入批注）再单独放进虚线下的「保存后可做」，
-          不和可选事项混排（2026-11-13 步骤卡统一设计稿） */}
+          保存进项目之后才用得上的收尾（继续精读、同步到文献库、导入批注）再单独放进「保存后可做」，
+          不画横贯全卡的实线/虚线（去线条化），改用轻量小节签区分 */}
       {([
         ["可选", "solid", flow.nodes.filter((n) => n.section === "optional" && !n.afterSave)],
         ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave)],
       ] as const).map(([title, line, nodes]) => nodes.length > 0 && (
-        <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"}>
-          <div className="mt-3 flex items-center gap-2 pl-[1.875rem]">
-            {/* pl-[1.875rem] = 节点 pl-1.5 + 序号列 w-4 + 间距 gap-2，分隔线的字与步骤名同一左缘（设计稿 .split） */}
-            <span className="shrink-0 text-micro text-l4">{title}</span>
-            <span className={line === "dashed" ? "min-w-0 flex-1 border-t border-dashed border-field" : "h-px min-w-0 flex-1 bg-hairline"} />
+        <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"} className="mt-3.5">
+          <div className="flex items-center gap-2 pl-[1.875rem]">
+            {/* pl-[1.875rem] = 节点 pl-1.5 + 序号列 w-4 + 间距 gap-2，分区签与步骤名同一左缘 */}
+            <span className="inline-flex items-center rounded-md bg-inset/65 px-2 py-0.5 text-micro font-medium text-l3">
+              {title}
+            </span>
           </div>
-          <ol className="mt-1.5 space-y-1">{nodes.map((node) => renderNode(node, false))}</ol>
+          <ol className="mt-1 space-y-1">{nodes.map((node) => renderNode(node, false))}</ol>
         </div>
       ))}
       {note && <p className="mt-1 pl-1 text-micro text-l3">{note}</p>}

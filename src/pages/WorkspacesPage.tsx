@@ -2454,8 +2454,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 空列表时由下方虚线引导卡承载同一入口，同一视野不摆两个相同按钮（v3.92）；
                 无步骤项目与未注册分组同样适用（空态卡按钮对它们照常可用）。
                 有研究步骤时列表恒跟随聚焦步骤（v3.81 起无「全部」切换） */}
-            <div className="flex items-center gap-2 pt-1">
-              <span className="text-xs text-l3">
+            <div className="flex items-center gap-2 pt-1 text-xs">
+              <span className="font-medium text-l3">
                 {focusStepName
                   ? `${focusStepName} · 工作区（${wsList.length}）`
                   : `工作区（${wsList.length}）`}
@@ -2465,7 +2465,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   <button
                     type="button"
                     onClick={() => setNewWsRepoPath(selectedGroup.repoPath)}
-                    className={`${actionBtn} shrink-0`}
+                    className={
+                      focusStepName
+                        ? "shrink-0 rounded-md px-2 py-1 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+                        : `${actionBtn} shrink-0`
+                    }
                   >
                     新建工作区
                   </button>
@@ -2533,6 +2537,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                       step.name === focusStepName &&
                       step.workspaceName === workspace.name,
                   );
+                const boundStep = wsView.steps.find(
+                  (step) => step.workspaceName === workspace.name,
+                );
                 return (
                   <li
                     key={workspace.id}
@@ -2543,8 +2550,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <span className="truncate text-sm font-medium text-l1">
-                            {workspace.name}
+                            {boundStep ? boundStep.name : workspace.name}
                           </span>
+                          {boundStep && boundStep.name !== workspace.name && (
+                            <span className="shrink-0 font-mono text-xs text-l4">
+                              {workspace.name}
+                            </span>
+                          )}
                           {merged ? (
                             // 「已保存进项目」是终态提示：行内小字 + ok 色小点，不占按钮位；
                             // 有新提交（ahead > 0）后恢复状态 pill 与评审入口
@@ -2670,6 +2682,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                     {artifactsOpen.has(workspace.id) &&
                       workspace.status === "active" && (
                         <ArtifactChecklist
+                          embedded
                           projectPath={selectedGroup.repoPath}
                           workspaceName={workspace.name}
                           root={

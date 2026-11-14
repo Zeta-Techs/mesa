@@ -1937,12 +1937,13 @@ export default function ProjectGroup({
         );
         if (!hint) return null;
         return (
-          <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-warn-text" role="note">
-            <span>{hint.text}</span>
+          <div className="ccode-well mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-1.5 text-xs text-warn-text" role="note">
+            <span className="size-1.5 shrink-0 rounded-full bg-warn-text" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{hint.text}</span>
             {focusIndex !== hint.index && (
               <button
                 type="button"
-                className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
+                className="shrink-0 rounded-md bg-raised px-2 py-0.5 text-xs text-l2 transition-colors hover:bg-seg-sel hover:text-l1"
                 onClick={() => focusByIndex(hint.index)}
               >
                 去这一步
@@ -1952,36 +1953,38 @@ export default function ProjectGroup({
         );
       })()}
       {registered && templateNotice && noticeDismissed !== templateNotice.signature && (
-        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-l3" role="note">
-          <span>
+        <div className="ccode-well mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-1.5 text-xs text-l3" role="note">
+          <span className="min-w-0 flex-1">
             内置模板「{templateNotice.templateName}」有更新：{templateNotice.steps.join("、")}
             可以换成新版。先看差异、勾选了才改，已写的产物不动。
           </span>
-          <button
-            type="button"
-            className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
-            onClick={() => {
-              setEditorUpgrade(templateNotice.templateId);
-              openEditor();
-            }}
-          >
-            去看看
-          </button>
-          <button
-            type="button"
-            className="text-l4 hover:text-l2"
-            title="这一批更新不再提示；内置模板以后再改了还会提示"
-            onClick={() => {
-              try {
-                localStorage.setItem(noticeKey, templateNotice.signature);
-              } catch {
-                /* 存不下就只在这次隐藏 */
-              }
-              setNoticeDismissed(templateNotice.signature);
-            }}
-          >
-            不用了
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              className="rounded-md bg-raised px-2 py-0.5 text-xs text-l2 transition-colors hover:bg-seg-sel hover:text-l1"
+              onClick={() => {
+                setEditorUpgrade(templateNotice.templateId);
+                openEditor();
+              }}
+            >
+              去看看
+            </button>
+            <button
+              type="button"
+              className="rounded-md px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+              title="这一批更新不再提示；内置模板以后再改了还会提示"
+              onClick={() => {
+                try {
+                  localStorage.setItem(noticeKey, templateNotice.signature);
+                } catch {
+                  /* 存不下就只在这次隐藏 */
+                }
+                setNoticeDismissed(templateNotice.signature);
+              }}
+            >
+              不用了
+            </button>
+          </div>
         </div>
       )}
 
@@ -1992,38 +1995,40 @@ export default function ProjectGroup({
             const field = parseSettingLine(x.line);
             const notes = SETTING_NOTES[x.q]?.options;
             return (
-              <div key={x.q} className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-micro text-l3" role="note">
-                <span>
+              <div key={x.q} className="ccode-well mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-1.5 text-xs text-l3" role="note">
+                <span className="min-w-0 flex-1">
                   内置模板「{settingsNotice.templateName}」新增了一项全局设定「{x.q}」，这个项目还没定。
                   {field.options ? "点一个写进项目规则，以后可在项目设置的规则里改：" : "加上后，用到它的那一步开工时 AI 先问你："}
                 </span>
-                {(field.options ?? [null]).map((opt) => (
+                <div className="flex shrink-0 flex-wrap items-center gap-1">
+                  {(field.options ?? [null]).map((opt) => (
+                    <button
+                      key={opt ?? "ask"}
+                      type="button"
+                      className="rounded-full bg-raised px-2.5 py-0.5 text-xs text-l2 transition-colors hover:bg-seg-sel hover:text-l1"
+                      title={opt ? notes?.[opt] : undefined}
+                      onClick={() => void addTemplateSetting(opt ? `${x.q}：${opt}` : x.line)}
+                    >
+                      {opt ?? "加上"}
+                    </button>
+                  ))}
                   <button
-                    key={opt ?? "ask"}
                     type="button"
-                    className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
-                    title={opt ? notes?.[opt] : undefined}
-                    onClick={() => void addTemplateSetting(opt ? `${x.q}：${opt}` : x.line)}
+                    className="rounded-md px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+                    title="这一项不加，以后不再提示；要加可在项目设置的规则里手写"
+                    onClick={() => {
+                      const next = [...dismissedSettings, `${settingsNotice.templateId}:${x.q}`];
+                      try {
+                        localStorage.setItem(settingsDismissKey, JSON.stringify(next));
+                      } catch {
+                        /* 存不下就只在这次隐藏 */
+                      }
+                      setDismissedSettings(next);
+                    }}
                   >
-                    {opt ?? "加上"}
+                    不用了
                   </button>
-                ))}
-                <button
-                  type="button"
-                  className="text-l4 hover:text-l2"
-                  title="这一项不加，以后不再提示；要加可在项目设置的规则里手写"
-                  onClick={() => {
-                    const next = [...dismissedSettings, `${settingsNotice.templateId}:${x.q}`];
-                    try {
-                      localStorage.setItem(settingsDismissKey, JSON.stringify(next));
-                    } catch {
-                      /* 存不下就只在这次隐藏 */
-                    }
-                    setDismissedSettings(next);
-                  }}
-                >
-                  不用了
-                </button>
+                </div>
               </div>
             );
           })}
@@ -2274,10 +2279,10 @@ export default function ProjectGroup({
               return (
                 <p
                   key={r.id}
-                  className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 border-t border-hairline pt-2 text-micro text-l3"
+                  className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-md bg-inset/65 px-2.5 py-1.5 text-micro text-l3"
                   title={`${r.fromStep} ${r.sentAt.slice(5, 10)} 发出：${r.topics.join("；")}`}
                 >
-                  <span>{lit ? "补文献" : "退回修改"}：</span>
+                  <span className="font-medium text-l2">{lit ? "补文献" : "退回修改"}：</span>
                   {path.steps.map((p, i) => {
                     const index = cfg.steps.findIndex((st) => st.name === p.name);
                     return (
@@ -2289,7 +2294,7 @@ export default function ProjectGroup({
                         )}
                         <button
                           type="button"
-                          className={`hover:underline ${p.state === "now" ? "text-l1" : "text-l3"}`}
+                          className={`rounded-sm px-1 py-0.5 transition-colors hover:bg-hover ${p.state === "now" ? "font-medium text-l1" : "text-l3"}`}
                           onClick={() => index >= 0 && focusByIndex(index)}
                           title="去这一步"
                         >
@@ -2302,7 +2307,7 @@ export default function ProjectGroup({
                   {path.chainActive && (
                     <button
                       type="button"
-                      className="ml-auto text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                      className="ml-auto rounded-sm px-1.5 py-0.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
                       title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进更新」"
                       onClick={() => {
                         void invoke("rework_chain_stop", { root: projectPath, reworkId: r.id })
@@ -2422,21 +2427,27 @@ export default function ProjectGroup({
           有流程时折进「流程之外」一行（2026-11-11 项目页减法），工作区卡的「可评审」与步骤卡「去评审」是同一件事。
           折起时照样挂着（hidden），目标条数、要不要自动展开才读得到 */}
       {flowFold && project && cfg && (
-        <section className="mt-2" aria-label="流程之外">
+        <section className="mt-3" aria-label="流程之外">
           <button
             type="button"
-            className="flex items-center gap-1.5 text-micro text-l4 hover:text-l2"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
             aria-expanded={outsideShown}
             onClick={() => setOutsideOpen(!outsideShown)}
             title="流程步骤之外的事（目标）与各步骤的工作区"
           >
             <FoldMark open={outsideShown} />
-            <span>
-              流程之外：目标 {goalCount ?? "…"} · 工作区 {activeWorkspaces.length}
-              {urgentGoals ? " · 有目标等你" : ""}
+            <span className="font-medium text-l2">流程之外</span>
+            <span className="text-micro text-l4">
+              目标 {goalCount ?? "…"} · 工作区 {activeWorkspaces.length}
             </span>
+            {urgentGoals && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
+                <span className="size-1.5 rounded-full bg-warn-text" aria-hidden="true" />
+                有目标等你
+              </span>
+            )}
           </button>
-          <div hidden={!outsideShown} className="mt-2">
+          <div hidden={!outsideShown} className="mt-2 space-y-3">
             <ProjectUserTasksView
               key={`goals:${project.path}`}
               project={project}

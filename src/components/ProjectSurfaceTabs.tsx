@@ -88,41 +88,46 @@ export default function ProjectSurfaceTabs({
 
   return (
     <section aria-label="项目视图" className="flex min-h-0 flex-1 flex-col">
-      <div className="mb-4 flex shrink-0 items-end border-b border-hairline">
-      <div
-        className="flex items-center gap-1"
-        role="tablist"
-        aria-label="项目视图"
-        onKeyDown={moveFocus}
-      >
-        {tabs.map((tab, index) => {
-          const Icon = TAB_ICONS[tab.id];
-          const selected = tab.id === active;
-          return (
-            <button
-              key={tab.id}
-              ref={(node) => {
-                buttons.current[index] = node;
-              }}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              tabIndex={tabStopIndex(index, stop)}
-              onFocus={() => setFocusIndex(index)}
-              onClick={() => onChange(tab.id)}
-              className={`inline-flex h-8 items-center gap-1.5 border-b-2 px-2.5 text-xs transition-colors ${
-                selected
-                  ? "border-cta text-l1"
-                  : "border-transparent text-l3 hover:text-l1"
-              }`}
-            >
-              <Icon size={14} strokeWidth={1.8} aria-hidden="true" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
-      {trailing && <div className="ml-auto flex items-center pb-1">{trailing}</div>}
+      <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2 text-xs">
+        <div
+          className="inline-flex items-center gap-1 rounded-lg bg-inset/70 p-1"
+          role="tablist"
+          aria-label="项目视图"
+          onKeyDown={moveFocus}
+        >
+          {tabs.map((tab, index) => {
+            const Icon = TAB_ICONS[tab.id];
+            const selected = tab.id === active;
+            return (
+              <button
+                key={tab.id}
+                ref={(node) => {
+                  buttons.current[index] = node;
+                }}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                tabIndex={tabStopIndex(index, stop)}
+                onFocus={() => setFocusIndex(index)}
+                onClick={() => onChange(tab.id)}
+                className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${
+                  selected
+                    ? "bg-seg-sel font-medium text-l1 shadow-2xs"
+                    : "text-l3 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                <Icon
+                  size={13.5}
+                  strokeWidth={1.8}
+                  className={selected ? "text-cta" : undefined}
+                  aria-hidden="true"
+                />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        {trailing && <div className="ml-auto flex items-center">{trailing}</div>}
       </div>
       <div
         data-project-main-scroll
@@ -131,7 +136,7 @@ export default function ProjectSurfaceTabs({
           const next = event.currentTarget.scrollTop > 2;
           setScrolled((prev) => (prev === next ? prev : next));
         }}
-        className="min-h-0 flex-1 overflow-auto pt-1 pb-6"
+        className="min-h-0 flex-1 overflow-auto pt-0.5 pb-6"
       >
         {active === "tasks" && taskPanel}
         {children}

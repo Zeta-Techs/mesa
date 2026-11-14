@@ -1470,7 +1470,7 @@ export default function TaskCardsSection({
                     type="button"
                     onClick={() => onContinue(card, true)}
                     title="不接上次的对话，新开一个会话从任务书读起（上次对话太长或跑偏时用）"
-                    className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                   >
                     新开一轮
                   </button>
@@ -1643,52 +1643,68 @@ export default function TaskCardsSection({
         /* shadow-sm：当前步骤卡是本屏唯一「现在该干嘛」答案，微弱投影把它从画布上抬起来（v3.92 走查） */
         <div className="ccode-well mt-2 rounded-lg px-4 py-3.5 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center gap-2">
-          {onFocusIndex && (
-            <button
-              type="button"
-              disabled={focusIdx <= 0}
-              onClick={() => onFocusIndex(focusIdx - 1)}
-              title={focusIdx > 0 ? `上一步：${steps[focusIdx - 1].name}` : "已是第一步"}
-              aria-label="上一步"
-              className="rounded-sm px-1.5 py-0.5 text-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-            >
-              ‹
-            </button>
-          )}
-          <span className="min-w-0 break-words text-sm font-semibold text-l1">{focusStep}</span>
-          {/* 角色标记（v3.89）：步骤名保留学术术语，另标「这一步轮到谁」——
-              用户扫一眼就知道哪几步要自己出场，流程感来自角色交替而非序号 */}
-          {focusStepDto && <RoleBadge role={focusStepDto.role} />}
-          {focusStepDto && (
-            <StepEvidenceChip
-              projectPath={projectPath}
-              step={focusStepDto}
-              workspaces={workspaces}
-              refreshToken={refreshToken}
-            />
-          )}
-          {onFocusIndex && (
-            <button
-              type="button"
-              disabled={focusIdx < 0 || focusIdx >= steps.length - 1}
-              onClick={() => onFocusIndex(focusIdx + 1)}
-              title={
-                focusIdx >= 0 && focusIdx < steps.length - 1
-                  ? `下一步：${steps[focusIdx + 1].name}`
-                  : "已是最后一步"
-              }
-              aria-label="下一步"
-              className="rounded-sm px-1.5 py-0.5 text-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-            >
-              ›
-            </button>
-          )}
-          {focusStatusText &&
-            (focusStatusText === "工作区已归档" ||
-              focusStatusText === "有合并冲突待处理") && (
-            <span className="text-xs text-l3">{focusStatusText}</span>
-          )}
-        </div>
+            {focusIdx >= 0 && steps.length > 0 && (
+              <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-sm bg-inset px-1.5 font-mono text-micro font-medium tabular-nums text-l3">
+                {String(focusIdx + 1).padStart(2, "0")}
+              </span>
+            )}
+            <span className="min-w-0 break-words text-sm font-semibold text-l1">{focusStep}</span>
+            {/* 角色标记（v3.89）：步骤名保留学术术语，另标「这一步轮到谁」——
+                用户扫一眼就知道哪几步要自己出场，流程感来自角色交替而非序号 */}
+            {focusStepDto && <RoleBadge role={focusStepDto.role} />}
+            {focusStepDto && (
+              <StepEvidenceChip
+                projectPath={projectPath}
+                step={focusStepDto}
+                workspaces={workspaces}
+                refreshToken={refreshToken}
+              />
+            )}
+            {focusStatusText &&
+              (focusStatusText === "工作区已归档" ||
+                focusStatusText === "有合并冲突待处理") && (
+              <span
+                className={`rounded-full px-2 py-0.5 text-micro ${
+                  focusStatusText === "有合并冲突待处理"
+                    ? "bg-warn text-warn-text"
+                    : "bg-inset text-l3"
+                }`}
+              >
+                {focusStatusText}
+              </span>
+            )}
+            {onFocusIndex && steps.length > 1 && (
+              <div className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/75 p-0.5 text-xs">
+                <button
+                  type="button"
+                  disabled={focusIdx <= 0}
+                  onClick={() => onFocusIndex(focusIdx - 1)}
+                  title={focusIdx > 0 ? `上一步：${steps[focusIdx - 1].name}` : "已是第一步"}
+                  aria-label="上一步"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                >
+                  ‹
+                </button>
+                <span className="px-1 font-mono text-micro tabular-nums text-l4" aria-hidden="true">
+                  {focusIdx + 1}/{steps.length}
+                </span>
+                <button
+                  type="button"
+                  disabled={focusIdx < 0 || focusIdx >= steps.length - 1}
+                  onClick={() => onFocusIndex(focusIdx + 1)}
+                  title={
+                    focusIdx >= 0 && focusIdx < steps.length - 1
+                      ? `下一步：${steps[focusIdx + 1].name}`
+                      : "已是最后一步"
+                  }
+                  aria-label="下一步"
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                >
+                  ›
+                </button>
+              </div>
+            )}
+          </div>
           {/* 步骤内协同流程线（v3.71）：人/agent 动作按先后排成节点链，当前节点就地操作。
               想法区经 discussContent 收进 discuss 节点内（原先是流程线上方的并列 strip，
               两块并排会把「一步 = 一条线」的时序感冲掉） */}

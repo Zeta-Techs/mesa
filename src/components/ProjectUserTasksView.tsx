@@ -507,6 +507,34 @@ export default function ProjectUserTasksView({
     <>
     <div className="mb-4">
       <section className="min-w-0" aria-label="项目目标">
+        {loaded && quietEmpty && !loadError && !error ? (
+          <div className={`${projectWellClass} flex flex-wrap items-center gap-2 py-2 text-xs`}>
+            <span className="font-medium text-l1">目标</span>
+            <span className="min-w-0 flex-1 text-l3">
+              流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。
+            </span>
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                className={`${secondaryActionClass} gap-1.5`}
+                onClick={() => setCreateOpen(true)}
+              >
+                <Plus size={13} aria-hidden="true" />
+                新建目标
+              </button>
+              <button
+                type="button"
+                className={iconActionClass}
+                onClick={() => void load()}
+                title="刷新目标"
+                aria-label="刷新目标"
+              >
+                <RotateCw size={14} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="flex min-w-0 flex-1 items-baseline gap-2">
             <h2 className="text-sm font-medium text-l1">目标</h2>
@@ -548,8 +576,6 @@ export default function ProjectUserTasksView({
         {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
         {!loaded ? (
           <p role="status" className={`${projectWellClass} text-xs text-l3`}>正在读取目标…</p>
-        ) : quietEmpty ? (
-          !loadError && <p className="text-xs text-l3">流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。</p>
         ) : tasks.length === 0 ? (
           // 无流程科研项目整页只有这一块：放到页面上部视觉中心，不贴着标题行留下大半屏空白
           !loadError && <div className={freeResearch ? "flex min-h-[55vh] flex-col justify-center" : undefined}><EmptyState
@@ -824,6 +850,8 @@ export default function ProjectUserTasksView({
               );
             })}
           </div>
+        )}
+        </>
         )}
         {loaded && archivedTasks.length > 0 && (
           <div className="mt-4">
