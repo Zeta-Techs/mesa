@@ -7,6 +7,7 @@ import { scheduleWarnText, usageWarnText, type UnbindRefs } from "../unbind-impa
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
+  Activity,
   CopyPlus,
   Database,
   Eye,
@@ -4548,11 +4549,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 className={`${secondaryActionClass} inline-flex items-center gap-1.5`}
               >
                 <span>网关库</span>
-                {gateways.length > 0 && (
-                  <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
-                    {gateways.length}
-                  </span>
-                )}
                 {gwIssueCount > 0 && (
                   <span className="size-1.5 shrink-0 rounded-full bg-warn-text" aria-hidden="true" />
                 )}
@@ -5584,35 +5580,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     </span>
                                   );
                                 }
-                                if (officialProbeable) {
-                                  return (
-                                    <button
-                                      type="button"
-                                      onClick={() => void probeRow(profile)}
-                                      title="用这条官方账号发一句话试试（走 CLI 自己的登录，会用一点官方额度），结果写在这里"
-                                      aria-label={`测试官方账号：${labelOf(profile.agent)}`}
-                                      className="hidden h-7 items-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 focus-visible:inline-flex md:group-hover:inline-flex"
-                                    >
-                                      测试
-                                    </button>
-                                  );
-                                }
-                                // 能测的行悬停都给「测试」（不占静止行宽，避免窄窗挤裁模型名）
-                                return canProbeProfile(profile) ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => void probeRow(profile)}
-                                    title={
-                                      profile.connectionStatus === "ready"
-                                        ? "上次测试通过。点一下再测一次：用它的启动模型发一次请求，结果写在这里"
-                                        : "这条连接还没测过。点一下用它的启动模型发一次请求，结果写在这里"
-                                    }
-                                    aria-label={`测试连接：${profile.name}`}
-                                    className="hidden h-7 items-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 focus-visible:inline-flex md:group-hover:inline-flex"
-                                  >
-                                    测试
-                                  </button>
-                                ) : null;
+                                return null;
                               })()}
                             </span>
                             <span className="col-start-4 row-span-3 row-start-1 flex items-center justify-end gap-1 self-center whitespace-nowrap @min-[60rem]/rows:col-start-5">
@@ -5652,7 +5620,45 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
-                              {/* 次要图标动作（外部终端 / 设为全局）悬停展开且平时不占宽度 */}
+                              {/* 次要图标动作（测试 / 外部终端 / 设为全局）悬停展开且平时不占宽度 */}
+                              {(() => {
+                                if (imageOnly || rowProbe[profile.id]?.running) return null;
+                                const hasShownStatus =
+                                  profile.accountType === "official"
+                                    ? Boolean(rowProbe[profile.id] || status)
+                                    : Boolean(status || rowProbe[profile.id]);
+                                if (hasShownStatus) return null;
+                                const officialProbeable =
+                                  profile.accountType === "official" && !!officialStatus[profile.agent]?.connected;
+                                if (officialProbeable) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => void probeRow(profile)}
+                                      title="测试：用这条官方账号发一句话试试（走 CLI 自己的登录，会用一点官方额度）"
+                                      aria-label={`测试官方账号：${labelOf(profile.agent)}`}
+                                      className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                                    >
+                                      <Activity size={14} strokeWidth={1.8} aria-hidden="true" />
+                                    </button>
+                                  );
+                                }
+                                return canProbeProfile(profile) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void probeRow(profile)}
+                                    title={
+                                      profile.connectionStatus === "ready"
+                                        ? "测试：上次测试通过，点一下用它的启动模型再测一次"
+                                        : "测试：用它的启动模型发一次请求，结果写在这里"
+                                    }
+                                    aria-label={`测试连接：${profile.name}`}
+                                    className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                                  >
+                                    <Activity size={14} strokeWidth={1.8} aria-hidden="true" />
+                                  </button>
+                                ) : null;
+                              })()}
                               <button
                                 type="button"
                                 onClick={() => useExternalWith(profile)}
@@ -5865,13 +5871,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             setGwNew(false);
             // 网关可能改过地址 / 密钥 / 重测过：行上就地结果作废，以后端重算为准
             setRowProbe({});
-          }}
-          onJumpUsage={(id) => {
-            sessionStorage.setItem("ccode.statsGateway", id);
-            setGwLib(false);
-            setGwFocus(null);
-            setGwNew(false);
-            setPage("stats");
           }}
           onAddConnection={(id) => {
             setGwLib(false);

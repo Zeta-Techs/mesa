@@ -8,7 +8,7 @@ import { vendorForGateway } from "../vendor-icon";
 import VendorIcon from "./VendorIcon";
 import AgentIcon from "./AgentIcon";
 import { mergeGatewayCatalog } from "../gateway-catalog";
-import { Checkbox, compactFieldClass, fieldClass, FoldMark, ghostActionClass, MenuSelect, PaneSearch, primaryActionClass, quietActionClass, RowAction, rowActionClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
+import { Checkbox, compactFieldClass, fieldClass, FoldMark, ghostActionClass, MenuSelect, primaryActionClass, quietActionClass, RowAction, rowActionClass, secondaryActionClass, NoticeBar, InlineNotice } from "./PageFrame";
 import { Activity, Check, ChevronRight, RefreshCw, Trash2, Zap } from "lucide-react";
 import PagePanel, { PAGE_PANEL_SLIDE_MS } from "./PagePanel";
 import GatewayAutoConfig from "./GatewayAutoConfig";
@@ -55,7 +55,6 @@ import type {
   GatewayInput,
   GatewayModel,
   GatewayProbeDto,
-  GatewayUsageRow,
   ModelCapabilityDto,
   ModelCapsOverrideDto,
   Profile,
@@ -71,9 +70,6 @@ const SLOT_LABELS: { key: keyof ProtocolSlots; label: string }[] = [
   { key: "gemini", label: "Gemini" },
   { key: "cursor", label: "Cursor" },
 ];
-
-/** 上次打开网关库时的「近 30 天」用量：再打开先显示它，新结果回来再换（不让那一列每次从空白弹出来） */
-let monthUsageCache: GatewayUsageRow[] = [];
 
 function emptySlots(): ProtocolSlots {
   return { anthropic: "", openai: "", responses: "", gemini: "", cursor: "" };
@@ -316,7 +312,6 @@ function catalogAge(iso: string | null | undefined): string | null {
 
 export default function GatewayLibrary({
   onClose,
-  onJumpUsage,
   initialId,
   initialNew,
   onAddConnection,
@@ -329,7 +324,6 @@ export default function GatewayLibrary({
   animate?: boolean;
   /** 连接页切走了：面板藏起来，内容留着 */
   hidden?: boolean;
-  onJumpUsage?: (gatewayId: string) => void;
   initialId?: string | null;
   /** 打开即进「新建网关」表单（上手引导「打开网关库」） */
   initialNew?: boolean;
@@ -348,8 +342,6 @@ export default function GatewayLibrary({
   const saveGateway = useAppStore((s) => s.saveGateway);
   const removeGateway = useAppStore((s) => s.removeGateway);
   const [editing, setEditing] = useState<Gateway | "new" | null>(null);
-  const [protoFilter, setProtoFilter] = useState<"all" | keyof ProtocolSlots>("all");
-  const [gwSearch, setGwSearch] = useState("");
   const [probingListAll, setProbingListAll] = useState(false);
   const [newBindAgents, setNewBindAgents] = useState<string[]>([]);
   const [verifyingNew, setVerifyingNew] = useState(false);
@@ -392,7 +384,6 @@ export default function GatewayLibrary({
   const [onlySet, setOnlySet] = useState(false);
   // 列表行上「测试」进行中的网关
   const [rowProbingId, setRowProbingId] = useState<string | null>(null);
-  const [monthUsage, setMonthUsage] = useState<GatewayUsageRow[]>(() => monthUsageCache);
   const [draftProbes, setDraftProbes] = useState<Record<string, SlotProbeSummary>>({});
   const [showSlots, setShowSlots] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -469,16 +460,10 @@ export default function GatewayLibrary({
     if (await confirmDiscard()) onClose();
   }
 
-  // 打开即显示：列表用 store 里已有的网关，「近 30 天」先用上次打开时的结果；
+  // 打开即显示：列表先用 store 里已有的网关；
   // 重拉网关会连同连接一起换掉、整个连接页跟着重渲染，放到滑入动画之后，免得面板滑到一半卡一下（2026-11-04 用户：点进去有点延迟）
   useEffect(() => {
     let live = true;
-    invoke<GatewayUsageRow[]>("usage_by_gateway", { range: "month" })
-      .then((rows) => {
-        monthUsageCache = rows;
-        if (live) setMonthUsage(rows);
-      })
-      .catch(() => live && setMonthUsage([]));
     const timer = window.setTimeout(
       () =>
         void loadGateways().catch((e) => {
@@ -509,8 +494,6 @@ export default function GatewayLibrary({
       openEdit(g);
     }
   }, [initialId, initialNew, gateways]);
-
-  const rate = useAppStore((s) => s.settings?.rateUsdCny) ?? 7.2;
 
   function openEdit(g: Gateway | "new") {
     modelSurfaceGen.current += 1;
@@ -1455,14 +1438,6 @@ export default function GatewayLibrary({
     effectiveSlotUrl(slots, "openai", masterUrl),
   );
 
-  function usageLine(g: Gateway): string | null {
-    const row = monthUsage.find((r) => r.bucket === "gateway" && r.gatewayId === g.id);
-    if (!row) return null;
-    const yen =
-      row.costUsd != null ? `¥${(row.costUsd * rate).toFixed(1)}` : "~";
-    return `近 30 天 ${yen} · ${row.sessionCount} 会话`;
-  }
-
   const healthDot = { ok: "bg-ok-text", err: "bg-err-text", warn: "bg-warn-text", idle: "bg-l4" } as const;
   const editingName = editing !== null && editing !== "new" ? editing.name : null;
   const modelIds = models.map((row) => row.id).filter((id) => {
@@ -1519,7 +1494,7 @@ export default function GatewayLibrary({
     <PagePanel
       hidden={hidden}
       title={editing ? (editing === "new" ? "新建网关" : `编辑「${editingName}」`) : "网关库"}
-      subtitle={editing ? "保存一次密钥与模型池，多 CLI 共享" : gateways.length > 0 ? `${gateways.length} 个网关` : undefined}
+      subtitle={editing ? "保存一次密钥与模型池，多 CLI 共享" : undefined}
       backLabel={editing ? "返回网关库" : "返回连接"}
       animate={animate}
       wide={!editing}
@@ -2429,114 +2404,31 @@ export default function GatewayLibrary({
             </div>
           </div>
         ) : (
-          <div className="@container space-y-3">
-            {gateways.length >= 2 && (() => {
-              const protoTabs: Array<{ key: "all" | keyof ProtocolSlots; label: string; count: number }> = [
-                { key: "all", label: "全部", count: gateways.length },
-                ...(
-                  [
-                    ["anthropic", "Anthropic"],
-                    ["openai", "OpenAI"],
-                    ["responses", "Responses"],
-                    ["gemini", "Gemini"],
-                  ] as const
-                )
-                  .map(([key, label]) => ({
-                    key,
-                    label,
-                    count: gateways.filter((g) => Boolean(g.slots[key]?.trim())).length,
-                  }))
-                  .filter((item) => item.count > 0),
-              ];
-              return (
-                <div className="flex flex-wrap items-center justify-between gap-2 pb-0.5">
-                  <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-hairline bg-inset p-0.5">
-                    {protoTabs.map((tab) => {
-                      const active = protoFilter === tab.key;
-                      return (
-                        <button
-                          key={tab.key}
-                          type="button"
-                          aria-pressed={active}
-                          onClick={() => setProtoFilter(tab.key)}
-                          className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
-                            active
-                              ? "bg-seg-sel font-medium text-l1"
-                              : "text-l3 hover:text-l1"
-                          }`}
-                        >
-                          {tab.label} ({tab.count})
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <PaneSearch
-                    className="w-64 max-w-full"
-                    value={gwSearch}
-                    onChange={setGwSearch}
-                    placeholder="搜网关名 / 域名 / 密钥尾号"
-                    label="搜索网关"
-                  />
-                </div>
-              );
-            })()}
-
+          <div className="@container">
             {gateways.length === 0 ? (
               <p className="py-10 text-center text-sm text-l3">还没有网关。点右上角「＋ 新建网关」，或在添加连接时新建。</p>
             ) : (() => {
-              const q = gwSearch.trim().toLowerCase();
-              const filteredRows = gatewayPickerRows(gateways).filter((row) => {
-                const g = gateways.find((item) => item.id === row.id);
-                if (!g) return false;
-                if (protoFilter !== "all" && !g.slots[protoFilter]?.trim()) return false;
-                if (!q) return true;
-                const hay = [
-                  g.name,
-                  ...gatewayHosts(g.slots),
-                  g.keyHint ?? "",
-                  ...g.models.map((m) => m.id),
-                ]
-                  .join("\n")
-                  .toLowerCase();
-                return hay.includes(q);
-              });
-
-              if (filteredRows.length === 0) {
-                return (
-                  <p className="py-8 text-center text-sm text-l3">
-                    没有匹配的网关。
-                    <button
-                      type="button"
-                      className="ml-1.5 text-cta hover:underline"
-                      onClick={() => {
-                        setProtoFilter("all");
-                        setGwSearch("");
-                      }}
-                    >
-                      清空筛选
-                    </button>
-                  </p>
-                );
-              }
+              const rows = gatewayPickerRows(gateways);
+              const gridCols =
+                "grid-cols-[minmax(0,1fr)_auto] @min-[47rem]:grid-cols-[minmax(12.5rem,1.05fr)_minmax(11.25rem,1.35fr)_6.5rem_12.75rem]";
 
               return (
                 <div className="overflow-hidden rounded-lg border border-hairline">
-                  <div className="hidden items-center gap-x-4 border-b border-hairline bg-rail2/70 px-3.5 py-1.5 text-micro text-l4 @3xl:flex">
-                    <span className="w-4 shrink-0" aria-hidden="true" />
-                    <span className="min-w-[11rem] flex-1 @4xl:w-[17rem] @4xl:flex-none">网关与密钥</span>
-                    <span className="min-w-0 flex-1">支持协议与模型池</span>
-                    <span className="w-28 shrink-0 text-right">已绑 CLI</span>
-                    <span className="hidden w-28 shrink-0 text-right @4xl:block">近 30 天</span>
-                    <span className="w-24 shrink-0 text-right">操作</span>
+                  <div
+                    className={`hidden items-center gap-x-3 border-b border-hairline bg-rail2/70 px-3 py-1.5 text-micro text-l4 @min-[47rem]:grid ${gridCols}`}
+                  >
+                    <span className="min-w-0 truncate pl-[34px]">网关与密钥</span>
+                    <span className="min-w-0 truncate">支持协议与模型池</span>
+                    <span className="min-w-0 truncate">已绑 CLI</span>
+                    <span className="min-w-0 truncate pr-1 text-right">操作</span>
                   </div>
                   <ul className="divide-y divide-hairline">
-                    {filteredRows.map((row) => {
+                    {rows.map((row) => {
                       const g = gateways.find((item) => item.id === row.id);
                       if (!g) return null;
                       const boundProfiles = profiles.filter((p) => p.gatewayId === g.id);
                       const n = boundProfiles.length;
                       const distinctAgents = [...new Set(boundProfiles.map((p) => p.agent))];
-                      const usage = usageLine(g);
                       const health = gatewayHealth(g);
                       const busy = rowProbingId === g.id || listFetchingId === g.id;
                       const hosts = gatewayHosts(g.slots);
@@ -2553,54 +2445,58 @@ export default function GatewayLibrary({
                       return (
                         <li
                           key={g.id}
-                          className={`group flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-2 px-3.5 py-2.5 transition-colors hover:bg-hover ${
+                          className={`group grid cursor-pointer items-center gap-x-3 gap-y-2 px-3 py-2.5 transition-colors hover:bg-hover ${gridCols} ${
                             health.tone === "err" ? "bg-err/5" : ""
                           }`}
                           onClick={() => openEdit(g)}
                         >
-                          <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
-
-                          {/* 第一列：名称 + 健康胶囊 + 主机与密钥尾号直接外露 */}
-                          <span className="min-w-[11rem] flex-1 @4xl:w-[17rem] @4xl:flex-none">
-                            <span className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                className="truncate text-sm font-medium text-l1"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEdit(g);
-                                }}
-                              >
-                                {row.name}
-                              </button>
-                              <span
-                                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-micro ${
-                                  health.tone === "ok"
-                                    ? "bg-ok text-ok-text"
-                                    : health.tone === "err"
-                                      ? "bg-err text-err-text"
-                                      : health.tone === "warn"
-                                        ? "bg-warn text-warn-text"
-                                        : "bg-inset text-l3"
-                                }`}
-                                title={[health.label, health.detail].filter(Boolean).join("；")}
-                              >
-                                <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
-                                <span>{busy ? "处理中…" : health.tone === "ok" ? "正常" : health.label}</span>
+                          {/* 第一列：图标 + 名称 + 健康胶囊 + 主机与密钥尾号 */}
+                          <span className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+                            <VendorIcon vendor={vendorForGateway(g)} name={row.name} />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex min-w-0 items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="truncate text-sm font-medium text-l1"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openEdit(g);
+                                  }}
+                                >
+                                  {row.name}
+                                </button>
+                                <span
+                                  className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px text-micro ${
+                                    health.tone === "ok"
+                                      ? "bg-ok text-ok-text"
+                                      : health.tone === "err"
+                                        ? "bg-err text-err-text"
+                                        : health.tone === "warn"
+                                          ? "bg-warn text-warn-text"
+                                          : "bg-inset text-l3"
+                                  }`}
+                                  title={[health.label, health.detail].filter(Boolean).join("；")}
+                                >
+                                  <span aria-hidden="true" className={`size-1.5 rounded-full ${healthDot[health.tone]}`} />
+                                  <span>{busy ? "处理中…" : health.tone === "ok" ? "正常" : health.label}</span>
+                                </span>
                               </span>
-                            </span>
-                            <span className="mt-0.5 flex min-w-0 items-center font-mono text-micro text-l3" title={row.detail}>
-                              <span className="truncate">{hostText}</span>
-                              <span className="mx-1 shrink-0 font-sans text-l4">·</span>
-                              <span className={`shrink-0 ${health.tone === "warn" || health.tone === "err" ? "text-err-text" : "text-l2"}`}>
-                                {keyLabel}
+                              <span className="mt-0.5 flex min-w-0 items-center font-mono text-micro text-l3" title={row.detail}>
+                                <span className="truncate">{hostText}</span>
+                                <span className="mx-1 shrink-0 font-sans text-l4">·</span>
+                                <span className={`shrink-0 ${health.tone === "warn" || health.tone === "err" ? "text-err-text" : "text-l2"}`}>
+                                  {keyLabel}
+                                </span>
                               </span>
                             </span>
                           </span>
 
-                          {/* 第二列：已开通协议槽胶囊 + 模型数 */}
-                          <span className="hidden min-w-0 flex-1 items-center gap-1 whitespace-nowrap @3xl:flex">
-                            {displaySlots.slice(0, 4).map((slotName) => (
+                          {/* 第二列：已开通协议槽胶囊 + 模型数（严格裁切不越界；按容器宽度自适应展开 1 / 2 / 4 个协议） */}
+                          <span
+                            className="hidden min-w-0 items-center gap-1 overflow-hidden whitespace-nowrap @min-[47rem]:flex"
+                            title={displaySlots.join(" / ")}
+                          >
+                            {displaySlots.slice(0, 1).map((slotName) => (
                               <span
                                 key={slotName}
                                 className="shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2"
@@ -2608,16 +2504,42 @@ export default function GatewayLibrary({
                                 {slotName}
                               </span>
                             ))}
-                            <span className="ml-1.5 shrink-0 text-xs tabular-nums text-l3">
+                            {displaySlots.slice(1, 2).map((slotName) => (
+                              <span
+                                key={slotName}
+                                className="hidden shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2 @min-[52rem]:inline-flex"
+                              >
+                                {slotName}
+                              </span>
+                            ))}
+                            {displaySlots.slice(2, 4).map((slotName) => (
+                              <span
+                                key={slotName}
+                                className="hidden shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro text-l2 @min-[63rem]:inline-flex"
+                              >
+                                {slotName}
+                              </span>
+                            ))}
+                            {displaySlots.length > 1 && (
+                              <span className="shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro tabular-nums text-l3 @min-[52rem]:hidden">
+                                +{displaySlots.length - 1}
+                              </span>
+                            )}
+                            {displaySlots.length > 2 && (
+                              <span className="hidden shrink-0 rounded border border-hairline bg-inset px-1.5 py-px text-micro tabular-nums text-l3 @min-[52rem]:inline-flex @min-[63rem]:hidden">
+                                +{displaySlots.length - 2}
+                              </span>
+                            )}
+                            <span className="ml-1 shrink-0 text-xs tabular-nums text-l3">
                               {activeModelCount > 0 ? `${activeModelCount} 个模型` : "未拉目录"}
                             </span>
                           </span>
 
-                          {/* 第三列：已绑 CLI 图标簇与连接数 */}
-                          <span className="hidden w-28 shrink-0 items-center justify-end gap-1.5 @2xl:flex">
+                          {/* 第三列：已绑 CLI 图标簇与连接数（左对齐紧跟列头，与右侧操作符号拉开呼吸间距） */}
+                          <span className="hidden min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap @min-[47rem]:flex">
                             {n > 0 ? (
                               <>
-                                <span className="flex items-center -space-x-1">
+                                <span className="flex shrink-0 items-center -space-x-1">
                                   {distinctAgents.slice(0, 3).map((agId) => {
                                     const agLabel = AGENTS.find((a) => a.id === agId)?.label ?? agId;
                                     return (
@@ -2627,38 +2549,19 @@ export default function GatewayLibrary({
                                     );
                                   })}
                                 </span>
-                                <span className="text-xs tabular-nums text-l2">{n} 连接</span>
+                                <span className="shrink-0 text-xs tabular-nums text-l2">{n} 连接</span>
                               </>
                             ) : (
-                              <span className="rounded-full bg-warn px-2 py-px text-micro text-warn-text">
+                              <span className="shrink-0 rounded-full bg-warn px-2 py-px text-micro text-warn-text">
                                 暂未绑 CLI
                               </span>
                             )}
                           </span>
 
-                          {/* 第四列：近 30 天用量 */}
-                          <span className="hidden w-28 shrink-0 truncate text-right text-xs tabular-nums text-l3 @4xl:block">
-                            {usage ? (
-                              <button
-                                type="button"
-                                className="hover:text-l1"
-                                title="去用量页看这个网关"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  onJumpUsage?.(g.id);
-                                }}
-                              >
-                                {usage.replace(/^近 30 天 /, "")}
-                              </button>
-                            ) : (
-                              "—"
-                            )}
-                          </span>
-
-                          {/* 第五列：显性主操作 + 悬停辅助图标（不占空白位）+ 右侧直达编辑箭头 */}
-                          <span className="ml-auto flex min-w-[6rem] shrink-0 items-center justify-end gap-1">
-                            <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                              <span className="hidden items-center group-focus-within:flex group-hover:flex">
+                          {/* 第四列：常驻符号操作（测试 / 刷新模型目录 / 删除）+ 主操作 + 右箭头 */}
+                          <span className="flex min-w-0 items-center justify-end gap-1 whitespace-nowrap">
+                            <span className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                              <span className="flex items-center gap-0.5 text-l3">
                                 <RowAction icon={<Activity className="size-3.5" />} tip="测试（用已保存的地址和密钥）" label={`测试 ${row.name}`} onClick={() => void probeListed(g)} />
                                 <RowAction icon={<RefreshCw className="size-3.5" />} tip="重新获取模型目录" label={`获取 ${row.name} 的模型`} onClick={() => void refreshListedCatalog(g)} />
                                 <RowAction icon={<Trash2 className="size-3.5" />} tip="删除网关" label={`删除 ${row.name}`} onClick={() => void onDelete(g)} />
