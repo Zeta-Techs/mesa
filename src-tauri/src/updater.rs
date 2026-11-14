@@ -1141,6 +1141,14 @@ fn semver_newer(a: &str, b: &str) -> bool {
     false
 }
 
+/// 远端版本严格新于本机版本时才算有新版：上游渠道回退（如本机已装 2.6.1、CDN 回退到 2.5.3）或装了预发布高版本时，不得按 `!=` 误报新版
+fn is_outdated(installed: Option<&str>, latest: Option<&str>) -> bool {
+    match (installed, latest) {
+        (Some(i), Some(l)) => semver_newer(l, i),
+        _ => false,
+    }
+}
+
 fn npm_latest(pkg: &str) -> Option<String> {
     let npm = agents::resolve_binary("npm")?;
     let mut cmd = crate::process::background_command(npm);
@@ -1409,13 +1417,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
         }
         None => (None, None),
     };
-    let outdated = match (&installed, &latest) {
-        (Some(i), Some(l)) => match (semver_token(i), semver_token(l)) {
-            (Some(a), Some(b)) => a != b,
-            _ => false,
-        },
-        _ => false,
-    };
+    let outdated = is_outdated(installed.as_deref(), latest.as_deref());
     AgentUpdateInfoDto {
         id: agent_id.into(),
         installed,
@@ -1509,6 +1511,21 @@ mod tests {
         // 提取不到版本串 → 判不新（静默）
         assert!(!semver_newer("unknown", "0.46.0"));
         assert!(!semver_newer("0.53.0", ""));
+    }
+
+    #[test]
+    fn is_outdated_requires_latest_strictly_newer_than_installed() {
+        // Kimi 实证：本机已装 2.6.1，CDN stable 回退到 2.5.3 → 不得误报有新版
+        assert!(!is_outdated(Some("2.6.1"), Some("2.5.3")));
+        assert!(!is_outdated(Some("2.7.0-canary.20261113"), Some("2.5.3")));
+        assert!(!is_outdated(Some("2.5.3"), Some("2.5.3")));
+        assert!(is_outdated(Some("2.5.3"), Some("2.6.1")));
+        // Cursor 年.月.日-哈希：跨日变新提示，同日重打包或回退不提示
+        assert!(is_outdated(Some("2026.10.01-e373342"), Some("2026.10.02-aaa111")));
+        assert!(!is_outdated(Some("2026.10.01-e373342"), Some("2026.10.01-bbb222")));
+        assert!(!is_outdated(Some("2026.10.02-aaa111"), Some("2026.10.01-e373342")));
+        assert!(!is_outdated(Some("2.6.1"), None));
+        assert!(!is_outdated(None, Some("2.6.1")));
     }
 
     #[test]
