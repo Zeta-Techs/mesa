@@ -536,10 +536,10 @@ export default function ProjectUserTasksView({
         ) : (
         <>
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <h2 className="text-sm font-medium text-l1">目标</h2>
             {loaded && tasks.length > 0 && (
-              <span className="text-xs text-l3">{tasks.length} 个</span>
+              <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-micro text-l3">{tasks.length} 个</span>
             )}
           </div>
           {loaded && tasks.length > 0 && freeResearch && onPickTemplate && (
@@ -590,7 +590,7 @@ export default function ProjectUserTasksView({
             }
             action={
               // text-xs 写在外层：全站 button { font: inherit } 会吞掉按钮自己的 text-xs，不给外层字号按钮就跟页面走成 14px、比标题还抢眼
-              <div className="flex flex-col items-center gap-4 text-xs">
+              <div className="flex flex-col items-center gap-3.5 text-xs">
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
                     type="button"
@@ -614,7 +614,7 @@ export default function ProjectUserTasksView({
                 {freeResearch && onPickTemplate && (
                   <button
                     type="button"
-                    className="text-l3 underline decoration-dotted underline-offset-4 hover:text-l1"
+                    className="rounded-full bg-inset/75 px-3 py-1 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                     title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
                     onClick={onPickTemplate}
                   >
@@ -629,12 +629,21 @@ export default function ProjectUserTasksView({
             {visibleBuckets.map((bucket) => {
               const rows = buckets[bucket];
               const label = bucket === "review" ? reviewCopy.bucketReview : GOAL_BUCKET_LABEL[bucket];
+              const bucketDot =
+                bucket === "review"
+                  ? "bg-cta"
+                  : bucket === "running"
+                    ? "bg-ok-text"
+                    : bucket === "stuck"
+                      ? "bg-err-text"
+                      : "bg-l4";
               return (
                 <div key={bucket}>
                   {visibleBuckets.length > 1 && (
-                    <h3 className="mb-2 flex items-center gap-2 text-xs font-medium text-l3">
+                    <h3 className="mb-2 flex items-center gap-2 text-xs font-medium text-l2">
+                      <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${bucketDot}`} />
                       {label}
-                      <span className="text-micro font-normal text-l4">{rows.length}</span>
+                      <span className="rounded-full bg-inset px-1.5 py-0.5 font-mono text-micro font-normal text-l3">{rows.length}</span>
                     </h3>
                   )}
                   <ul aria-label={label} className="space-y-2">
@@ -653,8 +662,9 @@ export default function ProjectUserTasksView({
                         ),
                         acceptedLabel: reviewCopy.timelineAccepted,
                       });
+                      const resolvedAgentId = task.agent ?? run?.agent ?? project.defaultAgent ?? "";
                       const meta = goalCardMeta({
-                        agentLabel: agentLabel(task.agent ?? run?.agent ?? project.defaultAgent ?? "") || "跟随项目默认",
+                        agentLabel: agentLabel(resolvedAgentId) || "跟随项目默认",
                         outputPaths: task.outputPaths,
                         adoptedPaths: task.adoptedPaths,
                         reviewRequired: task.reviewRequired,
@@ -672,20 +682,51 @@ export default function ProjectUserTasksView({
                       // 记下了还没跑过：资料还没复制、上下文还没冻结，要求和设置都还能改
                       const editable = task.status === "pending" && taskRuns.length === 0 && !recoveryPending;
                       const actionClass = `${task.id === primaryTaskId ? primaryActionClass : secondaryActionClass} gap-1.5`;
+                      const cardRingClass =
+                        recoveryPending || task.status === "failed"
+                          ? "ring-1 ring-err-text/30"
+                          : task.status === "pending_review"
+                            ? "ring-1 ring-cta-bd/45"
+                            : running
+                              ? "ring-1 ring-ok-text/25"
+                              : task.status === "completed" && !detailsOpen
+                                ? "opacity-90 transition-opacity hover:opacity-100"
+                                : "";
+                      const statusPillClass =
+                        task.status === "failed"
+                          ? "rounded-full bg-err px-2 py-0.5 text-micro font-medium text-err-text"
+                          : task.status === "stopped"
+                            ? "rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text"
+                            : task.status === "pending_review"
+                              ? "rounded-full bg-cta/12 px-2 py-0.5 text-micro font-medium text-cta"
+                              : running
+                                ? "rounded-full bg-ok px-2 py-0.5 text-micro font-medium text-ok-text"
+                                : "rounded-full bg-inset px-2 py-0.5 text-micro text-l3";
                       return (
-                        <li key={task.id} aria-label={`目标：${name}`} className={projectWellClass}>
+                        <li key={task.id} aria-label={`目标：${name}`} className={`${projectWellClass} ${cardRingClass}`}>
                           <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
                             <div className="min-w-0 flex-[1_1_18rem]">
                               <h4
                                 className={`${detailsOpen ? "" : "line-clamp-2"} break-words text-sm font-medium leading-5 text-l1 [overflow-wrap:anywhere]`}
                                 aria-label={detailsOpen && !extraRequirement ? `目标完整要求：${name}` : undefined}
                               >{name}</h4>
-                              <p className="mt-1.5 flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-xs text-l3">
+                              <p className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-l3">
                                 {showStatus && (
                                   <>
-                                    <span className={`shrink-0 ${task.status === "failed" ? "text-err-text" : ""}`}>{taskStatusLabel(task.status)}</span>
+                                    <span className={`inline-flex shrink-0 items-center gap-1 ${statusPillClass}`}>
+                                      {running && <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />}
+                                      {task.status === "pending_review" && <span aria-hidden="true" className="size-1.5 rounded-full bg-cta" />}
+                                      {taskStatusLabel(task.status)}
+                                    </span>
                                     <span aria-hidden="true">·</span>
                                   </>
+                                )}
+                                {resolvedAgentId && AGENTS.some((a) => a.id === resolvedAgentId) && (
+                                  <span
+                                    aria-hidden="true"
+                                    className="inline-block size-1.5 shrink-0 rounded-full"
+                                    style={{ background: agentBrand(resolvedAgentId) }}
+                                  />
                                 )}
                                 <span className="min-w-0 break-words">{meta}</span>
                               </p>
@@ -734,7 +775,7 @@ export default function ProjectUserTasksView({
                               )}
                               <button
                                 type="button"
-                                className={`${ghostActionClass} gap-1`}
+                                className={`${ghostActionClass} gap-1 ${detailsOpen ? "bg-hover text-l1" : ""}`}
                                 aria-label={`目标详情：${name}`}
                                 aria-expanded={detailsOpen}
                                 aria-controls={`goal-details-${task.id}`}
@@ -749,7 +790,7 @@ export default function ProjectUserTasksView({
                             <p className="mt-2 text-xs text-l3">运行记录暂不可用，请刷新后重试。</p>
                           )}
                           {detailsOpen && (
-                            <section id={`goal-details-${task.id}`} aria-label={`目标详情内容：${name}`} className="mt-3 space-y-4 border-t border-hairline pt-3">
+                            <section id={`goal-details-${task.id}`} aria-label={`目标详情内容：${name}`} className="mt-3 space-y-3.5 rounded-lg bg-canvas/45 p-3">
                               {extraRequirement && (
                                 <div>
                                   <h5 className="text-micro font-medium text-l3">要求</h5>
@@ -761,7 +802,7 @@ export default function ProjectUserTasksView({
                                   {fullGoal.split("\n").length > 4 || fullGoal.length > 160 ? (
                                     <button
                                       type="button"
-                                      className="mt-1 text-xs text-l3 hover:text-l1"
+                                      className="mt-1 inline-flex h-6 items-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
                                       aria-expanded={fullReqTaskId === task.id}
                                       aria-controls={`goal-req-${task.id}`}
                                       onClick={() => setFullReqTaskId(fullReqTaskId === task.id ? null : task.id)}
@@ -774,21 +815,30 @@ export default function ProjectUserTasksView({
                               {task.reviewRequired && outputPaths.length > 0 && (
                                 <div>
                                   <h5 className="text-micro font-medium text-l3">{hasAdoptedFiles ? "已写入项目" : "输出范围"} · {outputPaths.length}</h5>
-                                  <ul aria-label={hasAdoptedFiles ? "已写入项目的文件" : "声明的输出范围"} className="mt-1.5 space-y-1 font-mono text-xs text-l2">
-                                    {outputPaths.map((path) => <li key={path} className="break-all">{path}</li>)}
+                                  <ul aria-label={hasAdoptedFiles ? "已写入项目的文件" : "声明的输出范围"} className="mt-1.5 flex flex-wrap gap-1.5 font-mono text-xs text-l2">
+                                    {outputPaths.map((path) => (
+                                      <li key={path} className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-inset/80 px-2 py-1 break-all">
+                                        <FileTypeMark path={path} />
+                                        <span>{path}</span>
+                                      </li>
+                                    ))}
                                   </ul>
                                 </div>
                               )}
                               {timeline.length > 1 && (
                                 <div>
                                   <h5 className="text-micro font-medium text-l3">历程</h5>
-                                  <ol aria-label={`目标历程详情：${name}`} className="mt-1.5 space-y-3 border-l border-hairline pl-3">
+                                  <ol aria-label={`目标历程详情：${name}`} className="mt-2 ml-1 space-y-2.5 border-l border-hairline pl-3.5">
                                     {timeline.map((item, index) => {
                                       const row = timelineRow(item);
                                       return (
-                                        <li key={index}>
+                                        <li key={index} className="relative">
+                                          <span
+                                            aria-hidden="true"
+                                            className="absolute -left-[18px] top-1.5 size-1.5 rounded-full bg-field ring-2 ring-canvas"
+                                          />
                                           <p className="flex items-baseline gap-2 text-xs text-l3">
-                                            <span>{row.label}</span>
+                                            <span className="font-medium text-l2">{row.label}</span>
                                             {item.at && (
                                               <span className="text-micro text-l4" title={absTime(item.at)}>
                                                 {relTime(item.at)}
@@ -796,7 +846,7 @@ export default function ProjectUserTasksView({
                                             )}
                                           </p>
                                           {row.body ? (
-                                            <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-l2 [overflow-wrap:anywhere]">{row.body}</p>
+                                            <p className="mt-1 rounded-md bg-inset/65 px-2.5 py-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-l2 [overflow-wrap:anywhere]">{row.body}</p>
                                           ) : null}
                                         </li>
                                       );
@@ -806,16 +856,16 @@ export default function ProjectUserTasksView({
                               )}
                               <div>
                                 <h5 className="text-micro font-medium text-l3">设置</h5>
-                                <ul aria-label={`目标设置：${name}`} className="mt-1.5 space-y-0.5 text-xs text-l2">
+                                <ul aria-label={`目标设置：${name}`} className="mt-1.5 flex flex-wrap gap-1.5 text-xs text-l2">
                                   {goalSettingLines(task, project, profiles).map((line) => (
-                                    <li key={line} className="break-words [overflow-wrap:anywhere]">{line}</li>
+                                    <li key={line} className="rounded-md bg-inset/75 px-2 py-1 break-words [overflow-wrap:anywhere]">{line}</li>
                                   ))}
                                 </ul>
                               </div>
                               {task.workspaceCleared && (
                                 <p className="text-xs text-l3">工作副本已清理，不能从旧副本续跑。{task.reviewCleared ? "历史版本也已清理；目标与接受记录保留。" : "历史冻结版本仍保留。"}</p>
                               )}
-                              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-hairline pt-3">
+                              <div className="flex flex-wrap items-center justify-end gap-1.5 pt-1 text-xs">
                                 {editable && (
                                   <button type="button" className={secondaryActionClass} aria-label={`编辑目标：${name}`} onClick={() => setEditTask(task)}>编辑</button>
                                 )}
@@ -857,17 +907,20 @@ export default function ProjectUserTasksView({
           <div className="mt-4">
             <button
               type="button"
-              className="mb-2 flex min-h-7 items-center gap-1 text-xs font-medium text-l3 hover:text-l2"
+              className="mb-2 flex min-h-7 items-center gap-1.5 rounded-md px-1.5 text-xs font-medium text-l3 hover:bg-hover hover:text-l2"
               onClick={() => setArchiveOpen((open) => !open)}
               aria-expanded={archiveOpen}
             >
               <FoldMark open={archiveOpen} />
-              已归档 {archivedTasks.length}
+              已归档{" "}
+              <span className="rounded-full bg-inset px-1.5 py-0.5 font-mono text-micro font-normal text-l3">
+                {archivedTasks.length}
+              </span>
             </button>
             {archiveOpen && (
-              <ul className="space-y-2">
+              <ul className="space-y-1.5">
                 {archivedTasks.map((task) => (
-                  <li key={task.id} className="flex flex-wrap items-center gap-3 rounded-md px-2 py-2 hover:bg-hover">
+                  <li key={task.id} className="ccode-well flex flex-wrap items-center gap-3 rounded-lg px-3 py-2 text-xs">
                     <span className="min-w-0 flex-1">
                       <span className="break-words text-sm text-l2 [overflow-wrap:anywhere]">{goalDisplayName(task)}</span>
                       <span
