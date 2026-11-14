@@ -89,9 +89,13 @@ export function checkBatchNote(items: readonly CheckItem[]): string {
   return [CHECK_BATCH_LEAD, ...open.map(checkNoteBase)].join("\n");
 }
 
-/** 这一条是否已经在意见里（按标题认，单条加和批量加的写法都算） */
+/** 这一条是否已经在意见里（按「标题 + 位置」整行认，单条加和批量加的写法都算，同标题不同文件不串） */
 export function checkNoted(notes: string, item: CheckItem): boolean {
-  return notes.includes(`- ${item.title}`);
+  const base = checkNoteBase(item);
+  return notes.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return trimmed === base || trimmed.startsWith(`${base}：`) || trimmed.startsWith(`${base}:`);
+  });
 }
 
 /** 摘录后面跟的页码说明：p.N 来自 Agent 标注，实际在哪页写在 detail 里 */

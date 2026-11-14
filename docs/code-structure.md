@@ -648,7 +648,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-capabilities.ts  # 接活二期能力清单的两块：workerCapabilityLines（干活的连接能做到哪一步——支持程度、看图、出图、能否定时，数据来自 agent_capabilities / model_capabilities / 设置出图模型 / image_gen_status）、TRIGGER_CATALOG_LINES（定时与事件只说明不建）（tests/assistant-capabilities.test.ts）
   builtin-tasks.ts           # 内置科研任务（2026-11-05；11-08 加审改已有稿件，引文域只体检）：组会汇报 / 进展周报 / 实验规划 / 审改已有稿件的做法数据；不是流程模板、不进 pipeline-presets。findBuiltinTask、builtinTaskCatalogLines（能力清单）、builtinTaskMethod（派活单附上的做法）、builtinTaskGoalText（新建目标当模板）（tests/builtin-tasks.test.ts）
   project-snapshot.ts        # 项目快照纯逻辑：buildProjectSnapshot（步骤状态 / 出错原因 / 核验 / 退回意见 / 运行 / 人工请求 / Mesa 出错 / 环境 / 已定 / 研究档案），超长先砍事件与日志（同上测试）
-  project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过（各步核验 = 核验文件 + 大纲那步现算的 Mesa 核对，stepChecks）；
+  project-assistant-run.ts   # 项目助手取数与问一次（调 invoke）：gatherSnapshot 只用已有只读命令拼快照、读不到的块跳过（各步核验 = 核验文件 + Mesa 核对与写作扫描，stepChecks）；
                              # 问一轮怎么样时 reviewAskFocus 按点名或评审页开着的那一步做重点（reviewRoundFocus）；assistantConnection（assistant 槽 > 项目默认 > AI 功能连接）；
                              # prefetchSnapshot（面板一开就取）；planAsk（分流 + 要不要只读查看文件，带 history 接着上一轮）；request 另取项目地图（gatherMap）与能力清单（gatherCatalog：内置科研任务、我的任务、已装技能一句话；二期加项目默认连接的能力 workerCapabilities 与定时 / 事件说明）；askProjectAssistant 先分流再取材料，出错类在项目里只读查看（不支持的 Agent 退回只看记录）（快照留 90 秒、说明书走 assistant_guide_search）→ project_assistant_ask（项目默认不支持无头时退回 AI 功能连接，绑了槽的不偷换）
   assistant-actions.ts       # 项目助手回答按钮的全局执行（看第 N 步→workbenchTaskReq、去评审、确认后留话、商量、报告…），不依赖工作台状态；常驻侧栏时跳转不关面板

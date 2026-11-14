@@ -99,15 +99,15 @@ export default function CheckList({
             </button>
             {!collapsed && (
               <ul>
-                {group.items.map((item) => {
+                {group.items.map((item, idx) => {
                   const where = checkLocation(item);
                   const quote = checkQuoteLine(item);
-                  const key = `${item.id}-${where}`;
-                  const expanded = openIds.has(key);
+                  const stateKey = `${item.checker ?? ""}:${item.id}:${where}`;
+                  const expanded = openIds.has(stateKey);
                   const noted = isNoted?.(item) ?? false;
                   const hasMore = Boolean(quote || item.evidence?.detail);
                   return (
-                    <li key={key} className="flex gap-2 rounded-md px-2 py-1 hover:bg-hover">
+                    <li key={`${stateKey}:${idx}`} className="flex gap-2 rounded-md px-2 py-1 hover:bg-hover">
                       <span aria-hidden="true" className={`mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT[item.status]}`} />
                       <div className="min-w-0 flex-1">
                         <p className="text-xs leading-snug text-l1">{item.title}</p>
@@ -117,7 +117,7 @@ export default function CheckList({
                               <button
                                 type="button"
                                 onClick={() => onLocate(item)}
-                                title="在右边的稿件里跳到这一处所在的那一节"
+                                title="打开这一处所在的文件或章节"
                                 className="font-mono text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
                               >
                                 {where}
@@ -134,7 +134,7 @@ export default function CheckList({
                           <button
                             type="button"
                             aria-expanded={expanded}
-                            onClick={() => toggle(key)}
+                            onClick={() => toggle(stateKey)}
                             title={expanded ? "收起" : "看全文"}
                             className="mt-0.5 block w-full text-left text-micro leading-snug text-l3 hover:text-l2"
                           >

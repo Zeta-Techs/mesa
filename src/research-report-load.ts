@@ -5,7 +5,8 @@ import { searchPdfProbes, searchProgress, searchProgressParts } from "./notes-pr
 import { missingToFetchCount, parseToFetchItems } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
-import { checkDraft, draftProgressParts, imageRefs, pickManuscript, type DraftStepKind } from "./draft-check";
+import { checkDraft, draftProgressParts, imageRefs, pickManuscript, supersededWritingIds, type DraftStepKind } from "./draft-check";
+import { scanWritingReview, writingHitChecks } from "./draft-review";
 import type { CheckItem } from "./research-checks";
 
 export interface ReportPreview { text: string; truncated: boolean; revision: string | null; readOnlyReason?: string | null }
@@ -179,6 +180,32 @@ export async function loadDraftCheck(roots: readonly string[], kind: DraftStepKi
     readFirst(roots, "outline.md"),
   ]);
   return checkDraft({ kind, file, text, bib, included, index, sections, styleSheet, outline, existingImages: listed ? existing : null });
+}
+
+/** 大纲 / 初稿 / 定稿的写作扫描核验项（与评审页 WorkspaceReviewView 同口径，供项目助手取数共用） */
+export async function loadStepWritingChecks(
+  worktree: string,
+  kind: string,
+  artifacts: readonly string[],
+  mesaItems: readonly CheckItem[],
+): Promise<CheckItem[]> {
+  if (!worktree) return [];
+  let file: string | null = null;
+  if (kind === "outline") {
+    file = "outline.md";
+  } else if (kind === "writing" || kind === "final") {
+    const listing = await invoke<DirEntryDto[]>("list_dir", { path: researchAbsolutePath(worktree, "manuscript"), showHidden: false, root: worktree }).catch(() => [] as DirEntryDto[]);
+    file = pickManuscript(artifacts, listing.filter((e) => !e.isDir).map((e) => `manuscript/${e.name}`));
+  }
+  if (!file) return [];
+  const text = await readFirst([worktree], file);
+  if (text == null) return [];
+  const isOutline = /(^|\/)outline\.md$/i.test(file);
+  const superseded = supersededWritingIds(mesaItems);
+  return writingHitChecks(
+    scanWritingReview(text, { allowGapIds: isOutline, allowNumberedHeadings: isOutline }),
+    file,
+  ).filter((c) => !superseded.has(c.id));
 }
 
 /** 初稿步骤卡的统计行（draft-check.ts draftProgressParts 只算）：工作副本优先、项目根兜底，主稿与 sections.json 取同一处。

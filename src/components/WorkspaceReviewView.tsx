@@ -1199,6 +1199,7 @@ function LiveWorkspaceReviewView({
   // 核验清单（.ccode/checks/，2026-11-02）：没有核验记录时整颗按钮不出现
   const [fileChecks, setChecks] = useState<ChecksDto | null>(null);
   const [checksExpanded, setChecksExpanded] = useState(false);
+  const [evidenceTick, setEvidenceTick] = useState(0);
   // 大纲核对（综述回路三期）：大纲那一步打开评审时 Mesa 自己数、自己查，合并进核验清单（不写文件、不靠 AI 跑脚本）
   const [outlineCheck, setOutlineCheck] = useState<OutlineCheckResult | null>(null);
   // 告诉项目助手评审页正开着哪一步：这时问「这轮怎么样」「帮我看看」默认看这一步（关掉评审就清）
@@ -1423,6 +1424,9 @@ function LiveWorkspaceReviewView({
         if (signature !== signatureRef.current) {
           signatureRef.current = signature;
           setRevision((value) => value + 1);
+        } else if (!quiet) {
+          // 手动点「刷新」时哪怕只有 .gitignore 里的 .ccode/checks/*.jsonl 变了，也重读核验与引用健康，不重挂载正文预览
+          setEvidenceTick((value) => value + 1);
         }
         setDiff(nextDiff);
         setStatus(nextStatus);
@@ -1495,6 +1499,8 @@ function LiveWorkspaceReviewView({
     setNextStep(null);
     setCitations(null);
     setCiteExpanded(false);
+    setChecks(null);
+    setChecksExpanded(false);
     setArtifacts(null);
     setWsRow(null);
     setWritingHits([]);
@@ -1534,8 +1540,7 @@ function LiveWorkspaceReviewView({
       .catch(() => {});
   }, [diff?.workspaceId, diff?.reviewOnly]);
 
-  // 可信度证据：进评审一次性读取（不轮询）。引用健康扫工作树；产物按绑定步骤的
-  // 预期清单在工作树定位（同 ArtifactChecklist 机制）。任一路失败静默降级（行不显示）。
+  // 引用健康与 .ccode/checks/ 核验记录：随工作副本切换、内容版本推进（revision）或手动刷新（evidenceTick）重读
   useEffect(() => {
     const workspaceId = diff?.workspaceId;
     if (!workspaceId) return;
@@ -1545,6 +1550,21 @@ function LiveWorkspaceReviewView({
         if (!stale) setCitations(value);
       })
       .catch(() => {});
+    invoke<ChecksDto>("research_checks_read", { path: worktreePath })
+      .then((value) => {
+        if (!stale) setChecks(value.items.length > 0 || value.skipped > 0 ? value : null);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [diff?.workspaceId, worktreePath, revision, evidenceTick]);
+
+  // 步骤与复现上下文、产物完成数：进评审按工作区读取一次（不随轮询重复查配置）
+  useEffect(() => {
+    const workspaceId = diff?.workspaceId;
+    if (!workspaceId) return;
+    let stale = false;
     if (runId) {
       invoke<{ agent: string; profileId: string | null; models: string[] } | null>("research_run_producer", { runId })
         .then((run) => {
@@ -1552,11 +1572,6 @@ function LiveWorkspaceReviewView({
         })
         .catch(() => {});
     }
-    invoke<ChecksDto>("research_checks_read", { path: worktreePath })
-      .then((value) => {
-        if (!stale) setChecks(value.items.length > 0 || value.skipped > 0 ? value : null);
-      })
-      .catch(() => {});
     void (async () => {
       try {
         if (runId) {
@@ -2861,12 +2876,31 @@ function LiveWorkspaceReviewView({
           )}
         </CheckList>
   ) : null;
-  /** 核验清单点位置：切到稿件页签、打开那个文件，读源文件找这一行落在哪一节，等预览渲染出来跳过去 */
+  /** 核验清单点位置：优先跳到稿件对应章节；过程文件、Git 改动文件或冻结的非 Git 产物直接切到对应页签或打开预览 */
   function locateCheck(item: { target?: { file: string; line?: number } }) {
     const file = item.target?.file?.replace(/\\/g, "/");
     if (!file) return;
     if (!deliveryContentPaths(displayedPaths).includes(file)) {
-      toast(`${file} 不在稿件页签里，到「文件」页签看`, "info");
+      if (paneTabs?.some((tab) => tab.id === "process") && deliveryProcessPaths(displayedPaths).includes(file)) {
+        setReviewPane("process");
+        userPickedRef.current = true;
+        setActivePath(file);
+        return;
+      }
+      if (displayedPaths.includes(file)) {
+        if (paneTabs?.some((tab) => tab.id === "files")) setReviewPane("files");
+        userPickedRef.current = true;
+        setActivePath(file);
+        return;
+      }
+      const frozen = deliveryFiles.find(
+        (entry) => entry.path.replace(/\\/g, "/") === file && (entry.disposition === "copy" || entry.disposition === "skipped"),
+      );
+      if (frozen) {
+        setDeliveryPreview(frozen.path);
+        return;
+      }
+      toast(`${file} 本轮未改动，可在项目右侧「文件」栏查看`, "info");
       return;
     }
     setReviewPane("content");

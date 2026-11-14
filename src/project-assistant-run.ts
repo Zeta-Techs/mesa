@@ -34,7 +34,7 @@ import {
 } from "./project-assistant";
 import type { CheckItem, ChecksDto } from "./research-checks";
 import { mergeMesaChecks } from "./outline-check";
-import { loadDraftCheck, loadNotesCheck, loadOutlineCheck } from "./research-report-load";
+import { loadDraftCheck, loadNotesCheck, loadOutlineCheck, loadStepWritingChecks } from "./research-report-load";
 import { stepKind } from "./step-kind";
 import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
@@ -127,7 +127,8 @@ async function stepChecks(
     safe(invoke<ChecksDto>("research_checks_read", { path: worktree }), null as ChecksDto | null),
     mesa.catch(() => [] as CheckItem[]),
   ]);
-  return mergeMesaChecks(file, own)?.items ?? [];
+  const writing = await loadStepWritingChecks(worktree, kind, step.expectedArtifacts ?? [], own).catch(() => [] as CheckItem[]);
+  return mergeMesaChecks(file, [...own, ...writing])?.items ?? [];
 }
 
 function eventLine(e: RunEventDto): string {

@@ -73,4 +73,10 @@ test("全部加进意见：只带拦下和待你判断，开头一句要 AI 逐�
   assert.ok(checkNoted(note, items[0]));
   assert.ok(checkNoted(checkReviewNote(items[1]), items[1]));
   assert.ok(!checkNoted(note, items[2]));
+  // 同标题不同文件（如三张示意图的 REBUILD / COLD-READ）只认各自的位置，不串台
+  const fig1: CheckItem = { id: "REBUILD", kind: "schematic_rebuild", status: "blocked", title: "图纸重建出的 SVG 与现有文件不一致", target: { file: "figures/fig1/fig1.svg" } };
+  const fig2: CheckItem = { ...fig1, target: { file: "figures/fig2/fig2.svg" } };
+  const fig1Note = checkReviewNote(fig1);
+  assert.ok(checkNoted(fig1Note, fig1));
+  assert.ok(!checkNoted(fig1Note, fig2));
 });

@@ -157,6 +157,32 @@ test("笔记合并取最靠前的状态；Mesa 核对排在核验文件前面", 
   const out = mergeMesaChecks({ items: [{ id: "x", kind: "k", status: "passed", title: "t" }], files: ["a.jsonl"], skipped: 1 }, mesa)!;
   assert.equal(out.items[0], mesa[0]);
   assert.equal(out.skipped, 1);
+
+  // Mesa 核对已覆盖的确定性规则（DUP / REF / HEAD-NUM / CAP-NUM / CAP-SRC）去掉核验脚本里的重复条，其余（DOI、通过项等）照留
+  const mesaDup: Parameters<typeof mergeMesaChecks>[1] = [
+    { id: "draft-ref-Ghost2022", kind: "citation_resolve", status: "blocked", title: "t1", target: { file: "manuscript/draft.md", line: 3 }, checker: MESA_CHECKER },
+    { id: "draft-excluded-Zed2023", kind: "citation_excluded", status: "blocked", title: "t2", target: { file: "manuscript/draft.md", line: 5 }, checker: MESA_CHECKER },
+    { id: "draft-bib-dup-Ann2020", kind: "citation_duplicate", status: "blocked", title: "t3", target: { file: "references.bib" }, checker: MESA_CHECKER },
+    { id: "draft-heading-number", kind: "headings", status: "blocked", title: "t4", target: { file: "manuscript/draft.md", line: 10 }, checker: MESA_CHECKER },
+    { id: "draft-cap-num-Figure", kind: "caption-number", status: "blocked", title: "t5", target: { file: "manuscript/draft.md", line: 20 }, checker: MESA_CHECKER },
+    { id: "draft-cap-src-Figure1-20", kind: "caption-source", status: "needs_human", title: "t6", target: { file: "manuscript/draft.md", line: 20 }, checker: MESA_CHECKER },
+  ];
+  const scriptItems = [
+    { id: "REF-Ghost2022", kind: "citation_resolve", status: "blocked" as const, title: "dup ref", checker: "script:cite_check" },
+    { id: "REF-Zed2023", kind: "citation_resolve", status: "blocked" as const, title: "dup excluded ref", checker: "script:cite_check" },
+    { id: "REF-Bo2021a", kind: "citation_resolve", status: "passed" as const, title: "ok ref", checker: "script:cite_check" },
+    { id: "DUP-Ann2020", kind: "citation_duplicate", status: "blocked" as const, title: "dup bib", checker: "script:cite_check" },
+    { id: "HEAD-NUM@manuscript/draft.md", kind: "headings", status: "blocked" as const, title: "dup head", checker: "script:ms_check" },
+    { id: "CAP-NUM-Figure@manuscript/draft.md", kind: "caption-number", status: "blocked" as const, title: "dup cap num", checker: "script:ms_check" },
+    { id: "CAP-NUM-Table@manuscript/draft.md", kind: "caption-number", status: "passed" as const, title: "ok table num", checker: "script:ms_check" },
+    { id: "CAP-SRC-Figure1-20@manuscript/draft.md", kind: "caption-source", status: "needs_human" as const, title: "dup cap src", checker: "script:ms_check" },
+    { id: "DOI-Bo2021a", kind: "doi_resolve", status: "passed" as const, title: "ok doi", checker: "script:cite_check" },
+  ];
+  const deduped = mergeMesaChecks({ items: scriptItems, files: ["cite-refs.jsonl", "ms-check.jsonl"], skipped: 0 }, mesaDup)!;
+  assert.deepEqual(
+    deduped.items.filter((i) => i.checker !== MESA_CHECKER).map((i) => i.id),
+    ["REF-Bo2021a", "CAP-NUM-Table@manuscript/draft.md", "DOI-Bo2021a"],
+  );
 });
 
 test("拼图里用了综述的图：按笔记 bibKey 或引文库 DOI 认出 kind=review 的篇，一张拼图报一条；仅引用、研究论文不报", () => {

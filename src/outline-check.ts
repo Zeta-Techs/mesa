@@ -649,8 +649,38 @@ export function outlineThinStatus(
   return { thin, arrived };
 }
 
-/** 评审页 / 项目助手里把 Mesa 核对的项排在核验文件的前面（同一档里先看机器数清楚的） */
+/** 评审页 / 项目助手里把 Mesa 核对的项排在核验文件的前面，并去掉核验脚本对同一处确定性问题的重复条目 */
 export function mergeMesaChecks(dto: ChecksDto | null, mesa: readonly CheckItem[]): ChecksDto | null {
   if (!mesa.length) return dto;
-  return { items: [...mesa, ...(dto?.items ?? [])], files: dto?.files ?? [], skipped: dto?.skipped ?? 0 };
+  const normFile = (f?: string) => (f ?? "").replace(/\\/g, "/");
+  const citeKeys = new Set<string>();
+  const dupKeys = new Set<string>();
+  const headNumFiles = new Set<string>();
+  const capNums = new Set<string>();
+  const capSrcs = new Set<string>();
+  for (const item of mesa) {
+    const file = normFile(item.target?.file);
+    if (item.id.startsWith("draft-bib-dup-")) dupKeys.add(item.id.slice("draft-bib-dup-".length));
+    else if (item.id.startsWith("draft-ref-")) citeKeys.add(item.id.slice("draft-ref-".length));
+    else if (item.id.startsWith("draft-excluded-")) citeKeys.add(item.id.slice("draft-excluded-".length));
+    else if (item.id.startsWith("outline-missing-")) citeKeys.add(item.id.slice("outline-missing-".length));
+    else if (item.id.startsWith("outline-excluded-")) citeKeys.add(item.id.slice("outline-excluded-".length));
+    else if (item.id === "draft-heading-number" && file) headNumFiles.add(file);
+    else if (item.id.startsWith("draft-cap-num-") && file) capNums.add(`${item.id.slice("draft-cap-num-".length)}@${file}`);
+    else if (item.id.startsWith("draft-cap-src-") && file) capSrcs.add(`${item.id.slice("draft-cap-src-".length)}@${file}`);
+  }
+  const isSuperseded = (item: CheckItem): boolean => {
+    const c = item.checker ?? "";
+    if (c === "mesa" || c.startsWith("agent") || c.startsWith("pack:")) return false;
+    if (item.id.startsWith("DUP-") && dupKeys.has(item.id.slice(4))) return true;
+    if (item.id.startsWith("REF-") && citeKeys.has(item.id.slice(4))) return true;
+    const file = normFile(item.target?.file);
+    const baseId = item.id.includes("@") ? item.id : file ? `${item.id}@${file}` : item.id;
+    if (baseId.startsWith("HEAD-NUM@") && headNumFiles.has(baseId.slice("HEAD-NUM@".length))) return true;
+    if (baseId.startsWith("CAP-NUM-") && capNums.has(baseId.slice("CAP-NUM-".length))) return true;
+    if (baseId.startsWith("CAP-SRC-") && capSrcs.has(baseId.slice("CAP-SRC-".length))) return true;
+    return false;
+  };
+  const rest = (dto?.items ?? []).filter((item) => !isSuperseded(item));
+  return { items: [...mesa, ...rest], files: dto?.files ?? [], skipped: dto?.skipped ?? 0 };
 }

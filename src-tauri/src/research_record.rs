@@ -101,16 +101,29 @@ fn cap_opt(text: &mut Option<String>) {
     }
 }
 
-/// 核验脚本自己产出的文件（mesa_checks / cite_check 写的固定名）。只有这些文件里允许出现「通过」
-const SCRIPT_CHECK_FILES: [&str; 7] = [
+/// 核验脚本自己产出的文件（mesa_checks / cite_check / fig_lint / schematic_check 写的固定名）。只有这些文件里允许出现「通过」
+const SCRIPT_CHECK_FILES: [&str; 8] = [
     "cite-refs.jsonl",
     "cite-quotes.jsonl",
     "num-check.jsonl",
     "stat-check.jsonl",
     "fig-check.jsonl",
+    "fig-lint.jsonl",
     "cite-docx.jsonl",
     "ms-check.jsonl",
 ];
+
+fn is_schematic_check_file(file_name: &str) -> bool {
+    file_name
+        .strip_prefix("schematic-")
+        .and_then(|rest| rest.strip_suffix(".jsonl"))
+        .is_some_and(|stem| {
+            !stem.is_empty()
+                && stem
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        })
+}
 
 /// 核验文件出自谁：内置核验脚本的固定文件 / 任务包里的脚本（`pack-<包>-<名>.jsonl`，2026-11-03）/ 其余都算 Agent 的判断
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,7 +134,7 @@ enum CheckSource {
 }
 
 fn check_source(file_name: &str) -> CheckSource {
-    if SCRIPT_CHECK_FILES.contains(&file_name) {
+    if SCRIPT_CHECK_FILES.contains(&file_name) || is_schematic_check_file(file_name) {
         CheckSource::Script
     } else if file_name.starts_with("pack-") {
         CheckSource::Pack
@@ -836,7 +849,14 @@ mod tests {
         // 任务包脚本：检查器记成文件名、「通过」降为待你判断；拦下照收
         assert_eq!(check_source("pack-pk-1-qc.jsonl"), CheckSource::Pack);
         assert_eq!(check_source("num-check.jsonl"), CheckSource::Script);
+        assert_eq!(check_source("fig-lint.jsonl"), CheckSource::Script);
+        assert_eq!(check_source("schematic-fig1.jsonl"), CheckSource::Script);
+        assert_eq!(check_source("schematic-fig_2.v1.jsonl"), CheckSource::Script);
+        assert_eq!(check_source("schematic-.jsonl"), CheckSource::Agent);
         assert_eq!(check_source("cross-review.jsonl"), CheckSource::Agent);
+        let schematic = r#"{"id":"REL-s1-s2","kind":"schematic_fact","status":"passed","title":"关系 s1 → s2 已画","checker":"script:schematic_check"}"#;
+        let got = parse_check_line(schematic, check_source("schematic-fig1.jsonl"), "schematic-fig1.jsonl").unwrap();
+        assert_eq!((got.status.as_str(), got.checker.as_str()), ("passed", "script:schematic_check"));
         let pack = parse_check_line(script, CheckSource::Pack, "pack-pk-1-qc.jsonl").unwrap();
         assert_eq!((pack.status.as_str(), pack.checker.as_str()), ("needs_human", "pack:pk-1-qc"));
         let blocked = r#"{"id":"Q1","kind":"qc","status":"blocked","title":"线粒体比例超阈值的细胞没剔除","checker":"script:cite_check"}"#;
