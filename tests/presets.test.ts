@@ -58,8 +58,9 @@ test("Claude 走 Anthropic 兼容端点，CodeBuddy 走 OpenAI 端点", () => {
   assert.equal(own?.baseUrl, "https://www.codebuddy.ai/v2");
 });
 
-test("gemini/cursor 没有任何预设", () => {
+test("gemini/agy/cursor 没有任何预设", () => {
   assert.equal(presetsForAgent("gemini").length, 0);
+  assert.equal(presetsForAgent("agy").length, 0);
   assert.equal(presetsForAgent("cursor").length, 0);
 });
 
@@ -90,6 +91,7 @@ test("派生条目的 baseUrl 必落在该 Agent 的协议槽上（防槽位映�
     "opencode",
     "grok",
     "gemini",
+    "agy",
     "cursor",
   ]) {
     for (const preset of presetsForAgent(agent)) {

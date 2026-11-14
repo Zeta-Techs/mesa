@@ -42,7 +42,7 @@ test("recoverable terminal metadata round-trips without runtime fields", () => {
   });
 });
 
-test("grok 终端标签在重启恢复白名单内", () => {
+test("grok 与 agy 终端标签在重启恢复白名单内", () => {
   const raw = serializeRecoverableTerminalState({
     tabs: [
       {
@@ -53,12 +53,21 @@ test("grok 终端标签在重启恢复白名单内", () => {
         model: "",
         sessionId: null,
       },
+      {
+        label: "Antigravity CLI",
+        cwd: "/repo",
+        agentId: "agy",
+        profileId: "p2",
+        model: "gemini-2.5-pro",
+        sessionId: null,
+      },
     ],
     activeIndex: 0,
   });
   const parsed = parseRecoverableTerminalState(raw);
-  assert.equal(parsed.tabs.length, 1);
+  assert.equal(parsed.tabs.length, 2);
   assert.equal(parsed.tabs[0].agentId, "grok");
+  assert.equal(parsed.tabs[1].agentId, "agy");
 });
 
 test("damaged, future and incomplete states fall back safely", () => {

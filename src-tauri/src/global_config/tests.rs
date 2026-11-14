@@ -2242,3 +2242,46 @@ fn qwen_and_preview_handle_jsonc_and_redact_secrets_per_field() {
     assert_eq!(flat.get("model").map(String::as_str), Some("m1"));
     fs::remove_dir_all(&home).ok();
 }
+
+#[test]
+fn agy_set_global_supports_official_patch_and_rejects_api() {
+    let home = tmpdir("agy-global");
+    let dir = home.join(".gemini/antigravity-cli");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("settings.json"),
+        "{\n  // 用户注释保留\n  \"trustedWorkspaces\": [\"/work\"],\n  \"modelProvider\": \"gemini\",\n  \"model\": \"mesa/gemini-2.5-pro\",\n  \"customModelsConfig\": {\n    \"customModels\": {\n      \"mesa/gemini-2.5-pro\": { \"modelName\": \"gemini-2.5-pro\" },\n      \"user/keep\": { \"modelName\": \"gemini-2.5-flash\" }\n    }\n  }\n}\n",
+    )
+    .unwrap();
+
+    let mut api = profile("agy");
+    api.models = vec!["gemini-2.5-pro".into()];
+    let err = plan_writes(&home, &api, Some("sk-agy"), &api.models).unwrap_err();
+    assert!(err.contains("Antigravity CLI 只从环境变量读端点和密钥"), "{err}");
+
+    let mut off = profile("agy");
+    off.account_type = crate::profiles::AccountType::Official;
+    let plans = plan_writes(&home, &off, None, &[]).unwrap();
+    assert_eq!(plans.len(), 1);
+    let bk = home.join("bk");
+    apply_plans("agy", &bk, &home, &plans).unwrap();
+    let written = fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(written.contains("// 用户注释保留"));
+    assert!(written.contains("trustedWorkspaces"));
+    assert!(written.contains("user/keep"));
+    assert!(!written.contains("mesa/gemini-2.5-pro"));
+    assert!(!written.contains("\"modelProvider\""));
+    assert!(disk_equals_plans(&plans));
+    let backups: Vec<_> = fs::read_dir(&bk)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bak"))
+        .collect();
+    assert_eq!(backups.len(), 1, "写前已自动备份原 settings.json: {backups:?}");
+    let bak_text = fs::read_to_string(&backups[0]).unwrap();
+    assert!(bak_text.contains("mesa/gemini-2.5-pro") && bak_text.contains("// 用户注释保留"));
+    fs::copy(&backups[0], dir.join("settings.json")).unwrap();
+    assert!(fs::read_to_string(dir.join("settings.json")).unwrap().contains("\"modelProvider\": \"gemini\""));
+    fs::remove_dir_all(&home).ok();
+}

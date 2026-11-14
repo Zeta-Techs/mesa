@@ -1512,6 +1512,7 @@ export const AGENTS = [
   { id: "codebuddy", label: "CodeBuddy", binary: "codebuddy" },
   { id: "cursor", label: "Cursor", binary: "cursor-agent" },
   { id: "grok", label: "Grok Build", binary: "grok" },
+  { id: "agy", label: "Antigravity CLI", binary: "agy" },
 ] as const;
 
 /** 多协议 Agent 的协议选项与默认值（其余 Agent 返回 null，profile 不存协议） */

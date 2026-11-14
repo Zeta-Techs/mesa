@@ -215,6 +215,24 @@ const LAYOUTS: Record<string, Layout> = {
     thinkItalic: true,
     indent: 3,
   },
+  agy: {
+    // Antigravity CLI 1.5.8 抓屏：输入框包在上下两条 ──── 横线中间（`>` 或 `> 草稿`），审批菜单时输入框收起（`> 1. Yes…` 下方无横线）
+    boxTop: (rows) =>
+      lastBox(rows, (i) =>
+        i > 0 &&
+        i + 1 < rows.length &&
+        /^>(?:\s|$)/.test(rows[i]) &&
+        BORDER.test(rows[i - 1].trim()) &&
+        BORDER.test(rows[i + 1].trim())
+          ? i - 1
+          : -1,
+      ),
+    echo: /^>\s+\S/,
+    lead: null,
+    tool: /^\s*●\s/,
+    skip: /^─{8,}$|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)/,
+    indent: 2,
+  },
 };
 
 /**

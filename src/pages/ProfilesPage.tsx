@@ -1952,9 +1952,11 @@ export function ProfileModal({
           <EffectPreview
             profileId={initial.id}
             setGlobalReason={
-              agentCapabilities && !agentCapabilities.setGlobal.supported
-                ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
-                : null
+              form.agent === "agy" && form.accountType !== "official"
+                ? AGY_API_GLOBAL_REASON
+                : agentCapabilities && !agentCapabilities.setGlobal.supported
+                  ? (agentCapabilities.setGlobal.reason ?? "这家不支持设为全局")
+                  : null
             }
           />
         )}
@@ -2401,7 +2403,9 @@ const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
 
 /** 官方账号能「设为全局」（撤掉 API 键、交回 CLI 登录，走预览确认）的 Agent。
  *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
-const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok"]);
+const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok", "agy"]);
+const AGY_API_GLOBAL_REASON =
+  "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动。";
 function officialGlobalIsPatch(agent: string): boolean {
   return OFFICIAL_GLOBAL_AGENTS.has(agent);
 }
@@ -3715,6 +3719,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   function canQuickGlobal(p: Profile): boolean {
     if (p.noAuth || p.slotMissing) return false;
     if (p.accountType === "official") return officialGlobalIsPatch(p.agent);
+    if (p.agent === "agy") return false;
     return caps[p.agent]?.setGlobal.supported === true;
   }
 
@@ -5174,6 +5179,20 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
                                   )}
                                 </button>
+                              ) : !isGlobal &&
+                                profile.agent === "agy" &&
+                                profile.accountType !== "official" &&
+                                !profile.noAuth &&
+                                !profile.slotMissing ? (
+                                <button
+                                  type="button"
+                                  disabled
+                                  title={AGY_API_GLOBAL_REASON}
+                                  aria-label={`不可设为全局：${profile.name}`}
+                                  className={`flex h-7 w-7 cursor-not-allowed items-center justify-center rounded-sm text-l4 opacity-50 ${hoverRevealClass}`}
+                                >
+                                  <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
+                                </button>
                               ) : null}
                               {/* 编辑悬停才出（键盘聚焦也出）；点整行空白处同样是编辑 */}
                               <button
@@ -5497,8 +5516,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 !!rowMenu.profile.slotMissing ||
                 (rowMenu.profile.accountType === "official"
                   ? !officialGlobalIsPatch(rowMenu.profile.agent)
-                  : caps[rowMenu.profile.agent] !== undefined &&
-                    !caps[rowMenu.profile.agent].setGlobal.supported),
+                  : rowMenu.profile.agent === "agy" ||
+                    (caps[rowMenu.profile.agent] !== undefined &&
+                      !caps[rowMenu.profile.agent].setGlobal.supported)),
               title:
                 rowMenu.profile.accountType === "official"
                   ? officialGlobalIsPatch(rowMenu.profile.agent)
@@ -5508,6 +5528,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     ? "这个网关还没配该协议的端点"
                   : rowMenu.profile.noAuth
                     ? "无密钥连接不写入全局配置"
+                  : rowMenu.profile.agent === "agy"
+                    ? AGY_API_GLOBAL_REASON
                     : (caps[rowMenu.profile.agent]?.setGlobal.reason ??
                       "修改外部 CLI 的配置文件（先备份、失败自动回滚）。不改 Mesa 启动栏预选，也不改项目默认。已打开的进程需要新开才会读到。"),
               onSelect: () => void onApplyGlobal(rowMenu.profile),

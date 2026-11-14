@@ -8,8 +8,9 @@ import kimi from "../assets/agent-icons/kimi.svg?raw";
 import codebuddy from "../assets/agent-icons/codebuddy.svg?raw";
 import cursor from "../assets/agent-icons/cursor.svg?raw";
 import grok from "../assets/agent-icons/grok.svg?raw";
+import agy from "../assets/agent-icons/agy.svg?raw";
 
-/** 九家 Agent 的产品图标（lobe-icons，MIT；指示性使用，许可见 docs/licenses/THIRD-PARTY.md）。 */
+/** 十家 Agent 的产品图标（lobe-icons，MIT；指示性使用，许可见 docs/licenses/THIRD-PARTY.md）。 */
 const RAW: Record<string, string> = {
   "claude-code": claudeCode,
   codex,
@@ -20,6 +21,7 @@ const RAW: Record<string, string> = {
   codebuddy,
   cursor,
   grok,
+  agy,
 };
 
 /**

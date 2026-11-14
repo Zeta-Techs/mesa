@@ -42,6 +42,10 @@ export const MODEL_SWITCH: Record<string, ModelSwitchInfo> = {
     max: null,
     hint: "启动时注入全部已配置模型，运行中可用 /model 或模型选择器切换",
   },
+  agy: {
+    max: null,
+    hint: "启动时经会话级 --settings 注入全部已配置模型（mesa/<id>），运行中可用 /model 切换",
+  },
 };
 
 /**
@@ -108,6 +112,7 @@ export function officialModelAllowed(agent: string, model: string): boolean {
   ) {
     return false;
   }
+  if (agent === "agy" && m.startsWith("mesa/")) return false;
   if (agent === "codex") {
     return (
       m.startsWith("gpt-") ||
@@ -153,5 +158,17 @@ export function runtimeModelSwitch<T>(
   accountType: "api" | "official" | null | undefined,
 ): T | null {
   if (agentId === "kimi" && accountType !== "official") return null;
+  if (
+    modelSwitch &&
+    agentId === "agy" &&
+    accountType !== "official" &&
+    typeof (modelSwitch as { command?: unknown }).command === "string" &&
+    (modelSwitch as unknown as { command: string }).command === "/model {model}"
+  ) {
+    return {
+      ...(modelSwitch as object),
+      command: "/model mesa/{model}",
+    } as T;
+  }
   return modelSwitch;
 }

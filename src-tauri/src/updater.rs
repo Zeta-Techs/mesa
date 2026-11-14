@@ -1939,8 +1939,8 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
                 "{id} winget 包 ID 不符"
             );
         }
-        // gemini/qwen/codebuddy/cursor 无官方 winget 包，不出现废渠道
-        for id in ["gemini", "qwen", "codebuddy", "cursor"] {
+        // gemini/qwen/codebuddy/cursor/agy 无官方 winget 包，不出现废渠道
+        for id in ["gemini", "qwen", "codebuddy", "cursor", "agy"] {
             assert!(
                 install_specs(id).iter().all(|s| s.method != "winget"),
                 "{id} 不应有 winget 渠道"

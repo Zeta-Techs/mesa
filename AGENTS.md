@@ -41,16 +41,16 @@
 
 ## 项目简介
 
-Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用户拍板的对外称呼）（Tauri v2 + React/TS）——底层是九个 Agent CLI 的统一控制台（启动器 + 配置中心 +
+Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用户拍板的对外称呼）（Tauri v2 + React/TS）——底层是十个 Agent CLI 的统一控制台（启动器 + 配置中心 +
 会话监控台），表面是科研流水线（读文献→整数据→做图→写论文）：AI 负责干活，Mesa 负责管活，人负责拍板。
 **对外定位（2026-11-07 用户拍板）**：主线是给研究生和科研人员的 AI 科研工作台（科研流程、出处可查不编造、AI 干活人拍板），
-九家 CLI 控制台是底层能力；README / 介绍 / 宣传先讲科研，CLI 只在「底下 / 同时也是」一段带过，不作首要卖点。见 architecture §10 同日条。
+十家 CLI 控制台是底层能力；README / 介绍 / 宣传先讲科研，CLI 只在「底下 / 同时也是」一段带过，不作首要卖点。见 architecture §10 同日条。
 展示名 **Mesa**；内部身份仍是 `ccode`（bundle ID `com.ccode.dev`、项目 `.ccode/`、`~/ccode/`、Codex provider `ccode`/`ccode-<短id>`）。禁止把内部路径/安装身份跟着展示名一起改。
-为 Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build 管理多套 API 配置
+为 Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 管理多套 API 配置
 （端点/密钥/模型），内嵌终端一键拉起，并解析各 CLI 本地会话文件做可视化浏览。
 
 **设计文档即规格**：改架构/适配逻辑前，在 `docs/architecture.md`（总体设计）和 `docs/agent-integration-matrix.md`
-（九个 CLI 的 env/配置/会话格式，源码级调研结论）里检索相关小节——**勿凭印象写 env 变量名**。
+（十个 CLI 的 env/配置/会话格式，源码级调研结论）里检索相关小节——**勿凭印象写 env 变量名**。
 
 **参考实现（长期有效）**：`.reference/` 下三个开源项目浅克隆，设计新机制前（不是修 bug、改文案）先查有没有成熟方案可借鉴：
 
@@ -64,10 +64,10 @@ Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用�
 
 - **可选独立定时核心与分轮跟进（2026-11-13）**：默认关闭，只有人已批准的定时任务按原连接/模型/授权续跑；等人退出进程、预约复查限轮数/期限/软预算，坏回执和不明执行不重做，成果仍人工评审。桌面退出不停止核心，更新/卸载先停；不接管普通目标、交互终端和手机窗口循环，不开放公网。细则 pipeline.md「分轮跟进与独立后台」。
 
-- 应用展示名 **Mesa**（内部身份仍 `ccode`，见上）；九个 agent 全部支持（CodeBuddy Code、Cursor CLI、Grok Build 见 matrix §7/§8/§9；grok：MCP 只读不分发、技能强制 copy；「设为全局默认」2026-09-01 起支持，写 ~/.grok/config.toml）
+- 应用展示名 **Mesa**（内部身份仍 `ccode`，见上）；十个 agent 全部支持（CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 见 matrix §7/§8/§9/§9b；grok：MCP 只读不分发、技能强制 copy；「设为全局默认」2026-09-01 起支持，写 ~/.grok/config.toml；agy：启动生成会话级 `--settings` 文件合入用户自定义模型、仅官方 Google 账号支持「设为全局默认」、MCP/技能/hooks 写 `~/.gemini/config/` 不碰 Gemini CLI 的 `~/.gemini/skills/`、暂不进进程级只读场景）
 - **OpenCode 1.x / 2.x 两版都支持（2026-11-04）**：按 `--version` 大版本分开走（`agents::opencode_v2`），以 2.x 为主、不做共存；2.x 启动与无头调用一律私有服务，
   禁止连它的共享后台服务（注入的密钥会留在服务里）。细则 matrix §5「OpenCode 2」行、safety.md 旁路条
-- **CLI 支持分级（2026-11-02）**：一等 Claude Code、Codex、Kimi——新功能（跨厂商复核、核验接入等）先在这三家做全；其余六家维护级：能启动、能注入连接、能看会话、
+- **CLI 支持分级（2026-11-02）**：一等 Claude Code、Codex、Kimi——新功能（跨厂商复核、核验接入等）先在这三家做全；其余七家维护级：能启动、能注入连接、能看会话、
   金丝雀不红，新功能尽力而为，做不到的在界面写明原因（走 AgentSpec 能力表，不硬编码）。不删任何一家
 - **核验与研究记录（2026-11-02）**：核验结果只有通过 / 拦下 / 待你判断三档，要读懂内容的检查永不自动通过、不打总分；Run 事实与核验记录落项目 `.ccode/`
   （与验收账本同口径不进 git）；不做「降 AI 率」。设计稿 `docs/design-research-moat.md`，细则 pipeline.md「核验记录」
@@ -242,7 +242,7 @@ docs/            architecture.md（总体设计 + §10 决策记录 + §12 当�
   经 CLI 官方通道回；口令 / 令牌只经环境变量。改任一家旁路或升级 CLI 前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」
   两层核对。各家走法（Codex app-server、OpenCode 服务、OSC 7501 程序状态及其 Windows 不接）见 terminal.md / safety.md 同名条、
   matrix §14、`docs/design-chat-structured-channels.md`。
-- **CLI 金丝雀（2026-10-21）**：`.github/workflows/cli-canary.yml` 每天装最新版九家 CLI 比指纹；红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI。
+- **CLI 金丝雀（2026-10-21）**：`.github/workflows/cli-canary.yml` 每天装最新版十家 CLI 比指纹；红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI。
   适配（或判定无需适配）后在**同一平台**跑 `--accept`，把新指纹连同改动一起提交；基线 `version` 随包进 Mesa（`src/cli-verified.ts`；
   装好的 Mesa 另半天一次从 main 取指纹没变的前移，`cli_verified.rs`，2026-11-04），**上游新出的结构化通道由金丝雀「上游通道雷达」开 issue 提醒、
   结论记 `scripts/cli-canary/upstream.json`**（2026-11-04），

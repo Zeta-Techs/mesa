@@ -46,12 +46,12 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 | Picking up the next step | Re-explain the background every time | The brief carries earlier outputs, settled decisions and your profile |
 | Supervisor comments | Copy them over by hand | Word comments become a checklist that flows back into the steps |
 
-**Also a handy agent console**: one set of connections for Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Kimi Code, CodeBuddy Code, Cursor CLI and Grok Build (injected at launch by default, each CLI's own config left alone); chat and the real terminal are the same session (`⌘⇧T`); local sessions of all nine are searchable and resumable; costs are summed by project and model.
+**Also a handy agent console**: one set of connections for Claude Code, Codex, Gemini CLI, Qwen Code, OpenCode, Kimi Code, CodeBuddy Code, Cursor CLI, Grok Build and Antigravity CLI (injected at launch by default, each CLI's own config left alone); chat and the real terminal are the same session (`⌘⇧T`); local sessions of all ten are searchable and resumable; costs are summed by project and model.
 
 <table>
   <tr>
     <td width="50%"><img src="docs/assets/readme/research.jpg" alt="Research pipeline" /><br/><sub>Research pipeline: stepper, current step, review before merge</sub></td>
-    <td width="50%"><img src="docs/assets/readme/connections.jpg" alt="Connections page" /><br/><sub>Connections: API keys and official accounts for nine agents</sub></td>
+    <td width="50%"><img src="docs/assets/readme/connections.jpg" alt="Connections page" /><br/><sub>Connections: API keys and official accounts for ten agents</sub></td>
   </tr>
   <tr>
     <td><img src="docs/assets/readme/reader.jpg" alt="Reader" /><br/><sub>Reader: notes · PDF · terminal</sub></td>
@@ -71,7 +71,7 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 
 - **Connections**: gateway × binding model, API keys and official accounts side by side, keys stored locally with 0600 permissions and never echoed, a bundled model capability database, one-click CLI install and update.
 - **Run page**: chat layer on top of a real xterm.js terminal; file tree, change panel, Monaco preview and editing; inline preview of PDF, docx, pptx, spreadsheets, images, Jupyter notebooks, audio and video; a three-pane reader (notes | PDF | terminal).
-- **Sessions**: parses the local session files of all nine CLIs, including ones started outside Mesa; auto titles, archive, Markdown export, session bundles for moving machines.
+- **Sessions**: parses the local session files of all ten CLIs, including ones started outside Mesa; auto titles, archive, Markdown export, session bundles for moving machines.
 - **Coding and general projects**: coding projects use separate worktrees that merge back or open a PR.
 - **Skills & MCP**: one skill library distributed to every CLI, 22 built-in skills; one MCP list, with presets for Consensus, Undermind and Blender.
 

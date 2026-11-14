@@ -1,7 +1,7 @@
 export const TERMINAL_TABS_STORAGE_KEY = "ccode.terminalTabs.v1";
 
 const MAX_TABS = 24;
-const AGENT_IDS = new Set(["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok"]);
+const AGENT_IDS = new Set(["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"]);
 
 export interface RecoverableTerminalTab {
   id?: string;

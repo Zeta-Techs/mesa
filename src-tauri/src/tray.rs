@@ -148,8 +148,9 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
         let mut dry_failed = false;
         let mut checks = Vec::new();
         for p in &list {
+            let agy_api_only_launch = p.agent == "agy" && p.account_type != AccountType::Official;
             // 官方账号能 dry-run 的（Codex：只改几行）同样按磁盘比对出勾选
-            let matched = if set_global_ok {
+            let matched = if set_global_ok && !agy_api_only_launch {
                 global_config::dry_run_matches(&store, p)
             } else {
                 None
@@ -163,13 +164,15 @@ fn build_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, String> {
                 || (matched.is_none() && recorded.as_deref() == Some(p.id.as_str()));
             let mut label = if p.slot_missing && p.account_type != AccountType::Official {
                 format!("{}（缺槽）", p.name)
+            } else if agy_api_only_launch {
+                format!("{}（仅官方账号可设为全局）", p.name)
             } else {
                 p.name.clone()
             };
             if drifted && recorded.as_deref() == Some(p.id.as_str()) {
                 label.push_str("（已被外部修改）");
             }
-            let enabled = set_global_ok && !p.slot_missing;
+            let enabled = set_global_ok && !p.slot_missing && !agy_api_only_launch;
             let item = CheckMenuItem::with_id(
                 app,
                 format!("bind:{}", p.id),

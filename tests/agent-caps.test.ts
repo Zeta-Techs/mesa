@@ -37,6 +37,7 @@ test("escInterruptSafe：Grok 非 prompt 态 Esc 退整进程，不进白名单"
   assert.equal(escInterruptSafe("grok"), false);
   assert.equal(escInterruptSafe("codex"), true);
   assert.equal(escInterruptSafe("claude-code"), true);
+  assert.equal(escInterruptSafe("agy"), true);
   assert.equal(escInterruptSafe(null), false);
   assert.equal(escInterruptSafe(undefined), false);
   assert.equal(escInterruptSafe(""), false);

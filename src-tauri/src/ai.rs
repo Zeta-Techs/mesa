@@ -139,6 +139,7 @@ fn headless_args(agent: &str, prompt: &str) -> Vec<String> {
             prompt.into(),
         ],
         "gemini" => vec!["-p".into(), prompt.into()],
+        "agy" => vec!["-p".into(), prompt.into()],
         "kimi" => vec!["-p".into(), prompt.into()],
         // codebuddy 位置参数是交互模式；无头必须 -p/--print
         "codebuddy" => vec!["-p".into(), prompt.into()],
@@ -229,6 +230,13 @@ pub(crate) fn lower_effort(agent: &str, plan: &mut agents::LaunchPlan, level: &s
             for a in plan.args.iter_mut() {
                 if a.starts_with("model_reasoning_effort=") {
                     *a = format!(r#"model_reasoning_effort="{level}""#);
+                }
+            }
+        }
+        "agy" => {
+            if let Some(i) = plan.args.iter().position(|a| a == "--effort") {
+                if let Some(v) = plan.args.get_mut(i + 1) {
+                    *v = level.to_string();
                 }
             }
         }
@@ -392,6 +400,11 @@ pub(crate) fn headless_task_args(agent: &str, prompt: &str) -> Vec<String> {
             "json".into(),
             "--yolo".into(),
         ],
+        "agy" => vec![
+            "--dangerously-skip-permissions".into(),
+            "-p".into(),
+            prompt.into(),
+        ],
         other => headless_args(other, prompt),
     }
 }
@@ -413,6 +426,11 @@ pub(crate) fn headless_task_args_granted(agent: &str, prompt: &str, plan: &crate
         "grok" => {
             let mut args: Vec<String> = vec!["-p".into(), prompt.into(), "--output-format".into(), "json".into()];
             args.extend(plan.args.iter().cloned());
+            args
+        }
+        "agy" => {
+            let mut args = plan.args.clone();
+            args.extend(["-p".into(), prompt.into()]);
             args
         }
         other => headless_args(other, prompt),
@@ -849,6 +867,9 @@ pub(crate) fn ai_prompt_impl_full(
         settings.ai_profile_id.as_deref(),
         settings.ai_model.as_deref(),
     );
+    if profile.agent == "agy" {
+        return Err("Antigravity CLI 每次无头调用都会写入会话记录，暂不用于后台标题/翻译；请在设置「AI 角色分工」改选 Claude Code 或 Codex".into());
+    }
     let binary = agents::binary_for(&profile.agent)
         .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
     let binary_path = agents::resolve_binary(binary)
@@ -3851,6 +3872,11 @@ ERROR: Your access token could not be refreshed because your refresh token was r
             vec!["exec", "--skip-git-repo-check", "-s", "read-only", "你好"]
         );
         assert_eq!(headless_args("gemini", "你好"), vec!["-p", "你好"]);
+        assert_eq!(headless_args("agy", "你好"), vec!["-p", "你好"]);
+        assert_eq!(
+            headless_task_args("agy", "你好"),
+            vec!["--dangerously-skip-permissions", "-p", "你好"]
+        );
         assert_eq!(headless_args("qwen", "你好"), vec!["你好"]);
         assert_eq!(headless_args("kimi", "你好"), vec!["-p", "你好"]);
         assert_eq!(headless_args("opencode", "你好"), vec!["run", "你好"]);
@@ -3961,6 +3987,7 @@ ERROR: Your access token could not be refreshed because your refresh token was r
         assert!(composed.windows(2).any(|w| w == ["-s", "read-only"]));
         assert!(inspect_readonly_args("kimi", "看看", &[], false, &[], None).is_none());
         assert!(inspect_readonly_args("gemini", "看看", &[], false, &[], None).is_none());
+        assert!(inspect_readonly_args("agy", "看看", &[], false, &[], None).is_none());
         // 附图（2026-11-05）：Codex 一个 --image= 参数、在提示词前面；Claude 不加参数，靠提示词点名 + --add-dir
         let with_img = inspect_readonly_args("codex", "看看", &[], false, &["/t/a.png".into(), "/t/b.png".into()], None).unwrap();
         assert_eq!(&with_img[with_img.len() - 2..], ["--image=/t/a.png,/t/b.png", "看看"]);

@@ -96,11 +96,19 @@ test("官方账号不接受中转 DeepSeek 等模型名", () => {
   assert.equal(officialModelAllowed("kimi", "kimi-code/k3"), true);
   assert.equal(officialModelAllowed("kimi", "kimi-k3"), true);
   assert.equal(officialModelAllowed("kimi", "deepseek-chat"), false);
+  assert.equal(officialModelAllowed("agy", "gemini-3.8-flash-high"), true);
+  assert.equal(officialModelAllowed("agy", "claude-opus-4-6-thinking"), true);
+  assert.equal(officialModelAllowed("agy", "mesa/gemini-2.5-pro"), false);
 });
 
-test("Kimi 用接口连接启动时运行中不能用命令切模型（只认配置文件里的别名），官方账号照常", () => {
+test("Kimi 用接口连接启动时运行中不能用命令切模型（只认配置文件里的别名），agy 接口连接自动补 mesa/ 前缀，官方账号照常", () => {
   const ms = { kind: "direct" as const, command: "/model {model}" };
   assert.equal(runtimeModelSwitch(ms, "kimi", "api"), null);
   assert.equal(runtimeModelSwitch(ms, "kimi", "official"), ms);
   assert.equal(runtimeModelSwitch(ms, "claude-code", "api"), ms);
+  assert.deepEqual(runtimeModelSwitch(ms, "agy", "api"), {
+    kind: "direct",
+    command: "/model mesa/{model}",
+  });
+  assert.equal(runtimeModelSwitch(ms, "agy", "official"), ms);
 });

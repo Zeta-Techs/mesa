@@ -1142,3 +1142,46 @@ test("sameAsPrevReply：整段都是上一轮的回复才拦，有一行新的�
   assert.equal(sameAsPrevReply(["你好！"], ""), false);
   assert.equal(sameAsPrevReply([""], prev), false);
 });
+
+test("Antigravity CLI 1.5.8：读出缩进两格的流式回复，审批菜单挂着时不预览", () => {
+  assert.equal(liveReplySupported("agy"), true);
+  const streaming = [
+    "      ▄▀▀▄        Antigravity CLI 1.5.8",
+    "────────────────────────────────────────────────────────────",
+    "> TRIGGER_SLOW 讲一段",
+    "",
+    "  第一段：这是一段慢慢流出来的回复。",
+    "",
+    "  • 要点一：终端先画出来",
+    "  • 要点二：会话文件后落盘",
+    "",
+    "    echo mesa",
+    "",
+    "  最后一行：完毕。",
+    "⢿  Generating...",
+    RULE,
+    ">",
+    RULE,
+    "esc to cancel                                                                                            mesa/e2e-picked",
+  ];
+  assert.deepEqual(extractLiveReply(streaming, "agy")?.lines, [
+    "第一段：这是一段慢慢流出来的回复。",
+    "",
+    "• 要点一：终端先画出来",
+    "• 要点二：会话文件后落盘",
+    "",
+    "  echo mesa",
+    "",
+    "最后一行：完毕。",
+  ]);
+  const approval = [
+    "────────────────────────────────────────────────────────────",
+    "> TRIGGER_TOOL 跑一下",
+    "",
+    "● Ran (echo mesa > mesa_probe.txt) (ctrl+o to expand)",
+    "Run this command?",
+    "> 1. Yes, run command",
+    "  2. No, cancel",
+  ];
+  assert.equal(extractLiveReply(approval, "agy"), null);
+});

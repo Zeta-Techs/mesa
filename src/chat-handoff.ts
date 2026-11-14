@@ -18,6 +18,7 @@ export const HOOKS_AGENTS: ReadonlySet<string> = new Set([
   "kimi",
   "grok",
   "codex",
+  "agy",
 ]);
 
 export type ChatHandoffEvent =

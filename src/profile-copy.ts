@@ -10,7 +10,7 @@ import { AGENTS, AGENT_PROTOCOLS } from "./types.ts";
 /** 协议族：cursor 是专有协议（非 OpenAI/Anthropic 兼容），自成一族不与任何 Agent 互通 */
 export function apiKindOf(agent: string, protocol: string | null): string {
   if (agent === "claude-code") return "anthropic";
-  if (agent === "gemini") return "gemini";
+  if (agent === "gemini" || agent === "agy") return "gemini";
   if (agent === "cursor") return "cursor";
   if ((agent === "qwen" || agent === "kimi") && protocol === "anthropic")
     return "anthropic";

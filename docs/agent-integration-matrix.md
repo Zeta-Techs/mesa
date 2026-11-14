@@ -1,11 +1,12 @@
-# 九个 CLI Agent 适配参考（调研蒸馏版）
+# 十个 CLI Agent 适配参考（调研蒸馏版）
 
 > 供实现 AgentAdapter 时查阅。来源：2026-07-30 对官方文档与源码的调研（多数核到源码行号）。
 > 2026-08-05 补充核实各供应商 Anthropic/OpenAI 兼容端点（见 §1 附注），来源均为官方文档页面。
 > 2026-08-06 新增 §7 CodeBuddy Code（v2.132.0 实机验证，含真实会话样本与 product.json 核实）。
 > 2026-08 新增 §9 Grok Build（xai-org/grok-build 源码调研；标注「待实机验证」处未经实机核对）。
-> 2026-08-20 新增 §12 精确注意力 hooks 桥接调研（九家，实现 = hooks.rs 的 BRIDGE_SPECS；cursor/opencode 未接入结论同记）。
-> 2026-10-21 起有每日金丝雀（`scripts/cli-canary/`，10-22 扩到九家）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
+> 2026-08-20 新增 §12 精确注意力 hooks 桥接调研（实现 = hooks.rs 的 BRIDGE_SPECS；cursor/opencode 未接入结论同记）。
+> 2026-10-21 起有每日金丝雀（`scripts/cli-canary/`，10-22 扩到九家，11-14 加入 agy）：Mesa 已核对到的版本与指纹见 `scripts/cli-canary/baseline/<平台>/<agent>.json` 的 `version`，比本表各处「x.y 实测」更新。
+> 2026-11-14 新增 §9b Antigravity CLI（本机 v1.5.8 实测 + 假网关 / 金丝雀核实，完整设计见 `docs/design-agy-integration.md`）。
 > 标记「易漂移」的均为各 CLI 内部格式，解析必须防御式（跳过未知类型、容忍缺字段、容忍末行截断）。
 
 ## 1. Claude Code
@@ -160,6 +161,22 @@
 | 坑 | `auth.json` grok 自己原子重写（0600），我们只读；`session_search.sqlite` 不是会话本体；headless 不读 stdin；`--permission-mode plan` 门控链路未确认别用；base url 注入必须走 `GROK_MODELS_BASE_URL`（见「注入 env」行），`GROK_CLI_CHAT_PROXY_BASE_URL` 是 xAI 内部代理口勿用；`GROK_DEFAULT_MODEL` 不在目录即静默回退；当前版本支持 `-m/--model`、`--reasoning-effort`，Ccode 启动时优先使用 flag；**未选模型时 Ccode 用绑定模型清单第一个兜底注入 `GROK_DEFAULT_MODEL`+`-m`（2026-09-17 实测）**——grok 按 id 路由，不注会回落 config.toml `[models].default` 的第一方 grok-* 模型，第一方 id 绕过网关直连 `cli-chat-proxy.grok.com`，网络不通的环境表现为「连接超时」而非「模型不存在」，极易误诊成网关不通；`[models].default` 与注入的 `allowed_models` 不一致会**直接拒启动**（1.0.34 实证，见「注入 env」行——Ccode 已改为 overlay 同时写 `default`）；`api_backend`/`context_window` 仍必须来自 `[model.<id>]` 或网关目录，声明非 `chat_completions` 但未登记时 Ccode 会阻止启动；**能连上 x.ai 时用非 xAI 密钥可能被要求登录**（1.0.70，2026-10-25 起 CI 实证，同版本此前不会，疑为服务端变化）：`resolved credentials auth_type=ApiKey` 之后仍 `auto-triggering login at startup`、转设备登录、不发请求；连不上 x.ai 的环境照常。`auth.preferred_method = "api_key"` 可固定只用密钥，但 GROK_CONFIG overlay 白名单不收 `auth` 段（`grok inspect --json` 实测只剩 `sections: models`），只能写用户 config.toml——Mesa 不写，暂未处理，真实中转用户撞上再定。金丝雀里 Grok 出站指向不监听的本机代理（canary.py `OFFLINE`），与连不上 x.ai 的开发机可比。**配置文件里的去向压过 Mesa 注入（1.0.70 假网关实测，2026-11-01）**：`[endpoints].models_base_url` 压过 `GROK_MODELS_BASE_URL`（文档写的 env > config 对它不成立），按连接启动的任何模型都打到那里、带着这条连接的密钥；同名 `[model.<id>]` 段自带的 `base_url` / `api_key` 压过注入（打到段的地址、用段的密钥）。`GROK_CONFIG` 覆盖层的白名单不放行改网络去向的键，命令行也没有地址参数，都盖不了。所以「设为全局」不再写 `[endpoints]`，配置里有别家地址时 Mesa 启动前拦下说明（`agents::grok_endpoint_conflict`）；同名段（设为全局写的、老会话补的）同样会把同名模型拉去那条连接，地址不是这条连接（或 helper 取的是别的网关的钥）时 Mesa 启动前拦下说明（`agents::grok_model_section_conflict`，2026-11-01 用户拍板）。启动更新检查：`GROK_DISABLE_AUTOUPDATER=1` / `--no-auto-update` / `[cli] auto_update = false` 可关，后台静默更新、不弹进对话，按 10-29 拍板不关 |
 | 发版复核（2026-11-01） | 核到 1.0.70（对比 1.0.73 alpha 内置文档，env 表与 75 个配置键不变；x.ai 网页更新日志本机连不上，未读）。**已用**：`[auth_provider.<名>] command = …` + `[model.<id>] auth_provider = "<名>"` 由命令现取令牌，全局写入早已改用它（`global_config.rs grok_auth_provider_table`，1.0.70 假网关实测），不写明文 `api_key`；注意别与顶层 `auth.auth_provider_command` 混用。`supports_reasoning_effort` 1.0.74 alpha 文档标弃用，但中转目录常给第三方模型标 `false`、只有写 `true` 才盖得过，**保留写 true**，等 Grok 真删这个键再改（2026-11-04 复核）。1.0.74 alpha 新增 `ui.multiline_default`：开了回车变换行，见 terminal.md「Grok 多行回车」 |
 
+## 9b. Antigravity CLI（本机 1.5.8 实测，2026-11-14）
+
+| 项 | 值 |
+|---|---|
+| 二进制 / 检测 | `agy`（macOS/Linux 候选 `~/.antigravity/antigravity/bin` 等，Windows `%LOCALAPPDATA%\agy\bin`、`%USERPROFILE%\.antigravity\antigravity\bin`）；`agy --version`（输出 `Antigravity CLI 1.5.8 (...)`） |
+| 注入 env + 参数 | API / 中转连接不改用户 `~/.gemini/antigravity-cli/settings.json`，也不往 shell 配置加包装函数：Mesa 在 `<config_root>/agy-settings/<uuid>.json`（目录 0700、文件 0600，自动扫 >7 天陈旧文件）生成会话级设置文件，原样保留用户非 `mesa/` 的 `customModelsConfig.customModels`（JSONC 容错读），并入绑定模型 `"mesa/<m>": {"apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": "<m>"}`、`"modelProvider": "gemini"`、`"model": "mesa/<选中>"`，启动带 `--settings <文件> --model mesa/<选中>`（续聊同理），环境注入 `GEMINI_API_KEY` + `GOOGLE_GEMINI_BASE_URL`（自动剥尾部 `/v1` 与 `/v1beta`，`agy` 自接 `/v1beta/models/<m>:streamGenerateContent`），移除 `GOOGLE_API_KEY` 防冲突；思考档走 `--effort <low\|medium\|high>` |
+| 官方端点 | Google Gemini 原生协议 `https://generativelanguage.googleapis.com`（网关槽 `gemini`） |
+| 全局配置 | `~/.gemini/antigravity-cli/settings.json`（JSONC，无搬迁环境变量）。**`agy` 只从环境变量读端点与密钥，配置文件里没有 `baseUrl` / `apiKey` 字段**：因此「设为全局默认」**仅支持官方 Google 账号**（撤 `modelProvider: "gemini"`、以 `mesa/` 开头的 `model`、`customModelsConfig.customModels` 下的 `mesa/*` 条目，保 JSONC 注释与 `trustedWorkspaces` 等用户项），API / 中转连接置灰并说明原因 |
+| 官方账号 | `agy login` / `agy logout`；凭证落 `~/.gemini/antigravity-cli/oauth_creds.json`（含 `access_token` 或 `refresh_token` 判已登录）。官方账号启动 `env_remove GEMINI_API_KEY`、`GOOGLE_API_KEY`、`GOOGLE_GEMINI_BASE_URL` |
+| 会话存储与格式 | `~/.gemini/antigravity-cli/brain/<uuid>/.system_generated/logs/transcript_full.jsonl`（优先，缺时回落同目录 `transcript.jsonl`；按 `step_index` 稳定去重，容忍末行截断）；工作目录只读查 `~/.gemini/antigravity-cli/conversation_summaries.db`（`SQLITE_OPEN_READ_ONLY \| SQLITE_OPEN_NO_MUTEX`，**严格限定 `app_data_dir = 'antigravity-cli'`** 以排除桌面版 `'antigravity'`，排除标题含 `(subagent)` 及子会话链接，回落 `cache/last_conversations.json`）。`conversations/*.pb` protobuf 不解析。`PLANNER_RESPONSE` 行的 `usage`（`inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheWriteTokens`/`thinkingTokens`）计入用量（`inputTokens` 不含缓存读，不二次相减）。状态分散在 SQLite + protobuf，**暂不支持 `.ccode-sessions.zip` 会话包导出** |
+| 关键启动参数 | `-r/--resume <UUID>`（续聊）、`-p`（单轮无头）、`--settings <file>`、`--model <id>`、`--effort <low\|medium\|high>`；权限四档：`--mode plan`（先出方案）/ 默认（请求批准）/ `--auto-run-commands`（帮我批准）/ `--yolo`（完全访问）。无原生会话分叉 |
+| 只读边界 | `--mode plan` 仅靠系统提示词约束，进程层面没有只读沙箱保证（实测 1.5.8 仍暴露写文件工具声明）；聊天「先出方案」可用，但**研讨（`group_consult`）、项目助手只读查看等要求进程级只读的场景及内部 `ai_prompt_impl` 暂不纳入 `agy`** |
+| 技能 / MCP / Hooks | **全部在 `~/.gemini/config/` 下**（与 Gemini CLI 的 `~/.gemini/skills/`、`~/.gemini/settings.json` 隔离）：技能 `~/.gemini/config/skills/<name>/SKILL.md`（切勿写 `~/.gemini/skills/`，否则两家同时加载）；MCP `~/.gemini/config/mcp_config.json`（`mcpServers`，容忍首次生成的 0 字节空文件；stdio `command/args/env/cwd`，远程字段叫 **`serverUrl` + `headers`**，拒写 SSE）；Hooks `~/.gemini/config/hooks.json` 命名组 `mesa-attention`（`UserPromptSubmit` / `Stop` / `PreToolUse`，工具名 PascalCase 如 `Bash`、`WriteFile`） |
+| 安装 / 更新 | macOS `curl -fsSL https://antigravity.google/cli/install.sh \| sh`，Windows PowerShell `irm https://antigravity.google/cli/install.ps1 \| iex`；暂无 `agy update` 子命令，重跑安装脚本覆盖升级 |
+| 坑 | 后台小模型请求（如 `gemini-3.1-flash-lite-preview`）同样走 `GOOGLE_GEMINI_BASE_URL`（假网关实测无云端泄漏），中转网关若无该小模型只影响后台摘要不影响主对话；聊天内 `/model` 在 API 连接下需写 `/model mesa/<模型>`（Mesa `runtimeModelSwitch` 自动补前缀）；`mcp_config.json` 首次常为 0 字节空文件，JSONC 解析前须把空串视为空对象 `{}` |
+
 ## 原生分叉（2026-10-31 本机 --help + 假网关端到端 E2E_FORK=1 核实；实现 = agent_specs `fork`）
 
 | Agent | 参数 | 能同时 `--session-id` 定新 id | 新会话文件 |
@@ -173,6 +190,7 @@
 | kimi | `kimi fork [id]`（`-y` 跳过确认）是否进交互未实测，暂不用 | — | — |
 | cursor | 无 | — | — |
 | gemini | 本机未装，未核实 | — | — |
+| agy 1.5.8 | 无 | — | — |
 
 
 1. **会话格式全是内部格式**——解析层统一防御式策略，并准备「原始 JSON 视图」作为降级。
@@ -419,6 +437,7 @@
 | codebuddy | `~/.codebuddy/.mcp.json`（MCP 专用文件，回退链 mcp.json→.codebuddy.json） | `mcpServers` + 并列 `disabledMcpServers` | JSONC | `codebuddy mcp add-json -s user`（默认 scope 是 local，寄生全局状态文件，禁用） | 直写 user 级 .mcp.json（保留 disabledMcpServers 键；有 watch 热生效） |
 | cursor | `~/.cursor/mcp.json`（**CLI 与 IDE 共享**，写入同时改变 IDE 行为） | `mcpServers` | JSON | **直接写文件**（CLI 无 add/remove 子命令；`agent mcp list` 是交互 TUI 不能用于校验） | —（全局 server 免审批，项目级逐工作区批准） |
 | grok | `$GROK_HOME/config.toml`（缺省 `~/.grok/config.toml`，与 model/hooks 同文件） | `[mcp_servers.<name>]`（**TOML 段**，非 JSON） | TOML | `grok mcp add`（CLI 自己做读改写；**Ccode 首版只读清单、不分发**——TOML 段结构独立，不硬造原子写管线） | 手工编辑 config.toml（grok 兼容读 `~/.claude.json`/`.mcp.json`/`~/.cursor/mcp.json`，可在 config 关） |
+| agy | `~/.gemini/config/mcp_config.json`（独立 MCP 文件，首次生成可能为 0 字节空文件） | `mcpServers` | JSONC（容忍注释与 0 字节空文件） | **直接写文件**（远程字段名 **`serverUrl`** + `headers`，不支持 SSE；stdio `command/args/env/cwd`） | — |
 
 ### 10.2 条目 schema 映射（Ccode 统一模型 → 各家字段）
 
@@ -514,6 +533,7 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
 | codex | `~/.codex/hooks.json` | JSON，handler 带 `async: true` | UserPromptSubmit / Stop / **PermissionRequest** | **非托管 hook 需在 TUI /hooks 面板审核信任后才执行**（按 hook 定义 hash 记信任，改命令失效需重审） | 本机 0.148.0 实测 features stable + 官方仓库源码核实 | ✅ 已接入 |
 | cursor | `~/.cursor/hooks.json`（扁平结构 `{version:1, hooks:{事件:[{command}]}}`） | JSON | beforeSubmitPrompt / stop / **无「等待确认」等价事件** | CLI 逐事件触发与 conversation_id↔会话文件映射未实机验证（未登录） | bundle 调用链+官方文档核实 2026.08.04 | ❌ 未接入（无等待确认等价事件 + 机制未实机验证） |
 | opencode | 无 shell hooks 形态 | — | —（仅进程内 JS 插件：`~/.config/opencode/plugins/*.ts`，事件 session.idle/permission.asked 等，事件名 v2 重构中不稳定） | — | 官方文档+SDK 类型核实 1.18.18，本机未装未实测 | ❌ 未接入（无 shell hooks 形态） |
+| agy | `~/.gemini/config/hooks.json` 命名组 `mesa-attention` | JSON 命名组形态 | UserPromptSubmit / Stop / PreToolUse（工具名 PascalCase：`Bash`、`WriteFile`、`EditFile`） | 无（设置页开关开启后写入全局配置；未开启时靠 §14 OSC 7501 程序状态兜底） | 本机 1.5.8 实测 | ✅ 已接入 |
 
 ### 12.2 各家全事件集要点与陷阱（挂钩前核对）
 
@@ -555,6 +575,7 @@ V = 源码 / 官方文档 / 本机实测核实，I = 推断。Codex、Claude 两
 | gemini | **无会话级客户端**：VS Code / Antigravity 的 Gemini CLI Companion 只做 diff 与上下文（V）；Antigravity 是另一套存储，不读 Gemini CLI 会话（V 本机 `~/.gemini/antigravity*/conversations/*.db`） | 不适用 | 无 | `code <dir>` 再手动运行 | 不做 |
 | cursor | Cursor IDE / Agents Window（本机未装）。`cursor://anysphere.cursor-deeplink/` 只有 `prompt` / `command` / `rule` 三类（V 文档） | 未见读 CLI 会话（I；CLI 在 `~/.cursor/chats/<hash>/<id>/store.db`） | 无（`agent --resume <id>` 仅终端） | `cursor <dir>`（I，VS Code fork 惯例） | 不做；CLI 只认 Cursor 自家账号，不能走第三方网关（V） |
 | grok | **无已核实客户端**：文档只列 ACP 编辑器（Zed / Neovim / Emacs / marimo），JetBrains 即将（V）。本机 Grok Bot.app（`com.anysphere.sand`，schemes `grokbot` / `sand`）是 Cursor / SpaceXAI 的云电脑产品，与 `~/.grok` 无关，**不是** Grok Build 客户端（V） | 不适用 | 无 | 无 | 不做 |
+| agy | Antigravity IDE 桌面版 | 同库不同分区：`conversation_summaries.db` 里桌面版为 `app_data_dir = 'antigravity'`，CLI 为 `'antigravity-cli'`（V 本机 1.5.8） | 无已核实按 CLI 会话 id 打开的深链 | `agy <dir>` 进 CLI | 不做（Mesa 扫描限定 `'antigravity-cli'` 隔离桌面版对话） |
 
 Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入会话到 Thread History（V Zed 文档）；未核实其 URL scheme。
 
@@ -593,6 +614,7 @@ Zed 是唯一核实过的跨 agent 路线：可从已配置的 ACP agent 导入�
 | gemini 0.64.0 | **无**：系统设置 / 系统默认设置路径（`GEMINI_CLI_SYSTEM_SETTINGS_PATH` / `_DEFAULTS_PATH`）注入的 hooks 被丢——文件必须属 root（`isFileAndDirectorySecureSync`）（V） | — | — | — | — | — |
 | kimi 2.2.0 → 2.4.1 | 2.2 **无**：没有指定配置文件的参数或环境变量（二进制环境变量清单核实）（V）。**2.4.0 起程序状态 OSC 7501**（2026-11-04 本机 2.4.1）：启动探询 `OSC 7501;?`（在 DA1 之后、OSC 11 之间），答了即报；不写配置（V：假网关 e2e_channel 走完一轮，金丝雀 macOS 基线已接受） | 无（照旧认领） | 启动报 `blocked:kind=permission`（msg `Workspace trust required`，信任目录，不开回合）→ `idle`；发话后 `working`（msg 先是 `Kimi Code`，再是这句话原文）/ `done`（msg 同句）→ `clear`（V） | `blocked:kind=permission`，msg `Approval required`（不带工具说明）（V） | — | 终端菜单回车（Kimi 开 kitty 后用 CSI-u 回车） |
 | grok 1.0.67 | **程序状态 OSC 7501**（2026-10-22）：终端答 `OSC 7501 ; ?` 后 Grok 把状态写进输出流（`program_status = auto`）；不写任何配置（V：本机抓到 + 假网关 e2e_channel 走完一轮）。原先 `GROK_CONFIG` 覆盖层按白名单只收 models / features / toolset / shell_environment_policy，hooks 被丢（I） | 无（照旧认领） | `working`（msg = 它自己的进度一句：`Waiting for response…`、`Connection failed \| Retrying (1/15)`、工具说明）/ `done`（msg `Turn complete in 3.3s.`）后再报 `clear`（V） | `blocked:kind=permission`，msg 是工具说明（「写一个探针文件」）；启动信任菜单也报 blocked（msg `Trust this folder?`）（V） | 无 | 只能终端菜单 |
+| agy 1.5.8 | **程序状态 OSC 7501**（2026-11-14 本机 1.5.8 实测）：启动探询 `OSC 7501;?`，答了即报，不写配置；开了精确注意力开关时同时消费 `~/.gemini/config/hooks.json` 的 `mesa-attention`（V：假网关 + 金丝雀 macOS 基线已接受） | 无（照旧认领，或 hooks 带 `session_id`） | `working` / `done` → `idle`（V） | `blocked:kind=permission`，msg 带 `Approve Bash: <命令>` 时直接拆出 `execute` + `Bash` 与命令预览（即使未开全局 hooks）（V） | 读屏 `LAYOUTS.agy`（两格缩进无前缀正文，V） | 只能终端菜单 |
 | cursor | 无「等待确认」事件 | — | — | — | — | — |
 
 **程序状态 OSC 7501（2026-10-22，`program_status.rs`；规格 superlogical.com/rex/docs/build/program-status，机制参照 Orca `.reference/orca/src/main/agent-hooks/README.md`）**：

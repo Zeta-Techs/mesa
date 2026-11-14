@@ -1031,9 +1031,9 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
 
   /** 导出会话包（.ccode-sessions.zip），原文拷贝不含密钥/连接 */
   async function onExportPack(targets: SessionMetaDto[]) {
-    const packable = targets.filter((s) => s.agent !== "opencode");
+    const packable = targets.filter((s) => s.agent !== "opencode" && s.agent !== "agy");
     if (packable.length === 0) {
-      setError("OpenCode 会话不能打进会话包（会话在 SQLite 里，留到下一版）");
+      setError("OpenCode / Antigravity CLI 会话不能打进会话包（状态与工作目录在 SQLite / protobuf 里，暂不支持迁移）");
       return;
     }
     if (
@@ -1056,7 +1056,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       });
       setExportPath(path);
       if (packable.length < targets.length) {
-        setError("已跳过 OpenCode 会话（不能打进会话包）");
+        setError("已跳过 OpenCode / Antigravity CLI 会话（不能打进会话包）");
       }
     } catch (e) {
       setError(String(e));

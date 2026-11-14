@@ -144,6 +144,7 @@ export function snippetFileTag(agent: string): string | null {
     case "codebuddy":
     case "qwen":
     case "gemini":
+    case "agy":
       return "settings.json";
     case "codex":
     case "kimi":

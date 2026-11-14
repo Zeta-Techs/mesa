@@ -92,6 +92,49 @@ fn grok_note(grok_home: &Path) -> Option<CliPermissionNote> {
     }
 }
 
+/// Antigravity CLI 的默认权限在 ~/.gemini/antigravity-cli/settings.json（JSONC）的 toolPermission / agentMode（1.5.8 实证）
+fn agy_note(config_dir: &Path) -> Option<CliPermissionNote> {
+    let text = std::fs::read_to_string(config_dir.join("settings.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&crate::mcp::strip_jsonc(&text)).ok()?;
+    if let Some(perm) = v.get("toolPermission").and_then(|x| x.as_str()) {
+        match perm {
+            "always-proceed" => {
+                return note(
+                    Some("full"),
+                    "完全访问",
+                    "本机 Antigravity CLI 设为 always-proceed：工具调用与跑命令都不先问",
+                );
+            }
+            "proceed-in-sandbox" => {
+                return note(
+                    Some("auto"),
+                    "帮我批准",
+                    "本机 Antigravity CLI 设为沙箱内自动放行：沙箱外操作再问你",
+                );
+            }
+            _ => {}
+        }
+    }
+    match v.get("agentMode").and_then(|x| x.as_str())? {
+        "auto" => note(
+            Some("auto"),
+            "帮我批准",
+            "本机 Antigravity CLI 默认 auto 模式：常规操作直接执行",
+        ),
+        "plan" => note(
+            Some("discuss"),
+            "先出方案",
+            "本机 Antigravity CLI 默认计划模式：先出方案，你确认后再动手",
+        ),
+        "accept-edits" => note(
+            None,
+            "自动改文件",
+            "本机 Antigravity CLI 默认自动接受改文件，跑命令仍会先问",
+        ),
+        _ => None,
+    }
+}
+
 fn note_at(home: &Path, agent: &str) -> Option<CliPermissionNote> {
     match agent {
         "grok" => grok_note(&env_dir("GROK_HOME").unwrap_or_else(|| home.join(".grok"))),
@@ -99,6 +142,7 @@ fn note_at(home: &Path, agent: &str) -> Option<CliPermissionNote> {
             claude_note(&env_dir("CLAUDE_CONFIG_DIR").unwrap_or_else(|| home.join(".claude")))
         }
         "codex" => codex_note(&env_dir("CODEX_HOME").unwrap_or_else(|| home.join(".codex"))),
+        "agy" => agy_note(&home.join(".gemini/antigravity-cli")),
         _ => None,
     }
 }
@@ -170,5 +214,24 @@ mod tests {
         assert_eq!((n.tier.as_deref(), n.short.as_str()), (Some("full"), "完全访问"));
         std::fs::write(home.join(".grok/config.toml"), "[ui]\nyolo = false\n").unwrap();
         assert_eq!(grok_note(&home.join(".grok")), None);
+    }
+
+    #[test]
+    fn agy_settings_jsonc_permission_and_mode_are_reported() {
+        let home = scratch();
+        let dir = home.join(".gemini/antigravity-cli");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            "// jsonc\n{\n  \"toolPermission\": \"always-proceed\",\n}\n",
+        )
+        .unwrap();
+        let full = note_at(&home, "agy").unwrap();
+        assert_eq!((full.tier.as_deref(), full.short.as_str()), (Some("full"), "完全访问"));
+        std::fs::write(dir.join("settings.json"), r#"{"agentMode": "plan"}"#).unwrap();
+        assert_eq!(note_at(&home, "agy").unwrap().tier.as_deref(), Some("discuss"));
+        std::fs::write(dir.join("settings.json"), r#"{"agentMode": "accept-edits"}"#).unwrap();
+        assert_eq!(note_at(&home, "agy").unwrap().tier, None);
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

@@ -38,11 +38,19 @@ jobs:
           npm install -g @anthropic-ai/claude-code@latest @openai/codex@latest @google/gemini-cli@latest
           @qwen-code/qwen-code@latest opencode-ai@latest @moonshot-ai/kimi-code@latest
           @tencent-ai/codebuddy-code@latest @xai-official/grok@latest
-      # Cursor CLI 只有官方安装脚本；装不上不挡别的家（金丝雀会把没装的列为跳过）
+      # Cursor CLI、Antigravity CLI 只有官方安装脚本；装不上不挡别的家（金丝雀会把没装的列为跳过）。
+      # Antigravity CLI 目前只在 macOS 建了基线（baseline/darwin/agy.json），Windows 待本机 --accept 建好后再补安装步骤
       - name: 装 Cursor CLI（macOS）
         if: runner.os == 'macOS'
         continue-on-error: true
         run: curl https://cursor.com/install -fsS | bash && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: 装 Antigravity CLI（macOS）
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        run: |
+          curl -fsSL https://antigravity.google/cli/install.sh | bash
+          echo "$HOME/.antigravity/antigravity/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: 装 Cursor CLI（Windows）
         if: runner.os == 'Windows'
         continue-on-error: true

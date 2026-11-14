@@ -106,6 +106,7 @@ const OFFICIAL_VENDOR: Record<string, VendorId> = {
   codebuddy: "tencent",
   grok: "xai",
   cursor: "cursor",
+  agy: "gemini",
 };
 
 export function vendorForOfficialAgent(agent: string): VendorId | null {

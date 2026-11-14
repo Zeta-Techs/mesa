@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-14 · 接入第十家 Agent：Antigravity CLI（agy）
+
+用户拍板接入 Antigravity CLI 作为第十家 Agent（内部 id `agy`，展示名 `Antigravity CLI`，归维护级），方案见 `docs/design-agy-integration.md`。定：① 中转 / API 连接不改用户的 `~/.gemini/antigravity-cli/settings.json`、也不往 shell 配置写包装函数，每次启动在 `<config_root>/agy-settings/` 生成 0600 会话级设置文件（原样合并用户非 `mesa/` 自定义模型，注册 `mesa/<模型>`），经 `--settings` + `--model mesa/<模型>` 与 `GEMINI_API_KEY`、`GOOGLE_GEMINI_BASE_URL` 注入；② 会话与用量只读解析 `brain/<id>/.system_generated/logs/transcript_full.jsonl`（回落 `transcript.jsonl`），工作目录只读查 `conversation_summaries.db` 且限定 `app_data_dir = 'antigravity-cli'`（排除桌面版对话与子 Agent），不解析 protobuf，暂不支持会话包导出；③ `agy` 只从环境变量读端点与密钥，「设为全局默认」仅支持官方 Google 账号（撤 `mesa/*` 条目与 `modelProvider: "gemini"`，保 JSONC 注释），API / 中转连接置灰并写明原因；④ MCP、技能、hooks 均写 `~/.gemini/config/`（MCP 远程用 `serverUrl`、拒写 SSE；技能不写 `~/.gemini/skills/` 以免与 Gemini CLI 互串；聊天层取数用 OSC 7501 程序状态加可选 `mesa-attention` hooks）；⑤ plan 模式仅靠提示词约束、无进程级只读保证，研讨、项目助手只读查看等进程级只读场景暂不纳入 `agy`。细则 matrix §9b、profiles.md §12、safety.md。
+
 ### 2026-11-14 · 后台分轮跟进的人工请求须显式确认才续跑
 
 审查指出：后台分轮跟进（`waiting`）在人工请求弹层点选选项即写 `已答：…`，若直接触发续跑会在用户改答案或答多题最后一题的瞬间抢跑拉起下一轮；且未作答时弹层出现「去终端回答」会在 `watch-isolation` 隔离目录拉起交互终端。用户拍板按推荐收口：后台跟进与交互对话统一口径——卡片点选只落盘草稿回答，须把待答条目答齐并点「交给 Agent 继续」（或经调度台 / 飞书 / 桌宠提交）写入投递确认后，调度器才续跑下一轮；改写回答即撤掉确认；后台来源不提供「去终端回答」。细则 pipeline.md「分轮跟进与独立后台」。

@@ -2,22 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { CHAT_FIDELITY, baselineKey, chatFidelity, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
-test("九家都写了聊天层能做到哪一步", () => {
-  const nine = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok"];
-  for (const id of nine) {
+test("十家都写了聊天层能做到哪一步", () => {
+  const ten = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"];
+  for (const id of ten) {
     const f = chatFidelity(id);
     assert.ok(f, `${id} 缺一行`);
     assert.ok(f.source && f.terminalOnly);
   }
-  assert.deepEqual(Object.keys(CHAT_FIDELITY).sort(), [...nine].sort());
+  assert.deepEqual(Object.keys(CHAT_FIDELITY).sort(), [...ten].sort());
   assert.equal(chatFidelity(null), null);
   assert.equal(chatFidelity("custom"), null);
 });
 
-test("Windows 上 Grok、Kimi 没有程序状态旁路，降到读画面那一档；其余家两平台一样", () => {
+test("Windows 上 Grok、Kimi、Antigravity CLI 没有程序状态旁路，降到读画面那一档；其余家两平台一样", () => {
   assert.equal(chatFidelity("kimi")?.tier, 2);
   assert.equal(chatFidelity("kimi", true)?.tier, 3);
   assert.equal(chatFidelity("grok")?.tier, 2);
+  assert.equal(chatFidelity("agy")?.tier, 2);
+  assert.equal(chatFidelity("agy", true)?.tier, 3);
   const win = chatFidelity("grok", true);
   assert.equal(win?.tier, 3);
   assert.equal(win?.beta, false);

@@ -63,11 +63,12 @@ test("发送钮变暂停：正在出字或等首个回复；停在提示符或�
   assert.equal(composerShowsInterrupt({}), false);
 });
 
-test("七家有 hooks，cursor/opencode 没有", () => {
-  assert.equal(HOOKS_AGENTS.size, 8);
+test("九家有精确状态，cursor 没有", () => {
+  assert.equal(HOOKS_AGENTS.size, 9);
   assert.equal(agentHasHooks("claude-code"), true);
   assert.equal(agentHasHooks("claude"), false, "键是 Agent id");
   assert.equal(agentHasHooks("codex"), true);
+  assert.equal(agentHasHooks("agy"), true);
   assert.equal(agentHasHooks("cursor"), false);
   assert.equal(agentHasHooks("opencode"), true);
   assert.equal(agentHasHooks(null), false);

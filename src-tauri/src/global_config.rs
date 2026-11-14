@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// 一次计划好的写入：tag 用于备份文件命名（kimi 两个 config.toml 靠它区分）
+#[derive(Debug)]
 struct PlannedWrite {
     tag: &'static str,
     path: PathBuf,
@@ -247,6 +248,7 @@ fn target_paths(home: &Path, agent: &str) -> Vec<(&'static str, PathBuf)> {
             ("legacy-config.toml", kimi_legacy_dir(home).join("config.toml")),
         ],
         "grok" => vec![("config.toml", dir.join("config.toml"))],
+        "agy" => vec![("settings.json", dir.join("settings.json"))],
         _ => vec![],
     }
 }
@@ -281,13 +283,13 @@ fn parse_jsonc_doc(existing: Option<&str>) -> Result<Value, String> {
 
 /// 该 Agent 的这个配置文件本身支持 JSONC（注释与尾逗号）：
 /// - OpenCode：config.json / opencode.json / opencode.jsonc 全部按 JSONC 解析
-/// - Gemini / Qwen：settings.json 按 JSONC 解析
+/// - Gemini / Qwen / Antigravity CLI：settings.json 按 JSONC 解析
 /// - Claude Code / CodeBuddy / Codex / Cursor 的 JSON 文件只认严格 JSON，不得保留注释或尾逗号
 pub(crate) fn config_file_is_jsonc(agent: &str, tag: &str) -> bool {
     matches!(
         (agent, tag),
         ("opencode", "opencode.jsonc" | "opencode.json" | "config.json")
-            | ("gemini" | "qwen", "settings.json")
+            | ("gemini" | "qwen" | "agy", "settings.json")
     )
 }
 
@@ -1999,7 +2001,7 @@ fn patch_env_file(existing: Option<&str>, pairs: &[(String, String)]) -> Result<
 pub(crate) fn official_global_is_patch(agent: &str) -> bool {
     matches!(
         agent,
-        "codex" | "claude-code" | "gemini" | "qwen" | "codebuddy" | "kimi" | "grok"
+        "codex" | "claude-code" | "gemini" | "qwen" | "codebuddy" | "kimi" | "grok" | "agy"
     )
 }
 
@@ -2015,6 +2017,7 @@ pub(crate) fn official_model_kept(agent: &str, model: &str) -> bool {
         // gemini-* 与 CLI 自带别名（auto / pro / flash / flash-lite）
         "gemini" => m.starts_with("gemini") || matches!(m.as_str(), "auto" | "pro" | "flash" | "flash-lite"),
         "grok" => m.starts_with("grok"),
+        "agy" => !m.starts_with("mesa/") && agents::official_model_allowed("agy", model),
         _ => agents::official_model_allowed(agent, model),
     }
 }
@@ -2339,6 +2342,34 @@ fn patch_grok_config_official(existing: &str) -> Result<String, String> {
     Ok(doc.to_string())
 }
 
+/// Antigravity CLI 官方 Google 账号「设为全局」：撤掉 `modelProvider="gemini"`、`model="mesa/..."` 与 `mesa/*` 自定义模型；
+/// 用户自己的 `trustedWorkspaces`、`toolPermission`、`agentMode`、非 `mesa/` 自定义模型及 JSONC 注释（经 `jsonc_layout_kept`）原样保留。
+fn patch_agy_settings_official(existing: &str) -> Result<String, String> {
+    let mut v = serde_json::from_str::<Value>(&crate::mcp::strip_jsonc(existing))
+        .map_err(|e| format!("现有 settings.json 解析失败，已停止写入: {e}"))?;
+    let Some(obj) = v.as_object_mut() else {
+        return Err("现有 settings.json 根节点不是对象，已停止写入".into());
+    };
+    if obj.get("modelProvider").and_then(|x| x.as_str()) == Some("gemini") {
+        obj.remove("modelProvider");
+    }
+    if obj
+        .get("model")
+        .and_then(|x| x.as_str())
+        .is_some_and(|m| !official_model_kept("agy", m))
+    {
+        obj.remove("model");
+    }
+    if let Some(cm) = obj
+        .get_mut("customModelsConfig")
+        .and_then(|c| c.get_mut("customModels"))
+        .and_then(|m| m.as_object_mut())
+    {
+        cm.retain(|k, _| !k.starts_with("mesa/"));
+    }
+    to_pretty(&v)
+}
+
 /// 官方账号「设为全局」的写计划：文件不存在就不写（不存在 = 本来就没有 API 配置）。
 fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, String> {
     let mut plans = Vec::new();
@@ -2376,6 +2407,7 @@ fn plan_official_writes(home: &Path, agent: &str) -> Result<Vec<PlannedWrite>, S
             add("legacy-config.toml", kimi_legacy_dir(home).join("config.toml"), &patch_kimi_config_official)?;
         }
         "grok" => add("config.toml", dir.join("config.toml"), &patch_grok_config_official)?,
+        "agy" => add("settings.json", dir.join("settings.json"), &patch_agy_settings_official)?,
         other => return Err(format!("{other} 的官方账号不支持「设为全局」")),
     }
     Ok(plans)
@@ -2829,6 +2861,12 @@ fn plan_writes(
             };
             push("config.toml", path, content);
         }
+        "agy" => {
+            return Err(
+                "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动。"
+                    .into(),
+            );
+        }
         // 防御兜底：能力表标 Supported 但这里漏了 arm（两表漂移），属内部错误
         other => {
             return Err(format!(
@@ -3185,6 +3223,7 @@ fn override_notes_with(agent: &str, has: &dyn Fn(&str) -> bool) -> Vec<String> {
             "连接",
         )),
         "grok" => notes.extend(shell(&["GROK_MODELS_BASE_URL", "GROK_DEFAULT_MODEL"], "地址或默认模型")),
+        "agy" => notes.extend(shell(&["GEMINI_API_KEY", "GOOGLE_GEMINI_BASE_URL"], "密钥或地址")),
         _ => {}
     }
     notes

@@ -97,7 +97,7 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   壳与标题栏/侧栏/缝透明，桌面磨砂从窗口底透上来；
                              #   顶栏帮助菜单（HELP_MENU：命令面板左侧 ? 钮，分组下拉，关闭范式同收件箱；首项「上手引导」）；
                              #   侧栏系统段上方「上手引导」行（useOnboardingRail，引导进行中才渲染，点开全屏向导）
-  components/AgentIcon.tsx   # 九家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
+  components/AgentIcon.tsx   # 十家 Agent 产品图标（src/assets/agent-icons/，lobe-icons MIT）：内联 SVG（currentColor 跟主题）、渐变 id 按实例改前缀、认不出首字占位；连接页左栏与 Agent 节标题用
   components/OrderScheduleRow.tsx # 派活单「建成定时任务（先不启用）」（2026-11-08）：create_paused_schedule 一键建（Mesa 按单子生成技能、enabled=false），
                              #   就地「启用 / 停用 / 改一改 / 撤销」与技能全文；按「项目 + 派出时刻」记在 localStorage，定时任务页删掉了就回到可再建
   components/PageFrame.tsx   # 页面公共件：PageFrame/PageHeader（旧管理页外壳）、按钮类、SegTabs（pill / boxed 分段控件）、Toggle、NoticeBar…；
@@ -175,7 +175,7 @@ components/ProjectIdentityHeader.tsx  # 项目页身份头（WorkspacesPage 唯�
                              #   侧栏树在主 chunk，静态引入会把整页拖进主包），树右键与页面共用同一份
   navigation.ts              # 导航清单单一出处（九页全量）。侧栏本身不按本表渲染（App.tsx 自排三段），本表供隐藏态导航胶囊
 navigation-icons.ts        # 九页＋新对话/新项目/搜索/定时任务的 Lucide 图标表 NAV_ICONS（图标单一出处）：侧栏三段（App.tsx）、navigation.ts 导航清单、命令面板、灵动岛/对话切换器、连接页 agent 分组头共用——换图标只改这里（2026-10-27 用户拍板「对话管理」统一 NAV_ICONS.sessions 弃放大镜）
-types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文件 import）：Profile/ComboSurfaceDto（逐字段通道表）/Gateway*、会话（SessionMetaDto/瘦身/搜索/导入导出）、工作区（评审冻结/合并/PR/产物）、人工事项、任务卡、用量（含活跃度四列口径）、MCP、定时任务、目标 Run/评审快照等后端 DTO 的 TS 镜像（与 Rust 端 serde camelCase 对齐），另出九家 agent id 清单与 AGENT_PROTOCOLS。纯类型＋常量、不放逻辑；后端 DTO 增删字段先改这里再编译前端
+types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文件 import）：Profile/ComboSurfaceDto（逐字段通道表）/Gateway*、会话（SessionMetaDto/瘦身/搜索/导入导出）、工作区（评审冻结/合并/PR/产物）、人工事项、任务卡、用量（含活跃度四列口径）、MCP、定时任务、目标 Run/评审快照等后端 DTO 的 TS 镜像（与 Rust 端 serde camelCase 对齐），另出十家 agent id 清单与 AGENT_PROTOCOLS。纯类型＋常量、不放逻辑；后端 DTO 增删字段先改这里再编译前端
                              #   （TopNavCapsule）、设置页「岛上显示的入口」勾选消费——删页会静默弄坏这两处；顺序与字同图标态侧栏
                              #   （2026-10-24：工作台 · 运行 · 对话管理（10-27 前叫「搜对话」）· 项目；新对话不是页，岛上插在工作台后；page = 停在这一页时报的页名）；
                              #   「运行」只留给岛上休眠面报页名，不是任何地方的入口（同日撤出图标态侧栏、岛、快捷键）
@@ -708,7 +708,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # > 会话里还没回结果的调用（已有那一行就不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考
                              # > CLI 自己报的现状 statusLine（程序状态旁路，只等于「在等 / 在想」的不用）> 「思考中」（一发出就写）；
                              # settleStatus 状态字最短停留 800ms、statusCaretMotion 光标按阶段动（2026-10-26）；
-  chat-fidelity.ts           # 聊天层对九家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
+  chat-fidelity.ts           # 聊天层对十家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）/
                              # baselineKey（OpenCode 2.x 比 opencode2 那份基线）
   chat-mismatch.ts           # 「聊天和终端对不上」一键对照反馈（2026-10-30，tests/chat-mismatch.test.ts）：入口标签、标题、详情脚手架、聊天侧 / 终端侧摘录与对照全文拼法；只拼不脱敏（出站前经 feedback.rs feedback_chat_snapshot），事件 mesa:report-chat-mismatch 由 App 接、打开 FeedbackModal
@@ -731,7 +731,7 @@ __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore
 path-utils.ts              # 前端路径方言层（AGENTS「路径比较」条的前端口径，与后端 paths.rs path_key/path_within 同规则）：normSep/stripVerbatim（存量库里仍有 \\?\ verbatim 记录，显示与比较前都要过一道）/pathKey（Windows 折叠大小写，只用于比较不回写）/samePath/pathWithin（段边界含根自身）、normalizeStatusKeys＋hasChangedInside（git 装饰表键归一与文件夹变更点）、parentDir（Windows 盘符根保留）、abbrevHome（~ 折叠显示）、relativeUnder（写进 agent 指令的正斜杠相对路径）、revealFolderLabel 平台叫法；isWindows/isMac 显式传参禁模块内读平台（跨页广泛消费；tests/path-utils.test.ts）
                              #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
   file-icons.ts              # 文件类型图标纯逻辑：扩展名 → 图形种类（FileGlyph）+ 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
-agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（固定 hex 不随主题变，同 file-icons「固定识别色」先例）：对话页列表行胶囊（agentBrandBadgeStyle＝色字+同色 10% 淡底、无描边）与统计页进度条/圆点、项目任务/Agents 视图、模型菜单、会话导入弹层共用；未知 agent 按 id 哈希取 HSL 兜底（确定性、不撞令牌池）。v3.92 调色口径：低饱和中明度雾面、九家 hue 拉开；v3.94 起旧令牌色表 AGENT_COLORS 已随「进度条改绑品牌色」拍板删除——新增 agent 在这里加一行，别撞色
+agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（固定 hex 不随主题变，同 file-icons「固定识别色」先例）：对话页列表行胶囊（agentBrandBadgeStyle＝色字+同色 10% 淡底、无描边）与统计页进度条/圆点、项目任务/Agents 视图、模型菜单、会话导入弹层共用；未知 agent 按 id 哈希取 HSL 兜底（确定性、不撞令牌池）。v3.92 调色口径：低饱和中明度雾面、十家 hue 拉开；v3.94 起旧令牌色表 AGENT_COLORS 已随「进度条改绑品牌色」拍板删除——新增 agent 在这里加一行，别撞色
                              # 未收录返回 null，画通用文件图标，不留空槽；图形到 Lucide 的映射与渲染在 components/FileTypeMark.tsx；
                              # isPreviewableImagePath（png/jpg/gif/webp/svg，tests/file-icons.test.ts）
   project-files.ts           # 文件页纯逻辑：预览形态分流 / 类型筛选（recent 是视图不参与类型收窄）/
@@ -834,7 +834,7 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    回放抓屏的原始输出（CAP_RAW=1）、逐块读屏接预览，数重复 / 漏行；resume-drive.py 用 e2e_dump_resume_plans 按内嵌终端的恢复口径给本机真实老对话出计划、拉起真 CLI 接着问一句（能分叉的先分叉，Codex 用副本，不写原对话）；见其 README）
   （scripts/cli-canary/：CLI 金丝雀——canary.py 串起假网关 E2E_DUMP、chat_channel 的 e2e_channel（E2E_CLEAN_HOME / E2E_KEEP 留会话原件与
    解析结果）、chat-capture 抓屏，抽指纹与 baseline/<平台>/<agent>.json 比，报告附两版之间更新日志的相关条目；
-   .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家：有旁路的七家跑旁路端到端（Kimi 2026-11-04 加入），
+   .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家、2026-11-14 加入 agy（十家）：有旁路的八家跑旁路端到端（Kimi 2026-11-04、agy 2026-11-14 加入），
    Gemini 只抓屏，Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；2026-10-30 加「全局配置」层：global_phase 用
    global_config 的 e2e_write_global_config 把真写计划写进临时 HOME、不经 Mesa 起 CLI，核对模型与密钥；2026-11-04 加「上游通道雷达」：
    upstream_phase 看伪终端探询 / --help / 更新日志里的结构化通道线索，与 upstream.json 的结论比，新线索不算红、upstream_issue.py 开 / 追加 issue；见其 README）
@@ -1523,7 +1523,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   压缩边界之前不算）；apply 原地把较早的 base64 截图/文档换文字占位、留最近 6 张，没动的行逐字节原样，写前完整备份
                              #   到 <配置目录>/ccode/backups/session-slim/、最近 60 秒有写入拒绝、复核源文件未变、tmp+rename 保持 mtime；
                              #   不另存副本（会撞 sessionId、用量重复计）；安全口径 safety.md 例外清单第 7 条；干跑用 ignored 的 real_data_dry_run
-  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode）：原文打包装、导入时改写 cwd（含子目录前缀，
+  session_transfer.rs        # 会话包导出/导入（.ccode-sessions.zip，八家不含 opencode 与 agy）：原文打包装、导入时改写 cwd（含子目录前缀，
                              #   分隔符按目标机方言重接）并按 B 机目录重建落位；zip-slip/大小/后缀/白名单；同 id 跳过不覆盖（导出同会话去重；Claude id 按文件名，同 sessions.rs）；
                              #   Mesa 元数据写 app.db；Claude 附属目录 <id>/（subagents/tool-results/custom-title.json，32MB/128MB 封顶，
                              #   不跟符号链接，导入尽力而为 + tool-results 路径重映射）；各家目录名规则以 CLI 源码为准：
@@ -1576,7 +1576,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   delete_impl 先备份库目录进 skill-backups（留 5 份）再卸载；纯逻辑在 src/skill-delete.ts
                              #   （tests/skill-delete.test.ts）
   mcp_blender.rs             # Blender 官方 MCP 本机安装探测（只读：Blender 版本/插件文件/uv/仓库/TCP 9876）
-  mcp.rs                     # MCP 清单与分发（§6.15，规格 matrix §10）：统一模型→八家映射（grok 只读）、读-改-写一个键/段 + 备份 +
+  mcp.rs                     # MCP 清单与分发（§6.15，规格 matrix §10）：统一模型→九家映射（grok 只读；agy 写 ~/.gemini/config/mcp_config.json，远程 serverUrl）、读-改-写一个键/段 + 备份 +
                              # 原子写 + 读回校验、JSONC 容错读、密钥引用转写（不落明文；引用值可存 mcp-keys.json，启动/体检注入）、stdio 裸命令名 resolve_binary
                              #   绝对化 + node shim 深化、相对路径命令拒写（跨 agent 必挂，报错引导改绝对路径）；
                              #   全局启用开关（enabled 字段：停用=移除各 agent 条目但保留 apps 映射，重开按原样重投；

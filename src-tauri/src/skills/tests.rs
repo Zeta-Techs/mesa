@@ -1887,3 +1887,28 @@ fn optimize_snapshot_of_deleted_skill_does_not_leak_to_new_same_name() {
     assert!(listed(&fx, &new.id).optimize_review.is_none());
     assert!(optimize_review::review_impl(&fx.store, &new.id).is_err());
 }
+
+#[test]
+fn agy_skill_distributes_to_gemini_config_skills_without_touching_gemini_skills() {
+    let fx = Fx::new();
+    let home = fx.dir.join("sim-home");
+    fs::create_dir_all(&home).unwrap();
+    let mut real_layout_agents = HashMap::new();
+    for spec in crate::agent_specs::all_agent_specs() {
+        let mut p = home.clone();
+        for seg in spec.skills_dir {
+            p.push(seg);
+        }
+        real_layout_agents.insert(spec.id.to_string(), p);
+    }
+    let skill = fx.add_lib_skill("agy-dryrun", "隔离验证技能落位");
+    apply_impl(&fx.store, &real_layout_agents, &skill.id, "agy", true, false).unwrap();
+    assert!(home.join(".gemini/config/skills/agy-dryrun/SKILL.md").is_file());
+    assert!(
+        !home.join(".gemini/skills").exists(),
+        "Antigravity CLI 技能落 ~/.gemini/config/skills/，不得污染 Gemini CLI 的 ~/.gemini/skills/"
+    );
+    apply_impl(&fx.store, &real_layout_agents, &skill.id, "agy", false, false).unwrap();
+    assert!(!home.join(".gemini/config/skills/agy-dryrun").exists());
+    let _ = fs::remove_dir_all(&fx.dir);
+}

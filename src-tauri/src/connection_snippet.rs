@@ -87,6 +87,7 @@ fn file_of(agent: &str) -> &'static str {
         "codex" => "~/.codex/config.toml",
         "kimi" => "~/.kimi-code/config.toml",
         "grok" => "~/.grok/config.toml",
+        "agy" => "会话级 settings.json（--settings）与启动环境变量",
         _ => "",
     }
 }
@@ -420,6 +421,28 @@ fn render_tree(agent: &str, f: &SnippetFields) -> Result<Vec<(String, N)>, Strin
                 root.put("model", Some(tbl.n()));
             }
         }
+        "agy" => {
+            if f.account_type == "api" {
+                root.put("modelProvider", Some(s("gemini")));
+                root.put("model", f.models.first().map(|m| s(format!("mesa/{m}"))));
+                let mut cm = Obj::default();
+                for m in &f.models {
+                    let mut item = Obj::default();
+                    item.put("apiProvider", Some(s("API_PROVIDER_GOOGLE_GEMINI")));
+                    item.put("modelName", Some(s(m.clone())));
+                    cm.put(&format!("mesa/{m}"), Some(item.n()));
+                }
+                let mut cmc = Obj::default();
+                cmc.put("customModels", Some(cm.n()));
+                root.put("customModelsConfig", Some(cmc.n()));
+                let mut env = Obj::default();
+                env.put("GOOGLE_GEMINI_BASE_URL", url_value(f));
+                env.put("GEMINI_API_KEY", key_value(f));
+                root.put("env", Some(env.n()));
+            } else {
+                root.put("model", default);
+            }
+        }
         other => return Err(format!("{other} 没有配置视图")),
     }
     root.put("mesa", Some(mesa_section(agent, f)));
@@ -643,6 +666,40 @@ pub fn parse(agent: &str, account_type: &str, text: &str) -> Result<SnippetField
                 }
             }
         }
+        "agy" => {
+            let _ = take(&mut root, &["modelProvider"]);
+            let model = as_text(take(&mut root, &["model"]), "model")?;
+            default = model.map(|m| m.strip_prefix("mesa/").map(str::to_string).unwrap_or(m));
+            if let Some(mut cmc) = take(&mut root, &["customModelsConfig"]) {
+                match take(&mut cmc, &["customModels"]) {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Object(map)) => {
+                        let mut extracted = Vec::new();
+                        for (k, mut v) in map {
+                            let _ = as_text(take(&mut v, &["apiProvider"]), "apiProvider")?;
+                            let mn = as_text(take(&mut v, &["modelName"]), "modelName")?;
+                            let mut rest = Vec::new();
+                            leftovers(&v, &format!("customModelsConfig.customModels.{k}"), &mut rest);
+                            if !rest.is_empty() {
+                                return Err(unknown_keys(&rest));
+                            }
+                            extracted.push(mn.unwrap_or_else(|| k.strip_prefix("mesa/").unwrap_or(&k).to_string()));
+                        }
+                        if !extracted.is_empty() {
+                            native_models = Some(extracted);
+                        }
+                    }
+                    Some(_) => return Err("customModelsConfig.customModels 要写成对象".into()),
+                }
+                let mut rest = Vec::new();
+                leftovers(&cmc, "customModelsConfig", &mut rest);
+                if !rest.is_empty() {
+                    return Err(unknown_keys(&rest));
+                }
+            }
+            url = as_text(take(&mut root, &["env", "GOOGLE_GEMINI_BASE_URL"]), "GOOGLE_GEMINI_BASE_URL")?;
+            key = as_text(take(&mut root, &["env", "GEMINI_API_KEY"]), "GEMINI_API_KEY")?;
+        }
         other => return Err(format!("{other} 没有配置视图")),
     }
     // mesa 小节
@@ -666,7 +723,11 @@ pub fn parse(agent: &str, account_type: &str, text: &str) -> Result<SnippetField
         ),
         Some(_) => return Err("mesa.models 要写成模型名数组".into()),
     };
-    let mut models = native_models.or(listed).unwrap_or_default();
+    let mut models = if agent == "agy" {
+        listed.or(native_models).unwrap_or_default()
+    } else {
+        native_models.or(listed).unwrap_or_default()
+    };
     if let Some(d) = default.filter(|d| !d.is_empty()) {
         match models.iter().position(|m| *m == d) {
             Some(i) => {
@@ -755,7 +816,7 @@ pub fn connection_snippet_parse(agent: String, account_type: String, text: Strin
 mod tests {
     use super::*;
 
-    const AGENTS: [&str; 9] = ["claude-code", "codebuddy", "qwen", "gemini", "opencode", "cursor", "codex", "kimi", "grok"];
+    const AGENTS: [&str; 10] = ["claude-code", "codebuddy", "qwen", "gemini", "opencode", "cursor", "codex", "kimi", "grok", "agy"];
 
     fn full(agent: &str) -> SnippetFields {
         SnippetFields {

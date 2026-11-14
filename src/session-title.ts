@@ -6,7 +6,7 @@ function interruptedRe() {
   return /\[?\s*request interrupted by user\s*\]?|请求(?:已)?中断|被用户中断/gi;
 }
 const CLI_RESUME_RE =
-  /^(claude|codex|gemini|qwen|opencode|kimi|cursor|grok|codebuddy)(?:\s+code)?\s+--resume\b/i;
+  /^(claude|codex|gemini|qwen|opencode|kimi|cursor|grok|codebuddy|agy)(?:\s+code)?\s+--resume\b/i;
 function urlRe() {
   return /https?:\/\/\S+/gi;
 }

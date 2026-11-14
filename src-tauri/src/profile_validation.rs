@@ -444,6 +444,7 @@ fn local_check_with_env(
                 let legacy = crate::agent_specs::kimi_legacy_root_with(home, env).join("config.toml");
                 add(check_toml(legacy))?;
             }
+            "agy" => add(check_jsonc(dir.join("settings.json")))?,
             _ => {}
         }
         let mut message = if parsed.is_empty() {
@@ -727,6 +728,10 @@ fn cli_check(profile: &Profile, key: Option<&str>, injected: bool) -> Validation
                 cmd.arg("--version");
                 "Cursor 启动预检（CLI 暂无 doctor）"
             }
+            "agy" => {
+                cmd.arg("--version");
+                "Antigravity CLI 启动预检（CLI 暂无 doctor）"
+            }
             _ => return Err("该 agent 不支持 CLI 预检".into()),
         };
         cmd.env("NO_COLOR", "1");
@@ -776,7 +781,7 @@ fn api_kind(profile: &Profile) -> ApiKind {
         // codebuddy 不在这里：它把 CODEBUDDY_BASE_URL 原样当 base 拼 /chat/completions（OpenAI 形状，
         // 2026-10-21 源码 + 实测；原先按 Anthropic 探针验证能过、实际运行只得空回复）
         "claude-code" => ApiKind::Anthropic,
-        "gemini" => ApiKind::Gemini,
+        "gemini" | "agy" => ApiKind::Gemini,
         // codex 走 Responses 线格式：chat/completions 形状探针会被 GLM 这类
         // Responses-only 网关拒掉（实测 403 model_access_denied），却放行 /responses
         "codex" => ApiKind::Responses,
@@ -798,7 +803,7 @@ fn anthropic_uses_bearer(profile: &Profile) -> bool {
 pub(crate) fn api_kind_label(agent: &str, protocol: Option<&str>) -> &'static str {
     match agent {
         "claude-code" => "anthropic",
-        "gemini" => "gemini",
+        "gemini" | "agy" => "gemini",
         "cursor" => "cursor",
         "qwen" | "kimi" if protocol == Some("anthropic") => "anthropic",
         _ => "openai",

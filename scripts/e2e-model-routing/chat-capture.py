@@ -28,11 +28,13 @@ plans = json.load(open(sys.argv[1])); agent = sys.argv[2]; tier = sys.argv[3]; o
 switch_cmd = sys.argv[5] if len(sys.argv) > 5 else None
 real_home = os.path.expanduser("~")
 BIN = {"claude-code": "claude", "codebuddy": "codebuddy", "codex": "codex", "qwen": "qwen",
-       # npm 装的在 PATH 上（CI 就是这样），官方安装脚本装在 ~/.kimi-code；与 canary.py bin_path 同一顺序
+       # npm 装的在 PATH 上（CI 就是这样），官方安装脚本装在 ~/.kimi-code / ~/.antigravity；与 canary.py bin_path 同一顺序
        "kimi": shutil.which("kimi") or os.path.join(real_home, ".kimi-code/bin/kimi"), "opencode": "opencode", "grok": "grok",
-       "gemini": "gemini", "cursor": "cursor-agent"}
+       "gemini": "gemini", "cursor": "cursor-agent",
+       "agy": shutil.which("agy") or os.path.join(real_home, ".antigravity/antigravity/bin/agy")}
 COPY = [".claude/settings.json", ".claude.json", ".codex/config.toml", ".grok/config.toml", ".qwen/settings.json",
-        ".kimi-code/config.toml", ".config/opencode/opencode.json", ".gemini/settings.json", ".codebuddy/settings.json"]
+        ".kimi-code/config.toml", ".config/opencode/opencode.json", ".gemini/settings.json", ".codebuddy/settings.json",
+        ".gemini/antigravity-cli/settings.json"]
 plan = plans[agent]
 a = list(plan["args"] if tier == "base" else plan["permission"][tier])
 # Claude 的连接（网关地址、钥匙、模型）全在 --settings 文件里。文件不在了（Mesa 会清理 external-launch 下的旧文件）
@@ -69,6 +71,19 @@ if agent == "gemini":
     g = json.load(open(gs)) if os.path.exists(gs) else {}
     g.setdefault("security", {}).setdefault("auth", {})["selectedType"] = "gemini-api-key"
     json.dump(g, open(gs, "w"))
+if agent == "agy":
+    agy_dir = os.path.join(home, ".gemini/antigravity-cli")
+    os.makedirs(os.path.join(agy_dir, "cache"), exist_ok=True)
+    json.dump({"onboardingComplete": True, "consumerOnboardingComplete": True, "enterpriseOnboardingComplete": False},
+              open(os.path.join(agy_dir, "cache/onboarding.json"), "w"))
+    ags = os.path.join(agy_dir, "settings.json")
+    ag = {}
+    if os.path.exists(ags):
+        raw_ag = re.sub(r"//[^\n]*|/\*.*?\*/", "", open(ags, encoding="utf-8", errors="replace").read(), flags=re.S)
+        try: ag = json.loads(raw_ag)
+        except Exception: ag = {}
+    ag["trustedWorkspaces"] = sorted({work, os.path.realpath(work), work.replace("\\", "/")})
+    json.dump(ag, open(ags, "w"))
 cj = os.path.join(home, ".claude.json")
 if os.path.exists(cj):
     d = json.load(open(cj)); d.setdefault("projects", {})

@@ -62,6 +62,14 @@ const TABLE: Record<string, SlashCommand[]> = {
   // cursor / grok 的斜杠命令未做源码级全量调研，只给 /help，写错的代价是 CLI 回「未知命令」
   cursor: [HELP],
   grok: [HELP],
+  agy: [
+    { cmd: "/model", hint: "切换模型" },
+    { cmd: "/effort", hint: "切换思考档位" },
+    { cmd: "/clear", hint: "清空会话重新开始" },
+    { cmd: "/fork", hint: "从当前会话分叉" },
+    { cmd: "/plan", hint: "切换到计划模式" },
+    HELP,
+  ],
 };
 
 // Claude Code 的 Agent id 是 claude-code：表里原只登记了 claude，Claude Code 用户的斜杠面板只剩 /help（2026-10-17 发现）

@@ -334,10 +334,10 @@
   2026-10-17 审查修复：①不再写 `notes/inbox.md`——那是文献雷达收件箱，被 gitignore（摘录进不了合并、
   删工作区即丢），主仓多出的行还会把雷达采纳卡死；②不再替人提前建精读工作区（旧口径绕开开工弹层、
   基线可能还没合并检索结果，之后正式开工撞「工作区已存在且未合并」）；③候选不再盲取流水线第二步。
-- **MCP 分发（§6.15，规格 = matrix §10）**：Mesa 清单（<config>/ccode/mcp-servers.json）→ 八家用户级配置的映射写入（grok 首版只读不分发）。
+- **MCP 分发（§6.15，规格 = matrix §10）**：Mesa 清单（<config>/ccode/mcp-servers.json）→ 九家用户级配置的映射写入（grok 首版只读不分发；agy 写 `~/.gemini/config/mcp_config.json`，容忍 0 字节空文件，远程用 `serverUrl`、拒写 SSE）。
   **只写用户级**（项目级各家都有审批闸）；目标文件多是混合状态文件，一律读-改-写一个键/段 + 写前备份 + 原子写 + 读回校验，
   绝不整文件覆盖；写各家配置持「设为全局」同一把锁（`GLOBAL_CONFIG_MUTEX` + `global-config` 文件锁），Mesa 清单读改写另持
-  `mcp-servers` 锁（同线程可重入，体检回写 last_check 也在锁内）；写前备份每份配置只留最近 10 份；codex 走 toml_edit 保格式、gemini/qwen/opencode/codebuddy 走 JSONC 容错读；密钥一律用 `$VAR`/`${VAR}`
+  `mcp-servers` 锁（同线程可重入，体检回写 last_check 也在锁内）；写前备份每份配置只留最近 10 份；codex 走 toml_edit 保格式、gemini/qwen/opencode/codebuddy/agy 走 JSONC 容错读；密钥一律用 `$VAR`/`${VAR}`
   引用形式，映射成各家间接引用字段（codex env_vars/bearer_token_env_var、opencode {env:VAR}（整值与 `Bearer ${X}` 内嵌都转：
   OpenCode 读配置时对全文做 `{env:…}` 文本替换，2026-10-31 二进制实证）、kimi bearerTokenEnvVar），
   不落明文；server 名取各家交集 [A-Za-z0-9-]（下划线禁：gemini policy 引擎按下划线切分）；claude 的 managed-mcp.json
