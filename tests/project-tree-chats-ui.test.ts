@@ -26,6 +26,11 @@ const bundle = await build({
         b.onResolve({ filter: /quick-chat-launch$/ }, () => ({ path: "launch", namespace: "stub" }));
         b.onResolve({ filter: /\/AskAiModal$/ }, () => ({ path: "askai", namespace: "stub" }));
         b.onResolve({ filter: /\/ConfirmDialog$/ }, () => ({ path: "confirm", namespace: "stub" }));
+        b.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({ path: args.path, namespace: "svg-raw" }));
+        b.onLoad({ filter: /.*/, namespace: "svg-raw" }, () => ({
+          contents: `export default '<svg viewBox="0 0 16 16"></svg>';`,
+          loader: "js",
+        }));
         b.onLoad({ filter: /^confirm$/, namespace: "stub" }, () => ({
           contents: `
             export const confirmDialog = async (...a) => { window.__calls.push(["confirmDialog", ...a]); return true; };
@@ -1383,6 +1388,37 @@ test("课题下挂研讨：进行中的在最上面带光标，点了打开研�
     await view.act(async () => view.button("综述流程测试 的更多操作").click());
     await view.act(async () => view.button("请几家研讨…").click());
     assert.deepEqual(asked, [{ projectRoot: PROJECT.path }]);
+  } finally {
+    await view.close();
+  }
+});
+
+test("接力对话：标题左缘保持与普通对话对齐，行尾展示各家微型官方图标与交接箭头并悬停让位给 ⋯", async () => {
+  const relaySess = session({
+    sessionId: "relay-1",
+    agent: "claude-code",
+    customTitle: "1115|功能|联网搜索Rust资料",
+    updatedAt: "2026-11-15T00:00:00Z",
+    relayAgents: ["claude-code", "codex"],
+  });
+  const view = await renderTree({
+    sessions: [relaySess, ...reviewChats],
+  });
+  try {
+    const group = view.chatGroup("综述流程测试")!;
+    const btn = Array.from(group.querySelectorAll<HTMLButtonElement>("button[data-chat-key]")).find((b) =>
+      b.textContent?.includes("联网搜索Rust资料"),
+    )!;
+    assert.ok(btn, "应渲染接力对话行");
+    assert.equal(btn.querySelector("[data-relay-agents]"), null, "标题按钮左侧不再塞叠放圆点，保证与普通对话左对齐");
+    assert.ok(btn.firstElementChild?.classList.contains("ccode-rail-text"), "标题 span 直接顶在行首");
+
+    const row = btn.parentElement!;
+    const badge = row.querySelector<HTMLElement>("[data-relay-agents]")!;
+    assert.ok(badge, "行尾应有接力官方图标簇");
+    assert.equal(badge.getAttribute("aria-label"), "接力对话：Codex → Claude Code", "当前接手那家排在箭头右侧");
+    assert.match(badge.className, /group-hover\/chat:hidden/, "悬停时自动让位给 ⋯ 菜单");
+    assert.equal(badge.querySelectorAll("svg").length, 3, "2 家官方图标 SVG + 1 枚中间交接箭头");
   } finally {
     await view.close();
   }

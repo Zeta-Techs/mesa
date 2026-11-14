@@ -3,6 +3,7 @@ import {
   AppWindow,
   Archive,
   ArrowLeftRight,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -36,7 +37,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
-import { agentBrand } from "../agent-colors";
+import AgentIcon from "./AgentIcon";
 import {
   groupByWorkMode,
   normalizeWorkMode,
@@ -1372,9 +1373,14 @@ export default function ProjectTree({
     const depth = fork?.depth ?? 0;
     const forks = fork?.forks ?? 0;
     const forkFolded = forks > 0 && forkFoldSet.has(key);
-    // 接力对话：用过的几家按先后叠几个色点（悬停写全）
+    // 接力对话：标题左缘保持与普通对话一致，用过的几家收在行尾微型官方图标簇（悬停写全并让位给 ⋯）
     const relayAgents = (s.relayAgents?.length ?? 0) > 1 ? s.relayAgents! : null;
-    const relayPath = relayAgents?.map((a) => AGENTS.find((x) => x.id === a)?.label ?? a).join(" → ") ?? null;
+    const activeRelayAgent = relayAgents
+      ? (relayAgents.includes(s.agent) ? s.agent : relayAgents[relayAgents.length - 1])
+      : s.agent;
+    const priorRelayAgents = relayAgents ? relayAgents.filter((a) => a !== activeRelayAgent) : [];
+    const relayOrdered = relayAgents ? [...priorRelayAgents, activeRelayAgent] : null;
+    const relayPath = relayOrdered?.map((a) => AGENTS.find((x) => x.id === a)?.label ?? a).join(" → ") ?? null;
     const isPicked = picked.has(key);
     // 选了好几段时，在其中一段上右键 / 点 ⋯ 出的是对这几段的菜单
     const forPicked = isPicked && picked.size > 1;
@@ -1445,13 +1451,6 @@ export default function ProjectTree({
           {/* 字号 13px（.ccode-rail-text，2026-10-24 用户：比「工作台 / 对话管理」的 14px 再小一点点）。写在内层 span 上：
               按钮上写字号会被全站 button { font: inherit } 吞掉。
               字色一律 l1（2026-10-28 用户照 Claude 客户端，推翻 10-24「标题不用全亮着」）：正看着的靠底色，未读靠行尾蓝色光标，不靠变亮 */}
-          {relayAgents && (
-            <span aria-label={`接力对话：${relayPath}`} className="flex shrink-0 items-center -space-x-0.5" data-relay-agents>
-              {relayAgents.map((a) => (
-                <span key={a} className="h-1.5 w-1.5 rounded-full ring-1 ring-canvas" style={{ background: agentBrand(a) }} />
-              ))}
-            </span>
-          )}
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{short}</span>
           {isPicked && <Check size={13} strokeWidth={2} aria-hidden="true" data-pick-mark className="shrink-0 text-l2" />}
         </button>
@@ -1499,6 +1498,35 @@ export default function ProjectTree({
               className="mr-1.5 shrink-0 text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
               data-project-pin
             />
+          )}
+          {relayAgents && (
+            <span
+              aria-label={`接力对话：${relayPath}`}
+              title={`接力对话：${relayPath}`}
+              className={`${dot ? "mr-0.5" : "mr-1.5"} shrink-0 items-center gap-0.5 ${
+                menuOpen ? "hidden" : "inline-flex group-hover/chat:hidden group-focus-within/chat:hidden"
+              }`}
+              data-relay-agents
+            >
+              {(priorRelayAgents.length > 2 ? priorRelayAgents.slice(0, 1) : priorRelayAgents).map((a) => (
+                <AgentIcon
+                  key={a}
+                  agent={a}
+                  label={AGENTS.find((x) => x.id === a)?.label ?? a}
+                  size={11}
+                  className="opacity-70"
+                />
+              ))}
+              {priorRelayAgents.length > 2 && (
+                <span className="font-mono text-micro leading-none text-l4">+{priorRelayAgents.length - 1}</span>
+              )}
+              <ArrowRight size={9} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4/80" />
+              <AgentIcon
+                agent={activeRelayAgent}
+                label={AGENTS.find((x) => x.id === activeRelayAgent)?.label ?? activeRelayAgent}
+                size={12}
+              />
+            </span>
           )}
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
               没光标的行标题写到行尾（2026-10-26 用户：右边这一列要干净，同 Claude 客户端侧栏；空格位让标题早早淡掉、右边空一截）；Mesa 外在跑的悬停时不让位，⋯ 出现在它右边。
