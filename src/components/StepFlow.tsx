@@ -963,6 +963,11 @@ export default function StepFlow({
   // 学校访问方式（设置 → 网络「学校图书馆」）；老设置没选过：填了校外访问链接按 proxy
   const instAccess = appSettings?.institutionalAccess ?? ((appSettings?.institutionalPrefix ?? "").trim() ? "proxy" : "campus");
   const [dropNote, setDropNote] = useState<string | null>(null);
+  const [optSectionOpen, setOptSectionOpen] = useState(false);
+  const [afterSaveSectionOpen, setAfterSaveSectionOpen] = useState(() => runStatus === "done");
+  useEffect(() => {
+    if (runStatus === "done") setAfterSaveSectionOpen(true);
+  }, [runStatus]);
   const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
   // 点下一篇才换/消失（不按时间收）。行号进 sessionStorage——切文件页会卸任务页。
@@ -2245,7 +2250,7 @@ export default function StepFlow({
                 type="button"
                 onClick={onContinueFresh}
                 title="不接上次的对话，新开一个会话从任务书读起（上次对话太长或跑偏时用）"
-                className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
               >
                 新开一轮
               </button>
@@ -2282,7 +2287,7 @@ export default function StepFlow({
                 type="button"
                 onClick={() => requestCloseTab(stopTabId)}
                 title="停下这一步的 AI、收起对话；工作区文件和对话记录都在，之后点「继续」接回（正在干活时会先问你）"
-                className="shrink-0 rounded-sm px-1 text-xs text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                className="shrink-0 rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
               >
                 停下
               </button>
@@ -3095,145 +3100,149 @@ export default function StepFlow({
                     </button>
                   )}
                 </div>
-                {decisionsOpen &&
-                  decisions.map((d) => {
-                  const picked = answered.get(d.q.trim());
-                  const pickedRecord = picked ? parseDecisionAnswer(picked) : null;
-                  return (
-                    <div
-                      key={d.q}
-                      className="flex flex-wrap items-center gap-x-2 gap-y-1"
-                    >
-                      <span
-                        className={`shrink-0 text-xs ${picked ? "text-l3" : "text-l1"}`}
-                        title={d.q}
-                      >
-                        {decisionAsk(d.q)}
-                      </span>
-                      {d.options.map((opt) => {
-                        const on = picked === opt || (pickedRecord?.status === "approve" && pickedRecord.note === opt);
-                        return (
-                          <button
-                            key={opt}
-                            type="button"
-                            disabled={decisionBusy}
-                            onClick={() =>
-                              void commitDecisions([
-                                { q: d.q, answer: formatDecisionAnswer("approve", opt) },
-                              ])
-                            }
-                            title={
-                              on
-                                ? "已选：写在草稿「已定方向」里，点别的选项可改"
-                                : `选它：直接写进草稿「已定方向」，不开会话`
-                            }
-                            className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
-                              on
-                                ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
-                                : "bg-inset text-l3 hover:bg-hover hover:text-l1"
-                            }`}
+                {(decisionsOpen || writeOwn) && (
+                  <div className="mt-1 space-y-1.5 rounded-lg bg-canvas/45 px-2.5 py-2">
+                    {decisionsOpen &&
+                      decisions.map((d) => {
+                      const picked = answered.get(d.q.trim());
+                      const pickedRecord = picked ? parseDecisionAnswer(picked) : null;
+                      return (
+                        <div
+                          key={d.q}
+                          className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                        >
+                          <span
+                            className={`shrink-0 text-xs ${picked ? "text-l3" : "text-l1"}`}
+                            title={d.q}
                           >
-                            {opt}
+                            {decisionAsk(d.q)}
+                          </span>
+                          {d.options.map((opt) => {
+                            const on = picked === opt || (pickedRecord?.status === "approve" && pickedRecord.note === opt);
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                disabled={decisionBusy}
+                                onClick={() =>
+                                  void commitDecisions([
+                                    { q: d.q, answer: formatDecisionAnswer("approve", opt) },
+                                  ])
+                                }
+                                title={
+                                  on
+                                    ? "已选：写在草稿「已定方向」里，点别的选项可改"
+                                    : `选它：直接写进草稿「已定方向」，不开会话`
+                                }
+                                className={`rounded-full px-2 py-0.5 text-xs disabled:opacity-50 ${
+                                  on
+                                    ? "border border-cta-bd bg-cta-pill text-cta-pill-text"
+                                    : "bg-inset text-l3 hover:bg-hover hover:text-l1"
+                                }`}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
+                          {/* 自己写的答案不在选项里：单独显示成同款选中 chip，
+                              否则填完看不到任何选中态，像是没生效 */}
+                          {picked && !d.options.some((opt) => picked === opt || (pickedRecord?.status === "approve" && pickedRecord.note === opt)) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setWriteOwn({
+                                  q: d.q,
+                                  text: pickedRecord?.note ?? picked,
+                                  status: pickedRecord && pickedRecord.status !== "legacy" ? pickedRecord.status : "",
+                                })
+                              }
+                              title="你自己写的答案，点击可改"
+                              className="rounded-full border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110"
+                            >
+                              {pickedRecord && pickedRecord.status !== "legacy"
+                                ? `${DECISION_STATUS_ASK[pickedRecord.status]}：${pickedRecord.note || "（无说明）"}`
+                                : picked}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setWriteOwn(
+                                writeOwn?.q === d.q
+                                  ? null
+                                  : {
+                                      q: d.q,
+                                      text: pickedRecord?.note ?? picked ?? "",
+                                      status: pickedRecord && pickedRecord.status !== "legacy" ? pickedRecord.status : "",
+                                    },
+                              )
+                            }
+                            title="选项都不合适：自己写一句，或展开去聊"
+                            className="shrink-0 rounded-md px-1.5 py-0.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l1"
+                          >
+                            {d.options.length > 0 ? "其他…" : "写一句…"}
                           </button>
-                        );
-                      })}
-                      {/* 自己写的答案不在选项里：单独显示成同款选中 chip，
-                          否则填完看不到任何选中态，像是没生效 */}
-                      {picked && !d.options.some((opt) => picked === opt || (pickedRecord?.status === "approve" && pickedRecord.note === opt)) && (
+                        </div>
+                      );
+                    })}
+                    {/* 自己写：写完直接进草稿，和点选项同一条路径，不开终端 */}
+                    {writeOwn && (
+                      <form
+                        className="flex flex-wrap items-center gap-1.5 pt-0.5"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const answer = writeOwn.text.trim();
+                          if (!writeOwn.status || !answer) return;
+                          void commitDecisions([
+                            { q: writeOwn.q, answer: formatDecisionAnswer(writeOwn.status, answer) },
+                          ]).then(() => setWriteOwn(null));
+                        }}
+                      >
+                        <select
+                          value={writeOwn.status}
+                          onChange={(e) => setWriteOwn({ ...writeOwn, status: e.target.value as DecisionStatus | "" })}
+                          className="rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l1"
+                          title="可以写 = 按你写下的范围开写正文；只准备 = 还不准写正文"
+                        >
+                          <option value="">能不能写？</option>
+                          {(Object.keys(DECISION_STATUS) as DecisionStatus[]).map((key) => (
+                            <option key={key} value={key}>{DECISION_STATUS_ASK[key]}</option>
+                          ))}
+                        </select>
+                        <input
+                          autoFocus
+                          value={writeOwn.text}
+                          onChange={(e) =>
+                            setWriteOwn({ ...writeOwn, text: e.target.value })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") setWriteOwn(null);
+                          }}
+                          placeholder="例如：按已精读笔记写，没全文的只写到摘要"
+                          className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l1 outline-none focus:border-cta-bd"
+                        />
+                        <button
+                          type="submit"
+                          disabled={decisionBusy || !writeOwn.status || !writeOwn.text.trim()}
+                          className="shrink-0 rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+                        >
+                          记下
+                        </button>
                         <button
                           type="button"
-                          onClick={() =>
-                            setWriteOwn({
-                              q: d.q,
-                              text: pickedRecord?.note ?? picked,
-                              status: pickedRecord && pickedRecord.status !== "legacy" ? pickedRecord.status : "",
-                            })
-                          }
-                          title="你自己写的答案，点击可改"
-                          className="rounded-full border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110"
+                          onClick={() => {
+                            const q = writeOwn.q;
+                            setWriteOwn(null);
+                            void chatDraft(q);
+                          }}
+                          title="拿不准？就这个问题跟 AI 商量，聊定了它直接写进 TASK.md"
+                          className="shrink-0 rounded-md px-1.5 py-0.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l2"
                         >
-                          {pickedRecord && pickedRecord.status !== "legacy"
-                            ? `${DECISION_STATUS_ASK[pickedRecord.status]}：${pickedRecord.note || "（无说明）"}`
-                            : picked}
+                          开聊
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setWriteOwn(
-                            writeOwn?.q === d.q
-                              ? null
-                              : {
-                                  q: d.q,
-                                  text: pickedRecord?.note ?? picked ?? "",
-                                  status: pickedRecord && pickedRecord.status !== "legacy" ? pickedRecord.status : "",
-                                },
-                          )
-                        }
-                        title="选项都不合适：自己写一句，或展开去聊"
-                        className="shrink-0 rounded-sm px-1 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l1"
-                      >
-                        {d.options.length > 0 ? "其他…" : "写一句…"}
-                      </button>
-                    </div>
-                  );
-                })}
-                {/* 自己写：写完直接进草稿，和点选项同一条路径，不开终端 */}
-                {writeOwn && (
-                  <form
-                    className="flex flex-wrap items-center gap-1.5 pt-0.5"
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      const answer = writeOwn.text.trim();
-                      if (!writeOwn.status || !answer) return;
-                      void commitDecisions([
-                        { q: writeOwn.q, answer: formatDecisionAnswer(writeOwn.status, answer) },
-                      ]).then(() => setWriteOwn(null));
-                    }}
-                  >
-                    <select
-                      value={writeOwn.status}
-                      onChange={(e) => setWriteOwn({ ...writeOwn, status: e.target.value as DecisionStatus | "" })}
-                      className="rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l1"
-                      title="可以写 = 按你写下的范围开写正文；只准备 = 还不准写正文"
-                    >
-                      <option value="">能不能写？</option>
-                      {(Object.keys(DECISION_STATUS) as DecisionStatus[]).map((key) => (
-                        <option key={key} value={key}>{DECISION_STATUS_ASK[key]}</option>
-                      ))}
-                    </select>
-                    <input
-                      autoFocus
-                      value={writeOwn.text}
-                      onChange={(e) =>
-                        setWriteOwn({ ...writeOwn, text: e.target.value })
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") setWriteOwn(null);
-                      }}
-                      placeholder="例如：按已精读笔记写，没全文的只写到摘要"
-                      className="min-w-0 flex-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l1 outline-none focus:border-cta-bd"
-                    />
-                    <button
-                      type="submit"
-                      disabled={decisionBusy || !writeOwn.status || !writeOwn.text.trim()}
-                      className="shrink-0 rounded-sm border border-cta-bd bg-cta px-1.5 py-0.5 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
-                    >
-                      记下
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const q = writeOwn.q;
-                        setWriteOwn(null);
-                        void chatDraft(q);
-                      }}
-                      title="拿不准？就这个问题跟 AI 商量，聊定了它直接写进 TASK.md"
-                      className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l2"
-                    >
-                      开聊
-                    </button>
-                  </form>
+                      </form>
+                    )}
+                  </div>
                 )}
                 {decisionError && (
                   <InlineNotice tone="err" size="micro">{decisionError}</InlineNotice>
@@ -3611,7 +3620,7 @@ export default function StepFlow({
                           setSettingsSectionReq("network");
                           setPage("settings");
                         }}
-                        className="text-micro text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
+                        className="rounded-md px-1.5 py-0.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l2"
                         title="设置 → 网络：校园网或学校 VPN / 学校的校外访问链接 / 出版商网站上用学校账号登录"
                       >
                         访问方式
@@ -3620,7 +3629,7 @@ export default function StepFlow({
                   )}
                   </div>
                   {paywallListOpen && (
-                    <div ref={paywallDropRef} className="mt-1">
+                    <div ref={paywallDropRef} className="mt-1.5 rounded-lg bg-canvas/45 px-2.5 py-2">
                       {instLoginErr && (
                         <p className="mb-1 break-words text-micro text-err-text" role="alert">
                           {instLoginErr}
@@ -3929,17 +3938,30 @@ export default function StepFlow({
           保存进项目之后才用得上的收尾（继续精读、同步到文献库、导入批注）再单独放进「保存后可做」，
           不画横贯全卡的实线/虚线（去线条化），改用轻量小节签区分 */}
       {([
-        ["可选", "solid", flow.nodes.filter((n) => n.section === "optional" && !n.afterSave)],
-        ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave)],
-      ] as const).map(([title, line, nodes]) => nodes.length > 0 && (
-        <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"} className="mt-3.5">
+        ["可选", "solid", flow.nodes.filter((n) => n.section === "optional" && !n.afterSave), optSectionOpen, setOptSectionOpen],
+        ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave), afterSaveSectionOpen, setAfterSaveSectionOpen],
+      ] as const).map(([title, line, nodes, isOpen, setOpen]) => nodes.length > 0 && (
+        <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"} className="mt-3">
           <div className="flex items-center gap-2 pl-[1.875rem]">
             {/* pl-[1.875rem] = 节点 pl-1.5 + 序号列 w-4 + 间距 gap-2，分区签与步骤名同一左缘 */}
-            <span className="inline-flex items-center rounded-md bg-inset/65 px-2 py-0.5 text-micro font-medium text-l3">
-              {title}
-            </span>
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              onClick={() => setOpen((v) => !v)}
+              className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-inset/65 px-2 py-0.5 text-micro font-medium text-l3 transition-colors hover:bg-hover hover:text-l1"
+            >
+              <FoldMark open={isOpen} />
+              <span>{title}（{nodes.length}）</span>
+              {!isOpen && (
+                <span className="truncate font-normal text-l4">
+                  · {line === "dashed" && runStatus !== "done" ? "保存进项目后可用" : nodes.map((n) => n.label).join("、")}
+                </span>
+              )}
+            </button>
           </div>
-          <ol className="mt-1 space-y-1">{nodes.map((node) => renderNode(node, false))}</ol>
+          {isOpen && (
+            <ol className="mt-1.5 space-y-1">{nodes.map((node) => renderNode(node, false))}</ol>
+          )}
         </div>
       ))}
       {note && <p className="mt-1 pl-1 text-micro text-l3">{note}</p>}

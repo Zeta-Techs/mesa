@@ -146,23 +146,31 @@ export default function TemplatePicker({
     },
     key: string,
   ) {
-    const stepPreview = t.steps.map((s) => s.name).join(" → ");
+    const activeSteps =
+      t.id === "submission-rebuttal"
+        ? pipelineStepsForTemplate(
+            t as (typeof PIPELINE_TEMPLATES)[number],
+            submissionMode,
+            Math.max(1, Math.floor(submissionRound)),
+          )
+        : t.steps;
+    const stepPreview = activeSteps.map((s) => s.name).join(" → ");
     return (
-      <li key={key} className="rounded-sm ccode-well p-2">
-        <div className="flex items-center gap-2">
-          <span className="shrink-0 text-xs font-medium text-l1">{t.name}</span>
-          <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
-            {t.steps.length} 步
+      <li key={key} className="rounded-xl ccode-well px-3.5 py-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="shrink-0 text-sm font-semibold text-l1">{t.name}</span>
+          <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
+            {activeSteps.length} 步
           </span>
           {!t.fieldTested && (
             <span
-              className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
+              className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
               title={UNTESTED_TEMPLATE_HINT}
             >
               {UNTESTED_TEMPLATE_BADGE}
             </span>
           )}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <button
               type="button"
               className={actionBtn}
@@ -182,14 +190,7 @@ export default function TemplatePicker({
                 onApply({
                   id: t.id,
                   name: t.name,
-                steps:
-                    t.id === "submission-rebuttal"
-                      ? pipelineStepsForTemplate(
-                          t as (typeof PIPELINE_TEMPLATES)[number],
-                          mode ?? "initial",
-                          round,
-                        )
-                      : t.steps,
+                  steps: activeSteps,
                   projectRules: t.projectRules,
                   projectSettings: t.projectSettings,
                   mode,
@@ -202,30 +203,46 @@ export default function TemplatePicker({
           </div>
         </div>
         {t.description && (
-          <p className="mt-1 text-xs text-l3">{t.description}</p>
+          <p className="mt-1 text-xs leading-5 text-l3">{t.description}</p>
         )}
         {t.id === "submission-rebuttal" && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-l2">
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="template-submission-mode"
-                checked={submissionMode === "initial"}
-                onChange={() => setSubmissionMode("initial")}
-              />
-              首投
-            </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="radio"
-                name="template-submission-mode"
-                checked={submissionMode === "revision"}
-                onChange={() => setSubmissionMode("revision")}
-              />
-              返修
-            </label>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-l2">
+            <span className="inline-flex items-center rounded-lg bg-inset p-0.5">
+              <label
+                className={`cursor-pointer rounded-md px-2.5 py-0.5 text-xs transition-colors ${
+                  submissionMode === "initial"
+                    ? "bg-canvas font-medium text-l1"
+                    : "text-l3 hover:text-l1"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="template-submission-mode"
+                  checked={submissionMode === "initial"}
+                  onChange={() => setSubmissionMode("initial")}
+                  className="sr-only"
+                />
+                首投
+              </label>
+              <label
+                className={`cursor-pointer rounded-md px-2.5 py-0.5 text-xs transition-colors ${
+                  submissionMode === "revision"
+                    ? "bg-canvas font-medium text-l1"
+                    : "text-l3 hover:text-l1"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="template-submission-mode"
+                  checked={submissionMode === "revision"}
+                  onChange={() => setSubmissionMode("revision")}
+                  className="sr-only"
+                />
+                返修
+              </label>
+            </span>
             {submissionMode === "revision" && (
-              <label className="flex items-center gap-1">
+              <label className="inline-flex items-center gap-1.5 text-xs text-l2">
                 第
                 <input
                   type="number"
@@ -237,17 +254,24 @@ export default function TemplatePicker({
                       Math.max(1, Number.parseInt(e.target.value, 10) || 1),
                     )
                   }
-                  className="w-14 rounded-sm border border-field bg-inset px-1 py-0.5 text-xs"
+                  className="w-14 rounded-md border border-field bg-inset px-1.5 py-0.5 text-xs"
                 />
                 轮
               </label>
             )}
           </div>
         )}
-        <p className="mt-1 truncate text-xs text-l4" title={stepPreview}>
-          <span className="mr-1 text-l4">完整步骤：</span>
-          {stepPreview}
-        </p>
+        <div className="mt-2 flex flex-wrap items-center gap-1" title={stepPreview}>
+          {activeSteps.map((s, si) => (
+            <span key={`${s.name}-${si}`} className="inline-flex items-center gap-1">
+              {si > 0 && <span aria-hidden className="text-micro text-l4">›</span>}
+              <span className="inline-flex items-center gap-1 rounded-md bg-canvas/55 px-1.5 py-0.5 text-micro text-l2">
+                <span className="font-mono text-l4 tabular-nums">{si + 1}</span>
+                <span>{s.name}</span>
+              </span>
+            </span>
+          ))}
+        </div>
       </li>
     );
   }
@@ -255,10 +279,13 @@ export default function TemplatePicker({
   return (
     // 字号放容器上：全站 button { font: inherit } 会吞掉按钮上的 text-xs
     <div className="text-xs">
-      <ul className="space-y-1.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-micro font-medium text-l3">内置研究流程（{PIPELINE_TEMPLATES.length}）</span>
+      </div>
+      <ul className="space-y-2">
         {PIPELINE_TEMPLATES.map((t) => renderRow(t, t.id))}
       </ul>
-      {notice && <p className="mt-2 text-xs text-l3">{notice}</p>}
+      {notice && <p className="mt-2.5 text-xs text-l3">{notice}</p>}
       <MyPacksSection
         packs={packs}
         currents={currents}

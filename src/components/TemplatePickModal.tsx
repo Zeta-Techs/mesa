@@ -40,7 +40,7 @@ import { SETTING_FOLLOW_UPS, SETTING_NOTES, answerWithFollowUp, parseSettingLine
  */
 /** 设定选项按钮：与新建项目「工作方式」卡片同一套选中样式 */
 function choiceClass(on: boolean): string {
-  return `rounded-md border ${on ? "border-cta-bd bg-cta/15" : "border-field hover:bg-hover"}`;
+  return `rounded-lg border transition-colors ${on ? "border-cta-bd bg-cta/15" : "border-field hover:bg-hover"}`;
 }
 
 export default function TemplatePickModal({
@@ -228,40 +228,82 @@ export default function TemplatePickModal({
     >
         {submissionTpl ? (
           <>
-            <p className="mb-4 text-xs text-l3">
+            <p className="mb-3.5 text-xs leading-5 text-l3">
               首投与返修不是同一条流水线；返修会按轮次生成独立的意见、回复信、修订稿和再投稿清单。
             </p>
-            <div className="space-y-2">
-              <label className="flex cursor-pointer items-start gap-2 rounded-sm ccode-well p-3">
+            <div className="space-y-2.5">
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-xl ccode-well px-3.5 py-3 transition-colors hover:bg-hover ${
+                  submissionMode === "initial" ? "ring-1 ring-inset ring-cta-bd" : ""
+                }`}
+              >
                 <input
                   type="radio"
                   name="submission-mode"
                   checked={submissionMode === "initial"}
                   onChange={() => setSubmissionMode("initial")}
-                  className="mt-0.5"
+                  className="sr-only"
                 />
-                <span>
-                  <span className="block text-sm text-l1">首投</span>
-                  <span className="mt-0.5 block text-xs text-l3">
+                <span
+                  aria-hidden
+                  className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                    submissionMode === "initial"
+                      ? "border-cta-bd bg-cta/20"
+                      : "border-l2"
+                  }`}
+                >
+                  {submissionMode === "initial" && (
+                    <span className="h-2 w-2 rounded-full bg-cta" />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-l1">首投</span>
+                    <span className="rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
+                      {pipelineStepsForTemplate(submissionTpl, "initial", 1).length} 步
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-l3">
                     期刊格式适配 → 投稿材料（cover letter、投稿前自查、投稿清单）
                   </span>
                 </span>
               </label>
-              <label className="flex cursor-pointer items-start gap-2 rounded-sm ccode-well p-3">
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-xl ccode-well px-3.5 py-3 transition-colors hover:bg-hover ${
+                  submissionMode === "revision" ? "ring-1 ring-inset ring-cta-bd" : ""
+                }`}
+              >
                 <input
                   type="radio"
                   name="submission-mode"
                   checked={submissionMode === "revision"}
                   onChange={() => setSubmissionMode("revision")}
-                  className="mt-0.5"
+                  className="sr-only"
                 />
+                <span
+                  aria-hidden
+                  className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                    submissionMode === "revision"
+                      ? "border-cta-bd bg-cta/20"
+                      : "border-l2"
+                  }`}
+                >
+                  {submissionMode === "revision" && (
+                    <span className="h-2 w-2 rounded-full bg-cta" />
+                  )}
+                </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-l1">返修</span>
-                  <span className="mt-0.5 block text-xs text-l3">
+                  <span className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-l1">返修</span>
+                    <span className="rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
+                      {pipelineStepsForTemplate(submissionTpl, "revision", submissionRound).length} 步
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-xs leading-5 text-l3">
                     读取对应轮次审稿意见，生成轮次化回复信、修订稿与再投稿清单
                   </span>
                   {submissionMode === "revision" && (
-                    <span className="mt-2 flex items-center gap-2 text-xs text-l2">
+                    <span className="mt-2.5 inline-flex items-center gap-2 rounded-lg bg-canvas/55 px-2.5 py-1.5 text-xs text-l2">
                       返修轮次
                       <input
                         type="number"
@@ -281,7 +323,7 @@ export default function TemplatePickModal({
               </label>
             </div>
             {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-between">
+            <div className="mt-4 flex items-center justify-between pt-1">
               <button
                 type="button"
                 disabled={busy !== null}
@@ -318,10 +360,10 @@ export default function TemplatePickModal({
           /* 第二屏只填全局设定。文献来源在检索步；稿件载体/库交付/Origin/Blender
              在用得上的那一步问，不挡在创建屏。 */
           <>
-            <p className="mb-4 text-xs text-l3">
+            <p className="mb-3.5 text-xs leading-5 text-l3">
               这些设定会写进之后每一步的任务书，AI 照着干活。拿不准的先空着，之后可以在项目设置里补，或开工时让 AI 问你。
             </p>
-            <div className="space-y-4">
+            <div className="space-y-2.5">
               {settingsTpl.projectSettings!.map((line, i) => {
                 const { q, hint, options } = parseSettingLine(line);
                 const notes = SETTING_NOTES[q];
@@ -331,8 +373,8 @@ export default function TemplatePickModal({
                   setAnswers((prev) => prev.map((a, j) => (j === i ? v : a)));
                 const custom = options !== null && (customOpen[i] || (value !== "" && !options.includes(value)));
                 return (
-                  <div key={q}>
-                    <span className="mb-1 block text-xs text-l2">{q}</span>
+                  <div key={q} className="rounded-xl ccode-well px-3.5 py-3">
+                    <span className="mb-2 block text-xs font-medium text-l1">{q}</span>
                     {options ? (
                       <div
                         className="grid gap-1.5"
@@ -381,7 +423,7 @@ export default function TemplatePickModal({
                     ) : null}
                     {(options === null || custom) && (
                       <input
-                        className={`${fieldClass}${options ? " mt-1.5" : ""}`}
+                        className={`${fieldClass}${options ? " mt-2" : ""}`}
                         value={value}
                         placeholder={options ? "写你自己的答案" : hint}
                         autoFocus={custom}
@@ -389,7 +431,7 @@ export default function TemplatePickModal({
                       />
                     )}
                     {followUp && value === followUp.option && (
-                      <label className="mt-2 block">
+                      <label className="mt-2.5 block">
                         <span className="mb-1 block text-xs text-l3">{followUp.label}</span>
                         <input
                           className={fieldClass}
@@ -406,7 +448,7 @@ export default function TemplatePickModal({
               })}
             </div>
             {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-between">
+            <div className="mt-4 flex items-center justify-between pt-1">
               <button
                 type="button"
                 disabled={busy !== null}
@@ -452,20 +494,17 @@ export default function TemplatePickModal({
           </>
         ) : (
           <>
-            <h2 className="mb-1 text-base font-semibold text-l1">
-              选择研究流程模板
-            </h2>
-            <p className="mb-4 text-xs text-l3">
+            <p className="mb-3 text-xs leading-5 text-l3">
               给「{projectName}」套一整套流程：写整篇综述、论文、学位论文或投稿返修时用，步骤排好顺序，每步你评审过再往下走。只做一件件具体的事，用不着套，关掉在「目标」里写就行。
             </p>
-            <label className="mb-4 block">
+            <label className="mb-4 block rounded-xl ccode-well px-3.5 py-3">
               <span
-                className="mb-1 block text-xs text-l3"
+                className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2 text-xs font-medium text-l2"
                 title="每次开工时写进 TASK.md，给 Agent 交代研究背景"
               >
-                课题主题（可选）
+                <span>课题主题（可选）</span>
                 {!topicEditedRef.current && topic === projectName && (
-                  <span className="ml-2 text-l4">先填了项目名，直接打字就整段换掉</span>
+                  <span className="font-normal text-micro text-l4">先填了项目名，直接打字就整段换掉</span>
                 )}
               </span>
               <input
@@ -483,41 +522,58 @@ export default function TemplatePickModal({
                 autoFocus
               />
             </label>
-            <ul className="space-y-1.5">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-micro font-medium text-l3">内置研究流程（{PIPELINE_TEMPLATES.length}）</span>
+              <span className="text-micro text-l4">点选后先过一遍全局设定</span>
+            </div>
+            <ul className="space-y-2">
               {PIPELINE_TEMPLATES.map((t) => (
                 <li key={t.id}>
                   <button
                     type="button"
                     disabled={busy !== null}
                     onClick={() => pick(t.id)}
-                    className="w-full rounded-sm ccode-well p-2.5 text-left hover:bg-hover disabled:opacity-50"
+                    className="group w-full rounded-xl ccode-well px-3.5 py-3 text-left transition-colors hover:bg-hover disabled:opacity-50"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-l1">{t.name}</span>
-                      <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
+                      <span className="text-sm font-semibold text-l1">{t.name}</span>
+                      <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
                         {t.steps.length} 步
                       </span>
                       {!t.fieldTested && (
                         <span
-                          className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
+                          className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
                           title={UNTESTED_TEMPLATE_HINT}
                         >
                           {UNTESTED_TEMPLATE_BADGE}
                         </span>
                       )}
-                      {busy === t.id && (
-                        <span className="ml-auto text-xs text-l3">写入中…</span>
-                      )}
+                      <span className="ml-auto shrink-0 text-xs text-l4 transition-colors group-hover:text-l1">
+                        {busy === t.id ? "写入中…" : "选择 →"}
+                      </span>
                     </div>
-                    <p className="mt-1 text-xs text-l3">{t.description}</p>
+                    <p className="mt-1 text-xs leading-5 text-l3">{t.description}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-1">
+                      {t.steps.map((s, si) => (
+                        <span key={s.name} className="inline-flex items-center gap-1">
+                          {si > 0 && <span aria-hidden className="text-micro text-l4">›</span>}
+                          <span className="inline-flex items-center gap-1 rounded-md bg-canvas/55 px-1.5 py-0.5 text-micro text-l2">
+                            <span className="font-mono text-l4 tabular-nums">{si + 1}</span>
+                            <span>{s.name}</span>
+                          </span>
+                        </span>
+                      ))}
+                    </div>
                   </button>
                 </li>
               ))}
             </ul>
             {packs.length > 0 && (
               <>
-                <p className="mb-1.5 mt-4 text-xs text-l3">我的任务</p>
-                <ul className="space-y-1.5">
+                <div className="mb-1.5 mt-4 flex items-center justify-between">
+                  <span className="text-micro font-medium text-l3">我的任务（{packs.length}）</span>
+                </div>
+                <ul className="space-y-2">
                   {packs.map((p) => (
                     <li key={p.id}>
                       <button
@@ -525,17 +581,32 @@ export default function TemplatePickModal({
                         disabled={busy !== null}
                         onClick={() => void applyPack(p)}
                         title={p.params.length > 0 ? "参数先用默认值，之后在「编辑研究流程」里改" : undefined}
-                        className="w-full rounded-sm ccode-well p-2.5 text-left hover:bg-hover disabled:opacity-50"
+                        className="group w-full rounded-xl ccode-well px-3.5 py-3 text-left transition-colors hover:bg-hover disabled:opacity-50"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-l1">{p.name}</span>
-                          <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
+                          <span className="text-sm font-semibold text-l1">{p.name}</span>
+                          <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
                             {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
                           </span>
-                          {p.imported && <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">导入</span>}
-                          {busy === p.id && <span className="ml-auto text-xs text-l3">写入中…</span>}
+                          {p.imported && <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3">导入</span>}
+                          <span className="ml-auto shrink-0 text-xs text-l4 transition-colors group-hover:text-l1">
+                            {busy === p.id ? "写入中…" : "应用 →"}
+                          </span>
                         </div>
-                        <p className="mt-1 truncate text-xs text-l3">{p.description || p.steps.map((s) => s.name).join(" → ")}</p>
+                        {p.description && <p className="mt-1 text-xs leading-5 text-l3">{p.description}</p>}
+                        {p.steps.length > 0 && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1">
+                            {p.steps.map((s, si) => (
+                              <span key={`${s.name}-${si}`} className="inline-flex items-center gap-1">
+                                {si > 0 && <span aria-hidden className="text-micro text-l4">›</span>}
+                                <span className="inline-flex items-center gap-1 rounded-md bg-canvas/55 px-1.5 py-0.5 text-micro text-l2">
+                                  <span className="font-mono text-l4 tabular-nums">{si + 1}</span>
+                                  <span>{s.name}</span>
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </button>
                     </li>
                   ))}
@@ -543,7 +614,7 @@ export default function TemplatePickModal({
               </>
             )}
             {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-end">
+            <div className="mt-4 flex items-center justify-end pt-1">
               <button
                 type="button"
                 onClick={() => void closeLater()}

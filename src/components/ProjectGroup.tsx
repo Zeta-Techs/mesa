@@ -1880,12 +1880,16 @@ export default function ProjectGroup({
       )}
 
       {registered && cfg && cfg.steps.length === 0 && !cfg.pipelineOptOut && (
-        <div className="ccode-well mb-2 rounded-md p-3">
-          <p className="mb-2 text-xs text-l3">
-            还没有研究步骤。写整篇综述、论文或学位论文，套一整套流程；一件件具体的事，选「不使用研究流程」后在目标里写。
+        <div className="ccode-well mb-3 rounded-xl px-4 py-3.5">
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-sm font-semibold text-l1">还没有研究步骤</span>
+            <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3">可选流程</span>
+          </div>
+          <p className="mb-3 text-xs leading-5 text-l3">
+            写整篇综述、论文或学位论文，套一整套流程；一件件具体的事，选「不使用研究流程」后在目标里写。
           </p>
           {!onPickTemplate && <input
-            className={`${fieldSm} mb-2 w-full`}
+            className={`${fieldSm} mb-3 w-full`}
             value={templateTopic}
             onChange={(e) => setTemplateTopic(e.target.value)}
             placeholder="课题主题（给 Agent 看，随 TASK.md 走）：选模板时填过会显示在这里，可改可留空"
@@ -1918,7 +1922,7 @@ export default function ProjectGroup({
             </button>
             <button
               type="button"
-              className={actionBtn}
+              className={ghostActionClass}
               disabled={optingOut}
               title="不挂步进器，这个文件夹只用来读文献、写笔记（记住选择，不再显示本引导）"
               onClick={() => void optOutPipeline()}
@@ -2550,14 +2554,14 @@ export default function ProjectGroup({
         {registered && cfg && (
           <section>
             <h3 className="mb-2 text-xs font-medium text-l3">研究流程</h3>
-            <div className="rounded-lg ccode-well p-3 text-xs">
+            <div className="rounded-xl ccode-well px-3.5 py-3 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="min-w-0 flex-1 text-xs text-l4">
+                <span className="inline-flex items-center rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l2">
                   当前 {cfg.steps.length} 个步骤
                 </span>
                 <button
                   type="button"
-                  className={secondaryActionClass}
+                  className={`${secondaryActionClass} ml-auto`}
                   onClick={() => {
                     // 空流程走页面层选择层（带全局设定屏），与目标空态「套一整套流程…」同一个；换模板仍用这里的内联模板库
                     if (cfg.steps.length === 0 && onPickTemplate) {
@@ -2580,7 +2584,7 @@ export default function ProjectGroup({
                       : "更换模板"}
                 </button>
               </div>
-              <div className="mt-2 flex flex-wrap items-center gap-1">
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
                   className={ghostActionClass}
@@ -2625,7 +2629,7 @@ export default function ProjectGroup({
                 {cfg.steps.length > 0 && (
                   <button
                     type="button"
-                    className={dangerBtn}
+                    className={`${dangerBtn} ml-auto`}
                     disabled={optingOut}
                     title="去掉步进器，这个文件夹只用来读文献、写笔记；步骤表清空，文件保留"
                     onClick={() => void optOutPipeline()}
@@ -2634,9 +2638,9 @@ export default function ProjectGroup({
                   </button>
                 )}
               </div>
-              {/* 模板库选择器：项目菜单与空研究流程「选择研究流程模板」共用的唯一实例 */}
+              {/* 模板库选择器：项目菜单与空研究流程「选择研究流程模板」共用的唯一实例 — 去套娃不再额外包一层 ccode-well */}
               {pickerOpen && (
-                <div className="mt-3 rounded-lg ccode-well p-2">
+                <div className="mt-3 pt-2.5">
                   <TemplatePicker
                     applying={applyingTemplate}
                     onApply={(item) => void applyTemplate(item)}

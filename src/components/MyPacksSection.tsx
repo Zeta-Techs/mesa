@@ -102,13 +102,13 @@ export default function MyPacksSection({
 
   function renderUpdate(p: TaskPackDto, update: BuiltinUpdate) {
     return (
-      <div className="mt-2 space-y-2 rounded-sm bg-canvas p-2 text-xs">
-        <p className="text-l3">
+      <div className="mt-2.5 space-y-2 rounded-lg bg-canvas/55 p-3 text-xs">
+        <p className="leading-5 text-l3">
           内置「{update.templateName}」更新了 {update.changes.length} 处。勾上的换成内置新版，不勾的保留你的；一个都不勾就是保留你的版本。已经用它建好的流程不受影响。
         </p>
         {update.changes.map((c) => (
-          <details key={`${c.kind}-${c.name}`} className="rounded-sm ccode-well p-2">
-            <summary className="flex cursor-pointer items-center gap-2">
+          <details key={`${c.kind}-${c.name}`} className="rounded-lg ccode-well p-2.5">
+            <summary className="flex cursor-pointer flex-wrap items-center gap-2">
               <input
                 type="checkbox"
                 checked={picked.has(c.name)}
@@ -122,7 +122,7 @@ export default function MyPacksSection({
                   })
                 }
               />
-              <span className="text-l1">{c.name}</span>
+              <span className="font-medium text-l1">{c.name}</span>
               <span className="text-l3">
                 {c.kind === "added"
                   ? "内置新加的一步（勾上加进来）"
@@ -130,21 +130,21 @@ export default function MyPacksSection({
                     ? "内置去掉了这一步（勾上也从你的版本里去掉）"
                     : `改了 ${c.fields.map(fieldLabel).join("、")}`}
               </span>
-              {c.mineEdited && c.kind !== "added" && <span className="text-warn-text">你改过这一步</span>}
+              {c.mineEdited && c.kind !== "added" && <span className="rounded-full bg-inset px-2 py-0.5 text-micro text-warn-text">你改过这一步</span>}
             </summary>
             {c.kind === "changed" && (
               <div className="mt-2 grid grid-cols-2 gap-2">
-                <div>
-                  <p className="mb-1 text-l4">内置旧版</p>
+                <div className="rounded-md bg-canvas/60 p-2">
+                  <p className="mb-1 text-micro font-medium text-l4">内置旧版</p>
                   <pre className="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-micro text-l2">{fieldsText(c.old, c.fields)}</pre>
                 </div>
-                <div>
-                  <p className="mb-1 text-l4">内置新版</p>
+                <div className="rounded-md bg-canvas/60 p-2">
+                  <p className="mb-1 text-micro font-medium text-l4">内置新版</p>
                   <pre className="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-micro text-l2">{fieldsText(c.next, c.fields)}</pre>
                 </div>
                 {c.mineEdited && c.mine && (
-                  <div className="col-span-2">
-                    <p className="mb-1 text-l4">你的版本（勾上会被新版替换）</p>
+                  <div className="col-span-2 rounded-md bg-canvas/60 p-2">
+                    <p className="mb-1 text-micro font-medium text-l4">你的版本（勾上会被新版替换）</p>
                     <pre className="max-h-56 overflow-auto whitespace-pre-wrap font-mono text-micro text-l2">{fieldsText(c.mine, c.fields)}</pre>
                   </div>
                 )}
@@ -152,7 +152,7 @@ export default function MyPacksSection({
             )}
           </details>
         ))}
-        <div className="flex justify-end gap-1">
+        <div className="flex justify-end gap-1.5 pt-0.5">
           <button type="button" className={inlineActionClass} disabled={busy} onClick={() => void applyUpdate(p, update, new Set())}>
             保留我的
           </button>
@@ -165,35 +165,37 @@ export default function MyPacksSection({
   }
 
   return (
-    <div className="mt-3 text-xs">
-      <div className="mb-1 flex items-center gap-2">
-        <p className="text-xs text-l3">我的任务</p>
+    <div className="mt-4 text-xs">
+      <div className="mb-1.5 flex items-center gap-2">
+        <p className="text-micro font-medium text-l3">我的任务（{packs.length}）</p>
         <button type="button" className={`${inlineActionClass} ml-auto`} onClick={() => void pickImport()} title="选别人导出的 zip，先看清内容再装">
           导入…
         </button>
       </div>
       {packs.length === 0 && (
-        <p className="text-xs text-l4">还没有。内置模板点「另存为我的版本」，或在项目设置里「另存为我的任务」「跟 AI 写我的任务」。</p>
+        <p className="rounded-xl ccode-well px-3.5 py-2.5 text-xs text-l4">
+          还没有。内置模板点「另存为我的版本」，或在项目设置里「另存为我的任务」「跟 AI 写我的任务」。
+        </p>
       )}
-      <ul className="space-y-1.5">
+      <ul className="space-y-2">
         {packs.map((p) => {
           const update = p.basedOn ? builtinUpdate(p, currents[builtinKey(p.basedOn)]) : null;
           return (
-            <li key={p.id} className="rounded-sm ccode-well p-2">
-              <div className="flex items-center gap-2">
-                <span className="min-w-0 truncate text-xs font-medium text-l1">{p.name}</span>
-                <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
+            <li key={p.id} className="rounded-xl ccode-well px-3.5 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 truncate text-sm font-semibold text-l1">{p.name}</span>
+                <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
                   {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
                 </span>
                 {p.imported && (
-                  <span className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3" title="从别人的 zip 导入；第一次加进项目前会再问一次">
+                  <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3" title="从别人的 zip 导入；第一次加进项目前会再问一次">
                     导入
                   </span>
                 )}
                 {update && (
                   <button
                     type="button"
-                    className="shrink-0 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-warn-text"
+                    className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-warn-text transition-colors hover:bg-hover"
                     onClick={() => {
                       setPicked(new Set());
                       setUpdateOpen((cur) => (cur === p.id ? null : p.id));
@@ -202,22 +204,39 @@ export default function MyPacksSection({
                     内置有更新
                   </button>
                 )}
-                <div className="ml-auto flex shrink-0 items-center gap-1">
-                  <button type="button" className={inlineActionClass} onClick={() => void exportPack(p)}>
-                    导出
-                  </button>
-                  <button type="button" className={inlineActionClass} onClick={() => void removePack(p)}>
-                    删除
-                  </button>
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <span className="inline-flex items-center rounded-md bg-inset/65 p-0.5">
+                    <button type="button" className="rounded px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1" onClick={() => void exportPack(p)}>
+                      导出
+                    </button>
+                    <button type="button" className="rounded px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-err-text" onClick={() => void removePack(p)}>
+                      删除
+                    </button>
+                  </span>
                   <button type="button" className={compactPrimaryActionClass} disabled={applying} onClick={() => onApplyPack(p)}>
                     {applying ? "写入中…" : "使用"}
                   </button>
                 </div>
               </div>
-              <p className="mt-1 truncate text-xs text-l4" title={p.steps.map((s) => s.name).join(" → ")}>
-                {p.basedOn ? `基于内置「${p.basedOn.templateName}」 · ` : ""}
-                {p.description || p.steps.map((s) => s.name).join(" → ")}
-              </p>
+              {(p.basedOn || p.description) && (
+                <p className="mt-1 text-xs leading-5 text-l3">
+                  {p.basedOn ? `基于内置「${p.basedOn.templateName}」${p.description ? " · " : ""}` : ""}
+                  {p.description}
+                </p>
+              )}
+              {p.steps.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1" title={p.steps.map((s) => s.name).join(" → ")}>
+                  {p.steps.map((s, si) => (
+                    <span key={`${s.name}-${si}`} className="inline-flex items-center gap-1">
+                      {si > 0 && <span aria-hidden className="text-micro text-l4">›</span>}
+                      <span className="inline-flex items-center gap-1 rounded-md bg-canvas/55 px-1.5 py-0.5 text-micro text-l2">
+                        <span className="font-mono text-l4 tabular-nums">{si + 1}</span>
+                        <span>{s.name}</span>
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
               {update && updateOpen === p.id && renderUpdate(p, update)}
             </li>
           );

@@ -56,15 +56,19 @@ export default function TemplateUpgradePanel({
   }
 
   return (
-    <details open={initialTemplate ? true : undefined} className="rounded-md ccode-well p-3 text-xs">
-      <summary className="cursor-pointer text-sm text-l2">
+    <details open={initialTemplate ? true : undefined} className="rounded-xl ccode-well px-4 py-3 text-xs">
+      <summary className="cursor-pointer text-sm font-medium text-l2">
         内置模板更新
-        {changes && changes.length > 0 && <span className="ml-2 text-xs text-l3">{changes.length} 步可以换成新版</span>}
+        {changes && changes.length > 0 && (
+          <span className="ml-2 inline-flex items-center rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l2">
+            {changes.length} 步可以换成新版
+          </span>
+        )}
       </summary>
-      <p className="mt-2 text-l3">
+      <p className="mt-2 leading-5 text-l3">
         只比名称和工作区都一样的步骤。换成新版只改这一步的设定，资源绑定保留；已经写出来的文件、已开工那一轮的任务书都不动。
       </p>
-      <label className="mt-2 flex items-center gap-2">
+      <label className="mt-2.5 flex items-center gap-2">
         <span className="shrink-0 text-l3">对照模板</span>
         <select
           className={compactFieldClass}
@@ -86,16 +90,16 @@ export default function TemplateUpgradePanel({
       </label>
 
       {loaded.length > 0 && (
-        <p className="mt-2 text-ok-text">
+        <p className="mt-2.5 rounded-lg bg-canvas/55 px-3 py-2 text-ok-text">
           已换进草稿：{loaded.join("、")}。点右上角「保存」才写进项目，不想要就点「取消」。
         </p>
       )}
       {changes && changes.length === 0 && loaded.length === 0 && (
-        <p className="mt-2 text-l3">和模板一致，没有要换的。改过名的步骤对不上模板，需要自己对照。</p>
+        <p className="mt-2.5 text-l3">和模板一致，没有要换的。改过名的步骤对不上模板，需要自己对照。</p>
       )}
       {changes && changes.length > 0 && (
         <>
-          <div className="mt-3 flex items-center border-b border-hairline pb-1.5">
+          <div className="mt-3 flex items-center border-b border-hairline pb-2">
             <Checkbox
               checked={allPicked}
               onChange={(on) => setSelected(on ? changes.map((c) => c.index) : [])}
@@ -106,21 +110,21 @@ export default function TemplateUpgradePanel({
             {changes.map((c) => {
               const open = expanded.includes(c.index);
               return (
-                <li key={c.index} className="border-b border-hairline py-1.5 last:border-b-0">
+                <li key={c.index} className="border-b border-hairline py-2 last:border-b-0">
                   <div className="flex items-center gap-2">
                     <Checkbox
                       checked={selected.includes(c.index)}
                       onChange={(on) =>
                         setSelected((old) => (on ? [...old, c.index] : old.filter((i) => i !== c.index)))
                       }
-                      label={<span className="text-l1">{c.current.name}</span>}
+                      label={<span className="font-medium text-l1">{c.current.name}</span>}
                     />
                     <span className="min-w-0 flex-1 truncate text-l3">
                       改了 {c.fields.map((f) => UPGRADE_FIELD_LABELS[f]).join("、")}
                     </span>
                     <button
                       type="button"
-                      className="flex shrink-0 items-center gap-0.5 text-l3 hover:text-l1"
+                      className="flex shrink-0 items-center gap-0.5 rounded-md px-2 py-0.5 text-l3 transition-colors hover:bg-hover hover:text-l1"
                       aria-expanded={open}
                       onClick={() =>
                         setExpanded((old) => (open ? old.filter((i) => i !== c.index) : [...old, c.index]))
@@ -131,7 +135,7 @@ export default function TemplateUpgradePanel({
                     </button>
                   </div>
                   {open && (
-                    <div className="mt-1.5 space-y-2 pl-6">
+                    <div className="mt-2 space-y-2 rounded-lg bg-canvas/55 p-2.5 pl-4">
                       {c.fields.map((f) => (
                         <FieldDiff key={f} diff={describeUpgradeField(f, c.current, c.proposed)} />
                       ))}
@@ -141,7 +145,7 @@ export default function TemplateUpgradePanel({
               );
             })}
           </ul>
-          <div className="mt-2 flex items-center gap-2">
+          <div className="mt-2.5 flex items-center gap-2">
             <button type="button" className={secondaryActionClass} disabled={picked.length === 0} onClick={() => void load()}>
               把勾选的 {picked.length || ""} 步换成新版
             </button>
@@ -156,7 +160,7 @@ export default function TemplateUpgradePanel({
 function FieldDiff({ diff }: { diff: UpgradeFieldDiff }) {
   return (
     <div>
-      <p className="mb-0.5 text-l3">{diff.label}</p>
+      <p className="mb-0.5 font-medium text-l2">{diff.label}</p>
       {diff.kind === "value" && (
         <p className="leading-relaxed">
           <span className="text-l4 line-through">{diff.before}</span>
@@ -184,7 +188,7 @@ function FieldDiff({ diff }: { diff: UpgradeFieldDiff }) {
         </ul>
       )}
       {diff.kind === "text" && (
-        <div className="max-h-72 space-y-0.5 overflow-auto rounded-sm bg-canvas p-2 leading-relaxed">
+        <div className="max-h-72 space-y-0.5 overflow-auto rounded-md bg-canvas/75 p-2 leading-relaxed">
           {diff.lines.map((l, k) =>
             l.kind === "gap" ? (
               <p key={k} className="text-l4">

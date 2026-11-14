@@ -468,15 +468,15 @@ export default function PipelineEditor({
     const filled = parts.filter((p) => p.n > 0);
     const open = folds[key] ?? false;
     return (
-      <div className="mb-2">
+      <div className="mb-2 rounded-lg bg-canvas/45 px-3 py-2 last:mb-0">
         <button
           type="button"
           aria-expanded={open}
           onClick={() => setFolds((m) => ({ ...m, [key]: !open }))}
-          className="flex w-full items-center gap-1.5 rounded-sm py-1 text-left text-xs text-l3 hover:text-l1"
+          className="flex w-full items-center gap-2 rounded-md py-0.5 text-left text-xs text-l2 transition-colors hover:text-l1"
         >
           <FoldMark open={open} boxed />
-          {title}
+          <span className="font-medium">{title}</span>
           <span className="min-w-0 truncate text-micro text-l4">
             {filled.length
               ? filled
@@ -486,9 +486,9 @@ export default function PipelineEditor({
           </span>
         </button>
         {open && (
-          <div className="pl-4">
+          <div className="mt-2 pt-1.5">
             {/* 「这些改了会不会显示在流程里」是编辑时最常问的一句，直接写在区首 */}
-            <p className="mb-1.5 text-micro leading-4 text-l4">{note}</p>
+            <p className="mb-2 text-micro leading-4 text-l4">{note}</p>
             {body}
           </div>
         )}
@@ -528,12 +528,14 @@ export default function PipelineEditor({
       <div
         key={i}
         data-step-card={i}
-        className="rounded-md ccode-well p-3"
+        className="rounded-xl ccode-well p-4"
       >
-        <div className="mb-2 flex items-center gap-2">
-          <span className="shrink-0 text-xs text-l4">#{i + 1}</span>
+        <div className="mb-3 flex items-center gap-2">
+          <span className="inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md bg-inset px-1.5 font-mono text-xs font-semibold tabular-nums text-l2">
+            {String(i + 1).padStart(2, "0")}
+          </span>
           <input
-            className={`${field} min-w-0 flex-1`}
+            className={`${field} min-w-0 flex-1 font-medium`}
             value={d.name}
             onChange={(e) => patch(i, { name: e.target.value })}
             placeholder="步骤名，如 文献综述"
@@ -541,17 +543,17 @@ export default function PipelineEditor({
           {/* 工作区名移进「高级」：99% 的步骤用派生值，不该常年占一格。
               这里只回显最终会用的名字，不展开也能确认 */}
           <span
-            className="shrink-0 truncate font-mono text-micro text-l4"
+            className="shrink-0 truncate rounded-md bg-inset/75 px-2 py-0.5 font-mono text-micro text-l3"
             title="绑定的工作区名（在「高级」里可改）"
           >
             {d.workspaceName.trim() ||
               sanitizeWsName(d.name) ||
               `step-${i + 1}`}
           </span>
-          <div className="flex shrink-0 items-center">
+          <div className="inline-flex shrink-0 items-center rounded-lg bg-inset/65 p-0.5">
             <button
               type="button"
-              className={actionBtn}
+              className="rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40"
               disabled={i === 0}
               title="上移"
               aria-label={`上移步骤：${d.name || i + 1}`}
@@ -561,7 +563,7 @@ export default function PipelineEditor({
             </button>
             <button
               type="button"
-              className={actionBtn}
+              className="rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40"
               disabled={i === drafts.length - 1}
               title="下移"
               aria-label={`下移步骤：${d.name || i + 1}`}
@@ -571,7 +573,7 @@ export default function PipelineEditor({
             </button>
             <button
               type="button"
-              className={actionBtn}
+              className="rounded-md px-2 py-0.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-err-text"
               title="删除该步骤（不影响已创建的工作区；保存后才生效）"
               onClick={() =>
                 setDrafts((list) => list.filter((_, x) => x !== i))
@@ -756,7 +758,7 @@ export default function PipelineEditor({
             人工事项（人必须参与的事项清单；标题空白行保存时丢弃）
           </span>
           {d.humanTasks.map((t, ti) => (
-            <div key={ti} className="mb-1 rounded-sm ccode-well p-1.5">
+            <div key={ti} className="mb-1.5 rounded-lg bg-canvas/60 p-2.5">
               <div className="mb-1 flex items-center gap-1">
                 <input
                   className={`${field} min-w-0 flex-1`}
@@ -1211,7 +1213,10 @@ export default function PipelineEditor({
           编辑研究流程
         </h2>
         <span className="min-w-0 truncate text-xs text-l3">
-          {projectName} · {drafts.length} 个步骤
+          {projectName}
+        </span>
+        <span className="shrink-0 rounded-full bg-inset px-2.5 py-0.5 text-micro font-medium text-l3">
+          {drafts.length} 个步骤
         </span>
         {error && <span className="shrink-0 text-xs text-err-text">{error}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -1234,7 +1239,7 @@ export default function PipelineEditor({
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-3xl space-y-3 px-8 py-4">
+        <div className="mx-auto w-full max-w-3xl space-y-3.5 px-8 py-5">
           <ResearchToolFields value={tools} onChange={setTools} disabled={saving || appending} />
           <TemplateUpgradePanel
             steps={draftSteps}
@@ -1250,8 +1255,8 @@ export default function PipelineEditor({
             }
           />
           {warnings.length > 0 && (
-            <div className="rounded-sm ccode-well p-2 text-xs">
-              <p className="mb-1 text-warn-text">
+            <div className="rounded-xl ccode-well px-4 py-3 text-xs">
+              <p className="mb-1 font-medium text-warn-text">
                 ! project.toml 有 {warnings.length} 条提示
               </p>
               <ul className="space-y-0.5 text-l3">
@@ -1268,10 +1273,10 @@ export default function PipelineEditor({
             />
           )}
           {drafts.map(renderCard)}
-          <div className="flex gap-2">
+          <div className="flex gap-2.5">
             <button
               type="button"
-              className="flex-1 rounded-md ccode-well p-3 text-sm text-l3 hover:bg-hover hover:text-l1"
+              className="flex-1 rounded-xl ccode-well px-4 py-3 text-sm font-medium text-l2 transition-colors hover:bg-hover hover:text-l1"
               onClick={() =>
                 setDrafts((list) => [
                   ...list,
@@ -1307,7 +1312,7 @@ export default function PipelineEditor({
             </button>
             <button
               type="button"
-              className="flex-1 rounded-md ccode-well p-3 text-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
+              className="flex-1 rounded-xl ccode-well px-4 py-3 text-sm font-medium text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40"
               disabled={appending}
               title="把模板的步骤追加到当前流程末尾；同名且交付相容才跳过；交付不同需确认改名追加"
               onClick={() => setAppendOpen((v) => !v)}
@@ -1340,17 +1345,17 @@ export default function PipelineEditor({
           )}
           {packNote && <p className="text-xs text-warn-text">{packNote}</p>}
           {appendOpen && (
-            <div className="rounded-md ccode-well p-3">
-              <p className="mb-2 text-xs text-l3">
+            <div className="rounded-xl ccode-well p-4">
+              <p className="mb-2.5 text-xs leading-5 text-l3">
                 选择模板，把它的步骤追加到当前流程末尾（同名交付不同需确认改名；工作区名冲突会自动加后缀）：
               </p>
               {packForm ? (
-                <div className="rounded-sm ccode-well p-3">
-                  <p className="text-xs font-medium text-l1">
+                <div className="rounded-lg bg-canvas/55 p-3.5">
+                  <p className="text-xs font-semibold text-l1">
                     {packForm.pack.name}
                     {packForm.pack.params.length > 0 ? "：填参数" : ""}
                   </p>
-                  <div className="mt-2 space-y-2">
+                  <div className="mt-2.5 space-y-2">
                     {packForm.pack.params.map((p) => (
                       <label key={p.key} className="block text-xs">
                         <span className="mb-1 block text-l3">{p.label}</span>
@@ -1396,10 +1401,10 @@ export default function PipelineEditor({
                   </div>
                 </div>
               ) : submissionAppend ? (
-                <div className="rounded-sm ccode-well p-3">
-                  <p className="text-xs font-medium text-l1">投稿与返修分支</p>
-                  <div className="mt-2 space-y-1.5 text-xs text-l2">
-                    <label className="flex items-center gap-2">
+                <div className="rounded-lg bg-canvas/55 p-3.5">
+                  <p className="text-xs font-semibold text-l1">投稿与返修分支</p>
+                  <div className="mt-2.5 space-y-2 text-xs text-l2">
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-canvas/60 px-3 py-2">
                       <input
                         type="radio"
                         checked={submissionAppend.mode === "initial"}
@@ -1411,7 +1416,7 @@ export default function PipelineEditor({
                       />
                       首投：期刊格式适配 → 投稿材料
                     </label>
-                    <label className="flex items-center gap-2">
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg bg-canvas/60 px-3 py-2">
                       <input
                         type="radio"
                         checked={submissionAppend.mode === "revision"}
@@ -1475,82 +1480,97 @@ export default function PipelineEditor({
                   </div>
                 </div>
               ) : (
-                <ul className="space-y-1.5">
-                {PIPELINE_TEMPLATES.map((t) => (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      className="w-full rounded-sm ccode-well p-2 text-left hover:bg-hover disabled:opacity-40"
-                      disabled={appending}
-                      onClick={() =>
-                        t.id === "submission-rebuttal"
-                          ? setSubmissionAppend({
-                              template: t,
-                              mode: "initial",
-                              round: 1,
-                            })
-                          : void appendTemplate(t)
-                      }
-                    >
-                      <span className="text-xs font-medium text-l1">
-                        {t.name}
-                      </span>
-                      <span className="ml-2 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
-                        {t.steps.length} 步
-                      </span>
-                      {!t.fieldTested && (
-                        <span
-                          className="ml-1 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3"
-                          title={UNTESTED_TEMPLATE_HINT}
-                        >
-                          {UNTESTED_TEMPLATE_BADGE}
+                <ul className="space-y-2">
+                  {PIPELINE_TEMPLATES.map((t) => (
+                    <li key={t.id}>
+                      <button
+                        type="button"
+                        className="group w-full rounded-lg bg-canvas/55 px-3.5 py-2.5 text-left transition-colors hover:bg-hover disabled:opacity-40"
+                        disabled={appending}
+                        onClick={() =>
+                          t.id === "submission-rebuttal"
+                            ? setSubmissionAppend({
+                                template: t,
+                                mode: "initial",
+                                round: 1,
+                              })
+                            : void appendTemplate(t)
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-l1">
+                            {t.name}
+                          </span>
+                          <span className="rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
+                            {t.steps.length} 步
+                          </span>
+                          {!t.fieldTested && (
+                            <span
+                              className="rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
+                              title={UNTESTED_TEMPLATE_HINT}
+                            >
+                              {UNTESTED_TEMPLATE_BADGE}
+                            </span>
+                          )}
+                          <span className="ml-auto text-micro text-l4 transition-colors group-hover:text-l1">
+                            追加 →
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                          {t.steps.map((s, si) => (
+                            <span key={s.name} className="inline-flex items-center gap-1">
+                              {si > 0 && <span aria-hidden className="text-micro text-l4">›</span>}
+                              <span className="inline-flex items-center gap-1 rounded bg-inset/65 px-1.5 py-0.5 text-micro text-l2">
+                                <span className="font-mono text-l4 tabular-nums">{si + 1}</span>
+                                <span>{s.name}</span>
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                  {packs.length > 0 && (
+                    <li className="pt-1.5 text-micro font-medium text-l3">我的任务（{packs.length}）</li>
+                  )}
+                  {packs.map((p) => (
+                    <li key={p.id} className="group relative">
+                      <button
+                        type="button"
+                        className="w-full rounded-lg bg-canvas/55 px-3.5 py-2.5 pr-8 text-left transition-colors hover:bg-hover disabled:opacity-40"
+                        disabled={appending}
+                        title={p.description || undefined}
+                        onClick={() =>
+                          p.params.length > 0 || p.trigger
+                            ? setPackForm({
+                                pack: p,
+                                values: Object.fromEntries(p.params.map((x) => [x.key, x.value])),
+                                withTrigger: p.trigger ? triggerDefaultOn(p.trigger) : false,
+                              })
+                            : void appendPack(p, {})
+                        }
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-l1">{p.name}</span>
+                          <span className="rounded-full bg-inset px-2 py-0.5 text-micro font-medium text-l3">
+                            {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
+                          </span>
+                        </div>
+                        <span className="mt-1 block truncate text-xs text-l3">
+                          {p.description || p.steps.map((s) => s.name).join(" → ")}
                         </span>
-                      )}
-                      <span className="mt-1 block truncate text-xs text-l4">
-                        {t.steps.map((s) => s.name).join(" → ")}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-                {packs.length > 0 && (
-                  <li className="pt-1 text-xs text-l3">我的任务</li>
-                )}
-                {packs.map((p) => (
-                  <li key={p.id} className="group relative">
-                    <button
-                      type="button"
-                      className="w-full rounded-sm ccode-well p-2 pr-8 text-left hover:bg-hover disabled:opacity-40"
-                      disabled={appending}
-                      title={p.description || undefined}
-                      onClick={() =>
-                        p.params.length > 0 || p.trigger
-                          ? setPackForm({
-                              pack: p,
-                              values: Object.fromEntries(p.params.map((x) => [x.key, x.value])),
-                              withTrigger: p.trigger ? triggerDefaultOn(p.trigger) : false,
-                            })
-                          : void appendPack(p, {})
-                      }
-                    >
-                      <span className="text-xs font-medium text-l1">{p.name}</span>
-                      <span className="ml-2 rounded-sm bg-strip px-1.5 py-0.5 text-xs text-l3">
-                        {p.steps.length} 步{p.params.length > 0 ? ` · ${p.params.length} 个参数` : ""}
-                      </span>
-                      <span className="mt-1 block truncate text-xs text-l4">
-                        {p.description || p.steps.map((s) => s.name).join(" → ")}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className="absolute right-1.5 top-1.5 rounded-sm px-1 text-xs text-l4 opacity-0 hover:text-err-text focus:opacity-100 group-hover:opacity-100"
-                      aria-label={`删除我的任务：${p.name}`}
-                      title="删除这个我的任务（进回收站）"
-                      onClick={() => void deletePack(p)}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
+                      </button>
+                      <button
+                        type="button"
+                        className="absolute right-2 top-2 rounded-md px-1.5 py-0.5 text-xs text-l4 opacity-0 transition-colors hover:bg-hover hover:text-err-text focus:opacity-100 group-hover:opacity-100"
+                        aria-label={`删除我的任务：${p.name}`}
+                        title="删除这个我的任务（进回收站）"
+                        onClick={() => void deletePack(p)}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
                 </ul>
               )}
               {appending && (
