@@ -590,9 +590,26 @@ export default function ProjectAgentsView({
     () => roster.rows.find((row) => row.isProjectDefault) ?? null,
     [roster.rows],
   );
-  const otherRows = useMemo(
-    () => roster.rows.filter((row) => !row.isProjectDefault),
-    [roster.rows],
+  const otherRows = useMemo(() => {
+    const priorityOrder = ["claude-code", "codex", "kimi", "agy", "gemini"];
+    const rankOf = (row: (typeof roster.rows)[number]) => {
+      if (row.works.length > 0 || Boolean(defaultProfiles[row.agentId])) return -10;
+      const p = priorityOrder.indexOf(row.agentId);
+      return p >= 0 ? p : 100;
+    };
+    return roster.rows
+      .filter((row) => !row.isProjectDefault)
+      .slice()
+      .sort((a, b) => rankOf(a) - rankOf(b));
+  }, [defaultProfiles, roster.rows]);
+  // 候选 ≤5 家时单行胶囊即可放下（省去「更多 1 家」伪收纳）；>5 家时只露前 4 家常用 CLI，其余收进「更多 N 家」浮层
+  const inlineOtherRows = useMemo(
+    () => (otherRows.length <= 5 ? otherRows : otherRows.slice(0, 4)),
+    [otherRows],
+  );
+  const overflowOtherRows = useMemo(
+    () => (otherRows.length <= 5 ? [] : otherRows.slice(4)),
+    [otherRows],
   );
   const defaultSelectedProfile = defaultRow
     ? selectedProjectAgentProfile(defaultRow)
@@ -676,7 +693,7 @@ export default function ProjectAgentsView({
                     )}
                   </div>
                   <p className="mt-1 text-xs text-l3">
-                    下方未单独指定的入口、步骤与目标均使用此配置启动（{projectAgentsHint(project.workMode)}）
+                    下方未单独指定的入口、步骤与目标均使用此配置 · {projectAgentsHint(project.workMode)}
                   </p>
                 </div>
               </div>
@@ -725,43 +742,48 @@ export default function ProjectAgentsView({
           )}
 
           {otherRows.length > 0 && (
-            <div className="mt-3.5 flex flex-wrap items-center gap-1.5 border-t border-hairline pt-3">
-              <span className="mr-1 shrink-0 text-xs text-l3">
+            <div className="mt-3 flex items-start gap-2 border-t border-hairline pt-2.5">
+              <span className="shrink-0 leading-7 text-xs text-l3">
                 {defaultRow ? "切换默认到：" : "设为默认："}
               </span>
-              {otherRows.map((row) => {
-                const picked = selectedProjectAgentProfile(row);
-                return (
-                  <button
-                    key={row.agentId}
-                    type="button"
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                {inlineOtherRows.map((row) => {
+                  const picked = selectedProjectAgentProfile(row);
+                  return (
+                    <button
+                      key={row.agentId}
+                      type="button"
+                      disabled={saving}
+                      aria-pressed={false}
+                      aria-label={`将 ${row.label} 设为项目默认`}
+                      title={
+                        picked
+                          ? `${row.label}（${picked.name} / ${picked.model}）— 点击设为本项目默认`
+                          : `${row.label}（还没有连接）— 点击设为本项目默认`
+                      }
+                      onClick={() => void saveAgent(row.agentId)}
+                      className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-inset/80 px-2.5 text-xs font-medium text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ background: agentBrand(row.agentId) }}
+                      />
+                      <span className="truncate">{row.label}</span>
+                      {!picked && (
+                        <span className="font-normal text-micro text-l4">· 还没有连接</span>
+                      )}
+                    </button>
+                  );
+                })}
+                {overflowOtherRows.length > 0 && (
+                  <MoreAgentsMenu
+                    rows={overflowOtherRows}
                     disabled={saving}
-                    aria-pressed={false}
-                    aria-label={`将 ${row.label} 设为项目默认`}
-                    title={
-                      picked
-                        ? `只影响本项目的默认选择（${picked.name} · ${picked.model}），不改 Mesa 启动栏或 CLI 全局配置`
-                        : "只影响本项目的默认选择，不改 Mesa 启动栏或 CLI 全局配置"
-                    }
-                    onClick={() => void saveAgent(row.agentId)}
-                    className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-inset px-2.5 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ background: agentBrand(row.agentId) }}
-                    />
-                    <span className="truncate font-medium">{row.label}</span>
-                    {picked ? (
-                      <span className="max-w-[11rem] truncate text-l3">
-                        · {picked.model}
-                      </span>
-                    ) : (
-                      <span className="text-l4">· 还没有连接</span>
-                    )}
-                  </button>
-                );
-              })}
+                    onPick={(agentId) => void saveAgent(agentId)}
+                  />
+                )}
+              </div>
             </div>
           )}
 
@@ -2149,6 +2171,99 @@ function DefaultModelMenu({
               去连接页添加
             </button>
           </li>
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MoreAgentsMenu({
+  rows,
+  disabled,
+  onPick,
+}: {
+  rows: ProjectAgentRow[];
+  disabled: boolean;
+  onPick: (agentId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        disabled={disabled}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-label={`展开其余 ${rows.length} 家 Agent`}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center gap-1 rounded-full border border-hairline px-2.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+      >
+        <span>更多 {rows.length} 家</span>
+        <ChevronDown
+          size={12}
+          className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+      {open && (
+        <ul
+          role="menu"
+          aria-label="其余可用 Agent"
+          className="ccode-float-surface absolute left-0 z-50 mt-1.5 max-h-64 w-64 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-field p-1 shadow-lg"
+        >
+          {rows.map((row) => {
+            const picked = selectedProjectAgentProfile(row);
+            return (
+              <li key={row.agentId} role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={disabled}
+                  aria-label={`将 ${row.label} 设为项目默认`}
+                  onClick={() => {
+                    onPick(row.agentId);
+                    setOpen(false);
+                  }}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="size-2 shrink-0 rounded-full"
+                      style={{ background: agentBrand(row.agentId) }}
+                    />
+                    <span className="truncate font-medium text-l1">{row.label}</span>
+                  </span>
+                  <span className="max-w-[8.5rem] shrink-0 truncate font-mono text-micro text-l3">
+                    {picked ? picked.model : "未配连接"}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

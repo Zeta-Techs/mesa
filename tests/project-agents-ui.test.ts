@@ -148,9 +148,11 @@ test("本项目默认聚光灯卡置顶展示当前连接与模型，其余家�
     assert.match(spotlight.textContent!, /切换默认到：/);
     assert.equal(view.button("更换 Codex 的项目连接").textContent?.trim(), "换默认模型");
     assert.equal(view.button("取消 Codex 的项目默认").getAttribute("aria-pressed"), "true");
-    // 其余 5 家收在底部快速切换胶囊行，并直接显示模型或 CLI 默认
-    assert.match(view.button("将 Qwen Code 设为项目默认").textContent!, /CLI 默认/);
-    assert.match(view.button("将 Gemini CLI 设为项目默认").textContent!, /deepseek-v4-flash-0731/);
+    // 其余 ≤5 家收在底部单行精简胶囊：胶囊内只写 Agent 名（不再塞模型串造成杂乱），连接与模型放在悬停说明
+    assert.equal(view.button("将 Qwen Code 设为项目默认").textContent?.trim(), "Qwen Code");
+    assert.match(view.button("将 Qwen Code 设为项目默认").getAttribute("title") ?? "", /CLI \/ CLI 默认/);
+    assert.equal(view.button("将 Gemini CLI 设为项目默认").textContent?.trim(), "Gemini CLI");
+    assert.match(view.button("将 Gemini CLI 设为项目默认").getAttribute("title") ?? "", /Zeta \/ deepseek-v4-flash-0731/);
     assert.match(view.host.textContent!, /默认选择仅对本项目生效。/);
     assert.ok(!view.host.textContent!.includes("在工作树里选谁开工"));
     assert.equal(view.calls.length, 0, "展示名册不写配置，编程页不轮询声明目标");
@@ -158,6 +160,40 @@ test("本项目默认聚光灯卡置顶展示当前连接与模型，其余家�
     assert.deepEqual(view.pages, ["profiles"]);
   } finally {
     await view.close();
+  }
+
+  // 十家全配齐（其余 9 家 > 5）：底栏只露前 4 家常用一等 CLI +「更多 5 家」菜单，不铺成两排杂乱胶囊
+  const tenProfiles: ProjectAgentProfile[] = [
+    { id: "cc-1", agent: "claude-code", name: "GLM", models: ["glm-5.3"] },
+    { id: "cx-1", agent: "codex", name: "GLM", models: ["glm-5.3"] },
+    { id: "gm-1", agent: "gemini", name: "G", models: ["gemini-4-argon"] },
+    { id: "qw-1", agent: "qwen", name: "GLM", models: ["glm-5.3"] },
+    { id: "oc-1", agent: "opencode", name: "CLI", models: [] },
+    { id: "km-1", agent: "kimi", name: "GLM", models: ["glm-5.3"] },
+    { id: "cb-1", agent: "codebuddy", name: "GLM", models: ["glm-5.3"] },
+    { id: "cu-1", agent: "cursor", name: "Auto", models: ["auto"] },
+    { id: "gk-1", agent: "grok", name: "GLM", models: ["glm-5.3"] },
+    { id: "ag-1", agent: "agy", name: "G", models: ["gemini-4-carbon"] },
+  ];
+  const full = await renderView({
+    profiles: tenProfiles,
+    project: { defaultAgent: "claude-code", defaultProfiles: { "claude-code": "cc-1" } },
+  });
+  try {
+    assert.ok(full.button("展开其余 5 家 Agent").textContent?.includes("更多 5 家"));
+    assert.equal(full.host.querySelector('[role="menu"]'), null);
+    await full.click("展开其余 5 家 Agent");
+    const menu = full.host.querySelector('[role="menu"][aria-label="其余可用 Agent"]')!;
+    assert.ok(menu);
+    assert.match(menu.textContent!, /Grok Build/);
+    await full.click("将 Grok Build 设为项目默认");
+    assert.equal(full.host.querySelector('[role="menu"]'), null);
+    assert.deepEqual(full.calls.at(-1), {
+      command: "set_project_default_agent",
+      args: { projectRoot: "/project", agent: "grok" },
+    });
+  } finally {
+    await full.close();
   }
 });
 
