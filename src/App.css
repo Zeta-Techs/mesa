@@ -72,9 +72,10 @@
   --color-folder: #939189;
 
   /* 状态 pill：深底 + 同色相浅字（文字/小点用法不变）
-     ok 绿取深色底兼容的哑光绿（v3.43，用户反馈原霓虹绿 #40d080 在深底上发飘） */
-  --color-ok: #10331f;
-  --color-ok-text: #4cc38a;
+     2026-11-15 用户拍板：状态通过绿（ok-text / ok）统一对齐「✓ 已存」的低饱和柔和绿（--color-done），
+     深色下底色按 14% 混入当前画布，随各主题自己的 done 与 canvas 自动柔和成套，不再用高饱和亮薄荷绿 #4cc38a */
+  --color-ok: color-mix(in srgb, var(--color-done) 14%, var(--color-canvas));
+  --color-ok-text: var(--color-done);
   --color-err: #381e24;
   --color-err-text: #f07070;
   --color-warn: #37300f;
@@ -398,7 +399,7 @@
      （与上面 diff 行早已做过的浅底深字修正自相矛盾）。
      这里按同一手法翻转：底色取浅，文字/圆点取同色相深值——
      `*-text` 同时供 pill 文字与 size-2 状态圆点使用，故必须保证在浅底上可读。 */
-  --color-ok: #d9f2e2; --color-ok-text: #177245;
+  --color-ok: #e2efe9; --color-ok-text: #286e53;
   --color-err: #fbe3e6; --color-err-text: #b02a42;
   --color-warn: #fdf1cd; --color-warn-text: #8a6100;
 

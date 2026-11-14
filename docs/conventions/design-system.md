@@ -61,7 +61,7 @@
   滑块恒为浅色、状态由轨道表达；禁用 `bg-l1` 当滑块（l1 是文字最亮档，浅色主题是近黑，会渲染成白底黑疙瘩）。
   **以上几条已写成可执行断言 `tests/theme-contrast.test.ts`（直接解析 App.css），改主题令牌必须跑它**；
   对比度断言要用 WCAG 相对亮度（先线性化 sRGB），直接拿 0–255 加权会高估暗色、把合格色误判成不合格。
-  **状态语义色分深浅两套**（v3.85 修正原「ok/err/warn 不随主题变」口径）——深色沿用深底浅字，
+  **状态语义色分深浅两套**（v3.85 修正原「ok/err/warn 不随主题变」口径；**2026-11-15 用户拍板**：状态通过绿 `--color-ok-text` / `--color-ok` 对齐待获取清单「✓ 已存」的低饱和柔和绿 `--color-done`——深色 `--color-ok-text: var(--color-done)`、`--color-ok: color-mix(in srgb, var(--color-done) 14%, var(--color-canvas))`，浅色 `#e2efe9 / #286e53` 保 ≥4.5:1 AA，不再用高饱和亮薄荷绿 `#4cc38a`）——深色沿用深底浅字，
   浅色主题在 `[data-theme$="-light"]` 覆写为浅底深字（与 diff 行同手法，实测五对均 ≈5:1 过 AA）：不覆写会让全站 69 处
   `bg-ok/bg-err/bg-warn` 变成白页上的深色块。**`--color-*` 与 `--color-*-text` 分工是硬规则**：
   `--color-ok/err/warn` 只作 **pill 底色**（必须配 `text-*-text`），`--color-*-text` 同时供 pill 文字与
