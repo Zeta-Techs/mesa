@@ -727,14 +727,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         provider: s.provider ?? null,
       });
       await navigator.clipboard.writeText(cmd);
-      // 菜单点完即关，行内反馈看不到——走 toast。Mesa 连接开的 Codex 对话：命令里的渠道定义按名字取
-      // CODEX_API_KEY，终端里没设就接不上，要说在前面
-      const needsKey = s.agent === "codex" && Boolean(resumeBaseUrl(s));
+      // 菜单点完即关，行内反馈看不到——走 toast。Mesa 连接开的 Codex / Antigravity API 对话：
+      // 裸恢复命令不带密钥或会话级 --settings，终端里直接跑接不上，要说在前面
+      const prof = resumeProfile(s);
+      const needsCodexKey = s.agent === "codex" && Boolean(resumeBaseUrl(s));
+      const needsAgyEnv = s.agent === "agy" && Boolean(prof && prof.accountType !== "official");
       toast(
-        needsKey
+        needsCodexKey
           ? "已复制继续命令。这段对话走的是 Mesa 的连接，终端里要先设好 CODEX_API_KEY 才能接上；直接用「在外部终端继续」更省事"
-          : COPY_RESUME_DONE,
-        needsKey ? "warning" : "success",
+          : needsAgyEnv
+            ? "已复制继续命令。这段对话走的是 Mesa 的 API 连接，终端直接运行缺 --settings 与 GEMINI_API_KEY；直接用「在外部终端继续」更省事"
+            : COPY_RESUME_DONE,
+        needsCodexKey || needsAgyEnv ? "warning" : "success",
       );
     } catch (e) {
       await alertDialog(`复制失败：${e}`);

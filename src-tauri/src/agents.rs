@@ -4594,45 +4594,232 @@ fn open_external_profiled(
     let pref = crate::settings::read_current()
         .external_terminal
         .unwrap_or_else(|| "auto".into());
-    #[cfg(windows)]
+    let expanded_cwd = expand_home_path(cwd);
+    let agy_snapshot = if agent_id == "agy" && resume_session_id.is_none() {
+        snapshot_agy_external_before(&profile)
+    } else {
+        None
+    };
+    let opened: Result<(), String> = {
+        #[cfg(windows)]
+        {
+            open_windows_external(
+                &pref,
+                cwd,
+                &binary.to_string_lossy(),
+                &args,
+                &env,
+                &env_remove,
+                title,
+            )
+        }
+        // macOS：终端经 launchd 拉起（open/AppleScript/已运行的 Ghostty 实例），父进程 env
+        // 到不了新窗口，密钥只能随一次性包装脚本传递（0600 + 首行自删 + 60s 兜底清理）。
+        #[cfg(target_os = "macos")]
+        {
+            let wrapper =
+                write_external_wrapper(&binary.to_string_lossy(), &args, &env, &env_remove, title)?;
+            let cmd = external_wrapper_command(cwd, &wrapper);
+            match open_external_terminal(&cmd, &pref, cwd, &wrapper) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&wrapper);
+                    Err(e)
+                }
+            }
+        }
+        // Linux：终端由 Mesa 直接 spawn，密钥注入终端进程 env 由窗口 shell 继承
+        //（与 Windows start 环境块同口径），包装脚本不含凭证。
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let wrapper =
+                write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[], title)?;
+            let cmd = external_wrapper_command(cwd, &wrapper);
+            match open_external_terminal(&cmd, &pref, cwd, &wrapper, &env, &env_remove) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    let _ = std::fs::remove_file(&wrapper);
+                    Err(e)
+                }
+            }
+        }
+    };
+    opened?;
+    record_external_session_launch(
+        agent_id,
+        &profile,
+        selected_model.as_deref(),
+        resume_session_id,
+        &args,
+        &expanded_cwd,
+        agy_snapshot,
+    );
+    Ok(())
+}
+
+/// 外部终端新建 agy 会话的目录对齐结果（纯快照判定，供单测直接断各分支）
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AgyExternalMatch {
+    /// `conversation_summaries.db` 或 `last_conversations.json` 已确认工作目录与本次启动目录相同
+    Matched(String),
+    /// 仅发现唯一一条尚无目录记录的新 CLI 会话（SQLite 尚未刷出 workspace_uris），复核仍唯一再绑定
+    PendingSingle(String),
+    /// 尚无新会话，或同时有多个无目录新会话（不猜）
+    None,
+}
+
+pub(crate) fn detect_new_agy_external_session(
+    agy_root: &Path,
+    known_before: &std::collections::HashSet<String>,
+    target_cwd: &str,
+    started_at: std::time::SystemTime,
+) -> AgyExternalMatch {
+    let transcripts = crate::sessions::agy_collect_transcripts(&agy_root.join("brain"));
+    let floor = started_at
+        .checked_sub(std::time::Duration::from_secs(3))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let fresh: Vec<(String, std::time::SystemTime)> = transcripts
+        .into_iter()
+        .filter(|(cid, _)| !known_before.contains(cid))
+        .filter_map(|(cid, path)| {
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+            (mtime >= floor).then_some((cid, mtime))
+        })
+        .collect();
+    if fresh.is_empty() {
+        return AgyExternalMatch::None;
+    }
+    let meta = crate::sessions::agy_load_meta_map(agy_root);
+    let mut cwd_hits: Vec<(String, std::time::SystemTime)> = Vec::new();
+    let mut unknown_cwd: Vec<String> = Vec::new();
+    for (cid, mtime) in fresh {
+        if meta.get(&cid).is_some_and(|e| e.excluded) {
+            continue;
+        }
+        match meta.get(&cid).and_then(|e| e.cwd.as_deref()) {
+            Some(c) if crate::paths::same_path(c, target_cwd) => {
+                cwd_hits.push((cid, mtime));
+            }
+            Some(_) => {}
+            None => unknown_cwd.push(cid),
+        }
+    }
+    if !cwd_hits.is_empty() {
+        cwd_hits.sort_by_key(|(_, mtime)| *mtime);
+        return AgyExternalMatch::Matched(cwd_hits.remove(0).0);
+    }
+    if unknown_cwd.len() == 1 {
+        return AgyExternalMatch::PendingSingle(unknown_cwd.remove(0));
+    }
+    AgyExternalMatch::None
+}
+
+fn snapshot_agy_external_before(
+    profile: &Profile,
+) -> Option<(PathBuf, std::collections::HashSet<String>, std::time::SystemTime)> {
+    let home = profile
+        .extra_env
+        .get("HOME")
+        .filter(|d| !d.trim().is_empty())
+        .map(PathBuf::from)
+        .or_else(crate::dirs::home_dir)?;
+    let agy_root = home.join(".gemini/antigravity-cli");
+    let known: std::collections::HashSet<String> =
+        crate::sessions::agy_collect_transcripts(&agy_root.join("brain"))
+            .into_iter()
+            .map(|(cid, _)| cid)
+            .collect();
+    Some((agy_root, known, std::time::SystemTime::now()))
+}
+
+fn record_external_session_launch(
+    agent_id: &str,
+    profile: &Profile,
+    selected_model: Option<&str>,
+    resume_session_id: Option<&str>,
+    args: &[String],
+    cwd: &str,
+    agy_snapshot: Option<(PathBuf, std::collections::HashSet<String>, std::time::SystemTime)>,
+) {
+    #[cfg(test)]
     {
-        return open_windows_external(
-            &pref,
+        let _ = (
+            agent_id,
+            profile,
+            selected_model,
+            resume_session_id,
+            args,
             cwd,
-            &binary.to_string_lossy(),
-            &args,
-            &env,
-            &env_remove,
-            title,
+            agy_snapshot,
         );
     }
-    // macOS：终端经 launchd 拉起（open/AppleScript/已运行的 Ghostty 实例），父进程 env
-    // 到不了新窗口，密钥只能随一次性包装脚本传递（0600 + 首行自删 + 60s 兜底清理）。
-    #[cfg(target_os = "macos")]
+    #[cfg(not(test))]
     {
-        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &env, &env_remove, title)?;
-        let cmd = external_wrapper_command(cwd, &wrapper);
-        match open_external_terminal(&cmd, &pref, cwd, &wrapper) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                let _ = std::fs::remove_file(&wrapper);
-                Err(e)
-            }
+        let effort = profile
+            .request_policy
+            .reasoning_effort
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let model_str = selected_model
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+        let direct_sid = resume_session_id.map(str::to_string).or_else(|| {
+            args.windows(2)
+                .find(|w| w[0] == "--session-id")
+                .map(|w| w[1].clone())
+        });
+        if let Some(sid) = direct_sid {
+            let launch = model_str.as_deref().map(|m| (m, effort.as_str()));
+            let _ = crate::sessions::set_session_profile(agent_id, &sid, &profile.id, launch);
+            return;
         }
-    }
-    // Linux：终端由 Mesa 直接 spawn，密钥注入终端进程 env 由窗口 shell 继承
-    //（与 Windows start 环境块同口径），包装脚本不含凭证。
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        let wrapper = write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[], title)?;
-        let cmd = external_wrapper_command(cwd, &wrapper);
-        match open_external_terminal(&cmd, &pref, cwd, &wrapper, &env, &env_remove) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                let _ = std::fs::remove_file(&wrapper);
-                Err(e)
+        let Some((agy_root, known_before, started_at)) = agy_snapshot else {
+            return;
+        };
+        let profile_id = profile.id.clone();
+        let target_cwd = cwd.to_string();
+        std::thread::spawn(move || {
+            let mut last_pending: Option<String> = None;
+            for _ in 0..400 {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                match detect_new_agy_external_session(
+                    &agy_root,
+                    &known_before,
+                    &target_cwd,
+                    started_at,
+                ) {
+                    AgyExternalMatch::Matched(cid) => {
+                        let launch = model_str.as_deref().map(|m| (m, effort.as_str()));
+                        let _ = crate::sessions::set_session_profile(
+                            "agy",
+                            &cid,
+                            &profile_id,
+                            launch,
+                        );
+                        return;
+                    }
+                    AgyExternalMatch::PendingSingle(cid) => {
+                        if last_pending.as_deref() == Some(cid.as_str()) {
+                            let launch = model_str.as_deref().map(|m| (m, effort.as_str()));
+                            let _ = crate::sessions::set_session_profile(
+                                "agy",
+                                &cid,
+                                &profile_id,
+                                launch,
+                            );
+                            return;
+                        }
+                        last_pending = Some(cid);
+                    }
+                    AgyExternalMatch::None => {
+                        last_pending = None;
+                    }
+                }
             }
-        }
+        });
     }
 }
 

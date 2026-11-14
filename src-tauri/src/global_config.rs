@@ -2863,7 +2863,7 @@ fn plan_writes(
         }
         "agy" => {
             return Err(
-                "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动。"
+                "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。"
                     .into(),
             );
         }

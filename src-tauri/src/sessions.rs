@@ -3155,8 +3155,15 @@ fn session_resume_config_at(
             .unwrap_or_default();
         file_model = file_model.and_then(|alias| kimi_model_from_alias(&alias, &config));
     }
+    let mut model = file_model.or(launch_model);
+    if agent == "agy" {
+        model = model.and_then(|m| {
+            let clean = m.trim().strip_prefix("mesa/").unwrap_or(m.trim()).trim();
+            (!clean.is_empty()).then(|| clean.to_string())
+        });
+    }
     SessionResumeConfigDto {
-        model: file_model.or(launch_model),
+        model,
         effort: file_effort.or(launch_effort),
     }
 }

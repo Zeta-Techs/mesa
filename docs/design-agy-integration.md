@@ -105,7 +105,8 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 
 严格遵守 `docs/conventions/profiles.md` §12 九条规则：
 
-- **第三方中转与 Gemini 官方 API 密钥不支持设为全局**：`agy` 只从环境变量读 `GEMINI_API_KEY` 与 `GOOGLE_GEMINI_BASE_URL`，不支持配置文件或 `.env` 落盘，而 Mesa 不改用户 shell 配置。后端拒收并返回明确原因，前端连接页将这两类绑定的「设为全局默认」按钮置灰并悬停说明：「Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动。」
+- **第三方中转与 Gemini 官方 API 密钥不支持设为全局**：`agy` 只从环境变量读 `GEMINI_API_KEY` 与 `GOOGLE_GEMINI_BASE_URL`，不支持配置文件或 `.env` 落盘，而 Mesa 不改用户 shell 配置。后端拒收并返回明确原因，前端连接页将这两类绑定的「设为全局默认」按钮置灰并悬停说明：「Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。」
+- **外部终端拉起与会话归属**：连接行「外部终端」图标每次弹目录选择框（默认预填上次工作目录），经一次性启动脚本携带 `--settings` 临时设置文件与环境密钥拉起 `agy`；后端记录启动前快照并在新 `brain/<id>/` 会话落盘后按工作目录匹配回写 `(profile_id, launch_model, effort)`，保证外部终端新建会话的用量计费模型与后续续聊连接归属不丢失；复制裸 `agy --conversation` 命令时对 API / 中转连接给出不含密钥提示。
 - **官方 Google 账号支持设为全局**：写前完整备份 `~/.gemini/antigravity-cli/settings.json`（走统一备份与恢复表），用 JSONC 保格式编辑撤除 `modelProvider`（当值为 `"gemini"` 时）、指向 `mesa/` 的 `model`，以及 `customModelsConfig.customModels` 下 `mesa/` 前缀的条目，保留用户的 `trustedWorkspaces`、自定义模型和注释。
 - `official_global_is_patch` 与前端 `OFFICIAL_GLOBAL_AGENTS` 双端同步加入 `"agy"`。
 

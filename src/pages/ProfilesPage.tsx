@@ -2415,7 +2415,7 @@ const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
  *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
 const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok", "agy"]);
 const AGY_API_GLOBAL_REASON =
-  "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动。";
+  "Antigravity CLI 只从环境变量读端点和密钥，Mesa 不改你的 shell 配置；请从 Mesa 启动，或点这行的「外部终端」图标在系统终端打开。";
 function officialGlobalIsPatch(agent: string): boolean {
   return OFFICIAL_GLOBAL_AGENTS.has(agent);
 }
@@ -4083,18 +4083,29 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   }
 
   async function useExternalWith(profile: Profile) {
-    let cwd = "";
+    let lastLaunch: Record<string, unknown> = {};
+    let lastCwd = "";
     try {
-      cwd =
-        (JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "{}") as { cwd?: string }).cwd ?? "";
+      const parsed = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "{}") as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        lastLaunch = parsed;
+        if (typeof parsed.cwd === "string") lastCwd = parsed.cwd.trim();
+      }
     } catch {
       /* 损坏的本地记忆不阻断外部启动 */
     }
-    if (!cwd.trim()) {
-      const picked = await open({ directory: true, multiple: false });
-      if (typeof picked === "string") cwd = picked;
+    const picked = await open({
+      directory: true,
+      multiple: false,
+      ...(lastCwd ? { defaultPath: lastCwd } : {}),
+    });
+    const cwd = typeof picked === "string" ? picked.trim() : "";
+    if (!cwd) return;
+    try {
+      localStorage.setItem("ccode.lastLaunch", JSON.stringify({ ...lastLaunch, cwd }));
+    } catch {
+      /* 存储受限不阻断外部启动 */
     }
-    if (!cwd.trim()) return;
     try {
       await invoke("new_external_terminal", {
         agentId: profile.agent,

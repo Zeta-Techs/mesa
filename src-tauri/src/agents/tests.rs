@@ -3709,3 +3709,83 @@ fn agy_official_launch_and_models_parser_and_conflict_cleanup() {
     assert!(!after.contains("\"modelProvider\""));
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn detect_new_agy_external_session_matches_cwd_and_ignores_excluded_or_ambiguous() {
+    let tmp = std::env::temp_dir().join(format!("mesa-agy-ext-{}", uuid::Uuid::new_v4()));
+    let agy_root = tmp.join(".gemini/antigravity-cli");
+    let work_a = tmp.join("proj-a");
+    let work_b = tmp.join("proj-b");
+    std::fs::create_dir_all(&work_a).unwrap();
+    std::fs::create_dir_all(&work_b).unwrap();
+
+    let started = std::time::SystemTime::now();
+    let make_transcript = |cid: &str| {
+        let p = agy_root
+            .join("brain")
+            .join(cid)
+            .join(".system_generated/logs/transcript_full.jsonl");
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, "{\"step_index\":0,\"type\":\"USER_INPUT\",\"status\":\"DONE\",\"content\":\"hi\"}\n").unwrap();
+    };
+    make_transcript("old-1");
+    let known: std::collections::HashSet<String> = ["old-1".to_string()].into_iter().collect();
+
+    // 1. 尚无新会话 → None
+    assert_eq!(
+        detect_new_agy_external_session(&agy_root, &known, &work_a.to_string_lossy(), started),
+        AgyExternalMatch::None
+    );
+
+    // 2. 单一新会话、SQLite 尚未落盘 cwd → PendingSingle
+    make_transcript("new-pending");
+    assert_eq!(
+        detect_new_agy_external_session(&agy_root, &known, &work_a.to_string_lossy(), started),
+        AgyExternalMatch::PendingSingle("new-pending".into())
+    );
+
+    // 3. 两个均未落盘 cwd 的新会话并存 → None（不瞎猜）
+    make_transcript("new-other");
+    assert_eq!(
+        detect_new_agy_external_session(&agy_root, &known, &work_a.to_string_lossy(), started),
+        AgyExternalMatch::None
+    );
+
+    // 4. SQLite 落盘后：排除桌面版与子会话、忽略别的目录，精准命中 work_a
+    make_transcript("desk-1");
+    make_transcript("sub-1");
+    let db = rusqlite::Connection::open(agy_root.join("conversation_summaries.db")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            title TEXT,
+            preview TEXT,
+            last_modified_time TEXT,
+            workspace_uris TEXT,
+            parent_conversation_id TEXT,
+            nesting_depth INTEGER,
+            app_data_dir TEXT
+        );",
+    )
+    .unwrap();
+    let uri_a = format!("[\"file://{}\"]", work_a.to_string_lossy().replace('\\', "/"));
+    let uri_b = format!("[\"file://{}\"]", work_b.to_string_lossy().replace('\\', "/"));
+    for (cid, uri, parent, depth, app) in [
+        ("desk-1", uri_a.as_str(), "", 0i64, "antigravity"),
+        ("sub-1", uri_a.as_str(), "new-pending", 1i64, "antigravity-cli"),
+        ("new-other", uri_b.as_str(), "", 0i64, "antigravity-cli"),
+        ("new-pending", uri_a.as_str(), "", 0i64, "antigravity-cli"),
+    ] {
+        db.execute(
+            "INSERT INTO conversation_summaries VALUES (?1, 't', '', '2026-11-14T10:00:00Z', ?2, ?3, ?4, ?5)",
+            rusqlite::params![cid, uri, parent, depth, app],
+        )
+        .unwrap();
+    }
+    drop(db);
+    assert_eq!(
+        detect_new_agy_external_session(&agy_root, &known, &work_a.to_string_lossy(), started),
+        AgyExternalMatch::Matched("new-pending".into())
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
