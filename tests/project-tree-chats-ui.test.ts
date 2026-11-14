@@ -1380,6 +1380,8 @@ test("课题下挂研讨：进行中的在最上面带光标，点了打开研�
     const group = view.chatGroup("综述流程测试")!;
     const first = Array.from(group.querySelectorAll("button")).find((b) => b.textContent?.trim())!;
     assert.equal(first.textContent?.trim(), "先有鸡还是先有蛋", "研讨挂在最上面，标题去掉日期类型前缀");
+    assert.ok(first.firstElementChild?.classList.contains("ccode-rail-text"), "研讨标题顶格与对话行左对齐，前置人形图标已移入行尾");
+    assert.equal(first.parentElement?.querySelector("[data-consult-mark]")?.getAttribute("aria-label"), "研讨 · 3 家");
     assert.match(first.title, /研讨 · 3 家 · 3 家在答/);
     assert.equal(first.parentElement?.querySelector("[data-run-slot] .ccode-run-caret")?.getAttribute("data-state"), "working");
     assert.ok(!group.textContent?.includes("很久以前的研讨"), "10 天前答完的不挂，去对话管理翻");
@@ -1393,32 +1395,92 @@ test("课题下挂研讨：进行中的在最上面带光标，点了打开研�
   }
 });
 
-test("接力对话：标题左缘保持与普通对话对齐，行尾展示各家微型官方图标与交接箭头并悬停让位给 ⋯", async () => {
+test("侧栏行尾微标：接力对话、分支工作树与 PDF 沉浸精读均顶格左对齐，微标收在行尾并悬停让位给 ⋯", async () => {
   const relaySess = session({
     sessionId: "relay-1",
     agent: "claude-code",
     customTitle: "1115|功能|联网搜索Rust资料",
-    updatedAt: "2026-11-15T00:00:00Z",
+    updatedAt: "2026-11-15T03:00:00Z",
     relayAgents: ["claude-code", "codex"],
   });
-  const view = await renderTree({
-    sessions: [relaySess, ...reviewChats],
+  const worktreeSess = session({
+    sessionId: "wt-1",
+    agent: "codex",
+    customTitle: "1115|功能|重构鉴权模块",
+    updatedAt: "2026-11-15T02:00:00Z",
+    workspace: "feat-auth",
+    stepName: null,
   });
+  const readerSess = session({
+    sessionId: "reader-1",
+    agent: "claude-code",
+    customTitle: "1115|研究|精读 Smith 2024",
+    updatedAt: "2026-11-15T01:00:00Z",
+    reader: true,
+    readerPdf: "/work/review/papers/smith2024.pdf",
+  });
+  const stepSess = session({
+    sessionId: "step-wt",
+    agent: "claude-code",
+    customTitle: "1115|研究|文献检索执行",
+    updatedAt: "2026-11-15T04:00:00Z",
+    workspace: "step-1-worktree",
+    stepName: "文献检索",
+    stepIndex: 1,
+    stepRole: "work",
+  });
+  const view = await renderTree(
+    {
+      sessions: [stepSess, relaySess, worktreeSess, readerSess, ...reviewChats],
+    },
+    undefined,
+    {
+      storage: {
+        "ccode.projectShowReaderChats": JSON.stringify([PROJECT.path]),
+        "ccode.projectShowStepChats": JSON.stringify([PROJECT.path]),
+      },
+    },
+  );
   try {
     const group = view.chatGroup("综述流程测试")!;
-    const btn = Array.from(group.querySelectorAll<HTMLButtonElement>("button[data-chat-key]")).find((b) =>
-      b.textContent?.includes("联网搜索Rust资料"),
-    )!;
-    assert.ok(btn, "应渲染接力对话行");
-    assert.equal(btn.querySelector("[data-relay-agents]"), null, "标题按钮左侧不再塞叠放圆点，保证与普通对话左对齐");
-    assert.ok(btn.firstElementChild?.classList.contains("ccode-rail-text"), "标题 span 直接顶在行首");
+    const findRow = (txt: string) =>
+      Array.from(group.querySelectorAll<HTMLButtonElement>("button[data-chat-key]")).find((b) =>
+        b.textContent?.includes(txt),
+      )!;
 
-    const row = btn.parentElement!;
-    const badge = row.querySelector<HTMLElement>("[data-relay-agents]")!;
-    assert.ok(badge, "行尾应有接力官方图标簇");
-    assert.equal(badge.getAttribute("aria-label"), "接力对话：Codex → Claude Code", "当前接手那家排在最前（右侧）");
-    assert.match(badge.className, /group-hover\/chat:hidden/, "悬停时自动让位给 ⋯ 菜单");
-    assert.equal(badge.querySelectorAll("svg").length, 2, "仅叠放 2 枚官方图标 SVG，不带箭头");
+    // 1. 接力对话
+    const relayBtn = findRow("联网搜索Rust资料");
+    assert.ok(relayBtn, "应渲染接力对话行");
+    assert.ok(relayBtn.firstElementChild?.classList.contains("ccode-rail-text"), "标题 span 直接顶在行首");
+    const relayRow = relayBtn.parentElement!;
+    const relayBadge = relayRow.querySelector<HTMLElement>("[data-relay-agents]")!;
+    assert.ok(relayBadge, "行尾应有接力官方图标簇");
+    assert.equal(relayBadge.getAttribute("aria-label"), "接力对话：Codex → Claude Code", "当前接手那家排在最前（右侧）");
+    assert.match(relayRow.querySelector<HTMLElement>("[data-chat-marks]")!.className, /group-hover\/chat:hidden/, "悬停时自动让位给 ⋯ 菜单");
+    assert.equal(relayBadge.querySelectorAll("svg").length, 2, "仅叠放 2 枚官方图标 SVG，不带箭头");
+
+    // 2. 编程分支工作树对话
+    const wtBtn = findRow("重构鉴权模块");
+    assert.ok(wtBtn, "应渲染工作树对话行");
+    assert.ok(wtBtn.firstElementChild?.classList.contains("ccode-rail-text"), "工作树对话标题左缘同样顶格");
+    const wtMark = wtBtn.parentElement!.querySelector<HTMLElement>("[data-worktree-mark]")!;
+    assert.ok(wtMark, "行尾应有分支工作树微标");
+    assert.equal(wtMark.textContent?.trim(), "feat-auth");
+    assert.equal(wtMark.getAttribute("aria-label"), "工作树：feat-auth");
+    assert.match(wtBtn.title, /工作树：feat-auth/);
+
+    // 科研步骤自带的隔离工作区不应重复挂分支微标
+    const stepBtn = view.button("执行任务书");
+    assert.equal(stepBtn.parentElement?.querySelector("[data-worktree-mark]"), null, "流程步骤对话已归在步骤组下，不重复挂工作树微标");
+
+    // 3. 科研 PDF 沉浸精读对话
+    const readerBtn = findRow("精读 Smith 2024");
+    assert.ok(readerBtn, "打开显示精读对话后应渲染精读对话行");
+    assert.ok(readerBtn.firstElementChild?.classList.contains("ccode-rail-text"), "精读对话标题左缘同样顶格");
+    const readerMark = readerBtn.parentElement!.querySelector<HTMLElement>("[data-reader-mark]")!;
+    assert.ok(readerMark, "行尾应有书本精读微标");
+    assert.equal(readerMark.getAttribute("aria-label"), "精读论文：smith2024.pdf");
+    assert.match(readerBtn.title, /精读论文：smith2024\.pdf/);
   } finally {
     await view.close();
   }

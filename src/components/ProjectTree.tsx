@@ -13,6 +13,7 @@ import {
   Eraser,
   Folder,
   FolderMinus,
+  GitBranch,
   GitFork,
   FolderOpen,
   FolderPlus,
@@ -1372,7 +1373,7 @@ export default function ProjectTree({
     const depth = fork?.depth ?? 0;
     const forks = fork?.forks ?? 0;
     const forkFolded = forks > 0 && forkFoldSet.has(key);
-    // 接力对话：标题左缘保持与普通对话一致，用过的几家收在行尾微型官方图标簇（悬停写全并让位给 ⋯）
+    // 接力 / 分支工作树 / 精读论文：标题左缘一律顶格与普通对话对齐，微标收在行尾（悬停写全并让位给 ⋯）
     const relayAgents = (s.relayAgents?.length ?? 0) > 1 ? s.relayAgents! : null;
     const activeRelayAgent = relayAgents
       ? (relayAgents.includes(s.agent) ? s.agent : relayAgents[relayAgents.length - 1])
@@ -1380,6 +1381,11 @@ export default function ProjectTree({
     const priorRelayAgents = relayAgents ? relayAgents.filter((a) => a !== activeRelayAgent) : [];
     const relayOrdered = relayAgents ? [...priorRelayAgents, activeRelayAgent] : null;
     const relayPath = relayOrdered?.map((a) => AGENTS.find((x) => x.id === a)?.label ?? a).join(" → ") ?? null;
+    const worktreeName = !s.stepName && s.workspace?.trim() ? s.workspace.trim() : null;
+    const showWorktreeMark = Boolean(worktreeName && !(origin && originTag));
+    const readerFile = s.readerPdf ? s.readerPdf.split(/[\\/]/).filter(Boolean).pop() ?? s.readerPdf : null;
+    const readerLabel = s.reader ? (readerFile ? `精读论文：${readerFile}` : "沉浸阅读精读对话") : null;
+    const hasQuietMarks = Boolean(projectPinMark || showWorktreeMark || readerLabel || relayAgents);
     const isPicked = picked.has(key);
     // 选了好几段时，在其中一段上右键 / 点 ⋯ 出的是对这几段的菜单
     const forPicked = isPicked && picked.size > 1;
@@ -1434,7 +1440,7 @@ export default function ProjectTree({
           onPointerEnter={() => prefetchConversation(s)}
           onFocus={() => prefetchConversation(s)}
           aria-current={selected ? "true" : undefined}
-          title={`${full}\n${relayPath ? `接力对话：${relayPath} · ` : ""}${depth > 0 ? "分叉出来的对话 · " : ""}${projectPinMark ? "在项目里置顶 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
+          title={`${full}\n${relayPath ? `接力对话：${relayPath} · ` : ""}${readerLabel ? `${readerLabel} · ` : ""}${worktreeName ? `工作树：${worktreeName} · ` : ""}${depth > 0 ? "分叉出来的对话 · " : ""}${projectPinMark ? "在项目里置顶 · " : ""}${origin ? `${origin} · ` : ""}${agent} · ${relTime(s.updatedAt)}${dot ? ` · ${dotTitle(dot)}` : ""}\n点一下接着聊，双击改名`}
           className={`flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 ${
             "text-l1"
           }`}
@@ -1489,45 +1495,73 @@ export default function ProjectTree({
               {origin}
             </span>
           )}
-          {projectPinMark && (
-            <Pin
-              size={10}
-              strokeWidth={1.8}
-              aria-label="在项目里置顶"
-              className="mr-1.5 shrink-0 text-l4 group-hover/chat:hidden group-focus-within/chat:hidden"
-              data-project-pin
-            />
-          )}
-          {relayAgents && (
+          {hasQuietMarks && (
             <span
-              aria-label={`接力对话：${relayPath}`}
-              title={`接力对话：${relayPath}`}
-              className={`${dot ? "mr-0.5" : "mr-1.5"} shrink-0 items-center -space-x-1 ${
+              className={`${dot ? "mr-0.5" : "mr-1.5"} shrink-0 items-center gap-1.5 ${
                 menuOpen ? "hidden" : "inline-flex group-hover/chat:hidden group-focus-within/chat:hidden"
               }`}
-              data-relay-agents
+              data-chat-marks
             >
-              {priorRelayAgents.slice(-2).map((a) => (
+              {projectPinMark && (
+                <Pin
+                  size={10}
+                  strokeWidth={1.8}
+                  aria-label="在项目里置顶"
+                  className="shrink-0 text-l4"
+                  data-project-pin
+                />
+              )}
+              {showWorktreeMark && (
                 <span
-                  key={a}
-                  className="inline-flex opacity-70"
-                  style={{
-                    WebkitMaskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
-                    maskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
-                  }}
+                  aria-label={`工作树：${worktreeName}`}
+                  title={`工作树：${worktreeName}`}
+                  className="inline-flex max-w-[5rem] shrink-0 items-center gap-0.5 font-mono text-micro text-l4"
+                  data-worktree-mark
                 >
+                  <GitBranch size={10} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+                  <span className="truncate">{worktreeName}</span>
+                </span>
+              )}
+              {readerLabel && (
+                <span
+                  aria-label={readerLabel}
+                  title={readerLabel}
+                  className="inline-flex shrink-0 items-center text-l4"
+                  data-reader-mark
+                >
+                  <BookOpen size={11} strokeWidth={1.8} aria-hidden="true" />
+                </span>
+              )}
+              {relayAgents && (
+                <span
+                  aria-label={`接力对话：${relayPath}`}
+                  title={`接力对话：${relayPath}`}
+                  className="inline-flex shrink-0 items-center -space-x-1"
+                  data-relay-agents
+                >
+                  {priorRelayAgents.slice(-2).map((a) => (
+                    <span
+                      key={a}
+                      className="inline-flex opacity-70"
+                      style={{
+                        WebkitMaskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
+                        maskImage: "radial-gradient(circle 6.2px at 11px 50%, transparent 90%, #000 100%)",
+                      }}
+                    >
+                      <AgentIcon
+                        agent={a}
+                        label={AGENTS.find((x) => x.id === a)?.label ?? a}
+                        size={10}
+                      />
+                    </span>
+                  ))}
                   <AgentIcon
-                    agent={a}
-                    label={AGENTS.find((x) => x.id === a)?.label ?? a}
+                    agent={activeRelayAgent}
+                    label={AGENTS.find((x) => x.id === activeRelayAgent)?.label ?? activeRelayAgent}
                     size={10}
                   />
                 </span>
-              ))}
-              <AgentIcon
-                agent={activeRelayAgent}
-                label={AGENTS.find((x) => x.id === activeRelayAgent)?.label ?? activeRelayAgent}
-                size={10}
-              />
+              )}
             </span>
           )}
           {/* 运行状态光标（2026-10-24 用户：绿点换成 Mesa 的光标）。有光标才占一格、标题在它前面淡出；
@@ -1585,8 +1619,8 @@ export default function ProjectTree({
     );
   }
 
-  /** 课题下的一场研讨：点了在主区研讨页打开（同点对话一下就到）；Users 小图标和对话行区分，行尾光标——有人在答 working、
-   *  停下等你发话 idle，答完了不挂。标题同对话行去掉「MMDD|类型|」，完整标题与几家在悬停里 */
+  /** 课题下的一场研讨：点了在主区研讨页打开（同点对话一下就到）；标题左缘与对话行顶格对齐（2026-11-15 用户），
+   *  Users 微标收在行尾；行尾光标——有人在答 working、停下等你发话 idle，答完了不挂。标题同对话行去掉「MMDD|类型|」，完整标题与几家在悬停里 */
   function renderConsultRow(c: ConsultListItem, folderName: string) {
     const selected = page === "consult" && consultOpen?.id === c.id && samePath(consultOpen.projectRoot, c.projectRoot, IS_WINDOWS);
     const caret = consultCaret(c, Date.now());
@@ -1604,16 +1638,19 @@ export default function ProjectTree({
           onClick={() => useAppStore.getState().showConsult(c.projectRoot, c.id)}
           aria-current={selected ? "true" : undefined}
           title={`${c.title}\n研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
-          className="flex h-8 min-w-0 items-center gap-0.5 rounded-md pl-2 pr-1 text-l1"
+          className="flex h-8 min-w-0 items-center gap-2 rounded-md pl-2 pr-1 text-l1"
         >
-          {/* 人形占步骤号那样的定宽一格：研讨标题与上面步骤名的字左对齐（2026-11-11 用户）；
-              图标自带内边距、比顶格的 ① 靠右 1px，-ml-px 拉齐左缘 */}
-          <span className="flex w-4 shrink-0 items-center">
-            <Users size={13} strokeWidth={1.8} aria-hidden="true" className="-ml-px text-l4" />
-          </span>
           <span className="ccode-rail-text ccode-rail-fade min-w-0 flex-1 text-left">{sidebarChatTitle(c.title, folderName)}</span>
         </button>
         <div className="flex shrink-0 items-center gap-0.5 pr-0.5">
+          <span
+            aria-label={`研讨 · ${c.members.length} 家`}
+            title={`研讨 · ${c.members.length} 家${state ? ` · ${state}` : ""}`}
+            className={`${caret ? "mr-0.5" : "mr-1.5"} inline-flex shrink-0 items-center text-l4`}
+            data-consult-mark
+          >
+            <Users size={11} strokeWidth={1.8} aria-hidden="true" />
+          </span>
           {caret && (
             <span className="flex h-6 w-6 items-center justify-center" data-run-slot>
               <RunCaret state={caret} />
