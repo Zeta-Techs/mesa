@@ -17,6 +17,7 @@ import { buddyDayPart, buddyMood } from "../buddy-time";
 import {
   assistantErrorText,
   basisGuideHeadings,
+  INSPECT_AGENTS,
   INSPECT_WAITING,
   INTENT_WAITING,
   localReply,
@@ -208,8 +209,8 @@ export default function ProjectAssistantPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const askedNonce = useRef<number | null>(null);
   const conn = assistantConnection(project);
-  // 能看图的只有 Claude Code / Codex（走只读查看那条路）；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
-  const imageCapable = conn.agentId === null || conn.agentId === "claude-code" || conn.agentId === "codex";
+  // 能只读看文件与看图的只有 Claude Code / Codex；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
+  const imageCapable = conn.agentId === null || INSPECT_AGENTS.includes(conn.agentId);
   // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
     const result = await onDispatch(order);
@@ -356,7 +357,13 @@ export default function ProjectAssistantPanel({
     }
   }
 
-  async function send(question: string, withFocus: AssistantFocus | null, forced?: AssistantIntent, attached: AssistantImage[] = images) {
+  async function send(
+    question: string,
+    withFocus: AssistantFocus | null,
+    forced?: AssistantIntent,
+    attached: AssistantImage[] = images,
+    forcedInspect?: boolean,
+  ) {
     // 只贴了图没写字：替人补一句最常见的问法
     const q = question.trim() || (attached.length ? "看看这张截图是怎么回事，我该怎么办？" : "");
     if (!q || busy || !projectPath) return;
@@ -413,8 +420,9 @@ export default function ProjectAssistantPanel({
     const streamId = crypto.randomUUID();
     streamIdRef.current = streamId;
     cancelledRef.current = false;
+    const inspectRun = forcedInspect ?? plan.inspect;
     setIntent(plan.intent);
-    setInspecting(plan.inspect);
+    setInspecting(inspectRun);
     setBusy(true);
     setPending(q);
     setLiveText("");
@@ -433,7 +441,7 @@ export default function ProjectAssistantPanel({
         history: qaTurns,
         focus: withFocus,
         intent: plan.intent,
-        inspect: plan.inspect,
+        inspect: inspectRun,
         images: attached.map((img) => img.path),
         where,
         streamId,
@@ -643,7 +651,13 @@ export default function ProjectAssistantPanel({
           )}
           {/* 依据、花费、换个查法并成一行小字（原来各占一行） */}
           {(() => {
-            const retry = i === turns.length - 1 && !busy ? retryIntents(turn.basis, turn.connection) : [];
+            const retry =
+              i === turns.length - 1 && !busy
+                ? retryIntents(turn.basis, turn.connection, {
+                    canInspect: imageCapable,
+                    allowDraft: !withOrder.order && !withRework.rework,
+                  })
+                : [];
             if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
             const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
             const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
@@ -685,10 +699,10 @@ export default function ProjectAssistantPanel({
                     {(turn.basis || turn.costUsd != null) && dot}没答到点上？
                     {retry.map((r, ri) => (
                       <button
-                        key={r.intent}
+                        key={`${r.intent}-${r.inspect ? "inspect" : ""}`}
                         type="button"
                         className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() => void send(turn.question, null, r.intent)}
+                        onClick={() => void send(turn.question, null, r.intent, [], r.inspect)}
                       >
                         <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
                       </button>

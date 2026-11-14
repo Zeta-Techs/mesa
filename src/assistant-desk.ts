@@ -12,6 +12,7 @@ import { helpNotDismissed } from "./help-requests";
 import { buildWorkspaceTerminalRequest } from "./pipeline-start";
 import { loadHelpDismissed } from "./inbox";
 import { liveRunIn, sendToWorkspace } from "./assistant-dispatch";
+import { invalidateAssistantSnapshot } from "./project-assistant-run";
 import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
 import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
 import type { OpenDispatch } from "./assistant-echo";
@@ -81,6 +82,7 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
 export async function answerGrant(item: DeskItem, once: boolean): Promise<string> {
   if (!item.scheduleId) throw new Error("这件不是授权请求");
   await invoke(once ? "schedule_grant_once" : "schedule_grant_dismiss", { id: item.scheduleId });
+  invalidateAssistantSnapshot();
   return once ? `已放宽，${item.where}这一次联网不限、马上重跑；跑完回到原来的授权。` : `好的，${item.where}的授权不变。`;
 }
 
@@ -105,6 +107,7 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
       answer: value,
       remember: null,
     });
+    invalidateAssistantSnapshot(projectPath);
     const ws = (await workspaceFor(item.worktreePath)) ?? (await workspaceFor(item.helpRoot));
     let deliveryRun: RunDto;
     try {
@@ -159,6 +162,7 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
   const ws = await workspaceFor(item.worktreePath);
   if (!ws) throw new Error(`${item.where}的工作副本不在了，送不到`);
   const sent = await sendToWorkspace(projectPath, ws, null, relayText(value));
+  invalidateAssistantSnapshot(projectPath);
   return sent.mode === "mail" ? `已原话留给${item.where}的 AI，它空闲时送到` : `已接回${item.where}的对话，把你的话原样送了进去`;
 }
 
@@ -194,6 +198,7 @@ export async function addProjectKnowledge(projectPath: string, text: string): Pr
       text: line,
       reason: `项目助手对话里由你确认（${new Date().toLocaleDateString()}）`,
     });
+    invalidateAssistantSnapshot(projectPath);
   };
   const prev = knowledgeQueues.get(key) ?? Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {

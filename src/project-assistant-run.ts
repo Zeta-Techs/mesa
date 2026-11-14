@@ -11,7 +11,7 @@ import { useAppStore } from "./store";
 import { pathWithin, samePath } from "./path-utils";
 import { stepAttention } from "./run-overview";
 import { isAppCrashClose, latestRunFailure } from "./run-failure";
-import { projectAssistantLaunch } from "./project-agents";
+import { projectAssistantLaunch, resolveTaskModel, stepSlotKey, taskBindingLaunch } from "./project-agents";
 import { AGENTS } from "./types";
 import { buildProjectSnapshot, type SnapshotInput, type SnapshotRun, type SnapshotStep } from "./project-snapshot";
 import {
@@ -42,7 +42,6 @@ import { builtinTaskCatalogLines } from "./builtin-tasks";
 import { PIPELINE_TEMPLATES } from "./pipeline-presets";
 import { TRIGGER_CATALOG_LINES, workerCapabilityLines } from "./assistant-capabilities";
 import { projectDefaultProfile } from "./split-draft";
-import { resolveTaskModel } from "./project-agents";
 import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
 import { stepSessionTail } from "./session-tail";
 import type { BriefInput, BriefStep } from "./assistant-brief";
@@ -387,6 +386,17 @@ export function prefetchSnapshot(projectPath: string): void {
   void cachedSnapshot(projectPath, null).catch(() => {});
 }
 
+/** 派活、补料、回音、人工请求、记项目知识后清掉 90 秒快照缓存，紧接着追问时立刻看到最新状态 */
+export function invalidateAssistantSnapshot(projectPath?: string): void {
+  if (!projectPath) {
+    snapshotCache.clear();
+    return;
+  }
+  for (const key of snapshotCache.keys()) {
+    if (samePath(key, projectPath, IS_WINDOWS)) snapshotCache.delete(key);
+  }
+}
+
 async function cachedSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
   if (!focus) {
     const hit = snapshotCache.get(projectPath);
@@ -427,16 +437,61 @@ function firstSentence(text: string, cap = 90): string {
   return one.length > cap ? `${one.slice(0, cap)}…` : one;
 }
 
-/** 干活的连接能做到哪一步（二期）：项目默认连接的能力表、模型看不看得了图、出图模型配没配 */
-async function workerCapabilities(project: ProjectDto | null): Promise<string[]> {
+/** 干活的连接能做到哪一步（二期）：项目默认连接的能力表、模型看不看得了图、出图模型配没配，以及各步单独绑定的连接 */
+async function workerCapabilities(project: ProjectDto | null, projectPath?: string): Promise<string[]> {
+  const profiles = useAppStore.getState().profiles;
   const profile = projectDefaultProfile(project);
-  if (!profile) return workerCapabilityLines({ worker: null, headlessWrite: null, vision: null, imageGen: { model: null, helperReady: false }, tier: null });
-  const model = resolveTaskModel({
-    models: profile.models,
-    profileId: profile.id,
-    defaultProfileId: project?.defaultProfiles?.[profile.agent],
-    defaultModel: project?.defaultModels?.[profile.agent],
-  });
+  const model = profile
+    ? resolveTaskModel({
+        models: profile.models,
+        profileId: profile.id,
+        defaultProfileId: project?.defaultProfiles?.[profile.agent],
+        defaultModel: project?.defaultModels?.[profile.agent],
+      })
+    : "";
+  const root = projectPath ?? project?.path ?? null;
+  const hasStepBindings = !!root && !!project?.taskBindings && Object.keys(project.taskBindings).some((k) => k.startsWith("step:"));
+  const read = hasStepBindings ? await safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: root }), null) : null;
+  const stepEntries = (read?.config.steps ?? [])
+    .map((s, idx) => {
+      const launch = taskBindingLaunch(profiles, project?.taskBindings?.[stepSlotKey(s.name)]);
+      if (!launch) return null;
+      if (profile && launch.profileId === profile.id && launch.model === model) return null;
+      const boundProfile = profiles.find((p) => p.id === launch.profileId);
+      return {
+        n: idx + 1,
+        name: s.name,
+        agent: AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId,
+        profile: boundProfile?.name ?? launch.profileId,
+        model: launch.model,
+        gatewayId: boundProfile?.gatewayId ?? null,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x);
+
+  const stepBindings = await Promise.all(
+    stepEntries.map(async (b) => ({
+      n: b.n,
+      name: b.name,
+      agent: b.agent,
+      profile: b.profile,
+      model: b.model,
+      vision: b.model
+        ? await safe(invoke<ModelCapabilityDto[]>("model_capabilities", { models: [b.model], gatewayId: b.gatewayId }), []).then((rows) => rows[0]?.vision ?? null)
+        : null,
+    })),
+  );
+
+  if (!profile) {
+    return workerCapabilityLines({
+      worker: null,
+      headlessWrite: null,
+      vision: null,
+      imageGen: { model: null, helperReady: false },
+      tier: null,
+      stepBindings,
+    });
+  }
   const imageModel = useAppStore.getState().settings?.imageGenModel?.trim() || null;
   const [caps, vision, imageStatus] = await Promise.all([
     safe(invoke<AgentCapabilitiesDto[]>("agent_capabilities"), []),
@@ -452,15 +507,16 @@ async function workerCapabilities(project: ProjectDto | null): Promise<string[]>
     vision,
     imageGen: { model: imageModel, helperReady: imageStatus.helperReady },
     tier: cap ? { level: cap.supportTier, note: cap.tierNote } : null,
+    stepBindings,
   });
 }
 
 /** 能力清单：内置任务、我的任务、已装技能的名字和一句话（一期）；干活的连接能做到哪一步、定时与事件（二期） */
-export async function gatherCatalog(project: ProjectDto | null): Promise<string> {
+export async function gatherCatalog(project: ProjectDto | null, projectPath?: string): Promise<string> {
   const [skills, packs, worker] = await Promise.all([
     safe(invoke<SkillDto[]>("list_skills"), []),
     safe(invoke<TaskPackDto[]>("list_task_packs"), []),
-    workerCapabilities(project).catch(() => [] as string[]),
+    workerCapabilities(project, projectPath).catch(() => [] as string[]),
   ]);
   const lines = ["任务（写在「按任务」里）：", ...builtinTaskCatalogLines()];
   for (const p of packs) lines.push(`- 我的任务「${p.name}」：${firstSentence(p.description || p.steps.map((s) => s.name).join("、"))}`);
@@ -584,7 +640,7 @@ export async function askProjectAssistant(input: {
       : Promise.resolve([] as { heading: string; text: string }[]),
     inspect ? inspectExtraDirs(input.projectPath) : Promise.resolve([] as string[]),
     request ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at) : Promise.resolve(null),
-    request ? gatherCatalog(input.project) : Promise.resolve(null),
+    request ? gatherCatalog(input.project, input.projectPath) : Promise.resolve(null),
   ]);
   const promptFor = (withInspect: boolean) =>
     buildAssistantPrompt({

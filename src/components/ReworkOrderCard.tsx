@@ -4,6 +4,7 @@ import { primaryActionClass } from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import { ReworkDialog, type ReworkFields } from "./StepLoop";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
+import { invalidateAssistantSnapshot } from "../project-assistant-run";
 import { relTime } from "../rel-time";
 import { loadSkillProvides, type SkillProvides } from "../skill-slots";
 import { litKind, sendReworkRound } from "../step-round";
@@ -106,6 +107,7 @@ export default function ReworkOrderCard({
         confirm: confirmDialog,
       });
       if (!rework) return;
+      invalidateAssistantSnapshot(projectPath);
       const [wsList, health] = await Promise.all([
         invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]),
         invoke<{ ahead: number }>("workspace_health", { id: rework.toWorkspaceId }).catch(() => null),

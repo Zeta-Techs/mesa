@@ -45,3 +45,24 @@ test("没有可用连接：一句话说派不出去；定时与事件只说明�
   assert.match(TRIGGER_CATALOG_LINES[0], /你不建/);
   assert.match(TRIGGER_CATALOG_LINES.join("\n"), /新建默认只记录/);
 });
+
+test("各步单独绑定的干活连接：列在默认连接下面，没设默认连接时也保留可派步骤说明", () => {
+  const withSteps = workerCapabilityLines({
+    ...base,
+    stepBindings: [
+      { n: 2, name: "文献精读", agent: "Claude Code", profile: "Anthropic 官方", model: "claude-sonnet-4-6", vision: true },
+      { n: 4, name: "数据分析", agent: "Kimi Code", profile: "月之暗面", model: "kimi-k2", vision: false },
+    ],
+  }).join("\n");
+  assert.match(withSteps, /各步单独绑定的干活连接（交给那一步时以它为准）/);
+  assert.match(withSteps, /第 2 步「文献精读」：Claude Code · Anthropic 官方 · claude-sonnet-4-6，能看图/);
+  assert.match(withSteps, /第 4 步「数据分析」：Kimi Code · 月之暗面 · kimi-k2，不能看图/);
+
+  const noDefaultWithStep = workerCapabilityLines({
+    ...base,
+    worker: null,
+    stepBindings: [{ n: 1, name: "检索", agent: "Codex", profile: "中转", model: "gpt-5.4", vision: null }],
+  }).join("\n");
+  assert.match(noDefaultWithStep, /交给这几步照常能派/);
+  assert.match(noDefaultWithStep, /第 1 步「检索」：Codex · 中转 · gpt-5\.4$/m);
+});

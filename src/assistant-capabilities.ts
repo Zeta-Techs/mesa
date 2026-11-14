@@ -15,12 +15,34 @@ export interface WorkerCapabilityInput {
   imageGen: { model: string | null; helperReady: boolean };
   /** 支持分级：1 一等 / 2 维护级，附悬停人话 */
   tier: { level: 1 | 2; note: string } | null;
+  /** 单独绑了与项目默认不同的连接或模型的步骤（派给那一步时以它为准） */
+  stepBindings?: readonly {
+    n: number;
+    name: string;
+    agent: string;
+    profile: string;
+    model: string;
+    vision?: boolean | null;
+  }[];
+}
+
+function formatStepBindings(stepBindings: WorkerCapabilityInput["stepBindings"], header: string): string[] {
+  if (!stepBindings?.length) return [];
+  const out = [header];
+  for (const b of stepBindings) {
+    const vis = b.vision === true ? "，能看图" : b.vision === false ? "，不能看图" : "";
+    out.push(`  · 第 ${b.n} 步「${b.name}」：${b.agent} · ${b.profile} · ${b.model || "默认模型"}${vis}`);
+  }
+  return out;
 }
 
 export function workerCapabilityLines(input: WorkerCapabilityInput): string[] {
   const { worker } = input;
   if (!worker) {
-    return ["干活的连接：这个项目还没有能用的连接（派不出去，先请用户到连接页配一个，或在 Agent 分工里定项目默认）。"];
+    return [
+      "干活的连接：这个项目还没有能用的连接（派不出去，先请用户到连接页配一个，或在 Agent 分工里定项目默认）。",
+      ...formatStepBindings(input.stepBindings, "- 各步单独绑定的干活连接（交给这几步照常能派）："),
+    ];
   }
   const lines = [
     `干活的连接（派成新目标时用项目默认；交给第 N 步时用那一步自己绑的，可能不同）：${worker.agent} · ${worker.profile} · ${worker.model || "默认模型"}`,
@@ -55,6 +77,7 @@ export function workerCapabilityLines(input: WorkerCapabilityInput): string[] {
         ? `- 定时任务：这条连接能在后台写文件，可以用来建定时任务${hw.reason ? `（注意：${hw.reason}）` : ""}。`
         : `- 定时任务：这条连接不能在后台写文件（${hw.reason || "没验证过"}），定时任务选不了它，要换一条连接。`,
   );
+  lines.push(...formatStepBindings(input.stepBindings, "- 各步单独绑定的干活连接（交给那一步时以它为准）："));
   return lines;
 }
 

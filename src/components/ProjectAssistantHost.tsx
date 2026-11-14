@@ -18,6 +18,7 @@ import {
 } from "../assistant-dock";
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
+import { invalidateAssistantSnapshot } from "../project-assistant-run";
 import { pushNewGrants, pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
 import { startDeskPetHost } from "../desk-pet-host";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
@@ -81,9 +82,16 @@ export default function ProjectAssistantHost() {
     };
   }, []);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
+  const helpTick = useAppStore((s) => s.helpRefreshTick);
   useEffect(() => {
-    if (path) seeAssistantEchoes(path);
+    if (path) {
+      seeAssistantEchoes(path);
+      invalidateAssistantSnapshot(path);
+    }
   }, [path, echoTick]);
+  useEffect(() => {
+    if (path && helpTick > 0) invalidateAssistantSnapshot(path);
+  }, [path, helpTick]);
 
   useEffect(() => {
     if (!path) return;
@@ -193,6 +201,7 @@ export default function ProjectAssistantHost() {
       onDispatch={async (order) => {
         if (!path) throw new Error("项目助手已经关了");
         const result = await dispatchWorkOrder({ order, projectPath: path, project });
+        invalidateAssistantSnapshot(path);
         toast(result.note, "success");
         return result;
       }}
