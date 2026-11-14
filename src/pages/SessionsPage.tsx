@@ -36,6 +36,10 @@ import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { toast } from "../toast";
 import { IS_WINDOWS } from "../hotkeys";
 import { useClientOpen } from "../components/ClientOpenDialog";
+import {
+  ExternalTerminalDialog,
+  type ExternalTerminalTarget,
+} from "../components/ExternalTerminalDialog";
 import { openButtonLabel } from "../client-open";
 import { sessionRuntimeKey, useAppStore } from "../store";
 import { absTime, relTime } from "../rel-time";
@@ -727,6 +731,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         baseUrl: resumeBaseUrl(s),
         provider: s.provider ?? null,
         profileId: prof?.id ?? null,
+        fullAccess: Boolean(appSettings?.externalTerminalFullAccess),
       });
       await navigator.clipboard.writeText(cmd);
       // 菜单点完即关，行内反馈看不到——走 toast。Mesa 连接开的 Codex / Antigravity API 对话：
@@ -755,23 +760,30 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  /** A3. 在外部终端应用（Ghostty/iTerm/终端）中恢复会话 */
-  async function resumeExternal(s: SessionMetaDto) {
+  const [externalDialogTarget, setExternalDialogTarget] = useState<ExternalTerminalTarget | null>(
+    null,
+  );
+
+  /** A3. 在外部终端应用（Ghostty/iTerm/终端）中恢复会话（弹窗确认目录、模型与完全访问权限） */
+  async function resumeExternal(s: SessionMetaDto, initialFullAccess?: boolean) {
     try {
       const config = await invoke<{ model: string | null; effort: string | null }>("session_resume_config", {
         agent: s.agent,
         sessionId: s.sessionId,
         filePath: s.filePath,
       }).catch(() => null);
-      await invoke("resume_external_terminal", {
+      const prof = resumeProfile(s) ?? null;
+      setExternalDialogTarget({
+        kind: "resume",
         agentId: s.agent,
         sessionId: s.sessionId,
-        cwd: s.cwd ?? s.projectPath,
-        profileId: resumeProfile(s)?.id ?? null,
-        model: resumeModel(s, config?.model),
-        provider: s.provider ?? null,
-        baseUrl: resumeBaseUrl(s),
         title: tidySessionTitle(s).title,
+        initialCwd: s.cwd ?? s.projectPath,
+        profile: prof,
+        initialModel: resumeModel(s, config?.model) ?? null,
+        provider: s.provider ?? null,
+        baseUrl: resumeBaseUrl(s) ?? null,
+        initialFullAccess,
       });
     } catch (e) {
       await alertDialog(`打开外部终端失败：${e}`);
@@ -3110,6 +3122,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
               {
                 label: "在外部终端继续",
                 icon: SquareArrowOutUpRight,
+                hint: appSettings?.externalTerminalFullAccess ? "完全访问" : undefined,
                 disabled: !readable,
                 title: EXTERNAL_RESUME_HINT,
                 onSelect: () => void resumeExternal(selected),
@@ -3216,6 +3229,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
       )}
 
       {clientOpen.dialog}
+      <ExternalTerminalDialog
+        target={externalDialogTarget}
+        onClose={() => setExternalDialogTarget(null)}
+      />
 
 
       {/* 右键菜单：会话 = 整理 / 继续 / 删除三组（v3.88 分组口径不变，改走共用菜单）；项目 = 删除全部 */}
@@ -3301,7 +3318,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       {
                         label: "在外部终端继续",
                         icon: SquareArrowOutUpRight,
-                        title: "在外部终端应用里继续（同一件事的另一个出口，下面是复制命令自己粘）",
+                        hint: appSettings?.externalTerminalFullAccess ? "完全访问" : undefined,
+                        title: "选择或确认工作文件夹与完全访问权限，在外部终端应用里继续",
                         onSelect: () => void resumeExternal(ss),
                       },
                       {

@@ -3295,6 +3295,27 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             ))}
           </select>
         </Row>
+        <Row
+          label="外部终端默认完全访问"
+          hint="在外部终端打开、继续对话或复制启动命令时默认带上完全访问参数（CLI 对话内部 Shift+Tab 无法切到这一档）"
+        >
+          <Toggle
+            label="外部终端默认完全访问"
+            checked={Boolean(settings?.externalTerminalFullAccess)}
+            onChange={(checked) => {
+              if (!checked) {
+                patch({ externalTerminalFullAccess: false });
+                return;
+              }
+              void confirmDialog(
+                "开启「外部终端默认完全访问」？\n\n开启后，从连接页打开外部终端、从对话页或项目栏「在外部终端继续」以及复制终端启动命令时，默认都会带上完全访问启动参数——CLI 删文件、装软件不会先问你。\n\n如果只是偶尔需要，也可以保持关闭，只在单次菜单里点「在外部终端打开/继续（完全访问）」。",
+                { danger: true, confirmText: "默认完全访问" },
+              ).then((ok) => {
+                if (ok) patch({ externalTerminalFullAccess: true });
+              });
+            }}
+          />
+        </Row>
 
         <CustomRuntimeBlock onError={setError} onNotice={setNotice} />
       </Section>

@@ -370,6 +370,8 @@ pub struct AppSettingsDto {
     pub global_conflict_ack: Option<Vec<String>>,
     /// 会话页「⇗ 外部恢复」使用的终端应用（KNOWN_EXTERNAL_TERMINALS）；None/auto = 自动探测
     pub external_terminal: Option<String>,
+    /// 外部终端打开 / 恢复对话 / 复制启动命令是否默认附带「完全访问」参数（CLI 对话内部 Shift+Tab 无法切到这一档）；默认 false
+    pub external_terminal_full_access: Option<bool>,
     /// 精确注意力标记（agent hooks 桥接）：agent id → 开关。键缺失 = 关。
     /// 开/关由 hooks::set_hooks_attention 统一完成（写各家 hooks 配置 + 逐键记本字段），勿单独 patch
     pub hooks_attention: Option<BTreeMap<String, bool>>,
@@ -1058,6 +1060,7 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 "auto".into()
             }
         }),
+        external_terminal_full_access: Some(s.external_terminal_full_access.unwrap_or(false)),
         // 旧字段迁移：claude_hooks_attention=true 且新 map 无 claude-code 键 → 视为开
         hooks_attention: Some({
             let mut map = s.hooks_attention.unwrap_or_default();
@@ -1267,6 +1270,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.external_terminal.is_some() {
         cur.external_terminal = patch.external_terminal;
+    }
+    if patch.external_terminal_full_access.is_some() {
+        cur.external_terminal_full_access = patch.external_terminal_full_access;
     }
     // 整图覆盖（同 ai_profiles 口径）；开/关走 hooks::set_hooks_attention 专用命令
     // （那边用 set_hooks_attention_entry 逐键读-改-写），勿单独 patch 本字段
@@ -2387,9 +2393,19 @@ mod tests {
 
     #[test]
     fn external_terminal_defaults_to_auto_and_rejects_unknown() {
-        // 缺失 → auto
+        // 缺失 → auto，默认不开启外部终端完全访问
         let full = with_defaults(AppSettingsDto::default());
         assert_eq!(full.external_terminal.as_deref(), Some("auto"));
+        assert_eq!(full.external_terminal_full_access, Some(false));
+        let mut cur = AppSettingsDto::default();
+        merge(
+            &mut cur,
+            AppSettingsDto {
+                external_terminal_full_access: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(with_defaults(cur).external_terminal_full_access, Some(true));
         // 未知值 → auto；已知值保留
         let full = with_defaults(AppSettingsDto {
             external_terminal: Some("warp".into()),

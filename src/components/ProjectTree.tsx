@@ -144,6 +144,10 @@ import { consultCaret, liveConsultState, sidebarConsults, type ConsultListItem }
 import type { RailSearchChat, RailSearchProject } from "../rail-search";
 import { usePolling } from "../polling";
 import { useClientOpen } from "./ClientOpenDialog";
+import {
+  ExternalTerminalDialog,
+  type ExternalTerminalTarget,
+} from "./ExternalTerminalDialog";
 import { openButtonLabel } from "../client-open";
 
 const GROUPS_KEY = "ccode.projectTreeGroups";
@@ -690,8 +694,16 @@ export default function ProjectTree({
     if (next === shown || (!next && !s.customTitle)) return;
     void writeChatMeta(s, { customTitle: next || null });
   }
-  /** 在外部终端继续：连接 / 模型的挑法同对话页与内嵌接回，尊重已停用连接与会话原模型，窗口标题带上对话名 */
-  async function resumeExternalChat(s: SessionMetaDto, project: ProjectDto | null) {
+  const [externalDialogTarget, setExternalDialogTarget] = useState<ExternalTerminalTarget | null>(
+    null,
+  );
+
+  /** 在外部终端继续：连接 / 模型的挑法同对话页与内嵌接回，打开确认弹窗可切换工作文件夹与完全访问权限 */
+  async function resumeExternalChat(
+    s: SessionMetaDto,
+    project: ProjectDto | null,
+    initialFullAccess?: boolean,
+  ) {
     try {
       const hidden = useAppStore.getState().settings?.hiddenProfiles;
       const [run, config, codexStatus] = await Promise.all([
@@ -750,15 +762,17 @@ export default function ProjectTree({
         /* 损坏的本地记忆不阻断恢复 */
       }
       const model = resumeModelChoice(config?.model, profile) ?? fallbackModel ?? profile?.models?.[0] ?? null;
-      await invoke("resume_external_terminal", {
+      setExternalDialogTarget({
+        kind: "resume",
         agentId: s.agent,
         sessionId: s.sessionId,
-        cwd: s.cwd ?? s.projectPath,
-        profileId: profile?.id ?? null,
-        model,
+        title: tidySessionTitle(s).title,
+        initialCwd: s.cwd ?? s.projectPath,
+        profile: profile ?? null,
+        initialModel: model,
         provider: s.provider ?? null,
         baseUrl: profile?.baseUrl ?? null,
-        title: tidySessionTitle(s).title,
+        initialFullAccess,
       });
     } catch (e) {
       toast(`打开外部终端失败：${String(e)}`, "error");
@@ -896,7 +910,8 @@ export default function ProjectTree({
       {
         label: "在外部终端继续",
         icon: SquareArrowOutUpRight,
-        title: "用这段对话原来的连接，在设置里选的外部终端（Ghostty / iTerm2 / 终端）里接着聊",
+        hint: useAppStore.getState().settings?.externalTerminalFullAccess ? "完全访问" : undefined,
+        title: "选择或确认工作文件夹与完全访问权限，在设置里选的外部终端里接着聊",
         onSelect: () => void resumeExternalChat(s, project),
       },
       ...clientOpen.sessionClients(s.agent).map((c) => ({
@@ -2647,6 +2662,10 @@ export default function ProjectTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-rail-search-open={searchOpen || undefined}>
       {clientOpen.dialog}
+      <ExternalTerminalDialog
+        target={externalDialogTarget}
+        onClose={() => setExternalDialogTarget(null)}
+      />
       {/* 顶边 6px、底边 12px 渐隐：往下滚时上面的行淡出，不在上面的导航下面硬切半行，底下的行也不撞上工具栏分隔线；
           底部留 12px 内边距，滚到底时最后一行落在渐隐区上面。分节标签（置顶 / 其他打开的 / 项目）的左缘对齐上面导航图标的左缘（16px）。
           键盘（2026-10-24）：光标在树里时 ↑↓ / Home / End 走行，回车打开，← → 收起 / 展开课题，在对话上按 ← 回到它的课题 */}

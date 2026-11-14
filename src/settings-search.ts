@@ -59,7 +59,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "字体", "字号", "字体大小", "等宽字体", "终端字体", "终端字号", "终端渲染",
       "渲染器", "画布", "GPU", "序列化", "性能", "卡顿", "流畅",
       "调色板", "终端配色", "滚动缓冲", "回滚", "scrollback", "底色", "预览",
-      "外部终端", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
+      "外部终端", "外部终端权限", "完全访问", "跳过确认", "终端应用", "iTerm", "Ghostty", "PowerShell", "cmd",
       "shell", "内置终端 shell", "pwsh", "PowerShell 7", "Git Bash", "bash", "zsh", "fish",
       "自定义运行时", "运行时", "命令",
       "terminal", "font", "runtime",

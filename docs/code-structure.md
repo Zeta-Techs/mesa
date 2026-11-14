@@ -225,6 +225,7 @@ rel-time.ts                # 相对时间白话 relTime（刚刚/N 分钟前/N �
                              #   模块级缓存）、点开走 OfficePreviewModal（displayName 用原名、↑↓ 翻、右下一个后续动作）、文字就地展开；
                              #   从输入框打开的「收起」接收继续，⌘K 打开的「完成」即停止
   components/ClientOpenDialog.tsx # useClientOpen 钩子 + 确认层：对话页底栏/右键菜单与工作台项目行共用；预检全过直接打开，有 note/warn/fix/block 才弹层（Codex 缺渠道「写入并打开」可选连接，Claude 渠道会变提示，被拦只给原因/下载入口）
+  components/ExternalTerminalDialog.tsx # 外部终端打开/继续弹窗（ProfilesPage / SessionsPage / ProjectTree 共用）：选工作文件夹（最近项目一键点选 + 系统目录浏览）、启动模型与「默认权限 / 完全访问」档位（可勾选记住为默认），底栏一键打开外部终端或复制带文件夹与权限的启动/继续命令
 components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.askAiReq）：选 Agent/连接/模型，可勾「设为默认」（记忆存取在 ask-ai.ts）；beginAskAi = 三处共用入口（ScheduleSection / ProjectGroup / ProjectFilesView），先拼项目上下文包（composeLaunchPrompt），上次的选择仍有效就直连进终端不弹窗；startProjectChat 只委托 quick-chat-launch 的 openProjectChat（侧栏项目行「＋」与项目页「＋ 新对话」共用）
   components/FileTypeMark.tsx # 文件类型线条图标：FileTypeGlyph（Lucide 线条 + 识别色经 --file-glyph 传入，浅色主题由 .ccode-file-glyph 压暗；
                              #   附件卡 / 文件选择窗 / 资源列表 / 改动面板按 size 复用）+ FileTypeMark（14px 槽，与文件夹图标同宽对齐）

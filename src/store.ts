@@ -201,6 +201,8 @@ export interface AppSettings {
   globalConflictAck?: string[];
   /** 对话页「⇗ 外部恢复」的终端应用；auto/undefined = 按优先级探测 */
   externalTerminal?: string;
+  /** 外部终端打开、继续对话或复制启动命令是否默认附带「完全访问」启动参数 */
+  externalTerminalFullAccess?: boolean;
   /** 精确注意力标记（agent hooks 桥接）：agent id → 开关，键缺失 = 关；
       开/关走专用命令 set_hooks_attention（写各家 hooks 配置），勿单独 patch */
   hooksAttention?: Record<string, boolean>;

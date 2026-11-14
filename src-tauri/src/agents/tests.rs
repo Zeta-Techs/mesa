@@ -3173,6 +3173,7 @@ fn external_plan_reuses_profile_injections_without_putting_key_in_args() {
         Some("session-1"),
         None,
         None,
+        false,
     )
     .unwrap();
     assert!(args.iter().any(|a| a == "model_provider=\"ccode\""));
@@ -3211,11 +3212,67 @@ fn external_digest_locks_fixed_session_agents_to_a_new_session_id() {
         None,
         None,
         Some("读取简报继续"),
+        false,
     )
     .unwrap();
     let pos = args.iter().position(|a| a == "--session-id").unwrap();
     assert!(!args[pos + 1].is_empty());
     assert_eq!(args.last().map(String::as_str), Some("读取简报继续"));
+}
+
+#[test]
+fn external_launch_args_applies_full_access_flags_across_agents() {
+    let mut agy_prof = profile("agy", None);
+    agy_prof.account_type = crate::profiles::AccountType::Official;
+    agy_prof.models = vec!["claude-sonnet-4-6".into()];
+    let (agy_args, _, _) = external_launch_args(
+        "agy",
+        &agy_prof,
+        None,
+        Some("claude-sonnet-4-6"),
+        Some("conv-1"),
+        None,
+        None,
+        true,
+    )
+    .unwrap();
+    assert!(agy_args.iter().any(|a| a == "--dangerously-skip-permissions"));
+    assert!(agy_args.windows(2).any(|w| w == ["--conversation", "conv-1"]));
+
+    let mut codex_prof = profile("codex", Some("https://relay.example.com/v1"));
+    codex_prof.models = vec!["gpt-5.4".into()];
+    let (codex_args, _, _) = external_launch_args(
+        "codex",
+        &codex_prof,
+        Some("sk-secret".into()),
+        Some("gpt-5.4"),
+        None,
+        None,
+        None,
+        true,
+    )
+    .unwrap();
+    assert!(!codex_args.windows(2).any(|w| w == ["-s", "workspace-write"]));
+    assert!(codex_args.windows(2).any(|w| w == ["-a", "never"]));
+    assert!(codex_args.windows(2).any(|w| w == ["-s", "danger-full-access"]));
+
+    let mut claude_prof = profile("claude-code", Some("https://relay.example.com"));
+    claude_prof.models = vec!["sonnet-custom".into()];
+    let (claude_args, _, _) = external_launch_args(
+        "claude-code",
+        &claude_prof,
+        Some("sk-secret".into()),
+        Some("sonnet-custom"),
+        None,
+        None,
+        Some("读取简报继续"),
+        true,
+    )
+    .unwrap();
+    assert!(claude_args
+        .windows(2)
+        .any(|w| w == ["--permission-mode", "bypassPermissions"]));
+    assert_eq!(claude_args.last().map(String::as_str), Some("读取简报继续"));
 }
 
 #[cfg(unix)]
@@ -3851,14 +3908,19 @@ fn agy_official_model_mapping_and_helper_launch_formatting() {
 
     let unix_helper = std::path::Path::new("/Users/demo/Library/Application Support/ccode/bin/mesa_helper");
     assert_eq!(
-        format_helper_launch_command_for(false, unix_helper, "prof-1", None, &[]),
+        format_helper_launch_command_for(false, unix_helper, "prof-1", false, None, &[]),
         "'/Users/demo/Library/Application Support/ccode/bin/mesa_helper' launch prof-1"
+    );
+    assert_eq!(
+        format_helper_launch_command_for(false, unix_helper, "prof-1", true, None, &[]),
+        "'/Users/demo/Library/Application Support/ccode/bin/mesa_helper' launch --full-access prof-1"
     );
     assert_eq!(
         format_helper_launch_command_for(
             false,
             unix_helper,
             "prof-1",
+            false,
             Some("/Users/demo/my proj"),
             &["--conversation".to_string(), "conv-42".to_string()],
         ),
@@ -3867,23 +3929,29 @@ fn agy_official_model_mapping_and_helper_launch_formatting() {
 
     let win_helper = std::path::Path::new(r"C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe");
     assert_eq!(
-        format_helper_launch_command_for(true, win_helper, "prof-1", None, &[]),
+        format_helper_launch_command_for(true, win_helper, "prof-1", false, None, &[]),
         r"& 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' 'prof-1'"
+    );
+    assert_eq!(
+        format_helper_launch_command_for(true, win_helper, "prof-1", true, None, &[]),
+        r"& 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' --full-access 'prof-1'"
     );
     assert_eq!(
         format_helper_launch_command_for(
             true,
             win_helper,
             "prof-1",
+            false,
             Some(r"C:\work\proj"),
             &["--conversation".to_string(), "conv-42".to_string()],
         ),
         r"Set-Location 'C:\work\proj'; & 'C:\Users\demo\AppData\Roaming\ccode\bin\mesa_helper.exe' 'launch' 'prof-1' --conversation 'conv-42'"
     );
 
-    let (m, r, pass) = parse_helper_extra_args(
+    let (fa, m, r, pass) = parse_helper_extra_args(
         "agy",
         &[
+            "--full-access".into(),
             "--".into(),
             "--model".into(),
             "gemini-2.5-pro".into(),
@@ -3893,7 +3961,13 @@ fn agy_official_model_mapping_and_helper_launch_formatting() {
             "hi".into(),
         ],
     );
+    assert_eq!(fa, Some(true));
     assert_eq!(m.as_deref(), Some("gemini-2.5-pro"));
     assert_eq!(r.as_deref(), Some("conv-99"));
     assert_eq!(pass, vec!["--conversation", "conv-99", "-p", "hi"]);
+
+    let (fa_off, _, _, pass_off) =
+        parse_helper_extra_args("agy", &["--no-full-access".into(), "--conversation".into(), "conv-1".into()]);
+    assert_eq!(fa_off, Some(false));
+    assert_eq!(pass_off, vec!["--conversation", "conv-1"]);
 }

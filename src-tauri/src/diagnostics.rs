@@ -445,6 +445,7 @@ fn feature_flags() -> Value {
         "notificationsEnabled": settings.notifications_enabled,
         "hooksAttention": settings.hooks_attention,
         "externalTerminal": settings.external_terminal,
+        "externalTerminalFullAccess": settings.external_terminal_full_access,
         "hotkeyPaletteEnabled": settings.hotkey_palette.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyHideChromeEnabled": settings.hotkey_hide_chrome.as_deref().is_some_and(|v| !v.is_empty()),
         "hotkeyNewChatEnabled": settings.hotkey_new_chat.as_deref().is_some_and(|v| !v.is_empty()),

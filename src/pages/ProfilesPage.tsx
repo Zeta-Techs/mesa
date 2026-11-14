@@ -101,6 +101,10 @@ import {
 } from "../tab-drag";
 import { HoverTip, useHoverTip } from "../components/HoverTip";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
+import {
+  ExternalTerminalDialog,
+  type ExternalTerminalTarget,
+} from "../components/ExternalTerminalDialog";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { Modal } from "../components/Modal";
 import PagePanel, { PAGE_PANEL_SLIDE_MS } from "../components/PagePanel";
@@ -4083,52 +4087,30 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     void openChatWithProfile(profile);
   }
 
-  async function useExternalWith(profile: Profile) {
-    let lastLaunch: Record<string, unknown> = {};
-    let lastCwd = "";
-    try {
-      const parsed = JSON.parse(localStorage.getItem("ccode.lastLaunch") ?? "{}") as Record<string, unknown>;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        lastLaunch = parsed;
-        if (typeof parsed.cwd === "string") lastCwd = parsed.cwd.trim();
-      }
-    } catch {
-      /* 损坏的本地记忆不阻断外部启动 */
-    }
-    const picked = await open({
-      directory: true,
-      multiple: false,
-      ...(lastCwd ? { defaultPath: lastCwd } : {}),
+  const [externalDialogTarget, setExternalDialogTarget] = useState<ExternalTerminalTarget | null>(
+    null,
+  );
+
+  function useExternalWith(profile: Profile, initialFullAccess?: boolean) {
+    setExternalDialogTarget({
+      kind: "new",
+      profile,
+      initialFullAccess,
     });
-    const cwd = typeof picked === "string" ? picked.trim() : "";
-    if (!cwd) return;
-    try {
-      localStorage.setItem("ccode.lastLaunch", JSON.stringify({ ...lastLaunch, cwd }));
-    } catch {
-      /* 存储受限不阻断外部启动 */
-    }
-    try {
-      await invoke("new_external_terminal", {
-        agentId: profile.agent,
-        cwd,
-        profileId: profile.id,
-        model: profile.models[0] ?? null,
-      });
-      setNotice(`已在外部终端启动「${profile.name}」`);
-      setTimeout(() => setNotice(null), 4000);
-    } catch (e) {
-      setError(String(e));
-    }
   }
 
   async function copyTerminalLaunchCommand(profile: Profile) {
     try {
+      const useFullAccess = Boolean(settings?.externalTerminalFullAccess);
       const cmd = await invoke<string>("profile_terminal_command", {
         profileId: profile.id,
+        fullAccess: useFullAccess,
       });
       await navigator.clipboard.writeText(cmd);
       toast(
-        "已复制终端启动命令（运行时经 mesa_helper 现取密钥，不落明文；Mesa 关着也能在任意终端直接跑）",
+        useFullAccess
+          ? "已复制终端启动命令（含 --full-access 完全访问；运行时经 mesa_helper 现取密钥，不落明文）"
+          : "已复制终端启动命令（运行时经 mesa_helper 现取密钥，不落明文；Mesa 关着也能在任意终端直接跑）",
         "success",
       );
     } catch (e) {
@@ -5372,8 +5354,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void useExternalWith(profile)}
-                                title="外部终端：用这个连接在外部终端新开会话"
+                                onClick={() => useExternalWith(profile)}
+                                title={
+                                  settings?.externalTerminalFullAccess
+                                    ? "外部终端：选择工作文件夹与权限，在外部终端新开会话（当前默认完全访问）"
+                                    : "外部终端：选择工作文件夹与权限，在外部终端新开会话"
+                                }
                                 aria-label={`外部终端打开：${profile.name}`}
                                 className={`flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                               >
@@ -5699,6 +5685,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               onSelect: () => void onPreviewLaunchPlan(rowMenu.profile),
             },
             {
+              label: "在外部终端打开…",
+              icon: SquareArrowOutUpRight,
+              disabled: !!rowMenu.profile.slotMissing,
+              title: "选择工作文件夹、启动模型与完全访问权限，在外部终端新开会话",
+              onSelect: () => useExternalWith(rowMenu.profile),
+            },
+            {
               label: "复制终端启动命令",
               icon: Terminal,
               disabled: !!rowMenu.profile.slotMissing,
@@ -5957,6 +5950,22 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
           }}
         />
       )}
+      <ExternalTerminalDialog
+        target={externalDialogTarget}
+        onClose={() => setExternalDialogTarget(null)}
+        onLaunched={({ fullAccess }) => {
+          const name =
+            externalDialogTarget?.kind === "new" ? externalDialogTarget.profile.name : "";
+          if (name) {
+            setNotice(
+              fullAccess
+                ? `已在外部终端启动「${name}」（完全访问）`
+                : `已在外部终端启动「${name}」`,
+            );
+            setTimeout(() => setNotice(null), 4000);
+          }
+        }}
+      />
     </div>
   );
 }

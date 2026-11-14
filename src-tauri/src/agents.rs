@@ -4645,6 +4645,7 @@ fn external_launch_args(
     resume_session_id: Option<&str>,
     resume_provider: Option<&str>,
     prompt: Option<&str>,
+    full_access: bool,
 ) -> Result<(Vec<String>, Vec<(String, String)>, Vec<String>), String> {
     validate_launch_compatibility(profile, model)?;
     // 没带首条指令也走 launch_plan_with_prompt：交互启动的环境（关更新提示）只在那里加
@@ -4659,6 +4660,10 @@ fn external_launch_args(
     if let (true, Some(sid), Some(_)) = (agent_id == "codex", resume_session_id, codex_foreign_thread_provider(resume_provider)) {
         let thread_model = crate::sessions::codex_thread_model(sid);
         codex_resume_on_thread_provider(&mut plan, &mut extra, resume_provider, thread_model.as_deref());
+    }
+    if full_access {
+        plan.args = permission_launch_args(agent_id, &plan.args, "full")
+            .ok_or_else(|| format!("{agent_id} 不支持完全访问启动参数"))?;
     }
     let mut args = Vec::new();
     if let Some(session_id) = resume_session_id {
@@ -4697,6 +4702,7 @@ fn open_external_profiled(
     resume_session_id: Option<&str>,
     prompt: Option<&str>,
     title: Option<&str>,
+    full_access: Option<bool>,
 ) -> Result<(), String> {
     let mut profile = external_profile(store, agent_id, profile_id, provider, base_url, model)?;
     let selected_model = model
@@ -4707,6 +4713,11 @@ fn open_external_profiled(
     crate::combo::apply_to_profile(&mut profile, selected_model.as_deref());
     let key = crate::profiles::get_key_for_profile(&profile)?;
     ensure_launch_credentials(&profile, key.as_deref())?;
+    let use_full_access = full_access.unwrap_or_else(|| {
+        crate::settings::read_current()
+            .external_terminal_full_access
+            .unwrap_or(false)
+    });
     let (args, env, env_remove) = external_launch_args(
         agent_id,
         &profile,
@@ -4715,6 +4726,7 @@ fn open_external_profiled(
         resume_session_id,
         provider,
         prompt,
+        use_full_access,
     )?;
     let binary =
         resolve_binary(binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?)
@@ -5139,12 +5151,16 @@ pub(crate) fn format_helper_launch_command_for(
     is_windows: bool,
     helper: &Path,
     profile_id: &str,
+    full_access: bool,
     cwd: Option<&str>,
     extra_args: &[String],
 ) -> String {
     let helper_str = helper.to_string_lossy();
-    let mut invoke_args: Vec<&str> = Vec::with_capacity(2 + extra_args.len());
+    let mut invoke_args: Vec<&str> = Vec::with_capacity(3 + extra_args.len());
     invoke_args.push("launch");
+    if full_access {
+        invoke_args.push("--full-access");
+    }
     invoke_args.push(profile_id);
     for a in extra_args {
         invoke_args.push(a.as_str());
@@ -5181,6 +5197,9 @@ pub(crate) fn format_helper_launch_command_for(
 pub fn profile_terminal_command(
     store: tauri::State<'_, ProfileStore>,
     profile_id: String,
+    full_access: Option<bool>,
+    cwd: Option<String>,
+    model: Option<String>,
 ) -> Result<String, String> {
     let profile = store.get(&profile_id)?;
     if profile.slot_missing {
@@ -5189,12 +5208,25 @@ pub fn profile_terminal_command(
     let helper = crate::codex_continuity::stable_helper_for("launch").ok_or_else(|| {
         "未找到随包 mesa_helper（开发版请先构建 `cargo build --bin mesa_helper`）".to_string()
     })?;
+    let use_full_access = full_access.unwrap_or_else(|| {
+        crate::settings::read_current()
+            .external_terminal_full_access
+            .unwrap_or(false)
+    });
+    let mut extra: Vec<String> = Vec::new();
+    if let Some(m) = model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if profile.models.first().map(String::as_str) != Some(m) {
+            extra.push("--model".into());
+            extra.push(m.to_string());
+        }
+    }
     Ok(format_helper_launch_command_for(
         cfg!(windows),
         &helper,
         &profile.id,
-        None,
-        &[],
+        use_full_access,
+        cwd.as_deref(),
+        &extra,
     ))
 }
 
@@ -5210,8 +5242,14 @@ pub fn session_resume_command(
     base_url: Option<String>,
     provider: Option<String>,
     profile_id: Option<String>,
+    full_access: Option<bool>,
 ) -> Result<String, String> {
     let binary = binary_for(agent_id).ok_or_else(|| format!("未知 agent: {agent_id}"))?;
+    let use_full_access = full_access.unwrap_or_else(|| {
+        crate::settings::read_current()
+            .external_terminal_full_access
+            .unwrap_or(false)
+    });
     let mut extra = resume_extra_args(agent_id, base_url.as_deref(), provider.as_deref());
     // 外面续 Codex 老对话：不带 `-m` 发的是全局默认模型，换过默认连接后老渠道报「模型不存在」
     if agent_id == "codex" {
@@ -5234,11 +5272,17 @@ pub fn session_resume_command(
                         cfg!(windows),
                         &helper,
                         pid,
+                        use_full_access,
                         Some(cwd),
                         &resume,
                     ));
                 }
             }
+        }
+    }
+    if use_full_access {
+        if let Some(with_perm) = permission_launch_args(agent_id, &extra, "full") {
+            extra = with_perm;
         }
     }
     #[cfg(target_os = "windows")]
@@ -5253,25 +5297,39 @@ pub fn session_resume_command(
     resume_command_line_with(agent_id, session_id, cwd, binary, &extra)
 }
 
-/// 解析 `mesa_helper launch <连接> [-- <额外参数…>]` 的额外参数：
-/// 提取用户显式指定的 `--model/-m` 与恢复会话 ID，其余参数原样透传给底层 CLI。
+/// 解析 `mesa_helper launch [--full-access|--no-full-access] <连接> [-- <额外参数…>]` 的额外参数：
+/// 提取 `--` 之前的 `--full-access`/`--no-full-access` 开关，以及用户显式指定的 `--model/-m` 与恢复会话 ID，其余参数原样透传给底层 CLI。
 pub(crate) fn parse_helper_extra_args(
     agent_id: &str,
     extra_args: &[String],
-) -> (Option<String>, Option<String>, Vec<String>) {
-    let args = if extra_args.first().map(String::as_str) == Some("--") {
-        &extra_args[1..]
-    } else {
-        extra_args
-    };
+) -> (Option<bool>, Option<String>, Option<String>, Vec<String>) {
+    let mut extra_full_access: Option<bool> = None;
     let mut user_model: Option<String> = None;
     let mut user_resume: Option<String> = None;
     let mut passthrough: Vec<String> = Vec::new();
+    let mut after_sep = false;
     let mut i = 0;
-    while i < args.len() {
-        let cur = args[i].as_str();
-        if (cur == "--model" || cur == "-m") && i + 1 < args.len() {
-            let m = args[i + 1].trim();
+    while i < extra_args.len() {
+        let cur = extra_args[i].as_str();
+        if !after_sep {
+            if cur == "--" {
+                after_sep = true;
+                i += 1;
+                continue;
+            }
+            if cur == "--full-access" {
+                extra_full_access = Some(true);
+                i += 1;
+                continue;
+            }
+            if cur == "--no-full-access" {
+                extra_full_access = Some(false);
+                i += 1;
+                continue;
+            }
+        }
+        if (cur == "--model" || cur == "-m") && i + 1 < extra_args.len() {
+            let m = extra_args[i + 1].trim();
             if !m.is_empty() {
                 user_model = Some(m.to_string());
             }
@@ -5284,8 +5342,8 @@ pub(crate) fn parse_helper_extra_args(
             continue;
         }
         if agent_id == "agy" {
-            if cur == "--conversation" && i + 1 < args.len() {
-                let sid = args[i + 1].trim();
+            if cur == "--conversation" && i + 1 < extra_args.len() {
+                let sid = extra_args[i + 1].trim();
                 if !sid.is_empty() {
                     user_resume = Some(sid.to_string());
                 }
@@ -5297,17 +5355,17 @@ pub(crate) fn parse_helper_extra_args(
                 user_resume = Some(sid.to_string());
             }
         } else if matches!(cur, "--resume" | "-r" | "-s" | "-S" | "--session-id")
-            && i + 1 < args.len()
+            && i + 1 < extra_args.len()
         {
-            let sid = args[i + 1].trim();
+            let sid = extra_args[i + 1].trim();
             if !sid.is_empty() {
                 user_resume = Some(sid.to_string());
             }
         }
-        passthrough.push(args[i].clone());
+        passthrough.push(extra_args[i].clone());
         i += 1;
     }
-    (user_model, user_resume, passthrough)
+    (extra_full_access, user_model, user_resume, passthrough)
 }
 
 fn find_temp_agy_settings_arg(args: &[String]) -> Option<PathBuf> {
@@ -5322,21 +5380,42 @@ fn find_temp_agy_settings_arg(args: &[String]) -> Option<PathBuf> {
         })
 }
 
-/// `mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]`：
+/// `mesa_helper launch [--full-access|--no-full-access] <连接 ID 或名称> [-- <传给 CLI 的参数…>]`：
 /// 在本机进程内从 0600 `keys.json` 现取密钥并生成会话级 `--settings`（不打印、不落明文），直接以前台交互方式拉起 CLI。
 pub fn helper_launch_cli(args: &[String]) -> i32 {
     if args.first().map(String::as_str) == Some("--probe") {
         println!("ok");
         return 0;
     }
-    let Some(target) = args.first().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
-        eprintln!("用法：mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]");
+    const USAGE: &str =
+        "用法：mesa_helper launch [--full-access|--no-full-access] <连接 ID 或名称> [-- <传给 CLI 的参数…>]";
+    let mut lead_full_access: Option<bool> = None;
+    let mut target_idx = 0;
+    while target_idx < args.len() {
+        match args[target_idx].trim() {
+            "-h" | "--help" => {
+                eprintln!("{USAGE}");
+                return 0;
+            }
+            "--full-access" => {
+                lead_full_access = Some(true);
+                target_idx += 1;
+            }
+            "--no-full-access" => {
+                lead_full_access = Some(false);
+                target_idx += 1;
+            }
+            other if other.starts_with('-') => {
+                eprintln!("未知参数：{other}\n{USAGE}");
+                return 2;
+            }
+            _ => break,
+        }
+    }
+    let Some(target) = args.get(target_idx).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+        eprintln!("{USAGE}");
         return 2;
     };
-    if matches!(target, "-h" | "--help") {
-        eprintln!("用法：mesa_helper launch <连接 ID 或名称> [-- <传给 CLI 的参数…>]");
-        return 0;
-    }
     let store = match crate::profiles::ProfileStore::new() {
         Ok(s) => s,
         Err(e) => {
@@ -5373,7 +5452,13 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
         }
     };
     let agent_id = profile.agent.clone();
-    let (user_model, user_resume, passthrough) = parse_helper_extra_args(&agent_id, &args[1..]);
+    let (extra_full_access, user_model, user_resume, passthrough) =
+        parse_helper_extra_args(&agent_id, &args[target_idx + 1..]);
+    let use_full_access = extra_full_access.or(lead_full_access).unwrap_or_else(|| {
+        crate::settings::read_current()
+            .external_terminal_full_access
+            .unwrap_or(false)
+    });
     if let Some(ref m) = user_model {
         if profile.account_type != crate::profiles::AccountType::Official
             && !profile.models.iter().any(|x| x == m)
@@ -5402,6 +5487,7 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
         None,
         None,
         None,
+        use_full_access,
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -5522,6 +5608,7 @@ pub async fn resume_external_terminal(
     provider: Option<String>,
     base_url: Option<String>,
     title: Option<String>,
+    full_access: Option<bool>,
 ) -> Result<(), String> {
     open_external_off_main(app, move |store| {
         open_external_profiled(
@@ -5535,6 +5622,7 @@ pub async fn resume_external_terminal(
             Some(&session_id),
             None,
             title.as_deref(),
+            full_access,
         )
     })
     .await
@@ -5548,6 +5636,7 @@ pub async fn new_external_terminal(
     cwd: String,
     profile_id: String,
     model: Option<String>,
+    full_access: Option<bool>,
 ) -> Result<(), String> {
     open_external_off_main(app, move |store| {
         open_external_profiled(
@@ -5561,6 +5650,7 @@ pub async fn new_external_terminal(
             None,
             None,
             None,
+            full_access,
         )
     })
     .await
@@ -5646,6 +5736,7 @@ pub async fn digest_external_terminal(
     prompt: String,
     profile_id: Option<String>,
     model: Option<String>,
+    full_access: Option<bool>,
 ) -> Result<(), String> {
     open_external_off_main(app, move |store| {
         open_external_profiled(
@@ -5659,6 +5750,7 @@ pub async fn digest_external_terminal(
             None,
             Some(&prompt),
             None,
+            full_access,
         )
     })
     .await
