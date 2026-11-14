@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-15 · 聊天层 M▁ 品牌标识五态物理编舞与正在执行步骤动作合一
+
+用户提出聊天层品牌标识在「思考中、写文件」等状态下的显示需要更有设计感，审阅对比稿（`docs/design-chat-brand-status-mockup.html`）后拍板按推荐方向 A（光标编舞 + 动作合一）执行。定：① 提炼共享字标 `MesaStatusMark`，摒弃旋转圆圈或花哨特效，只用 `M` 与基线琥珀光标演绎五种物理直觉动作——`thinking` 柔光正弦呼吸、`read` 微暗导轨往返扫描、`write` 三拍离散打字步进、`cmd` 终端双节拍脉冲、`steady` 等你确认满格实心琥珀锁定；② 消除原先「工具落盘后上面一行闪字、下面孤零零空挂一个无字 `M▁`」的上下割裂：工具已落盘进 `ConversationView` 且正在执行（或等你确认）时，`M▁` 直接接管该顶层步骤行的图标位领衔主演（`suppressLiveMark` 保证全屏恒最多一处 `M▁`），底部不再空挂重复行；③ 旁路与思考状态行（`MesaStatusLead` + `chatStatusParts`）按杂志级排版拆分为动词、等宽文件名虚下划线、命令 8% 微胶囊、`·` 思考摘要与 `+N −M` 增删行数，状态切换采用 190ms 纵轴翻牌过渡。细则 design-system.md「生成中那一行」。
+
 ### 2026-11-15 · 项目 Agent 分工专属绑定分层筛选面板与思考档位 / 权限预设
 
 用户指出项目 `Agent 分工` 的专属绑定单列「连接×模型」展开太长，要求借鉴聊天层的筛选结构，并支持在专属绑定里提前设好每个配置的权限和思考档位；审阅设计对照稿（`docs/design-agent-binding-picker-mockup.html`）后拍板按推荐方案 A 执行。定：① `projects.task_bindings` 槽对象扩为 `{profile, model?, effort?, permissionTier?}`，后端按槽职责校验（`assistant` 忽略 `effort`；`chat` / `reader` 接四档权限，`step:*` 接写树三档，`discuss` / `assistant` 只读槽忽略权限预设）；② 专属绑定与科研步骤卡片改用 `SlotBindingPopover` 分层面板（顶部「跟随项目默认」→ 两列品牌标 Agent 筛选 → 多连接胶囊 → 可搜模型列表 → 底部按 `combo_surface` 动态挂载琥珀 `M▁` 思考强度标尺与按槽位匹配的权限预设，选「完全访问」须过 `confirmPermissionChoice` 二次确认），卡片第二行以 `.ccode-preset-chip` 回显已设档位，名册与定时任务仍走轻量 `ProfileMenu`；③ 预设值端到端接入 `chat`（`openProjectChat` 及输入栏起步态）、`reader`（沉浸阅读自动拉起）、`discuss`（`AskAiModal` 与直接拉起的 `effort`）与 `step:*`（`KickoffConfirmDialog` 预选及「存为本步骤默认」写回、不经弹层的自动继续/派活/跟进 `buildWorkspaceTerminalRequest`）。细则 agent-binding.md。

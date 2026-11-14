@@ -281,3 +281,70 @@ test("悬停操作浮着不占高度：用户的挂在气泡下面靠右缘，�
     await ui.close();
   }
 });
+
+test("正在跑的步骤由 M▁ 字标领衔并按工具类型切换五态光标（动作合一，2026-11-15）", async () => {
+  const ui = await mount();
+  try {
+    // 1. 正在编辑文件 → write 步进光标
+    await ui.render({
+      messages: [
+        m("user", [block("text", "改一下初稿")], 0),
+        m("assistant", [block("tool_use", JSON.stringify({ file_path: `${CWD}/a.qmd`, old_string: "x", new_string: "y" }), "Edit")], 1),
+      ],
+      cwd: CWD,
+      working: true,
+    });
+    assert.equal(ui.el.querySelectorAll(".ccode-status-mark").length, 1, "全屏只挂一处 M▁");
+    assert.equal(ui.el.querySelector(".ccode-status-caret")?.getAttribute("data-motion"), "write");
+
+    // 2. 正在查阅一组文件 → read 导轨扫描光标
+    await ui.render({
+      messages: [
+        m("user", [block("text", "查一下资料")], 0),
+        m("assistant", [block("tool_use", JSON.stringify({ file_path: `${CWD}/papers/included.json` }), "Read")], 1),
+      ],
+      cwd: CWD,
+      working: true,
+    });
+    assert.equal(ui.el.querySelector(".ccode-status-caret")?.getAttribute("data-motion"), "read");
+
+    // 3. 正在运行命令 → cmd 脉冲光标 + 命令微胶囊
+    await ui.render({
+      messages: [
+        m("user", [block("text", "跑校验")], 0),
+        m("assistant", [block("tool_use", JSON.stringify({ command: "npm test" }), "Bash")], 1),
+      ],
+      cwd: CWD,
+      working: true,
+    });
+    assert.equal(ui.el.querySelector(".ccode-status-caret")?.getAttribute("data-motion"), "cmd");
+    assert.ok(ui.el.querySelector(".ccode-status-cmd"), "运行中裸命令带微胶囊样式");
+
+    // 4. 等你决定时 → steady 常亮琥珀锁定 + 等你决定高亮
+    await ui.render({
+      messages: [
+        m("user", [block("text", "跑校验")], 0),
+        m("assistant", [block("tool_use", JSON.stringify({ command: "npm test" }), "Bash")], 1),
+      ],
+      cwd: CWD,
+      working: false,
+      awaiting: true,
+    });
+    assert.equal(ui.el.querySelector(".ccode-status-caret")?.getAttribute("data-motion"), "steady");
+    assert.match(ui.el.textContent ?? "", /等你决定/);
+
+    // 5. 底部状态行已单独显示 M▁（suppressLiveMark）或回放页（working=false）时，不重复挂第二个 M▁
+    await ui.render({
+      messages: [
+        m("user", [block("text", "跑校验")], 0),
+        m("assistant", [block("tool_use", JSON.stringify({ command: "npm test" }), "Bash")], 1),
+      ],
+      cwd: CWD,
+      working: true,
+      suppressLiveMark: true,
+    });
+    assert.equal(ui.el.querySelectorAll(".ccode-status-mark").length, 0);
+  } finally {
+    await ui.close();
+  }
+});

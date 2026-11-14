@@ -53,6 +53,8 @@ import {
   type ProcessTool,
 } from "../conversation-tools";
 import { activityFile, resultStatusLabel, type ActivityKind, type DiffLine } from "../tool-activity";
+import { activityCaretMotion, type StatusCaretMotion } from "../chat-status";
+import { MesaStatusMark } from "./MesaMark";
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
 import { makeChatQuote, type ChatQuote } from "../chat-navigation";
@@ -287,6 +289,7 @@ export default function ConversationView({
   onQuote,
   queuedNote,
   onOpenFile,
+  suppressLiveMark = false,
 }: {
   messages: ChatMessageDto[];
   /** 正跟着底部（聊天层的贴底状态）：长对话只画视野附近时把那一段钉在末尾（virtual-window.ts tailWindow） */
@@ -298,10 +301,12 @@ export default function ConversationView({
   /** 搜索关键词，用来在命中消息里标出那一句 */
   focusKeywords?: string[];
   focusRequest?: number;
-  /** 最后一轮还在生成（聊天层传）：这一轮的过程铺开、不收起，正文不当回答切出去；还没回结果的那一行带光带 */
+  /** 最后一轮还在生成（聊天层传）：这一轮的过程铺开、不收起，正文不当回答切出去；还没回结果的那一行由 M▁ 领衔 */
   working?: boolean;
-  /** 正在等你决定（聊天层有审批 / 确认卡）：还没回结果的那一行写「等你决定」，不再带光带 */
+  /** 正在等你决定（聊天层有审批 / 确认卡）：还没回结果的那一行 M▁ 锁定琥珀常亮并写「等你决定」 */
   awaiting?: boolean;
+  /** 底部状态栏已经在单独显示一条 M▁（如计划步骤或流式思考）时，过程行不再重复挂第二个 M▁ */
+  suppressLiveMark?: boolean;
   /** 用户消息「编辑后重发」：把这句放回输入框（聊天层传；回放页不传 = 不显示） */
   onEditResend?: (text: string) => void;
   /** 助手消息「从这里分叉」：带着到这条为止的对话开分叉标签（聊天层传；回放页不传 = 不显示） */
@@ -603,6 +608,9 @@ export default function ConversationView({
       searchHit?: boolean;
       /** 还在跑（进行中的一轮里没回结果的调用） */
       pending?: boolean;
+      /** 这一轮最后一条在跑的顶层步骤：由 M▁ 字标领衔五态光标编舞（动作合一），不画静态小图标 */
+      isLeadPending?: boolean;
+      liveMotion?: StatusCaretMotion;
       /** 对象是文件、能打开：文件名单独成一个链接（点了在右侧预览），行的其余部分照旧展开细节 */
       openTarget?: { title: string; open: () => void } | null;
       detail?: () => ReactNode;
@@ -610,11 +618,12 @@ export default function ConversationView({
   ) {
     const open = expanded.has(key) || Boolean(row.forceOpen);
     const Icon = row.icon;
-    // 还没回结果的一行：聊天层在生成时动词和对象一起带一道光带（不再写「进行中…」）；等你决定时写明在等你；
-    // 回放里悬着没结果的调用（多半是当时被打断）什么都不标
+    // 还没回结果的一行：最后一条在跑的顶层步骤直接由 M▁ 领衔（动作合一，不再下面空挂一行无字 M▁）；
+    // 等你决定时 M▁ 锁定琥珀常亮并标「等你决定」；回放里悬着没结果的调用（多半是当时被打断）什么都不标
     const live = row.pending && !row.problem;
-    const shimmer = live && working && !awaiting;
-    const targetCls = `min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? monoText : ""}`;
+    const activeLead = Boolean(live && row.isLeadPending && (awaiting || (working && !suppressLiveMark)));
+    const shimmer = live && working && !awaiting && !activeLead;
+    const targetCls = `min-w-0 truncate ${row.plain ? "text-l2" : "text-l1"} ${row.mono ? monoText : ""} ${activeLead && row.mono ? "ccode-status-cmd" : ""}`;
     const verb = <span className="shrink-0 text-l3">{row.verb}</span>;
     const head = (
       <>
@@ -622,7 +631,11 @@ export default function ConversationView({
         {row.target && <span className={targetCls}>{row.target}</span>}
       </>
     );
-    const lead = <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />;
+    const lead = activeLead ? (
+      <MesaStatusMark motion={awaiting ? "steady" : (row.liveMotion ?? "cmd")} />
+    ) : (
+      <Icon size={iconSize} strokeWidth={1.7} aria-hidden="true" className="shrink-0 text-l4" />
+    );
     const tail = (
       <>
         {row.dir && <span className="min-w-0 shrink truncate text-l4">{row.dir}</span>}
@@ -634,7 +647,7 @@ export default function ConversationView({
         {(row.added ?? 0) > 0 && <span className="shrink-0 tabular-nums text-add">+{row.added}</span>}
         {(row.removed ?? 0) > 0 && <span className="shrink-0 tabular-nums text-del">−{row.removed}</span>}
         {row.problem && <span className={`shrink-0 ${row.failed ? "text-err-text" : "text-warn-text"}`}>{row.problem}</span>}
-        {live && awaiting && <span className="shrink-0 text-l4">等你决定</span>}
+        {live && awaiting && <span className="shrink-0 font-medium text-mesa-amber">等你决定</span>}
       </>
     );
     const line = (
@@ -718,7 +731,7 @@ export default function ConversationView({
     );
   }
 
-  function toolRow(key: string, t: ProcessTool, live = false, searching = false) {
+  function toolRow(key: string, t: ProcessTool, live = false, searching = false, isLeadPending = false) {
     searching = searching && (t.index === focusIndex || t.resultIndex === focusIndex);
     const resultHit = searching && t.resultIndex === focusIndex && t.index !== focusIndex;
     const a = t.activity;
@@ -794,12 +807,14 @@ export default function ConversationView({
       forceOpen: searching && (containsSearch(a.input) || containsSearch(t.result)),
       searchHit: searching && !resultHit,
       pending,
+      isLeadPending,
+      liveMotion: activityCaretMotion(a.kind),
       openTarget: file && onOpenFile ? { title: `在右侧预览打开 ${file.path}`, open: () => onOpenFile(file) } : null,
       detail: () => <>{detail()}{searching && a.kind !== "run" && a.kind !== "other" && a.kind !== "mcp" && containsSearch(a.input) && <details open><summary>调用参数</summary><OutputView text={prettyInput(a.input)} full /></details>}</>,
     });
   }
 
-  function renderItem(item: ProcessItem, key: string, live = false, searching = false) {
+  function renderItem(item: ProcessItem, key: string, live = false, searching = false, isLeadPending = false) {
     if (item.kind === "thinking") {
       return processRow(key, {
         icon: Brain,
@@ -824,7 +839,7 @@ export default function ConversationView({
         </div>
       );
     }
-    if (item.kind === "tool") return toolRow(key, item.tool, live, searching);
+    if (item.kind === "tool") return toolRow(key, item.tool, live, searching, isLeadPending);
     return processRow(key, {
       icon: Search,
       verb: "查阅",
@@ -832,8 +847,10 @@ export default function ConversationView({
       plain: true,
       problem: problemText(item.tools.map((t) => t.status), "处"),
       pending: live && item.tools.some((t) => t.result === null),
+      isLeadPending,
+      liveMotion: "read",
       forceOpen: searching && item.tools.some((t) => containsSearch(t.result) || containsSearch(t.activity.input)),
-      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t, live, searching))}</div>,
+      detail: () => <div>{item.tools.map((t, i) => toolRow(`${key}:${i}`, t, live, searching, false))}</div>,
     });
   }
 
@@ -845,6 +862,29 @@ export default function ConversationView({
     const plan = turnPlan(seg.items);
     // 有计划卡就不再一行行列「更新待办」（同一份清单反复改，画最新那份就够）
     const items = plan ? seg.items.filter((it) => !(it.kind === "tool" && it.tool.activity.kind === "todo")) : seg.items;
+    let lastPendingIdx = -1;
+    if (seg.live) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        if (
+          it.kind === "tool" &&
+          it.tool.result === null &&
+          it.tool.activity.verb !== "工具结果" &&
+          !resultStatusLabel(it.tool.status)
+        ) {
+          lastPendingIdx = i;
+          break;
+        }
+        if (
+          it.kind === "explore" &&
+          it.tools.some((t) => t.result === null) &&
+          !problemText(it.tools.map((t) => t.status), "处")
+        ) {
+          lastPendingIdx = i;
+          break;
+        }
+      }
+    }
     const records = turnToolEntries(items);
     const problems = records.filter(({ tool }) => tool.status !== "ok");
     const revealRecord = (record: (typeof records)[number]) => {
@@ -903,7 +943,7 @@ export default function ConversationView({
                 `whitespace-pre-wrap border-l border-hairline pl-3 ${rowText} leading-relaxed text-l3`,
                 hit,
               )
-            : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live, hit))}
+            : items.map((item, i) => renderItem(item, `${key}:${i}`, seg.live, hit, i === lastPendingIdx))}
         </Collapse>
         {seg.answer && (
           <>

@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 设计对比 ③ · 聊天层 M▁ 品牌标识状态设计</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --canvas: #111111; --strip: #1c1c1c; --inset: #212121; --raised: #272727;
+    --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --mesa-amber: #f5b83d;
+    --agent-color: #D97757; /* 默认演示 Claude 赤陶，可切换 */
+    --add: #8fd3a8; --del: #d98a93;
+    --chat-bubble: color-mix(in oklab, var(--canvas), var(--l1) 4.8%);
+    --composer: color-mix(in oklab, var(--canvas), var(--l1) 7%);
+    --composer-edge: color-mix(in oklab, var(--canvas), var(--l1) 13%);
+    --code-pill: color-mix(in srgb, var(--l1) 8%, transparent);
+    --amber-glow: 0 0 7px color-mix(in srgb, var(--mesa-amber) 52%, transparent);
+  }
+  [data-theme="ayu"] {
+    --canvas: #15130f; --strip: #1e1b18; --inset: #23211d; --raised: #2c2925;
+    --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+  }
+  [data-theme="ayu-light"] {
+    --canvas: #f2eee5; --strip: #fbf5ed; --inset: #fefaf6; --raised: #ffffff;
+    --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --mesa-amber: #e39a1c;
+    --add: #16794b; --del: #b91c1c;
+    --chat-bubble: color-mix(in oklab, var(--canvas), var(--l1) 5%);
+    --composer: #ffffff;
+    --composer-edge: rgba(0, 0, 0, 0.12);
+    --code-pill: rgba(0, 0, 0, 0.06);
+    --amber-glow: none;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #08090b; color: var(--l2);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .suite-nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(12, 13, 16, 0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #23252a; padding: 10px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
+    color: #c8c8ce; font-size: 12.5px;
+  }
+  .suite-links { display: inline-flex; gap: 4px; background: #17181c; padding: 3px; border-radius: 9px; border: 1px solid #282a30; }
+  .suite-links a { color: #9496a1; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-weight: 500; }
+  .suite-links a:hover { color: #e5e5e5; }
+  .suite-links a.active { background: #2b2e37; color: #fff; }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 6px; }
+  .ctrl-label { color: #7c7e88; font-size: 12px; }
+  .seg { display: inline-flex; background: #17181c; padding: 2px; border-radius: 8px; border: 1px solid #282a30; gap: 2px; }
+  .seg button { background: none; border: 0; color: #9496a1; padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: #2c2f38; color: #fff; font-weight: 500; }
+
+  .wrap { max-width: 1520px; margin: 16px auto 56px; padding: 0 20px; }
+
+  /* 状态控制台 */
+  .state-bar {
+    background: #131418; border: 1px solid #23252c; border-radius: 12px;
+    padding: 10px 14px; margin-bottom: 16px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  }
+  .play-btn {
+    height: 28px; padding: 0 12px; border-radius: 7px; border: 1px solid rgba(245,184,61,.4);
+    background: rgba(245,184,61,.14); color: #f5b83d; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .play-btn:hover { background: rgba(245,184,61,.22); }
+
+  /* 左右对比视口 */
+  .compare-grid { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 18px; }
+  .pane-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .badge { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; }
+  .badge.now { background: #23252b; color: #a5a7b2; }
+  .badge.new { background: rgba(245, 184, 61, 0.16); color: #f5b83d; border: 0.5px solid rgba(245, 184, 61, 0.35); }
+  .pane-desc { font-size: 12px; color: #878a94; }
+
+  .chat-stage {
+    background: var(--canvas); color: var(--l2);
+    border-radius: 14px; border: 1px solid color-mix(in srgb, var(--field) 85%, transparent);
+    padding: 24px 28px 18px;
+    display: flex; flex-direction: column; min-height: 360px; position: relative;
+  }
+  .user-msg {
+    align-self: flex-end; max-width: 78%;
+    background: var(--chat-bubble); color: var(--l1);
+    padding: 8px 14px; border-radius: 16px; font-size: 13.5px; margin-bottom: 18px;
+  }
+
+  /* 已完成的过程树 */
+  .done-proc {
+    display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px;
+    font-size: 12.5px; color: var(--l4);
+  }
+  .proc-item { display: flex; align-items: center; gap: 7px; min-height: 24px; }
+  .proc-item .v { color: var(--l3); }
+  .proc-item .t { color: var(--l2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  /* 现状（NOW）的割裂表现 */
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+  .now-shimmer {
+    background-image: linear-gradient(90deg, var(--l3) 0%, var(--l3) 38%, var(--l1) 50%, var(--l3) 62%, var(--l3) 100%);
+    background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    animation: shimmer 2.4s linear infinite;
+  }
+  .now-lead { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--l3); height: 22px; }
+  .m-glyph {
+    width: 12px; height: 9.8px; display: inline-block; background: currentColor;
+    -webkit-mask: var(--m-mask) center / 100% 100% no-repeat;
+    mask: var(--m-mask) center / 100% 100% no-repeat;
+  }
+  .now-caret {
+    width: 5.5px; height: 2.3px; border-radius: 0.6px; background: var(--mesa-amber);
+    transform-origin: left center;
+  }
+  @keyframes nowStretch { 0%, 100% { transform: scaleX(1); } 50% { transform: scaleX(1.55); } }
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.22; } }
+  @keyframes hardBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+  /* ==================== 新设计（A / B / C 三套风格） ==================== */
+  /* 翻牌进入动效 */
+  @keyframes tickerIn {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .ticker-enter { animation: tickerIn 190ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+  /* 专属五态光标编舞 */
+  /* 1. 思考中：柔光深呼吸 + M 轻微明暗流转 */
+  @keyframes thinkPulse {
+    0%, 100% { opacity: 1; transform: scaleX(1); }
+    50% { opacity: 0.28; transform: scaleX(0.86); }
+  }
+  /* 2. 查阅/检索：导轨扫描梭往返 */
+  @keyframes scanShuttle {
+    0%, 100% { transform: translateX(0) scaleX(0.9); }
+    50% { transform: translateX(6px) scaleX(1.15); }
+  }
+  /* 3. 写文件/编辑：三拍打字推进后落定 */
+  @keyframes writeAdvance {
+    0%   { width: 4px; opacity: 0.75; }
+    28%  { width: 7.5px; opacity: 1; }
+    56%  { width: 11px; opacity: 1; }
+    82%  { width: 11px; opacity: 0.35; }
+    100% { width: 4px; opacity: 0.75; }
+  }
+  /* 4. 跑命令：短促有力的终端双节拍 */
+  @keyframes cmdBeat {
+    0%, 100% { opacity: 1; transform: scaleY(1); }
+    25% { opacity: 0.3; transform: scaleY(0.75); }
+    50% { opacity: 1; transform: scaleY(1.15); }
+    75% { opacity: 0.85; transform: scaleY(1); }
+  }
+
+  /* 方案 A：无框杂志排印 + 合一动作行 */
+  .status-a {
+    display: inline-flex; align-items: center; gap: 9px; min-height: 26px; font-size: 12.5px;
+  }
+  /* 方案 B：暗房微浮雕仪器舱 + Agent 品牌色 M */
+  .status-b {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 4px 11px 4px 9px; border-radius: 999px;
+    background: var(--chat-bubble);
+    border: 0.5px solid var(--hairline);
+    font-size: 12.5px; align-self: flex-start;
+  }
+  /* 方案 C：三格微光栅光标 */
+  .status-c {
+    display: inline-flex; align-items: center; gap: 9px; min-height: 26px; font-size: 12.5px;
+  }
+
+  .brand-lockup {
+    display: inline-flex; align-items: flex-end; height: 11px; flex: none; position: relative;
+  }
+  .brand-lockup .m {
+    width: 13.5px; height: 11px;
+    background: var(--l2);
+    -webkit-mask: var(--m-mask) center / 100% 100% no-repeat;
+    mask: var(--m-mask) center / 100% 100% no-repeat;
+    transition: background-color .2s;
+  }
+  .brand-lockup.agent-tinted .m { background: var(--agent-color); }
+
+  /* 单光标槽（A & B 用） */
+  .caret-slot {
+    position: relative; width: 13px; height: 4px; margin-left: 2.5px; display: inline-flex; align-items: center;
+  }
+  .caret-rail {
+    position: absolute; inset: 1px 0; border-radius: 1px;
+    background: color-mix(in srgb, var(--l4) 28%, transparent);
+    opacity: 0; transition: opacity .2s;
+  }
+  .caret-bar {
+    width: 7px; height: 2.8px; border-radius: 0.8px;
+    background: var(--mesa-amber); box-shadow: var(--amber-glow);
+  }
+  .brand-lockup[data-kind="thinking"] .caret-bar { animation: thinkPulse 2.2s ease-in-out infinite; }
+  .brand-lockup[data-kind="read"] .caret-rail { opacity: 1; }
+  .brand-lockup[data-kind="read"] .caret-bar { width: 5.5px; animation: scanShuttle 1.35s ease-in-out infinite; }
+  .brand-lockup[data-kind="write"] .caret-bar { animation: writeAdvance 1.6s steps(1, end) infinite; }
+  .brand-lockup[data-kind="cmd"] .caret-bar { width: 6.5px; animation: cmdBeat 1.1s ease-in-out infinite; }
+  .brand-lockup[data-kind="confirm"] .caret-bar {
+    width: 9px; height: 3.2px;
+    box-shadow: 0 0 9px color-mix(in srgb, var(--mesa-amber) 78%, transparent);
+  }
+
+  /* 三格微光栅（方案 C 专属） */
+  .raster-cells {
+    display: inline-flex; align-items: flex-end; gap: 1.5px; margin-left: 2.5px; height: 4px;
+  }
+  .raster-cells i {
+    width: 3px; height: 2.8px; border-radius: 0.6px; background: var(--mesa-amber);
+    transition: all .2s;
+  }
+  @keyframes waveCell { 0%, 100% { opacity: 0.22; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-1px); } }
+  .raster-cells[data-kind="thinking"] i:nth-child(1) { animation: waveCell 1.8s ease-in-out 0s infinite; }
+  .raster-cells[data-kind="thinking"] i:nth-child(2) { animation: waveCell 1.8s ease-in-out .25s infinite; }
+  .raster-cells[data-kind="thinking"] i:nth-child(3) { animation: waveCell 1.8s ease-in-out .5s infinite; }
+
+  @keyframes stepFill1 { 0%,24%{opacity:.25} 25%,100%{opacity:1} }
+  @keyframes stepFill2 { 0%,49%{opacity:.2} 50%,100%{opacity:1} }
+  @keyframes stepFill3 { 0%,74%{opacity:.2} 75%,100%{opacity:1} }
+  .raster-cells[data-kind="write"] i:nth-child(1) { animation: stepFill1 1.5s infinite; }
+  .raster-cells[data-kind="write"] i:nth-child(2) { animation: stepFill2 1.5s infinite; }
+  .raster-cells[data-kind="write"] i:nth-child(3) { animation: stepFill3 1.5s infinite; }
+
+  @keyframes scanCell { 0%,100%{opacity:.2} 33%{opacity:1} }
+  .raster-cells[data-kind="read"] i:nth-child(1) { animation: scanCell 1.1s 0s infinite; }
+  .raster-cells[data-kind="read"] i:nth-child(2) { animation: scanCell 1.1s .22s infinite; }
+  .raster-cells[data-kind="read"] i:nth-child(3) { animation: scanCell 1.1s .44s infinite; }
+
+  .raster-cells[data-kind="cmd"] i { animation: cmdBeat 1s ease-in-out infinite; }
+  /* 等你确认：三格严丝合缝合拢成一道实心琥珀条！ */
+  .raster-cells[data-kind="confirm"] { gap: 0; }
+  .raster-cells[data-kind="confirm"] i { width: 3.4px; height: 3.2px; border-radius: 0; }
+  .raster-cells[data-kind="confirm"] i:first-child { border-radius: 1px 0 0 1px; }
+  .raster-cells[data-kind="confirm"] i:last-child { border-radius: 0 1px 1px 0; }
+
+  /* 结构化状态文案语义部件 */
+  .act-verb { color: var(--l3); font-weight: 450; }
+  .act-file {
+    color: var(--l1); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    border-bottom: 1px dotted color-mix(in srgb, var(--l3) 55%, transparent);
+  }
+  .act-cmd {
+    color: var(--l1); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    background: var(--code-pill); padding: 1px 6px; border-radius: 4px;
+  }
+  .act-thought { color: var(--l2); }
+  .act-diff { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .act-diff .p { color: var(--add); margin-right: 4px; }
+  .act-diff .m { color: var(--del); }
+  .act-clock { color: var(--l4); font-size: 11.5px; font-variant-numeric: tabular-nums; margin-left: 2px; }
+
+  /* 流式正文与插入符 */
+  .stream-body { color: var(--l1); font-size: 14px; line-height: 1.72; }
+  .stream-caret {
+    display: inline-block; width: 7.5px; height: 3px; margin-left: 3px; vertical-align: baseline;
+    background: var(--mesa-amber); box-shadow: var(--amber-glow);
+    animation: hardBlink 1.04s steps(1, end) infinite;
+  }
+
+  /* 模拟底部输入框 */
+  .mock-composer {
+    margin-top: auto; padding-top: 16px;
+  }
+  .comp-box {
+    background: var(--composer); border: 0.5px solid var(--composer-edge);
+    border-radius: 14px; padding: 9px 11px; display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; color: var(--l4);
+  }
+  .stop-blk {
+    width: 30px; height: 22px; border-radius: 6px; background: var(--mesa-amber);
+    display: inline-flex; align-items: center; justify-content: center; color: #1d1608; font-size: 10px; font-weight: 800;
+  }
+
+  /* 3× 微观放大镜展台 */
+  .macro-title {
+    margin: 28px 0 10px; display: flex; align-items: baseline; justify-content: space-between;
+  }
+  .macro-title h2 { margin: 0; font-size: 15px; color: #ededf0; }
+  .macro-title span { font-size: 12px; color: #878a94; }
+  .macro-grid {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px;
+  }
+  .macro-card {
+    background: var(--canvas); border: 1px solid color-mix(in srgb, var(--field) 80%, transparent);
+    border-radius: 12px; padding: 14px; cursor: pointer; transition: border-color .14s;
+  }
+  .macro-card:hover, .macro-card.active { border-color: var(--mesa-amber); }
+  .macro-stage {
+    height: 78px; border-radius: 8px;
+    background: color-mix(in oklab, var(--canvas), var(--l1) 2.8%);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 10px;
+  }
+  .macro-scale { transform: scale(2.8); transform-origin: center; }
+  .macro-card h3 { margin: 0 0 3px; font-size: 12.5px; color: var(--l1); }
+  .macro-card p { margin: 0; font-size: 11.5px; color: var(--l3); line-height: 1.45; }
+
+  @media (max-width: 1140px) {
+    .compare-grid { grid-template-columns: 1fr; }
+    .macro-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+</style>
+</head>
+<body>
+
+<nav class="suite-nav">
+  <strong style="color:#fff">Mesa 设计方案预览</strong>
+  <div class="suite-links">
+    <a href="./design-workbench-v2-mockup.html">① 工作台 UI 优化</a>
+    <a href="./design-agent-binding-picker-mockup.html">② Agent 专属绑定 + 权限/思考预设</a>
+    <a href="./design-chat-brand-status-mockup.html" class="active">③ 聊天层 M▁ 状态设计</a>
+    <a href="./design-global-ui-polish-mockup.html">④ 全局 UI 建议 &amp; 删示例课题</a>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">设计方向</span>
+    <div class="seg" id="styleMode">
+      <button data-m="a" class="on">方向 A：光标编舞 + 动作合一（推荐）</button>
+      <button data-m="b">方向 B：仪器状态舱 + Agent 品牌色 M</button>
+      <button data-m="c">方向 C：三格微光栅 M▁▁▁</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">Agent 色</span>
+    <div class="seg" id="agentMode">
+      <button data-c="#D97757" class="on">Claude 赤陶</button>
+      <button data-c="#8B7EC8">Codex 雾紫</button>
+      <button data-c="#3B8EA5">AGY 湖青</button>
+    </div>
+  </div>
+  <div class="ctrl-group">
+    <span class="ctrl-label">主题</span>
+    <div class="seg" id="themeMode">
+      <button data-t="neutral" class="on">极简灰蓝</button>
+      <button data-t="ayu">暖炭琥珀</button>
+      <button data-t="ayu-light">暖炭·浅</button>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+  <div class="state-bar">
+    <button class="play-btn" id="playBtn">▶ 自动回放完整一轮</button>
+    <span class="ctrl-label">点击单看各阶段：</span>
+    <div class="seg" id="phaseBar">
+      <button data-p="thinking">① 深度思考中</button>
+      <button data-p="read">② 查阅文献/代码</button>
+      <button data-p="write" class="on">③ 写文件 / 改代码</button>
+      <button data-p="cmd">④ 运行命令</button>
+      <button data-p="stream">⑤ 流式写回复</button>
+      <button data-p="confirm">⑥ 等你拍板</button>
+    </div>
+  </div>
+
+  <div class="compare-grid">
+    <!-- 左：现状 -->
+    <div>
+      <div class="pane-head">
+        <span class="badge now">现在 Current</span>
+        <span class="pane-desc">工具落盘后上面一行闪字、下面孤零零剩一个无字 M▁；所有工具同一种拉伸，区分不出在想/在读/在写</span>
+      </div>
+      <div class="chat-stage" id="stageNow"></div>
+    </div>
+
+    <!-- 右：建议 -->
+    <div>
+      <div class="pane-head">
+        <span class="badge new" id="newBadgeTitle">方向 A · 光标编舞 + 动作合一</span>
+        <span class="pane-desc" id="newBadgeDesc">正在发生的那一步始终由 M▁ 领衔主演；光标按物理直觉分五态编舞，文字纵轴翻牌丝滑切换</span>
+      </div>
+      <div class="chat-stage" id="stageNew"></div>
+    </div>
+  </div>
+
+  <div class="macro-title">
+    <h2>3× 微观放大镜：五种状态的 M▁ 光标物理语言（点击卡片可直接切到对应场景）</h2>
+    <span>零旋转转圈 · 零 3D 球 · 只用 M 与那一道琥珀光标演绎精密仪器感</span>
+  </div>
+  <div class="macro-grid" id="macroGrid"></div>
+</div>
+
+<script>
+const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
+document.documentElement.style.setProperty(
+  "--m-mask",
+  `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="232 284 560 456"><path d="${M_PATH}"/></svg>`)}")`
+);
+
+const PHASES = {
+  thinking: {
+    title: "深度思考中",
+    macroDesc: "光标柔光正弦深呼吸（2.2s），不刺眼硬闪；右侧承接思考摘要小标题。",
+    done: [],
+    nowPending: null,
+    nowStatus: { text: "梳理碱性 HER 火山曲线与界面水网络判据", motion: "breathe" },
+    newHtml: `<span class="act-verb">思考中</span><span style="color:var(--l4)">·</span><span class="act-thought">梳理碱性 HER 火山曲线与界面水网络判据</span><span class="act-clock">0:06</span>`
+  },
+  read: {
+    title: "查阅 / 检索",
+    macroDesc: "微暗导轨浮现，琥珀游标左右轻快掠过扫描，直观表达「正在翻阅文件」。",
+    done: [
+      { v: "思考", t: "确定需核对近三年 PtRu 双金属机理文献" }
+    ],
+    nowPending: { v: "查阅", t: "papers/included.json · 读了 4 个文件" },
+    nowStatus: { text: null, motion: "stretch" },
+    newHtml: `<span class="act-verb">查阅</span><span class="act-file">papers/included.json</span><span style="color:var(--l4);font-size:11.5px">第 4 / 12 篇</span>`
+  },
+  write: {
+    title: "写文件 / 改代码",
+    macroDesc: "光标向前三拍打字步进再复位，配文件名虚下划线与实时 +42 −6 增删微标，「动笔感」一目了然。",
+    done: [
+      { v: "查阅", t: "读了 4 个文件，搜索 2 次" }
+    ],
+    nowPending: { v: "编辑", t: "manuscript/02-mechanism.qmd  +42 −6" },
+    nowStatus: { text: null, motion: "stretch" },
+    newHtml: `<span class="act-verb">写文件</span><span class="act-file">manuscript/02-mechanism.qmd</span><span class="act-diff"><span class="p">+42</span><span class="m">−6</span></span><span class="act-clock">0:14</span>`
+  },
+  cmd: {
+    title: "运行命令",
+    macroDesc: "终端节拍脉冲，命令装进 8% 中性无描边等宽胶囊，与普通说明文字清晰分层。",
+    done: [
+      { v: "查阅", t: "读了 4 个文件" },
+      { v: "写文件", t: "manuscript/02-mechanism.qmd  +42 −6" }
+    ],
+    nowPending: { v: "运行", t: "python3 scripts/lit_records.py --verify" },
+    nowStatus: { text: null, motion: "stretch" },
+    newHtml: `<span class="act-verb">运行</span><span class="act-cmd">python3 scripts/lit_records.py --verify</span><span class="act-clock">0:19</span>`
+  },
+  stream: {
+    title: "流式写回复",
+    macroDesc: "过程收拢，M▁ 状态行优雅退场，琥珀插入符直接跟在正文最后一个字基线上跳动。",
+    done: [
+      { v: "已工作 21 秒", t: "改了 1 个文件 · 运行 1 条命令 ▸" }
+    ],
+    streamText: "已在 `manuscript/02-mechanism.qmd` 补齐碱性介质中水解离能垒与 OH* 吸附强度的定量对照，并核验了 12 条题录引用键全部闭环"
+  },
+  confirm: {
+    title: "等你拍板",
+    macroDesc: "光标锁定满格琥珀常亮 + 余辉（方案 C 三格磁吸合拢为一体），全站唯一「轮到你」信号。",
+    done: [
+      { v: "查阅", t: "读了 4 个文件" }
+    ],
+    nowPending: { v: "运行", t: "quarto render manuscript/draft.qmd --output-dir ../output（等你决定）" },
+    nowStatus: { text: null, motion: "steady" },
+    newHtml: `<span style="color:var(--mesa-amber);font-weight:500">等你确认</span><span class="act-cmd">quarto render --output-dir ../output</span>`
+  }
+};
+
+let st = { style: "a", phase: "write", theme: "neutral", agentColor: "#D97757", timer: null };
+
+function buildLockup(kind, forMacro = false) {
+  if (st.style === "c") {
+    return `
+      <span class="brand-lockup ${st.style === "b" ? "agent-tinted" : ""}">
+        <span class="m"></span>
+        <span class="raster-cells" data-kind="${kind}"><i></i><i></i><i></i></span>
+      </span>`;
+  }
+  return `
+    <span class="brand-lockup ${st.style === "b" ? "agent-tinted" : ""}" data-kind="${kind}">
+      <span class="m"></span>
+      <span class="caret-slot"><span class="caret-rail"></span><span class="caret-bar"></span></span>
+    </span>`;
+}
+
+function renderStages() {
+  document.documentElement.dataset.theme = st.theme;
+  document.documentElement.style.setProperty("--agent-color", st.agentColor);
+
+  const p = PHASES[st.phase];
+  const userBubble = `<div class="user-msg">把第 2 节碱性 HER 双功能机理的文献证据补进初稿，并跑一遍题录校验。</div>`;
+  const composerHtml = `
+    <div class="mock-composer">
+      <div class="comp-box">
+        <span>＋  继续补充说明，或按 Esc 暂停当前一轮</span>
+        <span class="stop-blk">■</span>
+      </div>
+    </div>`;
+
+  // 左栏：现状
+  let nowInner = userBubble;
+  if (p.done.length) {
+    nowInner += `<div class="done-proc">${p.done.map((d) => `<div class="proc-item"><span class="v">${d.v}</span><span class="t">${d.t}</span></div>`).join("")}</div>`;
+  }
+  if (st.phase === "stream") {
+    nowInner += `<div class="stream-body" style="color:var(--l3)">${p.streamText}<span class="stream-caret"></span></div>`;
+  } else {
+    if (p.nowPending) {
+      nowInner += `<div class="proc-item" style="margin-bottom:8px;font-size:12.5px"><span style="color:var(--l4)">✎</span><span class="${st.phase === "confirm" ? "" : "now-shimmer"}">${p.nowPending.v}  ${p.nowPending.t}</span></div>`;
+    }
+    const anim = p.nowStatus.motion === "breathe" ? "breathe 2.4s ease-in-out infinite" : p.nowStatus.motion === "stretch" ? "nowStretch 2s ease-in-out infinite" : "none";
+    nowInner += `
+      <div class="now-lead">
+        <span style="display:inline-flex;align-items:flex-end;gap:2px">
+          <span class="m-glyph"></span>
+          <span class="now-caret" style="animation:${anim}"></span>
+        </span>
+        ${p.nowStatus.text ? `<span class="now-shimmer">${p.nowStatus.text}</span>` : `<span style="color:var(--l4);font-size:11px">（此处工具已在上方，M▁ 单独空挂一行）</span>`}
+      </div>`;
+  }
+  nowInner += composerHtml;
+  document.getElementById("stageNow").innerHTML = nowInner;
+
+  // 右栏：新设计
+  const descMap = {
+    a: ["方向 A · 光标编舞 + 动作合一（推荐）", "不加气泡框保持呼吸感；正在跑的那一步直接并入 M▁ 行，五种物理光标动作一眼分辨在想/在读/在写"],
+    b: ["方向 B · 微浮雕仪器舱 + Agent 品牌色 M", "极淡胶囊承载当前状态；左侧 M 染当前 Agent 品牌色（谁在干活），右侧琥珀光标（Mesa 舞台状态）"],
+    c: ["方向 C · 三格微光栅 M▁▁▁", "光标拆为三枚精密光栅：思考涟漪波动、写文件逐格推进、等你确认时磁吸合拢成整条实心琥珀"]
+  };
+  document.getElementById("newBadgeTitle").textContent = descMap[st.style][0];
+  document.getElementById("newBadgeDesc").textContent = descMap[st.style][1];
+
+  let newInner = userBubble;
+  if (p.done.length) {
+    newInner += `<div class="done-proc">${p.done.map((d) => `<div class="proc-item"><span style="color:var(--l4)">✓</span><span class="v">${d.v}</span><span class="t">${d.t}</span></div>`).join("")}</div>`;
+  }
+  if (st.phase === "stream") {
+    newInner += `<div class="stream-body">${p.streamText}<span class="stream-caret"></span></div>`;
+  } else {
+    const cls = st.style === "b" ? "status-b" : st.style === "c" ? "status-c" : "status-a";
+    newInner += `
+      <div class="${cls}">
+        ${buildLockup(st.phase)}
+        <span class="ticker-enter" style="display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap">${p.newHtml}</span>
+      </div>`;
+  }
+  newInner += composerHtml;
+  document.getElementById("stageNew").innerHTML = newInner;
+
+  // 底部 3× 微观展台
+  const macroKeys = ["thinking", "read", "write", "cmd", "confirm"];
+  document.getElementById("macroGrid").innerHTML = macroKeys.map((k) => `
+    <div class="macro-card ${st.phase === k ? "active" : ""}" data-pick="${k}">
+      <div class="macro-stage">
+        <div class="macro-scale">${buildLockup(k, true)}</div>
+      </div>
+      <h3>${PHASES[k].title}</h3>
+      <p>${PHASES[k].macroDesc}</p>
+    </div>
+  `).join("");
+}
+
+function stopPlay() {
+  if (st.timer) {
+    clearInterval(st.timer);
+    st.timer = null;
+    document.getElementById("playBtn").textContent = "▶ 自动回放完整一轮";
+  }
+}
+
+document.getElementById("playBtn").addEventListener("click", () => {
+  if (st.timer) { stopPlay(); return; }
+  const order = ["thinking", "read", "write", "cmd", "stream"];
+  let idx = 0;
+  st.phase = order[0];
+  syncPhaseBtns();
+  renderStages();
+  document.getElementById("playBtn").textContent = "⏸ 停止回放";
+  st.timer = setInterval(() => {
+    idx++;
+    if (idx >= order.length) { stopPlay(); return; }
+    st.phase = order[idx];
+    syncPhaseBtns();
+    renderStages();
+  }, 2100);
+});
+
+function syncPhaseBtns() {
+  document.querySelectorAll("#phaseBar button").forEach((b) => b.classList.toggle("on", b.dataset.p === st.phase));
+}
+
+document.getElementById("phaseBar").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-p]");
+  if (!btn) return;
+  stopPlay();
+  st.phase = btn.dataset.p;
+  syncPhaseBtns();
+  renderStages();
+});
+document.getElementById("macroGrid").addEventListener("click", (e) => {
+  const card = e.target.closest("[data-pick]");
+  if (!card) return;
+  stopPlay();
+  st.phase = card.dataset.pick;
+  syncPhaseBtns();
+  renderStages();
+});
+document.getElementById("styleMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-m]");
+  if (!btn) return;
+  st.style = btn.dataset.m;
+  document.querySelectorAll("#styleMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  renderStages();
+});
+document.getElementById("agentMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-c]");
+  if (!btn) return;
+  st.agentColor = btn.dataset.c;
+  document.querySelectorAll("#agentMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  renderStages();
+});
+document.getElementById("themeMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-t]");
+  if (!btn) return;
+  st.theme = btn.dataset.t;
+  document.querySelectorAll("#themeMode button").forEach((b) => b.classList.toggle("on", b === btn));
+  renderStages();
+});
+
+renderStages();
+</script>
+</body>
+</html>

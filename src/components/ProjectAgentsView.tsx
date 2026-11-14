@@ -77,6 +77,8 @@ import { headlessWriteBlocked } from "../agent-caps";
 import { isLitWatchSkill } from "../schedule-skill";
 import { usePolling } from "../polling";
 
+const EMPTY_AGENTS: DetectResult[] = [];
+
 export default function ProjectAgentsView({
   project,
   onProjectChanged,
@@ -89,7 +91,7 @@ export default function ProjectAgentsView({
   onError: (message: string) => void;
 }) {
   const profiles = useAppStore((state) => state.profiles);
-  const agents = useAppStore((state) => state.agents ?? []);
+  const agents = useAppStore((state) => state.agents ?? EMPTY_AGENTS);
   const hiddenProfiles = useAppStore(selectHiddenProfiles);
   const setPage = useAppStore((state) => state.setPage);
   const [saving, setSaving] = useState(false);
@@ -100,7 +102,7 @@ export default function ProjectAgentsView({
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>(
     project.defaultModels ?? {},
   );
-  const [taskBindings, setTaskBindings] = useState<Record<string, ProjectAgentBinding>>(
+  const [taskBindings, setTaskBindings] = useState<NonNullable<ProjectDto["taskBindings"]>>(
     project.taskBindings ?? {},
   );
   const [tasks, setTasks] = useState<TaskDto[]>([]);

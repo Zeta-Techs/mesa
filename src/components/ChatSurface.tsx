@@ -61,7 +61,12 @@ import {
   slashHandoff,
 } from "../chat-handoff";
 import { confirmHandoffReason, decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
-import { chatStatus, settleStatus, statusCaretMotion, type ShownStatus } from "../chat-status";
+import {
+  chatStatus,
+  chatStatusParts,
+  settleStatus,
+  type ShownStatus,
+} from "../chat-status";
 import { confirmChoices } from "../chat-reply";
 import ChatDecisionCard, { decisionOptionLabels, decisionShowsNumbers, type ChatDecision } from "./ChatDecisionCard";
 import type { MismatchFrom } from "../chat-mismatch";
@@ -659,18 +664,19 @@ export default function ChatSurface({
   const activity = channel?.activity ?? null;
   const thinking = channel?.thinking ?? null;
   const statusLine = channel?.statusLine ?? null;
-  const statusBase = useMemo(
-    () =>
-      chatStatus({
-        messages,
-        activity,
-        thinking,
-        statusLine,
-        cwd: cwd ?? null,
-        isWindows: IS_WINDOWS,
-      }),
+  const statusInput = useMemo(
+    () => ({
+      messages,
+      activity,
+      thinking,
+      statusLine,
+      cwd: cwd ?? null,
+      isWindows: IS_WINDOWS,
+    }),
     [messages, activity, thinking, statusLine, cwd],
   );
+  const statusBase = useMemo(() => chatStatus(statusInput), [statusInput]);
+  const statusPartsBase = useMemo(() => chatStatusParts(statusInput, statusBase), [statusInput, statusBase]);
   // 状态字最短停留（settleStatus）：一秒里连跳几条时不跟着闪，停够了换成那一刻最新的一条；每一轮从头算。
   // 「思考中」与 M▁ 同一帧出（2026-10-26，原先刚发出 1.5 秒只亮光标）
   const shownStatusRef = useRef<ShownStatus | null>(null);
@@ -683,7 +689,7 @@ export default function ChatSurface({
     }
     let timer = 0;
     const apply = () => {
-      const r = settleStatus(shownStatusRef.current, statusBase, Date.now());
+      const r = settleStatus(shownStatusRef.current, statusBase, Date.now(), statusPartsBase);
       if (r.shown !== shownStatusRef.current) {
         shownStatusRef.current = r.shown;
         setShownStatus(r.shown);
@@ -692,11 +698,13 @@ export default function ChatSurface({
     };
     apply();
     return () => window.clearTimeout(timer);
-  }, [generating, statusBase]);
+  }, [generating, statusBase, statusPartsBase]);
   // 刚开始生成、还没排进去的那一帧直接用算出来的（和第一条一样，不必空一帧）
   const status = shownStatus?.status ?? statusBase;
+  const settledParts = shownStatus?.parts ?? statusPartsBase;
   const statusText = trustPrompt ? "等你确认是否信任这个目录" : status.text;
-  const statusMotion = statusCaretMotion(status.kind, Boolean(trustPrompt));
+  const statusParts = trustPrompt ? chatStatusParts(statusInput, status, "等你确认是否信任这个目录") : settledParts;
+  const statusMotion = statusParts.motion;
   // 最近一次「看得见的进展」：新消息、预览出字、旁路换了工具 / 思考 / CLI 自己报的现状。安静满 10 秒才给「看实时输出」
   const [progressAt, setProgressAt] = useState(() => Date.now());
   useEffect(() => {
@@ -1658,6 +1666,19 @@ export default function ChatSurface({
               focusRequest={focus?.seq ?? 0}
               working={generating || settling}
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
+              suppressLiveMark={
+                !generating ||
+                livePreview.length > 0 ||
+                Boolean(thinkingPreview) ||
+                Boolean(
+                  generating &&
+                    !decision &&
+                    !channel?.retry &&
+                    livePreview.length === 0 &&
+                    !thinkingPreview &&
+                    statusText !== null,
+                )
+              }
               // 消息里整行的图片 / 文档路径还原成附件卡，不当文字塞回输入框
               onEditResend={(text) => {
                 const split = splitImagePaths(text);
@@ -1703,7 +1724,7 @@ export default function ChatSurface({
             // 现在表头不动，只有下面的原文出没（2026-10-29 用户）
             <div className="mb-2">
               <div className="mb-1 flex min-w-0 items-center gap-2 text-xs text-l3">
-                <MesaStatusLead text="思考中" motion="breathe" sweep={!trustPrompt} />
+                <MesaStatusLead text="思考中" motion="thinking" sweep={!trustPrompt} />
                 {genElapsed >= 10 && (
                   <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
                     {fmtElapsed(genElapsed)}
@@ -1760,14 +1781,23 @@ export default function ChatSurface({
               }
             />
           )}
-          {generating && !decision && !channel?.retry && livePreview.length === 0 && !thinkingPreview && (
-            // 生成中那一行（2026-10-21 用户：「正在生成回复」「正在用」太机械）：M▁ 后面说这一轮在做的事——
-            // 正在跑的工具（「运行 npm test」）、计划里在做的一项、思考的小标题，都没有才写「思考中」；
-            // 过程里已经有那一行在动时只留光标。2026-10-26 起光标按阶段动（在想呼吸、干活伸缩、等你确认常亮），
-            // 一道光带连着扫过 M 和字（等你确认时不扫）。满 10 秒才写时间，Claude 没有逐字预览时写已生成的 token 数，
-            // 安静满 10 秒才给「看实时输出」。预览在出字时这一行不出现，光标接在预览末尾
+          {generating &&
+            !decision &&
+            !channel?.retry &&
+            livePreview.length === 0 &&
+            !thinkingPreview &&
+            (statusText !== null ||
+              genElapsed >= 10 ||
+              (liveTokens !== null && liveTokens > 0) ||
+              Boolean(onTogglePeek && !peek && !liveReplyCapable && quiet)) && (
+            // 生成中那一行（2026-10-21 初版，2026-11-15 升级方向 A：光标五态编舞 + 动作合一）：
+            // - 旁路工具、思考摘要、计划步骤或「思考中」由 MesaStatusLead 按结构化语义分层展示；
+            // - 正在跑的工具已落盘进 ConversationView（statusText === null）时，M▁ 直接领衔上方工具行，
+            //   此处不再空挂第二个无字 M▁，仅在满 10 秒 / 有 token 计数 / 需「看实时输出」时补尾注。
             <div className="mb-2 flex min-w-0 items-center gap-2 text-xs text-l3">
-              <MesaStatusLead text={statusText} motion={statusMotion} sweep={!trustPrompt} />
+              {statusText !== null && (
+                <MesaStatusLead text={statusText} motion={statusMotion} parts={statusParts} sweep={!trustPrompt} />
+              )}
               {genElapsed >= 10 && (
                 <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
                   {fmtElapsed(genElapsed)}

@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef } from "react";
-import type { StatusCaretMotion } from "../chat-status";
+import type { ChatStatusParts, StatusCaretMotion } from "../chat-status";
 
 /** M 的字形（与图标源 src-tauri/icons/source/mesa-*.svg 同一条路径；包围盒 232,284 起 560×456） */
 const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
@@ -68,24 +68,64 @@ export function MesaMark({
 }
 
 /**
- * 聊天生成中那一行的开头：M▁ 加这一轮在做的事（2026-10-26，设计稿 docs/design-chat-status-motion-mockup.html）。
- * 光标按阶段换动作（motion，见 chat-status statusCaretMotion）；sweep 时一道光带连着扫过 M 和字——
- * 两段共用整段的宽度作渐变坐标，各自按偏移对齐（App.css .ccode-status-lead）。字换了就重挂、淡入。
- * 光标比例同原 MesaMark 小字号版（加宽加厚到 250×100，否则 10px 高只剩一个句点）
+ * M▁ 状态字标本体（2026-11-15，设计稿 docs/design-chat-brand-status-mockup.html 方向 A）：
+ * M 用 CSS 遮罩画，右侧单光标槽含微暗导轨（read 态显现）与琥珀游标（五态物理编舞：
+ * thinking 柔光呼吸 / read 导轨往返扫描 / write 三拍打字推进 / cmd 终端双节拍 / steady 满格锁定）。
+ * MesaStatusLead 与 ConversationView 正在进行的那一步共用同一个字标，保证全屏只出现一处 M▁ 主演。
+ */
+export function MesaStatusMark({
+  motion,
+  sweep = false,
+  className = "",
+}: {
+  motion: StatusCaretMotion;
+  sweep?: boolean;
+  className?: string;
+}) {
+  return (
+    <span className={`ccode-status-mark ${className}`} data-motion={motion} aria-hidden="true">
+      <span
+        className={`ccode-status-m ${sweep ? "ccode-sweep" : ""}`}
+        style={{ WebkitMaskImage: M_MASK, maskImage: M_MASK }}
+      />
+      <span className="ccode-status-caret-slot">
+        <span className="ccode-status-caret-rail" />
+        <span className="ccode-status-caret" data-motion={motion} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * 聊天生成中那一行的开头：M▁ 加这一轮在做的事（2026-10-26 初版，2026-11-15 升级方向 A：光标五态编舞 + 结构化动作排版）。
+ * - 传了 parts 时：动词（l3 / 等你确认琥珀）、文件名（等宽 l1 + 虚下划线）、命令（8% 等宽微胶囊）、思考摘要（· + l2）、
+ *   增删行数（+N −M）分层排印，切换状态时 .ccode-status-ticker 纵轴轻翻牌（190ms）；
+ * - 仅裸「思考中」或外部传纯 text（如项目助手）且开启 sweep 时：保留连贯光带扫过 M 和文字。
  */
 export function MesaStatusLead({
   text,
   motion,
-  sweep,
+  sweep = false,
+  parts = null,
 }: {
   text: string | null;
   motion: StatusCaretMotion;
-  sweep: boolean;
+  sweep?: boolean;
+  parts?: ChatStatusParts | null;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
+  const effectiveMotion = parts?.motion ?? motion;
+  const hasStructured = Boolean(
+    parts && (parts.target !== null || parts.awaiting || (parts.added ?? 0) > 0 || (parts.removed ?? 0) > 0),
+  );
+  const plainSweep = sweep && !hasStructured;
+  const displayKey = parts
+    ? `${parts.verb ?? ""}|${parts.targetKind}|${parts.target ?? ""}|${parts.note ?? ""}|${parts.added ?? ""}|${parts.removed ?? ""}`
+    : (text ?? "");
+
   useLayoutEffect(() => {
     const row = ref.current;
-    if (!row || !sweep) return;
+    if (!row || !plainSweep) return;
     const measure = () => {
       row.style.setProperty("--ccode-sweep-w", `${row.offsetWidth}px`);
       for (const el of row.querySelectorAll<HTMLElement>(".ccode-sweep")) {
@@ -97,18 +137,50 @@ export function MesaStatusLead({
     const ro = new ResizeObserver(measure);
     ro.observe(row);
     return () => ro.disconnect();
-  }, [sweep, text]);
+  }, [plainSweep, displayKey]);
+
+  const plainLabel = parts ? (parts.verb ?? text) : text;
+
   return (
-    <span ref={ref} className="ccode-status-lead" data-sweep={sweep ? "" : undefined}>
-      <span className="ccode-status-mark" aria-hidden="true">
-        <span className="ccode-status-m ccode-sweep" style={{ WebkitMaskImage: M_MASK, maskImage: M_MASK }} />
-        <span className="ccode-status-caret" data-motion={motion} />
-      </span>
+    <span ref={ref} className="ccode-status-lead" data-sweep={plainSweep ? "" : undefined}>
+      <MesaStatusMark motion={effectiveMotion} sweep={plainSweep} />
       <span aria-live="polite" className="contents">
-        {text && (
-          <span key={text} className="ccode-status-text ccode-sweep min-w-0 truncate">
-            {text}
+        {hasStructured && parts ? (
+          <span key={displayKey} className="ccode-status-ticker">
+            {parts.verb && (
+              <span className={parts.awaiting ? "shrink-0 font-medium text-mesa-amber" : "ccode-status-verb shrink-0"}>
+                {parts.verb}
+              </span>
+            )}
+            {parts.targetKind === "thought" && parts.target && (
+              <>
+                <span className="shrink-0 text-l4" aria-hidden="true">·</span>
+                <span className="ccode-status-thought min-w-0 truncate">{parts.target}</span>
+              </>
+            )}
+            {parts.targetKind === "file" && parts.target && (
+              <span className="ccode-status-file min-w-0 truncate font-mono">{parts.target}</span>
+            )}
+            {parts.targetKind === "cmd" && parts.target && (
+              <span className="ccode-status-cmd min-w-0 truncate font-mono">{parts.target}</span>
+            )}
+            {parts.targetKind === "plain" && parts.target && (
+              <span className="min-w-0 truncate text-l2">{parts.target}</span>
+            )}
+            {parts.note && <span className="shrink-0 text-l4">{parts.note}</span>}
+            {(parts.added ?? 0) > 0 && (
+              <span className="shrink-0 font-mono tabular-nums text-add">+{parts.added}</span>
+            )}
+            {(parts.removed ?? 0) > 0 && (
+              <span className="shrink-0 font-mono tabular-nums text-del">−{parts.removed}</span>
+            )}
           </span>
+        ) : (
+          plainLabel && (
+            <span key={displayKey} className="ccode-status-text ccode-sweep min-w-0 truncate">
+              {plainLabel}
+            </span>
+          )
         )}
       </span>
     </span>

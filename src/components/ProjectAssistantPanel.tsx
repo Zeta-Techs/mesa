@@ -1070,7 +1070,7 @@ export default function ProjectAssistantPanel({
                     只读查看时实时写正在读哪个文件 / 搜什么（后端推来的步骤） */}
                 <MesaStatusLead
                   text={liveStep ?? (liveText ? "正在写…" : inspecting ? INSPECT_WAITING : INTENT_WAITING[intent])}
-                  motion={liveText ? "stretch" : "breathe"}
+                  motion={liveText ? "write" : inspecting && liveStep ? "read" : "thinking"}
                   sweep
                 />
                 {waited >= 3 && (

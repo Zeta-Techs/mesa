@@ -13,7 +13,7 @@
  */
 import type { ChatMessageDto } from "./types.ts";
 import { groupConversationSegments, sessionPlan, turnPlan, type ProcessItem } from "./conversation-tools.ts";
-import { toolActivities } from "./tool-activity.ts";
+import { toolActivities, type ActivityKind } from "./tool-activity.ts";
 
 /** 旁路快照里正在跑的工具（ChatChannelSnapshot.activity 的子集） */
 export interface StatusActivity {
@@ -85,11 +85,14 @@ export function describeActivity(
   return clip(text, 72);
 }
 
-function lastTool(items: readonly ProcessItem[]): { result: string | null } | null {
+function lastTool(items: readonly ProcessItem[]): { result: string | null; kind: ActivityKind } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    if (it.kind === "tool") return it.tool;
-    if (it.kind === "explore") return it.tools[it.tools.length - 1] ?? null;
+    if (it.kind === "tool") return { result: it.tool.result, kind: it.tool.activity.kind };
+    if (it.kind === "explore") {
+      const last = it.tools[it.tools.length - 1];
+      return last ? { result: last.result, kind: last.activity.kind } : null;
+    }
   }
   return null;
 }
@@ -99,8 +102,8 @@ function liveTurn(
   messages: readonly ChatMessageDto[],
   cwd: string | null,
   isWindows: boolean,
-): { pendingVisible: boolean; planStep: string | null; lastThought: string | null } {
-  const empty = { pendingVisible: false, planStep: null, lastThought: null };
+): { pendingVisible: boolean; pendingKind: ActivityKind | null; planStep: string | null; lastThought: string | null } {
+  const empty = { pendingVisible: false, pendingKind: null, planStep: null, lastThought: null };
   // 只看最后一句提问之后（状态每秒重算，整段对话的差异计算不必跟着跑）
   let ask = messages.length - 1;
   while (ask >= 0 && !(messages[ask].role === "user" && messages[ask].blocks.some((b) => b.kind === "text"))) ask--;
@@ -115,8 +118,10 @@ function liveTurn(
     (plan ? null : sessionPlan(messages)?.find((p) => p.status === "in_progress")) ??
     null;
   const last = seg.items[seg.items.length - 1];
+  const pendingVisible = Boolean(tool && tool.result === null);
   return {
-    pendingVisible: Boolean(tool && tool.result === null),
+    pendingVisible,
+    pendingKind: pendingVisible && tool ? tool.kind : null,
     planStep: doing ? clip(doing.active ?? doing.text, 72) : null,
     lastThought: last?.kind === "thinking" ? last.text : null,
   };
@@ -143,6 +148,7 @@ export function chatStatus(input: ChatStatusInput): ChatStatus {
 /** 屏上正显示的那条状态与它出现的时刻 */
 export interface ShownStatus {
   status: ChatStatus;
+  parts?: ChatStatusParts;
   at: number;
 }
 
@@ -156,18 +162,155 @@ export function settleStatus(
   shown: ShownStatus | null,
   next: ChatStatus,
   now: number,
+  nextParts?: ChatStatusParts,
 ): { shown: ShownStatus; retryInMs: number | null } {
-  if (!shown) return { shown: { status: next, at: now }, retryInMs: null };
+  const pack = (): ShownStatus => (nextParts ? { status: next, parts: nextParts, at: now } : { status: next, at: now });
+  if (!shown) return { shown: pack(), retryInMs: null };
   if (sameStatus(shown.status, next)) return { shown, retryInMs: null };
   const wait = shown.at + STATUS_MIN_DWELL_MS - now;
-  if (wait <= 0) return { shown: { status: next, at: now }, retryInMs: null };
+  if (wait <= 0) return { shown: pack(), retryInMs: null };
   return { shown, retryInMs: wait };
 }
 
-/** M▁ 光标的动作：在想 = 呼吸，在干活（工具 / 计划里那一步）= 横向伸缩，等你确认 = 常亮 */
-export type StatusCaretMotion = "breathe" | "stretch" | "steady";
+/**
+ * M▁ 光标的五种物理编舞阶段（2026-11-15，设计稿 docs/design-chat-brand-status-mockup.html 方向 A）：
+ * - thinking：思考中 / 推理摘要，柔光正弦深呼吸
+ * - read：查阅文件 / 搜索 / 网页，微暗导轨浮现、琥珀游标左右往返扫描
+ * - write：编辑 / 写入 / 删除文件，三拍打字步进推进
+ * - cmd：运行终端命令 / 调子任务 / MCP，短促有力的双节拍脉冲
+ * - steady：等你确认 / 提问，满格琥珀常亮锁定 + 余辉
+ * 保留 breathe / stretch 别名兼容其他面板（如项目助手）
+ */
+export type StatusCaretMotion =
+  | "thinking"
+  | "read"
+  | "write"
+  | "cmd"
+  | "steady"
+  | "breathe"
+  | "stretch";
 
-export function statusCaretMotion(kind: ChatStatusKind, awaitingYou: boolean): StatusCaretMotion {
+/** 按工具类别映射物理光标动作（ConversationView 进行中工具行与 MesaStatusLead 共用） */
+export function activityCaretMotion(kind: ActivityKind): "read" | "write" | "cmd" | "steady" {
+  switch (kind) {
+    case "read":
+    case "search":
+    case "list":
+    case "web":
+      return "read";
+    case "edit":
+    case "write":
+    case "delete":
+      return "write";
+    case "ask":
+      return "steady";
+    default:
+      return "cmd";
+  }
+}
+
+export function statusCaretMotion(
+  kind: ChatStatusKind,
+  awaitingYou: boolean,
+  activityKind?: ActivityKind | null,
+): StatusCaretMotion {
   if (awaitingYou) return "steady";
-  return kind === "tool" || kind === "plan" ? "stretch" : "breathe";
+  if (activityKind) return activityCaretMotion(activityKind);
+  return kind === "tool" || kind === "plan" ? "cmd" : "thinking";
+}
+
+/** 状态行结构化语义片段：让 M▁ 后面的动词、等宽文件名虚下划线、命令胶囊、思考摘要与增删行数分层排版 */
+export interface ChatStatusParts {
+  motion: StatusCaretMotion;
+  verb: string | null;
+  awaiting?: boolean;
+  target: string | null;
+  targetKind: "plain" | "file" | "cmd" | "thought";
+  note?: string | null;
+  added?: number | null;
+  removed?: number | null;
+}
+
+export function chatStatusParts(
+  input: ChatStatusInput,
+  status: ChatStatus = chatStatus(input),
+  awaitingPromptText?: string | null,
+): ChatStatusParts {
+  if (awaitingPromptText) {
+    const rest = awaitingPromptText.startsWith("等你确认")
+      ? awaitingPromptText.slice("等你确认".length).trim()
+      : awaitingPromptText;
+    return {
+      motion: "steady",
+      verb: "等你确认",
+      awaiting: true,
+      target: rest || null,
+      targetKind: "plain",
+    };
+  }
+  const turn = liveTurn(input.messages, input.cwd, input.isWindows);
+  if (status.text === null) {
+    return {
+      motion: statusCaretMotion(status.kind, false, turn.pendingKind),
+      verb: null,
+      target: null,
+      targetKind: "plain",
+    };
+  }
+  if (status.kind === "tool" && input.activity) {
+    const acts = toolActivities(input.activity.name, input.activity.input, input.cwd, input.isWindows);
+    const a = acts[0];
+    if (a) {
+      const motion = activityCaretMotion(a.kind);
+      if (a.kind === "mcp" && a.note) {
+        return {
+          motion,
+          verb: a.verb,
+          target: clip(`${a.note} · ${a.target}`, 64),
+          targetKind: "cmd",
+        };
+      }
+      const isFile = a.kind === "edit" || a.kind === "write" || a.kind === "delete" || a.kind === "read";
+      const targetKind = isFile ? "file" : a.kind === "run" ? "cmd" : "plain";
+      return {
+        motion,
+        verb: a.verb,
+        target: a.target ? clip(a.target, 64) : null,
+        targetKind,
+        note: acts.length > 1 ? `等 ${acts.length} 个文件` : null,
+        added: a.added,
+        removed: a.removed,
+      };
+    }
+  }
+  if (status.kind === "thinking") {
+    return {
+      motion: "thinking",
+      verb: "思考中",
+      target: status.text,
+      targetKind: "thought",
+    };
+  }
+  if (status.kind === "plan") {
+    return {
+      motion: statusCaretMotion("plan", false, turn.pendingKind),
+      verb: null,
+      target: status.text,
+      targetKind: "plain",
+    };
+  }
+  if (status.kind === "cli") {
+    return {
+      motion: "thinking",
+      verb: null,
+      target: status.text,
+      targetKind: "plain",
+    };
+  }
+  return {
+    motion: "thinking",
+    verb: status.text,
+    target: null,
+    targetKind: "plain",
+  };
 }

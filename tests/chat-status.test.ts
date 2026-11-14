@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activityCaretMotion,
   chatStatus,
+  chatStatusParts,
   describeActivity,
   settleStatus,
   statusCaretMotion,
@@ -55,13 +57,19 @@ test("状态字最短停留：停够才换，期间来的只留最新一条", ()
   assert.equal(settleStatus(due.shown, { ...readB }, STATUS_MIN_DWELL_MS + 50).shown, due.shown);
 });
 
-test("M▁ 光标的动作：在想呼吸、干活伸缩、等你确认常亮", () => {
-  assert.equal(statusCaretMotion("waiting", false), "breathe");
-  assert.equal(statusCaretMotion("thinking", false), "breathe");
-  assert.equal(statusCaretMotion("cli", false), "breathe");
-  assert.equal(statusCaretMotion("tool", false), "stretch");
-  assert.equal(statusCaretMotion("plan", false), "stretch");
-  assert.equal(statusCaretMotion("tool", true), "steady");
+test("M▁ 光标的五态物理编舞：在想呼吸、查阅扫描、写文件步进、跑命令脉冲、等你确认锁定", () => {
+  assert.equal(statusCaretMotion("waiting", false), "thinking");
+  assert.equal(statusCaretMotion("thinking", false), "thinking");
+  assert.equal(statusCaretMotion("cli", false), "thinking");
+  assert.equal(statusCaretMotion("tool", false), "cmd");
+  assert.equal(statusCaretMotion("plan", false), "cmd");
+  assert.equal(statusCaretMotion("tool", false, "read"), "read");
+  assert.equal(statusCaretMotion("tool", false, "edit"), "write");
+  assert.equal(statusCaretMotion("tool", true, "edit"), "steady");
+  assert.equal(activityCaretMotion("search"), "read");
+  assert.equal(activityCaretMotion("write"), "write");
+  assert.equal(activityCaretMotion("run"), "cmd");
+  assert.equal(activityCaretMotion("ask"), "steady");
 });
 
 test("旁路报来正在跑的工具：说在做的事，不说工具原名", () => {
@@ -146,4 +154,68 @@ test("Claude Code 的 Task 清单跨轮共用：发了「继续」后这一轮�
     msg("assistant", [use("Bash", { command: "ls" }, "c10")]),
   ];
   assert.deepEqual(chatStatus({ ...base, messages: finished }), { kind: "tool", text: null });
+});
+
+test("chatStatusParts：把思考摘要、文件增删、命令胶囊与等你确认拆成结构化片段", () => {
+  assert.deepEqual(chatStatusParts({ ...base, thinking: "**梳理碱性 HER 判据**\n细节" }), {
+    motion: "thinking",
+    verb: "思考中",
+    target: "梳理碱性 HER 判据",
+    targetKind: "thought",
+  });
+  assert.deepEqual(
+    chatStatusParts({
+      ...base,
+      activity: {
+        name: "Edit",
+        input: JSON.stringify({ file_path: "/w/manuscript/02.qmd", old_string: "a\nb", new_string: "a\nc\nd" }),
+      },
+    }),
+    {
+      motion: "write",
+      verb: "编辑",
+      target: "02.qmd",
+      targetKind: "file",
+      note: null,
+      added: 2,
+      removed: 1,
+    },
+  );
+  assert.deepEqual(
+    chatStatusParts({
+      ...base,
+      activity: { name: "Read", input: JSON.stringify({ file_path: "/w/papers/included.json" }) },
+    }),
+    {
+      motion: "read",
+      verb: "读取",
+      target: "included.json",
+      targetKind: "file",
+      note: null,
+      added: null,
+      removed: null,
+    },
+  );
+  assert.deepEqual(
+    chatStatusParts({
+      ...base,
+      activity: { name: "Bash", input: JSON.stringify({ command: "python3 scripts/lit_records.py --verify" }) },
+    }),
+    {
+      motion: "cmd",
+      verb: "运行",
+      target: "python3 scripts/lit_records.py --verify",
+      targetKind: "cmd",
+      note: null,
+      added: null,
+      removed: null,
+    },
+  );
+  assert.deepEqual(chatStatusParts(base, chatStatus(base), "等你确认是否信任这个目录"), {
+    motion: "steady",
+    verb: "等你确认",
+    awaiting: true,
+    target: "是否信任这个目录",
+    targetKind: "plain",
+  });
 });
