@@ -196,6 +196,14 @@ test("科研保存链白话：有未提交 / 有提交 / 已写入 / 空", () =>
     "保存进项目",
   );
   assert.equal(
+    reviewSavePrimaryLabel({ hasUncommitted: true, hasCommitted: false, checking: true }),
+    "提交并保存进项目",
+  );
+  assert.equal(
+    reviewSavePrimaryLabel({ hasUncommitted: false, hasCommitted: false, mergedAt: "t", checking: true }),
+    "检查中…",
+  );
+  assert.equal(
     reviewSavePrimaryLabel({ hasUncommitted: false, hasCommitted: false, mergedAt: "t" }),
     "已保存进项目",
   );

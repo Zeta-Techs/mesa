@@ -105,3 +105,74 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     assert.equal(mergedArgs.expectReviewedSha,'a'.repeat(40));
   }finally{await act(async()=>root.unmount());dom.window.close();for(const[key,d]of restore){if(d)Object.defineProperty(globalThis,key,d);else Reflect.deleteProperty(globalThis,key);}}
 });
+
+test("打开初稿评审不先闪「无待保存提交」和半截核验数，等健康度与 Mesa 核对到齐再出终态", async () => {
+  const bundle=await build({stdin:{contents:`export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as Review} from './src/components/WorkspaceReviewView';`,resolveDir:process.cwd(),loader:'tsx'},loader:{'.css':'empty'},bundle:true,write:false,format:'cjs',platform:'node',jsx:'automatic',external:['react','react-dom/client','react/jsx-runtime'],plugins:[{name:'host',setup(b){
+    b.onResolve({filter:/^\.\.\/store$/},()=>({path:'store',namespace:'stub'}));
+    b.onResolve({filter:/^\.\/ArtifactChecklist$/},()=>({path:'artifacts',namespace:'stub'}));
+    b.onResolve({filter:/^\.\/WatchRunReview$/},()=>({path:'watch',namespace:'stub'}));
+    b.onResolve({filter:/^\.\/OfficePreviewModal$/},()=>({path:'preview',namespace:'stub'}));
+    b.onResolve({filter:/^\.\/ProjectFilePreview$/},()=>({path:'file-preview',namespace:'stub'}));
+    b.onResolve({filter:/^\.\/ConfirmDialog$/},()=>({path:'confirm',namespace:'stub'}));
+    b.onResolve({filter:/\?(worker|url)$/},()=>({path:'asset',namespace:'stub'}));
+    b.onLoad({filter:/.*/,namespace:'stub'},(args)=>({loader:'js',contents:args.path==='asset'?'export default "data:text/javascript,";':args.path==='confirm'?'export const confirmDialog=async()=>true;':args.path==='store'?'export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});export const selectHiddenProfiles=()=>[];':args.path==='artifacts'?'export const loadArtifactRows=async()=>[{entry:"manuscript/draft.md",files:[{name:"draft.md",path:"/tree/manuscript/draft.md",isDir:false}]}];':'export default function Stub(){return null;}'}));
+  }}]});
+  const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost',pretendToBeVisual:true});
+  const restore:Array<[string,PropertyDescriptor|undefined]>=[];
+  class FakeObserver{observe(){}disconnect(){}unobserve(){}takeRecords(){return[];}}
+  for(const[key,value]of Object.entries({window:dom.window,document:dom.window.document,navigator:dom.window.navigator,HTMLElement:dom.window.HTMLElement,localStorage:dom.window.localStorage,sessionStorage:dom.window.sessionStorage,IS_REACT_ACT_ENVIRONMENT:true,IntersectionObserver:FakeObserver,DOMMatrix:class{multiplySelf(){return this}preMultiplySelf(){return this}invertSelf(){return this}translateSelf(){return this}scaleSelf(){return this}multiply(){return this}inverse(){return this}},requestAnimationFrame:(fn:()=>void)=>{fn();return 0;},cancelAnimationFrame:()=>{},__reviewStore:{setPage(){},setSelectProjectReq(){},setFilePreviewReq(){},setPendingTerminal(){},runningScripts:{},profiles:[]}})){
+    restore.push([key,Object.getOwnPropertyDescriptor(globalThis,key)]);Object.defineProperty(globalThis,key,{value,configurable:true,writable:true});
+  }
+  const step=PIPELINE_TEMPLATES.flatMap(t=>t.steps).find(s=>s.workspaceName==='draft')!;
+  let releaseSlow!:()=>void;
+  const slowGate=new Promise<void>(r=>{releaseSlow=r;});
+  Object.assign(dom.window,{__TAURI_INTERNALS__:{invoke:async(command:string,args:any)=>{
+    if(command==='workspace_diff')return {inWorkspace:true,workspaceId:'w-draft',workspaceName:'draft',branch:'ccode/draft',reviewOnly:false,baseBranch:'master',mergeBase:'abc',files:[{path:'manuscript/draft.md',status:'M',additions:100,deletions:0}],totalAdd:100,totalDel:0,worktreePath:'/tree'};
+    if(command==='git_status')return {isRepo:true,branch:'ccode/draft',ahead:0,behind:0,files:[],totalAdd:0,totalDel:0};
+    if(command==='workspace_health'){await slowGate;return {conflict:false,uncommitted:false,mainDirty:false,mainOffBase:false,readyToMerge:false,worktreeHead:'a'.repeat(40),ahead:0,behind:0};}
+    if(command==='workspace_review_deliverables'){await slowGate;return {token:'frozen',workspaceId:'w-draft',projectRoot:'/project',payloadDir:'/frozen',files:[]};}
+    if(command==='workspace_unmerged_files')return {merging:false,files:[],staleBase:false};
+    if(command==='list_workspaces')return [{id:'w-draft',name:'draft',status:'active',repoPath:'/project',worktreePath:'/tree',mergedAt:'2026-11-14T08:00:00Z'}];
+    if(command==='read_project_config')return {config:{steps:[step],resources:[],artifactDir:'artifacts'}};
+    if(command==='check_citation_health')return {bibFound:true,totalRefs:1,resolved:1,missing:[]};
+    if(command==='research_checks_read')return {items:[{id:'C-1',kind:'quote',status:'passed',title:'摘录一致'},{id:'C-2',kind:'quote',status:'needs_human',title:'仅摘要'}],files:['cite.jsonl'],skipped:0};
+    if(command==='workspace_settings')return {run:[],runMode:'nonconcurrent'};
+    if(command==='list_human_task_states'||command==='list_skills')return [];
+    if(command==='list_dir'){
+      if(String(args.path).endsWith('manuscript'))return [{name:'draft.md',path:'/tree/manuscript/draft.md',isDir:false}];
+      return [];
+    }
+    if(command==='workspace_file_diff')return 'diff --git a/manuscript/draft.md b/manuscript/draft.md\n';
+    if(command==='read_research_ledger'){
+      if(String(args.path).endsWith('references.bib'))return {text:'@article{Real2024,\n  year={2024}\n}\n',revision:'b1',truncated:false};
+      throw new Error('not found');
+    }
+    if(command==='read_file_preview'){
+      if(String(args.path).endsWith('draft.md')){
+        await slowGate;
+        return {text:'# Intro\nSee [@Ghost2025].\n',revision:'d1',truncated:false};
+      }
+      throw new Error('not found');
+    }
+    throw new Error(command);
+  }}});
+  const module={exports:{} as Record<string,any>};new Function('require','module','exports',bundle.outputFiles[0].text)(createRequire(import.meta.url),module,module.exports);
+  const{createElement:h,act,createRoot,Review}=module.exports;
+  const host=dom.window.document.getElementById('root')!,root=createRoot(host);
+  try{
+    await act(async()=>{root.render(h(Review,{worktreePath:'/tree',onClose(){}}));});
+    // 慢路（workspace_health 与 loadStepMesaChecks 读 draft.md）尚未返回时：
+    // 绝不先闪「无待保存提交」或半截的「核验 2 项 · 待你判断 1」
+    assert.doesNotMatch(host.textContent!,/无待保存提交/);
+    assert.doesNotMatch(host.textContent!,/核验 2 项/);
+    assert.match(host.textContent!,/检查中…/);
+    assert.match(host.textContent!,/退回修改…/);
+    assert.match(host.textContent!,/稿件/);
+
+    await act(async()=>{releaseSlow();await slowGate;});
+    // 慢路返回后一次性显示完整的「已保存进项目」与合并后的「核验 3 项 · 拦下 1 · 待你判断 1」
+    assert.match(host.textContent!,/已保存进项目/);
+    assert.match(host.textContent!,/核验 3 项 · 拦下 1 · 待你判断 1/);
+    assert.match(host.textContent!,/产物 1\/1/);
+  }finally{await act(async()=>root.unmount());dom.window.close();for(const[key,d]of restore){if(d)Object.defineProperty(globalThis,key,d);else Reflect.deleteProperty(globalThis,key);}}
+});

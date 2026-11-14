@@ -7,8 +7,10 @@ export function reviewSavePrimaryLabel(input: {
   hasUncommitted: boolean;
   hasCommitted: boolean;
   mergedAt?: string | null;
+  checking?: boolean;
 }): string {
   if (input.hasUncommitted) return "提交并保存进项目";
+  if (input.checking) return "检查中…";
   if (input.hasCommitted) return "保存进项目";
   if (input.mergedAt) return "已保存进项目";
   return "无待保存提交";

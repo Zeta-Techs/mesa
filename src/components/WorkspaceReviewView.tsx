@@ -1199,27 +1199,38 @@ function LiveWorkspaceReviewView({
   const [citeExpanded, setCiteExpanded] = useState(false);
   // 核验清单（.ccode/checks/，2026-11-02）：没有核验记录时整颗按钮不出现
   const [fileChecks, setChecks] = useState<ChecksDto | null>(null);
+  const [fileChecksPath, setFileChecksPath] = useState<string | null>(null);
   const [checksExpanded, setChecksExpanded] = useState(false);
   const [evidenceTick, setEvidenceTick] = useState(0);
+  const [openedPath, setOpenedPath] = useState<string | null>(null);
+  const [wsLoadedPath, setWsLoadedPath] = useState<string | null>(null);
+  const [loadedDiffPath, setLoadedDiffPath] = useState<string | null>(null);
+  const [loadedHealthPath, setLoadedHealthPath] = useState<string | null>(null);
+  const [artifactsLoadedPath, setArtifactsLoadedPath] = useState<string | null>(null);
   // 大纲核对（综述回路三期）：大纲那一步打开评审时 Mesa 自己数、自己查，合并进核验清单（不写文件、不靠 AI 跑脚本）
   const [outlineCheck, setOutlineCheck] = useState<OutlineCheckResult | null>(null);
+  const [outlineLoadedKey, setOutlineLoadedKey] = useState<string | null>(null);
+  const readOnlyRunReview = diff?.reviewOnly === true;
+  const activeContext =
+    !readOnlyRunReview && researchContext?.root === worktreePath ? researchContext : null;
+  const opening = openedPath !== worktreePath;
   // 告诉项目助手评审页正开着哪一步：这时问「这轮怎么样」「帮我看看」默认看这一步（关掉评审就清）
   useEffect(() => {
-    if (!researchContext) return;
+    if (!activeContext) return;
     setReviewingStep({
-      projectRoot: researchContext.workspace.repoPath,
-      n: researchContext.stepNo,
-      name: researchContext.step.name,
-      worktree: researchContext.workspace.worktreePath,
-      artifacts: researchContext.step.expectedArtifacts,
+      projectRoot: activeContext.workspace.repoPath,
+      n: activeContext.stepNo,
+      name: activeContext.step.name,
+      worktree: activeContext.workspace.worktreePath,
+      artifacts: activeContext.step.expectedArtifacts,
     });
     return () => setReviewingStep(null);
-  }, [researchContext]);
+  }, [activeContext]);
   const skillProvides = useSkillProvides();
-  const currentStepKind = researchContext ? stepKind(researchContext.step, skillProvides) : null;
+  const currentStepKind = activeContext ? stepKind(activeContext.step, skillProvides) : null;
   const outlineRoots =
-    researchContext && currentStepKind === "outline"
-      ? `${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
+    activeContext && currentStepKind === "outline"
+      ? `${activeContext.workspace.worktreePath}\n${activeContext.workspace.repoPath}`
       : null;
   useEffect(() => {
     if (!outlineRoots) {
@@ -1233,6 +1244,9 @@ function LiveWorkspaceReviewView({
       })
       .catch(() => {
         if (!stale) setOutlineCheck(null);
+      })
+      .finally(() => {
+        if (!stale) setOutlineLoadedKey(outlineRoots);
       });
     return () => {
       stale = true;
@@ -1240,9 +1254,10 @@ function LiveWorkspaceReviewView({
   }, [outlineRoots, revision, evidenceTick]);
   // 其余各步的 Mesa 核对（精读、初稿/定稿、检索台账、数据登记/清洗、实验设计/执行、结果分析、投稿材料与返修）：打开评审时现算、合并进核验清单，不写文件
   const [stepMesaChecks, setStepMesaChecks] = useState<CheckItem[]>([]);
+  const [stepMesaLoadedKey, setStepMesaLoadedKey] = useState<string | null>(null);
   const mesaStep =
-    researchContext && currentStepKind && currentStepKind !== "outline"
-      ? `${currentStepKind}\n${researchContext.workspace.worktreePath}\n${researchContext.workspace.repoPath}`
+    activeContext && currentStepKind && currentStepKind !== "outline"
+      ? `${currentStepKind}\n${activeContext.workspace.worktreePath}\n${activeContext.workspace.repoPath}`
       : null;
   useEffect(() => {
     if (!mesaStep) {
@@ -1250,7 +1265,7 @@ function LiveWorkspaceReviewView({
       return;
     }
     const [kind, ...roots] = mesaStep.split("\n");
-    const artifacts = researchContext?.step.expectedArtifacts ?? [];
+    const artifacts = activeContext?.step.expectedArtifacts ?? [];
     let stale = false;
     loadStepMesaChecks(roots, kind as StepKind, artifacts)
       .then((value) => {
@@ -1258,6 +1273,9 @@ function LiveWorkspaceReviewView({
       })
       .catch(() => {
         if (!stale) setStepMesaChecks([]);
+      })
+      .finally(() => {
+        if (!stale) setStepMesaLoadedKey(mesaStep);
       });
     return () => {
       stale = true;
@@ -1271,16 +1289,29 @@ function LiveWorkspaceReviewView({
   const [humanClosing, setHumanClosing] = useState<string[] | null>(null);
   const [wsRow, setWsRow] = useState<WorkspaceDto | null>(null);
   const [writingHits, setWritingHits] = useState<WritingReviewHit[]>([]);
-  // 核验清单 = 核验文件 + Mesa 自己查的（大纲核对、写作扫描；2026-11-11 写作扫描不再单独占一段黄字）
-  const writingFile = useMemo(() => writingScanSourcePath((diff?.files ?? []).map((file) => file.path)), [diff]);
+  const [writingLoadedKey, setWritingLoadedKey] = useState<string | null>(null);
+  // 核验清单 = 核验文件 + Mesa 自己查的（大纲核对、写作扫描；2026-11-11 写作扫描不再单独占一段黄字）。
+  // 等核验记录、本步 Mesa 核对与写作扫描都齐了再合出结果，避免刚打开先闪「核验 41 项 · 待你判断 7」再跳到「52 项 · 18」（2026-11-14 HER 初稿实证）
+  const currentDiff = loadedDiffPath === worktreePath ? diff : null;
+  const writingFile = useMemo(() => writingScanSourcePath((currentDiff?.files ?? []).map((file) => file.path)), [currentDiff]);
+  const checksReady =
+    !opening &&
+    loadedDiffPath === worktreePath &&
+    fileChecksPath === worktreePath &&
+    artifactsLoadedPath === worktreePath &&
+    (!outlineRoots || outlineLoadedKey === outlineRoots) &&
+    (!mesaStep || stepMesaLoadedKey === mesaStep) &&
+    (!writingFile || writingLoadedKey === `${worktreePath}\n${writingFile}`);
+  const shownArtifacts = checksReady ? artifacts : null;
   const checks = useMemo(
     () => {
+      if (!checksReady) return null;
       // 同一件事只报一次：定稿占位、number-sections 下手写编号由核对拦下，写作扫描那条去掉
       const superseded = supersededWritingIds(stepMesaChecks);
       const writing = writingHitChecks(writingHits, writingFile ?? "").filter((c) => !superseded.has(c.id));
       return mergeMesaChecks(fileChecks, [...(outlineCheck?.items ?? []), ...stepMesaChecks, ...writing]);
     },
-    [fileChecks, outlineCheck, stepMesaChecks, writingHits, writingFile],
+    [checksReady, fileChecks, outlineCheck, stepMesaChecks, writingHits, writingFile],
   );
   // 退回意见：按工作副本记在本机（2026-11-11 用户：评审看了一半关掉，写的意见别丢）；退回或保存进项目后清掉
   const [reviewNotes, setReviewNotes] = useState("");
@@ -1327,7 +1358,7 @@ function LiveWorkspaceReviewView({
   const setSelectProjectReq = useAppStore((s) => s.setSelectProjectReq);
   const setFilePreviewReq = useAppStore((s) => s.setFilePreviewReq);
   const [reviewPane, setReviewPane] = useState<ReviewPane>("content");
-  const [opening, setOpening] = useState(true);
+  const refreshSeqRef = useRef(0);
   const [message, setMessage] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1380,21 +1411,23 @@ function LiveWorkspaceReviewView({
   /** 人在这次评审里亲手点过文件（之后不再自动改选）；自动选时用的评审类型 */
   const userPickedRef = useRef(false);
   const autoPickKindRef = useRef<string | null>(null);
-  const readOnlyRunReview = diff?.reviewOnly === true;
 
   const refresh = useCallback(
     async (quiet = false) => {
+      const seq = ++refreshSeqRef.current;
       if (!quiet) setRefreshing(true);
       try {
         const [nextDiff, nextStatus] = await Promise.all([
           invoke<WorkspaceDiffDto>("workspace_diff", { worktreePath }),
           invoke<GitStatusDto>("git_status", { cwd: worktreePath }),
         ]);
+        if (seq !== refreshSeqRef.current) return;
         if (!nextDiff.inWorkspace) throw new Error("该目录不属于活动工作区或 Run 隔离树");
         // 先把改动清单交给页面，稿件可以先开始读；健康度、冲突、产物冻结三路并行随后补上
         // （2026-10-24：三段串行时 HER 初稿要等 2 秒多才出页面）。保存进项目仍要等冻结完成。
         if (!quiet) {
           setDiff(nextDiff);
+          setLoadedDiffPath(worktreePath);
           setStatus(nextStatus);
           setLoading(false);
         }
@@ -1402,9 +1435,11 @@ function LiveWorkspaceReviewView({
           !nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)
             ? invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId }).then(
                 (review) => {
+                  if (seq !== refreshSeqRef.current) return;
                   deliveryReviewRef.current = review; setDeliveryReview(review); setDeliveryError(null);
                 },
                 (reason) => {
+                  if (seq !== refreshSeqRef.current) return;
                   deliveryReviewRef.current = null; setDeliveryReview(null); setDeliveryError(String(reason));
                 },
               )
@@ -1419,7 +1454,7 @@ function LiveWorkspaceReviewView({
                 id: nextDiff.workspaceId,
               }),
             ]);
-        await freezing;
+        if (seq !== refreshSeqRef.current) return;
         const signature = JSON.stringify({
           files: nextDiff.files,
           status: nextStatus.files,
@@ -1432,9 +1467,12 @@ function LiveWorkspaceReviewView({
           // 手动点「刷新」时哪怕只有 .gitignore 里的 .ccode/checks/*.jsonl 变了，也重读核验与引用健康，不重挂载正文预览
           setEvidenceTick((value) => value + 1);
         }
+        // 健康度与冲突状态一拿到就更新（不等大文件 SHA-256 冻结跑完），右上角按钮文案即时落定；可点击性仍由 deliveryReview 门控
         setDiff(nextDiff);
+        setLoadedDiffPath(worktreePath);
         setStatus(nextStatus);
         setHealth(nextHealth);
+        setLoadedHealthPath(worktreePath);
         setLedgerPending(nextHealth?.ledgerPending === true);
         reviewedShaRef.current = freezeReviewedSha(
           reviewedShaRef.current,
@@ -1448,12 +1486,16 @@ function LiveWorkspaceReviewView({
           );
         }
         if (!quiet) setError(null);
+        await freezing;
       } catch (reason) {
+        if (seq !== refreshSeqRef.current) return;
         // 静默轮询失败不覆盖用户正在看的错误，避免留下清不掉的粘性横幅
         if (!quiet) setError(String(reason));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (seq === refreshSeqRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [worktreePath],
@@ -1492,7 +1534,15 @@ function LiveWorkspaceReviewView({
     }
     sectionRefs.current.clear();
     setMergedAt(null);
-    setOpening(true);
+    setOpenedPath(null);
+    setWsLoadedPath(null);
+    setLoadedDiffPath(null);
+    setLoadedHealthPath(null);
+    setFileChecksPath(null);
+    setArtifactsLoadedPath(null);
+    setOutlineLoadedKey(null);
+    setStepMesaLoadedKey(null);
+    setWritingLoadedKey(null);
     setResearchContext(null);
     setResearchError(null);
     setMergeDone(false);
@@ -1506,6 +1556,7 @@ function LiveWorkspaceReviewView({
     setChecks(null);
     setChecksExpanded(false);
     setArtifacts(null);
+    setHumanClosing(null);
     setWsRow(null);
     setWritingHits([]);
     notesPathRef.current = worktreePath;
@@ -1528,46 +1579,34 @@ function LiveWorkspaceReviewView({
     initialActionRef.current = null;
   }, [worktreePath]);
 
-  // merged_at 不在 diff/health DTO 上，按工作区单独取一次，用于「已合并」按钮态；
-  // 顺带取所属主仓库路径（主仓脏拦截的内联快速提交）与上游漂移提醒（staleUpstream）
+  // 引用健康与 .ccode/checks/ 核验记录：打开评审即与 workspace_diff 并行读取，随内容版本推进（revision）或手动刷新（evidenceTick）重读
   useEffect(() => {
-    const workspaceId = diff?.workspaceId;
-    if (!workspaceId || diff?.reviewOnly) return;
-    invoke<WorkspaceDto[]>("list_workspaces")
-      .then((list) => {
-        const workspace = list.find((entry) => entry.id === workspaceId);
-        setMergedAt(workspace?.mergedAt ?? null);
-        setRepoPath(workspace?.repoPath ?? null);
-        setStaleUpstream(workspace?.staleUpstream ?? null);
-        setWsRow(workspace ?? null);
-      })
-      .catch(() => {});
-  }, [diff?.workspaceId, diff?.reviewOnly]);
-
-  // 引用健康与 .ccode/checks/ 核验记录：随工作副本切换、内容版本推进（revision）或手动刷新（evidenceTick）重读
-  useEffect(() => {
-    const workspaceId = diff?.workspaceId;
-    if (!workspaceId) return;
     let stale = false;
     invoke<CitationHealthDto>("check_citation_health", { path: worktreePath })
       .then((value) => {
         if (!stale) setCitations(value);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!stale) setCitations(null);
+      });
     invoke<ChecksDto>("research_checks_read", { path: worktreePath })
       .then((value) => {
         if (!stale) setChecks(value.items.length > 0 || value.skipped > 0 ? value : null);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!stale) setChecks(null);
+      })
+      .finally(() => {
+        if (!stale) setFileChecksPath(worktreePath);
+      });
     return () => {
       stale = true;
     };
-  }, [diff?.workspaceId, worktreePath, revision, evidenceTick]);
+  }, [worktreePath, revision, evidenceTick]);
 
-  // 步骤与复现上下文、产物完成数：进评审按工作区读取一次（不随轮询重复查配置）
+  // 工作区元数据、步骤与复现上下文、产物完成数：打开评审即按 worktreePath 与 workspace_diff 并行读取
+  // （原先等 diff 回来再分两处调 list_workspaces → read_project_config → Mesa 核对，导致刚打开先闪「无待保存提交」与半截核验数）
   useEffect(() => {
-    const workspaceId = diff?.workspaceId;
-    if (!workspaceId) return;
     let stale = false;
     if (runId) {
       invoke<{ agent: string; profileId: string | null; models: string[] } | null>("research_run_producer", { runId })
@@ -1575,6 +1614,8 @@ function LiveWorkspaceReviewView({
           if (!stale) setProducer(run);
         })
         .catch(() => {});
+    } else {
+      setProducer(null);
     }
     void (async () => {
       try {
@@ -1586,23 +1627,46 @@ function LiveWorkspaceReviewView({
               produced: expectedRows.filter((row) => row.reviewStatus !== "not_started").length,
               total: expectedRows.length,
             });
+            setArtifactsLoadedPath(worktreePath);
           }
         }
-        if (diff?.reviewOnly) return;
-        const list = await invoke<WorkspaceDto[]>("list_workspaces");
-        const workspace = list.find((entry) => entry.id === workspaceId);
-        if (!workspace || workspace.worktreePath !== worktreePath) return;
+        const list = await invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]);
+        if (stale) return;
+        const workspace = list.find((entry) => samePath(entry.worktreePath, worktreePath, IS_WINDOWS)) ?? null;
+        setMergedAt(workspace?.mergedAt ?? null);
+        setRepoPath(workspace?.repoPath ?? null);
+        setStaleUpstream(workspace?.staleUpstream ?? null);
+        setWsRow(workspace);
+        setWsLoadedPath(worktreePath);
+        if (!workspace) {
+          setResearchContext(null);
+          setOpenedPath(worktreePath);
+          if (!runId) setArtifactsLoadedPath(worktreePath);
+          return;
+        }
         const read = await invoke<ProjectConfigReadDto>("read_project_config", {
           path: workspace.repoPath,
         });
+        if (stale) return;
         const step = read.config.steps.find(
           (s) => s.workspaceName === workspace.name,
         );
-        if (!stale) {
-          setResearchError(null);
-          setResearchContext(step ? { root: worktreePath, workspace, step, stepNo: read.config.steps.indexOf(step) + 1, artifactDir: read.config.artifactDir || "artifacts", hasReproduction: reproductionEntrypoints(step).length > 0 || step.run.some((s) => /reproduc|复现|复算/i.test(s.name)) } : null);
-          setOpening(false);
-        }
+        setResearchError(null);
+        setResearchContext(
+          step
+            ? {
+                root: worktreePath,
+                workspace,
+                step,
+                stepNo: read.config.steps.indexOf(step) + 1,
+                artifactDir: read.config.artifactDir || "artifacts",
+                hasReproduction:
+                  reproductionEntrypoints(step).length > 0 ||
+                  step.run.some((s) => /reproduc|复现|复算/i.test(s.name)),
+              }
+            : null,
+        );
+        setOpenedPath(worktreePath);
         if (step) {
           invoke<{ run: { name: string }[] }>("workspace_settings", { repoPath: workspace.repoPath }).then((settings) => {
             if (!stale && settings.run.some((s) => /reproduc|复现|复算/i.test(s.name))) {
@@ -1631,28 +1695,72 @@ function LiveWorkspaceReviewView({
             })
             .catch(() => {});
         }
-        if (!runId && step && step.expectedArtifacts.length > 0) {
-          const rows = await loadArtifactRows(step.expectedArtifacts, worktreePath);
+        if (!runId) {
+          if (step && step.expectedArtifacts.length > 0) {
+            const rows = await loadArtifactRows(step.expectedArtifacts, worktreePath);
+            if (!stale) {
+              setArtifacts({
+                produced: rows.filter((row) => row.files.length > 0).length,
+                total: rows.length,
+              });
+            }
+          }
+          if (!stale) setArtifactsLoadedPath(worktreePath);
+        }
+      } catch (reason) {
+        if (!stale) {
+          setWsLoadedPath(worktreePath);
+          setOpenedPath(worktreePath);
+          setArtifactsLoadedPath(worktreePath);
+          setResearchError(`科研报告上下文读取失败：${String(reason)}`);
+        }
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [runId, worktreePath]);
+
+  // 手动点刷新时同步刷新本步产物数与人工收尾状态（不动已更新的 mergedAt）
+  useEffect(() => {
+    if (evidenceTick === 0 || !activeContext) return;
+    let stale = false;
+    const { step, workspace } = activeContext;
+    if ((step.humanTasks?.length ?? 0) > 0) {
+      invoke<HumanTaskStateDto[]>("list_human_task_states", { projectRoot: workspace.repoPath })
+        .then((states) => {
+          if (stale) return;
+          setHumanClosing(
+            states
+              .filter((s) => s.step === step.name && s.timing === "after" && !s.done && !s.optional)
+              .map((s) => s.title),
+          );
+        })
+        .catch(() => {});
+    }
+    if (!runId && step.expectedArtifacts.length > 0) {
+      loadArtifactRows(step.expectedArtifacts, worktreePath)
+        .then((rows) => {
           if (!stale) {
             setArtifacts({
               produced: rows.filter((row) => row.files.length > 0).length,
               total: rows.length,
             });
           }
-        }
-      } catch (reason) {
-        if (!stale && !diff?.reviewOnly) setResearchError(`科研报告上下文读取失败：${String(reason)}`);
-      }
-    })();
+        })
+        .catch(() => {});
+    }
     return () => {
       stale = true;
     };
-  }, [diff?.workspaceId, diff?.reviewOnly, runId, worktreePath]);
+  }, [activeContext, evidenceTick, runId, worktreePath]);
 
   useEffect(() => {
-    const rel = writingScanSourcePath((diff?.files ?? []).map((file) => file.path));
+    if (loadedDiffPath !== worktreePath) return;
+    const rel = writingFile;
     let stale = false;
     if (rel) {
+      const key = `${worktreePath}\n${rel}`;
       invoke<{ text: string }>("read_file_preview", {
         path: absUnderRoot(worktreePath, rel),
         root: worktreePath,
@@ -1666,6 +1774,9 @@ function LiveWorkspaceReviewView({
         })
         .catch(() => {
           if (!stale) setWritingHits([]);
+        })
+        .finally(() => {
+          if (!stale) setWritingLoadedKey(key);
         });
     } else {
       setWritingHits([]);
@@ -1673,7 +1784,7 @@ function LiveWorkspaceReviewView({
     return () => {
       stale = true;
     };
-  }, [diff, worktreePath]);
+  }, [loadedDiffPath, writingFile, revision, worktreePath]);
 
   // 上次退回意见只在打开这一步时读一次，显示在意见框上面，不填进框里。
   useEffect(() => {
@@ -2066,11 +2177,16 @@ function LiveWorkspaceReviewView({
   const hasTaskChanges = (diff?.files.length ?? 0) > 0;
   const hardBlocked = blockers.length > 0;
   // 约定：merged_at && ahead == 0 时按钮显示禁用的「已保存进项目」，
-  // 新提交令 ahead > 0 后恢复「保存进项目」
+  // 新提交令 ahead > 0 后恢复「保存进项目」；健康度与工作区记录未取齐前显示「检查中…」，不先闪「无待保存提交」
+  const checkingSaveState =
+    !readOnlyRunReview &&
+    !hasUncommitted &&
+    (loadedDiffPath !== worktreePath || loadedHealthPath !== worktreePath || wsLoadedPath !== worktreePath);
   const primaryLabel = reviewSavePrimaryLabel({
     hasUncommitted,
     hasCommitted,
     mergedAt,
+    checking: checkingSaveState,
   });
   const canPrimary =
     !busy &&
@@ -2079,7 +2195,7 @@ function LiveWorkspaceReviewView({
     (hasUncommitted || hasCommitted);
   const normalizedQuery = fileQuery.trim().toLocaleLowerCase();
   const reviewProfile = resolveStepReviewProfile(
-    researchContext?.step ?? null,
+    activeContext?.step ?? null,
     (diff?.files ?? []).map((file) => file.path),
   );
   const filteredFiles = useMemo(
@@ -2744,8 +2860,8 @@ function LiveWorkspaceReviewView({
 
   // 「请 AI 看看 ▾」的三样（2026-11-11 收进一个菜单；条件与原来三个按钮一致）
   const askAiItems: ReviewAskAiItem[] = [];
-  if (researchContext && !mergeDone) {
-    const ctx = researchContext;
+  if (activeContext && !mergeDone) {
+    const ctx = activeContext;
     // 评审前让项目助手只读过一遍（2026-11-08）：列出值得看的地方，不判通过、不打分；人点了才问、才花钱
     askAiItems.push({
       key: "assistant",
@@ -2853,10 +2969,10 @@ function LiveWorkspaceReviewView({
           }
           isNoted={(item) => checkNoted(reviewNotes, item)}
           onConsult={
-            researchContext && !mergeDone
+            activeContext && !mergeDone
               ? (item) => {
                   // 待你判断的一条带进研讨（研讨二期）：成员读这一步的工作副本，只预填已存在的文件
-                  const ctx = researchContext;
+                  const ctx = activeContext;
                   const readRoot = ctx.workspace.worktreePath;
                   const seed = checkConsultSeed(item);
                   void invoke<string[]>("consult_existing_files", { root: readRoot, paths: seed.materials.map((m) => m.path) })
@@ -3249,11 +3365,12 @@ function LiveWorkspaceReviewView({
         {/* 可信度行：引用解析（bib 对照）+ 产物核验摘要 + 人工事项收尾提醒。
             无 bib/全文无引用/无预期产物/无收尾事项时不渲染，不给非写作类项目添噪声；
             数据进评审时一次性读取，失败静默降级；收尾事项只提醒不阻断合并 */}
-        {diff &&
+        {diff && !opening &&
           (contentReview ||
             (citations && citations.bibFound && citations.totalRefs > 0) ||
             checks ||
-            (artifacts && artifacts.total > 0) ||
+            (!checksReady && currentStepKind !== null) ||
+            (shownArtifacts && shownArtifacts.total > 0) ||
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
               {/* 2026-11-11 评审页整理：查出来的状态（核验 / 引用 / 产物）、请 AI 帮看（一个菜单）、页签各成一组；
@@ -3288,50 +3405,58 @@ function LiveWorkspaceReviewView({
                     </CoachTip>
                   )}
                 </span>
-                {checks && (
-                  <button
-                    type="button"
-                    aria-expanded={checksExpanded}
-                    onClick={() => setChecksExpanded((v) => !v)}
-                    title="点开看每一条：拦下的、要你判断的、确认无误的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
-                    className={`shrink-0 rounded-full border border-hairline px-2 hover:bg-hover ${
-                      countChecks(checks.items).blocked > 0
-                        ? "text-err-text"
-                        : countChecks(checks.items).needsHuman > 0 || checks.skipped > 0
-                          ? "text-warn-text"
-                          : "text-l3"
-                    }`}
-                  >
-                    {checkChipText(checks.items)}
-                  </button>
-                )}
-                {citations && citations.bibFound && citations.totalRefs > 0 && (
-                  <button
-                    type="button"
-                    disabled={citations.missing.length === 0}
-                    onClick={() => setCiteExpanded((v) => !v)}
-                    title={
-                      citations.missing.length > 0
-                        ? `${citations.missing.length} 个引用键在 references.bib 里找不到，点开看是哪几个`
-                        : "正文里的引用键都能在 references.bib 里找到"
-                    }
-                    className={`shrink-0 rounded-full border border-hairline px-2 ${
-                      citations.missing.length > 0 ? "text-warn-text hover:bg-hover" : "text-l3"
-                    } disabled:cursor-default`}
-                  >
-                    引用 {citations.resolved}/{citations.totalRefs}
-                    {citations.missing.length > 0 && ` · 缺 ${citations.missing.length}`}
-                  </button>
-                )}
-                {artifacts && artifacts.total > 0 && (
-                  <span
-                    title="任务书要交的文件，交了几份"
-                    className={`shrink-0 rounded-full border border-hairline px-2 ${
-                      artifacts.produced < artifacts.total ? "text-warn-text" : "text-l3"
-                    }`}
-                  >
-                    产物 {artifacts.produced}/{artifacts.total}
+                {!checksReady && (contentReview || currentStepKind !== null) ? (
+                  <span className="shrink-0 rounded-full border border-hairline px-2 text-l4">
+                    检查中…
                   </span>
+                ) : (
+                  <>
+                    {checks && (
+                      <button
+                        type="button"
+                        aria-expanded={checksExpanded}
+                        onClick={() => setChecksExpanded((v) => !v)}
+                        title="点开看每一条：拦下的、要你判断的、确认无误的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
+                        className={`shrink-0 rounded-full border border-hairline px-2 hover:bg-hover ${
+                          countChecks(checks.items).blocked > 0
+                            ? "text-err-text"
+                            : countChecks(checks.items).needsHuman > 0 || checks.skipped > 0
+                              ? "text-warn-text"
+                              : "text-l3"
+                        }`}
+                      >
+                        {checkChipText(checks.items)}
+                      </button>
+                    )}
+                    {citations && citations.bibFound && citations.totalRefs > 0 && (
+                      <button
+                        type="button"
+                        disabled={citations.missing.length === 0}
+                        onClick={() => setCiteExpanded((v) => !v)}
+                        title={
+                          citations.missing.length > 0
+                            ? `${citations.missing.length} 个引用键在 references.bib 里找不到，点开看是哪几个`
+                            : "正文里的引用键都能在 references.bib 里找到"
+                        }
+                        className={`shrink-0 rounded-full border border-hairline px-2 ${
+                          citations.missing.length > 0 ? "text-warn-text hover:bg-hover" : "text-l3"
+                        } disabled:cursor-default`}
+                      >
+                        引用 {citations.resolved}/{citations.totalRefs}
+                        {citations.missing.length > 0 && ` · 缺 ${citations.missing.length}`}
+                      </button>
+                    )}
+                    {shownArtifacts && shownArtifacts.total > 0 && (
+                      <span
+                        title="任务书要交的文件，交了几份"
+                        className={`shrink-0 rounded-full border border-hairline px-2 ${
+                          shownArtifacts.produced < shownArtifacts.total ? "text-warn-text" : "text-l3"
+                        }`}
+                      >
+                        产物 {shownArtifacts.produced}/{shownArtifacts.total}
+                      </span>
+                    )}
+                  </>
                 )}
                 {humanClosing && humanClosing.length > 0 && (
                   <span
