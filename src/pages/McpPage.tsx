@@ -1351,16 +1351,9 @@ export default function McpPage({ visible }: { visible: boolean }) {
                         : "还没分发给任何 Agent；点击展开分发管理"
                     }
                     className={`flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-xs ${
-                      s.enabled ? "text-l2" : "text-l4"
+                      s.enabled ? "text-l3" : "text-l4"
                     } hover:bg-hover hover:text-l1`}
                   >
-                    {enabledAgents.length > 0 && (
-                      <span className="flex items-center gap-1 pr-0.5" aria-hidden="true">
-                        {enabledAgents.slice(0, 4).map((a) => (
-                          <AgentMark key={a.id} agentId={a.id} decorative className="h-2.5 w-auto" />
-                        ))}
-                      </span>
-                    )}
                     <span>{onCount > 0 ? `${onCount} 个 Agent` : "未分发"}</span>
                     {issues.length > 0 && (
                       <span

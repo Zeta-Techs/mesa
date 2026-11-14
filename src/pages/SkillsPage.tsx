@@ -128,8 +128,7 @@ function AppliedCell({
   installedIds: ReadonlySet<string> | null;
   onOpen: () => void;
 }) {
-  const appliedAgents = AGENTS.filter((a) => skill.apps[a.id]);
-  const appliedNames = appliedAgents.map((a) => a.label);
+  const appliedNames = AGENTS.filter((a) => skill.apps[a.id]).map((a) => a.label);
   const missingNames = skillMissingAgentNames(skill, installedIds);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const { tip, show, hide } = useHoverTip(anchorRef);
@@ -146,14 +145,7 @@ function AppliedCell({
       onMouseLeave={hide}
       className="flex h-7 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-left text-xs hover:bg-hover"
     >
-      {has && (
-        <span className="flex items-center gap-1 pr-0.5" aria-hidden="true">
-          {appliedAgents.slice(0, 4).map((a) => (
-            <AgentMark key={a.id} agentId={a.id} decorative className="h-2.5 w-auto" />
-          ))}
-        </span>
-      )}
-      <span className={has ? "text-l2 hover:text-l1" : "text-l4 hover:text-l2"}>
+      <span className={has ? "text-l3 hover:text-l1" : "text-l4 hover:text-l2"}>
         {has ? `${appliedNames.length} 个 Agent` : "未分发"}
       </span>
       {has && (
