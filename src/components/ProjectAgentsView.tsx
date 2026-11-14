@@ -1059,12 +1059,12 @@ function stepGroupSummary(total: number, bound: number, stale: number): string {
   return parts.join(" · ");
 }
 
-/** 与「项目 Agents / 默认选择仅对本项目生效。」同一套标题。 */
+/** 与「项目 Agents / 默认选择仅对本项目生效。」同一套标题；短说明与标题同基线横排，窄时自然换行。 */
 function SectionHeading({ title, hint }: { title: string; hint: string }) {
   return (
-    <div className="min-w-0">
+    <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
       <h2 className="text-sm font-medium text-l1">{title}</h2>
-      <p className="mt-1 text-xs text-l3">{hint}</p>
+      <p className="text-xs text-l3">{hint}</p>
     </div>
   );
 }
@@ -1114,7 +1114,7 @@ function SlotCard({
 }) {
   return (
     <li
-      className={`min-w-0 rounded-lg p-3 ${marked ? "bg-seg-sel" : "ccode-well"} ${
+      className={`ccode-well min-w-0 rounded-lg p-3 ${
         stale ? "opacity-70" : ""
       }`}
     >
@@ -1128,7 +1128,11 @@ function SlotCard({
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">{label}</h3>
         {tag && (
           <span
-            className={`shrink-0 text-xs ${marked ? "font-medium text-l1" : "text-l4"}`}
+            className={`shrink-0 ${
+              marked
+                ? "ccode-bound-pill rounded-full px-2 py-0.5 text-micro font-medium"
+                : "text-xs text-l4"
+            }`}
           >
             {tag}
           </span>
@@ -1276,7 +1280,6 @@ function ProfileMenu({
                   role="option"
                   aria-selected={selected}
                   disabled={disabled}
-                  title={profile.modelLine}
                   className={`flex w-full items-center gap-2 px-2.5 py-2 text-left disabled:opacity-50 ${
                     selected ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
                   }`}

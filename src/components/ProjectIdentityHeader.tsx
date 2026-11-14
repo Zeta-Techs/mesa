@@ -1,6 +1,7 @@
 import {
   FolderMinus,
   History,
+  PenLine,
   Settings2,
   Workflow,
 } from "lucide-react";
@@ -102,6 +103,8 @@ export default function ProjectIdentityHeader({
   });
   const showMenu = registered;
   const topicText = cfg?.topic?.trim() ?? "";
+  // 课题主题与项目标题同名时不重复印第二遍（如「HER催化综述  科研  HER催化综述」），改为安静的补充说明入口
+  const topicDuplicatesTitle = Boolean(topicText) && topicText === displayName.trim();
 
   async function submitRename(event: FormEvent) {
     event.preventDefault();
@@ -184,7 +187,7 @@ export default function ProjectIdentityHeader({
           </span>
         )}
         {showTopic &&
-          (topicText ? (
+          (topicText && !topicDuplicatesTitle ? (
             <button
               type="button"
               className="min-w-0 max-w-[16rem] truncate text-left text-sm text-l3 hover:text-l1"
@@ -195,6 +198,19 @@ export default function ProjectIdentityHeader({
               }}
             >
               {topicText}
+            </button>
+          ) : topicDuplicatesTitle ? (
+            <button
+              type="button"
+              onClick={() => {
+                setTopicDraft(topicText);
+                setEditingTopic(true);
+              }}
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+              title={`当前课题主题与项目名相同（${topicText}），点击补充更具体的一句话说明；会写进每次开工的 TASK.md`}
+            >
+              <PenLine size={11.5} strokeWidth={1.8} aria-hidden="true" />
+              补充课题说明
             </button>
           ) : (
             <button

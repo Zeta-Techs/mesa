@@ -1937,3 +1937,64 @@ test("Antigravity 运行中切思考档：官方空模型列表仍能读到 comb
     await ui.close();
   }
 });
+
+test("模型菜单 WhoView：十家 Agent 排两列带装饰性品牌标、已装项无冗余 title 气泡、配置行显示默认模型或 CLI 登录", async () => {
+  const ui = await mount();
+  try {
+    ui.useAppStore.setState({
+      agents: [
+        { id: "cursor", binaryPath: "/usr/local/bin/cursor-agent", version: "1.0.0", modelSwitch: null, effort: null, permissionModes: [], readonlySupported: false },
+        { id: "agy", binaryPath: null, version: null, modelSwitch: null, effort: null, permissionModes: [], readonlySupported: false },
+      ],
+      profiles: [
+        { id: "p-gem", name: "Gemini", agent: "agy", accountType: "api_key", models: ["gemini-4-carbon"], gatewayId: "g1" },
+        { id: "p-off", name: "官方账号", agent: "agy", accountType: "official", models: [], gatewayId: null },
+      ],
+    });
+    await ui.render(
+      ui.h(ui.Menu, {
+        kind: "launch",
+        pick: {
+          editable: true,
+          resumeSessionId: null,
+          agentId: "agy",
+          profileId: "p-gem",
+          model: "gemini-4-carbon",
+          profiles: [
+            { value: "p-gem", label: "Gemini" },
+            { value: "p-off", label: "官方账号" },
+          ],
+          models: ["gemini-4-carbon"],
+          effort: "",
+          effortLevels: [],
+          permission: "write_tree",
+          permissionMode: null,
+          permissionModes: [],
+          readonlySupported: false,
+          permissionNote: null,
+          observedTier: null,
+          autoNote: null,
+          rememberPermission: false,
+        },
+        onAgent: () => {},
+        onProfile: () => {},
+        onModel: () => {},
+        onEffort: () => {},
+        onPermission: () => {},
+      }),
+    );
+    await ui.click("gemini-4-carbon");
+    const dialog = ui.el.querySelector('[role="dialog"]')!;
+    assert.ok(dialog.className.includes("w-[21.5rem]"), "加宽菜单避免 Antigravity CLI 截断");
+    await ui.click("换");
+    const cursorBtn = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent?.includes("Cursor"))!;
+    assert.ok(cursorBtn, "WhoView 列出 Cursor");
+    assert.equal(cursorBtn.getAttribute("title"), null, "已安装 Agent 不再弹冗余原生 title 遮挡下排");
+    assert.ok(cursorBtn.querySelector('svg[aria-hidden="true"]'), "带装饰性品牌色 M 标");
+    const agyBtn = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent?.includes("Antigravity CLI"))!;
+    assert.match(agyBtn.getAttribute("title") ?? "", /本机还没装/);
+    assert.match(dialog.textContent ?? "", /CLI 登录/, "官方账号右侧给出 CLI 登录副标");
+  } finally {
+    await ui.close();
+  }
+});

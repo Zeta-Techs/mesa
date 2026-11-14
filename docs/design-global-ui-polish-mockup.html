@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 设计对比 ④ · 全局 UI 优化建议 & 删去示例课题</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626;
+    --strip: #1c1c1c; --canvas: #111111; --inset: #212121; --raised: #272727;
+    --seg-sel: #2b2b2b; --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --cta: #0169cc; --cta-text: #eaf4ff;
+    --hover: rgb(255 255 255 / 0.05);
+    --mesa-amber: #f5b83d;
+    --err-text: #f07070; --ok-text: #4cc38a;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --canvas-well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #1b1815; --rail-sel: #312d29;
+    --strip: #1e1b18; --canvas: #15130f; --inset: #23211d; --raised: #2c2925;
+    --seg-sel: #35322d; --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+    --cta: #f5b83d; --cta-text: #1d1608;
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f6f2e9; --rail-sel: #e1dcd3;
+    --strip: #fbf5ed; --canvas: #f2eee5; --inset: #fefaf6; --raised: #ffffff;
+    --seg-sel: #d2cdc3; --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --cta: #e39a1c; --cta-text: #241a02;
+    --hover: rgb(0 0 0 / 0.045);
+    --mesa-amber: #e39a1c;
+    --err-text: #b91c1c; --ok-text: #16794b;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #08090b; color: var(--l2);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .suite-nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(12, 13, 16, 0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #23252a; padding: 10px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px;
+    color: #c8c8ce; font-size: 12.5px;
+  }
+  .suite-links { display: inline-flex; gap: 4px; background: #17181c; padding: 3px; border-radius: 9px; border: 1px solid #282a30; }
+  .suite-links a { color: #9496a1; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-weight: 500; }
+  .suite-links a:hover { color: #e5e5e5; }
+  .suite-links a.active { background: #2b2e37; color: #fff; }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+  .seg { display: inline-flex; background: #17181c; padding: 2px; border-radius: 8px; border: 1px solid #282a30; gap: 2px; }
+  .seg button { background: none; border: 0; color: #9496a1; padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: #2c2f38; color: #fff; font-weight: 500; }
+
+  .container { max-width: 1480px; margin: 20px auto 60px; padding: 0 20px; display: flex; flex-direction: column; gap: 26px; }
+
+  .proposal-block {
+    background: #111216; border: 1px solid #22242c; border-radius: 14px; padding: 18px 20px;
+  }
+  .block-head { margin-bottom: 14px; }
+  .block-head h2 { margin: 0; font-size: 15.5px; color: #f1f1f4; display: flex; align-items: center; gap: 8px; }
+  .num-tag {
+    font-size: 11px; padding: 2px 7px; border-radius: 6px;
+    background: rgba(245, 184, 61, 0.16); color: #f5b83d; font-weight: 700;
+  }
+  .block-head p { margin: 5px 0 0; font-size: 12.5px; color: #8c8f9a; max-width: 1080px; }
+
+  .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .ab-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .ab-tag { font-size: 11.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .ab-tag.before { color: #9496a1; }
+  .ab-tag.after { color: #f5b83d; }
+
+  .demo-box {
+    background: var(--canvas); color: var(--l2);
+    border-radius: 11px; border: 1px solid color-mix(in srgb, var(--field) 80%, transparent);
+    overflow: hidden; position: relative;
+  }
+  .demo-box.ws { background: var(--rail2); }
+
+  /* 模块 1：新项目菜单 & 向导 */
+  .menu-pop {
+    width: 220px; background: var(--raised); border: 0.5px solid var(--field);
+    border-radius: 10px; padding: 4px; font-size: 12.5px;
+  }
+  .menu-row {
+    height: 30px; padding: 0 9px; border-radius: 6px; display: flex; align-items: center; gap: 8px; color: var(--l1);
+  }
+  .menu-row.struck {
+    color: var(--err-text); text-decoration: line-through; background: color-mix(in srgb, var(--err-text) 10%, transparent);
+  }
+  .menu-hint { margin-left: auto; font-size: 11px; color: var(--l4); }
+
+  /* 模块 2：顶栏 */
+  .top-chrome {
+    height: 40px; background: var(--rail); padding: 0 14px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 0.5px solid var(--hairline);
+  }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: color-mix(in srgb, var(--l4) 50%, transparent); }
+  .cmd-pill-after {
+    height: 26px; width: 196px; padding: 0 9px; border-radius: 7px;
+    background: var(--inset); border: 0.5px solid var(--hairline);
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--l3);
+  }
+  .kbd-cap {
+    margin-left: auto; font-size: 10.5px; padding: 0.5px 5px; border-radius: 4px;
+    background: var(--raised); color: var(--l3); border: 0.5px solid var(--field);
+  }
+  .inbox-after {
+    height: 26px; padding: 0 9px; border-radius: 7px;
+    background: color-mix(in srgb, var(--mesa-amber) 11%, transparent);
+    color: var(--l1); font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .inbox-caret { width: 6.5px; height: 2.8px; border-radius: 1px; background: var(--mesa-amber); }
+
+  /* 模块 3：项目头去重 + 滚动上沿柔化 */
+  .p-head { padding: 12px 16px 0; }
+  .p-id-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .p-id-row h3 { margin: 0; font-size: 17px; font-weight: 600; color: var(--l1); }
+  .p-pill { font-size: 11px; padding: 1.5px 8px; border-radius: 999px; background: var(--strip); color: var(--l2); }
+  .p-tabs {
+    display: flex; align-items: center; gap: 6px; border-bottom: 0.5px solid var(--hairline);
+  }
+  .p-tab {
+    height: 32px; padding: 0 9px; font-size: 12px; color: var(--l3);
+    display: inline-flex; align-items: center; border-bottom: 2px solid transparent;
+  }
+  .p-tab.on { color: var(--l1); border-bottom-color: var(--cta); font-weight: 500; }
+
+  .clipped-bad {
+    padding: 0 16px 14px;
+  }
+  .half-cut-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin-top: 2px; margin-bottom: 10px;
+  }
+  .half-cut-card {
+    height: 9px; background: var(--well); border-radius: 0 0 8px 8px;
+    outline: 1px dashed rgba(240, 112, 112, 0.55);
+  }
+  .masked-good {
+    padding: 10px 16px 14px;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0px, black 16px);
+    mask-image: linear-gradient(to bottom, transparent 0px, black 16px);
+  }
+
+  /* 模块 4：棋盘格卡片 vs 统一底色 + 同行分区头 */
+  .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .m-card { background: var(--well); border-radius: 9px; padding: 9px 11px; }
+  .m-card.checker { background: var(--seg-sel); }
+  .m-card b { font-size: 12.5px; color: var(--l1); font-weight: 500; }
+  .m-card small { display: block; font-size: 11.5px; color: var(--l3); margin-top: 3px; }
+  .pin-tag {
+    font-size: 10.5px; padding: 1px 6px; border-radius: 4px;
+    background: color-mix(in srgb, var(--cta) 16%, transparent);
+    color: color-mix(in srgb, var(--cta) 80%, var(--l1));
+  }
+
+  @media (max-width: 1040px) {
+    .ab-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="suite-nav">
+  <strong style="color:#fff">Mesa 设计方案预览</strong>
+  <div class="suite-links">
+    <a href="./design-workbench-v2-mockup.html">① 工作台 UI 优化</a>
+    <a href="./design-agent-binding-picker-mockup.html">② Agent 专属绑定 + 权限/思考预设</a>
+    <a href="./design-chat-brand-status-mockup.html">③ 聊天层 M▁ 状态设计</a>
+    <a href="./design-global-ui-polish-mockup.html" class="active">④ 全局 UI 建议 &amp; 删示例课题</a>
+  </div>
+  <div class="ctrl-group">
+    <span style="color:#7c7e88;font-size:12px">主题</span>
+    <div class="seg" id="themeMode">
+      <button data-t="neutral" class="on">极简灰蓝</button>
+      <button data-t="ayu">暖炭琥珀</button>
+      <button data-t="ayu-light">暖炭·浅</button>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+  <!-- 1. 删去创建示例课题 -->
+  <section class="proposal-block">
+    <div class="block-head">
+      <h2><span class="num-tag">问题 1 收口</span>侧栏「新项目」菜单、首次引导与空状态：全面移除「创建示例课题」</h2>
+      <p>删去 4 处入口（侧栏「新项目」下拉、工作台空态、项目页空态、新手向导第 3 步示例卡）及底层闲置的 <code>create_demo_project</code> 创建链路，不碰用户磁盘已存在目录。</p>
+    </div>
+    <div class="ab-grid">
+      <div class="ab-col">
+        <span class="ab-tag before">● 现在 Before · 三条入口混着演示项</span>
+        <div class="demo-box" style="padding:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+          <div class="menu-pop">
+            <div class="menu-row">📁 新建项目…</div>
+            <div class="menu-row">📂 添加已有文件夹…</div>
+            <div class="menu-row struck">✦ 创建示例课题 <span class="menu-hint">演示</span></div>
+          </div>
+          <div style="font-size:12px;color:var(--l3);max-width:260px">
+            工作台与项目页空态也并排摆着「✦ 创建示例课题」，真实用户点过一次会在文稿目录留下一套演示文件。
+          </div>
+        </div>
+      </div>
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 建议 After · 只留真实起步双入口</span>
+        <div class="demo-box" style="padding:16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+          <div class="menu-pop">
+            <div class="menu-row" style="background:var(--hover)">📁 新建项目… <span class="menu-hint">⇧⌘N</span></div>
+            <div class="menu-row">📂 添加已有文件夹…</div>
+          </div>
+          <div style="font-size:12px;color:var(--l2);max-width:280px">
+            菜单、向导与空状态统一收敛为「新建空白课题文件夹」或「添加已有文件夹」，路径纯粹干脆。
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. 全局顶栏 -->
+  <section class="proposal-block">
+    <div class="block-head">
+      <h2><span class="num-tag">全局建议 A</span>窗口顶栏（Titlebar Chrome）：命令面板胶囊化 + 待处理琥珀微光标</h2>
+      <p>从你的截图顶部可见：右侧 <code>?  ⌘K 命令面板  待处理 2</code> 三项全是同字重灰字，核心搜索入口不明显，有待拍板事项时也缺少视觉焦点。</p>
+    </div>
+    <div class="ab-grid">
+      <div class="ab-col">
+        <span class="ab-tag before">● 现在 Before · 顶栏右侧平铺灰字</span>
+        <div class="demo-box">
+          <div class="top-chrome">
+            <div class="dots"><i></i><i></i><i></i></div>
+            <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--l3)">
+              <span>?</span>
+              <span>⌘K 命令面板</span>
+              <span>📥 待处理 2</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 建议 After · 帮助书册胶囊居左 + 搜索框轻实体 + 琥珀「轮到你」收尾</span>
+        <div class="demo-box">
+          <div class="top-chrome">
+            <div class="dots"><i></i><i></i><i></i></div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span class="cmd-pill-after" style="padding:0 8px">📖 帮助</span>
+              <span class="cmd-pill-after">⌕ 搜索或跳转… <span class="kbd-cap">⌘K</span></span>
+              <span class="inbox-after"><span class="inbox-caret"></span>待处理 2</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. 项目详情头去重 + 滚动柔边 -->
+  <section class="proposal-block">
+    <div class="block-head">
+      <h2><span class="num-tag">全局建议 B</span>项目详情头去重 + 页签下沿滚动渐隐遮罩（直击截图中的两处瑕疵）</h2>
+      <p>① 当课题主题与项目同名时（截图里 <code>HER催化综述 [科研] HER催化综述 ~/Documents/HER催化综述</code>），不再重复显示第二遍标题；② 列表向下滚动时页签底线加 14px 柔边遮罩，消除截图中卡片被硬切剩一截细灰边的割裂感；③ 页签行右侧按钮严格水平居中对齐。</p>
+    </div>
+    <div class="ab-grid">
+      <div class="ab-col">
+        <span class="ab-tag before">● 现在 Before · 同名连写三次 + 卡片顶边被生硬腰斩</span>
+        <div class="demo-box ws">
+          <div class="p-head">
+            <div class="p-id-row">
+              <h3>HER催化综述</h3>
+              <span class="p-pill">科研</span>
+              <span style="font-size:13px;color:var(--l3);text-decoration:underline wavy var(--err-text)">HER催化综述</span>
+              <span style="font-family:monospace;font-size:11px;color:var(--l4)">~/Documents/HER催化综述</span>
+            </div>
+            <div class="p-tabs">
+              <span class="p-tab">科研任务</span><span class="p-tab">定时任务</span><span class="p-tab">文件</span><span class="p-tab on">Agent 分工</span>
+              <span style="margin-left:auto;font-size:12px;color:var(--l3);padding-bottom:5px">✨ 项目助手 &nbsp; ＋ 新对话</span>
+            </div>
+          </div>
+          <div class="clipped-bad">
+            <div class="half-cut-row">
+              <div class="half-cut-card" title="滚动时被硬切露出的上一排卡片残影"></div>
+              <div class="half-cut-card"></div>
+            </div>
+            <div class="mini-grid">
+              <div class="m-card"><b>Grok Build</b><small>GLM · glm-5.3</small></div>
+              <div class="m-card"><b>Antigravity CLI</b><small>Gemini · gemini-4-carbon</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 建议 After · 同名自动去重 + 滚动上沿柔滑消隐</span>
+        <div class="demo-box ws">
+          <div class="p-head">
+            <div class="p-id-row">
+              <h3>HER催化综述</h3>
+              <span class="p-pill">科研</span>
+              <span style="font-size:12px;color:var(--l4)">＋ 补充一句具体研究问题</span>
+              <span style="font-family:monospace;font-size:11px;color:var(--l4);margin-left:auto">~/Documents/HER催化综述</span>
+            </div>
+            <div class="p-tabs">
+              <span class="p-tab">科研任务</span><span class="p-tab">定时任务</span><span class="p-tab">文件</span><span class="p-tab on">Agent 分工</span>
+              <span style="margin-left:auto;display:inline-flex;align-items:center;gap:10px;font-size:12px;color:var(--l2)"><span>✨ 项目助手</span><span>＋ 新对话</span></span>
+            </div>
+          </div>
+          <div class="masked-good">
+            <div class="mini-grid">
+              <div class="m-card"><b>Grok Build</b><small>GLM · glm-5.3</small></div>
+              <div class="m-card"><b>Antigravity CLI</b><small>Gemini · gemini-4-carbon</small></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. 分区标题节奏 + 去棋盘格花斑 -->
+  <section class="proposal-block">
+    <div class="block-head">
+      <h2><span class="num-tag">全局建议 C</span>分区标题「同行基线化」+ 消除多选卡片的「深浅棋盘格花斑」</h2>
+      <p>现状里分区标题与卡片内标题同为 14px medium，且副说明另起一行占高；已指定卡片整块换亮底 <code>bg-seg-sel</code>，交错排布时整页深一块浅一块。改为同行基线标题 + 统一 <code>.ccode-well</code> 沉稳底色 + 右上角精致淡色徽标。</p>
+    </div>
+    <div class="ab-grid">
+      <div class="ab-col">
+        <span class="ab-tag before">● 现在 Before · 双行标题占高 + 整卡换底形成棋盘格</span>
+        <div class="demo-box ws" style="padding:14px 16px">
+          <div style="margin-bottom:12px">
+            <div style="font-size:13.5px;font-weight:500;color:var(--l1)">专属绑定</div>
+            <div style="font-size:12px;color:var(--l3);margin-top:3px">留空跟随项目默认。</div>
+          </div>
+          <div class="mini-grid">
+            <div class="m-card"><b>项目对话</b><small>跟随项目默认</small></div>
+            <div class="m-card checker"><div style="display:flex;justify-content:space-between"><b>问 AI / 聊想法</b><span style="font-size:11px;color:var(--l1)">已指定</span></div><small>gemini-4-carbon</small></div>
+            <div class="m-card checker"><div style="display:flex;justify-content:space-between"><b>项目助手</b><span style="font-size:11px;color:var(--l1)">已指定</span></div><small>glm-5.3-flash</small></div>
+            <div class="m-card"><b>沉浸阅读对话</b><small>跟随项目默认</small></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 建议 After · 同行紧凑组头 + 统一底色零花斑</span>
+        <div class="demo-box ws" style="padding:14px 16px">
+          <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px">
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">专属绑定</span>
+            <span style="font-size:12px;color:var(--l3)">留空跟随项目默认</span>
+          </div>
+          <div class="mini-grid">
+            <div class="m-card"><b style="color:var(--l2)">项目对话</b><small>Claude Code · 跟随默认</small></div>
+            <div class="m-card"><div style="display:flex;justify-content:space-between;align-items:center"><b>问 AI / 聊想法</b><span class="pin-tag">已指定</span></div><small style="color:var(--l2)">AGY · gemini-4-carbon · high</small></div>
+            <div class="m-card"><div style="display:flex;justify-content:space-between;align-items:center"><b>项目助手</b><span class="pin-tag">已指定</span></div><small style="color:var(--l2)">Codex · glm-5.3-flash · low</small></div>
+            <div class="m-card"><b style="color:var(--l2)">沉浸阅读对话</b><small>Claude Code · 跟随默认</small></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+document.getElementById("themeMode").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-t]");
+  if (!btn) return;
+  document.documentElement.dataset.theme = btn.dataset.t;
+  document.querySelectorAll("#themeMode button").forEach((b) => b.classList.toggle("on", b === btn));
+});
+</script>
+</body>
+</html>

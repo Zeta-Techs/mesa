@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Users } from "lucide-react";
+import { Briefcase, Code2, FlaskConical, FolderOpen, Users } from "lucide-react";
 import { useAppStore } from "../store";
 import type { ProjectDto } from "../types";
 import { IS_WINDOWS } from "../hotkeys";
 import { samePath } from "../path-utils";
+import { normalizeWorkMode } from "../work-mode";
 import {
   PROJECT_STARTER_LIMIT,
   recentProjectStarters,
@@ -83,19 +84,32 @@ export default function ChatEmptyStart({
 
   return (
     <div className="flex flex-col gap-3 px-1 pt-3">
-      <div className="flex flex-wrap gap-2">
-        {projectStarters.map((p) => (
-          <button
-            key={p.path}
-            type="button"
-            onClick={() => onPickProject?.(p.path)}
-            title={`把这段对话放到「${p.name}」里开始（还没发出去，之后还能换）\n${p.path}`}
-            className="flex max-w-[16rem] items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
-          >
-            <span className="shrink-0 text-l3">接着做</span>
-            <span className="truncate">{p.name}</span>
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-2">
+        {projectStarters.map((p) => {
+          const matched = projects.find((proj) => samePath(proj.path, p.path, IS_WINDOWS));
+          const mode = matched ? normalizeWorkMode(matched.workMode) : null;
+          const ModeIcon =
+            mode === "research"
+              ? FlaskConical
+              : mode === "coding"
+                ? Code2
+                : mode === "office"
+                  ? Briefcase
+                  : FolderOpen;
+          return (
+            <button
+              key={p.path}
+              type="button"
+              onClick={() => onPickProject?.(p.path)}
+              title={`把这段对话放到「${p.name}」里开始（还没发出去，之后还能换）\n${p.path}`}
+              className="ccode-well flex max-w-[17rem] items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
+            >
+              <ModeIcon size={12.5} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+              <span className="shrink-0 text-l3">接着做</span>
+              <span className="truncate font-medium text-l1">{p.name}</span>
+            </button>
+          );
+        })}
         {prompts.map((p) => (
           <button
             key={p.label}

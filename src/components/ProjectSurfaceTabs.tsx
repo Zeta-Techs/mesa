@@ -38,12 +38,18 @@ export default function ProjectSurfaceTabs({
     : ([] as readonly ProjectSurfaceTab[]);
   const selectedIndex = tabIds.indexOf(active);
   const [focusIndex, setFocusIndex] = useState(selectedIndex);
+  const [scrolled, setScrolled] = useState(false);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
 
   // 当前选中项变化（含键盘切换、外部跳转）时，把游标收回到它身上
   useEffect(() => {
     if (selectedIndex >= 0) setFocusIndex(selectedIndex);
   }, [selectedIndex]);
+
+  // 切页签或切项目时重置滚动遮罩态，避免首屏顶部被误虚化
+  useEffect(() => {
+    setScrolled(false);
+  }, [active, project?.path]);
 
   if (!project) {
     return (
@@ -120,7 +126,12 @@ export default function ProjectSurfaceTabs({
       </div>
       <div
         data-project-main-scroll
-        className="min-h-0 flex-1 overflow-auto pb-6"
+        data-scrolled={scrolled ? "true" : undefined}
+        onScroll={(event) => {
+          const next = event.currentTarget.scrollTop > 2;
+          setScrolled((prev) => (prev === next ? prev : next));
+        }}
+        className="min-h-0 flex-1 overflow-auto pt-1 pb-6"
       >
         {active === "tasks" && taskPanel}
         {children}

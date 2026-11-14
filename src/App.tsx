@@ -5,10 +5,8 @@ import {
   BookOpen,
   BookText,
   CheckCheck,
-  CircleHelp,
   Compass,
   ExternalLink,
-  Inbox,
   Info,
   Megaphone,
   ListTree,
@@ -1738,11 +1736,9 @@ function App() {
               )}
             </div>
             <div className="ccode-titlebar-side relative z-3 ml-auto flex min-w-0 shrink-0 items-center gap-1.5">
-              {/* 帮助：命令面板左侧常驻入口。文档/支持走外链（↗ 标记），应用内
-                  目标跳设置分区；下拉结构与关闭范式对齐收件箱（Esc / 遮罩 / 再点），
-                  与收件箱/命令面板互斥（同锚区三个浮层不同时开）。
-                  浮层面板上的次级文字用 l3 不用 l4：l4 压在 ccode-float-surface 上
-                  对比度只有 2.3–2.9:1，低于项目 3.0 底线（2026-10-12 HIG 复审）。 */}
+              {/* 帮助：命令面板左侧常驻安静胶囊（书册图标 +「帮助」；窄窗自动收为图标）。
+                  避免裸问号挂在顶栏最右破坏胶囊收尾节奏；有新版时带绿点提示。
+                  下拉结构与关闭范式对齐收件箱（Esc / 遮罩 / 再点），与收件箱/命令面板互斥。 */}
               <div className="relative flex items-center" ref={helpRootRef}>
                 <button
                   type="button"
@@ -1750,19 +1746,25 @@ function App() {
                     setHelpOpen((v) => !v);
                     setTitleInboxCat(null);
                   }}
-                  title="帮助"
+                  title={appUpdateVersion ? `帮助（v${appUpdateVersion} 可更新）` : "帮助"}
                   aria-label="帮助"
                   aria-expanded={helpOpen}
                   aria-haspopup="menu"
-                  // 只留图标（2026-10-25 用户对照 Claude 客户端：顶栏三组文字太挤），悬停写「帮助」
-                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+                  className="ccode-titlebar-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:text-l1"
                 >
-                  <CircleHelp
-                    size={14.5}
+                  <BookOpen
+                    size={13}
                     strokeWidth={1.8}
                     className="shrink-0"
                     aria-hidden="true"
                   />
+                  <span className="hidden md:inline">帮助</span>
+                  {appUpdateVersion && (
+                    <span
+                      className="size-1.5 shrink-0 rounded-full bg-ok-text"
+                      aria-hidden="true"
+                    />
+                  )}
                 </button>
                 {helpOpen && (
                   <div
@@ -1862,10 +1864,13 @@ function App() {
                 }}
                 title={`打开命令面板（${paletteComboLabel}）`}
                 aria-label="打开命令面板"
-                className="flex h-6 items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
+                className="ccode-titlebar-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1.5 text-micro text-l3 hover:text-l1"
               >
-                <span className="font-mono">{paletteComboLabel}</span>
-                <span className="hidden sm:inline">命令面板</span>
+                <NAV_ICONS.search size={12.5} strokeWidth={1.8} className="shrink-0 opacity-80" aria-hidden="true" />
+                <span className="hidden sm:inline">搜索或跳转…</span>
+                <kbd className="ccode-titlebar-kbd rounded px-1 py-px font-mono text-micro text-l3">
+                  {paletteComboLabel}
+                </kbd>
               </button>
               {inboxGroups.length > 0 && (
                 <div
@@ -1882,17 +1887,12 @@ function App() {
                       );
                     }}
                     aria-expanded={titleInboxCat !== null}
-                    className="flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
+                    className="ccode-titlebar-inbox-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro"
                     title="待处理"
                   >
-                    <Inbox
-                      size={13}
-                      strokeWidth={1.8}
-                      className="shrink-0"
-                      aria-hidden="true"
-                    />
+                    <RunCaret state="confirm" decorative />
                     <span className="hidden sm:inline">待处理</span>
-                    {inboxCount}
+                    <span className="font-medium tabular-nums">{inboxCount}</span>
                   </button>
                   {titleInboxCat !== null && (
                     <ul className="absolute right-0 top-full z-40 mt-1.5 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">

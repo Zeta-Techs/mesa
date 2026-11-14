@@ -2,9 +2,9 @@ import type { ChatChannelSnapshot } from "../chat-channel";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeftRight, Check, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
+import { ArrowLeftRight, Check, ChevronDown, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
 import { AGENTS } from "../types";
-import type { DetectResult, ModelCapabilityDto } from "../types";
+import type { DetectResult, ModelCapabilityDto, Profile } from "../types";
 import { useAppStore } from "../store";
 import { useMenuKeyNav } from "../menu-key-nav";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
@@ -627,7 +627,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         disabled={!launch && !live && !next}
         onClick={() => setOpen((v) => !v)}
         title={beta.newer ? `${title}\n你装的 CLI 比 Mesa 核对过的新，点开看底部「${beta.badge}」` : title}
-        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
+        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
           open ? "bg-hover text-l1" : ""
         }`}
       >
@@ -642,6 +642,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
         {/* CLI 比 Mesa 核对过的新（原「测试版」格上的小点，2026-10-23 随它收进菜单） */}
         {beta.newer && <span aria-label="CLI 比核对过的新" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
+        <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" className="shrink-0 opacity-60" />
       </button>
       {open && (
         <div
@@ -650,7 +651,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           aria-label={next ? "接着聊用的模型与思考强度" : "模型与思考强度"}
           // 字号挂在容器上：全站 button / input { font: inherit } 会吞掉按钮自己的 text-*
           // 限高（room）+ 纵向三段：顶部 Agent 行与底部思考 / 说明固定，中间名单区滚动
-          className={`absolute right-0 z-30 flex w-[19rem] flex-col overflow-y-auto rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal select-text ${
+          className={`absolute right-0 z-30 flex w-[21.5rem] flex-col overflow-y-auto rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal select-text ${
             side === "below" ? "top-full mt-2 origin-top-right" : "bottom-full mb-2 origin-bottom-right"
           }`}
           style={{ maxHeight: room }}
@@ -659,6 +660,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             <WhoView
               pick={launch.pick}
               agents={agents}
+              profiles={profiles}
               relay={props.relay?.state.available ? props.relay : null}
               onBack={() => setView("model")}
               onAgent={(id) => {
@@ -920,6 +922,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
 function WhoView({
   pick,
   agents,
+  profiles,
   relay,
   onBack,
   onAgent,
@@ -933,6 +936,7 @@ function WhoView({
 }: {
   pick: LaunchPickState;
   agents: DetectResult[];
+  profiles: Profile[];
   relay: RelayMenuProps | null;
   onBack: () => void;
   onAgent: (id: string) => void;
@@ -962,8 +966,8 @@ function WhoView({
         {!pick.resumePick && (
           <>
             <h4 className={section}>Agent</h4>
-            {/* 九家排成两列：名字都短，单列一家一行太占高度 */}
-            <div className="grid grid-cols-2 gap-x-0.5">
+            {/* 十家排成两列：带品牌色 M 锚点，已装项不挂冗余 title 免原生气泡遮挡下排按钮 */}
+            <div className="grid grid-cols-2 gap-1 px-0.5">
               {AGENTS.map((a) => {
                 const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;
                 const selected = a.id === pick.agentId;
@@ -972,17 +976,20 @@ function WhoView({
                     key={a.id}
                     type="button"
                     data-selected={selected}
-                    className={`${item(selected)} ${selected ? "bg-seg-sel hover:bg-seg-sel" : ""}`}
-                    title={installed ? a.label : `${a.label}（本机还没装）`}
+                    className={`${item(selected)} ${selected ? "bg-seg-sel hover:bg-seg-sel font-medium" : ""}`}
+                    title={installed ? undefined : `${a.label}（本机还没装）`}
                     onClick={() => onAgent(a.id)}
                   >
+                    <span className={installed ? "shrink-0" : "shrink-0 opacity-40"}>
+                      <AgentMark agentId={a.id} decorative />
+                    </span>
                     <span className={`min-w-0 flex-1 truncate ${installed ? "" : "text-l4"}`}>{a.label}</span>
                     {!installed && <span className="shrink-0 text-micro text-l4">未安装</span>}
                   </button>
                 );
               })}
             </div>
-            <div className="mx-1 my-1 h-px bg-hairline" />
+            <div className="mx-1 my-1.5 h-px bg-hairline" />
           </>
         )}
         <h4 className={section}>配置</h4>
@@ -994,6 +1001,8 @@ function WhoView({
           {pick.profiles.map((p) => {
             const header = p.group && p.group !== lastGroup ? p.group : null;
             lastGroup = p.group;
+            const prof = profiles.find((x) => x.id === p.value);
+            const subHint = prof?.models[0] || (prof?.accountType === "official" ? "CLI 登录" : null);
             return (
               <li key={p.value}>
                 {header && <div className="px-2 pb-0.5 pt-1.5 text-micro text-l4">{header}</div>}
@@ -1005,6 +1014,7 @@ function WhoView({
                   onClick={() => onProfile(p.value)}
                 >
                   <span className="min-w-0 flex-1 truncate">{p.label}</span>
+                  {subHint && <span className="max-w-[8rem] shrink-0 truncate text-xs text-l4">{subHint}</span>}
                   {mark(p.value === pick.profileId)}
                 </button>
               </li>

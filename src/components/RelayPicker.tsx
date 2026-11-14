@@ -210,18 +210,17 @@ export default function RelayPicker({
   );
 }
 
-/** Agent 标记：Mesa 标志里的 M（与图标源同一条路径），染成这家的品牌色；悬停写 Agent 名 */
-export function AgentMark({ agentId }: { agentId: string }) {
+/** Agent 标记：Mesa 标志里的 M（与图标源同一条路径），染成这家的品牌色；紧挨文字时传 decorative 免重复念与悬停原生气泡 */
+export function AgentMark({ agentId, decorative = false }: { agentId: string; decorative?: boolean }) {
   const name = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
   return (
     <svg
       viewBox="232 284 560 456"
       className="h-[0.8em] w-auto shrink-0"
-      role="img"
-      aria-label={name}
+      {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": name })}
       style={{ color: agentBrand(agentId) }}
     >
-      <title>{name}</title>
+      {!decorative && <title>{name}</title>}
       <path
         d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z"
         fill="currentColor"

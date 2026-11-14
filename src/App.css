@@ -786,6 +786,14 @@ body {
     border: 1px solid var(--color-hairline);
   }
 
+  /* 专属绑定 / 步骤槽「已指定」胶囊：避免整张 SlotCard 铺 bg-seg-sel 在两列网格形成明暗棋盘格，
+     改用极淡强调色洗层 + 内描边胶囊，字色保持 l1 确保全主题对比度 ≥ 7:1 */
+  .ccode-bound-pill {
+    background-color: color-mix(in srgb, var(--color-cta) 12%, transparent);
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-cta) 30%, transparent);
+    color: var(--color-l1);
+  }
+
   /* 活跃度热力图（用量页）· 格子边长由 --heat-cell 一个变量决定（2026-10-13）：
      窗口变宽只让格子在 9–28px 里按设备像素分档变大（2x 屏 0.5px 一档，非整数缩放 1px 一档），变高不再把格子拉成长方形。
      9 是下限（2026-10-31 由 11 下调，57 周窗口在窄卡里放得下）：放不下 9 才出横向滚动，星期列 sticky 钉住。
@@ -939,6 +947,46 @@ body {
   position: relative;
   z-index: 39;
   background: transparent;
+}
+
+/* 顶栏右组三枚功能胶囊（帮助 / 搜索或跳转 ⌘K / 待处理 N）：同 .ccode-rail-search，玻璃顶栏上不用实心底，
+   用前景色薄洗层 + 0.5px 内描边，深浅十四套主题与任意透明度档都跟着底色自然融合。 */
+.ccode-titlebar-pill {
+  background: color-mix(in srgb, var(--color-l1) 4.5%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 9%, transparent);
+  transition:
+    background-color 140ms var(--ccode-motion-ease),
+    box-shadow 140ms var(--ccode-motion-ease),
+    color 140ms var(--ccode-motion-ease);
+}
+.ccode-titlebar-pill:hover,
+.ccode-titlebar-pill[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-l1) 8.5%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 16%, transparent);
+}
+.ccode-titlebar-kbd {
+  background: color-mix(in srgb, var(--color-l1) 6%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-l1) 11%, transparent);
+}
+/* 待处理胶囊：有条目时带极淡琥珀提醒洗层与 M▁ 琥珀光标，一眼区别于静态工具入口 */
+.ccode-titlebar-inbox-pill {
+  background: color-mix(in srgb, var(--color-caution-text) 12%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-caution-text) 28%, transparent);
+  color: var(--color-l1);
+  transition:
+    background-color 140ms var(--ccode-motion-ease),
+    box-shadow 140ms var(--ccode-motion-ease);
+}
+.ccode-titlebar-inbox-pill:hover,
+.ccode-titlebar-inbox-pill[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-caution-text) 18%, transparent);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-caution-text) 40%, transparent);
+}
+
+/* 项目视图主滚动区：内容向上滚进页签横线下方时，顶边 14px 柔和渐隐，避免卡片被生硬切成 2px 残边 */
+[data-project-main-scroll][data-scrolled="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14px);
+  mask-image: linear-gradient(to bottom, transparent, #000 14px);
 }
 
 /* 侧栏罩色：基数（.ccode-app-shell 里声明）× 用户系数。
