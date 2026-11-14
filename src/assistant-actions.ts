@@ -75,6 +75,9 @@ export async function runAssistantAction(
       toast("要拆的事已复制，在工作台项目分组下点「拆成几个目标同时做…」粘进去", "info");
       return;
     case "project":
+      if (action.text === "schedule") {
+        st.setProjectFocusReq({ projectRoot: path, focus: "schedule", token: Date.now() });
+      }
       toProject();
       return;
     case "agents":

@@ -3,9 +3,36 @@
  * 三个来源全机械判定，不调 AI：人工请求（未答的）、AI 在对话里问你的话（最后一段像在问、它没在干活）、等你确认的命令。
  * 你就地回，Mesa 原路、原话转达（assistant-desk.ts）。纯逻辑，配 tests/assistant-queue.test.ts。
  */
+import { samePath } from "./path-utils.ts";
 import type { RunBlocker } from "./run-blocker";
 
 export type DeskKind = "help" | "question" | "confirm" | "trust" | "blocked" | "grant";
+
+const DISMISSED_QUESTIONS_KEY = "ccode.assistantDeskDismissedQuestions";
+const MAX_DISMISSED_QUESTIONS = 200;
+
+export function loadDismissedDeskQuestions(): Set<string> {
+  try {
+    if (typeof localStorage === "undefined") return new Set();
+    const raw = localStorage.getItem(DISMISSED_QUESTIONS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : null;
+    return Array.isArray(parsed) ? new Set(parsed.filter((x): x is string => typeof x === "string")) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+export function dismissDeskQuestion(key: string): void {
+  if (!key) return;
+  try {
+    if (typeof localStorage === "undefined") return;
+    const next = Array.from(loadDismissedDeskQuestions()).filter((x) => x !== key);
+    next.push(key);
+    localStorage.setItem(DISMISSED_QUESTIONS_KEY, JSON.stringify(next.slice(-MAX_DISMISSED_QUESTIONS)));
+  } catch {
+    /* 存不下就算本次内存隐藏 */
+  }
+}
 
 export interface DeskItem {
   /** 稳定键：同一件事在桌面与手机上同一个键（手机推送去重、按钮回传都靠它） */
@@ -23,8 +50,12 @@ export interface DeskItem {
   /** 人工请求：来源根与这一条的 id（写回作答用） */
   helpRoot?: string;
   helpItemId?: string;
-  /** 这一步的工作副本（转达用） */
+  /** 同一份人工请求里还有几条未答未送的题（>0 时提醒同处还有几题待答） */
+  siblingPendingCount?: number;
+  /** 这一步的工作副本或对话所在目录（转达用） */
   worktreePath?: string | null;
+  /** 非步骤对话的运行 id（同目录开了多段对话时精确转达给那一段） */
+  runId?: string;
   /** 等确认 / 停在信任菜单的标签（带路、替人按菜单用） */
   tabId?: string;
   /** 信任菜单：两项原文；dispatched = 这是你经项目助手派出去的活（手机上才能点信任，2026-11-06 用户拍板） */
@@ -63,7 +94,12 @@ export interface DeskHelpInput {
 }
 
 export interface DeskTailInput {
-  step: DeskStep;
+  /** 步骤对话传步骤；项目根 / 目标对话等非步骤交互活传 null，靠 where + targetRoot 定位 */
+  step: DeskStep | null;
+  where?: string;
+  targetRoot?: string | null;
+  runId?: string;
+  tabId?: string;
   /** AI 在这段对话里最后说的一段话 */
   text: string;
   /** 它此刻在干活 / 停在等确认（这两种不算在问你） */
@@ -74,6 +110,7 @@ export interface DeskConfirmInput {
   tabId: string;
   title: string;
   step: DeskStep | null;
+  cwd?: string | null;
   /** 卡在哪（run-blocker.ts 唯一出处）；dispatched = 这是经项目助手派出去的活 */
   blocker: RunBlocker;
   dispatched: boolean;
@@ -105,7 +142,10 @@ export function buildDeskItems(input: {
   tails: readonly DeskTailInput[];
   confirms: readonly DeskConfirmInput[];
   grants?: readonly DeskGrantInput[];
+  dismissedQuestions?: ReadonlySet<string>;
+  isWindows?: boolean;
 }): DeskItem[] {
+  const isWin = input.isWindows ?? false;
   const out: DeskItem[] = [];
   for (const g of input.grants ?? []) {
     if (g.blocked.length === 0) continue;
@@ -123,6 +163,7 @@ export function buildDeskItems(input: {
   }
   for (const req of input.help) {
     const step = req.workspaceName ? (input.steps.find((s) => s.workspaceName === req.workspaceName) ?? null) : null;
+    const pendingCount = req.items.filter((i) => !i.answer && !i.sent).length;
     for (const item of req.items) {
       if (item.answer || item.sent) continue;
       out.push({
@@ -136,6 +177,7 @@ export function buildDeskItems(input: {
         detail: item.detail,
         helpRoot: req.root,
         helpItemId: item.id,
+        ...(pendingCount > 1 ? { siblingPendingCount: pendingCount - 1 } : {}),
         worktreePath: step?.worktreePath ?? null,
       });
     }
@@ -153,25 +195,57 @@ export function buildDeskItems(input: {
       recommend: null,
       detail: [],
       tabId: c.tabId,
-      worktreePath: c.step?.worktreePath ?? null,
+      worktreePath: c.step?.worktreePath ?? c.cwd ?? null,
       ...(b.trust ? { trust: { ...b.trust, dispatched: c.dispatched } } : {}),
     });
   }
   for (const t of input.tails) {
-    // 这一步已经有人工请求在等你、或停在等确认：同一件事不说两遍
+    // 这一步 / 这一处已经有人工请求在等你、或停在等确认：同一件事不说两遍
     if (t.busy || !looksLikeQuestion(t.text)) continue;
-    if (out.some((x) => x.step === t.step.index + 1 && x.kind !== "question")) continue;
-    out.push({
-      key: `question:${t.step.worktreePath ?? t.step.workspaceName}:${hash(t.text)}`,
-      kind: "question",
-      step: t.step.index + 1,
-      where: stepLabel(t.step),
-      question: questionExcerpt(t.text),
-      options: [],
-      recommend: null,
-      detail: [],
-      worktreePath: t.step.worktreePath,
-    });
+    if (t.step !== null) {
+      if (out.some((x) => x.step === t.step!.index + 1 && x.kind !== "question")) continue;
+      const key = `question:${t.step.worktreePath ?? t.step.workspaceName}:${hash(t.text)}`;
+      if (input.dismissedQuestions?.has(key)) continue;
+      out.push({
+        key,
+        kind: "question",
+        step: t.step.index + 1,
+        where: stepLabel(t.step),
+        question: questionExcerpt(t.text),
+        options: [],
+        recommend: null,
+        detail: [],
+        worktreePath: t.step.worktreePath,
+      });
+    } else {
+      const root = t.targetRoot ?? null;
+      if (t.tabId && out.some((x) => x.tabId === t.tabId)) continue;
+      if (
+        root &&
+        out.some(
+          (x) =>
+            x.kind !== "question" &&
+            ((x.helpRoot && samePath(x.helpRoot, root, isWin)) || (!x.tabId && x.worktreePath && samePath(x.worktreePath, root, isWin))),
+        )
+      ) {
+        continue;
+      }
+      const key = `question:${t.runId ?? t.tabId ?? root ?? "chat"}:${hash(t.text)}`;
+      if (input.dismissedQuestions?.has(key)) continue;
+      out.push({
+        key,
+        kind: "question",
+        step: null,
+        where: t.where || "项目对话",
+        question: questionExcerpt(t.text),
+        options: [],
+        recommend: null,
+        detail: [],
+        worktreePath: root,
+        ...(t.runId ? { runId: t.runId } : {}),
+        ...(t.tabId ? { tabId: t.tabId } : {}),
+      });
+    }
   }
   return out;
 }

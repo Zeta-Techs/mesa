@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { Send } from "lucide-react";
 import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
@@ -46,6 +47,7 @@ export default function WorkOrderCard({
   record,
   projectPath,
   workMode,
+  steps,
   onDispatch,
 }: {
   order: WorkOrder;
@@ -53,6 +55,7 @@ export default function WorkOrderCard({
   record: DispatchRecord | null;
   projectPath: string | null;
   workMode?: string | null;
+  steps?: readonly { name: string }[];
   onDispatch: (order: WorkOrder) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<WorkOrder>(order);
@@ -65,8 +68,36 @@ export default function WorkOrderCard({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<{ text: string; tone: DispatchTone; phase?: string } | null>(null);
   const [savingPack, setSavingPack] = useState(false);
+  const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set());
   const shown = record ? { ...draft, title: record.title } : draft;
-  const to = shown.target === "step" ? `第 ${shown.step} 步的 AI` : "新目标（隔离副本里做，做完验收）";
+  const stepName = shown.target === "step" && shown.step ? steps?.[shown.step - 1]?.name : undefined;
+  const to = shown.target === "step" ? `第 ${shown.step} 步${stepName ? `「${stepName}」` : ""}的 AI` : "新目标（隔离副本里做，做完验收）";
+
+  const activeInputsKey = (!record ? (editing ? parseOrderPaths(inputsText) : (shown.inputs ?? [])) : []).join("\n");
+  useEffect(() => {
+    if (!projectPath || !activeInputsKey || record) {
+      setMissingPaths(new Set());
+      return;
+    }
+    let stale = false;
+    const paths = activeInputsKey.split("\n").filter(Boolean);
+    const timer = window.setTimeout(
+      () => {
+        void invoke<string[]>("assistant_missing_paths", { projectRoot: projectPath, paths })
+          .then((list) => {
+            if (!stale) setMissingPaths(new Set(list));
+          })
+          .catch(() => {
+            if (!stale) setMissingPaths(new Set());
+          });
+      },
+      editing ? 250 : 0,
+    );
+    return () => {
+      stale = true;
+      window.clearTimeout(timer);
+    };
+  }, [projectPath, activeInputsKey, record, editing]);
 
   useEffect(() => {
     if (!record || !projectPath) return;
@@ -158,6 +189,32 @@ export default function WorkOrderCard({
       </div>
       {editing && !record ? (
         <div className="space-y-2">
+          {(steps?.length ?? 0) > 0 && (
+            <label className="block">
+              <span className="mb-1 block text-xs text-l3">交给</span>
+              <select
+                className={`${compactFieldClass} w-full`}
+                aria-label="交给"
+                value={draft.target === "step" && draft.step ? `step:${draft.step}` : "goal"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v.startsWith("step:")) {
+                    setDraft({ ...draft, target: "step", step: Number(v.slice(5)) });
+                  } else {
+                    setDraft({ ...draft, target: "goal", step: null });
+                  }
+                }}
+              >
+                {workMode !== "coding" && <option value="goal">新目标（隔离副本里做，做完验收）</option>}
+                {workMode === "coding" && draft.target === "goal" && <option value="goal">新目标（编程项目不支持，请改选步骤）</option>}
+                {steps!.map((s, idx) => (
+                  <option key={`${idx + 1}-${s.name}`} value={`step:${idx + 1}`}>
+                    第 {idx + 1} 步「{s.name}」的 AI
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <input
             className={`${compactFieldClass} w-full`}
             value={draft.title}
@@ -181,6 +238,11 @@ export default function WorkOrderCard({
               value={inputsText}
               onChange={(e) => setInputsText(e.target.value)}
             />
+            {missingPaths.size > 0 && (
+              <span className="mt-1 block text-micro text-warn-text">
+                项目下还没找到：{Array.from(missingPaths).join("、")}（路径写错了可改掉，开工时才生成的不用管）
+              </span>
+            )}
           </label>
           {TEXT_FIELDS.map((f) => (
             <label key={f.key} className="block">
@@ -200,7 +262,9 @@ export default function WorkOrderCard({
           <p className="line-clamp-3 whitespace-pre-wrap break-words text-l2">{shown.task}</p>
           {(() => {
             const extra = [
-              shown.inputs?.length ? `依据材料 ${shown.inputs.length} 份` : "",
+              shown.inputs?.length
+                ? `依据材料 ${shown.inputs.length} 份${missingPaths.size ? `（${missingPaths.size} 处未找到）` : ""}`
+                : "",
               ...TEXT_FIELDS.filter((f) => shown[f.key]).map((f) => f.label),
               shown.basedOn ? `按「${shown.basedOn}」` : "",
               shown.skills?.length ? `技能 ${shown.skills.length} 个` : "",
@@ -221,8 +285,9 @@ export default function WorkOrderCard({
           {shown.inputs && shown.inputs.length > 0 && (
             <Field label="依据材料">
               {shown.inputs.map((p) => (
-                <span key={p} className="mr-2 font-mono text-xs">
+                <span key={p} className={`mr-2 font-mono text-xs ${missingPaths.has(p) ? "text-warn-text" : ""}`}>
                   {p}
+                  {missingPaths.has(p) ? "（未找到）" : ""}
                 </span>
               ))}
             </Field>

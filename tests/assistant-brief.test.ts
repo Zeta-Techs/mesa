@@ -170,3 +170,24 @@ test("待验收目标常用问题：带上隔离副本与只读预读重点，�
   });
   assert.match(lines[0].ask!.focus.detail, /\/iso\/goal-2/);
 });
+
+test("步骤待跟进与定时任务后台跟进不明都进「现在的情况」，且与目标待验收互不顶掉", () => {
+  const lines = briefLines({
+    ...base,
+    steps: [
+      { n: 2, name: "精读", state: "open", needsHuman: 0, pendingUpstream: true },
+      { n: 3, name: "大纲", state: "review", needsHuman: 0, pendingUpstream: true },
+    ],
+    goals: [{ name: "图表核对", status: "pending_review", updatedAt: "2026-11-12T00:00:00Z" }],
+    uncertainSchedules: [{ id: "sch-1", name: "每周前沿雷达" }],
+  });
+  const pendingStep = lines.find((l) => l.text === "第 2 步「精读」有前面步骤新保存的内容待跟进");
+  assert.ok(pendingStep);
+  assert.deepEqual(pendingStep.action, { kind: "step", step: 2, text: "", label: "看第 2 步" });
+  assert.ok(!lines.some((l) => l.text === "第 3 步「大纲」有前面步骤新保存的内容待跟进"), "已在待评审的步骤不重复挂待跟进");
+
+  const uncertain = lines.find((l) => l.text === "定时任务「每周前沿雷达」上次后台跟进结果不明已暂停，等你核对");
+  assert.ok(uncertain);
+  assert.deepEqual(uncertain.action, { kind: "project", step: null, text: "schedule", label: "去定时任务核对" });
+  assert.ok(lines.some((l) => l.text === "目标「图表核对」做完了，等你验收"), "同为 project 动作但 text 不同，不会互相去重吃掉");
+});

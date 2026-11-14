@@ -93,3 +93,47 @@ test("授权请求：有被拦下的事才成一件「等你的事」，带定�
   assert.deepEqual(items[0].detail, ["example.com"]);
   assert.equal(deskSummary(items), "等你的事 1 件：要扩大授权 1");
 });
+
+test("多题人工请求带 siblingPendingCount；非步骤交互对话提问进调度台、同处有人工请求或点过「不用回」不再重复出", () => {
+  const items = buildDeskItems({
+    steps,
+    help: [
+      {
+        root: "/iso/g-help",
+        workspaceName: null,
+        items: [
+          { id: "q1", question: "样本 A 留不留？", detail: [], recommend: null, options: [], answer: null, sent: null },
+          { id: "q2", question: "样本 B 留不留？", detail: [], recommend: null, options: [], answer: null, sent: null },
+          { id: "q3", question: "已答", detail: [], recommend: null, options: [], answer: "留", sent: null },
+        ],
+      },
+    ],
+    tails: [
+      { step: null, where: "对话「数据核对」", targetRoot: "/iso/g1", runId: "run-1", tabId: "tab-1", text: "异常值按 3σ 还是 IQR 标？", busy: false },
+      { step: null, where: "对话「有人工请求的」", targetRoot: "/iso/g-help", runId: "run-2", tabId: "tab-2", text: "要不要继续？", busy: false },
+      { step: null, where: "对话「停在确认的」", targetRoot: "/p", runId: "run-3", tabId: "tab-3", text: "要不要删旧表？", busy: false },
+    ],
+    confirms: [
+      { tabId: "tab-3", title: "停在确认的", step: null, cwd: "/p", blocker: { kind: "confirm", text: "等你确认命令", phone: "notify" }, dispatched: false },
+    ],
+  });
+  const helps = items.filter((i) => i.kind === "help");
+  assert.equal(helps.length, 2);
+  assert.equal(helps[0].siblingPendingCount, 1);
+  assert.equal(helps[1].siblingPendingCount, 1);
+
+  const questions = items.filter((i) => i.kind === "question");
+  assert.equal(questions.length, 1);
+  assert.equal(questions[0].where, "对话「数据核对」");
+  assert.equal(questions[0].worktreePath, "/iso/g1");
+  assert.equal(questions[0].runId, "run-1");
+
+  const afterDismiss = buildDeskItems({
+    steps,
+    help: [],
+    tails: [{ step: null, where: "对话「数据核对」", targetRoot: "/iso/g1", runId: "run-1", tabId: "tab-1", text: "异常值按 3σ 还是 IQR 标？", busy: false }],
+    confirms: [],
+    dismissedQuestions: new Set([questions[0].key]),
+  });
+  assert.deepEqual(afterDismiss, []);
+});

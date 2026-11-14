@@ -18,6 +18,8 @@ export interface BriefStep {
   mergedAt?: string | null;
   /** 核验里待你判断的条数 */
   needsHuman: number;
+  /** 前面步骤保存了新内容，这一步的工作副本还没跟进并入 */
+  pendingUpstream?: boolean;
 }
 
 export interface BriefGoal {
@@ -38,6 +40,8 @@ export interface BriefInput {
   since: string | null;
   /** 项目知识一条都还没有（交给 AI 的那一份是空的），且项目根有可起草的约定文件（见 hasKnowledgeSources）：提议起草几条 */
   knowledgeEmpty?: boolean;
+  /** 后台跟进结果不明、已暂停等你核对的定时任务 */
+  uncertainSchedules?: readonly { id: string; name: string }[];
 }
 
 export type BriefTone = "err" | "warn" | "ok";
@@ -175,6 +179,20 @@ export function briefLines(input: BriefInput): BriefLine[] {
         action: { kind: "review", step: s.n, text: "", label: `去评审第 ${s.n} 步` },
       });
     }
+    if (s.pendingUpstream && s.state !== "failed" && s.state !== "confirm" && s.state !== "review") {
+      now.push({
+        tone: "warn",
+        text: `${stepLabel(s)}有前面步骤新保存的内容待跟进`,
+        action: { kind: "step", step: s.n, text: "", label: `看第 ${s.n} 步` },
+      });
+    }
+  }
+  for (const u of input.uncertainSchedules ?? []) {
+    now.push({
+      tone: "warn",
+      text: `定时任务「${u.name}」上次后台跟进结果不明已暂停，等你核对`,
+      action: { kind: "project", step: null, text: "schedule", label: "去定时任务核对" },
+    });
   }
   for (const g of input.goals) {
     if (g.status === "pending_review") {
@@ -195,7 +213,7 @@ export function briefLines(input: BriefInput): BriefLine[] {
   // 同一步「待评审」与「核验待判断」去重：两行指向同一处评审，只留前一行
   const seen = new Set<string>();
   const merged = [...now, ...changed].filter((line) => {
-    const key = line.action ? `${line.action.kind}:${line.action.step ?? ""}` : line.text;
+    const key = line.action ? `${line.action.kind}:${line.action.step ?? ""}:${line.action.text}` : line.text;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

@@ -3,7 +3,7 @@ import { compactFieldClass, ghostActionClass, secondaryActionClass } from "./Pag
 import { useAppStore } from "../store";
 import { toast } from "../toast";
 import { optionAnswer } from "../help-requests";
-import { deskSummary, type DeskItem } from "../assistant-queue";
+import { deskSummary, dismissDeskQuestion, type DeskItem } from "../assistant-queue";
 import { answerGrant, answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
 
 /**
@@ -16,6 +16,7 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
   const [items, setItems] = useState<DeskItem[]>([]);
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [remembers, setRemembers] = useState<Record<string, "已定" | "不做" | undefined>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
   const helpTick = useAppStore((s) => s.helpRefreshTick);
@@ -35,9 +36,14 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
   async function reply(item: DeskItem, text: string) {
     setBusy(item.key);
     try {
-      const note = await replyDesk(projectPath, item, text);
+      const note = await replyDesk(projectPath, item, text, item.kind === "help" ? (remembers[item.key] ?? null) : null);
       toast(note, "success");
       setDrafts((d) => ({ ...d, [item.key]: "" }));
+      setRemembers((r) => {
+        const next = { ...r };
+        delete next[item.key];
+        return next;
+      });
       setItems((list) => list.filter((x) => x.key !== item.key));
       window.setTimeout(load, 1500);
     } catch (reason) {
@@ -65,6 +71,7 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
               <li key={item.key} className="border-t border-hairline pt-2.5">
                 <p className="text-xs text-l3">
                   {item.where} · {item.kind === "help" ? "人工请求" : item.kind === "question" ? "AI 在对话里问你" : item.kind === "trust" ? "等你信任文件夹" : item.kind === "blocked" ? "卡住了" : item.kind === "grant" ? "要扩大授权" : "等你确认"}
+                  {(item.siblingPendingCount ?? 0) > 0 ? ` · 同处还有 ${item.siblingPendingCount} 题待答` : ""}
                 </p>
                 <p className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-l1">{item.question}</p>
                 {item.detail.length > 0 && <p className="text-xs leading-5 text-l3">{item.detail.join("；")}</p>}
@@ -153,7 +160,56 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
                       <button type="button" className={ghostActionClass} disabled={disabled || !draft.trim()} onClick={() => void reply(item, draft)}>
                         {busy === item.key ? "送出中…" : "送过去"}
                       </button>
+                      {item.kind === "question" && (
+                        <button
+                          type="button"
+                          className={ghostActionClass}
+                          disabled={disabled}
+                          title="这句只是客套结尾或不用回答，收起不再提示"
+                          onClick={() => {
+                            dismissDeskQuestion(item.key);
+                            setItems((list) => list.filter((x) => x.key !== item.key));
+                          }}
+                        >
+                          不用回
+                        </button>
+                      )}
                     </div>
+                    {item.kind === "help" && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-micro text-l3">
+                        <label className="inline-flex items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={remembers[item.key] != null}
+                            disabled={disabled}
+                            onChange={(e) =>
+                              setRemembers((prev) => ({ ...prev, [item.key]: e.target.checked ? "已定" : undefined }))
+                            }
+                          />
+                          以后同类照此办
+                        </label>
+                        {remembers[item.key] && (
+                          <span className="inline-flex items-center gap-1">
+                            记为
+                            {(["已定", "不做"] as const).map((kind) => (
+                              <button
+                                key={kind}
+                                type="button"
+                                disabled={disabled}
+                                aria-pressed={remembers[item.key] === kind}
+                                onClick={() => setRemembers((prev) => ({ ...prev, [item.key]: kind }))}
+                                className={`rounded-sm border px-1 py-px ${
+                                  remembers[item.key] === kind ? "border-cta-bd text-l1" : "border-field text-l3"
+                                }`}
+                              >
+                                <span className="text-micro">{kind}</span>
+                              </button>
+                            ))}
+                            <span className="text-l4">（答的时候一并记进项目知识）</span>
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </li>

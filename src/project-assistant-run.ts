@@ -37,6 +37,7 @@ import { mergeMesaChecks } from "./outline-check";
 import { loadOutlineCheck, loadStepMesaChecks, loadStepWritingChecks } from "./research-report-load";
 import { stepKind } from "./step-kind";
 import { loadSkillProvides, type SkillProvides } from "./skill-slots";
+import { followupFiles } from "./step-loop";
 import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
@@ -62,6 +63,7 @@ import type {
   KnowledgeForAiDto,
   RunDto,
   RunEventDto,
+  ScheduleDto,
   SkillDto,
   TaskDto,
   TaskPackDto,
@@ -321,7 +323,7 @@ const snapshotCache = new Map<string, { at: number; text: string }>();
 /** 面板一打开就先把项目记录整理好（你打字时已经取完，问的时候不再等这一两秒）；失败不管 */
 /** 「现在的情况」卡与常用问题的取数（assistant-brief.ts 只算）：步骤状态与 gatherSnapshot 同口径，但不读对话尾巴、不拼文字 */
 export async function gatherBriefInput(projectPath: string, since: string | null): Promise<BriefInput> {
-  const [read, workspaces, runs, tasks, projects, knowledge, topLevel] = await Promise.all([
+  const [read, workspaces, runs, tasks, projects, knowledge, topLevel, schedules] = await Promise.all([
     safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
     safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
     safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
@@ -329,6 +331,7 @@ export async function gatherBriefInput(projectPath: string, since: string | null
     safe(invoke<ProjectDto[]>("list_projects"), []),
     safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
     safe(invoke<DirEntryDto[]>("list_dir", { path: projectPath, showHidden: false }), [] as DirEntryDto[]),
+    safe(invoke<ScheduleDto[]>("list_schedules"), [] as ScheduleDto[]),
   ]);
   const cfg = read?.config ?? null;
   const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
@@ -342,6 +345,9 @@ export async function gatherBriefInput(projectPath: string, since: string | null
         safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
         stepChecks(s, ws.worktreePath, projectPath),
       ]);
+      const pendingUpstream = health?.behind
+        ? (await safe(invoke<string[]>("workspace_incoming", { id: ws.id }), [] as string[])).some((f) => followupFiles([f]).length > 0)
+        : false;
       const attention = stepAttention(ws, live, IS_WINDOWS);
       const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
       const state: BriefStep["state"] =
@@ -357,7 +363,7 @@ export async function gatherBriefInput(projectPath: string, since: string | null
                   ? "review"
                   : "open";
       const needsHuman = checks.filter((c) => c.status === "needs_human").length;
-      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman };
+      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman, pendingUpstream };
     }),
   );
   const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;
@@ -377,7 +383,10 @@ export async function gatherBriefInput(projectPath: string, since: string | null
   // 读不到项目知识时不提议（宁可不提，也别对已有知识的项目说「还没有」）；项目根没有约定文件也不提议（起草了也是「一条没找到」）
   const knowledgeEmpty =
     !!knowledge && knowledge.lines.length === 0 && knowledge.stale === 0 && hasKnowledgeSources(topLevel.filter((e) => !e.isDir).map((e) => e.name));
-  return { hasFlow: steps.length > 0, steps, goals, since, knowledgeEmpty };
+  const uncertainSchedules = schedules
+    .filter((s) => samePath(s.projectRoot, projectPath, IS_WINDOWS) && s.followupState === "uncertain")
+    .map((s) => ({ id: s.id, name: s.name }));
+  return { hasFlow: steps.length > 0, steps, goals, since, knowledgeEmpty, uncertainSchedules };
 }
 
 export function prefetchSnapshot(projectPath: string): void {

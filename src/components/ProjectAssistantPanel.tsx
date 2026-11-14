@@ -122,6 +122,7 @@ export default function ProjectAssistantPanel({
   projectName,
   project,
   stepCount,
+  steps,
   ask,
   onAction,
   onDispatch,
@@ -144,6 +145,7 @@ export default function ProjectAssistantPanel({
   projectName: string;
   project: ProjectDto | null;
   stepCount: number;
+  steps?: readonly { name: string }[];
   ask: AssistantAsk | null;
   onAction: (action: AssistantAction, turn: AssistantTurn) => void;
   /** 派活单「派出去」：页面按去处开工，返回给人看的一句（「已留话给第 2 步的 AI」） */
@@ -281,6 +283,15 @@ export default function ProjectAssistantPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [echoTick, open, projectPath]);
 
+  function markSeenNow(targetPath: string | null) {
+    if (!targetPath) return;
+    try {
+      localStorage.setItem(SEEN_KEY(targetPath), new Date().toISOString());
+    } catch {
+      /* 存不了就只列现状 */
+    }
+  }
+
   useEffect(() => {
     if (!open || !projectPath) return;
     let stale = false;
@@ -292,10 +303,18 @@ export default function ProjectAssistantPanel({
     let since: string | null = null;
     try {
       since = localStorage.getItem(SEEN_KEY(projectPath));
-      localStorage.setItem(SEEN_KEY(projectPath), new Date().toISOString());
     } catch {
       /* 存不了就只列现状 */
     }
+    // 停留满 4 秒再把「上次打开」拨到现在：顺手打开一眼就关或切项目时，不把还没看清的变化冲掉
+    const openedAt = new Date().toISOString();
+    const seenTimer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(SEEN_KEY(projectPath), openedAt);
+      } catch {
+        /* 存不了就只列现状 */
+      }
+    }, 4000);
     gatherBriefInput(projectPath, since)
       .then((input) => {
         if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since });
@@ -310,6 +329,7 @@ export default function ProjectAssistantPanel({
       });
     return () => {
       stale = true;
+      window.clearTimeout(seenTimer);
     };
   }, [open, projectPath]);
 
@@ -367,6 +387,7 @@ export default function ProjectAssistantPanel({
     // 只贴了图没写字：替人补一句最常见的问法
     const q = question.trim() || (attached.length ? "看看这张截图是怎么回事，我该怎么办？" : "");
     if (!q || busy || !projectPath) return;
+    markSeenNow(projectPath);
     // 「派出去」「接着做」照字面办，不交给 AI（它自己做不了动作，交给它只会被说成「已经派出去了」，2026-11-06 实证）
     const quick = !withFocus && !forced && !attached.length ? quickIntent(q) : null;
     if (quick) {
@@ -630,6 +651,7 @@ export default function ProjectAssistantPanel({
               record={turn.dispatched ?? null}
               projectPath={projectPath}
               workMode={project?.workMode ?? null}
+              steps={steps}
               onDispatch={(order) => dispatch(turn.at, order)}
             />
           )}
@@ -729,7 +751,14 @@ export default function ProjectAssistantPanel({
           <span className="min-w-0 flex-1 truncate text-micro text-l4" title={brief.since ? absTime(brief.since) : undefined}>
             {brief.since && Date.now() - Date.parse(brief.since) > BRIEF_SINCE_QUIET_MS ? `上次打开是${relTime(brief.since)}` : ""}
           </span>
-          <button type="button" className="shrink-0 text-l4 hover:text-l2" onClick={() => setBriefOff(true)}>
+          <button
+            type="button"
+            className="shrink-0 text-l4 hover:text-l2"
+            onClick={() => {
+              markSeenNow(projectPath);
+              setBriefOff(true);
+            }}
+          >
             <span className="text-micro">知道了</span>
           </button>
         </div>

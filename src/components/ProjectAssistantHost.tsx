@@ -45,7 +45,8 @@ export default function ProjectAssistantHost() {
   const page = useAppStore((s) => s.page);
   const contextLabel = useAppStore((s) => s.contextLabel);
   const [project, setProject] = useState<ProjectDto | null>(null);
-  const [stepCount, setStepCount] = useState(0);
+  const [steps, setSteps] = useState<{ name: string }[]>([]);
+  const stepCount = steps.length;
   const path = req?.path ?? null;
 
   // 派活回音（2026-11-05）：应用开着就每分钟看一次派出去的活，做完 / 失败 / 停了在问答里补一条、进收件箱
@@ -103,10 +104,10 @@ export default function ProjectAssistantHost() {
       .catch(() => {});
     void invoke<ProjectConfigReadDto>("read_project_config", { path })
       .then((read) => {
-        if (!stale) setStepCount(read.config.steps.length);
+        if (!stale) setSteps(read.config.steps.map((s) => ({ name: s.name })));
       })
       .catch(() => {
-        if (!stale) setStepCount(0);
+        if (!stale) setSteps([]);
       });
     return () => {
       stale = true;
@@ -177,6 +178,7 @@ export default function ProjectAssistantHost() {
       projectName={project?.name ?? path?.split(/[\\/]/).filter(Boolean).pop() ?? ""}
       project={project}
       stepCount={stepCount}
+      steps={steps}
       where={where}
       hideProjectName={docked && !!viewing?.samePath}
       docked={

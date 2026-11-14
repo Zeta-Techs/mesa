@@ -13,7 +13,7 @@ import { buildWorkspaceTerminalRequest } from "./pipeline-start";
 import { loadHelpDismissed } from "./inbox";
 import { liveRunIn, sendToWorkspace } from "./assistant-dispatch";
 import { invalidateAssistantSnapshot } from "./project-assistant-run";
-import { buildDeskItems, relayText, type DeskItem, type DeskStep } from "./assistant-queue";
+import { buildDeskItems, loadDismissedDeskQuestions, relayText, type DeskItem, type DeskStep, type DeskTailInput } from "./assistant-queue";
 import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
 import type { OpenDispatch } from "./assistant-echo";
 
@@ -38,19 +38,65 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
   }));
   const live = useAppStore.getState().terminalRunInputs;
   const busy = (path: string) =>
-    live.some((r) => r.running && !r.shell && pathWithin(r.cwd, path, IS_WINDOWS) && (r.attention === "working" || r.attention === "confirm"));
-  const tails = (
-    await Promise.all(
-      steps
-        .filter((s) => s.worktreePath)
-        .map(async (s) => {
-          const tail = await stepSessionTail(runs, s.worktreePath!).catch(() => null);
-          return tail ? { step: s, text: tail.text, busy: busy(s.worktreePath!) } : null;
-        }),
-    )
-  ).filter((t): t is { step: DeskStep; text: string; busy: boolean } => !!t);
+    live.some((r) => r.running && !r.shell && pathWithin(r.cwd, path, IS_WINDOWS) && (r.attention === "working" || r.attention === "confirm" || !!r.blocker));
   // 目标在 Mesa 自己的隔离副本里跑（不在项目目录下）：按这个项目的运行记录认它们
   const roots = [projectPath, ...mine.map((w) => w.worktreePath), ...runs.filter((r) => !r.closedAt).map((r) => r.isolationPath)];
+  const stepTails = await Promise.all(
+    steps
+      .filter((s) => s.worktreePath)
+      .map(async (s): Promise<DeskTailInput | null> => {
+        const tail = await stepSessionTail(runs, s.worktreePath!).catch(() => null);
+        return tail ? { step: s, text: tail.text, busy: busy(s.worktreePath!) } : null;
+      }),
+  );
+  // 项目根对话、目标隔离副本对话等非步骤交互活：同样读最后一段话抓提问，就地原路转达
+  const nonStepLive = live.filter(
+    (r) =>
+      r.running &&
+      !r.shell &&
+      !!r.cwd &&
+      !steps.some((s) => s.worktreePath && pathWithin(r.cwd, s.worktreePath, IS_WINDOWS)) &&
+      roots.some((root) => pathWithin(r.cwd, root, IS_WINDOWS)),
+  );
+  const seenFallbackCwd = new Set<string>();
+  const nonStepTails = await Promise.all(
+    nonStepLive.map(async (r): Promise<DeskTailInput | null> => {
+      const matched = r.runId ? runs.find((x) => x.id === r.runId) : undefined;
+      const sid = r.sessionId || matched?.sessionId || null;
+      let scoped: readonly RunDto[];
+      if (sid) {
+        scoped = [
+          matched
+            ? { ...matched, sessionId: sid }
+            : ({
+                id: r.runId ?? r.tabId,
+                agent: r.agentId,
+                sessionId: sid,
+                isolationPath: r.cwd,
+                createdAt: "9999",
+                internal: false,
+              } as RunDto),
+        ];
+      } else {
+        const key = IS_WINDOWS ? r.cwd.toLowerCase() : r.cwd;
+        if (seenFallbackCwd.has(key)) return null;
+        seenFallbackCwd.add(key);
+        scoped = runs;
+      }
+      const tail = await stepSessionTail(scoped, r.cwd).catch(() => null);
+      if (!tail) return null;
+      return {
+        step: null,
+        where: `对话「${r.title || "未命名"}」`,
+        targetRoot: r.cwd,
+        runId: r.runId,
+        tabId: r.tabId,
+        text: tail.text,
+        busy: r.attention === "working" || r.attention === "confirm" || !!r.blocker,
+      };
+    }),
+  );
+  const tails = [...stepTails, ...nonStepTails].filter((t): t is DeskTailInput => !!t);
   const open = await safe(invoke<OpenDispatch[]>("assistant_open_dispatches"), []);
   const dispatchedHere = (cwd: string, taskId: string | undefined) =>
     open.some(
@@ -64,6 +110,7 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
       tabId: r.tabId,
       title: r.title,
       step: steps.find((s) => s.worktreePath && pathWithin(r.cwd, s.worktreePath, IS_WINDOWS)) ?? null,
+      cwd: r.cwd,
       blocker: r.blocker!,
       dispatched: dispatchedHere(r.cwd, r.taskId),
     }));
@@ -75,6 +122,8 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
     grants: schedules
       .filter((s) => s.grantRequest && samePath(s.projectRoot, projectPath, IS_WINDOWS))
       .map((s) => ({ scheduleId: s.id, name: s.name, at: s.grantRequest!.at, blocked: s.grantRequest!.blocked })),
+    dismissedQuestions: loadDismissedDeskQuestions(),
+    isWindows: IS_WINDOWS,
   });
 }
 
@@ -96,7 +145,12 @@ async function workspaceFor(path: string | null | undefined): Promise<WorkspaceD
  * 回一件「等你的事」：人工请求写回作答，再把「按决定继续」送进那一步；对话里的问题把原话送进那段对话。
  * 等确认的命令不在这里答（只在桌面、回对话里确认），调用方先按分级表挡住。返回给人看的一句。
  */
-export async function replyDesk(projectPath: string, item: DeskItem, text: string): Promise<string> {
+export async function replyDesk(
+  projectPath: string,
+  item: DeskItem,
+  text: string,
+  remember: "已定" | "不做" | null = null,
+): Promise<string> {
   const value = text.trim();
   if (!value) throw new Error("回复是空的");
   if (item.kind === "confirm") throw new Error("等确认的命令要回到电脑上的对话里确认");
@@ -105,7 +159,7 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
       root: item.helpRoot,
       itemId: item.helpItemId,
       answer: value,
-      remember: null,
+      remember: remember ?? null,
     });
     invalidateAssistantSnapshot(projectPath);
     const ws = (await workspaceFor(item.worktreePath)) ?? (await workspaceFor(item.helpRoot));
@@ -160,7 +214,41 @@ export async function replyDesk(projectPath: string, item: DeskItem, text: strin
     return `已记下，回答已排队；${item.where}的 AI 空闲时送到，送到前仍保留在待处理里`;
   }
   const ws = await workspaceFor(item.worktreePath);
-  if (!ws) throw new Error(`${item.where}的工作副本不在了，送不到`);
+  if (!ws) {
+    const liveById = item.runId
+      ? useAppStore.getState().terminalRunInputs.find((r) => r.running && !r.shell && r.runId === item.runId)?.runId ?? null
+      : null;
+    const liveRun = liveById ?? (item.worktreePath ? liveRunIn(item.worktreePath) : null);
+    if (liveRun) {
+      await invoke<string>("mail_send", { toRun: liveRun, text: relayText(value) });
+      invalidateAssistantSnapshot(projectPath);
+      return `已原话留给${item.where}的 AI，它空闲时送到`;
+    }
+    const runs = await safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []);
+    const run =
+      (item.runId ? runs.find((r) => !r.internal && !!r.sessionId && r.id === item.runId) : undefined) ??
+      runs
+        .filter((r) => !r.internal && !!r.sessionId && !!item.worktreePath && pathWithin(r.isolationPath, item.worktreePath, IS_WINDOWS))
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+    if (run?.sessionId && item.worktreePath) {
+      useAppStore.getState().setPendingTerminal({
+        cwd: item.worktreePath,
+        extraEnv: {},
+        title: item.where,
+        runId: run.id,
+        taskId: run.taskId || undefined,
+        agentId: run.agent,
+        profileId: run.profileId ?? undefined,
+        resume: { agentId: run.agent, sessionId: run.sessionId },
+        initialPrompt: relayText(value),
+        autoStart: Boolean(run.profileId),
+      });
+      useAppStore.getState().setPage("terminal");
+      invalidateAssistantSnapshot(projectPath);
+      return `已接回${item.where}的对话，把你的话原样送了进去`;
+    }
+    throw new Error(`${item.where}的工作副本不在了，送不到`);
+  }
   const sent = await sendToWorkspace(projectPath, ws, null, relayText(value));
   invalidateAssistantSnapshot(projectPath);
   return sent.mode === "mail" ? `已原话留给${item.where}的 AI，它空闲时送到` : `已接回${item.where}的对话，把你的话原样送了进去`;
