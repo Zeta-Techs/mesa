@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import LitWatchCard from "./LitWatchCard";
 import ScheduleSection from "./ScheduleSection";
 import { confirmDialog } from "./ConfirmDialog";
+import { projectWellClass, Toggle } from "./PageFrame";
 import { normalizeWorkMode } from "../work-mode";
 import type { ProjectConfigDto, ProjectDto } from "../types";
 
@@ -65,29 +66,69 @@ export default function ProjectSchedulesView({
     onFocusHandled?.();
   }, [focusToken, onFocusHandled]);
 
+  async function toggleBackgroundCore() {
+    if (!core || coreBusy) return;
+    const enabled = !core.enabled;
+    if (!enabled) {
+      // 关后台会停掉它正在跑的任务：先说清停几条、停了会怎样，人点头才关
+      const active = await invoke<{ id: string }[]>("background_core_active_runs").catch(() => []);
+      if (active.length > 0) {
+        const ok = await confirmDialog(
+          `独立后台里有 ${active.length} 个定时任务正在运行。\n\n现在关闭会中断它们，这一轮记为结果不明并暂停跟进，需要你去核对后再继续。`,
+          { danger: true, confirmText: "仍然关闭", focusCancel: true },
+        );
+        if (!ok) return;
+      }
+    }
+    setCoreBusy(true);
+    try {
+      setCore(await invoke("background_core_set", { enabled }));
+    } catch (error) {
+      onError?.(`独立后台切换失败：${String(error)}`);
+    } finally {
+      setCoreBusy(false);
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      {core && <label className="flex items-start gap-2 text-xs text-l2">
-        <input type="checkbox" checked={core.enabled} disabled={coreBusy} onChange={async (event) => {
-          const enabled = event.target.checked;
-          if (!enabled) {
-            // 关后台会停掉它正在跑的任务：先说清停几条、停了会怎样，人点头才关
-            const active = await invoke<{ id: string }[]>("background_core_active_runs").catch(() => []);
-            if (active.length > 0) {
-              const ok = await confirmDialog(
-                `独立后台里有 ${active.length} 个定时任务正在运行。\n\n现在关闭会中断它们，这一轮记为结果不明并暂停跟进，需要你去核对后再继续。`,
-                { danger: true, confirmText: "仍然关闭", focusCancel: true },
-              );
-              if (!ok) return;
-            }
-          }
-          setCoreBusy(true);
-          try { setCore(await invoke("background_core_set", { enabled })); }
-          catch (error) { onError?.(`独立后台切换失败：${String(error)}`); }
-          finally { setCoreBusy(false); }
-        }} />
-        <span>独立后台：退出桌面后继续运行已授权的定时任务。{core.running ? "后台正在运行。" : core.enabled ? "后台没在运行，Mesa 开着时由桌面接着跑定时任务，并会自动重新拉起后台。" : ""}电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审。</span>
-      </label>}
+    <div className="space-y-5">
+      {core && (
+        <div
+          className={`${projectWellClass} flex flex-wrap items-center gap-x-2.5 gap-y-1.5 py-2.5 text-xs`}
+          title="电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审。"
+        >
+          <span className={coreBusy ? "pointer-events-none opacity-50" : ""}>
+            <Toggle
+              checked={core.enabled}
+              label={`${core.enabled ? "关闭" : "开启"}独立后台`}
+              onChange={() => void toggleBackgroundCore()}
+            />
+          </span>
+          <span className="font-medium text-l1">独立后台</span>
+          {core.running ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-micro font-medium text-ok-text">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />
+              运行中
+            </span>
+          ) : core.enabled ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text">
+              <span aria-hidden="true" className="size-1.5 rounded-full bg-warn-text" />
+              待拉起
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l4">
+              已关闭
+            </span>
+          )}
+          <span className="min-w-0 flex-1 text-l3">
+            {core.running
+              ? "退出桌面后继续运行已授权的定时任务，成果回桌面评审。"
+              : core.enabled
+                ? "后台暂未运行，Mesa 开着时接着跑并会自动重新拉起，成果回桌面评审。"
+                : "退出桌面后继续运行已授权的定时任务（关机或睡眠时不运行，成果回桌面评审）。"}
+          </span>
+        </div>
+      )}
       {research && cfg && (
         <LitWatchCard
           projectRoot={project.path}

@@ -1676,7 +1676,7 @@ export default function ScheduleSection({
   const addBtn = (
     <button
       type="button"
-      className={actionBtn}
+      className={isCard ? `${secondaryActionClass} ml-auto` : actionBtn}
       title={research ? "新建定时任务（默认文献雷达，也可以选巡检技能或新建一个）" : "新建定时任务（让 AI 按你的描述写一个巡检技能）"}
       onClick={() => openCreate()}
     >
@@ -1687,9 +1687,17 @@ export default function ScheduleSection({
   return (
     <div className={isCard ? projectWellClass : "mb-2"}>
       {isCard ? (
-        <div className="mb-2 flex items-center gap-2">
-          <h2 className="text-xs font-medium text-l2">
-            定时任务{count > 0 ? `（${count}）` : ""}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <h2 className="flex items-center gap-1.5 text-sm font-medium text-l1">
+            <span>定时任务</span>
+            {count > 0 && (
+              <>
+                <span className="sr-only">（{count}）</span>
+                <span aria-hidden="true" className="rounded-full bg-inset px-2 py-0.5 font-mono text-micro font-normal text-l3">
+                  {count}
+                </span>
+              </>
+            )}
           </h2>
           {addBtn}
         </div>
@@ -1711,7 +1719,7 @@ export default function ScheduleSection({
         <div className={isCard ? "" : "mt-1 rounded-md ccode-well p-2"}>
           {error && <InlineNotice tone="err" className="py-1">{error}</InlineNotice>}
           {schedules !== null && schedules.length === 0 && drafts.length === 0 && (
-            <div className="text-xs text-l3">
+            <div className={`${isCard ? "rounded-lg bg-canvas/45 px-3 py-3" : ""} text-xs text-l3`}>
               {/* 2026-11-05 用户：空态太复杂、说明看不懂——一句说清它做什么、结果去哪 */}
               <p>
                 {research
@@ -1724,7 +1732,7 @@ export default function ScheduleSection({
                   <button
                     key={ex.label}
                     type="button"
-                    className="rounded-full border border-hairline px-2.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1"
+                    className="rounded-full bg-inset px-2.5 py-0.5 text-micro text-l2 transition-colors hover:bg-hover hover:text-l1"
                     title={ex.intent ?? "按周期查新文献，新命中先待你评审"}
                     onClick={() => openCreate(ex)}
                   >
@@ -1735,14 +1743,14 @@ export default function ScheduleSection({
             </div>
           )}
           {drafts.length > 0 && (
-            <ul className="mb-1 space-y-0.5">
+            <ul className="mb-1.5 space-y-1.5">
               {drafts.map((d) => (
-                <li key={d.id} className="rounded-sm py-1.5">
+                <li key={d.id} className={isCard ? "rounded-lg bg-canvas/45 px-3 py-2" : "rounded-sm py-1.5"}>
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 truncate text-xs text-l2" title={d.name}>
+                    <span className="min-w-0 truncate text-xs font-medium text-l1" title={d.name}>
                       {d.name}
                     </span>
-                    <span className="shrink-0 text-micro text-l4">
+                    <span className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3">
                       {d.hasDraft ? "草稿待确认" : "正在写技能…"}
                     </span>
                     <span className="min-w-0 flex-1" />
@@ -1795,7 +1803,7 @@ export default function ScheduleSection({
             </ul>
           )}
           {schedules !== null && schedules.length > 0 && (
-            <ul className="space-y-0.5">
+            <ul className={isCard ? "space-y-2" : "space-y-0.5"}>
               {schedules.map((s) => {
                 const needsKeywords =
                   isLitWatchSkill(s.skill) && subCounts[s.id] === 0;
@@ -1806,36 +1814,46 @@ export default function ScheduleSection({
                   ? profiles.find((p) => p.id === s.profileId) ?? null
                   : null;
                 const isRunning = Boolean(s.runningRunId) || running.has(s.id);
+                const autoPaused = !s.enabled && Boolean(s.pausedReason);
+                const needsAttention =
+                  autoPaused ||
+                  s.followupState === "uncertain" ||
+                  Boolean(s.grantRequest && s.grantRequest.blocked.length > 0);
+                const rowContainerClass = isCard
+                  ? `group rounded-lg bg-canvas/45 px-3 py-2.5 transition-colors hover:bg-canvas/70 ${
+                      needsAttention
+                        ? "ring-1 ring-warn-text/30"
+                        : isRunning
+                          ? "ring-1 ring-ok-text/25"
+                          : ""
+                    }`
+                  : "group rounded-sm py-1.5";
+                const followupPillClass =
+                  s.followupState === "uncertain"
+                    ? "bg-warn text-warn-text"
+                    : s.followupState === "waiting"
+                      ? "bg-cta/12 text-cta"
+                      : s.followupState === "later"
+                        ? "bg-inset text-l2"
+                        : "bg-ok text-ok-text";
                 return (
-                <li key={s.id} className="group rounded-sm py-1.5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                <li key={s.id} className={rowContainerClass}>
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
                     <Toggle
                       checked={s.enabled}
                       onChange={() => void toggleEnabled(s)}
                       label={`${s.enabled ? "停用" : "启用"}定时任务：${s.name}`}
                     />
                     <span
-                      className="min-w-0 truncate text-xs text-l2"
+                      className={`min-w-0 truncate ${isCard ? "text-sm font-medium" : "text-xs"} ${
+                        s.enabled || autoPaused ? "text-l1" : "text-l3"
+                      }`}
                       title={isLitWatchSkill(s.skill) ? s.name : `${s.name} · 巡检技能 ${s.skill}`}
                     >
                       {s.name}
                     </span>
-                    {!s.enabled && s.pausedReason && (
-                      <span className="shrink-0 text-micro text-warn-text" title={s.pausedReason}>
-                        已自动暂停
-                      </span>
-                    )}
-                    {s.followupState && <span className="text-micro text-l3" title={s.followupAbout ?? undefined}>{s.followupState === "waiting" ? "等你回答 · 未占进程" : s.followupState === "later" ? (s.followupAt ? `预约复查 ${slotLabel(s.followupAt)}` : "预约复查") : s.followupState === "uncertain" ? "上次结果不明，等你核对" : "正在接着跟进"}</span>}
-                    {s.queued && !s.runningRunId && !running.has(s.id) && !needsKeywords && (
-                      <span
-                        className="shrink-0 text-micro text-l3"
-                        title={`到点了，正在排队：${runningCount > 0 ? `${runningCount} 个雷达在跑` : "上一条还没收尾"}，空出来就自动接上（同一项目一次只跑一条）`}
-                      >
-                        排队中
-                      </span>
-                    )}
                     <span
-                      className="shrink-0 text-micro text-l4"
+                      className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
                       title={s.nextRunAt ? `下一次：${slotLabel(s.nextRunAt)}` : undefined}
                     >
                       {s.event ? (
@@ -1847,10 +1865,44 @@ export default function ScheduleSection({
                         </>
                       )}
                     </span>
+                    {autoPaused && (
+                      <span
+                        className="shrink-0 rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text"
+                        title={s.pausedReason ?? undefined}
+                      >
+                        已自动暂停
+                      </span>
+                    )}
+                    {s.followupState && (
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-micro font-medium ${followupPillClass}`}
+                        title={s.followupAbout ?? undefined}
+                      >
+                        {s.followupState === "waiting"
+                          ? "等你回答 · 未占进程"
+                          : s.followupState === "later"
+                            ? (s.followupAt ? `预约复查 ${slotLabel(s.followupAt)}` : "预约复查")
+                            : s.followupState === "uncertain"
+                              ? "上次结果不明，等你核对"
+                              : "正在接着跟进"}
+                      </span>
+                    )}
+                    {s.queued && !s.runningRunId && !running.has(s.id) && !needsKeywords && (
+                      <span
+                        className="shrink-0 rounded-full bg-inset px-2 py-0.5 text-micro text-l3"
+                        title={`到点了，正在排队：${runningCount > 0 ? `${runningCount} 个雷达在跑` : "上一条还没收尾"}，空出来就自动接上（同一项目一次只跑一条）`}
+                      >
+                        排队中
+                      </span>
+                    )}
                     {isLitWatchSkill(s.skill) && (
                       <button
                         type="button"
-                        className={actionBtn}
+                        className={`inline-flex h-6 shrink-0 items-center rounded-full px-2.5 text-micro transition-colors ${
+                          needsKeywords
+                            ? "bg-warn font-medium text-warn-text hover:opacity-90"
+                            : "bg-inset text-l2 hover:bg-hover hover:text-l1"
+                        }`}
                         title={
                           subCounts[s.id] === 1 && subKeywords[s.id]?.[0]
                             ? `唯一关键词：${subKeywords[s.id][0]}（点击管理）`
@@ -1867,7 +1919,7 @@ export default function ScheduleSection({
                     )}
                     {s.profileId && (
                       <span
-                        className={`min-w-0 max-w-52 truncate text-micro ${pinned ? "text-l4" : "text-warn-text"}`}
+                        className={`min-w-0 max-w-52 truncate rounded-md bg-inset/75 px-1.5 py-0.5 text-micro ${pinned ? "text-l3" : "bg-warn text-warn-text"}`}
                         title={
                           pinned
                             ? "这条任务钉了这条连接，不跟随项目默认；在「编辑任务」里改"
@@ -1877,7 +1929,7 @@ export default function ScheduleSection({
                         {pinned ? pinned.name : "原连接已删除"}
                       </span>
                     )}
-                    <span className="ml-auto flex shrink-0 items-center">
+                    <span className={`ml-auto flex shrink-0 items-center gap-0.5 ${isCard ? "rounded-lg bg-inset/65 p-0.5" : ""}`}>
                       {s.history.length > 0 && (
                         <button
                           type="button"
@@ -1906,7 +1958,7 @@ export default function ScheduleSection({
                       )}
                       <button
                         type="button"
-                        className={`${iconActionClass} ${running.has(s.id) || needsKeywords ? "" : hoverRevealClass}`}
+                        className={`${iconActionClass} ${isCard || running.has(s.id) || needsKeywords ? "" : hoverRevealClass}`}
                         disabled={running.has(s.id) || needsKeywords}
                         title={
                           needsKeywords
@@ -1931,7 +1983,7 @@ export default function ScheduleSection({
                         }}
                         title="任务操作"
                         aria-label={`任务操作：${s.name}`}
-                        className={`${iconActionClass} ${hoverRevealClass}`}
+                        className={`${iconActionClass} ${isCard ? "" : hoverRevealClass}`}
                       >
                         <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
                       </button>
@@ -2085,7 +2137,7 @@ export default function ScheduleSection({
                     </p>
                   )}
                   {s.history.length > 0 && historyOpen === s.id && (
-                    <ul className="mt-0.5 divide-y divide-hairline border-l border-white/5 pl-11">
+                    <ul className="mt-2 ml-10 space-y-1 rounded-md bg-inset/55 p-2">
                       {s.history.slice(0, HISTORY_PREVIEW).map((r, i) => (
                         <RunHistoryItem
                           key={`${r.at}-${i}`}

@@ -1905,12 +1905,20 @@ export default function LitWatchCard({
           aria-expanded={bodyOpen}
         >
           <FoldMark open={bodyOpen} boxed />
-          <h2 className="text-xs font-medium text-l2">
-            {visibleEntries.length > 0
-              ? `文献雷达 · ${visibleEntries.length} 篇`
-              : lastRunAt
-                ? `文献雷达 · 上次巡检 ${relTime(lastRunAt)}`
-                : "文献雷达"}
+          <h2 className="flex items-center gap-1.5 text-sm font-medium text-l1">
+            <span>文献雷达</span>
+            {visibleEntries.length > 0 ? (
+              <>
+                <span className="sr-only"> · </span>
+                <span className="rounded-full bg-inset px-2 py-0.5 font-mono text-micro font-normal text-l3">
+                  {visibleEntries.length} 篇
+                </span>
+              </>
+            ) : lastRunAt ? (
+              <span className="text-micro font-normal text-l4">
+                {" "}· 上次巡检 {relTime(lastRunAt)}
+              </span>
+            ) : null}
           </h2>
         </button>
         {visibleEntries.length > 0 && lastRunAt && (
@@ -1921,14 +1929,14 @@ export default function LitWatchCard({
         {/* 巡检全停用时卡头说清：列表还在，但不会再长新命中（停用开关在下面的任务行） */}
         {radarSchedules.length > 0 && radarSchedules.every((s) => !s.enabled) && (
           <span
-            className="text-micro text-warn-text"
+            className="rounded-full bg-warn px-2 py-0.5 text-micro font-medium text-warn-text"
             title="雷达巡检已停用，不会再有新命中；在下方定时任务行重新启用"
           >
             已暂停
           </span>
         )}
         {bodyOpen && (
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
           {metricsStatus && (
             <button
               type="button"
