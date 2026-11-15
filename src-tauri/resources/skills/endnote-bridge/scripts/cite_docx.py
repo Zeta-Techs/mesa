@@ -52,6 +52,7 @@ CURLY_TEMP = re.compile(r"\{[^{}]{1,80},\s*[^{}]{1,20}\}")
 # Quarto / 交叉引用花括号。EndNote 会把 {#键} 当成临时引文去库里搜。
 CURLY_KEY = re.compile(r"\{#(?!fig-|tbl-|sec-)([A-Za-z0-9_.:-]+)\}")
 RAW_HASH_BRACE = re.compile(r"\{#[A-Za-z0-9_.:-]+\}")
+PROSE_BRACE = re.compile(r"\{[^{}\r\n]{1,40}\}")
 
 
 def load_library_match():
@@ -1292,6 +1293,17 @@ def write_report(path: Path, payload: dict):
             lines.append("")
         lines.append("打开 `output/endnote.docx`，在 EndNote 工具栏点 Update Citations and Bibliography，再换 Output Style。**先确认 EndNote 应用已在运行再开文档**：首次打开若插件无响应（按钮灰/无反应），是宿主还没就绪——等 EndNote 加载完库，或关掉文档重开一次即可，文档本身没坏。不要改源稿里的 `[@键]`。")
         lines.append("合意后另存为 `manuscript/source.docx`。不要覆盖这份报告或源稿。")
+        if payload.get("prose_braces"):
+            sample = "、".join(f"`{b}`" for b in payload["prose_braces"][:6])
+            more = (
+                f" 等 {payload['prose_brace_total']} 种"
+                if payload.get("prose_brace_total", 0) > 6
+                else ""
+            )
+            lines.append("")
+            lines.append(
+                f"提示：正文含有花括号记号（{sample}{more}，如晶面族或集合符号）。EndNote 默认把 `{{ }}` 当作临时引文分隔符，点 Update 时若弹出「选择匹配参考文献」，直接点 **全部忽略 / 忽略**（切勿点「插入」，否则会把正文花括号替换成文献）；若需反复刷新不再弹出，可在 Word 的 EndNote 栏点 Configure Bibliography（格式化书目...）把临时引文分隔符从 `{{` `}}` 改为 `{{{{` `}}}}`。"
+            )
     binding = payload.get("binding") or []
     if binding:
         lines.append("")
@@ -1414,6 +1426,12 @@ def main(argv: list[str] | None = None) -> int:
         {m.group(0) for m in RAW_HASH_BRACE.finditer(visible)}
         | {m.group(0) for m in CURLY_TEMP.finditer(visible)}
     )
+    prose_braces: list[str] = []
+    unmatched_set = set(unmatched_braces)
+    for m in PROSE_BRACE.finditer(visible):
+        tok = m.group(0)
+        if tok not in unmatched_set and tok not in prose_braces:
+            prose_braces.append(tok)
     payload = {
         "source": str(source),
         "spans": len(cited),
@@ -1422,6 +1440,8 @@ def main(argv: list[str] | None = None) -> int:
         "images": len(images),
         "missing_images": missing_images,
         "unmatched_braces": unmatched_braces,
+        "prose_braces": prose_braces[:12],
+        "prose_brace_total": len(prose_braces),
         "caption_only": caption_only_keys(rec_nums, cited),
         "binding": binding,
     }

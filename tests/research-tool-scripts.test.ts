@@ -961,6 +961,18 @@ test("两份域稿支持 {#sec-}/@sec- 章节交叉引用、ΔG~H\\*~ 下标与 
     const dirtyReportText = readFileSync(dirtyRep, "utf8");
     assert.match(dirtyReportText, /未写 docx/);
     assert.doesNotMatch(dirtyReportText, /打开 `output\/endnote\.docx`/);
+
+    // 催化/材料正文里的晶面族 {110}、{001} 不拦出稿，保持 ASCII 原文并在报告里给出 EndNote「全部忽略」提示（2026-11-16 实证）
+    const facetMd = join(root, "facet.md");
+    writeFileSync(facetMd, "## Facets\n\nOn {110} and {001} facets of MoB2 [@Huang2027].\n");
+    const facetDocx = join(root, "facet.docx");
+    const facetRep = join(root, "facet-report.md");
+    const rFacet = run(citeDocx, ["--input", facetMd, "--bib", bib, "--output", facetDocx, "--report", facetRep]);
+    assert.equal(rFacet.status, 0, rFacet.stderr);
+    assert.match(zipXml(facetDocx).stdout, /on \{110\} and \{001\} facets/i);
+    const facetReportText = readFileSync(facetRep, "utf8");
+    assert.match(facetReportText, /`\{110\}`、`\{001\}`/);
+    assert.match(facetReportText, /全部忽略/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

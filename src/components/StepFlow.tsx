@@ -839,7 +839,11 @@ export default function StepFlow({
   const [editOpen, setEditOpen] = useState<string | null>(null);
   /** 打开清单/填写后未点「交给 AI」就勾了完成框：留一行提醒补交回，防误以为勾选会自动让 AI 重渲 */
   const [unhandedTitle, setUnhandedTitle] = useState<string | null>(null);
-  const [handbackNote, setHandbackNote] = useState<{ title: string; text: string } | null>(null);
+  const [handbackNote, setHandbackNote] = useState<{
+    title: string;
+    text: string;
+    tone?: "info" | "warn" | "err";
+  } | null>(null);
   const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(new Map());
   const [citeOpen, setCiteOpen] = useState<string | null>(null);
   const [citeBusy, setCiteBusy] = useState(false);
@@ -1599,7 +1603,13 @@ export default function StepFlow({
     const roots = [...new Set([ws?.worktreePath, projectPath].filter((p): p is string => Boolean(p)))];
     for (const root of roots) {
       try {
-        await invoke("open_in_system", { path: `${root.replace(/[\\/]+$/, "")}/output/${file}.docx`, root });
+        const hint = await invoke<string | null>("open_in_system", {
+          path: `${root.replace(/[\\/]+$/, "")}/output/${file}.docx`,
+          root,
+        });
+        if (hint) {
+          setHandbackNote({ title, text: hint, tone: "warn" });
+        }
         return;
       } catch {
         /* 试下一处 */
@@ -3907,7 +3917,7 @@ export default function StepFlow({
           })()}
         {node.kind === "human" && human && handbackNote?.title === human.title && (
           <div className="mt-1 pl-6">
-            <InlineNotice tone="err" size="micro">{handbackNote.text}</InlineNotice>
+            <InlineNotice tone={handbackNote.tone ?? "err"} size="micro">{handbackNote.text}</InlineNotice>
           </div>
         )}
         {node.kind === "human" &&

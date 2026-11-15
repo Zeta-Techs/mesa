@@ -1666,6 +1666,141 @@ pub fn refresh_project_endnote_docs(project_root: &Path) {
     }
 }
 
+fn unescape_docx_xml_text(raw: &str) -> String {
+    raw.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+fn collect_docx_prose_braces(doc_xml: &str) -> Vec<String> {
+    let mut hits: Vec<String> = Vec::new();
+    let mut rest = doc_xml;
+    while let Some(p_idx) = rest.find("<w:p") {
+        let after_p = &rest[p_idx + 4..];
+        let is_p_tag = after_p
+            .chars()
+            .next()
+            .is_some_and(|c| c == '>' || c == '/' || c.is_ascii_whitespace());
+        if !is_p_tag {
+            rest = after_p;
+            continue;
+        }
+        let Some(p_end) = after_p.find("</w:p>") else {
+            break;
+        };
+        let p_body = &after_p[..p_end];
+        rest = &after_p[p_end + "</w:p>".len()..];
+
+        let mut para = String::new();
+        let mut scan = p_body;
+        while let Some(t_idx) = scan.find("<w:t") {
+            let after_t = &scan[t_idx + 4..];
+            let is_t_tag = after_t
+                .chars()
+                .next()
+                .is_some_and(|c| c == '>' || c.is_ascii_whitespace());
+            if !is_t_tag {
+                scan = after_t;
+                continue;
+            }
+            let Some(gt) = after_t.find('>') else {
+                break;
+            };
+            if after_t[..gt].ends_with('/') {
+                scan = &after_t[gt + 1..];
+                continue;
+            }
+            let inner = &after_t[gt + 1..];
+            let Some(t_end) = inner.find("</w:t>") else {
+                break;
+            };
+            para.push_str(&unescape_docx_xml_text(&inner[..t_end]));
+            scan = &inner[t_end + "</w:t>".len()..];
+        }
+
+        let bytes = para.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'{' {
+                if let Some(rel_close) = para[i + 1..].find('}') {
+                    let content = &para[i + 1..i + 1 + rel_close];
+                    let char_len = content.chars().count();
+                    if (1..=40).contains(&char_len)
+                        && !content.contains('{')
+                        && !content.contains('\r')
+                        && !content.contains('\n')
+                    {
+                        let token = format!("{{{content}}}");
+                        if !hits.contains(&token) {
+                            hits.push(token);
+                        }
+                        i += 1 + rel_close + 1;
+                        continue;
+                    }
+                }
+            }
+            let step = para[i..].chars().next().map_or(1, char::len_utf8);
+            i += step;
+        }
+    }
+    hits
+}
+
+/// 打开 `endnote.docx` 时，若正文可见文字含 `{110}`、`{001}` 等花括号符号且文档尚未自定义 CWYW 临时引文分隔符，
+/// 返回行内防呆提示（避免人在 EndNote 弹窗里误点「插入」把晶面或集合记号替换成引文）。
+pub fn endnote_docx_prose_brace_hint(docx_path: &Path) -> Option<String> {
+    use std::io::Read;
+    if !docx_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("endnote.docx"))
+        || !docx_path.is_file()
+    {
+        return None;
+    }
+    let file = std::fs::File::open(docx_path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    if let Ok(settings_entry) = zip.by_name("word/settings.xml") {
+        let mut settings_xml = String::new();
+        if settings_entry
+            .take(2 * 1024 * 1024)
+            .read_to_string(&mut settings_xml)
+            .is_ok()
+        {
+            let unescaped = unescape_docx_xml_text(&settings_xml);
+            if let Some(ld) = unescaped.find("<LeftDelim>") {
+                let after = &unescaped[ld + "<LeftDelim>".len()..];
+                if let Some(end) = after.find("</LeftDelim>") {
+                    if after[..end].trim() != "{" {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    let doc_entry = zip.by_name("word/document.xml").ok()?;
+    let mut doc_xml = String::new();
+    doc_entry
+        .take(16 * 1024 * 1024)
+        .read_to_string(&mut doc_xml)
+        .ok()?;
+    let hits = collect_docx_prose_braces(&doc_xml);
+    if hits.is_empty() {
+        return None;
+    }
+    let sample = hits.iter().take(5).cloned().collect::<Vec<_>>().join("、");
+    let more = if hits.len() > 5 {
+        format!(" 等 {} 种", hits.len())
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "正文含花括号符号（{sample}{more}），点 Update 若弹出「选择匹配参考文献」请直接点「全部忽略」（切勿点「插入」）。若需反复刷新不再弹出，可在 Word 的 EndNote 栏点 Configure Bibliography 把临时引文分隔符改为 {{{{ }}}}。"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2078,5 +2213,14 @@ mod tests {
             app.display()
         );
         assert!(is_endnote_bundle(&app));
+    }
+
+    #[test]
+    fn detects_prose_braces_in_endnote_docx_without_matching_para_or_tab_tags() {
+        let xml = r#"<w:document><w:body><w:pPr><w:jc w:val="left"/></w:pPr><w:p><w:r><w:tab/><w:t xml:space="preserve">on {110} and </w:t></w:r><w:r><w:t>{001} facets </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/><w:instrText> ADDIN EN.CITE </w:instrText><w:fldData>e30=</w:fldData><w:fldChar w:fldCharType="separate"/><w:t>(Chen et al., 2016)</w:t><w:fldChar w:fldCharType="end"/></w:r></w:p></w:body></w:document>"#;
+        assert_eq!(
+            collect_docx_prose_braces(xml),
+            vec!["{110}".to_string(), "{001}".to_string()]
+        );
     }
 }

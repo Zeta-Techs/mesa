@@ -3123,6 +3123,7 @@ macOS 用户还会在屏幕顶部的应用菜单里看到 About Mesa——系统
 - Mesa 平时不读 `.enl`，也不把 Zotero 库再倒一遍进 EndNote；只有你指定了库（`papers/endnote-library.path`），出 EndNote 版 Word 时才只读那一个库、按 DOI 对记录号。
 - PDF 要拖到 EndNote 里对应的那一条上；拖到库列表的空白处会另建一条重复记录。
 - 域稿绑定的是库里的记录号：在库里删过条目或重新导入后，若 `output/endnote.docx` 还没在 Word 里保存改过，重新用 Mesa 打开它即自动按新记录号重绑；若已在 Word 里编辑保存过，回对话让 AI 重新生成一份域稿再 Update，避免旧记录号落到「漫游个人图书馆」。
+- 正文若含晶面族 `{110}`、`{001}` 或集合等花括号符号，EndNote 默认把 `{ }` 当成临时引文分隔符，点 **Update Citations and Bibliography** 时会弹出「选择匹配参考文献」询问：直接点右下角 **全部忽略 / 忽略**（切勿点 **插入**，否则会把正文里的 `{110}` 替换成文献引注）；若后续还需反复刷新不想再弹，可在 Word 的 EndNote 选项卡点 **Configure Bibliography（格式化书目...）** 把临时引文分隔符从 `{` `}` 改成 `{{` `}}`（设置随该文档保存）。
 - 步骤说明不会替你点 Word。
 - 润色与定稿、学位论文的格式与定稿、期刊格式适配同时写出两份带引用域的 Word；正文里的拼图会嵌进这两份。LaTeX 稿不交这两份。
 - 渲染时复制到 `output/figures/` 的图不另交，源图在 `figures/`。

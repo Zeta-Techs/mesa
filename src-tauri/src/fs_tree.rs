@@ -1693,19 +1693,21 @@ fn prepare_open_in_system(path: &str, root: &str) -> Result<PathBuf, String> {
     Ok(path_c)
 }
 
-fn open_in_system_sync(path: &str, root: &str) -> Result<(), String> {
+fn open_in_system_sync(path: &str, root: &str) -> Result<Option<String>, String> {
     let target = prepare_open_in_system(path, root)?;
     crate::endnote::refresh_field_docx_if_stale(
         &target,
         std::path::Path::new(&expand_tilde(root)),
     );
+    let hint = crate::endnote::endnote_docx_prose_brace_hint(&target);
     tauri_plugin_opener::open_path(&target, None::<&str>)
-        .map_err(|e| format!("无法用系统应用打开: {e}"))
+        .map_err(|e| format!("无法用系统应用打开: {e}"))?;
+    Ok(hint)
 }
 
 /// 用系统默认应用打开项目内文档（Excel / Word / 幻灯等）。用户点「系统打开」才走这里。
 #[tauri::command]
-pub async fn open_in_system(path: String, root: String) -> Result<(), String> {
+pub async fn open_in_system(path: String, root: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || open_in_system_sync(&path, &root))
         .await
         .map_err(|e| format!("无法用系统应用打开: {e}"))?
