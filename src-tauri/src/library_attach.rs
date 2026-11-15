@@ -38,6 +38,8 @@ struct Attach {
     pdf: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
+    #[serde(skip)]
+    from_skim: bool,
 }
 
 /// 写好的临时文件与计数（反馈里说「带上 N 篇全文、M 篇笔记」）
@@ -46,6 +48,7 @@ pub struct AttachPlan {
     pub file: PathBuf,
     pub pdfs: usize,
     pub notes: usize,
+    pub skim_notes: usize,
 }
 
 impl AttachPlan {
@@ -54,7 +57,14 @@ impl AttachPlan {
             AttachMode::Items => String::new(),
             AttachMode::Pdf => format!("带上 {} 篇全文 PDF。", self.pdfs),
             AttachMode::PdfNotes => {
-                format!("带上 {} 篇全文 PDF、{} 篇精读笔记。", self.pdfs, self.notes)
+                if self.skim_notes > 0 {
+                    format!(
+                        "带上 {} 篇全文 PDF、{} 篇精读笔记、{} 篇速读笔记。",
+                        self.pdfs, self.notes, self.skim_notes
+                    )
+                } else {
+                    format!("带上 {} 篇全文 PDF、{} 篇精读笔记。", self.pdfs, self.notes)
+                }
             }
         }
     }
@@ -158,10 +168,22 @@ fn write_plan_inner(
         }
     }
     let pdfs = map.values().filter(|a| a.pdf.is_some()).count();
-    let notes = map.values().filter(|a| a.note.is_some()).count();
+    let notes = map
+        .values()
+        .filter(|a| a.note.is_some() && !a.from_skim)
+        .count();
+    let skim_notes = map
+        .values()
+        .filter(|a| a.note.is_some() && a.from_skim)
+        .count();
     let json = serde_json::to_string(&map).map_err(|e| e.to_string())?;
     crate::storage::atomic_write(dest, json.as_bytes(), true)?;
-    Ok(Some(AttachPlan { file: dest.to_path_buf(), pdfs, notes }))
+    Ok(Some(AttachPlan {
+        file: dest.to_path_buf(),
+        pdfs,
+        notes,
+        skim_notes,
+    }))
 }
 
 fn collapse_spaces(raw: &str) -> String {
@@ -242,6 +264,162 @@ fn stage_endnote_pdf_if_needed(raw_path: &str) -> String {
     }
 }
 
+fn split_md_table_row(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = if inner.ends_with('|') && !inner.ends_with(r"\|") {
+        &inner[..inner.len() - 1]
+    } else {
+        inner
+    };
+    let mut cells = Vec::new();
+    let mut cur = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' && chars.peek() == Some(&'|') {
+            cur.push('|');
+            chars.next();
+        } else if ch == '|' {
+            cells.push(cur.trim().to_string());
+            cur.clear();
+        } else {
+            cur.push(ch);
+        }
+    }
+    cells.push(cur.trim().to_string());
+    cells
+}
+
+fn is_md_separator_row(cells: &[String]) -> bool {
+    !cells.is_empty()
+        && cells.iter().all(|c| {
+            let s = c.trim().trim_matches(':');
+            s.is_empty() || (s.len() >= 2 && s.chars().all(|ch| ch == '-'))
+        })
+}
+
+fn norm_skim_bib_key(raw: &str) -> String {
+    let mut s = raw.trim();
+    s = s.trim_matches('`').trim();
+    if let Some(inner) = s.strip_prefix('[').and_then(|v| v.strip_suffix(']')) {
+        s = inner.trim();
+    }
+    s.trim_start_matches('@').trim().to_string()
+}
+
+/// 解析 `notes/skim.md`（及分路 `skim-*.md`）里的速读表行：返回 bibKey → Markdown 正文小节串。
+/// 综述回路第一轮研究论文只速读不建单篇 `notes/*.md`（`notePath: null, skimmed: true`），
+/// 同步「带 PDF 和笔记」时给这些未展开为单篇笔记的文献补挂速读记录（写临时文件，不写进项目 `notes/`）。
+fn parse_skim_notes(root: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Ok(text) = std::fs::read_to_string(root.join("notes/skim.md")) else {
+        return out;
+    };
+    let mut fenced = false;
+    let mut headers: Option<Vec<String>> = None;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with("```") || t.starts_with("~~~") {
+            fenced = !fenced;
+            headers = None;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        if !t.starts_with('|') {
+            headers = None;
+            continue;
+        }
+        let cells = split_md_table_row(t);
+        if is_md_separator_row(&cells) {
+            continue;
+        }
+        let Some(cols) = headers.as_ref() else {
+            headers = Some(cells);
+            continue;
+        };
+        let Some(first) = cells.first() else {
+            continue;
+        };
+        let key = norm_skim_bib_key(first);
+        if key.is_empty() {
+            continue;
+        }
+        let mut sections = Vec::new();
+        for (idx, val) in cells.iter().enumerate().skip(1) {
+            let v = val.trim();
+            if v.is_empty() || v == "-" || v == "—" {
+                continue;
+            }
+            let head = cols.get(idx).map(|h| h.trim()).unwrap_or("");
+            if head.is_empty() || head == "年份" || head.eq_ignore_ascii_case("year") {
+                continue;
+            }
+            if head == "全文" || head.eq_ignore_ascii_case("fulltext") {
+                if v == "有" || v.eq_ignore_ascii_case("yes") || v.eq_ignore_ascii_case("fulltext") {
+                    continue;
+                }
+                sections.push(format!("## 全文状态\n\n{v}"));
+                continue;
+            }
+            sections.push(format!("## {head}\n\n{v}"));
+        }
+        if !sections.is_empty() {
+            out.entry(key).or_insert_with(|| sections.join("\n\n"));
+        }
+    }
+    out
+}
+
+fn is_reader_empty_skeleton(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let mut has_h2 = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with("> 来源") || t.starts_with(">#") {
+            continue;
+        }
+        if t.starts_with("## ") || t.starts_with("### ") {
+            has_h2 = true;
+            continue;
+        }
+        if t.starts_with("# ") {
+            continue;
+        }
+        return false;
+    }
+    has_h2
+}
+
+fn stage_skim_note(root: &Path, key: &str, title: &str, body_sections: &str) -> Option<String> {
+    let base = std::env::temp_dir().join("ccode-skim-notes");
+    prune_stale_stage_dirs(&base);
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(root.to_string_lossy().as_bytes());
+    let digest = hasher.finalize();
+    let short: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+    let dir = base.join(short);
+    std::fs::create_dir_all(&dir).ok()?;
+    let safe_key: String = key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let dest = dir.join(format!(
+        "{}.md",
+        if safe_key.is_empty() { "note" } else { &safe_key }
+    ));
+    let clean_title = title.replace(['{', '}'], "");
+    let clean_title = clean_title.trim();
+    let head = if clean_title.is_empty() { key } else { clean_title };
+    let content = format!("# {head}\n\n> 来源：notes/skim.md（速读记录）\n\n{body_sections}\n");
+    crate::storage::atomic_write(&dest, content.as_bytes(), true).ok()?;
+    Some(dest.to_string_lossy().into_owned())
+}
+
 /// 纯计算：键 → 要挂的东西。找 PDF 的那一步由调用方给（测试里不扫下载登记）
 fn plan_map(
     root: &Path,
@@ -276,6 +454,11 @@ fn plan_map(
     } else {
         Vec::new()
     };
+    let skim_by_key = if mode == AttachMode::PdfNotes {
+        parse_skim_notes(root)
+    } else {
+        HashMap::new()
+    };
     let mut note_by_key: HashMap<String, String> = HashMap::new();
     let mut note_by_id: HashMap<String, String> = HashMap::new();
     for row in &note_rows {
@@ -299,7 +482,11 @@ fn plan_map(
         if row.is_some_and(|r| s(r, "decision") == "excluded") {
             continue;
         }
-        let mut attach = Attach { pdf: None, note: None };
+        let mut attach = Attach {
+            pdf: None,
+            note: None,
+            from_skim: false,
+        };
         if let Some(pdf) = row.and_then(|r| project_file(root, s(r, "pdf"))) {
             if used_pdfs.insert(pdf.clone()) {
                 attach.pdf = Some(pdf.to_string_lossy().into_owned());
@@ -315,12 +502,33 @@ fn plan_map(
             ));
         }
         if mode == AttachMode::PdfNotes {
-            let note = note_by_key
+            let single_note = note_by_key
                 .get(key)
                 .or_else(|| row.and_then(|r| note_by_id.get(s(r, "id"))))
                 .and_then(|p| project_file(root, p))
                 .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("md")));
-            attach.note = note.map(|p| p.to_string_lossy().into_owned());
+            let skim_body = skim_by_key.get(key).or_else(|| {
+                skim_by_key
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                    .map(|(_, v)| v)
+            });
+            let use_single = single_note
+                .as_ref()
+                .filter(|p| skim_body.is_none() || !is_reader_empty_skeleton(p));
+            if let Some(p) = use_single {
+                attach.note = Some(p.to_string_lossy().into_owned());
+            } else if let Some(body) = skim_body {
+                let display_title = title
+                    .as_deref()
+                    .filter(|t| !t.trim().is_empty())
+                    .or_else(|| row.map(|r| s(r, "title")).filter(|t| !t.is_empty()))
+                    .unwrap_or(key);
+                if let Some(staged) = stage_skim_note(root, key, display_title, body) {
+                    attach.note = Some(staged);
+                    attach.from_skim = true;
+                }
+            }
         }
         out.insert(key.clone(), attach);
     }
@@ -501,6 +709,44 @@ mod tests {
             std::fs::copy(ris, root.join(format!("papers/dryrun-endnote-{name}.ris"))).unwrap();
             println!("endnote {name}: {note}");
         }
+    }
+
+    #[test]
+    fn skim_table_fallback_attaches_notes_for_skimmed_papers() {
+        let dir = setup();
+        // li2019 改为未精读（notePath: null, skimmed: true），但 notes/skim.md 有速读行
+        std::fs::write(
+            dir.join("notes/index.json"),
+            r#"[{"id":"10.1038/s41467-021-26307-6","bibKey":"wang2021","notePath":"notes/wang.md"},
+                {"id":"W2","bibKey":"li2019","notePath":null,"skimmed":true}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("notes/skim.md"),
+            "# 速读表\n\n| 键 | 年份 | 主题 | 研究问题 | 方法 | 主要结论 | 新在哪 | 全文 |\n|---|---|---|---|---|---|---|---|\n| @li2019 | 2019 | 三元硼化物 | Mo2NiB2 是否兼具 HER/OER 活性 | 电弧熔炼 \\| LSV | η10 显著降低 | 首个三元 MAB 硼化物双功能体系 | 有 |\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("references.bib"), BIB).unwrap();
+        let dest = dir.join("plan.json");
+        let plan = write_plan(&dir, &dir.join("references.bib"), AttachMode::PdfNotes, &dest)
+            .unwrap()
+            .unwrap();
+        assert_eq!(plan.notes, 1);
+        assert_eq!(plan.skim_notes, 1);
+        assert!(plan.summary(AttachMode::PdfNotes).contains("1 篇精读笔记、1 篇速读笔记"));
+        let raw: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dest).unwrap()).unwrap();
+        let skim_path = raw["li2019"]["note"].as_str().expect("li2019 skim note path");
+        assert!(
+            !Path::new(skim_path).starts_with(&dir),
+            "速读临时文件不得写进项目 notes/ 目录: {skim_path}"
+        );
+        let skim_md = std::fs::read_to_string(skim_path).unwrap();
+        assert!(skim_md.contains("# Ternary Mo2NiB2 as a superior bifunctional electrocatalyst"));
+        assert!(skim_md.contains("## 研究问题\n\nMo2NiB2 是否兼具 HER/OER 活性"));
+        assert!(skim_md.contains("## 方法\n\n电弧熔炼 | LSV"));
+        assert!(!skim_md.contains("## 年份"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
