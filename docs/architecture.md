@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-16 · 外部桌面软件优先深挖官方原生接口一步闭环，禁止拿操作说明替代自动衔接
+
+用户在 HER 催化综述实走「同步到文献库 / Word 更新引文」时，连续遇到 `papers/endnote-library.xml` 藏在项目子目录难找、EndNote 手动 `File → Import` 默认停在 `PDF File or Folder` 导致选 XML 点导入无反应、macOS 26+ 搭配 Mac App Store 沙盒版 Word 触发 Zotero `Zotero.scpt` 误报 Rosetta、以及催化晶面记号 `{110}`/`{001}` 触发 CWYW 临时引文匹配框等断层，追问为何一开始未直接接入一键导入并拍板将此立为设计规矩。定：① **区分「禁界面模拟点击」与「调官方原生接口」**：严禁键鼠模拟点击和无人值守操控 Word CWYW / Zotero 文档插件改写用户正打开的稿件，但对接外部桌面软件前必须先拆查其安装包自带的官方可编程接口（如 macOS `.sdef` AppleScript 字典、CLI 参数、本地只读 SQLite/索引）把导库、建群组、重绑记录号等确定性步骤在后台一步闭环，禁止图省事写长段文字让人找深层文件或手改隐蔽选项；确需人工点外部弹窗的回退路径（如 Windows 导 EndNote XML），必须真机走完默认目录与默认选项（文件置顶放入系统「下载/`<课题名>-EndNote导入.xml`」配一键定位与 `EndNote generated XML` 提示）；② **真上下标富文本入库与按需分流**：同步同时生成保留 `<style face="subscript|superscript">` 的 XML 与纯文本 RIS（单篇精读外自动以 `notes/skim.md` 速读表补齐子笔记/研究笔记），macOS 已开或已选 `.enl` 库时经 EndNote 原生 `import`（RSXML）直接把条目、PDF 链接与研究笔记一键导进库并建同名群组，无上下标课题回退直走 `.ris` 一键关联；③ **未手改域稿自动重绑与学术花括号防呆**：`output/endnote.docx` 与 `output/zotero.docx` 在未经字处理软件保存改写前，选库、重导库或点「Word 打开」时自动按最新记录号重绑（`zotero.docx` 未唯一匹配时内嵌完整 CSL 题录防清空）；正文含 `{110}` 等学术花括号时保持 ASCII 原文不篡改，在报告与打开按钮行内提示点「全部忽略」。细则 `AGENTS.md`、`docs/conventions/pipeline.md`「科研外部工具与交付合同」。
+
 ### 2026-11-15 · 飞书通道交互闭环、原地卡片流转、引用回复与睡眠重连优化
 
 用户询问飞书接入有哪些可完善的体验点，审阅九项改进建议后拍板「按你推荐全部优化」（严守 `assistant-ops.ts` 手机只做 auto / tap 两档、确认命令与评审采纳仍回桌面的安全边界）。定：① 全量卡片启用 `update_multi: true` 并接入 `PATCH /open-apis/im/v1/messages/:message_id`（`feishu_update_card`，校验 `is_safe_message_id`）——提问先发 `thinkingCard` 实时流式展示查看进度与排队位置、答完原地替换为 `answerCard`（消除「收到…稍等」刷屏），所有操作按钮点击后原地置为已完成态防重按；② 补齐非流程步骤会话在手机上的回复闭环（消除 `回第 ? 步`），支持飞书左滑引用回复卡片（`parent_id` 对位投递）、卡片「写一句回它 / 写一句自定回答」免前缀直回与 `回：…` 简写，人工请求展示超过 4 个的全部选项并支持答完顺手「同时记进项目知识」，后端兼容 `post` 富文本并剥除 `@_user_N`；③ 新增 `进展 / 状态` 零 Token 秒回项目快照卡与 `项目` 按钮切换卡，主动推送补齐科研步骤与非派活目标的待评审 / 出错里程碑通知（复用 `petItemsFromBrief` 单一真源，首次建基线不倒旧账，支持一键「先让项目助手看一遍」只读预审）并由 `echoTick / helpTick` 事件驱动秒级快推，新增 `notify_milestones` 与 `quiet_night`（23:00–08:00 免打扰，联动桌宠 `PET_DND_KEY`）；④ 首次配置补齐一键复制最小权限 JSON、配对倒计时与复制口令、`feishu_send_test_card` 收发与回调闭环自检，长连接改用 `2s → 5s → 15s` 阶梯快重连、`45s` 心跳上限、合盖唤醒 / 网络恢复自动重连及 6 秒 `feishu_ack_inbound` 前端未就绪看门狗。细则 safety.md「飞书通道」。

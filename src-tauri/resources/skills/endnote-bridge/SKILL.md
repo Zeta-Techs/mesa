@@ -1,6 +1,6 @@
 ---
 name: endnote-bridge
-description: EndNote 格式桥接规范。当用户必须把项目文献导入 EndNote 库、收尾存量「Word + EndNote」稿件、或组内流程绑定 EndNote 时使用。本项目不依赖 EndNote 桌面端自动化 API，本技能只做格式桥接（references.bib → EndNote XML/RIS 供一键导入；定稿 Markdown [@键] → 带 ADDIN EN.CITE 域的 Word；EndNote 导出 → 解析回流 references.bib）、已有 Word + EndNote 稿的只读体检（读标黄 / 修订 / 批注，体检引文域并出 EndNote 修改清单，不改写域）与人工步骤指引；禁止 CWYW 无人值守（不点 Word 插件、不写假花括号引用）。新稿写作可按需选择 Zotero 线（zotero-sync），两者互补不互斥。
+description: EndNote 格式桥接规范。当用户必须把项目文献导入 EndNote 库、收尾存量「Word + EndNote」稿件、或组内流程绑定 EndNote 时使用。Agent 脚本侧只做确定性桥接（references.bib → EndNote XML/RIS 供 Mesa 原生导入接口或用户导入；定稿 Markdown [@键] → 带 ADDIN EN.CITE 域的 Word；EndNote 导出 → 解析回流 references.bib）与已有 Word + EndNote 稿的只读体检（读标黄 / 修订 / 批注，体检引文域并出 EndNote 修改清单，不改写域）；禁止 Word CWYW 无人值守与键鼠界面模拟点击（不代点 Word 插件、不写假花括号引用）。新稿写作可按需选择 Zotero 线（zotero-sync），两者互补不互斥。
 inputs: [references.bib]
 outputs: [papers/endnote-report.json, output/endnote.docx, papers/endnote-cite-report.md, output/endnote-audit.md, output/docx-marks.md]
 provides: [endnote-bridge]
@@ -24,8 +24,8 @@ provides: [endnote-bridge]
 ## 红线（不可逾越）
 
 - **禁止 CWYW 无人值守**：不用 Word COM/VBA 点「插入引文 / Update Citations」，不写 `{Author, Year}` 假临时引用。域稿只走 `scripts/cite_docx.py` 写出真正的 `ADDIN EN.CITE`（带 traveling library），人再点一次 Update。
-- **不做 EndNote 界面自动化**（模拟点击/键鼠脚本）
-- 人工步骤就明说人工步骤（导入库、Update 一次、换 Style），不假装已经刷新过
+- **区分「禁界面模拟点击」与「宿主官方导入接口」**：禁止脆弱的键鼠界面模拟点击；Mesa 桌面端「同步到 EndNote」在 macOS 上可直调 `EndNote.sdef` 官方原生 `import` 接口把生成的 XML 一键导入库并建群组，Agent 自身跑脚本时只产出规范 XML/RIS 与 `.docx`，不自行操控桌面窗口。
+- 仍需人在 Word 里确认的动作（如点一次 Update、换 Output Style、遇到正文 `{110}` 等晶面花括号弹窗点「全部忽略」）明说清楚，不假装已经刷新过。
 - **已有稿件的引文域不改写**（2026-11-08）：人在 EndNote 里维护的稿件，不重编号、不增删引文、不改域数据和参考文献表，只体检、出清单（§6）
 
 ## 随包离线转换器
