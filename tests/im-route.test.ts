@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findProject, routeMessage } from "../src/im-route.ts";
+import { findProject, isCancelReply, isMetaCommand, isStatusQuery, parseStepReplyPrefix, routeMessage } from "../src/im-route.ts";
 import { OP_TIERS, actionOp, opAllowed } from "../src/assistant-ops.ts";
 
 const A = { path: "/p/a", name: "药物毒性" };
@@ -8,12 +8,17 @@ const B = { path: "/p/b", name: "综述 单细胞" };
 const C = { path: "/p/c", name: "综述 免疫" };
 const all = [A, B, C];
 
-test("总助手路由：命令、点名、切换、默认项目、说不清就让人选", () => {
+test("总助手路由：命令、进展、点名、切换、默认项目、说不清就让人选", () => {
   assert.deepEqual(routeMessage("帮助", all, null), { kind: "help" });
   assert.deepEqual(routeMessage("等我的", all, null), { kind: "queue" });
   assert.deepEqual(routeMessage("项目", all, null), { kind: "list" });
+  assert.deepEqual(routeMessage("切到", all, null), { kind: "list" });
   assert.deepEqual(routeMessage("切到 单细胞", all, null), { kind: "switch", project: B });
   assert.deepEqual(routeMessage("切到 综述", all, null), { kind: "unknown_project", name: "综述" }, "两个都像不猜");
+  assert.deepEqual(routeMessage("进展", all, A), { kind: "status", project: A });
+  assert.deepEqual(routeMessage("状态", [A], null), { kind: "status", project: A });
+  assert.deepEqual(routeMessage("进展", all, null), { kind: "pick", text: "进展" });
+  assert.deepEqual(routeMessage("药物毒性：进展", all, null), { kind: "status", project: A });
   assert.deepEqual(routeMessage("药物毒性：下周组会准备一下", all, null), { kind: "ask", project: A, text: "下周组会准备一下" });
   assert.deepEqual(routeMessage("@免疫 出一份周报", all, null), { kind: "ask", project: C, text: "出一份周报" });
   assert.deepEqual(routeMessage("出一份周报", all, A), { kind: "ask", project: A, text: "出一份周报" });
@@ -21,8 +26,14 @@ test("总助手路由：命令、点名、切换、默认项目、说不清就�
   assert.deepEqual(routeMessage("出一份周报", [A], null), { kind: "ask", project: A, text: "出一份周报" });
   assert.deepEqual(routeMessage("回第 2 步 剔除那两孔", all, A), { kind: "reply", project: A, step: 2, text: "剔除那两孔" });
   assert.deepEqual(routeMessage("药物毒性：回第3步：灰度", all, null), { kind: "reply", project: A, step: 3, text: "灰度" });
+  assert.deepEqual(routeMessage("回：保留原始对照", all, A), { kind: "reply", project: A, step: null, text: "保留原始对照" });
+  assert.deepEqual(routeMessage("回顾文献里的指标", all, A), { kind: "ask", project: A, text: "回顾文献里的指标" }, "普通『回顾』不误判成转达");
   assert.deepEqual(routeMessage("时间：明天", all, A), { kind: "ask", project: A, text: "时间：明天" }, "冒号前不是项目名就整句交给当前项目");
   assert.equal(findProject("不存在", all), null);
+  assert.equal(isStatusQuery("现在什么情况？"), true);
+  assert.equal(isCancelReply("取消"), true);
+  assert.equal(isMetaCommand("等我的"), true);
+  assert.deepEqual(parseStepReplyPrefix("回第 4 步：重跑基线"), { step: 4, body: "重跑基线" });
 });
 
 test("动作分级：手机上只做点一下就生效那一档", () => {
@@ -43,8 +54,17 @@ test("动作分级：手机上只做点一下就生效那一档", () => {
 });
 
 test("「派出去」「接着做」照字面认，不交给 AI", async () => {
-  const { quickIntent } = await import("../src/im-route.ts");
+  const { quickIntent, isImQuietHour } = await import("../src/im-route.ts");
   for (const t of ["派出去", "派吧", "开工", "派出去吧"]) assert.equal(quickIntent(t), "dispatch", t);
   for (const t of ["让他接着做", "接着做", "继续", "让它继续吧"]) assert.equal(quickIntent(t), "resume", t);
   for (const t of ["派出去之前先问一下", "继续写第二节", "帮我写周报"]) assert.equal(quickIntent(t), null, t);
+
+  const night23 = new Date(2026, 10, 15, 23, 30, 0);
+  const dawn07 = new Date(2026, 10, 16, 7, 59, 0);
+  const morning08 = new Date(2026, 10, 16, 8, 0, 0);
+  assert.equal(isImQuietHour(false, night23, 0), false);
+  assert.equal(isImQuietHour(true, night23, 0), true);
+  assert.equal(isImQuietHour(true, dawn07, 0), true);
+  assert.equal(isImQuietHour(true, morning08, 0), false);
+  assert.equal(isImQuietHour(false, morning08, morning08.getTime() + 60_000), true, "桌宠勿扰倒计时联动静音");
 });

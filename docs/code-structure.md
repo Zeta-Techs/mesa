@@ -359,7 +359,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/AssistantDesk.tsx # 项目助手顶上的「等你的事」：就地点选项 / 写一句送过去，等确认的带路回对话；20 秒刷新
   components/RouteCheckCard.tsx # 设置 → 网络「线路体检」（挂在 Row 的 extra 全宽区）：route_check_agents 列有探测点的 Agent，每家一行到底
                              #   （点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮，ROW_GRID 定宽列对齐，拦下原因跨三列），探测主机进 HoverTip；出网代理保存后自动重测
-  components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、测试连接、绑定 6 位码、解绑
+  components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、立即重连、测试连接、发测试卡片自检、绑定 6 位码倒计时与复制、步骤与目标通知 / 夜间免打扰开关、一键复制权限配置 JSON
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/ConsultView.tsx  # 研讨回放（2026-11-11）：useConsult（consult_read + consult-event 事件：started/done/idle 重读、step/text 只更新进行中）；第一轮并排卡片（有人还在答时只写「已答完 · 等其他几家」）、各家结论对照条（原话、不判谁对）、交叉与追问流、点名胶囊输入框；记进项目知识复用 RememberCard，起草派活单经 openAssistant 交给项目助手；MemberAvatar = 成员所选模型的厂商图标
   components/ConsultHost.tsx  # 研讨发起弹层的唯一挂载处（挂 App，仿 ProjectAssistantHost）：消费 consultReq 原地打开、不跳页；开始后提示「研讨开始了，N 家在答」+「去看看」（showConsult → consultSelectReq，SessionsPage 消费选中）
@@ -644,9 +644,9 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-desk.ts          # 调度台取数与转达（调 invoke）：loadDesk、replyDesk（人工请求写回作答再交给那一步；对话问题原话送进去）、focusConfirm、addProjectKnowledge（记规矩，桌面卡片与飞书共用）
   help-delivery.ts           # 人工回答投递发送链：领取持久快照、聊天发送成功才确认；失败/终端人工操作/确认失败不重发（tests/help-delivery.test.ts）
   assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp；rework（发补料单）= desktop（tests/im-route.test.ts）
-  im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 切到 / 点名项目 / 回第 N 步 / 默认项目 / 说不清给项目按钮；只认点名不猜（tests/im-route.test.ts）
-  im-cards.ts                # 飞书卡片 JSON：answerCard（追问选项、派出去、记进项目知识按钮）、deskCard、projectPickCard、phoneText（tests/im-cards.test.ts）
-  im-bridge.ts               # 飞书通道前端桥（调 invoke）：听 feishu-message / feishu-card-action，路由 → askProjectAssistant → 卡片；按钮按分级执行；pushNewHelp、imPushText（派活回音）
+  im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 进展（status） / 切到 / 点名项目 / 回第 N 步与回：… / 默认项目 / 说不清给项目按钮 / 夜间免打扰时段判定 isImQuietHour；只认点名不猜（tests/im-route.test.ts）
+  im-cards.ts                # 飞书卡片 JSON（全带 update_multi 供 PATCH 原地更新）：thinkingCard / askErrorCard、answerCard（追问选项、派出去、记进项目知识及已处理态）、deskCard（>4 选项分行、自定回答、写一句回它、顺手记进项目知识）、projectListCard、projectStatusCard、milestoneCard、replyPickCard、selfTestDoneCard、phoneText（tests/im-cards.test.ts）
+  im-bridge.ts               # 飞书通道前端桥（调 invoke）：听 feishu-message / feishu-card-action 并回执 feishu_ack_inbound，支持左滑引用回复（parentId）与免前缀待回目标，思考占位卡流式更新后原地换成回答卡，按钮点击后 feishu_update_card 原地置已完成；主动推送 pushNewHelp / pushNewGrants / pushStuck / pushMilestones / imPushEcho（夜间免打扰与桌宠勿扰联动），唤醒重连 reconnectImIfNeeded
   assistant-echo.ts          # 派活回音纯逻辑（2026-11-05）：echoText（做完 / 失败 / 停了各一句、带去处标记，已验收不说）、echoInboxItems（没看过的进收件箱「项目助手」asst:）、本机已看记录 ccode.assistantEchoSeen（tests/assistant-echo.test.ts）
   assistant-echo-watch.ts    # 派活回音巡视（调 invoke）：pollAssistantEchoes 每分钟 assistant_open_dispatches → dispatchStatus.phase → assistant_echo，刷新 store.assistantEchoes、到新回音 bumpAssistantEchoTick；seeAssistantEchoes 打开项目助手即算看过
   work-order-pack.ts         # 接活三期：workOrderToStep / builtinTaskStep（派活单、内置科研任务 → 一步步骤合同）、artifactPaths（交付物认路径）、suggestPackParams（时间范围 / 日期 / 时长 / 这次的文件预填成参数）、workOrderScheduleIntent（做成定时任务的描述）（tests/work-order-pack.test.ts）
@@ -2008,10 +2008,11 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
-  feishu.rs                  # 飞书机器人通道（2026-11-06，design-assistant-dispatch-desk.md）：只出不进的长连接（同步 tungstenite 跑在 feishu-ws 线程，手写 pbbp2 帧编解码、
-                             #   ping / 分片重组 / ack 照官方 Go SDK ws 客户端），REST 取 tenant token、发文字与卡片；配置 feishu.json（App ID / 开关 / 绑定的 open_id，0600），
-                             #   Secret 进 keys.json「feishu:<app_id>」不回显；配对 6 位码 10 分钟、错 5 次作废；只认绑定人的私聊，按 event_id / message_id 去重；
-                             #   事件 feishu-message / feishu-card-action / feishu-status；命令 feishu_config_get / _set / pair_start / unbind / send_text / send_card / test
+  feishu.rs                  # 飞书机器人通道（2026-11-06，design-assistant-dispatch-desk.md；2026-11-15 体验与重连加固）：只出不进的长连接（同步 tungstenite 跑在 feishu-ws 线程，手写 pbbp2 帧编解码、
+                             #   45s 上限心跳、2s→5s→15s 阶梯快重连、分片重组 / ack 照官方 Go SDK ws 客户端），兼容 text 与 post 富文本（剥 @_user_N）及 parent_id 引用回复，6 秒前端回执看门狗防静默丢消息；
+                             #   REST 取 tenant token、发文字与卡片、PATCH 原地更新卡片（is_safe_message_id 校验）；配置 feishu.json（App ID / 开关 / 绑定的 open_id / notify_milestones / quiet_night，0600），
+                             #   Secret 进 keys.json「feishu:<app_id>」不回显；配对 6 位码 10 分钟（带倒计时快照）、错 5 次作废；只认绑定人的私聊，按 event_id / message_id 去重；
+                             #   事件 feishu-message / feishu-card-action / feishu-status；命令 feishu_ack_inbound / feishu_config_get / _set / feishu_prefs_set / feishu_reconnect / pair_start / unbind / send_text / send_card / feishu_update_card / feishu_send_test_card / test
   （2026-11-06 目标无头）runs.rs 加 task_run_headless / run_headless_supported、goal_headless_block_reason / headless_goal_target / launch_goal_headless、GOAL_HEADLESS_TIMEOUT（90 分钟），
                              #   端到端测试 goal_headless_end_to_end_in_isolated_home（子进程 + 临时 HOME + /bin/sh 假 Agent，覆盖成功 / 接着做 / 失败 / 停止）；
                              #   ai.rs 拆出 build_headless_command（定时任务与目标共用）、run_goal_headless_to_exit；process.rs capture_command_streaming_both（stdout + stderr 都流）

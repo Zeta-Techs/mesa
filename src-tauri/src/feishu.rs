@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::Emitter;
@@ -33,6 +33,7 @@ const API_BASE: &str = "https://open.feishu.cn";
 const ENDPOINT_PATH: &str = "/callback/ws/endpoint";
 const TOKEN_PATH: &str = "/open-apis/auth/v3/tenant_access_token/internal";
 const SEND_PATH: &str = "/open-apis/im/v1/messages?receive_id_type=open_id";
+const MESSAGES_PATH: &str = "/open-apis/im/v1/messages";
 
 const PAIR_TTL: Duration = Duration::from_secs(10 * 60);
 const PAIR_MAX_WRONG: u32 = 5;
@@ -45,11 +46,17 @@ const MAX_FRAGMENTS: usize = 64;
 const MAX_PENDING_MESSAGES: usize = 32;
 /// 读超时只是为了能按时 ping、按时看停止标志，不是断线判定
 const READ_TICK: Duration = Duration::from_millis(500);
+/// 前端回执看门狗：前端超过这么久没接住入站消息，主动回手机一句，免得石沉大海
+const FRONTEND_ACK_TIMEOUT: Duration = Duration::from_secs(6);
+/// 心跳上限：比服务端默认 120s 更勤，合盖唤醒 / 切网后更快发现半开连接
+const MAX_PING_INTERVAL_SECS: u64 = 45;
 
 const TEXT_PAIRED: &str = "已绑定到这台电脑上的 Mesa";
 const TEXT_STRANGER: &str = "这个机器人只听绑定它的人";
 const TEXT_WRONG_CODE: &str = "配对码不对或已过期，请在 Mesa 里重新点「开始配对」";
 const TEXT_ONLY_TEXT: &str = "暂时只收文字消息";
+const TEXT_MEDIA_HINT: &str = "暂时只收文字与富文本消息；传图片或文件请用 Mesa 里的「从手机添加」";
+const TEXT_FRONTEND_NOT_READY: &str = "Mesa 窗口刚在恢复或还没准备好，刚才那一下没接住，请稍等几秒再试一次";
 
 // ===== pbbp2 帧编解码（手写，字段号与写出顺序照 pbbp2.pb.go）=====
 
@@ -259,6 +266,12 @@ pub struct FeishuMessageDto {
     pub message_id: String,
     /// 消息发送时间（毫秒时间戳）
     pub at: i64,
+    /// 引用回复时指向被回复那条消息的 id（om_…）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    /// 前端回执 id（看门狗确认前端已接住）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -271,6 +284,9 @@ pub struct FeishuCardActionDto {
     /// 卡片所在那条消息的 id（om_…）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub open_message_id: Option<String>,
+    /// 前端回执 id（看门狗确认前端已接住）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ack_id: Option<u64>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -336,6 +352,82 @@ fn str_at<'a>(v: &'a Value, pointer: &str) -> Option<&'a str> {
     v.pointer(pointer).and_then(Value::as_str).filter(|s| !s.is_empty())
 }
 
+/// 去掉飞书在正文里塞的 `@_user_1` 占位符（单聊里误 @ 机器人或粘贴带 @ 时会有）
+fn strip_mention_tokens(mut text: String, mentions: Option<&Value>) -> String {
+    if let Some(arr) = mentions.and_then(Value::as_array) {
+        for m in arr {
+            if let Some(key) = m.get("key").and_then(Value::as_str).filter(|k| !k.is_empty()) {
+                text = text.replace(key, "");
+            }
+        }
+    }
+    text
+}
+
+/// 富文本（post）消息抽纯文本：兼容接收态平铺 `{title, content}` 与 `{post:{zh_cn:{...}}}` / `{zh_cn:{...}}`
+fn extract_post_body(v: &Value) -> Option<&Value> {
+    if v.get("content").and_then(Value::as_array).is_some() {
+        return Some(v);
+    }
+    let container = v.get("post").filter(|p| p.is_object()).unwrap_or(v);
+    for lang in ["zh_cn", "en_us", "ja_jp"] {
+        if let Some(sub) = container.get(lang).filter(|s| s.get("content").and_then(Value::as_array).is_some()) {
+            return Some(sub);
+        }
+    }
+    container
+        .as_object()?
+        .values()
+        .find(|s| s.get("content").and_then(Value::as_array).is_some())
+}
+
+fn extract_post_text(v: &Value) -> Option<String> {
+    let body = extract_post_body(v)?;
+    let mut lines: Vec<String> = Vec::new();
+    if let Some(title) = body.get("title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()) {
+        lines.push(title.to_string());
+    }
+    for para in body.get("content").and_then(Value::as_array)? {
+        let Some(nodes) = para.as_array() else { continue };
+        let mut line = String::new();
+        for node in nodes {
+            let tag = node.get("tag").and_then(Value::as_str).unwrap_or("");
+            match tag {
+                "text" | "md" | "code_block" => {
+                    if let Some(t) = node.get("text").and_then(Value::as_str) {
+                        line.push_str(t);
+                    }
+                }
+                "a" => {
+                    let text = node.get("text").and_then(Value::as_str).unwrap_or("").trim();
+                    let href = node.get("href").and_then(Value::as_str).unwrap_or("").trim();
+                    if !text.is_empty() {
+                        line.push_str(text);
+                    } else if !href.is_empty() {
+                        line.push_str(href);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines.push(line);
+    }
+    let joined = lines.join("\n");
+    (!joined.trim().is_empty()).then_some(joined)
+}
+
+fn extract_message_text(event: &Value) -> Option<String> {
+    let msg_type = str_at(event, "/message/message_type")?;
+    let raw = str_at(event, "/message/content")?;
+    let parsed = serde_json::from_str::<Value>(raw).ok()?;
+    let text = match msg_type {
+        "text" => parsed.get("text").and_then(Value::as_str).map(str::to_string),
+        "post" => extract_post_text(&parsed),
+        _ => None,
+    }?;
+    Some(strip_mention_tokens(text, event.pointer("/message/mentions")))
+}
+
 impl Router {
     fn new(bound_open_id: Option<String>) -> Self {
         Self {
@@ -389,12 +481,7 @@ impl Router {
         let Some(open_id) = str_at(event, "/sender/sender_id/open_id").map(str::to_string) else {
             return Inbound::Ignore;
         };
-        // 文字消息的 content 是一段 JSON 字符串：{"text": "..."}
-        let text = (str_at(event, "/message/message_type") == Some("text"))
-            .then(|| str_at(event, "/message/content"))
-            .flatten()
-            .and_then(|c| serde_json::from_str::<Value>(c).ok())
-            .and_then(|c| c.get("text").and_then(Value::as_str).map(str::to_string));
+        let text = extract_message_text(event);
 
         let bound = self.is_bound(&open_id);
         if let Some(code) = text.as_deref().and_then(pair_code_candidate) {
@@ -426,9 +513,26 @@ impl Router {
                 let at = str_at(event, "/message/create_time")
                     .and_then(|s| s.parse::<i64>().ok())
                     .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-                Inbound::Message(FeishuMessageDto { text: t, message_id: message_id.to_string(), at })
+                let parent_id = str_at(event, "/message/parent_id")
+                    .or_else(|| str_at(event, "/message/root_id"))
+                    .map(str::to_string);
+                Inbound::Message(FeishuMessageDto {
+                    text: t,
+                    message_id: message_id.to_string(),
+                    at,
+                    parent_id,
+                    ack_id: None,
+                })
             }
-            _ => Inbound::Reply { open_id, text: TEXT_ONLY_TEXT },
+            _ => {
+                let msg_type = str_at(event, "/message/message_type").unwrap_or("");
+                let hint = if matches!(msg_type, "image" | "file" | "media" | "audio" | "sticker") {
+                    TEXT_MEDIA_HINT
+                } else {
+                    TEXT_ONLY_TEXT
+                };
+                Inbound::Reply { open_id, text: hint }
+            }
         }
     }
 
@@ -457,13 +561,18 @@ impl Router {
             value: event.pointer("/action/value").cloned().unwrap_or(Value::Null),
             message_id,
             open_message_id,
+            ack_id: None,
         })
     }
 }
 
 // ===== 配置与密钥 =====
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct StoredConfig {
     #[serde(default)]
@@ -473,6 +582,24 @@ struct StoredConfig {
     /// 绑定人的 open_id（同一个人在不同应用下 open_id 不同，换 App ID 即作废）
     #[serde(default)]
     bound_open_id: Option<String>,
+    /// 步骤 / 目标做完等评审或出错时也推到手机（默认开）
+    #[serde(default = "default_true", alias = "notify_milestones")]
+    notify_milestones: bool,
+    /// 夜间免打扰（23:00–08:00 暂停主动推送，手机主动问照常回）
+    #[serde(default, alias = "quiet_night")]
+    quiet_night: bool,
+}
+
+impl Default for StoredConfig {
+    fn default() -> Self {
+        Self {
+            app_id: String::new(),
+            enabled: false,
+            bound_open_id: None,
+            notify_milestones: true,
+            quiet_night: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -486,6 +613,14 @@ pub struct FeishuConfigDto {
     /// off | connecting | online | error
     pub status: String,
     pub last_error: Option<String>,
+    pub notify_milestones: bool,
+    pub quiet_night: bool,
+    /// 正在配对且未过期时的 6 位码（仅内存态）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_code: Option<String>,
+    /// 配对码剩余有效秒数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_left_secs: Option<u64>,
 }
 
 static CONFIG_LOCK: Mutex<()> = Mutex::new(());
@@ -597,6 +732,8 @@ static RUNTIME: Mutex<Runtime> = Mutex::new(Runtime {
 });
 static ROUTER: LazyLock<Mutex<Router>> = LazyLock::new(|| Mutex::new(Router::new(None)));
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+static NEXT_ACK_ID: AtomicU64 = AtomicU64::new(1);
+static PENDING_ACKS: LazyLock<Mutex<HashSet<u64>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 fn runtime() -> std::sync::MutexGuard<'static, Runtime> {
     RUNTIME.lock().unwrap_or_else(|e| e.into_inner())
@@ -606,11 +743,29 @@ fn router() -> std::sync::MutexGuard<'static, Router> {
     ROUTER.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+fn active_pairing_snapshot() -> (Option<String>, Option<u64>) {
+    let now = Instant::now();
+    let mut r = router();
+    if let Some(p) = r.pairing.as_ref() {
+        if p.expires_at > now {
+            let left = p.expires_at.saturating_duration_since(now).as_secs().max(1);
+            return (Some(p.code.clone()), Some(left));
+        }
+    }
+    r.pairing = None;
+    (None, None)
+}
+
 fn config_dto() -> FeishuConfigDto {
     let cfg = load_config();
     let (status, last_error) = {
         let rt = runtime();
         (rt.status.to_string(), rt.last_error.clone())
+    };
+    let (pairing_code, pairing_left_secs) = if cfg.bound_open_id.is_none() {
+        active_pairing_snapshot()
+    } else {
+        (None, None)
     };
     FeishuConfigDto {
         enabled: cfg.enabled,
@@ -619,6 +774,10 @@ fn config_dto() -> FeishuConfigDto {
         bound_user: cfg.bound_open_id.as_deref().map(open_id_tail),
         status,
         last_error,
+        notify_milestones: cfg.notify_milestones,
+        quiet_night: cfg.quiet_night,
+        pairing_code,
+        pairing_left_secs,
     }
 }
 
@@ -904,6 +1063,16 @@ fn random_below(limit_ms: u64) -> u64 {
     (n % u128::from(limit_ms)) as u64
 }
 
+/// 前三次断线走短退避（2s → 5s → 15s）让笔记本合盖唤醒 / 切 Wi-Fi 后尽快恢复；之后再回落服务端间隔
+fn reconnect_delay(attempts: i64, conf: &ClientConf, jitter_ms: u64) -> Duration {
+    match attempts {
+        0 => Duration::from_millis(2_000 + (jitter_ms % 1_000)),
+        1 => Duration::from_secs(5),
+        2 => Duration::from_secs(15),
+        _ => Duration::from_secs(conf.reconnect_interval.max(5)),
+    }
+}
+
 fn connection_loop(generation: u64, stop: Arc<AtomicBool>, app_id: String, secret: String) {
     let mut conf = ClientConf::default();
     let mut attempts: i64 = 0;
@@ -939,11 +1108,7 @@ fn connection_loop(generation: u64, stop: Arc<AtomicBool>, app_id: String, secre
         }
         // 等待重连期间仍算「连接中」，lastError 写上次为什么断
         set_status(generation, "connecting", Some(msg));
-        let delay = if attempts == 0 {
-            Duration::from_millis(random_below(conf.reconnect_nonce * 1000).max(1000))
-        } else {
-            Duration::from_secs(conf.reconnect_interval)
-        };
+        let delay = reconnect_delay(attempts, &conf, random_below(1_000));
         attempts += 1;
         if !sleep_unless_stopped(&stop, delay) {
             return;
@@ -980,11 +1145,12 @@ fn run_session(
             return Ok(());
         }
         let now = Instant::now();
+        let ping_secs = conf.ping_interval.min(MAX_PING_INTERVAL_SECS).max(15);
         if now >= next_ping {
             send_frame(socket, &ping_frame(service))?;
-            next_ping = now + Duration::from_secs(conf.ping_interval);
+            next_ping = now + Duration::from_secs(ping_secs);
         }
-        if now.saturating_duration_since(last_recv) > Duration::from_secs(conf.ping_interval * 2 + 5) {
+        if now.saturating_duration_since(last_recv) > Duration::from_secs(ping_secs * 2 + 10) {
             return Err(ConnError::retry("飞书长连接心跳超时，网络可能断了"));
         }
         match socket.read() {
@@ -1065,11 +1231,41 @@ fn spawn_reply(app_id: &str, secret: &str, open_id: String, text: &'static str) 
     });
 }
 
+fn watch_frontend_ack(ack_id: u64, app_id: &str, secret: &str) {
+    if APP.get().is_none() {
+        return;
+    }
+    PENDING_ACKS.lock().unwrap_or_else(|e| e.into_inner()).insert(ack_id);
+    let (app_id, secret) = (app_id.to_string(), secret.to_string());
+    tauri::async_runtime::spawn(async move {
+        let _ = tauri::async_runtime::spawn_blocking(move || std::thread::sleep(FRONTEND_ACK_TIMEOUT)).await;
+        let missed = PENDING_ACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(&ack_id);
+        if !missed {
+            return;
+        }
+        let Some(open_id) = load_config().bound_open_id else { return };
+        let content = json!({ "text": TEXT_FRONTEND_NOT_READY }).to_string();
+        if let Err(e) = send_message(&app_id, &secret, &open_id, "text", content).await {
+            crate::logbuf::record("warn", "feishu", &redact(&format!("飞书兜底回话失败：{e}"), &secret));
+        }
+    });
+}
+
 fn apply_inbound(inbound: Inbound, app_id: &str, secret: &str) {
     match inbound {
         Inbound::Ignore => {}
-        Inbound::Message(dto) => emit("feishu-message", dto),
-        Inbound::CardAction(dto) => emit("feishu-card-action", dto),
+        Inbound::Message(mut dto) => {
+            let ack_id = NEXT_ACK_ID.fetch_add(1, Ordering::Relaxed);
+            dto.ack_id = Some(ack_id);
+            watch_frontend_ack(ack_id, app_id, secret);
+            emit("feishu-message", dto);
+        }
+        Inbound::CardAction(mut dto) => {
+            let ack_id = NEXT_ACK_ID.fetch_add(1, Ordering::Relaxed);
+            dto.ack_id = Some(ack_id);
+            watch_frontend_ack(ack_id, app_id, secret);
+            emit("feishu-card-action", dto);
+        }
         Inbound::Paired { open_id } => {
             let saved = update_config(|c| {
                 if c.app_id == app_id {
@@ -1095,6 +1291,12 @@ struct TokenCache {
 }
 
 static TOKEN: Mutex<Option<TokenCache>> = Mutex::new(None);
+
+fn is_safe_message_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
 
 async fn tenant_token(app_id: &str, secret: &str, force: bool) -> Result<String, String> {
     if !force {
@@ -1168,6 +1370,40 @@ async fn send_message(app_id: &str, secret: &str, open_id: &str, msg_type: &str,
     Err("飞书令牌换新后仍被拒".into())
 }
 
+/// 原地更新已发出的交互卡片（PATCH /open-apis/im/v1/messages/:message_id）
+async fn patch_card_message(app_id: &str, secret: &str, message_id: &str, content: String) -> Result<(), String> {
+    if !is_safe_message_id(message_id) {
+        return Err("消息 id 格式不对".into());
+    }
+    let body = json!({ "content": content });
+    for attempt in 0..2 {
+        let token = tenant_token(app_id, secret, attempt > 0).await?;
+        let resp = http()
+            .patch(format!("{API_BASE}{MESSAGES_PATH}/{message_id}"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("连不上飞书服务器：{e}"))?;
+        let status = resp.status();
+        let v: Value = resp.json().await.unwrap_or(Value::Null);
+        let code = v.get("code").and_then(Value::as_i64).unwrap_or(-1);
+        if code == 0 {
+            return Ok(());
+        }
+        if attempt == 0 && matches!(code, 99991661 | 99991663) {
+            continue;
+        }
+        let msg = v.get("msg").and_then(Value::as_str).unwrap_or("");
+        return Err(format!(
+            "飞书没更新这张卡片：{}（错误码 {code}，HTTP {}）",
+            if msg.is_empty() { "未说明原因" } else { msg },
+            status.as_u16()
+        ));
+    }
+    Err("飞书令牌换新后仍被拒".into())
+}
+
 /// 发给绑定人：通道要开着、要已绑定
 async fn send_to_bound(msg_type: &str, content: String) -> Result<String, String> {
     let cfg = load_config();
@@ -1181,7 +1417,43 @@ async fn send_to_bound(msg_type: &str, content: String) -> Result<String, String
         .map_err(|e| redact(&e, &secret))
 }
 
+fn build_self_test_card() -> Value {
+    json!({
+        "config": { "wide_screen_mode": true, "update_multi": true },
+        "header": {
+            "template": "blue",
+            "title": { "tag": "plain_text", "content": "通道自检 · Mesa" }
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "收到这张卡片说明 **发消息权限** 已开通。\n请点下面的按钮，确认 **卡片回传交互** 回调也已打通："
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": { "tag": "plain_text", "content": "点我完成自检" },
+                        "type": "primary",
+                        "value": { "op": "self_test" }
+                    }
+                ]
+            },
+            {
+                "tag": "note",
+                "elements": [{ "tag": "plain_text", "content": "点击后卡片会原地变成「自检通过」，电脑上也会收到提示" }]
+            }
+        ]
+    })
+}
+
 // ===== 命令 =====
+
+#[tauri::command]
+pub fn feishu_ack_inbound(id: u64) {
+    PENDING_ACKS.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+}
 
 #[tauri::command]
 pub async fn feishu_config_get() -> Result<FeishuConfigDto, String> {
@@ -1202,6 +1474,35 @@ pub async fn feishu_config_set(app_id: String, app_secret: Option<String>, enabl
 }
 
 #[tauri::command]
+pub async fn feishu_prefs_set(notify_milestones: bool, quiet_night: bool) -> Result<FeishuConfigDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        update_config(|c| {
+            c.notify_milestones = notify_milestones;
+            c.quiet_night = quiet_night;
+        })?;
+        let dto = config_dto();
+        emit("feishu-status", dto.clone());
+        Ok(dto)
+    })
+    .await
+    .map_err(|e| format!("保存飞书通知设置失败：{e}"))?
+}
+
+#[tauri::command]
+pub async fn feishu_reconnect() -> Result<FeishuConfigDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = load_config();
+        if !cfg.enabled {
+            return Err("飞书通道没打开".to_string());
+        }
+        restart(&cfg);
+        Ok(config_dto())
+    })
+    .await
+    .map_err(|e| format!("重连飞书失败：{e}"))?
+}
+
+#[tauri::command]
 pub async fn feishu_pair_start() -> Result<String, String> {
     let cfg = tauri::async_runtime::spawn_blocking(load_config)
         .await
@@ -1211,6 +1512,7 @@ pub async fn feishu_pair_start() -> Result<String, String> {
     }
     let code = format!("{:06}", random_below(1_000_000));
     router().start_pairing(code.clone(), Instant::now());
+    emit_status();
     Ok(code)
 }
 
@@ -1241,6 +1543,35 @@ pub async fn feishu_send_card(card: Value) -> Result<String, String> {
         return Err("卡片内容要是一个 JSON 对象".into());
     }
     send_to_bound("interactive", card.to_string()).await
+}
+
+#[tauri::command]
+pub async fn feishu_update_card(message_id: String, card: Value) -> Result<(), String> {
+    if !card.is_object() {
+        return Err("卡片内容要是一个 JSON 对象".into());
+    }
+    let cfg = load_config();
+    if !cfg.enabled {
+        return Err("飞书通道没打开".into());
+    }
+    let secret = load_secret(&cfg.app_id).ok_or("缺少 App Secret，请在设置里重新填写")?;
+    if cfg.bound_open_id.is_none() {
+        return Err("还没绑定".into());
+    }
+    patch_card_message(&cfg.app_id, &secret, message_id.trim(), card.to_string())
+        .await
+        .map_err(|e| redact(&e, &secret))
+}
+
+/// 设置页「发测试卡片」：已绑定时往手机发一张带回调按钮的自检卡，验证发消息 + 卡片回传全链路
+#[tauri::command]
+pub async fn feishu_send_test_card() -> Result<String, String> {
+    let status = runtime().status;
+    if status != "online" {
+        return Err("长连接还没连上，等状态变成「已连上」再试".into());
+    }
+    send_to_bound("interactive", build_self_test_card().to_string()).await?;
+    Ok("已往你的飞书发了一张自检卡片，去手机点一下卡片里的按钮即可验证全链路".into())
 }
 
 /// 设置页「测试连接」：拿一次令牌和长连接接入点，不开连接
@@ -1385,12 +1716,113 @@ mod tests {
         let got = r.route(&message_event("e1", "om_1", "ou_me", "p2p", "进度怎么样"), now);
         assert_eq!(
             got,
-            Inbound::Message(FeishuMessageDto { text: "进度怎么样".into(), message_id: "om_1".into(), at: 1730000000123 })
+            Inbound::Message(FeishuMessageDto {
+                text: "进度怎么样".into(),
+                message_id: "om_1".into(),
+                at: 1730000000123,
+                parent_id: None,
+                ack_id: None,
+            })
         );
-        let dto = serde_json::to_value(FeishuMessageDto { text: "t".into(), message_id: "m".into(), at: 1 }).unwrap();
+        let dto = serde_json::to_value(FeishuMessageDto {
+            text: "t".into(),
+            message_id: "m".into(),
+            at: 1,
+            parent_id: None,
+            ack_id: None,
+        })
+        .unwrap();
         assert_eq!(dto, json!({ "text": "t", "messageId": "m", "at": 1 }));
         // 群聊不理
         assert_eq!(r.route(&message_event("e2", "om_2", "ou_me", "group", "hi"), now), Inbound::Ignore);
+    }
+
+    #[test]
+    fn post_rich_text_and_quote_reply_parent_id_are_extracted() {
+        let mut r = Router::new(Some("ou_me".into()));
+        let now = Instant::now();
+        // 接收态平铺 post + parent_id 引用回复 + @_user_1 占位符
+        let flat_post = json!({
+            "schema": "2.0",
+            "header": { "event_id": "ep1", "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_id": { "open_id": "ou_me" }, "sender_type": "user" },
+                "message": {
+                    "message_id": "om_post_1",
+                    "parent_id": "om_card_99",
+                    "create_time": "1730000000555",
+                    "chat_type": "p2p",
+                    "message_type": "post",
+                    "mentions": [{ "key": "@_user_1", "name": "Mesa" }],
+                    "content": json!({
+                        "title": "组会补充",
+                        "content": [
+                            [{ "tag": "text", "text": "@_user_1 第一段结论" }, { "tag": "a", "text": "参考链接", "href": "https://example.com" }],
+                            [{ "tag": "text", "text": "第二段剔除异常孔" }]
+                        ]
+                    }).to_string()
+                }
+            }
+        })
+        .to_string()
+        .into_bytes();
+        let got = r.route(&flat_post, now);
+        assert_eq!(
+            got,
+            Inbound::Message(FeishuMessageDto {
+                text: "组会补充\n 第一段结论参考链接\n第二段剔除异常孔".into(),
+                message_id: "om_post_1".into(),
+                at: 1730000000555,
+                parent_id: Some("om_card_99".into()),
+                ack_id: None,
+            })
+        );
+
+        // 包在 post.zh_cn 里的富文本也能解
+        let wrapped = json!({
+            "post": {
+                "zh_cn": {
+                    "title": "",
+                    "content": [[{ "tag": "text", "text": "多语言包装正文" }]]
+                }
+            }
+        });
+        assert_eq!(extract_post_text(&wrapped).as_deref(), Some("多语言包装正文"));
+
+        // 图片消息给明确引导文案
+        let img_ev = json!({
+            "schema": "2.0",
+            "header": { "event_id": "e_img", "event_type": "im.message.receive_v1" },
+            "event": {
+                "sender": { "sender_id": { "open_id": "ou_me" }, "sender_type": "user" },
+                "message": {
+                    "message_id": "om_img",
+                    "chat_type": "p2p",
+                    "message_type": "image",
+                    "content": "{\"image_key\":\"img_v2_1\"}"
+                }
+            }
+        })
+        .to_string()
+        .into_bytes();
+        assert_eq!(
+            r.route(&img_ev, now),
+            Inbound::Reply { open_id: "ou_me".into(), text: TEXT_MEDIA_HINT }
+        );
+    }
+
+    #[test]
+    fn fast_reconnect_backoff_and_message_id_guard() {
+        let conf = ClientConf::default();
+        assert_eq!(reconnect_delay(0, &conf, 350), Duration::from_millis(2_350));
+        assert_eq!(reconnect_delay(1, &conf, 999), Duration::from_secs(5));
+        assert_eq!(reconnect_delay(2, &conf, 0), Duration::from_secs(15));
+        assert_eq!(reconnect_delay(3, &conf, 0), Duration::from_secs(120));
+
+        assert!(is_safe_message_id("om_dc13264520392913993dd051dba21dcf"));
+        assert!(!is_safe_message_id(""));
+        assert!(!is_safe_message_id("om_1/../../etc"));
+        assert!(!is_safe_message_id("om_1?foo=bar"));
     }
 
     #[test]
@@ -1517,13 +1949,26 @@ mod tests {
         assert!(config_set_impl("cli_a", None, true).is_err(), "没 Secret 不能打开");
         let cfg = config_set_impl("cli_a", Some("secret-value-1234567890"), true).unwrap();
         assert!(cfg.enabled);
+        assert!(cfg.notify_milestones, "默认推送完成/出错");
+        assert!(!cfg.quiet_night);
         let file = std::fs::read_to_string(tmp.join("feishu.json")).unwrap();
         assert!(!file.contains("secret-value"), "Secret 不进 feishu.json");
         assert_eq!(load_secret("cli_a").as_deref(), Some("secret-value-1234567890"));
 
-        update_config(|c| c.bound_open_id = Some("ou_1234567890abcd".into())).unwrap();
+        router().start_pairing("654321".into(), Instant::now());
+        let dto_pairing = config_dto();
+        assert_eq!(dto_pairing.pairing_code.as_deref(), Some("654321"));
+        assert!(dto_pairing.pairing_left_secs.unwrap_or(0) > 0);
+
+        update_config(|c| {
+            c.bound_open_id = Some("ou_1234567890abcd".into());
+            c.quiet_night = true;
+        })
+        .unwrap();
         let dto = config_dto();
         assert!(dto.has_secret);
+        assert!(dto.quiet_night);
+        assert!(dto.pairing_code.is_none(), "已绑定后不再展示配对码");
         assert_eq!(dto.bound_user.as_deref(), Some("ou_…abcd"));
         let json = serde_json::to_string(&dto).unwrap();
         assert!(!json.contains("secret-value"));

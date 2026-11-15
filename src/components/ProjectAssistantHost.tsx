@@ -19,7 +19,7 @@ import {
 import { readProjectSurfaceTab } from "../project-surface";
 import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assistant-echo-watch";
 import { invalidateAssistantSnapshot } from "../project-assistant-run";
-import { pushNewGrants, pushNewHelp, pushStuck, startImBridge } from "../im-bridge";
+import { pushMilestones, pushNewGrants, pushNewHelp, pushStuck, reconnectImIfNeeded, startImBridge } from "../im-bridge";
 import { startDeskPetHost } from "../desk-pet-host";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
@@ -50,18 +50,29 @@ export default function ProjectAssistantHost() {
   const path = req?.path ?? null;
 
   // 派活回音（2026-11-05）：应用开着就每分钟看一次派出去的活，做完 / 失败 / 停了在问答里补一条、进收件箱
-  // 飞书通道（2026-11-06）：收手机消息与卡片按钮；新出现的人工请求推到手机。没配飞书时这些都是空转
+  // 飞书通道（2026-11-06，2026-11-15 补步骤/目标通知与唤醒重连）：收手机消息与卡片按钮；新出现的人工请求与阶段进展推到手机。没配飞书时都是空转
   useEffect(() => {
     void pollAssistantEchoes();
     void pushNewHelp();
     void pushNewGrants();
+    void pushMilestones();
     const timer = window.setInterval(() => {
       void pollAssistantEchoes();
       void pushNewHelp();
       void pushNewGrants();
+      void pushMilestones();
     }, ECHO_POLL_MS);
-    // 卡住了（信任文件夹 / 等确认）要早点说：20 秒看一次，不跟回音同频
-    const stuckTimer = window.setInterval(() => void pushStuck(), 20_000);
+    // 卡住了（信任文件夹 / 等确认）与合盖睡眠唤醒检测共用 20 秒节拍，不新增长循环
+    let lastTickAt = Date.now();
+    const stuckTimer = window.setInterval(() => {
+      const now = Date.now();
+      if (now - lastTickAt > 50_000) void reconnectImIfNeeded();
+      lastTickAt = now;
+      void pushStuck();
+      void pushMilestones();
+    }, 20_000);
+    const onOnline = () => void reconnectImIfNeeded();
+    window.addEventListener("online", onOnline);
     let stop: (() => void) | null = null;
     let cancelled = false;
     void startImBridge().then((off) => {
@@ -78,12 +89,24 @@ export default function ProjectAssistantHost() {
       cancelled = true;
       window.clearInterval(timer);
       window.clearInterval(stuckTimer);
+      window.removeEventListener("online", onOnline);
       stop?.();
       stopPet?.();
     };
   }, []);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
   const helpTick = useAppStore((s) => s.helpRefreshTick);
+  // 事件驱动快推：人工请求落盘或派活状态刚变时 1 秒内推到手机，不必干等 60 秒轮询
+  useEffect(() => {
+    if (echoTick === 0 && helpTick === 0) return;
+    const t = window.setTimeout(() => {
+      void pollAssistantEchoes();
+      void pushNewHelp();
+      void pushNewGrants();
+      void pushMilestones();
+    }, 1000);
+    return () => window.clearTimeout(t);
+  }, [echoTick, helpTick]);
   useEffect(() => {
     if (path) {
       seeAssistantEchoes(path);
