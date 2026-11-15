@@ -43,6 +43,7 @@ const AGY_USAGE_TIMEOUT: Duration = Duration::from_secs(15);
 const CLAUDE_ROW_ID: &str = "official:claude-code";
 pub(crate) const CODEX_ROW_ID: &str = "official:codex";
 const AGY_ROW_ID: &str = "official:agy";
+const AGY_CONSOLE_URL: &str = "https://antigravity.google";
 const ROW_NAME: &str = "官方账号";
 
 /// 未检测到 agy 官方登录时的负缓存截止毫秒（2 分钟，force 强刷时跳过），免得只用 API Key 的用户每次进页都拉起一次 agy
@@ -470,9 +471,27 @@ fn agy_window_kind(bucket_id: &str) -> Option<(&'static str, usize)> {
     }
 }
 
+fn agy_location_blocked(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("unsupported_location")
+        || lower.contains("not currently available in your location")
+}
+
+fn agy_failure_message(stdout: &str, stderr: &str) -> &'static str {
+    if agy_location_blocked(stdout) || agy_location_blocked(stderr) {
+        "当前代理出口或账号地区不支持 Google 官方个人额度（如香港节点会被拦截，Error 1008），请将代理切到美 / 新 / 日等支持地区后刷新"
+    } else {
+        "Antigravity 额度查询失败：请检查设置里的出网代理，或到连接页重新登录"
+    }
+}
+
 /// 解析 `agy --print /usage --output-format json` 的输出：将各桶的 remaining_fraction 转为已用百分比
 fn parse_agy_usage(body: &serde_json::Value) -> Result<Vec<PlanQuotaWindowDto>, String> {
     if body.get("status").and_then(|s| s.as_str()) != Some("SUCCESS") {
+        let raw = body.to_string();
+        if agy_location_blocked(&raw) {
+            return Err(agy_failure_message(&raw, "").into());
+        }
         return Err("Antigravity 用量返回未就绪".into());
     }
     let groups = body
@@ -518,7 +537,7 @@ fn agy_token_file_present() -> bool {
     })
 }
 
-fn run_agy_usage_cli(bin: &std::path::Path) -> Option<(bool, String)> {
+fn run_agy_usage_cli(bin: &std::path::Path) -> Option<(bool, String, String)> {
     let mut cmd = crate::process::background_command(bin);
     for (k, v) in crate::settings::official_outbound_env() {
         cmd.env(k, v);
@@ -546,7 +565,8 @@ fn run_agy_usage_cli(bin: &std::path::Path) -> Option<(bool, String)> {
     };
     let out = child.wait_with_output().ok()?;
     let stdout = String::from_utf8(out.stdout).unwrap_or_default();
-    Some((status.success(), stdout))
+    let stderr = String::from_utf8(out.stderr).unwrap_or_default();
+    Some((status.success(), stdout, stderr))
 }
 
 async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
@@ -570,9 +590,9 @@ async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
         .await
         .ok()
         .flatten();
-    let mut dto = blank_row(AGY_ROW_ID, "agy", None, "");
+    let mut dto = blank_row(AGY_ROW_ID, "agy", None, AGY_CONSOLE_URL);
     match ran {
-        Some((true, stdout)) => {
+        Some((true, stdout, stderr)) => {
             let body: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or(serde_json::Value::Null);
             match parse_agy_usage(&body) {
                 Ok(windows) => {
@@ -582,14 +602,19 @@ async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
                     return Some(settle_fresh(dto));
                 }
                 Err(e) if has_token_file => {
-                    dto.error = Some(e);
+                    let msg = if agy_location_blocked(&stdout) || agy_location_blocked(&stderr) {
+                        agy_failure_message(&stdout, &stderr).to_string()
+                    } else {
+                        e
+                    };
+                    dto.error = Some(msg);
                     return Some(settle_fresh(dto));
                 }
                 Err(_) => {}
             }
         }
-        Some((false, _)) if has_token_file => {
-            dto.error = Some("Antigravity 额度查询失败：请检查设置里的出网代理，或到连接页重新登录".into());
+        Some((false, stdout, stderr)) if has_token_file => {
+            dto.error = Some(agy_failure_message(&stdout, &stderr).into());
             return Some(settle_fresh(dto));
         }
         None if has_token_file => {
@@ -785,6 +810,16 @@ mod tests {
         assert_eq!(w[1].used_percent.round(), 25.0);
         assert_eq!(w[2].used_percent.round(), 40.0);
         assert!(parse_agy_usage(&serde_json::json!({"status": "ERROR"})).is_err());
+        let loc_err = parse_agy_usage(&serde_json::json!({
+            "status": "ERROR",
+            "error": "Your current account is not eligible for Gemini Code Assist for individuals because it is not currently available in your location."
+        }))
+        .unwrap_err();
+        assert!(loc_err.contains("Error 1008"));
+        assert_eq!(
+            blank_row(AGY_ROW_ID, "agy", None, AGY_CONSOLE_URL).console_url,
+            "https://antigravity.google"
+        );
     }
 
     #[test]
