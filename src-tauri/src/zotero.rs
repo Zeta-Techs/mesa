@@ -604,6 +604,21 @@ mod tests {
 
     /// Zotero 6 导不进 RIS / BibTeX：按 application.ini 的版本号先拦下
     #[test]
+    fn detects_unpatched_macos_zotero_scpt_bytecode() {
+        let unpatched = b"FasdUAS 1.101.10\x00\x00getPath\x00cura\x00";
+        assert!(zotero_scpt_has_current_app_bug(unpatched));
+
+        let mut patched = b"FasdUAS 1.101.10\x00\x00getPath\x00".to_vec();
+        patched.extend(
+            "com.microsoft.Word"
+                .encode_utf16()
+                .flat_map(|u| u.to_be_bytes()),
+        );
+        assert!(!zotero_scpt_has_current_app_bug(&patched));
+        assert!(!zotero_scpt_has_current_app_bug(b"plain text"));
+    }
+
+    #[test]
     fn zotero_six_is_too_old() {
         let ini = "[App]\r\nVendor=Zotero\r\nName=Zotero\r\nVersion=6.0.36\r\nBuildID=20240313202508\r\n\r\n[Gecko]\r\nMinVersion=60.0\r\n";
         assert_eq!(ini_version(ini).as_deref(), Some("6.0.36"));
@@ -2018,10 +2033,69 @@ pub async fn zotero_open_import(
         if !cleaned.is_empty() {
             lines.push(cleaned);
         }
+        if let Some(warn) = macos_mas_word_zotero_scpt_warning() {
+            lines.push(warn);
+        }
         Ok(lines.join("\n"))
     })
     .await
     .map_err(|e| format!("{e}"))?
+}
+
+/// 判别编译态 `Zotero.scpt` 是否仍用 `path to current application`（AppleEvent 4CC `'cura'`）：
+/// 在 macOS 26+（Darwin >= 25）+ Mac App Store 沙盒版 Word 下，UserScriptService 会把 `current application`
+/// 解析成 `/usr/bin/osascript`，导致 Word 点 Zotero Refresh 误报「Open in Rosetta」。只读字节判别，不调外部进程。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn zotero_scpt_has_current_app_bug(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(b"Fasd") {
+        return false;
+    }
+    let has_cura = bytes.windows(4).any(|w| w == b"cura");
+    if !has_cura {
+        return false;
+    }
+    let word_utf16be: Vec<u8> = "com.microsoft.Word"
+        .encode_utf16()
+        .flat_map(|u| u.to_be_bytes())
+        .collect();
+    !bytes
+        .windows(word_utf16be.len())
+        .any(|w| w == word_utf16be.as_slice())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_mas_word_zotero_scpt_warning() -> Option<String> {
+    if !Path::new("/Applications/Microsoft Word.app/Contents/_MASReceipt/receipt").exists() {
+        return None;
+    }
+    let out = crate::process::background_command("/usr/sbin/sysctl")
+        .args(["-n", "kern.osrelease"])
+        .output()
+        .ok()?;
+    let major: u32 = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .split('.')
+        .next()?
+        .parse()
+        .ok()?;
+    if major < 25 {
+        return None;
+    }
+    let scpt = crate::dirs::home_dir()?
+        .join("Library/Application Scripts/com.microsoft.Word/Zotero.scpt");
+    let bytes = fs::read(&scpt).ok()?;
+    if !zotero_scpt_has_current_app_bug(&bytes) {
+        return None;
+    }
+    Some(
+        "提示：检测到本机为 macOS 26+ 且安装了 Mac App Store 沙盒版 Word，Zotero 自带的 Word 插件脚本（Zotero.scpt）点 Refresh 会误报「Open in Rosetta」。若遇到该报错，可在终端执行一行命令修好：osadecompile ~/Library/Application\\ Scripts/com.microsoft.Word/Zotero.scpt | sed 's/path to current application/path to application id \"com.microsoft.Word\"/' | osacompile -o ~/Library/Application\\ Scripts/com.microsoft.Word/Zotero.scpt -（或改用微软官网安装包版 Office）。"
+            .to_string(),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_mas_word_zotero_scpt_warning() -> Option<String> {
+    None
 }
 
 /// 按课题文件夹名在临时目录放一份 `<课题名>.ris` 给 Zotero 打开，使「导入到新分类」直接建成课题名分类。

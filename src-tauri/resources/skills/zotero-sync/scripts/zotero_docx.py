@@ -154,6 +154,36 @@ def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str, 
     return " ADDIN ZOTERO_ITEM CSL_CITATION " + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + " "
 
 
+def macos_mas_word_scpt_warning() -> str:
+    if sys.platform != "darwin":
+        return ""
+    if not Path("/Applications/Microsoft Word.app/Contents/_MASReceipt/receipt").exists():
+        return ""
+    try:
+        import os as _os
+        major = int(_os.uname().release.split(".", 1)[0])
+    except Exception:
+        return ""
+    if major < 25:
+        return ""
+    scpt = Path.home() / "Library/Application Scripts/com.microsoft.Word/Zotero.scpt"
+    try:
+        raw = scpt.read_bytes()
+    except OSError:
+        return ""
+    if not raw.startswith(b"Fasd") or b"cura" not in raw:
+        return ""
+    if "com.microsoft.Word".encode("utf-16-be") in raw:
+        return ""
+    return (
+        "⚠ **macOS 26+ 与 App Store 版 Word 兼容提示**：检测到本机 Word 来自 Mac App Store 沙盒且 `Zotero.scpt` 尚未修补，"
+        "在 Word 里点 Zotero **Refresh** 会误报 `Open in Rosetta`。若遇到该弹窗，在终端运行一行即可修好（无需重装 Word）："
+        "`osadecompile ~/Library/Application\\ Scripts/com.microsoft.Word/Zotero.scpt | "
+        "sed 's/path to current application/path to application id \"com.microsoft.Word\"/' | "
+        "osacompile -o ~/Library/Application\\ Scripts/com.microsoft.Word/Zotero.scpt -`"
+    )
+
+
 def write_report(path: Path, payload: dict):
     lines = [
         "# Zotero 域稿报告",
@@ -165,6 +195,9 @@ def write_report(path: Path, payload: dict):
         f"- 插图：{payload.get('images', 0)}",
         f"- 缺图：{len(payload.get('missing_images') or [])}",
     ]
+    mas_warn = macos_mas_word_scpt_warning()
+    if mas_warn:
+        lines.extend(["", mas_warn])
     if payload["missing"]:
         lines.append("")
         lines.append("未匹配键（未写 docx）：")

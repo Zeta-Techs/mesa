@@ -923,6 +923,23 @@ fn spotlight_libraries(text: &str, home: &Path) -> (Vec<String>, Vec<String>) {
     )
 }
 
+/// 仅当条目 `<titles>` 含 `<style face="subscript|superscript">` 富文本上下标时才需要走 EndNote XML 手动导入；
+/// 普通课题标题不含化学式/上下标时直接把 `endnote-library.ris` 交给 EndNote 即可一键静默导入（含 PDF 与笔记）。
+fn xml_titles_have_rich_style(xml_text: &str) -> bool {
+    let mut rest = xml_text;
+    while let Some(start) = rest.find("<titles>") {
+        let after = &rest[start + "<titles>".len()..];
+        let Some(end) = after.find("</titles>") else {
+            break;
+        };
+        if after[..end].contains("<style face=") {
+            return true;
+        }
+        rest = &after[end + "</titles>".len()..];
+    }
+    false
+}
+
 #[tauri::command]
 pub async fn endnote_export_xml(
     project_root: String,
@@ -934,12 +951,15 @@ pub async fn endnote_export_xml(
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
         // 有引文库就按它生成整库 endnote-library.xml + endnote-library.ris（初稿/定稿同步时）；
-        // XML 保留 <style face="subscript|superscript"> 真上下标，避免 RIS 纯文本把 MoS₂ 存成假下标码位。
+        // 标题含化学上下标时走 XML 保留 <style face="subscript|superscript"> 真上下标；不含时直接走 RIS 一键导入。
         // 还没有引文库（检索步）才交检索清单那份 endnote-import.ris。
         if root_path.join("references.bib").is_file() {
             let (ris, health) = export_ris_only(root_path, mode)?;
             let xml = ris.with_file_name(LIBRARY_XML);
-            if xml.is_file() {
+            let needs_rich_xml = xml.is_file()
+                && std::fs::read_to_string(&xml)
+                    .is_ok_and(|text| xml_titles_have_rich_style(&text));
+            if needs_rich_xml {
                 copy_path_to_clipboard(&xml);
                 let enl = endnote_library_pointer(root_path);
                 let health_note = if health.is_empty() {
@@ -948,9 +968,9 @@ pub async fn endnote_export_xml(
                     format!("\n{health}")
                 };
                 let import_steps = if cfg!(target_os = "macos") {
-                    "点「文件 → 导入...」（File → Import…），按 ⇧⌘G 粘贴路径回车，点底部「显示选项」（Options）把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML）导入"
+                    "点「文件 → 导入...」（File → Import…），按 ⇧⌘G 粘贴路径回车；首次点底部「显示选项」（Options）把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项，直接粘贴回车即可"
                 } else {
-                    "点「文件 → 导入 → 文件...」（File → Import → File…），「导入选项」（Import Option）选「EndNote 生成的 XML」（EndNote generated XML），在文件框粘贴路径导入"
+                    "点「文件 → 导入 → 文件...」（File → Import → File…），在文件框粘贴路径；首次把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"
                 };
                 return match launch_endnote_app(enl.as_deref()) {
                     Ok(()) => {
@@ -1718,6 +1738,20 @@ mod tests {
         };
         assert!(after_xml.contains("USER_EDIT_MARKER"), "Word 保存过的 docx 绝不能被覆盖");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn xml_titles_rich_style_detection_distinguishes_plain_and_formula_titles() {
+        let plain_xml = r#"<?xml version="1.0" encoding="utf-8"?><xml><records><record><titles><title>Deep Learning for Protein Folding</title><secondary-title>Nature</secondary-title></titles><abstract><style face="subscript">2</style></abstract></record></records></xml>"#;
+        assert!(
+            !xml_titles_have_rich_style(plain_xml),
+            "标题不含上下标时应直走 RIS 一键导入"
+        );
+        let formula_xml = r#"<?xml version="1.0" encoding="utf-8"?><xml><records><record><titles><title>Amorphous Co<style face="subscript">2</style>B for HER</title></titles></record></records></xml>"#;
+        assert!(
+            xml_titles_have_rich_style(formula_xml),
+            "标题含化学上下标时必须走 XML 保留真上下标"
+        );
     }
 
     #[test]
