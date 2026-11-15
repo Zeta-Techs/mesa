@@ -222,6 +222,107 @@ def write_library_ris(
     return len(written), duplicated, dropped
 
 
+def write_library_xml(
+    bib_text: str, dest: Path, skip_excluded: Path | None = None, attach: Path | None = None
+) -> int:
+    """另写一份供 Zotero 原生导入的 EndNote XML（Zotero EndNote XML.js 翻译器）：
+    RIS 纯文本装不下富文本角标，Zotero 导入 RIS 只存 Unicode ₂，Word 刷新后不是真下标；
+    而导入 EndNote XML 时，Zotero 自动把 <style face="subscript|superscript"> 转成 <sub>/<sup>，
+    Word 刷新后即生成真正的 <w:vertAlign> 上下标格式，同时保留 PDF 附件、子笔记、缩写与 Citation Key，
+    且只写 EndNote XML.js 已映射字段，不触发 _EndnoteXML import 杂项笔记。"""
+    import xml.etree.ElementTree as ET
+
+    bridge = load_bridge()
+    records, _dropped = bridge.drop_excluded(bridge.parse_bibtex(bib_text), skip_excluded)
+    plan = bridge.load_attach_plan(attach) if attach is not None else {}
+    if plan:
+        bridge.attach_records(records, plan, html_notes=False, multiline_notes=True)
+    type_code = {"article": 17, "book": 6, "incollection": 5, "inproceedings": 47, "phdthesis": 32}
+    type_name = {
+        17: "Journal Article",
+        6: "Book",
+        5: "Book Section",
+        47: "Conference Paper",
+        32: "Thesis",
+    }
+    root = ET.Element("xml")
+    rows = ET.SubElement(root, "records")
+    for i, rec in enumerate(records, 1):
+        item = ET.SubElement(rows, "record")
+
+        def make_el(path: str, attrs: dict | None = None):
+            parent = item
+            parts = path.split("/")
+            for part in parts[:-1]:
+                child = parent.find(part)
+                if child is None:
+                    child = ET.SubElement(parent, part)
+                parent = child
+            return ET.SubElement(parent, parts[-1], attrs or {})
+
+        def put(path: str, value, attrs: dict | None = None):
+            el = make_el(path, attrs)
+            el.text = str(value)
+
+        code = type_code.get(rec.get("type"), 17)
+        put("rec-number", i)
+        put("ref-type", code, {"name": type_name[code]})
+        for author in rec.get("authors") or []:
+            put("contributors/authors/author", bridge.family_comma(author))
+        if rec.get("title"):
+            bridge.put_styled_xml(make_el("titles/title"), bridge.title_text(rec["title"]))
+        journal = bridge.clean(rec.get("journal") or "")
+        if journal and code in (17, 5, 6, 47):
+            put("titles/secondary-title", journal)
+        short, alt = bridge.journal_abbreviations(rec)
+        if code == 17 and short and short.casefold() != journal.casefold():
+            put("periodical/abbr-1", short)
+        start, end = bridge.split_pages(rec.get("pages") or "")
+        if start and code in (17, 5, 6, 47):
+            put("pages", f"{start}-{end}" if end and end != start else start)
+        if rec.get("volume") and code in (17, 5, 6, 47):
+            put("volume", rec["volume"])
+        if rec.get("number") and code in (17, 5, 6):
+            put("number", rec["number"])
+        for word in rec.get("keywords") or []:
+            put("keywords/keyword", word)
+        if rec.get("year") or rec.get("date"):
+            dates = ET.SubElement(item, "dates")
+            if rec.get("year"):
+                bridge.xml_date(dates, "year", rec["year"])
+            if rec.get("date"):
+                bridge.xml_date(ET.SubElement(dates, "pub-dates"), "date", rec["date"])
+        if (rec.get("issn") or rec.get("isbn")) and code in (17, 5, 6, 47):
+            put("isbn", rec.get("issn") or rec.get("isbn"))
+        if rec.get("abstract"):
+            bridge.put_styled_xml(make_el("abstract"), bridge.clean(rec["abstract"]))
+        doi = bridge.bare_doi(rec.get("doi") or "")
+        label_lines = [rec["id"]] if rec.get("id") else []
+        if alt:
+            label_lines.append(f"ISO 4 abbreviation: {alt}")
+        if doi and code == 32:
+            label_lines.append(f"DOI: {doi}")
+        if label_lines:
+            put("label", "\n".join(label_lines))
+        url = rec.get("url") or (f"https://doi.org/{doi}" if doi else "")
+        if url or rec.get("attachPdf"):
+            urls = ET.SubElement(item, "urls")
+            if url:
+                ET.SubElement(ET.SubElement(urls, "web-urls"), "url").text = bridge.plain_id(url)
+            if rec.get("attachPdf"):
+                ET.SubElement(ET.SubElement(urls, "pdf-urls"), "url").text = rec["attachPdf"]
+        if doi and code != 32:
+            put("electronic-resource-num", doi)
+        if rec.get("attachNote"):
+            put("research-notes", rec["attachNote"])
+        if rec.get("language"):
+            put("language", rec["language"])
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    xml_str = ET.tostring(root, encoding="unicode", xml_declaration=True) + "\n"
+    dest.write_text(xml_str, encoding="utf-8", newline="\n")
+    return len(records)
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows 控制台/管道默认 cp1252：差量与库体检提示含中文，print 会 UnicodeEncodeError
     for stream in (sys.stdout, sys.stderr):
@@ -229,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Write a Zotero RTF Scan manuscript")
     parser.add_argument("--library-ris", action="store_true")
+    parser.add_argument("--library-xml", help="另写一份保留真上下标格式的 EndNote XML 供 Zotero 导入")
     parser.add_argument("--input")
     parser.add_argument("--bib", required=True)
     parser.add_argument("--rtf")
@@ -238,12 +340,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--attach", help="Mesa 写的 {键: {pdf, note}}：给条目挂全文（L1）与笔记（N1）")
     args = parser.parse_args(argv)
     if args.library_ris:
+        bib_content = Path(args.bib).read_text(encoding="utf-8")
+        skip_path = Path(args.skip_excluded) if args.skip_excluded else None
+        attach_path = Path(args.attach) if args.attach else None
         written, duplicated, dropped = write_library_ris(
-            Path(args.bib).read_text(encoding="utf-8"),
+            bib_content,
             Path(args.ris),
-            Path(args.skip_excluded) if args.skip_excluded else None,
-            Path(args.attach) if args.attach else None,
+            skip_path,
+            attach_path,
         )
+        if args.library_xml and written > 0:
+            write_library_xml(bib_content, Path(args.library_xml), skip_path, attach_path)
         # 「交给 Zotero 0 条」是调用方的判据：零记录的 RIS 不是合法导入文件，不拉起 Zotero
         print(
             f"本次交给 Zotero {written} 条"

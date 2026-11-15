@@ -543,6 +543,12 @@ z.commit()
     assert.match(zoXml.stdout, /users\/local\/UserKey1\/items\/ONLYKEY8/);
     assert.doesNotMatch(zoXml.stdout, /DUPKEY0/);
     assert.doesNotMatch(zoXml.stdout, /ITEM-/);
+    assert.doesNotMatch(
+      zoXml.stdout,
+      /"citationItems":\s*\[\]/,
+      "未绑定/多条的引文也必须带嵌在域里的 itemData，空 citationItems 会被 Zotero Refresh 整条删掉",
+    );
+    assert.match(zoXml.stdout, /users\/local\/00000000\/items\/embed000/);
     const zoReport = readFileSync(join(root, "zo.md"), "utf8");
     assert.match(zoReport, /已绑定 1 条/);
     assert.match(zoReport, /Dup2021.*2 条/);
@@ -621,7 +627,7 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     writeFileSync(md, "See [@Doe2020] and [@Doe2020; @Lee2021].\n");
     writeFileSync(
       bib,
-      "@article{Doe2020,\n title={Evidence}, author={Doe, Jane and Roe, John}, year={2020}, journal={Research}, doi={10.1/ex}\n}\n@article{Lee2021,\n title={More}, author={Lee, Ann}, year={2021}, journal={Research}\n}\n",
+      "@article{Doe2020,\n title={Evidence on MoS2 & Co2B at 10 mA cm^-2}, author={Doe, Jane and Roe, John}, year={2020}, journal={Research}, doi={10.1/ex}\n}\n@article{Lee2021,\n title={More}, author={Lee, Ann}, year={2021}, journal={Research}\n}\n",
     );
     const script = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
     const docx = join(root, "zotero.docx");
@@ -630,6 +636,18 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     const zip = zipXml(docx, ["word/document.xml", "word/styles.xml"]);
     assert.equal(zip.status, 0, zip.stderr);
     assert.match(zip.stdout, /ADDIN ZOTERO_ITEM CSL_CITATION/);
+    assert.doesNotMatch(zip.stdout, /"citationItems":\s*\[\]/);
+    // Zotero CSL JSON title 带 <sub>/<sup> 真上下标标记（Word Refresh 后出 w:vertAlign），而非 Unicode 假下标码位
+    assert.match(zip.stdout, /MoS&lt;sub&gt;2&lt;\/sub&gt;/);
+    assert.match(zip.stdout, /Co&lt;sub&gt;2&lt;\/sub&gt;B/);
+    assert.doesNotMatch(zip.stdout, /MoS₂|Co₂B/);
+    // EndNote 域稿 traveling library 同样写 <style face="subscript"> 真下标
+    const enDocx = join(root, "en-sub.docx");
+    assert.equal(run(citeDocx, ["--input", md, "--bib", bib, "--output", enDocx, "--report", join(root, "en-sub.md")]).status, 0);
+    assert.match(
+      fldData(enDocx).stdout,
+      /<style face="normal" font="default" size="100%">Evidence on MoS<\/style><style face="subscript" font="default" size="100%">2<\/style>/,
+    );
     assert.match(zip.stdout, /citationID/);
     assert.match(zip.stdout, /formattedCitation/);
     // 预置空 BIBL 会被 Zotero Refresh 删掉（2026-10-10 实证）：生成稿只留 References 标题和空锚点段

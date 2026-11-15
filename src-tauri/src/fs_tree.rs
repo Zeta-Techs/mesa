@@ -402,6 +402,12 @@ fn save_file_preview_encoded_sync(
             return Err("路径超出项目根目录，拒绝写入".into());
         }
         crate::profiles::atomic_write(std::path::Path::new(&expanded), text)?;
+        drop(_file_guard);
+        drop(_guard);
+        if rel == "papers/endnote-library.path" || rel.ends_with("/papers/endnote-library.path") {
+            crate::projects::exclude_in_git(&root_c, "/papers/endnote-library.path");
+            crate::endnote::refresh_project_endnote_docs(&root_c);
+        }
         return Ok(preview_revision(text.as_bytes()));
     }
     let current = read_file_preview_sync(path, root)?;
@@ -423,6 +429,12 @@ fn save_file_preview_encoded_sync(
         None => text.as_bytes().to_vec(),
     };
     crate::profiles::atomic_write_bytes(&path_c, &bytes)?;
+    drop(_file_guard);
+    drop(_guard);
+    if rel == "papers/endnote-library.path" || rel.ends_with("/papers/endnote-library.path") {
+        crate::projects::exclude_in_git(&root_c, "/papers/endnote-library.path");
+        crate::endnote::refresh_project_endnote_docs(&root_c);
+    }
     Ok(preview_revision(&bytes))
 }
 
@@ -1683,6 +1695,10 @@ fn prepare_open_in_system(path: &str, root: &str) -> Result<PathBuf, String> {
 
 fn open_in_system_sync(path: &str, root: &str) -> Result<(), String> {
     let target = prepare_open_in_system(path, root)?;
+    crate::endnote::refresh_field_docx_if_stale(
+        &target,
+        std::path::Path::new(&expand_tilde(root)),
+    );
     tauri_plugin_opener::open_path(&target, None::<&str>)
         .map_err(|e| format!("无法用系统应用打开: {e}"))
 }

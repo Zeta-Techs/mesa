@@ -7,6 +7,7 @@ Visible text never contains {Author, Year} temporary citations.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import secrets
@@ -15,29 +16,40 @@ from pathlib import Path
 
 SCHEMA = "https://github.com/citation-style-language/schema/raw/master/csl-citation.json"
 
+CSL_TYPE = {
+    "article": "article-journal",
+    "book": "book",
+    "incollection": "chapter",
+    "inproceedings": "paper-conference",
+    "phdthesis": "thesis",
+    "mastersthesis": "thesis",
+    "techreport": "report",
+}
 
-def load_library_match():
-    path = Path(__file__).resolve().parents[2] / "endnote-bridge" / "scripts" / "library_match.py"
-    spec = importlib.util.spec_from_file_location("library_match", path)
+
+def _load_sibling_or_endnote(mod_name: str, filename: str):
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent / filename,
+        here.parents[2] / "endnote-bridge" / "scripts" / filename,
+    ]
+    path = next((item for item in candidates if item.is_file()), candidates[-1])
+    spec = importlib.util.spec_from_file_location(mod_name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def load_library_match():
+    return _load_sibling_or_endnote("library_match", "library_match.py")
 
 
 def load_cite():
-    path = Path(__file__).resolve().parents[2] / "endnote-bridge" / "scripts" / "cite_docx.py"
-    spec = importlib.util.spec_from_file_location("endnote_cite_docx", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return _load_sibling_or_endnote("endnote_cite_docx", "cite_docx.py")
 
 
 def load_bridge():
-    path = Path(__file__).resolve().parents[2] / "endnote-bridge" / "scripts" / "bridge.py"
-    spec = importlib.util.spec_from_file_location("endnote_bridge", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    return _load_sibling_or_endnote("endnote_bridge", "bridge.py")
 
 
 def split_name(author: str) -> tuple[str, str]:
@@ -53,7 +65,7 @@ def split_name(author: str) -> tuple[str, str]:
     return " ".join(parts[:-1]), parts[-1]
 
 
-def csl_item(rec: dict, index: int) -> dict:
+def csl_item(rec: dict, item_id: str | int, bridge=None) -> dict:
     names = []
     for author in rec.get("authors") or []:
         given, family = split_name(author)
@@ -63,16 +75,24 @@ def csl_item(rec: dict, index: int) -> dict:
         names.append(item)
     if not names:
         names = [{"family": "Anon"}]
+    raw_title = rec.get("title") or ""
+    title = bridge.rich_html(bridge.title_text(raw_title)) if bridge else raw_title
+    journal = bridge.clean(rec.get("journal") or "") if bridge else (rec.get("journal") or "")
     item = {
-        "id": index,
-        "type": "article-journal",
-        "title": rec.get("title") or "",
+        "id": item_id,
+        "type": CSL_TYPE.get(rec.get("type", ""), "article-journal"),
+        "title": title,
         "author": names,
     }
     if rec.get("year"):
         item["issued"] = {"date-parts": [[str(rec["year"])]]}
-    if rec.get("journal"):
-        item["container-title"] = rec["journal"]
+    if journal:
+        item["container-title"] = journal
+        if bridge:
+            short, _alt = bridge.journal_abbreviations(rec)
+            if short and short.casefold() != journal.casefold():
+                item["container-title-short"] = short
+                item["journalAbbreviation"] = short
     if rec.get("volume"):
         item["volume"] = rec["volume"]
     if rec.get("number"):
@@ -92,17 +112,35 @@ def cite_id() -> str:
     return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
-def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str) -> str:
+def _embedded_uri(bib_key: str) -> str:
+    """未绑上本机库（库没开、库里没有、或同一 DOI 在库里有多条）时的确定性内嵌题录 URI。
+    Zotero Word 插件（integration.js loadItemData）的铁律（2026-11-15 Zotero 10 源码实证）：
+    1. citationItems 绝不能是 []——空数组的域在点 Refresh 时会触发 Zotero.Integration.DELETE 把整篇引注删光，
+       紧接着点 Add/Edit Bibliography 就报「执行本操作前您需要插入引注。」；
+    2. uris 不可省略（缺 uris 访问 citationItem.uris.length 会抛 TypeError）；
+    3. uri 必须符合 users/local/<key>/items/<key> 语法且不撞真实 8 位大写条目键（embed000 + 12 位小写 hex），
+       使 getURIItem 干净返回 false 并回退到 itemData，同时靠同一 uri 在 embeddedItemsByURI 里跨处去重。"""
+    digest = hashlib.sha256((bib_key or "").encode("utf-8")).hexdigest()[:12]
+    return f"http://zotero.org/users/local/00000000/items/embed000{digest}"
+
+
+def cite_instruction(group: list[dict], rec_nums: dict[str, int], display: str, bridge=None) -> str:
     items = []
     for rec in group:
         index = rec_nums[rec["id"]]
-        # 只有库里 DOI 唯一的那条才写 uris。对不上、库锁住、或同一 DOI 多条时省略，
-        # 不编 ITEM-1 这种假地址，否则 Refresh 会当成幽灵条目。
-        # 条目号必须是字符串。数字会被 Zotero 当成另一种旧格式。
         uri = rec.get("_zotero_uri")
-        if not isinstance(uri, str) or not uri.startswith("http://zotero.org/"):
-            continue
-        items.append({"id": str(index), "uris": [uri]})
+        if isinstance(uri, str) and uri.startswith("http://zotero.org/"):
+            item_id = str(index)
+            target_uri = uri
+        else:
+            # 未绑定条目用字符串前缀 id，防止数字 id 误撞 Zotero.Items.get(itemID) 里的无关本地条目
+            item_id = f"embed-{rec['id']}"
+            target_uri = _embedded_uri(rec["id"])
+        items.append({
+            "id": item_id,
+            "uris": [target_uri],
+            "itemData": csl_item(rec, item_id, bridge),
+        })
     payload = {
         "citationID": cite_id(),
         "citationItems": items,
@@ -218,13 +256,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         binding.extend(f"- {h}" for h in stale)
         binding.append(
-            "处方：在 Zotero 里按上面清单的标题删除这些条目，重新导入 papers/zotero-library.ris，"
+            "处方：在 Zotero 里按上面清单的标题删除这些条目，再点「同步到 Zotero」，"
             "然后重新生成本域稿再 Refresh。"
         )
 
     def field(group, numbers, display):
         # Zotero 的引文 JSON 写在 instrText 里，不写 fldData。
-        return cite_instruction(group, numbers, display), ""
+        return cite_instruction(group, numbers, display, bridge), ""
 
     cite.cite_field = field
     body_el, images, missing_images = cite.build_body(

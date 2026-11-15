@@ -213,9 +213,14 @@ def _endnote_sqlite_rows(path: Path) -> tuple[list, str, str]:
     return rows, db_id, error
 
 
+_TITLE_FOLD = dict(_DIGIT_FOLD)
+for _src, _dst in zip("₊₋ₓᵧₙ⁺⁻ⁿ", "+-xyn+-n"):
+    _TITLE_FOLD[ord(_src)] = _dst
+
+
 def norm_title(raw: str) -> str:
-    """题名比对口径：大小写、空白、标点都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
-    return re.sub(r"[\W_]+", "", (raw or "").casefold())
+    """题名比对口径：大小写、空白、标点、上下标写法都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
+    return re.sub(r"[\W_]+", "", (raw or "").translate(_TITLE_FOLD).casefold())
 
 
 def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
@@ -520,6 +525,38 @@ def endnote_stale_records(path: Path | None) -> tuple[list[str], str]:
         if which:
             hits.append(f"记录 {rec_id}（{which}）｜{(title or '')[:44]}")
     return hits, ""
+
+
+_UNICODE_SUBSUP = frozenset("₀₁₂₃₄₅₆₇₈₉₊₋ₓᵧₙ⁰¹²³⁴⁵⁶₇⁸⁹⁺⁻ⁿ")
+
+
+def endnote_unformatted_subscripts(path: Path | None, record_ids: set[int] | None = None) -> list[str]:
+    """检出 EndNote 库里由纯文本 RIS 导入、题名带 Unicode 上下标字符（₂/⁻² 等）而非 EndNote 富文本上下标样式的活记录。
+    EndNote 从 XML 导入 <style face="subscript|superscript"> 时，refs.title 存 ASCII 字符 + text_styles 样式表，不会命中这里。"""
+    if path is None or not path.is_file() or path.suffix.lower() == ".xml":
+        return []
+    try:
+        conn, copied = open_library_copy(_endnote_sqlite_path(path))
+    except (OSError, sqlite3.Error):
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT id, title FROM refs WHERE trash_state = 0"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+        copied.close()
+    out: list[str] = []
+    for rec_id, title in rows:
+        rid = int(rec_id)
+        if record_ids is not None and rid not in record_ids:
+            continue
+        t = str(title or "")
+        if any(c in _UNICODE_SUBSUP for c in t):
+            out.append(f"记录 {rid}｜{t[:52]}")
+    return out
 
 
 def zotero_stale_items(db: Path | None) -> tuple[list[str], str]:

@@ -43,6 +43,12 @@ fn is_untracked_only_ledger(path: &str) -> bool {
         ".ccode/watch-explains.json"
             | ".ccode/pending-registrations.json"
             | "papers/reading-list.md"
+            | "papers/endnote-library.path"
+            | "papers/zotero-library.ris"
+            | "papers/zotero-library.xml"
+            | "papers/endnote-library.ris"
+            | "papers/endnote-library.xml"
+            | "papers/endnote-journals.txt"
     )
 }
 

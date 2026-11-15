@@ -190,7 +190,40 @@ def note_flat(markdown):
     return ' '.join(' '.join(out).split())
 
 
-def attach_records(records, plan, html_notes):
+def note_multiline(markdown):
+    """精读笔记 Markdown → 多行纯文字（EndNote XML 研究笔记：XML 保留真实换行，不必像 RIS 那样压成单行）。"""
+    out = []
+    for line in markdown.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('```'):
+            continue
+        if not stripped:
+            if out and out[-1] != '':
+                out.append('')
+            continue
+        if stripped.startswith('|'):
+            cells = [c.strip() for c in stripped.strip('|').split('|')]
+            if all(re.fullmatch(r':?-{2,}:?', c) for c in cells if c):
+                continue
+            stripped = ' | '.join(cells)
+        head = _MD_HEAD.match(stripped)
+        if head:
+            text = head.group(2).strip()
+            stripped = text if len(head.group(1)) == 1 else f'【{text}】'
+        else:
+            item = _MD_LIST.match(line)
+            if item:
+                stripped = ('· ' if not item.group(1) else f'{item.group(1)}. ') + item.group(2).strip()
+            elif stripped.startswith('>'):
+                stripped = stripped.lstrip('>').strip()
+        stripped = re.sub(r'\*\*(.+?)\*\*', r'\1', stripped).replace('`', '')
+        out.append(stripped)
+    while out and out[-1] == '':
+        out.pop()
+    return '\n'.join(out)
+
+
+def attach_records(records, plan, html_notes, multiline_notes=False):
     """按 Mesa 给的 {键: {pdf, note}} 给记录挂全文与笔记。文件不在了的不挂。返回 (挂上全文几篇, 挂上笔记几篇)。"""
     pdfs = notes = 0
     for r in records:
@@ -208,7 +241,12 @@ def attach_records(records, plan, html_notes):
             except OSError:
                 text = ''
             if text.strip():
-                r['attachNote'] = note_html(text) if html_notes else note_flat(text)
+                if html_notes:
+                    r['attachNote'] = note_html(text)
+                elif multiline_notes:
+                    r['attachNote'] = note_multiline(text)
+                else:
+                    r['attachNote'] = note_flat(text)
                 notes += 1
     return pdfs, notes
 
@@ -381,6 +419,23 @@ def _load(path):
             def value(name):
                 el = item.find(name)
                 return ''.join(el.itertext()).strip() if el is not None else ''
+            def rich_value(name):
+                el = item.find(name)
+                if el is None:
+                    return ''
+                parts = [el.text or '']
+                for child in el:
+                    txt = ''.join(child.itertext())
+                    faces = (child.get('face') or '').lower().split()
+                    if 'subscript' in faces and txt:
+                        parts.append(f'<sub>{txt}</sub>')
+                    elif 'superscript' in faces and txt:
+                        parts.append(f'<sup>{txt}</sup>')
+                    else:
+                        parts.append(txt)
+                    if child.tail:
+                        parts.append(child.tail)
+                return ''.join(parts).strip()
             pages = value('pages')
             start = (item.find('pages').get('start') or '').strip() if item.find('pages') is not None else ''
             end = (item.find('pages').get('end') or '').strip() if item.find('pages') is not None else ''
@@ -389,13 +444,13 @@ def _load(path):
             keywords = [''.join(k.itertext()).strip() for k in item.findall('keywords/keyword')]
             keywords = [k for k in keywords if k]
             result.append({'id': value('label'), 'sourceRecordNumber': value('rec-number'), 'type': {'17': 'article', '6': 'book', '5': 'incollection', '47': 'inproceedings', '32': 'phdthesis'}.get(value('ref-type'), 'misc'),
-                'title': value('titles/title'), 'journal': value('titles/secondary-title'),
+                'title': rich_value('titles/title'), 'journal': value('titles/secondary-title'),
                 'journalAbbreviation': value('periodical/abbr-1') or value('titles/alt-title'),
                 'authors': [''.join(a.itertext()).strip() for a in item.findall('contributors/authors/author')],
                 'year': value('dates/year'), 'date': value('dates/pub-dates/date'),
                 'epubDate': value('edition'), 'doi': value('electronic-resource-num'),
                 'volume': value('volume'), 'number': value('number'), 'pages': pages,
-                'articleType': value('work-type'), 'abstract': value('abstract'), 'notes': value('notes'),
+                'articleType': value('work-type'), 'abstract': rich_value('abstract'), 'notes': value('notes'),
                 'language': value('language'), 'keywords': keywords,
                 'url': value('urls/web-urls/url'), 'issn': value('isbn'),
                 'attachments': [''.join(a.itertext()).strip() for a in item.findall('urls/pdf-urls/url')], 'sourceXml': ET.tostring(item,encoding='unicode')})
@@ -454,8 +509,90 @@ def escape_bib(value):
     return ''.join('\\'+c if c in '&%_#{}$' else c for c in str(value))
 
 
-_SUB = str.maketrans('0123456789+-xy−', '₀₁₂₃₄₅₆₇₈₉₊₋ₓᵧ₋')
-_SUP = str.maketrans('0123456789+-−', '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻')
+_SUB = str.maketrans('0123456789+-xyn−', '₀₁₂₃₄₅₆₇₈₉₊₋ₓᵧₙ₋')
+_SUP = str.maketrans('0123456789+-n−', '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿ⁻')
+
+_SUB_UNMAP = {
+    '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+    '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9',
+    '₊': '+', '₋': '-', 'ₓ': 'x', 'ᵧ': 'y', 'ₙ': 'n',
+}
+_SUP_UNMAP = {
+    '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
+    '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+    '⁺': '+', '⁻': '−', 'ⁿ': 'n',
+}
+
+
+def styled_runs(cleaned_text):
+    """已走过 clean()/title_text() 的字符串拆成 [('normal'|'subscript'|'superscript', plain_str), ...]。
+    EndNote XML 用它生成 <style face="subscript|superscript">，Zotero 用它生成 <sub>/<sup>，
+    使 Word 刷新参考文献表时产出真正的 <w:vertAlign> 上下标格式而非 Unicode 伪下标字符（2026-11-15 HER 实证）。"""
+    s = str(cleaned_text or '')
+    if not s:
+        return []
+    runs = []
+    n = len(s)
+    for i, ch in enumerate(s):
+        if ch in _SUB_UNMAP:
+            face, out = 'subscript', _SUB_UNMAP[ch]
+        elif ch in _SUP_UNMAP:
+            face, out = 'superscript', _SUP_UNMAP[ch]
+        elif ch in ('.', '\u2024') and i > 0 and i + 1 < n and s[i - 1] in _SUB_UNMAP and s[i + 1] in _SUB_UNMAP:
+            face, out = 'subscript', '.'
+        elif ch == '/' and i > 0 and i + 1 < n and s[i - 1] in '₀₁₂₃₄₅₆₇₈₉' and s[i + 1] in '₀₁₂₃₄₅₆₇₈₉':
+            face, out = 'subscript', '/'
+        else:
+            face, out = 'normal', ch
+        if runs and runs[-1][0] == face:
+            runs[-1] = (face, runs[-1][1] + out)
+        else:
+            runs.append((face, out))
+    return runs
+
+
+def put_styled_xml(el, cleaned_text):
+    """EndNote XML 富文本节点：含上下标时写 <style face="normal|subscript|superscript" font="default" size="100%">，
+    否则直接写纯文本，避免无角标题录膨胀。"""
+    runs = styled_runs(cleaned_text)
+    if not runs:
+        el.text = ''
+        return el
+    if all(face == 'normal' for face, _ in runs):
+        el.text = runs[0][1]
+        return el
+    for face, val in runs:
+        st = ET.SubElement(el, 'style', {'face': face, 'font': 'default', 'size': '100%'})
+        st.text = val
+    return el
+
+
+def styled_xml_inner(cleaned_text):
+    """供 cite_docx.py 的 record_xml 拼进 <title>...</title> 内部（已做 XML 转义）。"""
+    from xml.sax.saxutils import escape as _xml_esc
+    runs = styled_runs(cleaned_text)
+    if not runs:
+        return ''
+    if all(face == 'normal' for face, _ in runs):
+        return _xml_esc(runs[0][1])
+    return ''.join(
+        f'<style face="{face}" font="default" size="100%">{_xml_esc(val)}</style>'
+        for face, val in runs
+    )
+
+
+def rich_html(cleaned_text):
+    """供 Zotero CSL JSON title 使用：上下标输出为 <sub>...</sub> / <sup>...</sup>，普通字符原样保留（citeproc 不解 &amp;）。"""
+    runs = styled_runs(cleaned_text)
+    out = []
+    for face, val in runs:
+        if face == 'subscript':
+            out.append(f'<sub>{val}</sub>')
+        elif face == 'superscript':
+            out.append(f'<sup>{val}</sup>')
+        else:
+            out.append(val)
+    return ''.join(out)
 
 # DOI/URL/附件路径是标识符：不做化学上下标美化，只折空白；输入侧再把上下标/全角
 # 数字折叠回 ASCII（老导入文件里的 10.1039/D₂EE₀₄₁₂₁A 这类愈合回 D2EE04121A）。
@@ -787,7 +924,7 @@ def render(records, suffix):
         root = ET.Element('xml'); rows = ET.SubElement(root, 'records')
         for i, r in enumerate(records, 1):
             item = ET.SubElement(rows, 'record')
-            def put(path, value, attrs=None):
+            def make_el(path, attrs=None):
                 parent = item
                 parts = path.split('/')
                 for part in parts[:-1]:
@@ -795,14 +932,16 @@ def render(records, suffix):
                     if child is None:
                         child = ET.SubElement(parent, part)
                     parent = child
-                el = ET.SubElement(parent, parts[-1], attrs or {})
+                return ET.SubElement(parent, parts[-1], attrs or {})
+            def put(path, value, attrs=None):
+                el = make_el(path, attrs)
                 el.text = str(value)
             code = type_code.get(r.get('type'), 13)
             ET.SubElement(item, 'source-app', {'name':'EndNote','version':'21.0'}).text = 'EndNote'
             put('rec-number', i)
             put('ref-type', code, {'name': type_name.get(code, 'Generic')})
             for author in r.get('authors', []): put('contributors/authors/author', family_comma(author))
-            if r.get('title'): put('titles/title', title_text(r['title']))
+            if r.get('title'): put_styled_xml(make_el('titles/title'), title_text(r['title']))
             full_journal = clean(r.get('journal') or '')
             if full_journal: put('titles/secondary-title', full_journal)
             short, alt = journal_abbreviations(r)
@@ -818,7 +957,7 @@ def render(records, suffix):
                 if has_short:
                     put('titles/alt-title', short)
             # EndNote.dtd 的 record 子元素顺序：pages → volume → number → keywords → dates
-            # → isbn → abstract → notes → work-type → urls → electronic-resource-num → language。
+            # → isbn → abstract → notes → work-type → urls → electronic-resource-num → research-notes → language。
             # 插错顺序时 EndNote 会整份拒绝。
             if r.get('pages'):
                 start, end = split_pages(r['pages'])
@@ -836,22 +975,30 @@ def render(records, suffix):
                 if r.get('date'):
                     xml_date(ET.SubElement(dates, 'pub-dates'), 'date', r['date'])
             if r.get('issn') or r.get('isbn'): put('isbn', r.get('issn') or r.get('isbn'))
-            if r.get('abstract'): put('abstract', clean(r['abstract']))
+            if r.get('abstract'): put_styled_xml(make_el('abstract'), clean(r['abstract']))
             # label 在 DTD 里位于 abstract 与 notes 之间
             put('label', r['id'])
             if r.get('notes'): put('notes', r['notes'])
             if r.get('articleType'): put('work-type', r['articleType'])
-            if r.get('url') or r.get('attachments'):
+            pdf_urls = [plain_id(att) for att in (r.get('attachments') or []) if att]
+            if r.get('attachPdf'):
+                pdf_path = Path(r['attachPdf'])
+                pdf_uri = pdf_path.resolve().as_uri() if pdf_path.is_file() else plain_id(r['attachPdf'])
+                if pdf_uri not in pdf_urls:
+                    pdf_urls.append(pdf_uri)
+            if r.get('url') or pdf_urls:
                 urls = ET.SubElement(item, 'urls')
                 if r.get('url'):
                     web = ET.SubElement(urls, 'web-urls')
                     ET.SubElement(web, 'url').text = plain_id(r['url'])
-                if r.get('attachments'):
+                if pdf_urls:
                     pdfs = ET.SubElement(urls, 'pdf-urls')
-                    for attachment in r['attachments']:
-                        ET.SubElement(pdfs, 'url').text = plain_id(attachment)
+                    for attachment in pdf_urls:
+                        ET.SubElement(pdfs, 'url').text = attachment
             if r.get('doi'):
                 put('electronic-resource-num', bare_doi(r['doi']))
+            if r.get('attachNote'):
+                put('research-notes', r['attachNote'])
             if r.get('language'): put('language', r['language'])
         return ET.tostring(root, encoding='unicode', xml_declaration=True) + '\n'
     if suffix == '.ris':
@@ -1000,7 +1147,7 @@ def main():
     p.add_argument('--attach',type=Path,help='Mesa 写的 {键: {pdf, note}}：RIS 给条目挂全文（L1）与笔记（RN）')
     a=p.parse_args()
     if a.check_endnote_library is not None:
-        # 库体检（同步按钮用）：只读列出旧版导出的污染记录，永远成功退出
+        # 库体检（同步按钮用）：只读列出旧版导出的污染记录与纯文本 RIS 伪上下标记录，永远成功退出
         import importlib.util
         spec=importlib.util.spec_from_file_location('library_match',Path(__file__).with_name('library_match.py'))
         match=importlib.util.module_from_spec(spec);spec.loader.exec_module(match)
@@ -1009,8 +1156,13 @@ def main():
         elif hits:
             print(f'库体检：检出 {len(hits)} 条旧版导出的脏记录，不删掉它们，新导入的去重认不出、旧数据会残留：')
             for h in hits: print(f'- {h}')
-            print('处方：在 EndNote 里按上面的标题搜到这些记录删除（进废纸篓即可），再导入本次生成的 RIS。')
-        else: print('库体检：库里没有旧版导出的脏记录。')
+            print('处方：在 EndNote 里按上面的标题搜到这些记录删除（进废纸篓即可），再导入本次生成的 endnote-library.xml。')
+        else:
+            unformatted = match.endnote_unformatted_subscripts(a.check_endnote_library)
+            if unformatted:
+                print(f'库体检：检出 {len(unformatted)} 条由纯文本 RIS 导入的上下标记录（Word 更新引文后显示为 ₂ 字符而非真下标格式）——若要真上下标格式，先在 EndNote 删掉旧条目再导入 papers/endnote-library.xml。')
+            else:
+                print('库体检：库里没有旧版导出的脏记录。')
         return 0
     if a.input is None or a.output is None or a.report is None:
         print('--input/--output/--report are required',file=sys.stderr);return 1
@@ -1020,7 +1172,7 @@ def main():
             records,dropped=drop_excluded(records,a.skip_excluded)
             if dropped: print(f'检索时排除的 {dropped} 篇不导。')
         if a.attach:
-            attach_records(records, load_attach_plan(a.attach), html_notes=False)
+            attach_records(records, load_attach_plan(a.attach), html_notes=False, multiline_notes=(a.output.suffix.lower() == '.xml'))
         if a.journal_terms:
             a.journal_terms.write_text(journal_terms(records), encoding='utf-8', newline='')
         for dest in (a.output,a.report):

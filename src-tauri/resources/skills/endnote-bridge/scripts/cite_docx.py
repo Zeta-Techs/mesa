@@ -150,8 +150,9 @@ def record_xml(rec: dict, rec_num: int) -> str:
     authors = "".join(
         f"<author>{xml_escape(a)}</author>" for a in (rec.get("authors") or [])
     )
-    title = xml_escape(rec.get("title") or "")
+    title = rec.get("_styled_title") or xml_escape(rec.get("title") or "")
     journal = xml_escape(rec.get("journal") or "")
+    abbr1 = xml_escape(rec.get("_abbr1") or "")
     year = xml_escape(rec.get("year") or "")
     pages = xml_escape(rec.get("pages") or "")
     volume = xml_escape(rec.get("volume") or "")
@@ -175,12 +176,17 @@ def record_xml(rec: dict, rec_num: int) -> str:
             f'{library_num}</key><key app="ENWeb" db-id="">0</key></foreign-keys>'
         )
     urls = f"<urls><related-urls><url>{url}</url></related-urls></urls>" if url else "<urls></urls>"
+    periodical = (
+        f"<periodical><full-title>{journal}</full-title><abbr-1>{abbr1}</abbr-1></periodical>"
+        if abbr1
+        else f"<periodical><full-title>{journal}</full-title></periodical>"
+    )
     return (
         f"<record><rec-number>{shown_num}</rec-number>{foreign}"
         f'<ref-type name="{kind}">{code}</ref-type>'
         f"<contributors><authors>{authors}</authors></contributors>"
         f"<titles><title>{title}</title><secondary-title>{journal}</secondary-title></titles>"
-        f"<periodical><full-title>{journal}</full-title></periodical>"
+        f"{periodical}"
         f"<pages>{pages}</pages><volume>{volume}</volume><number>{number}</number>"
         f"<dates><year>{year}</year></dates>"
         f"{urls}<electronic-resource-num>{doi}</electronic-resource-num>"
@@ -1316,11 +1322,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     bridge = load_bridge()
     records = {rec["id"]: rec for rec in bridge.load(bib_path) if rec.get("id")}
-    # traveling library 里的题名/刊名与导入文件同一套化学上下标口径（<sup>0</sup> 收成 ⁰），
-    # 否则没绑上库的记录刷新后会把字面 <sup> 文本带进参考文献表。标识符字段保持原样。
+    # traveling library 里的题名转成 EndNote 原生 <style face="subscript|superscript"> 富文本，
+    # 刊名/缩写与导入文件同口径，避免 Update 后落成字面 <sup> 或非下标格式的 ₂ 字符（2026-11-15 HER 实证）。
     for rec in records.values():
-        rec["title"] = bridge.clean(rec.get("title") or "")
-        rec["journal"] = bridge.clean(rec.get("journal") or "")
+        cleaned_title = bridge.title_text(rec.get("title") or "")
+        rec["title"] = cleaned_title
+        rec["_styled_title"] = bridge.styled_xml_inner(cleaned_title)
+        full_journal = bridge.clean(rec.get("journal") or "")
+        rec["journal"] = full_journal
+        short, _alt = bridge.journal_abbreviations(rec)
+        if short and short.casefold() != full_journal.casefold():
+            rec["_abbr1"] = short
     # Update 前的可见文字做同年同姓消歧（(R. Zhang et al., 2026) / 2026a/b）
     decorate_disambiguation(records)
     text = source.read_text(encoding="utf-8-sig")
@@ -1355,8 +1367,8 @@ def main(argv: list[str] | None = None) -> int:
     if bound_ids:
         binding.append(
             f"绑定记录号范围 {bound_ids[0]}–{bound_ids[-1]}。"
-            "生成之后不要再对库做删除/重新导入——动了就要重新生成域稿，"
-            "否则 Update 会把整篇落进「漫游个人图书馆」。"
+            "若之后在 EndNote 里删除或重导条目，重开 `output/endnote.docx` 时 Mesa 会自动按新记录号重绑（未在 Word 里手工改存过时）；"
+            "若已在 Word 里改过，请重跑本脚本，否则旧记录号会落进「漫游个人图书馆」。"
         )
     # 库体检：旧版 Mesa 导出的脏记录会让新导入的去重认不出、旧数据残留。
     # 只读检查；检出就给出「先删再导」的处方，库干净时零输出。
@@ -1371,7 +1383,19 @@ def main(argv: list[str] | None = None) -> int:
                 "重新导入时去重认不出，旧数据会残留："
             )
             binding.extend(f"- {h}" for h in stale)
-            binding.append("处方：在 EndNote 按上面清单的标题搜索并删除这些记录，再导入新的 endnote-library.ris。")
+            binding.append("处方：在 EndNote 按上面清单的标题搜索并删除这些记录，再用 File → Import（选 EndNote generated XML）导入 papers/endnote-library.xml。")
+        elif bound_ids:
+            unformatted = match.endnote_unformatted_subscripts(lib_for_check, set(bound_ids))
+            if unformatted:
+                binding.append(
+                    f"提示：已绑定的记录里有 {len(unformatted)} 条由纯文本 RIS 导入，题名含 Unicode 字符（₂/⁻² 等）而非富文本上下标样式，"
+                    "点 Update 后 Word 参考文献表会沿用库里的纯字符："
+                )
+                binding.extend(f"- {h}" for h in unformatted)
+                binding.append(
+                    "如需真上下标格式：在 EndNote 删掉旧条目后点 File → Import → File…（Import Option 选 EndNote generated XML）导入 `papers/endnote-library.xml`，"
+                    "再重新打开 `output/endnote.docx`（Mesa 会自动按新记录号重绑）。"
+                )
     body_el, images, missing_images = build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )

@@ -926,13 +926,14 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
   标注与笔记都按路径认文件（2026-10-23 HER 实证：精读步改名 9 个，暂缓登记全指向旧名）。模板 guidance 必须写明
   「文件名随意」，不得暗示用户要自己整理命名。
 - **精读笔记是读后消化，不是覆盖索引（2026-09-18）**：写法 SSOT 为 `lit-notes` 技能。叙述用中文，材料名/离子/电解液/方法缩写/图表编号等惯用英文原词保留，不强翻；禁止把英文摘要整段贴进笔记。TASK 简报不得写「每篇产出笔记文件」当完成标准。机器验收 `same-ids` 只对 index 覆盖；`records` 不要求 `notePath` 非空。可逆准备 = 认 PDF（lit_records.py write）/ index 骨架 / bib 对账 / 合法 OA，不包括从摘要批量生成笔记正文。「按摘要记」= 根据摘要消化来写并标「仅摘要」。用户确认的核心篇有 PDF 却未写出精读时，质量状态不得高于「已生成待审」。已有项目不静默改 TASK.md，下一轮开步才带新简报；技能更新走内置技能「有新版」。
-- **同步到文献库写单独的整库文件，不改清单那份（2026-10-23）**：「同步到 Zotero / EndNote」按 references.bib 生成
-  `papers/zotero-library.ris` / `papers/endnote-library.ris`（每次重写，新项目 .gitignore 模板带这两行）；检索清单的
+- **同步到文献库写单独的整库文件，不改清单那份（2026-10-23，2026-11-15 升级 XML 富文本上下标）**：「同步到 Zotero / EndNote」按 references.bib 生成
+  `papers/zotero-library.xml` + `papers/zotero-library.ris` 与 `papers/endnote-library.xml` + `papers/endnote-library.ris`（每次重写，新项目 .gitignore 模板与运行时 `.git/info/exclude` 均覆盖这四行及 `papers/endnote-library.path`）；检索清单的
   `endnote-import.ris` 只由 lit_records.py 与 Mesa 纳入/移出维护，同步不碰——HER 实证同步整份改写它，主仓留下改了没提交的
-  清单文件。included.json 里 decision=excluded 的篇（DOI 优先、其次标题）不进这两份（`bridge.py drop_excluded`，
+  清单文件。有 `references.bib` 时：Zotero 优先转交保留 `<style face="subscript|superscript">` 的 `zotero-library.xml`（Zotero 原生导入转为标题 `<sub>`/`<sup>`）；EndNote 复制 `endnote-library.xml` 路径并拉起所指 `.enl` 库，引导用 `File → Import → EndNote generated XML` 导入（纯文本 RIS 只能存 Unicode `₂` 码位，Word Update 后不是真下标 `w:vertAlign`）。included.json 里 decision=excluded 的篇（DOI 优先、其次标题）不进导出（`bridge.py drop_excluded`，
   bridge 与 zotero_rtf 都带 `--skip-excluded`）：引文库里还留着检索前从 Zotero 导进来、后来全排除的条目。
   **库里已有的照样导（同日用户拍板，改 2026-10-11 的「Zotero 按 DOI 差量」）**：Mesa 出的题录字段全是卖点，重复的导进去由人在
   Zotero「重复条目」里挑着合并；反馈只报有几条重复。zotero-library.ris 不写 `#` 头注释（RIS 没有注释语法），条数只进 stdout。
+  **域稿兜底与自动重绑（2026-11-15 HER 实证）**：① `zotero_docx.py` 对未绑定或库内多条重复的引文，仍必须在 `citationItems` 写入确定性占位 URI（`embed000…`）与嵌在域里的完整 `itemData`（标题带 `<sub>`/`<sup>`、剔除 `待补`），严禁写空 `"citationItems": []`（Zotero `integration.js` 见空数组会在 Refresh 时整条删光引注，点 Add/Edit Bibliography 报「执行本操作前您需要插入引注。」）；② `cite_docx.py` 的漫游库 `<record>` 同样写 `<style face="subscript|superscript">`，库绑定检出已绑定记录来自 RIS 假下标时在报告点名；③ 人在界面保存 `papers/endnote-library.path` 或点「Word 打开 EndNote 版 / Zotero 版」（`open_in_system`）时，若磁盘上的域稿尚未被字处理软件保存改过（无 `w:rsid` / `mc:Ignorable` / `_ENREF_` / `ZOTERO_BIBL`），`endnote::refresh_field_docx_if_stale` 自动按最新库指针与库记录静默重绑，且不改写已纳入 Git 跟踪的报告文件。
   **导出题录写法（同日核查整改）**：两份同步文件与界面同一套写法——化学式按「整词能拆成元素 + 计量」认（bridge.py
   `_subscript_formulas` 与 screening-review.ts 镜像，`tests/citation-format.test.ts` 逐条比对；图表编号 Figure S2、B3LYP、H1N1、
   标题里的 As/In 不动）；题名去人手编号前缀（`strip_title_prefix`）；缩写经 `tidy_abbreviation`（Chem.A 补空格、去冒号）；

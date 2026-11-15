@@ -3282,10 +3282,13 @@ fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          .ccode/help-wanted.md\n\
          .ccode/outbox.jsonl\n\
          \n\
-         # 同步到文献库时 Mesa 按引文库生成的导入文件：每次重写，不进 git\n\
+         # 同步到文献库时 Mesa 按引文库生成的导入文件与本机库指针：每次重写或本机私有，不进 git\n\
          /papers/zotero-library.ris\n\
+         /papers/zotero-library.xml\n\
          /papers/endnote-library.ris\n\
+         /papers/endnote-library.xml\n\
          /papers/endnote-journals.txt\n\
+         /papers/endnote-library.path\n\
          \n\
          # 文献 PDF 等大文件登记为资源引用，不进 git\n\
          *.pdf\n\

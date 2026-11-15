@@ -707,6 +707,7 @@ mod tests {
         assert!(zotero_native_import_ext("ris"));
         assert!(zotero_native_import_ext("bib"));
         assert!(zotero_native_import_ext("json"));
+        assert!(zotero_native_import_ext("xml"));
         assert!(!zotero_native_import_ext("pdf"));
         assert!(!zotero_native_import_ext("xpi"));
     }
@@ -1448,7 +1449,7 @@ pub async fn zotero_install_bbt() -> Result<ZoteroBbtInstallDto, String> {
 }
 
 fn zotero_native_import_ext(ext: &str) -> bool {
-    matches!(ext, "ris" | "bib" | "json")
+    matches!(ext, "ris" | "bib" | "json" | "xml")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1588,7 +1589,10 @@ pub fn refresh_library_ris(
     }
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
+    crate::projects::exclude_in_git(&root, "/papers/zotero-library.ris");
+    crate::projects::exclude_in_git(&root, "/papers/zotero-library.xml");
     let ris = papers.join("zotero-library.ris");
+    let xml = papers.join("zotero-library.xml");
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-zotero-ris-{stamp}.py"));
     crate::storage::atomic_write(
@@ -1664,6 +1668,8 @@ pub fn refresh_library_ris(
     let mut cmd = crate::process::background_command(&py);
     cmd.arg(&script)
         .arg("--library-ris")
+        .arg("--library-xml")
+        .arg(&xml)
         .arg("--bib")
         .arg(&source)
         .arg("--ris")
@@ -1860,7 +1866,10 @@ pub async fn zotero_open_import(
         let root_c = crate::paths::canonicalize_plain(std::path::Path::new(&root_exp))
             .map_err(|e| format!("目录无效: {e}"))?;
         let (open_path, health) = if root_c.join("references.bib").is_file() {
-            refresh_library_ris(&root_c, mode)?
+            let (ris_opt, health) = refresh_library_ris(&root_c, mode)?;
+            let xml = root_c.join("papers/zotero-library.xml");
+            let preferred = ris_opt.map(|ris| if xml.is_file() { xml } else { ris });
+            (preferred, health)
         } else {
             (Some(std::path::PathBuf::from(&path_exp)), String::new())
         };
@@ -1870,7 +1879,7 @@ pub async fn zotero_open_import(
             None => return Ok(health),
         };
         let path_c = crate::paths::canonicalize_plain(&open_path)
-            .map_err(|_| "找不到 papers/zotero-library.ris（同步时会按引文库生成）".to_string())?;
+            .map_err(|_| "找不到 papers/zotero-library.xml（同步时会按引文库生成）".to_string())?;
         if !crate::paths::path_within_path(&path_c, &root_c) {
             return Err("导入文件不在项目目录内".into());
         }
@@ -1880,7 +1889,7 @@ pub async fn zotero_open_import(
             .unwrap_or("")
             .to_ascii_lowercase();
         if !zotero_native_import_ext(&ext) {
-            return Err("只打开 RIS / BibTeX / CSL JSON 给 Zotero 导入".into());
+            return Err("只打开 RIS / BibTeX / EndNote XML / CSL JSON 给 Zotero 导入".into());
         }
         // Zotero 6 导不进：先说清楚，不拉起一个注定报「不支持所选文件的格式」的导入
         if let Some(version) = installed_zotero_version() {

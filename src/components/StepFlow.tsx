@@ -70,7 +70,7 @@ import {
   spotCheckPicks,
   type SpotCheckPick,
 } from "../notes-progress";
-import { inlineDecisionListVisible, stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
+import { inlineDecisionListVisible, isFieldDocRefreshTitle, stepNodeAction, stepNodeReady } from "../step-node-actions.ts";
 import {
   DECISION_STATUS,
   DECISION_STATUS_ASK,
@@ -1188,13 +1188,15 @@ export default function StepFlow({
   /** 这一步有「同步到文献库」那一行（三套模板的初稿、期刊格式、投稿材料、返修）。
    *  2026-11-10 从精读挪到初稿：大纲后还会补文献，初稿保存后清单才基本定；定稿出的两份域稿要库里每篇恰好一条，
    *  所以在定稿开工前同步一次（每次同步都是整份导入，早同步、多同步只会多出重复条目） */
+  const hasFieldDocRefresh = (step.humanTasks ?? []).some((h) => isFieldDocRefreshTitle(h.title));
   const endnoteStep =
     step.workspaceName === "draft" ||
     step.workspaceName === "paper-draft" ||
     step.workspaceName === "thesis-draft" ||
     step.workspaceName === "journal-format" ||
     step.workspaceName === "submission-materials" ||
-    /^rebuttal-r\d+$/.test(step.workspaceName ?? "");
+    /^rebuttal-r\d+$/.test(step.workspaceName ?? "") ||
+    hasFieldDocRefresh;
   useEffect(() => {
     if (!endnoteStep) return;
     let stale = false;
@@ -2808,7 +2810,10 @@ export default function StepFlow({
             )}
           </div>
         )}
-        {!dense && node.key === "endnote-export" && endnoteLib && (
+        {!dense &&
+          (node.key === "endnote-export" ||
+            Boolean(node.kind === "human" && human && isFieldDocRefreshTitle(human.title) && !node.done && afterReady(human))) &&
+          endnoteLib && (
           <p className="mt-0.5 pl-6 text-micro leading-5 text-l4">
             {endnoteLib.path ? (
               <>
@@ -2848,7 +2853,10 @@ export default function StepFlow({
             {endnoteLibNote && <span className="ml-1 text-err-text">{endnoteLibNote}</span>}
           </p>
         )}
-        {!dense && node.key === "endnote-export" && endnoteChoices && (
+        {!dense &&
+          (node.key === "endnote-export" ||
+            Boolean(node.kind === "human" && human && isFieldDocRefreshTitle(human.title) && !node.done && afterReady(human))) &&
+          endnoteChoices && (
           <div className="mt-1 ml-6 flex flex-wrap items-center gap-1">
             <span className="text-micro text-l4">选你导入题录的那个库：</span>
             {endnoteChoices.map((choice) => (

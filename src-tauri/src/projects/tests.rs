@@ -3068,7 +3068,14 @@ fn gitignore_template_covers_ledger_block_and_coding_mode_does_not() {
         assert!(gitignore_text(mode, "artifacts").lines().any(|l| l == ".ccode/help-wanted.md"), "{mode}");
     }
     // 同步到文献库生成的导入文件不进 git（科研项目才有文献库）
-    for path in ["/papers/zotero-library.ris", "/papers/endnote-library.ris", "/papers/endnote-journals.txt"] {
+    for path in [
+        "/papers/zotero-library.ris",
+        "/papers/zotero-library.xml",
+        "/papers/endnote-library.ris",
+        "/papers/endnote-library.xml",
+        "/papers/endnote-journals.txt",
+        "/papers/endnote-library.path",
+    ] {
         assert!(gitignore_text("research", "artifacts").lines().any(|l| l == path), "{path}");
     }
 }

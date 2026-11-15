@@ -4,9 +4,14 @@
 use std::path::{Path, PathBuf};
 
 const BRIDGE_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts/bridge.py");
+const CITE_DOCX_PY: &str = include_str!("../resources/skills/endnote-bridge/scripts/cite_docx.py");
+const ZOTERO_DOCX_PY: &str = include_str!("../resources/skills/zotero-sync/scripts/zotero_docx.py");
+const LIBRARY_MATCH_PY: &str =
+    include_str!("../resources/skills/endnote-bridge/scripts/library_match.py");
 
-/// 按 references.bib 生成、交给 EndNote 的整库 RIS（gitignored）。检索清单那份 `endnote-import.ris` 另有人维护，不改写
+/// 按 references.bib 生成、交给 EndNote 的整库 RIS / XML（均 gitignored）。检索清单那份 `endnote-import.ris` 另有人维护，不改写
 const LIBRARY_RIS: &str = "endnote-library.ris";
+const LIBRARY_XML: &str = "endnote-library.xml";
 
 /// 同步时顺手写的 EndNote 期刊术语表（全称、缩写 1/2/3，gitignored）：RIS 只有一格缩写，另一种写法放这里
 const JOURNAL_TERMS: &str = "endnote-journals.txt";
@@ -176,8 +181,12 @@ pub fn export_ris_only(
     }
     let papers = root.join("papers");
     std::fs::create_dir_all(&papers).map_err(|e| format!("无法创建 papers/: {e}"))?;
+    crate::projects::exclude_in_git(&root, "/papers/endnote-library.ris");
+    crate::projects::exclude_in_git(&root, "/papers/endnote-library.xml");
+    crate::projects::exclude_in_git(&root, "/papers/endnote-journals.txt");
     let ris = papers.join(LIBRARY_RIS);
-    let report = papers.join("endnote-report.json");
+    let xml = papers.join(LIBRARY_XML);
+    let report = std::env::temp_dir().join(format!("ccode-endnote-lib-report-{}.json", uuid::Uuid::new_v4()));
     let stamp = uuid::Uuid::new_v4();
     let script = std::env::temp_dir().join(format!("ccode-endnote-bridge-{stamp}.py"));
     crate::storage::atomic_write(&script, BRIDGE_PY.as_bytes(), true)?;
@@ -228,6 +237,24 @@ pub fn export_ris_only(
         Some(&terms),
         attach.as_ref().map(|p| p.file.as_path()),
     );
+    // 同步写出保留 <style face="subscript|superscript"> 真上下标格式的 EndNote XML（供 File → Import → EndNote generated XML 导入）
+    if dropped.is_ok() {
+        let _ = run_bridge_terms(
+            &py,
+            &script,
+            &source,
+            &papers,
+            &stamp,
+            "xml",
+            &xml,
+            &report,
+            &root,
+            false,
+            None,
+            attach.as_ref().map(|p| p.file.as_path()),
+        );
+    }
+    let _ = std::fs::remove_file(&report);
     let _ = std::fs::remove_file(&attach_file);
     if source != bib {
         let _ = std::fs::remove_file(&source);
@@ -600,6 +627,44 @@ fn clip_utf16_payload(text: &str) -> Vec<u8> {
     bytes
 }
 
+fn launch_endnote_app(enl: Option<&Path>) -> Result<(), String> {
+    let app = find_endnote_app().ok_or_else(|| "找不到 EndNote。".to_string())?;
+    let valid_enl = enl.filter(|p| {
+        p.is_file()
+            && p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("enl"))
+    });
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = crate::process::background_command("open");
+        cmd.arg("-a").arg(&app);
+        if let Some(lib) = valid_enl {
+            cmd.arg(lib);
+        }
+        cmd.spawn().map_err(|e| format!("没法打开 EndNote: {e}"))?;
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let mut cmd = crate::process::background_command(&app);
+        if let Some(lib) = valid_enl {
+            cmd.arg(lib);
+        }
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("没法打开 EndNote: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (app, valid_enl);
+        Err("这个系统上没有 EndNote 桌面版可交。".into())
+    }
+}
+
 fn launch_endnote_with_file(file: &Path) -> Result<(), String> {
     let app = find_endnote_app().ok_or_else(|| {
         "找不到 EndNote。".to_string()
@@ -868,53 +933,437 @@ pub async fn endnote_export_xml(
     tauri::async_runtime::spawn_blocking(move || {
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
-        // 有引文库就按它生成整库 RIS（endnote-library.ris，初稿步同步时）；还没有引文库（检索步）才交检索清单那份。
-        let (ris, health) = if root_path.join("references.bib").is_file() {
-            export_ris_only(root_path, mode)?
-        } else {
-            let Some(ris) = find_import_ris(root_path) else {
-                return Err(
-                    "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
-                        .into(),
-                );
+        // 有引文库就按它生成整库 endnote-library.xml + endnote-library.ris（初稿/定稿同步时）；
+        // XML 保留 <style face="subscript|superscript"> 真上下标，避免 RIS 纯文本把 MoS₂ 存成假下标码位。
+        // 还没有引文库（检索步）才交检索清单那份 endnote-import.ris。
+        if root_path.join("references.bib").is_file() {
+            let (ris, health) = export_ris_only(root_path, mode)?;
+            let xml = ris.with_file_name(LIBRARY_XML);
+            if xml.is_file() {
+                copy_path_to_clipboard(&xml);
+                let enl = endnote_library_pointer(root_path);
+                let health_note = if health.is_empty() {
+                    String::new()
+                } else {
+                    format!("\n{health}")
+                };
+                return match launch_endnote_app(enl.as_deref()) {
+                    Ok(()) => {
+                        let mut lines = vec![format!(
+                            "已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）并打开 EndNote：点 File → Import → File…，「Import Option」选 EndNote generated XML，粘贴路径导入。{}",
+                            if mode == crate::library_attach::AttachMode::Items {
+                                "全文可点「打开 papers」拖入条目。"
+                            } else {
+                                ""
+                            }
+                        )];
+                        lines.push(
+                            "若此前已用 RIS 或旧版导过同批文献，请先删掉旧条目再导入（避免重复或沿用假下标）。"
+                                .to_string(),
+                        );
+                        if !health.is_empty() {
+                            lines.push(health);
+                        }
+                        Ok(lines.join("\n"))
+                    }
+                    Err(e) => Ok(format!(
+                        "已生成 papers/{LIBRARY_XML}（路径已复制）。打开 EndNote → File → Import → File…，「Import Option」选 EndNote generated XML，粘贴路径导入。{e}{health_note}"
+                    )),
+                };
+            }
+            let shown = ris
+                .file_name()
+                .map(|n| format!("papers/{}", n.to_string_lossy()))
+                .unwrap_or_else(|| ris.display().to_string());
+            copy_path_to_clipboard(&ris);
+            let health_note = if health.is_empty() {
+                String::new()
+            } else {
+                format!("\n{health}")
             };
-            (ris, String::new())
+            return match launch_endnote_with_file(&ris) {
+                Ok(()) => {
+                    let mut lines = vec![format!(
+                        "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。{}",
+                        if mode == crate::library_attach::AttachMode::Items {
+                            "全文可点「打开 papers」拖入条目。"
+                        } else {
+                            ""
+                        }
+                    )];
+                    lines.push("若此前已导过，请用 References → Find Duplicates 去重。".to_string());
+                    if !health.is_empty() {
+                        lines.push(health);
+                    }
+                    Ok(lines.join("\n"))
+                }
+                Err(e) => Ok(format!(
+                    "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
+                )),
+            };
+        }
+        let Some(ris) = find_import_ris(root_path) else {
+            return Err(
+                "还没有 papers/endnote-import.ris。检索保存进项目后才会有这一份，同步只打开它，不再重新检索。"
+                    .into(),
+            );
         };
         let shown = ris
             .file_name()
             .map(|n| format!("papers/{}", n.to_string_lossy()))
             .unwrap_or_else(|| ris.display().to_string());
         copy_path_to_clipboard(&ris);
-        let health_note = if health.is_empty() {
-            String::new()
-        } else {
-            format!("\n{health}")
-        };
         match launch_endnote_with_file(&ris) {
-            // 每次同步都是整份导入：同一个库点两次就是两份（2026-10-24 HER：27 篇里 18 篇在库里有 3 条，
-            // Word 里 Update 后只有 8 条挂上库）。精简为两行要点，不再与下方「选这个 EndNote 库」重复罗嗦
-            Ok(()) => {
-                let mut lines = vec![format!(
-                    "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。{}",
-                    if mode == crate::library_attach::AttachMode::Items {
-                        "全文可点「打开 papers」拖入条目。"
-                    } else {
-                        ""
-                    }
-                )];
-                lines.push("若此前已导过，请用 References → Find Duplicates 去重。".to_string());
-                if !health.is_empty() {
-                    lines.push(health);
-                }
-                Ok(lines.join("\n"))
-            }
+            Ok(()) => Ok(
+                "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。\n若此前已导过，请用 References → Find Duplicates 去重。"
+                    .to_string(),
+            ),
             Err(e) => Ok(format!(
-                "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
+                "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}"
             )),
         }
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+fn file_mtime(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).ok()?.modified().ok()
+}
+
+/// 仅当 docx 仍是 cite_docx.py / zotero_docx.py 写出的原装域稿（未被 Word / WPS / LibreOffice / CWYW / Zotero 保存改写）时，
+/// 返回其中的 `word/document.xml` 文本；一旦检出人在字处理软件里保存过的痕迹就返回 None，绝不覆盖。
+fn inspect_untouched_field_docx(docx_path: &Path) -> Option<String> {
+    use std::io::Read;
+    if !docx_path.is_file() {
+        return None;
+    }
+    let file = std::fs::File::open(docx_path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let entry = zip.by_name("word/document.xml").ok()?;
+    let mut xml = String::new();
+    entry.take(16 * 1024 * 1024).read_to_string(&mut xml).ok()?;
+    if xml.contains("w:rsid")
+        || xml.contains("mc:Ignorable")
+        || xml.contains("_ENREF_")
+        || xml.contains("EndNoteBibliography")
+        || xml.contains("ZOTERO_BIBL")
+    {
+        return None;
+    }
+    if !xml.contains("ADDIN EN.CITE") && !xml.contains("ADDIN ZOTERO_ITEM") {
+        return None;
+    }
+    Some(xml)
+}
+
+fn endnote_docx_has_foreign_keys(doc_xml: &str) -> bool {
+    use base64::Engine as _;
+    let mut rest = doc_xml;
+    while let Some(start) = rest.find("<w:fldData") {
+        let after = &rest[start..];
+        let Some(gt) = after.find('>') else { break };
+        let body = &after[gt + 1..];
+        let Some(end) = body.find("</w:fldData>") else { break };
+        let b64: String = body[..end].chars().filter(|c| !c.is_ascii_whitespace()).collect();
+        rest = &body[end + "</w:fldData>".len()..];
+        if b64.is_empty() {
+            continue;
+        }
+        if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(&b64) {
+            let text = String::from_utf8_lossy(&decoded);
+            if text.contains("<EndNote>") {
+                return text.contains("<foreign-keys>");
+            }
+        }
+    }
+    false
+}
+
+fn is_git_tracked(doc_root: &Path, path: &Path) -> bool {
+    if !doc_root.join(".git").exists() {
+        return false;
+    }
+    let Ok(rel) = path.strip_prefix(doc_root) else {
+        return false;
+    };
+    crate::process::background_command("git")
+        .arg("-C")
+        .arg(doc_root)
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg("--")
+        .arg(rel)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+fn find_final_markdown(doc_root: &Path) -> Option<PathBuf> {
+    const CANDIDATES: [&str; 4] = [
+        "submission/formatted.md",
+        "manuscript/review-final.md",
+        "manuscript/paper-final.md",
+        "manuscript/thesis-final.md",
+    ];
+    let mut best: Option<(Option<std::time::SystemTime>, usize, PathBuf)> = None;
+    for (idx, rel) in CANDIDATES.iter().enumerate() {
+        let candidate = doc_root.join(rel);
+        if !candidate.is_file() {
+            continue;
+        }
+        let mtime = file_mtime(&candidate);
+        let take = match &best {
+            None => true,
+            Some((bm, bi, _)) => match (mtime, *bm) {
+                (Some(m), Some(b)) if m != b => m > b,
+                _ => idx < *bi,
+            },
+        };
+        if take {
+            best = Some((mtime, idx, candidate));
+        }
+    }
+    best.map(|(_, _, p)| p)
+}
+
+fn resolve_project_root_for_doc_root(doc_root: &Path, context_root: &Path) -> PathBuf {
+    if !crate::paths::same_path(
+        &doc_root.to_string_lossy(),
+        &context_root.to_string_lossy(),
+    ) && (context_root.join("papers/endnote-library.path").is_file()
+        || context_root.join(".ccode/project.toml").is_file())
+    {
+        return context_root.to_path_buf();
+    }
+    let dot_git = doc_root.join(".git");
+    if dot_git.is_file() {
+        if let Ok(text) = std::fs::read_to_string(&dot_git) {
+            if let Some(raw) = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:")) {
+                let raw_path = PathBuf::from(raw.trim());
+                let gitdir = if raw_path.is_absolute() {
+                    raw_path
+                } else {
+                    doc_root.join(raw_path)
+                };
+                if let Some(worktrees) = gitdir.parent() {
+                    if worktrees.file_name().and_then(|n| n.to_str()) == Some("worktrees") {
+                        if let Some(repo_git) = worktrees.parent() {
+                            if repo_git.file_name().and_then(|n| n.to_str()) == Some(".git") {
+                                if let Some(repo_root) = repo_git.parent() {
+                                    return repo_root.to_path_buf();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Ok(conn) = crate::workspaces::db() {
+        if let Ok(rows) = crate::workspaces::query_workspaces(&conn) {
+            let doc_str = doc_root.to_string_lossy();
+            if let Some(row) = rows
+                .into_iter()
+                .find(|r| r.status != "archived" && crate::paths::same_path(&r.worktree_path, &doc_str))
+            {
+                return PathBuf::from(row.repo_path);
+            }
+        }
+    }
+    doc_root.to_path_buf()
+}
+
+fn rebuild_field_docx(
+    kind: &str,
+    doc_root: &Path,
+    project_root: &Path,
+    md_path: &Path,
+    bib_path: &Path,
+    docx_path: &Path,
+    report_path: &Path,
+) -> Result<(), String> {
+    let py = python_bin()?;
+    let tmp_dir = std::env::temp_dir().join(format!("ccode-field-docx-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("无法创建临时目录: {e}"))?;
+    let write_res = (|| -> Result<(), String> {
+        crate::storage::atomic_write(&tmp_dir.join("bridge.py"), BRIDGE_PY.as_bytes(), true)?;
+        crate::storage::atomic_write(
+            &tmp_dir.join("library_match.py"),
+            LIBRARY_MATCH_PY.as_bytes(),
+            true,
+        )?;
+        crate::storage::atomic_write(
+            &tmp_dir.join("cite_docx.py"),
+            CITE_DOCX_PY.as_bytes(),
+            true,
+        )?;
+        if kind == "zotero" {
+            crate::storage::atomic_write(
+                &tmp_dir.join("zotero_docx.py"),
+                ZOTERO_DOCX_PY.as_bytes(),
+                true,
+            )?;
+        }
+        crate::storage::atomic_write(
+            &tmp_dir.join("journal-abbreviations.csv"),
+            include_bytes!("../resources/journal-abbreviations.csv"),
+            true,
+        )?;
+        Ok(())
+    })();
+    if let Err(e) = write_res {
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        return Err(e);
+    }
+    let stamp = uuid::Uuid::new_v4();
+    let docx_tmp = docx_path.with_file_name(format!(".ccode-{kind}-{stamp}.docx"));
+    let report_tmp = if let Some(parent) = report_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+        parent.join(format!(".ccode-{kind}-{stamp}.md"))
+    } else {
+        tmp_dir.join(format!("report-{stamp}.md"))
+    };
+    let script = tmp_dir.join(if kind == "zotero" {
+        "zotero_docx.py"
+    } else {
+        "cite_docx.py"
+    });
+    let mut cmd = python_command(&py);
+    cmd.arg(&script)
+        .arg("--input")
+        .arg(md_path)
+        .arg("--bib")
+        .arg(bib_path)
+        .arg("--output")
+        .arg(&docx_tmp)
+        .arg("--report")
+        .arg(&report_tmp)
+        .current_dir(doc_root);
+    if kind == "endnote" {
+        cmd.arg("--project-root").arg(project_root);
+    }
+    let out = crate::process::capture_command(&mut cmd, std::time::Duration::from_secs(120), 1024 * 1024);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let Ok(out) = out else {
+        let _ = std::fs::remove_file(&docx_tmp);
+        let _ = std::fs::remove_file(&report_tmp);
+        return Err("运行域稿脚本失败".into());
+    };
+    if out.timed_out || !out.status.is_some_and(|s| s.success()) || !docx_tmp.is_file() {
+        let _ = std::fs::remove_file(&docx_tmp);
+        let _ = std::fs::remove_file(&report_tmp);
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    crate::storage::replace(&docx_tmp, docx_path)?;
+    // 已纳入 Git 跟踪的报告（如可评审工作区或已合并主仓）不在后台打开 docx 时偷偷改脏，避免拦住合并
+    if report_tmp.is_file() && report_path.parent().is_some() && !is_git_tracked(doc_root, report_path) {
+        let _ = crate::storage::replace(&report_tmp, report_path);
+    } else {
+        let _ = std::fs::remove_file(&report_tmp);
+    }
+    Ok(())
+}
+
+/// 打开 `output/endnote.docx` 或 `output/zotero.docx` 前（或刚选完 EndNote 库后），若该域稿还没被人在 Word 里保存改过，
+/// 且后来新指了 `papers/endnote-library.path`、更新了库记录、或旧版 `zotero.docx` 含空 `citationItems: []`，自动静默重绑。
+pub fn refresh_field_docx_if_stale(docx_path: &Path, context_root: &Path) {
+    let Some(name) = docx_path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let kind = if name.eq_ignore_ascii_case("endnote.docx") {
+        "endnote"
+    } else if name.eq_ignore_ascii_case("zotero.docx") {
+        "zotero"
+    } else {
+        return;
+    };
+    let Some(output_dir) = docx_path.parent() else {
+        return;
+    };
+    if !output_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case("output"))
+    {
+        return;
+    }
+    let Some(doc_root) = output_dir.parent() else {
+        return;
+    };
+    let bib_path = doc_root.join("references.bib");
+    if !bib_path.is_file() {
+        return;
+    }
+    let Some(md_path) = find_final_markdown(doc_root) else {
+        return;
+    };
+    let report_path = doc_root.join(if kind == "endnote" {
+        "papers/endnote-cite-report.md"
+    } else {
+        "papers/zotero-cite-report.md"
+    });
+    let Some(doc_xml) = inspect_untouched_field_docx(docx_path) else {
+        return;
+    };
+    let project_root = resolve_project_root_for_doc_root(doc_root, context_root);
+    let docx_mtime = file_mtime(docx_path);
+    let newer = |p: &Path| matches!((file_mtime(p), docx_mtime), (Some(pm), Some(dm)) if pm > dm);
+    let report_text = std::fs::read_to_string(&report_path).unwrap_or_default();
+    let stale = if kind == "endnote" {
+        let enl = endnote_library_pointer(&project_root).or_else(|| endnote_library_pointer(doc_root));
+        let sdb = enl.as_ref().map(|p| p.with_extension("Data").join("sdb").join("sdb.eni"));
+        newer(&project_root.join("papers/endnote-library.path"))
+            || newer(&doc_root.join("papers/endnote-library.path"))
+            || enl.as_deref().is_some_and(newer)
+            || sdb.as_deref().is_some_and(newer)
+            || newer(&bib_path)
+            || newer(&md_path)
+            || (enl.as_deref().is_some_and(|p| p.exists())
+                && !endnote_docx_has_foreign_keys(&doc_xml))
+    } else {
+        let empty_cites = doc_xml.contains("\"citationItems\":[]")
+            || doc_xml.contains("\"citationItems\": []");
+        let zotero_db = crate::dirs::home_dir().map(|h| h.join("Zotero").join("zotero.sqlite"));
+        let db_updated_with_unbound = (report_text.contains("已绑定：0")
+            || report_text.contains("未写入条目地址"))
+            && zotero_db.as_deref().is_some_and(newer);
+        empty_cites || newer(&bib_path) || newer(&md_path) || db_updated_with_unbound
+    };
+    if stale {
+        let _ = rebuild_field_docx(
+            kind,
+            doc_root,
+            &project_root,
+            &md_path,
+            &bib_path,
+            docx_path,
+            &report_path,
+        );
+    }
+}
+
+/// 人在界面上保存 `papers/endnote-library.path` 后，顺手把主仓和活动工作区里尚未用 Word 编辑过的 `output/endnote.docx` 重绑到新选的库。
+pub fn refresh_project_endnote_docs(project_root: &Path) {
+    let direct = project_root.join("output").join("endnote.docx");
+    if direct.is_file() {
+        refresh_field_docx_if_stale(&direct, project_root);
+    }
+    let Ok(conn) = crate::workspaces::db() else {
+        return;
+    };
+    let Ok(rows) = crate::workspaces::query_workspaces(&conn) else {
+        return;
+    };
+    let root_str = project_root.to_string_lossy();
+    for row in rows {
+        if row.status == "archived" || !crate::paths::same_path(&row.repo_path, &root_str) {
+            continue;
+        }
+        let wt_docx = Path::new(&row.worktree_path).join("output").join("endnote.docx");
+        if wt_docx.is_file() {
+            refresh_field_docx_if_stale(&wt_docx, project_root);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1027,7 +1476,9 @@ mod tests {
         std::fs::write(dir.join("papers/endnote-import.ris"), "TY  - JOUR\r\nTI  - Kept paper\r\nER  - \r\n").unwrap();
         let out = export_ris_only(&dir, crate::library_attach::AttachMode::Items);
         let library = std::fs::read_to_string(dir.join("papers/endnote-library.ris")).ok();
+        let library_xml = std::fs::read_to_string(dir.join("papers/endnote-library.xml")).ok();
         let terms = std::fs::read_to_string(dir.join("papers/endnote-journals.txt")).ok();
+        let has_leak_report = dir.join("papers/endnote-report.json").exists();
         let canonical = std::fs::read_to_string(dir.join("papers/endnote-import.ris")).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         if out.as_ref().is_err_and(|e| e.contains("找不到 python")) {
@@ -1035,7 +1486,14 @@ mod tests {
         }
         let (path, note) = out.expect("ris export");
         assert!(path.ends_with("papers/endnote-library.ris"));
+        assert!(!has_leak_report, "export_ris_only 不得留下未忽略的 endnote-report.json");
         let library = library.expect("library ris");
+        let library_xml = library_xml.expect("library xml");
+        assert!(
+            library_xml.contains(r#"<style face="subscript" font="default" size="100%">2</style>"#),
+            "{library_xml}"
+        );
+        assert!(!library_xml.contains("Excluded boride paper"), "{library_xml}");
         // 题名编号前缀去掉、式子收成下标；排除的不导
         assert!(library.contains("TI  - Kept paper on MoS₂\r\n"), "{library}");
         assert!(library.contains("J2  - Appl. Catal., B\r\n"), "{library}");
@@ -1169,6 +1627,92 @@ mod tests {
         assert!(xml_text.contains("<alt-title>J Alloy Compd</alt-title>"), "{xml_text}");
         assert!(xml_text.contains("<volume>1010</volume>"), "{xml_text}");
         assert!(xml_text.contains("Sulfur rich spheres."), "{xml_text}");
+    }
+
+    #[test]
+    fn refresh_field_docx_rebinds_untouched_doc_and_preserves_word_saved_doc() {
+        let Ok(_) = python_bin() else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("ccode-rebind-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("manuscript")).unwrap();
+        std::fs::create_dir_all(dir.join("papers")).unwrap();
+        std::fs::create_dir_all(dir.join("output")).unwrap();
+        let md = dir.join("manuscript/review-final.md");
+        let bib = dir.join("references.bib");
+        let docx = dir.join("output/endnote.docx");
+        let report = dir.join("papers/endnote-cite-report.md");
+        std::fs::write(&md, "Boride catalyst [@Masa2016].\n").unwrap();
+        std::fs::write(
+            &bib,
+            "@article{Masa2016,\n  title = {Amorphous Co2B for HER},\n  author = {Masa, Justus},\n  year = {2016},\n  journal = {Adv. Energy Mater.},\n  doi = {10.1002/aenm.201502313},\n}\n",
+        )
+        .unwrap();
+        // 先生成未指定库时的原装 endnote.docx（走漫游库）
+        rebuild_field_docx("endnote", &dir, &dir, &md, &bib, &docx, &report).expect("initial docx");
+        let initial_report = std::fs::read_to_string(&report).unwrap();
+        assert!(initial_report.contains("未指定 EndNote 库"), "{initial_report}");
+
+        // 随后人补选了 EndNote 导出的 XML 库：打开前自动重绑到 rec-number=42
+        let lib_xml = dir.join("papers/my-lib.xml");
+        std::fs::write(
+            &lib_xml,
+            r#"<?xml version="1.0" encoding="utf-8"?><xml><records><record><rec-number>42</rec-number><foreign-keys><key app="EN" db-id="dbid0001" timestamp="1700000000">42</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>Amorphous Co2B for HER</title></titles><electronic-resource-num>10.1002/aenm.201502313</electronic-resource-num></record></records></xml>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("papers/endnote-library.path"),
+            format!("{}\n", lib_xml.display()),
+        )
+        .unwrap();
+        refresh_field_docx_if_stale(&docx, &dir);
+        let rebound_report = std::fs::read_to_string(&report).unwrap();
+        assert!(rebound_report.contains("已绑定 1 条"), "{rebound_report}");
+
+        // 模拟人在 Word 里保存过该 docx（带 w:rsidR）：即使库又变了，也绝不能覆盖
+        let saved_bytes = {
+            use std::io::{Read, Write};
+            let f = std::fs::File::open(&docx).unwrap();
+            let mut zin = zip::ZipArchive::new(f).unwrap();
+            let mut cursor = std::io::Cursor::new(Vec::new());
+            {
+                let mut zout = zip::ZipWriter::new(&mut cursor);
+                let opts = zip::write::SimpleFileOptions::default();
+                for i in 0..zin.len() {
+                    let mut entry = zin.by_index(i).unwrap();
+                    let name = entry.name().to_string();
+                    let mut buf = Vec::new();
+                    entry.read_to_end(&mut buf).unwrap();
+                    if name == "word/document.xml" {
+                        let s = String::from_utf8(buf)
+                            .unwrap()
+                            .replace("<w:p>", r#"<w:p w:rsidR="00A1B2C3">USER_EDIT_MARKER"#);
+                        buf = s.into_bytes();
+                    }
+                    zout.start_file(name, opts).unwrap();
+                    zout.write_all(&buf).unwrap();
+                }
+                zout.finish().unwrap();
+            }
+            cursor.into_inner()
+        };
+        std::fs::write(&docx, &saved_bytes).unwrap();
+        std::fs::write(
+            &lib_xml,
+            r#"<?xml version="1.0" encoding="utf-8"?><xml><records><record><database name="MyLib.enl">MyLib.enl</database><rec-number>99</rec-number><titles><title>Amorphous Co2B for HER</title></titles><electronic-resource-num>10.1002/aenm.201502313</electronic-resource-num></record></records></xml>"#,
+        )
+        .unwrap();
+        refresh_field_docx_if_stale(&docx, &dir);
+        let after_xml = {
+            use std::io::Read;
+            let f = std::fs::File::open(&docx).unwrap();
+            let mut zin = zip::ZipArchive::new(f).unwrap();
+            let mut s = String::new();
+            zin.by_name("word/document.xml").unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(after_xml.contains("USER_EDIT_MARKER"), "Word 保存过的 docx 绝不能被覆盖");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -122,24 +122,48 @@ test("EndNote 份：题名去编号前缀，缩写收拾写法，ACS 与 ISO 4 �
     const xml = readFileSync(join(dir, "lib.xml"), "utf8");
     assert.match(xml, /<abbr-1>Appl\. Catal\., B<\/abbr-1><abbr-2>Appl\. Catal\. B Environ\.<\/abbr-2>/);
     assert.doesNotMatch(xml, /<abbr-1>Small<\/abbr-1>/);
-    assert.match(xml, /<title>Single atom Ru doping 2H-MoS₂<\/title>/);
+    assert.match(
+      xml,
+      /<title><style face="normal" font="default" size="100%">Single atom Ru doping 2H-MoS<\/style><style face="subscript" font="default" size="100%">2<\/style><\/title>/,
+      "EndNote XML 用真 subscript style，不落 Unicode 假下标码位",
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("Zotero 份：缩写与 EndNote 份同一套，另一种写法进「其他」（M2），题名去编号前缀", () => {
+test("Zotero 份：缩写与 EndNote 份同一套，另一种写法进「其他」（M2），题名去编号前缀，XML 带真上下标", () => {
   const dir = syncDir(true);
   try {
     writeFileSync(join(dir, "references.bib"), BIB);
     const env = { ...process.env, ZOTERO_CONFIG_DIR: dir };
-    const r = spawnSync(python, [join(dir, "zotero_rtf.py"), "--library-ris", "--bib", join(dir, "references.bib"), "--ris", join(dir, "z.ris")], { encoding: "utf8", timeout: 60_000, env });
+    const r = spawnSync(
+      python,
+      [
+        join(dir, "zotero_rtf.py"),
+        "--library-ris",
+        "--library-xml",
+        join(dir, "z.xml"),
+        "--bib",
+        join(dir, "references.bib"),
+        "--ris",
+        join(dir, "z.ris"),
+      ],
+      { encoding: "utf8", timeout: 60_000, env },
+    );
     assert.equal(r.status, 0, r.stderr);
     const ris = readFileSync(join(dir, "z.ris"), "utf8");
     assert.match(ris, /TI  - Single atom Ru doping 2H-MoS₂\r\nAU/);
     assert.match(ris, /J2  - Appl\. Catal\., B\r\nM2  - ISO 4 abbreviation: Appl\. Catal\. B Environ\.\r\n/);
     assert.match(ris, /J2  - J\. Mater\. Chem\. A\r\n/);
     assert.match(ris, /TI  - Cobalt nickel boride\r\n/);
+    const xml = readFileSync(join(dir, "z.xml"), "utf8");
+    assert.match(
+      xml,
+      /<title><style face="normal" font="default" size="100%">Single atom Ru doping 2H-MoS<\/style><style face="subscript" font="default" size="100%">2<\/style><\/title>/,
+    );
+    assert.match(xml, /<abbr-1>Appl\. Catal\., B<\/abbr-1>/);
+    assert.doesNotMatch(xml, /notecache|\[Mesa\]/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -11,7 +11,7 @@ provides: [zotero-sync]
 
 本技能是可选的项目 ↔ Zotero **规范与报告**，不是清单上的「同步到 Zotero」按钮。
 
-- 按钮：打开 `papers/to-fetch.ris`，走 Zotero 原生导入（RIS/BibTeX/CSL JSON）。
+- 按钮：尚无 `references.bib` 时打开 `papers/to-fetch.ris`；已有 `references.bib` 时按引文库生成 `papers/zotero-library.xml`（及备用 `papers/zotero-library.ris`），把保留 `<style face="subscript|superscript">` 真上下标的 XML 转交 Zotero 原生导入（Zotero 自动转为标题里的 `<sub>`/`<sup>`）。
 - 内核「从 Zotero 导入」：只读 sqlite 快照进项目，绝不写回个人库。
 - 本技能：检索时盘点已有库，定稿时把 `[@键]` 写成带 Zotero 域的 Word（`output/zotero.docx`）。不点 Zotero 的 Word 插件。`zotero_rtf.py` 只留给旧的 RTF Scan 稿，定稿不再交 RTF。
 
@@ -63,7 +63,7 @@ python3 <技能目录>/scripts/zotero_docx.py \
 科研论文改 `manuscript/paper-final.md`，学位论文用 `manuscript/thesis-final.md`，期刊格式用 `submission/formatted.md`。同一份源稿再跑 endnote-bridge 的 `cite_docx.py`，写出 `output/endnote.docx`。
 
 - 每个 `[@键]` 写成一条 Word 域：`ADDIN ZOTERO_ITEM CSL_CITATION`。域里带 `citationID`、`formattedCitation`、`plainCitation`、`noteIndex`。**不预置空的 `ZOTERO_BIBL` 域**：Refresh 会把预置的空文献表域直接删掉（2026-10-10 集成日志实证 `getCode BIBL → removeCode`），文末只放 References 标题加一个空段做锚点。可见文字用 `(Author, year)`。正文里的 `{#键}`：键在 bib 里就写成同一条域，不在就只留键名。`Figure @fig-`、`Table @tbl-`、`{#fig-}`、`{#tbl-}` 收成编号，中间有括号也收。对不上的只留键名。
-- 生成时只读当前默认 Zotero 配置里 `extensions.zotero.dataDir` 指明的 `zotero.sqlite`（换库用 `--zotero-db`）。配置不止一个、没有默认、或没写数据目录时不猜。只查用户库，不查群组库。DOI 去掉网址前缀、空白和末尾句点后必须整段相同，并且只有一条未删除条目，才把 `http://zotero.org/users/local/<本机用户键>/items/<条目键>` 写进域。同一 DOI 多条、没有 DOI、或库里没有，不猜，报告「库绑定」点名；这条仍用稿内题录。RIS 的 `ID` 导入时不进库，不能用来对。
+- 生成时只读当前默认 Zotero 配置里 `extensions.zotero.dataDir` 指明的 `zotero.sqlite`（换库用 `--zotero-db`）。配置不止一个、没有默认、或没写数据目录时不猜。只查用户库，不查群组库。DOI 去掉网址前缀、空白和末尾句点后必须整段相同，并且只有一条未删除条目，才把 `http://zotero.org/users/local/<本机用户键>/items/<条目键>` 写进域。同一 DOI 多条、没有 DOI、或库里没有，不猜本机条目键，报告「库绑定」点名；但域内 `citationItems` **必须仍写入带确定性占位 URI（`embed000…`）与完整 `itemData`（标题含 `<sub>`/`<sup>` 富文本标记、剔除 `待补` 占位符）的嵌入条目**——**严禁写空的 `"citationItems": []`**（Zotero `integration.js` 见空数组会在点 Refresh 时把整条引注当 `DELETE` 删光，随后点 Add/Edit Bibliography 必报「执行本操作前您需要插入引注。」；2026-11-15 HER 实证）。RIS 的 `ID` 导入时不进库，不能用来对。
 - 未匹配键 **fail-closed**：写报告、不写 docx、退出码非 0。
 - 图注和表题里的 `[@键]` 只写作者-年，不写域（图注里的引用域会让 Refresh 整篇报错）。只在图注或表题里出现的文献，Refresh 后进不了参考文献表：脚本照常出稿，但在报告和 stderr 点名这些键。看到点名就在正文里至少引一次，再重新生成。
 - 不点 Zotero 插件。人的三步（都写进报告）：打开 `output/zotero.docx` → Zotero 工具栏 **Refresh**（首次会弹引用样式选择框，属正常、一次性；文档首选项存在 docx 的 `docProps/custom.xml` ZOTERO_PREF 属性里，不是 Word 域）→ 光标点进 References 标题下面那个空段本身（⚠ 点在标题行上会把参考文献表插到标题上方、继承标题大字号；插错就 Ctrl+Z 撤销，光标点对再点一次），点 **Add/Edit Bibliography** 插入参考文献表。换样式用 Document Preferences 后再 Refresh。刷新前重启 Zotero 和 Word、关掉所有弹窗（旧实例的 AppleScript 通道堵死会报「遇到一个错误」，175 个域约 2–4 分钟，期间别在 Word 里点）。

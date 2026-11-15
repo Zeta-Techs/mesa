@@ -40,7 +40,7 @@ provides: [endnote-bridge]
 
 ### 1. 出库桥接（references.bib → EndNote）
 
-- 产出 `papers/endnote-import.xml`（EndNote XML，字段保真最好；本技能主产物）和同内容的 `papers/endnote-library.ris`（不进 git；检索时排除的篇不导）。Mesa 的「同步到 EndNote」交的是这份 RIS：拖到 EndNote 图标上，选 Reference Manager (RIS)。不要改写 `papers/endnote-import.ris`——那是检索步维护的纳入篇题录，进 git。同步时另写 `papers/endnote-journals.txt`（EndNote 期刊术语表：全称、缩写 1/2/3），缩写 2 是每本刊按 LTWA 算的 ISO 4（Mesa 兜底表第三列人工值优先）；XML 的 abbr-2 同样放另一种写法。题名开头人手加的编号（【77】、19~.）导出时去掉。XML 仍给 File → Import → EndNote XML。
+- 产出 `papers/endnote-import.xml`（EndNote XML，字段保真最好，且标题与摘要用 `<style face="subscript|superscript">` 保留真上下标格式；本技能主产物）和同内容的 `papers/endnote-library.xml` / `papers/endnote-library.ris`（均不进 git；检索时排除的篇不导）。有 `references.bib` 时，Mesa 的「同步到 EndNote」同时生成 `papers/endnote-library.xml` 与 `papers/endnote-library.ris`，复制 `endnote-library.xml` 路径并打开 EndNote，引导人用 `File → Import → File…`（`Import Option` 选 `EndNote generated XML`）导入——纯文本 RIS 只装得下 Unicode 假下标码位（`MoS₂`），Word 里 Update 出来的参考文献不是 Word 真下标格式（`w:vertAlign`），只有 EndNote XML 才进库的 `text_styles`。不要改写 `papers/endnote-import.ris`——那是检索步维护的纳入篇题录，进 git。同步时另写 `papers/endnote-journals.txt`（EndNote 期刊术语表：全称、缩写 1/2/3），缩写 2 是每本刊按 LTWA 算的 ISO 4（Mesa 兜底表第三列人工值优先）；XML 的 abbr-2 同样放另一种写法。题名开头人手加的编号（【77】、19~.）导出时去掉。
   - bib 里有的字段都要写进导入文件，没有的留空，不编造。期刊文献对应 EndNote 里这些格子：作者（`姓, 名`，一位一个 author / 一条 `AU`；「名 姓」无逗号源串翻转为末词作姓，末词为缩写如 `Smith JM` 时首词作姓）、年份、标题、期刊（secondary-title / `T2`+`JO`）、卷、期、页、起始页码、日期、网络出版日期（RIS 的 `ET`；XML 的 `edition`）、文章类型、其他形式的期刊名（与全称不同才写：`periodical/abbr-1` 与 `titles/alt-title`，RIS 为 `J2`）、ISSN、DOI、关键词（一词一条）、摘要、URL。注释只写文献本身的内容，不写筛选过程、来源库或出版商。
   - 附件：项目 `papers/` 下已配对的 PDF 写进 `pdf-urls`（用 absolute file URL），导入后人工核对附件是否成功绑定，不能假定每个版本/路径都自动成功
   - 转换用随包 `scripts/bridge.py`。bib 里的 `journalabbreviation`、`issn`、`abstract`、`keywords`、`date`、`epubdate`、`language`、`note` 会进上面这些格子。回流 .bib 保持源作者格式。
@@ -57,7 +57,7 @@ provides: [endnote-bridge]
   ```
 - RIS 与 XML 一起生成（`TY`/`ID`/`AU`/`TI`/`T2`/`J2`/`PY`/`DA`/`ET`/`VL`/`IS`/`SP`/`M2`/`EP`/`M3`/`SN`/`DO`/`KW`/`AB`/`UR`，CRLF，无 BOM）。`ID` 载 citation key。对照 EndNote 2025 的 RefMan RIS 过滤器：期刊全称只写 `T2`，其他形式的期刊名写 `J2`，页 `SP`，起始页码 `M2`，文章类型 `M3`，网络出版日期 `ET`（XML 写在 `edition`）。不要写 `JO`/`JF`/`JA`/`M1`：`M1` 不进任何格子。写文件时一次查全：有 DOI 就向 Crossref 取正式字段，摘要和关键词缺了再问 OpenAlex。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；对不上就留空，不让 Agent 现编，也不用 NLM 的 ISSN 结果。点「同步到 EndNote」只把这份已经写好的 RIS 交给 EndNote，不再重新检索。
 - **标识符不做化学上下标美化**：DOI/URL/附件路径之外，卷、期、页、ISSN、citation key（RIS 的 `ID`）同口径（2026-10-11 实证：文章号页码 `A257` 被美化成 `A₂₅₇`、`s0022-0728(99)00146-1` 的 `00146` 被下标、`D2EE04121A` → `D₂EE₀₄₁₂₁A`，导进库后 DOI 匹配全断）。`clean()` 对正文（摘要）里引用的裸 DOI/URL 也整段豁免。输入侧统一把上下标/全角数字折回 ASCII（`ascii_doi`），老库里已被美化过的 DOI 靠折叠愈合，不改用户库。
-- **标题上下标收敛三规则**（2026-10-11 实证补齐）：`<sub>`/`<sup>` 标签前的排版空格吃掉（`MgCl <sub>2</sub>` → `MgCl₂`，不得留 `MgCl ₂`）；电荷上标允许后跟连字符形容词（`Mg2+-Conducting` → `Mg²⁺-Conducting`）；电流密度单位 `cm −2`/`cm–2` 收成 `cm⁻²`。前端 `displayCitationTitle`（清单显示 + 纳入追加 RIS 的 TI）镜像同款规则，两套实现按约定不合并。
+- **标题上下标收敛三规则**（2026-10-11 实证补齐，2026-11-15 升级 XML 真上下标）：`<sub>`/`<sup>` 标签前的排版空格吃掉（`MgCl <sub>2</sub>` → `MgCl₂`，不得留 `MgCl ₂`）；电荷上标允许后跟连字符形容词（`Mg2+-Conducting` → `Mg²⁺-Conducting`）；电流密度单位 `cm −2`/`cm–2` 收成 `cm⁻²`。写出 EndNote XML 与 `cite_docx.py` 域内 `<record>` 时进一步拆成 `<style face="subscript|superscript" font="default" size="100%">` 富文本段（回流 `.bib` / `.ris` 时无损还原），使 Word 里 Update 出来的参考文献标题具有真正的下标/上标格式；仅 RIS 纯文本落 Unicode 上下标字符。前端 `displayCitationTitle`（清单显示 + 纳入追加 RIS 的 TI）镜像同款规则，两套实现按约定不合并。
 - 导入动作本身是人工：报告里写清指引——双击文件或 EndNote「File → Import」，XML 选「EndNote generated XML / EndNote XML」、RIS 选「Reference Manager (RIS)」；具体名称与附件解析须在实际版本验证
 
 ### 2. Word 侧人工步骤（供人工事项引用）
