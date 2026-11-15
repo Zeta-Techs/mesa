@@ -32,6 +32,7 @@ async function renderPanel(options: {
   saveError?: boolean;
   picked?: string[] | null;
   entries?: { name: string; isDir: boolean }[];
+  onPreviewFile?: (relPath: string) => void;
 } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -89,6 +90,7 @@ async function renderPanel(options: {
   const root = createRoot(host);
   await act(async () => root.render(h(Panel, {
     projectPath: "/project", workMode: disk.workMode, defaultOpen: true, compact: true,
+    onPreviewFile: options.onPreviewFile,
   })));
   const button = (label: string) => {
     const found = Array.from(host.querySelectorAll("button")).find((item) =>
@@ -237,7 +239,7 @@ test("项目设置：保留研究流程/编程分流与保存失败反馈", asyn
         assert.ok(!text.includes("技能"));
       } else if (mode === "coding") {
         assert.ok(!text.includes("写回时跳过"));
-        panel.button("技能未添加");
+        assert.ok(!text.includes("技能"));
       } else {
         await panel.click("技能未添加");
         await panel.click("从技能库添加");
@@ -280,6 +282,47 @@ test("写回跳过：已有子目录文件可见，尾斜线和 Windows 分隔�
     assert.equal(panel.host.querySelectorAll('[aria-label="写回时跳过的文件夹"] label').length, 2);
     await panel.act(async () => (fileRows[0] as HTMLLabelElement).click());
     assert.deepEqual(panel.writes.at(-1)!.protectedPaths, ["papers/"]);
+  } finally {
+    await panel.close();
+  }
+});
+
+test("项目规则：待定占位拆分为独立填写行、保留科研工具隐藏键、检测仓库 AGENTS.md", async () => {
+  const previewed: string[] = [];
+  const panel = await renderPanel({
+    config: {
+      workMode: "coding",
+      settings: ["目标期刊：（待填）", "科研工具/manuscript：word", "遵循既有风格"],
+    },
+    entries: [
+      { name: "AGENTS.md", isDir: false },
+      { name: "src", isDir: true },
+    ],
+    onPreviewFile: (rel) => previewed.push(rel),
+  });
+  try {
+    assert.match(panel.host.textContent!, /检测到仓库自带 AGENTS\.md/);
+    await panel.click("查看 AGENTS.md");
+    assert.deepEqual(previewed, ["AGENTS.md"]);
+
+    const textarea = panel.host.querySelector<HTMLTextAreaElement>('textarea[aria-label="项目规则"]')!;
+    assert.equal(textarea.value, "遵循既有风格", "机器键与待填项不混进自由文本框");
+
+    const slotInput = panel.host.querySelector<HTMLInputElement>('input[aria-label="设定项 目标期刊"]')!;
+    assert.ok(slotInput);
+    await panel.act(async () => {
+      Object.getOwnPropertyDescriptor(panel.dom.window.HTMLInputElement.prototype, "value")!.set!.call(slotInput, "Nature Catalysis");
+      slotInput.dispatchEvent(new panel.dom.window.Event("input", { bubbles: true }));
+    });
+    await panel.act(async () => {
+      slotInput.focus();
+      slotInput.blur();
+    });
+    assert.deepEqual(panel.writes.at(-1)!.settings, [
+      "目标期刊：Nature Catalysis",
+      "遵循既有风格",
+      "科研工具/manuscript：word",
+    ]);
   } finally {
     await panel.close();
   }

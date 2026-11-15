@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { File, Folder, Plus, Search, X } from "lucide-react";
+import { File, FileText, Folder, Plus, Search, X } from "lucide-react";
 import {
   effectiveProjectRules,
   isSettingPlaceholder,
   projectShowsProtectedPaths,
   projectUsesSkillPool,
+  settingParts,
   uniqueRuleLines,
 } from "../project-context";
 import {
@@ -25,6 +26,7 @@ import type { ProjectConfigDto, ProjectConfigReadDto, SkillDto } from "../types"
 import {
   Checkbox,
   FoldMark,
+  compactFieldClass,
   ghostActionClass,
   iconActionClass,
   searchFieldClass,
@@ -38,11 +40,65 @@ const RULE_PLACEHOLDER: Record<string, string> = {
   coding: "只改当前工作树\n不要切回主仓改",
 };
 
+const TOOL_SETTING_PREFIX = "科研工具/";
+
+type PlaceholderSlot = {
+  key: string;
+  hint: string;
+  value: string;
+};
+
+function splitSettingsForEditor(lines: readonly string[]): {
+  toolLines: string[];
+  slots: PlaceholderSlot[];
+  freeLines: string[];
+} {
+  const toolLines: string[] = [];
+  const slots: PlaceholderSlot[] = [];
+  const freeLines: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith(TOOL_SETTING_PREFIX)) {
+      toolLines.push(line);
+      continue;
+    }
+    if (isSettingPlaceholder(line)) {
+      const { q, answer } = settingParts(line);
+      slots.push({
+        key: q,
+        hint: answer || "（待填）",
+        value: "",
+      });
+      continue;
+    }
+    freeLines.push(line);
+  }
+  return { toolLines, slots, freeLines };
+}
+
+function mergeSettingsFromEditor(
+  toolLines: readonly string[],
+  slots: readonly PlaceholderSlot[],
+  freeText: string,
+): string[] {
+  const slotLines = slots.map((slot) => {
+    const trimmed = slot.value.trim();
+    return trimmed ? `${slot.key}：${trimmed}` : `${slot.key}：${slot.hint}`;
+  });
+  const freeLines = freeText
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return uniqueRuleLines([...slotLines, ...freeLines, ...toolLines]);
+}
+
 export default function ProjectRulesPanel({
   projectPath,
   workMode,
   compact = false,
   defaultOpen = false,
+  onPreviewFile,
   onSaved,
   onError,
 }: {
@@ -50,13 +106,17 @@ export default function ProjectRulesPanel({
   workMode?: string | null;
   compact?: boolean;
   defaultOpen?: boolean;
+  onPreviewFile?: (relPath: string) => void;
   onSaved?: () => void;
   onError?: (message: string) => void;
 }) {
   const mode = normalizeWorkMode(workMode);
   const [open, setOpen] = useState(defaultOpen);
   const [config, setConfig] = useState<ProjectConfigDto | null>(null);
+  const [toolLines, setToolLines] = useState<string[]>([]);
+  const [slots, setSlots] = useState<PlaceholderSlot[]>([]);
   const [rulesDraft, setRulesDraft] = useState("");
+  const [repoDocs, setRepoDocs] = useState<string[]>([]);
   const [protectedPaths, setProtectedPaths] = useState<string[]>([]);
   const [entries, setEntries] = useState<ProtectEntry[]>([]);
   const [saved, setSaved] = useState(false);
@@ -82,17 +142,18 @@ export default function ProjectRulesPanel({
       });
       listed = read.config;
       setConfig(read.config);
-      const saved = uniqueRuleLines(read.config.settings ?? []);
-      setRulesDraft(
-        (saved.length
-          ? saved
-          : effectiveProjectRules(
-              read.config.settings,
-              workMode ?? read.config.workMode,
-              read.config.rulesOwned,
-            )
-        ).join("\n"),
-      );
+      const savedLines = uniqueRuleLines(read.config.settings ?? []);
+      const effective = savedLines.length
+        ? savedLines
+        : effectiveProjectRules(
+            read.config.settings,
+            workMode ?? read.config.workMode,
+            read.config.rulesOwned,
+          );
+      const split = splitSettingsForEditor(effective);
+      setToolLines(split.toolLines);
+      setSlots(split.slots);
+      setRulesDraft(split.freeLines.join("\n"));
       nextProtected = read.config.protectedPaths ?? [];
       setProtectedPaths(nextProtected);
       const projectSkills = read.config.skills ?? [];
@@ -109,18 +170,19 @@ export default function ProjectRulesPanel({
         workMode ?? listed.workMode,
         listed.steps.length,
       );
-    if (!protect) {
-      setEntries([]);
-      return;
-    }
     try {
       const top = await invoke<DirEntryDto[]>("list_dir", {
         path: projectPath,
         showHidden: false,
       });
-      setEntries(protectableEntries(top, nextProtected, workMode));
+      const docs = top
+        .filter((entry) => !entry.isDir && /^(AGENTS|CLAUDE)\.md$/i.test(entry.name))
+        .map((entry) => entry.name);
+      setRepoDocs(docs);
+      setEntries(protect ? protectableEntries(top, nextProtected, workMode) : []);
     } catch {
-      setEntries(protectableEntries([], nextProtected, workMode));
+      setRepoDocs([]);
+      setEntries(protect ? protectableEntries([], nextProtected, workMode) : []);
     }
   }, [onError, projectPath, workMode]);
 
@@ -153,16 +215,25 @@ export default function ProjectRulesPanel({
     el.style.height = `${Math.min(Math.max(el.scrollHeight, 72), 200)}px`;
   }, [open, rulesDraft]);
 
-  async function save(nextRules: string, nextProtected: string[], nextSkills: string[]) {
+  async function save(
+    nextSlots: readonly PlaceholderSlot[],
+    nextRules: string,
+    nextProtected: string[],
+    nextSkills: string[],
+  ) {
     if (!config) return;
-    const rules = nextRules
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
     try {
       const latest = await invoke<ProjectConfigReadDto>("read_project_config", {
         path: projectPath,
       });
+      const latestTools = (latest.config.settings ?? []).filter((line) =>
+        line.trim().startsWith(TOOL_SETTING_PREFIX),
+      );
+      const rules = mergeSettingsFromEditor(
+        latestTools.length ? latestTools : toolLines,
+        nextSlots,
+        nextRules,
+      );
       await invoke("write_project_config", {
         path: projectPath,
         config: {
@@ -196,7 +267,7 @@ export default function ProjectRulesPanel({
   function toggleFolder(path: string, checked: boolean) {
     const next = toggleProtectedFolder(protectedPaths, path, checked);
     setProtectedPaths(next);
-    void save(rulesDraft, next, skillNames);
+    void save(slots, rulesDraft, next, skillNames);
   }
 
   function toggleSkill(name: string, checked: boolean) {
@@ -204,13 +275,22 @@ export default function ProjectRulesPanel({
       ? [...skillNames, name]
       : skillNames.filter((item) => item !== name);
     setSkillNames(next);
-    void save(rulesDraft, protectedPaths, next);
+    void save(slots, rulesDraft, protectedPaths, next);
   }
 
-  const ruleCount = rulesDraft
+  function updateSlotValue(index: number, value: string) {
+    setSlots((current) =>
+      current.map((slot, idx) => (idx === index ? { ...slot, value } : slot)),
+    );
+  }
+
+  const freeRuleCount = rulesDraft
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean).length;
+  const filledSlotCount = slots.filter((s) => s.value.trim().length > 0).length;
+  const pendingSlotCount = slots.length - filledSlotCount;
+  const ruleCount = freeRuleCount + filledSlotCount;
   const showProtect =
     config != null && projectShowsProtectedPaths(mode, config.steps.length);
   const showSkillPool =
@@ -233,7 +313,6 @@ export default function ProjectRulesPanel({
     : folders.filter(
         (entry) => !visibleFolders.some((item) => item.path === entry.path),
       );
-  // 文件只列已选路径；新增的子目录文件也能立即显示，不依赖重新读取目录。
   const protectedFiles = protectedPaths
     .filter((path) => !folders.some((entry) => samePath(entry.path, path, IS_WINDOWS)))
     .map((path) => ({ path, isDir: false }));
@@ -249,7 +328,9 @@ export default function ProjectRulesPanel({
     addSkillRef.current?.focus();
   }
   const summary = [
-    ruleCount ? `${ruleCount}` : "默认",
+    ruleCount ? `${ruleCount} 条` : "默认",
+    pendingSlotCount > 0 ? `${pendingSlotCount} 项待填` : null,
+    repoDocs.length > 0 ? repoDocs.join("/") : null,
     showProtect && protectedPaths.length ? `⊘${protectedPaths.length}` : null,
     showSkillPool && skillNames.length ? `✦${skillNames.length}` : null,
   ]
@@ -294,18 +375,65 @@ export default function ProjectRulesPanel({
       </button>
       {open && (
         <div className="mt-2 space-y-2">
+          {repoDocs.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 rounded-md ccode-well px-2.5 py-1.5 text-micro text-l3">
+              <FileText size={12.5} className="shrink-0 text-l4" aria-hidden="true" />
+              <span className="min-w-0 flex-1">
+                检测到仓库自带 {repoDocs.join(" / ")}（CLI 启动自动读取），下方可写 Mesa 补充规则
+              </span>
+              {onPreviewFile &&
+                repoDocs.map((docName) => (
+                  <button
+                    key={docName}
+                    type="button"
+                    className={ghostActionClass}
+                    onClick={() => onPreviewFile(docName)}
+                  >
+                    查看 {docName}
+                  </button>
+                ))}
+            </div>
+          )}
+          {slots.length > 0 && (
+            <div className="space-y-1.5 rounded-md ccode-well p-2.5" aria-label="待填规则项">
+              <p className="text-micro text-l3">
+                待定设定（直接填写即可，也可在步骤上点「跟 AI 商量一下」确定）：
+              </p>
+              {slots.map((slot, index) => (
+                <label key={slot.key} className="flex items-center gap-2 text-xs">
+                  <span className="w-24 shrink-0 truncate text-l2" title={slot.key}>
+                    {slot.key}
+                  </span>
+                  <input
+                    className={`${compactFieldClass} min-w-0 flex-1`}
+                    value={slot.value}
+                    placeholder={slot.hint.replace(/^[（(]|[）)]$/g, "")}
+                    aria-label={`设定项 ${slot.key}`}
+                    onChange={(event) => updateSlotValue(index, event.target.value)}
+                    onBlur={() => void save(slots, rulesDraft, protectedPaths, skillNames)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        (event.currentTarget as HTMLInputElement).blur();
+                      }
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
           <textarea
             ref={rulesRef}
             className={`${surfaceFieldClass} resize-none overflow-hidden leading-6`}
             value={rulesDraft}
             onChange={(event) => setRulesDraft(event.target.value)}
-            onBlur={() => void save(rulesDraft, protectedPaths, skillNames)}
+            onBlur={() => void save(slots, rulesDraft, protectedPaths, skillNames)}
             placeholder={RULE_PLACEHOLDER[mode]}
             aria-label="项目规则"
           />
-          {rulesDraft.split("\n").some((line) => isSettingPlaceholder(line)) && (
-            <p className="text-xs text-l2">
-              带括号的还没定。把括号换成你的答案，或在步骤上点「跟 AI 商量一下」，它会逐项问你，确定后改这一行。
+          {mode === "research" && (config?.steps.length ?? 0) > 0 && (
+            <p className="text-micro text-l4">
+              当前使用研究流程：各步骤的能力挂载与验收口径随步骤单独配置。
             </p>
           )}
           {showProtect && (
@@ -362,13 +490,12 @@ export default function ProjectRulesPanel({
                           const next = [...protectedPaths];
                           for (const abs of list) {
                             const rel = relativeProjectPath(projectPath, abs);
-                            // 项目外/解析不出相对路径的跳过，不写非法保护项
                             if (!rel || rel.startsWith("/") || /^[a-zA-Z]:/.test(rel)) continue;
                             if (!pathIsProtected(rel, next)) next.push(rel);
                           }
                           if (next.length !== protectedPaths.length) {
                             setProtectedPaths(next);
-                            void save(rulesDraft, next, skillNames);
+                            void save(slots, rulesDraft, next, skillNames);
                           }
                         })();
                       }}

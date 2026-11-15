@@ -261,12 +261,12 @@ test("pack splits named goal skills from project skill pool", () => {
   assert.match(pack, /只有「本目标点名要用的技能」才按其规范执行/);
 });
 
-test("research pipeline does not use the project skill pool", () => {
+test("research pipeline and coding do not use the project skill pool", () => {
   assert.equal(projectUsesSkillPool("research", 0), true);
   assert.equal(projectUsesSkillPool("research", 3), false);
   assert.equal(projectUsesSkillPool(undefined, 2), false);
   assert.equal(projectUsesSkillPool("office", 4), true);
-  assert.equal(projectUsesSkillPool("coding", 0), true);
+  assert.equal(projectUsesSkillPool("coding", 0), false);
 });
 
 test("protected paths stay on goal-review surfaces only", () => {

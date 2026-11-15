@@ -61,6 +61,7 @@ import ProjectIdentityHeader, {
   type ProjectChromeAction,
 } from "../components/ProjectIdentityHeader";
 import ProjectUserTasksView from "../components/ProjectUserTasksView";
+import ProjectSettingsDrawer from "../components/ProjectSettingsDrawer";
 import TemplatePickModal from "../components/TemplatePickModal";
 import { Modal } from "../components/Modal";
 import { cloudSyncHint, loadNewProjectParent, saveNewProjectParent } from "../new-project-parent";
@@ -1451,15 +1452,28 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     action: ProjectChromeAction;
     token: number;
   } | null>(null);
+  const [nonResearchSettingsOpen, setNonResearchSettingsOpen] = useState(false);
+  const [researchOverlayOnOtherTab, setResearchOverlayOnOtherTab] = useState(false);
   useEffect(() => {
     setIdentityChrome(null);
+    setNonResearchSettingsOpen(false);
+    setResearchOverlayOnOtherTab(false);
   }, [selectedGroupKey]);
   useEffect(() => {
     if (visible) return;
     setIdentityChrome(null);
+    setNonResearchSettingsOpen(false);
+    setResearchOverlayOnOtherTab(false);
   }, [visible]);
   function requestIdentityChrome(action: ProjectChromeAction) {
-    if (action !== "rename" && action !== "topic") selectProjectSurface("tasks");
+    if (action !== "rename" && action !== "topic" && selectedSurfaceTab !== "tasks") {
+      if (selectedWorkMode === "research") {
+        setResearchOverlayOnOtherTab(true);
+      } else if (action === "settings") {
+        setNonResearchSettingsOpen(true);
+        return;
+      }
+    }
     setIdentityChrome({ action, token: Date.now() });
   }
   function consumeIdentityChrome() {
@@ -2350,7 +2364,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 <button
                   type="button"
                   onClick={() => selectedGroup.project && startProjectChat(selectedGroup.project)}
-                  title={`在「${selectedGroup.project.name}」里开一段新对话：发第一句才启动，Agent 和模型在输入框里选。要 AI 动手干活、聊课题内容用这个`}
+                  title={`在「${selectedGroup.project.name}」里开一段新对话：发第一句才启动，临时提问、讨论或顺手小改用这个（直接在项目文件夹里改）；要交付正式成果并验收后再进项目，用下方的步骤或目标`}
                   className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                 >
                   <Plus size={13} strokeWidth={1.8} aria-hidden="true" />
@@ -2436,7 +2450,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             }
             onError={setError}
             chromeReq={identityChrome}
-            onIdentityAction={requestIdentityChrome}
             onOpenAgents={() => selectProjectSurface("agents")}
             onChromeConsumed={consumeIdentityChrome}
             onPickTemplate={
@@ -2791,6 +2804,53 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         )}
         </ProjectSurfaceTabs>
       ) : null}
+      {selectedGroup?.project &&
+        selectedWorkMode !== "research" &&
+        selectedSurfaceTab !== "tasks" && (
+          <ProjectSettingsDrawer
+            open={nonResearchSettingsOpen}
+            onClose={() => setNonResearchSettingsOpen(false)}
+            projectPath={selectedGroup.project.path}
+            projectName={selectedGroup.project.name}
+            workMode={selectedGroup.project.workMode}
+            onProjectChanged={() => void refresh()}
+            onError={setError}
+          />
+        )}
+      {selectedGroup?.project &&
+        selectedWorkMode === "research" &&
+        selectedSurfaceTab !== "tasks" &&
+        researchOverlayOnOtherTab && (
+          <ProjectGroup
+            key={`overlay:${selectedGroup.key}`}
+            surfaceHidden
+            onOverlayIdle={() => setResearchOverlayOnOtherTab(false)}
+            project={selectedGroup.project}
+            repoPath={selectedGroup.repoPath}
+            repoName={selectedGroup.repoName}
+            workspaces={selectedGroup.list}
+            health={health}
+            drift={drift}
+            refreshToken={refreshToken}
+            pageVisible={visible}
+            freshGitGuide={false}
+            onDismissGitGuide={() => {}}
+            onRefresh={refresh}
+            onOpenTerminal={(ws, initialPrompt, opts) =>
+              void openInTerminal(ws, initialPrompt, opts)
+            }
+            onError={setError}
+            chromeReq={identityChrome}
+            onOpenAgents={() => selectProjectSurface("agents")}
+            onChromeConsumed={consumeIdentityChrome}
+            onPickTemplate={() => {
+              const p = selectedGroup.project!;
+              setTemplatePick({ path: p.path, name: p.name });
+            }}
+          >
+            {() => null}
+          </ProjectGroup>
+        )}
       {/* 挂到 body：从别的页就地弹出，不切到项目页（见 project-add.ts） */}
       {(addProjectPath || creatingProject) && createPortal(
         <AddProjectModal

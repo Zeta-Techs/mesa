@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./ConfirmDialog";
+import { normalizeWorkMode } from "../work-mode";
 import type { KnowledgeForAiDto } from "../types";
 import {
   FoldMark,
@@ -25,7 +26,16 @@ const dangerGhostActionClass =
   "inline-flex h-7 items-center rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-err-text disabled:opacity-50";
 
 /** 项目长期知识：与抽屉内其他分区同一折叠 idiom，默认收起、摘要给有效条数。 */
-export default function ProjectMemoryPanel({ projectPath }: { projectPath: string }) {
+export default function ProjectMemoryPanel({
+  projectPath,
+  workMode,
+  compact = false,
+}: {
+  projectPath: string;
+  workMode?: string | null;
+  compact?: boolean;
+}) {
+  const isResearch = normalizeWorkMode(workMode) === "research";
   const [doc, setDoc] = useState<Document | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -61,11 +71,12 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
   }, [projectPath, reload]);
   async function save(action: "add" | "replace" | "revoke" | "archive_legacy", id: string | null) {
     if (!doc || busy) return;
-    if (!reason.trim()) { setError("请写明确认或作废的依据"); return; }
+    const effectiveReason = reason.trim() || (action === "add" ? "人工直接录入" : "");
+    if (!effectiveReason) { setError("请写明确认或作废的依据"); return; }
     if ((action === "revoke" || action === "archive_legacy") && !await confirmDialog("作废这条项目知识？历史仍保留，之后开工不再把它当作有效结论。", { focusCancel: true })) return;
     setBusy(true); setError(null);
     try {
-      setDoc(await invoke<Document>("project_memory_update", { path: projectPath, expectedRevision: doc.revision, id, action, text, reason }));
+      setDoc(await invoke<Document>("project_memory_update", { path: projectPath, expectedRevision: doc.revision, id, action, text, reason: effectiveReason }));
       setText(""); setReason(""); setEditing(null);
     } catch (e) {
       setError(String(e));
@@ -114,7 +125,7 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
         <span className="min-w-0 flex-1 truncate text-micro text-l4">{summary}</span>
       </button>
       {open && (
-        <div className="mt-2 space-y-2 rounded-lg ccode-well p-3">
+        <div className={compact ? "mt-2 space-y-2" : "mt-2 space-y-2 rounded-lg ccode-well p-3"}>
           <div className="flex items-start justify-between gap-2">
             <p className="min-w-0 flex-1 text-xs leading-5 text-l3">
               只保存你确认的结论；修订和作废保留原记录。
@@ -146,11 +157,11 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
             <div className="mt-1.5 flex gap-1">
               <button type="button" className={ghostActionClass} disabled={busy} onClick={() => { setEditing(entry.meta.id); setText(entry.text); setReason(""); }}>修订 / 重新确认</button>
               <button type="button" className={dangerGhostActionClass} disabled={busy} onClick={() => void save("revoke", entry.meta.id)}>作废</button>
-              {promoted === entry.meta.id
+              {isResearch && (promoted === entry.meta.id
                 ? <span className="inline-flex h-7 items-center px-2 text-xs text-l4">已提升到研究档案</span>
-                : <button type="button" className={ghostActionClass} disabled={busy} title="这条适用于你所有项目时，复制进设置里的「研究档案」，以后开新项目 Agent 也会带上" onClick={() => setPromoting(promoting === entry.meta.id ? null : entry.meta.id)}>提升到研究档案</button>}
+                : <button type="button" className={ghostActionClass} disabled={busy} title="这条适用于你所有科研项目时，复制进设置里的「研究档案」，以后开新项目 Agent 也会带上" onClick={() => setPromoting(promoting === entry.meta.id ? null : entry.meta.id)}>提升到研究档案</button>)}
             </div>
-            {promoting === entry.meta.id && <div className="mt-1 flex items-center gap-1.5 text-xs">
+            {isResearch && promoting === entry.meta.id && <div className="mt-1 flex items-center gap-1.5 text-xs">
               <span className="text-l3">放进</span>
               <select aria-label="研究档案分类" value={promoteCategory} onChange={(e) => setPromoteCategory(e.target.value)} className="rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-xs text-l2">
                 {RESEARCH_PROFILE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
@@ -197,9 +208,9 @@ export default function ProjectMemoryPanel({ projectPath }: { projectPath: strin
           )}
           <div className="space-y-2 pt-1">
             <label className="block text-xs text-l3">{editing ? "修订后的结论" : "新增人工确认的结论"}<textarea className={`${surfaceFieldClass} mt-1 resize-none leading-6`} rows={3} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} /></label>
-            <label className="block text-xs text-l3">确认 / 作废依据<input className={`${surfaceFieldClass} mt-1`} value={reason} disabled={busy} onChange={(e) => setReason(e.target.value)} /></label>
+            <label className="block text-xs text-l3">{editing ? "修订 / 作废依据" : "确认依据（选填；作废已有条目时必填）"}<input className={`${surfaceFieldClass} mt-1`} value={reason} placeholder={editing ? "写明修订原因…" : "不填默认记为「人工直接录入」"} disabled={busy} onChange={(e) => setReason(e.target.value)} /></label>
             <div className="flex items-center gap-2">
-              <button type="button" className={secondaryActionClass} disabled={busy || !doc || !text.trim() || !reason.trim()} onClick={() => void save(editing ? "replace" : "add", editing)}>{busy ? "保存中…" : editing ? "确认替代旧结论" : "确认新增"}</button>
+              <button type="button" className={secondaryActionClass} disabled={busy || !doc || !text.trim() || (Boolean(editing) && !reason.trim())} onClick={() => void save(editing ? "replace" : "add", editing)}>{busy ? "保存中…" : editing ? "确认替代旧结论" : "确认新增"}</button>
               {editing && <button type="button" className={ghostActionClass} disabled={busy} onClick={() => { setEditing(null); setText(""); }}>取消修订</button>}
             </div>
             {error && <InlineNotice tone="err">{error}</InlineNotice>}

@@ -7,7 +7,6 @@ import {
   projectUsesSkillPool,
   renderProjectContextPack,
   renderSessionInjection,
-  sessionTemplateValues,
   type ContextPackEntry,
   type ContextPackKind,
   type ProjectSkillPack,
@@ -203,14 +202,4 @@ export async function loadProjectContextPack(input: PackRequest): Promise<string
     return renderSessionInjection(injectionTemplate, packInput);
   }
   return renderProjectContextPack(packInput);
-}
-
-/** 对话注入分段编辑器的逐段内容：每个占位符在这个项目下此刻会填进去什么（会话包口径）。 */
-export async function loadSessionTemplateValues(input: {
-  name: string;
-  path: string;
-  workMode?: string | null;
-}): Promise<Record<string, string>> {
-  const { packInput } = await gatherPack({ ...input, kind: "session" });
-  return sessionTemplateValues(packInput);
 }

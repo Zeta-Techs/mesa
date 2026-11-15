@@ -380,27 +380,14 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）+ 问它一句（不打断，run_ask_aside，只给 Claude Code / Codex）与你留过的几条状态
   components/WorkbenchApprovalPanel.tsx # 工作台审批详情：完整展示通道已提供的请求 / 已知对话目录 / 单问回复范围，动作交回工作台同一条延迟发送与原对话入口
-  components/ProjectSettingsDrawer.tsx # 项目设置抽屉（三方式共用，2026-10-16 统一）：SettingsDrawerShell 外壳（title / headerActions / backdropClassName 可传，工作台任务与审批详情复用，独立设定 400px 宽度与标题栏下沿定位）；
-                             # docked（2026-11-05 项目助手）= 不压暗不困焦点的常驻 aside，左缘拖动条
-                             #   （ccode-sheet-right 滑入/退场 + Esc/Tab 焦点圈闭 + role=dialog + 遮罩 mousedown
-                             #   靶命中关闭，头带项目名副题）+ SettingsRulesSection「规则与验收」分区（规则/
-                             #   验收记录/对话注入，验收账本自取）；默认导出=编程/工作组装（再加项目长期知识）
-  components/SessionTemplateEditor.tsx # 对话注入「自定义」勾选编辑器（2026-10-17 用户三轮拍板：原文模板、可排序段落清单都嫌不便）：
-                             #   「带上哪些项目信息」9 枚开关标签（悬停看本项目此刻内容，勾着为空标「（空）」）+「我的补充」文本框；
-                             #   标签即存、补充失焦存；补充框自持原文（回流模板会裁空白）；放不进勾选形状的手工版式给
-                             #   「编辑源文本 / 改用勾选」两条出路（tests/session-template-editor-ui.test.ts）
-  components/ProjectInjectionPanel.tsx # 项目设置抽屉「对话注入」面板（2026-10-16）：三态 SegTabs（自动/自定义/不注入）+
-components/ProjectMemoryPanel.tsx  # 项目设置抽屉「项目长期知识」分区（2026-11-02 起每条可「提升到研究档案」，分类由人选）（ProjectSettingsDrawer 编程/工作组装）：读写 .ccode/memory.md（project_memory_read/update）——新增/替代/作废都要写依据（reason）、revision 乐观锁、作废先确认，历史与 legacy 原文保留可查；默认收起、摘要给有效条数（tests/project-memory-panel.test.ts）
-components/ProjectRulesPanel.tsx  # 项目设置抽屉「规则」面板（ProjectSettingsDrawer，SettingsRulesSection 同款分区）：规则草稿与生效预览（effectiveProjectRules）、保护文件夹勾选（protectableEntries/suggestProtectedPaths）、项目技能池增删；按工作方式给占位示例（tests/project-rules-panel.test.ts）
-                             #   模板编辑（切到自定义且模板空 → 直接填默认版式并保存；恢复默认模板覆盖前确认；「插入」占位符小标签、
-                             #   未知占位符/单独 ---- 行点名、人清空时的不生效提示）+
-                             #   展开式预览（loadProjectContextPack + sessionOverride 按面板未保存的档位/草稿 400ms 防抖重渲，所见即所得，
-                             #   ↻ 手动按项目当前内容重读，previewSeq 序号守卫防并发旧读覆盖）；保存合并的最后一次入队放 ref（不得用每次渲染重置的 let）；
-                             #   保存走 project_set_session_injection（projects.rs 配置锁内单键读改写，不整卡——
-                             #   同分区规则面板等写者互不覆盖）+ 前端 saveChain 串行化保落盘顺序；touchedRef 防
-                             #   迟到的挂载读档覆盖用户刚改的表单；
-                             #   挂载三处共用 SettingsRulesSection「规则与验收」分区（科研抽屉与编程/工作抽屉
-                             #   同一份），影响一切 session 入口（＋新对话/问 AI/编程「进入」/定时巡检开聊）
+  components/ProjectSettingsDrawer.tsx # 统一项目设置抽屉（三方式共用四段结构，2026-11-16 重构）：SettingsDrawerShell 外壳（title / headerActions / docked 等，工作台任务、审批详情、项目助手、文件栏复用）+
+                             #   ① SettingsBasicSection「基本信息」（项目名就地重命名、课题主题/项目简介就地编辑、路径复制与打开文件夹、工作方式切换 set_work_mode）+
+                             #   ② SettingsRulesSection「AI 规则与项目记忆」（ProjectRulesPanel + ProjectMemoryPanel + ProjectInjectionPanel）+
+                             #   ③ children 模式专属（科研的研究流程 + 文献与数据）+
+                             #   ④ SettingsRecordsAndManageSection「记录与管理」（只读验收记录 AcceptanceLogList + 研究记录与导出 ResearchRecordPanel + 从 Mesa 移除）（tests/project-settings-drawer-ui.test.ts）
+  components/ProjectInjectionPanel.tsx # 项目设置「新对话附带项目背景」面板（2026-11-16 由三态模板编辑器简化为自动开关 + 预览 AI 拿到的全文）：开启=auto / 关闭=off（兼容盘上旧 custom 提示一键切自动），保存走 project_set_session_injection 单键原子写 + saveChain 串行化
+  components/ProjectMemoryPanel.tsx  # 项目设置「项目长期知识」面板：读写 .ccode/memory.md（project_memory_read/update）——人工新增时确认依据选填（默认「人工直接录入」）、修订/作废必填依据并保留历史、revision 乐观锁；仅科研项目展示「提升到研究档案」（tests/project-memory-panel.test.ts）
+  components/ProjectRulesPanel.tsx  # 项目设置「规则」面板：待填设定项拆分为独立输入框、隐藏保留科研工具机器键、检测仓库根 AGENTS.md/CLAUDE.md 并提供一键预览；无流程科研与工作项目提供保护路径勾选与项目技能池（编程与有流程科研不展示技能池）（tests/project-rules-panel.test.ts）
   components/ActivityHeatmap.tsx  # 用量页「活跃度」热力图区块（2026-10-12）：真 table role=grid + CSS 格子（几何全在
                              #   App.css .ccode-heat*，档位色 --heat-1..4 令牌）；去年同月 1 日到今天、与 range 解耦；
                              #   单模布局（2026-10-16）：胶囊全在卡头一行（标题后、窗口范围前），网格吃满卡宽；
@@ -1129,15 +1116,11 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
 components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts；导出 PdfRegionThumb（正文图号悬停小图）
 components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球）：挂覆盖层根、只在 PDF 栏里（bounds）；摆位请求 TlPlace（划词选区或原文段外框）换 key 就按 readerTlWinPlace 摆到原文段下方 / 上方；拖表头换位、拖右下角改大小（readerTlCard 记住，双击复位）；Mesa 图标样「译」悬浮球 ReaderTlBall 贴窗左侧与窗一体（拖球或表头一起走，点球收起 / 展开）；表头 原文 / 存进笔记 / 复制 / ⋯（问这段、历史——在窗里列）/ ×（彻底关、连球收掉，PDF 顶栏「译文 N」再开）；onDisplay 报正文摆着哪条供 PDF 标原文段（tests/reader-translate-ui.test.ts）
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
-  session-template-blocks.ts # 对话注入模板 ↔ 勾选模型：[项目基本信息] → 勾中的内容段（固定标准顺序）→ 我的补充；
-                             #   parseSimpleTemplate（放不进返回 null）/ serializeSimpleTemplate / coerceSimpleTemplate（只丢顺序不丢字）/
-                             #   sectionSummary；盘上仍是同一份模板文本（tests/session-template-blocks.test.ts）
   acceptance-log.ts          # 验收账本文案：kind → 人话（进主仓 ≠ 科学验收）；acceptanceEntryRow = 设置抽屉验收记录一行
                              #   （lit-watch→文献雷达、版本短号进悬浮、系统备注「定时巡检采纳」不重复；AcceptanceLogList 渲染）
   project-context-load.ts    # 启动环境说明拼装：读档案卡和顶层目录，失败仍返回能用的短包；
-                             #   session 包按档案卡对话注入三态分叉（off=空串 / custom=模板 / 其余=自动，空模板 fail-open 自动）；
-                             #   sessionOverride 只给设置面板预览用（按未保存草稿渲染），开对话一律读盘；
-                             #   loadSessionTemplateValues = 每个占位符此刻的内容（project-context.ts sessionTemplateValues，与渲染同一出处）
+                             #   session 包按档案卡对话注入配置分叉（off=空串 / 其余=自动生成，兼容旧 custom 模板渲染）；
+                             #   sessionOverride 只给设置面板预览用，开对话一律读盘
   step-kind.ts               # 步骤类型（2026-11-06 流程贯通推到全部模板）：stepKind 按技能槽与专属产物归 search / notes / outline / clean / design / experiment / analysis /
                              #   writing / final / other；ROUND_CLAUSE 回头 / 跟进开场话按类补的做法、chainDefaultOff（实验默认不进链）（tests/step-kind.test.ts）
   notes-progress.ts          # 精读进度：notes/index.json 按 reviewStatus=reviewed（旧索引的 done/read 同义）数已写笔记、按 fulltextStatus 分全文/仅摘要，

@@ -27,12 +27,15 @@ export type ProjectSkillPack = {
 };
 
 /** 有研究步骤的科研项目：技能以步骤挂载为准，不用项目技能池。
- *  无流程科研 / 办公 / 编程：池 + 目标点名。 */
+ *  编程项目走工作树与会话（CLI 自读仓库与全局技能），也不用项目技能池（2026-11-16）。
+ *  无流程科研 / 工作：池 + 目标点名。 */
 export function projectUsesSkillPool(
   workMode?: string | null,
   stepCount = 0,
 ): boolean {
-  return !(normalizeWorkMode(workMode) === "research" && stepCount > 0);
+  const mode = normalizeWorkMode(workMode);
+  if (mode === "coding") return false;
+  return !(mode === "research" && stepCount > 0);
 }
 
 /** 「写回时跳过」是普通目标验收写回的合同。有研究步骤走评审合并，编程走工作树，界面都不展示。 */

@@ -7,8 +7,14 @@ import { Checkbox, FoldMark } from "./PageFrame";
 
 const RECENT = 30;
 
-/** 项目设置「规则与验收」里的研究记录：每次 AI 运行一行，下面三颗导出按钮。没有记录时整块不出现 */
-export default function ResearchRecordPanel({ projectPath }: { projectPath: string }) {
+/** 项目设置「记录与管理」里的研究记录：每次 AI 运行一行，下面三颗导出按钮。没有记录时整块不出现 */
+export default function ResearchRecordPanel({
+  projectPath,
+  className = "mt-3",
+}: {
+  projectPath: string;
+  className?: string;
+}) {
   const [runs, setRuns] = useState<RunRecordDto[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<ResearchExportKind | null>(null);
@@ -43,7 +49,7 @@ export default function ResearchRecordPanel({ projectPath }: { projectPath: stri
     }
   };
   return (
-    <div className="mt-3 text-xs">
+    <div className={`${className} text-xs`.trim()}>
       <button
         type="button"
         className="flex items-center gap-1.5 font-medium text-l3 hover:text-l1"

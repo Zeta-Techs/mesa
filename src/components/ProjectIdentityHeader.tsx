@@ -277,18 +277,29 @@ export default function ProjectIdentityHeader({
             </button>
           )}
           {showMenu && (
-            <button
-              type="button"
-              onClick={(event) => {
-                const rect = event.currentTarget.getBoundingClientRect();
-                setMenu({ x: rect.right, y: rect.bottom + 4 });
-              }}
-              title="项目操作"
-              aria-label={`项目操作：${displayName}`}
-              className="flex h-7 w-7 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
-            >
-              ⋯
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onChromeAction("settings")}
+                title="项目设置"
+                aria-label={`项目设置：${displayName}`}
+                className="flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+              >
+                <Settings2 size={14} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  setMenu({ x: rect.right, y: rect.bottom + 4 });
+                }}
+                title="更多项目操作"
+                aria-label={`项目操作：${displayName}`}
+                className="flex h-7 w-7 items-center justify-center rounded-sm text-sm text-l3 hover:bg-hover hover:text-l1"
+              >
+                ⋯
+              </button>
+            </>
           )}
         </div>
       </div>

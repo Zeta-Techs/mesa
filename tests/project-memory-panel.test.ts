@@ -51,3 +51,48 @@ test("项目知识：人工修订传版本，作废确认，保存失败不丢�
     assert.equal(calls.at(-1).action, "revoke"); assert.equal(calls.at(-1).expectedRevision, "v2");
   } finally { await act(async () => root.unmount()); dom.window.close(); for (const [key, descriptor] of restore) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); } }
 });
+
+test("项目知识：新增时依据选填默认人工直接录入；非科研模式隐藏提升到研究档案", async () => {
+  const compiled = await build({ stdin: { contents: `export {createElement,act} from 'react'; export {createRoot} from 'react-dom/client'; export {default as Panel} from './src/components/ProjectMemoryPanel';`, resolveDir: process.cwd(), loader: "tsx" }, bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic", external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"] });
+  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
+  const restore: Array<[string, PropertyDescriptor | undefined]> = [];
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
+    restore.push([key, Object.getOwnPropertyDescriptor(globalThis, key)]); Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  }
+  const entry = { meta: { id: "m1", createdAt: "t1", goalName: "架构", sourceVersion: null, state: "active", replaces: null, reason: "人工直接录入" }, text: "只用 Postgres", stalePaths: [] };
+  let disk = { revision: "v1", legacyText: "", entries: [entry] };
+  const calls: any[] = [];
+  Object.assign(dom.window, { __TAURI_INTERNALS__: { invoke: async (command: string, args: any) => {
+    if (command === "project_memory_read") return disk;
+    if (command === "project_memory_for_ai") return { included: disk.entries.length, omitted: 0, stale: 0, omittedIds: [], lines: disk.entries.map((e) => e.text) };
+    if (command === "project_memory_update") {
+      calls.push(args);
+      disk = { ...disk, revision: "v2", entries: [...disk.entries, { ...entry, meta: { ...entry.meta, id: "m2", reason: args.reason }, text: args.text }] };
+      return disk;
+    }
+    throw new Error(`Unexpected IPC: ${command}`);
+  } } });
+  const mod = { exports: {} as Record<string, any> }; new Function("require", "module", "exports", compiled.outputFiles[0].text)(createRequire(import.meta.url), mod, mod.exports);
+  const { createElement: h, act, createRoot, Panel } = mod.exports;
+  const host = dom.window.document.getElementById("root")!; const root = createRoot(host);
+  try {
+    await act(async () => root.render(h(Panel, { projectPath: "/repo", workMode: "coding" })));
+    await act(async () => [...host.querySelectorAll("button")].find((b) => b.textContent!.includes("项目长期知识"))!.click());
+    assert.ok(!host.textContent!.includes("提升到研究档案"), "编程模式不展示研究档案提升按钮");
+
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "API 统一走 v2");
+      textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    const addBtn = [...host.querySelectorAll("button")].find((b) => b.textContent === "确认新增")!;
+    assert.equal(addBtn.disabled, false, "新增结论无需强填依据即可提交");
+    await act(async () => addBtn.click());
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, "add");
+    assert.equal(calls[0].reason, "人工直接录入");
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of restore) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});
