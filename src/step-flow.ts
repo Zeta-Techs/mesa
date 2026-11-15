@@ -595,6 +595,7 @@ function parseToFetchLine(line: string, i: number): ToFetchItem | null {
 export function pickDiscussResume<
   T extends {
     stepName?: string | null;
+    workspace?: string | null;
     archived?: boolean;
     internal?: boolean;
     live?: boolean;
@@ -605,10 +606,12 @@ export function pickDiscussResume<
 >(sessions: readonly T[], stepName: string): T | null {
   const name = stepName.trim();
   if (!name) return null;
+  // 只认在项目根开的商量会话（workspace 为空）：步骤开工后的 git worktree 执行会话也带同一个 stepName，不能当成商量接回
   const hits = sessions.filter(
     (session) =>
       !session.archived &&
       !session.internal &&
+      !session.workspace &&
       session.stepName === name,
   );
   if (hits.length === 0) return null;
@@ -619,10 +622,11 @@ export function pickDiscussResume<
   )[0] ?? null;
 }
 
-/** 本步是否已经商量过：认 session_meta.stepName（「跟 AI 商量」认领后固化）。 */
+/** 本步是否已经商量过：认 session_meta.stepName（「跟 AI 商量」认领后固化，不含步骤工作区执行会话）。 */
 export function stepHasDiscussSession(
   sessions: readonly {
     stepName?: string | null;
+    workspace?: string | null;
     archived?: boolean;
     internal?: boolean;
     live?: boolean;

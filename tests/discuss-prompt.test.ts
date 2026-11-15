@@ -43,3 +43,16 @@ test("商量对话复用键：拼出来的能拆回项目根与任务书路径�
   assert.equal(parseDiscussReuseKey("discuss:/p/notes.md"), null);
   assert.equal(parseDiscussReuseKey(undefined), null);
 });
+
+test("已有项目规则传入商量开场：用户定下或推翻全局设定时允许同步改 .ccode/project.toml，不直接手改 memory.md", () => {
+  const p = discussOpeningPrompt({
+    stepName: "文献检索与筛选",
+    relPath: ".ccode/drafts/lit-search.md",
+    workspaceName: "lit-search",
+    projectSettings: ["去向：EES期刊", "文献数据抽取表：不需要"],
+  });
+  assert.match(p, /当前项目规则：去向：EES期刊；文献数据抽取表：不需要/);
+  assert.match(p, /同步把 \.ccode\/project\.toml 的 settings 里对应那条改成定下来的话/);
+  assert.match(p, /## 本步补充要求/);
+  assert.match(p, /记进项目知识/);
+});

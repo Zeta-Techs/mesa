@@ -1,5 +1,5 @@
 import { researchToolArtifacts, researchToolContractMatches, researchToolStageOutputs } from "../research-tools";
-import { appendUpstreamAcceptance, type UpstreamAcceptance } from "../research-acceptance";
+import { appendUpstreamAcceptance } from "../research-acceptance";
 import UpstreamResearchAcceptance from "./UpstreamResearchAcceptance";
 import ResearchToolPreflight from "./ResearchToolPreflight";
 import FigureVisionNotice from "./FigureVisionNotice";
@@ -79,7 +79,6 @@ import { IS_WINDOWS } from "../hotkeys";
 import { fanOutSummary } from "../fan-out";
 import type {
   FanOutPlanDto,
-  ArtifactEntryDto,
   DiscoveredResourceDto,
   HumanTaskStateDto,
   ProjectConfigDto,
@@ -236,20 +235,7 @@ export default function KickoffConfirmDialog({
   }, [cfgLocal, step.name, stepNow, skillLib]);
 
   // TASK.md 提货单/技能元数据（打开时读一次）
-  const [extras, setExtras] = useState<{
-    artifacts: ArtifactEntryDto[];
-    skillMeta: Record<string, string> | undefined;
-    providesByName: Record<string, string[]> | undefined;
-    /** 已定方向（决策项答案，读自任务书草稿）：渲染进 TASK.md 的「已定方向」段 */
-    decisions: { q: string; answer: string }[];
-    upstream: UpstreamAcceptance[];
-    /** 项目知识（project_memory_for_ai 的那一份） */
-    ledger: string[];
-    /** 同项目还开着的其他工作数（有才带「同项目的其他工作」一节） */
-    peers: number;
-    /** 研究档案（跨项目；设置里关掉时为空） */
-    profile: string;
-  } | null>(null);
+  const [extras, setExtras] = useState<Awaited<ReturnType<typeof gatherTaskMdExtras>> | null>(null);
   const [mainDirtyFiles, setMainDirtyFiles] = useState<GitFileDto[] | null>(
     null,
   );
@@ -558,7 +544,7 @@ export default function KickoffConfirmDialog({
   // 打开时一次性加载：提货单/技能元数据 + 主仓状态 + 技能库 + 未登记资源 + 任务书草稿 + 旧版简报；不轮询
   useEffect(() => {
     let stale = false;
-    gatherTaskMdExtras(projectPath, step).then((value) => {
+    gatherTaskMdExtras(projectPath, step, cfgLocal.steps).then((value) => {
       if (!stale) setExtras(value);
     }).catch((reason) => { if (!stale) { setSkillError(`无法读取上游验收：${String(reason)}，请关闭后重试`); setEditorReady(false); } });
     invoke<KickoffInputChip[]>("inspect_step_inputs", {
@@ -663,6 +649,7 @@ export default function KickoffConfirmDialog({
       extras.ledger,
       extras.peers,
       extras.profile,
+      extras.upstreamDecisions,
     );
   }, [extras, stepNow, cfgLocal, skillMeta, projectPath]);
 

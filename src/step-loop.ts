@@ -269,7 +269,8 @@ export function litOrder(opts: {
  *  否则 AI 照任务书只补速读行（2026-11-05 排查）；精读步没有「主要报告」，不叫它往报告末尾追加。 */
 /** 点名精读的篇写成完整笔记（补料轮与链上跟进共用） */
 const FULL_NOTES_CLAUSE =
-  "写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed。" +
+  "写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed，单上带了节号的同步填进 forSections（如 [\"3.3\"]）；" +
+  "项目里有 notes/extraction.md 且这篇含可抽取定量指标的，一并补进 notes/extraction.md。" +
   "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。";
 
 export function reworkPrompt(
@@ -306,7 +307,7 @@ export function reworkPrompt(
   }
   lines.push(
     opts.isSearch
-      ? "已纳入、已判定的文献不重筛、不改判定；新找到的按原纳入标准筛，纳入的追加进 papers/included.json，再按技能跑 lit_records.py write 重出清单。" +
+      ? "已纳入、已判定的文献不重筛、不改判定；新找到的按原纳入标准筛，纳入的追加进 papers/included.json（单上带了节号的，在新条目的 forSections 填对应节号数组，如 [\"3.3\"]，供精读与大纲对账），再按技能跑 lit_records.py write 重出清单。" +
           `在 papers/screening.md 末尾追加「## 补料轮（${opts.date}）」一节：补了什么、检索式、候选数与纳入数、没拿到全文的原因。`
       : opts.isNotes
         ? `单上点名的篇（或这些主题下该精读的篇）${FULL_NOTES_CLAUSE}收尾跑 lit_records.py bib 补 references.bib；notes/handoff.md 的写作约束按新笔记改到现在成立的样子（新补的约束加上，不再成立的删掉），不记改动经过；最后在对话里列出补了哪几篇、改了哪些文件。`
@@ -541,7 +542,7 @@ export function followupPrompt(opts: {
                 ? ["上面没写节号的，按 papers/included.json 里这几篇的纳入理由和大纲判断它撑哪几节。"]
                 : []),
               `只处理这些篇（先跑 lit_records.py pdfs 认 PDF）：综述写综述卡；研究论文也直接${FULL_NOTES_CLAUSE}` +
-                "每篇在 notes/index.json 记 forSections（它撑的是上面哪几节，写节号）。没全文的按摘要写并标「仅摘要·待全文」。",
+                "每篇在 notes/index.json 记 forSections（优先沿用 papers/included.json 那条的 forSections，没有的按上面哪几节写节号）。没全文的按摘要写并标「仅摘要·待全文」。",
             ].join("\n")
           : "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
       );
@@ -729,15 +730,22 @@ export function unplacedCoverageDrafts(drafts: CoverageDraft[], has: { search: b
 }
 
 /** 回路进行中「下一步去哪」（2026-11-05，用户反馈「跑完一个节点就不会弄了」）：流程进度条上方一行。
- *  ① 前面某步在补一轮（进行中 / 待评审 / 有冲突），后面已有做完的步骤 → 先把它做完、评审保存；
- *  ② 否则第一个「已完成但上游又保存过」的步骤 → 去那一步点「跟进更新」。
+ *  ① 前面某步在补一轮（进行中 / 待评审 / 有冲突），后面已有做完或停在半途等补料的步骤 → 先把它做完、评审保存；
+ *  ② 否则第一个「已完成或待评审、且上游又保存过」的步骤 → 去那一步点「跟进更新」。
  *  都不是返回 null。只认状态，不认模板。 */
 export function loopHint(
   steps: { name: string }[],
   statuses: { key: string; staleUpstream?: string | null }[],
 ): { index: number; text: string } | null {
-  const lastDone = statuses.map((s) => s.key).lastIndexOf("done");
-  for (let i = 0; i < lastDone; i++) {
+  let lastReached = -1;
+  for (let i = statuses.length - 1; i >= 0; i--) {
+    const k = statuses[i]?.key;
+    if (k === "done" || k === "review" || k === "active" || k === "blocked") {
+      lastReached = i;
+      break;
+    }
+  }
+  for (let i = 0; i < lastReached; i++) {
     const key = statuses[i]?.key;
     if (key === "active" || key === "review" || key === "blocked") {
       const name = steps[i]?.name ?? "";
@@ -747,10 +755,10 @@ export function loopHint(
           : key === "blocked"
             ? "有冲突要先处理"
             : "正在补一轮，做完去评审、保存进项目";
-      return { index: i, text: `回头补的这一轮在「${name}」：${what}；保存后，后面做完的步骤会显示「待跟进」，再依次去跟进。` };
+      return { index: i, text: `回头补的这一轮在「${name}」：${what}；保存后，后面的步骤会显示「待跟进」，再依次去跟进。` };
     }
   }
-  const i = statuses.findIndex((s) => s.key === "done" && !!s.staleUpstream);
+  const i = statuses.findIndex((s) => (s.key === "done" || s.key === "review") && !!s.staleUpstream);
   if (i >= 0) {
     const name = steps[i]?.name ?? "";
     return { index: i, text: `「${statuses[i].staleUpstream}」有更新：下一步到「${name}」点「跟进更新」。` };

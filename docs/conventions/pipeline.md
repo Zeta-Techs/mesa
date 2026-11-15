@@ -544,6 +544,10 @@
     **评审页打开时算好合并进核验清单，不写 `.ccode/checks/` 文件**（理由见 architecture §10 同日条）；同一份结果给大纲预览上方「覆盖检查：AI 写的 / Mesa 数的」并排表。
     大纲步骤卡「薄 n 节待补料」：薄节仍是 AI 判断；补读点名的篇都有全文笔记、或补检来的新篇笔记 forSections 记了这一节，就改算「补料已到、等大纲重看」（`outlineThinStatus`）。
     任务书与 review-framework 技能改口：篇数以 Mesa 数的为准、对不上下一轮按它改表，AI 只判够 / 薄并写理由。
+- **全流程衔接与前三步卡点收口（2026-11-16 用户：「按你推荐 修复所有问题」）**：
+  - **商量与任务书跨步继承**：商量开场传入现有 `projectSettings`，人定下或推翻全局设定时允许同步改 `.ccode/project.toml` 的 `settings` 对应行（长期口径仍提醒人点「记进项目知识」，不手改 `.ccode/memory.md`）；桩草稿认 `## 已定方向`、`## 本步补充要求`、`## 待拍板`，全文草稿在预览与开工时经 `syncDynamicTaskSections` 动态刷新项目规则、待确认全局设定、文献来源、上游已定方向、项目知识、研究档案、本步骤脚本与上一步提货单（保留用户手改简报），前面各步草稿的「已定方向」汇总为 `## 上游已定方向`（`gatherTaskMdExtras`）；提货单过滤 `notes/inbox.md`、`papers/watch-seen.md`、`papers/reading-list.md` 与 `*-副本.*`；`pickDiscussResume` 限定 `!session.workspace`，不把工作树执行会话误当项目根商量接回；开工后打开 `TASK.md` 顶部提示新改内容下次重开生效。
+  - **回路自动跟进与大纲防呆**：发起补料单的当前进行中步骤（如大纲第 6 问未首次保存时点「补文献…」）纳入 `chainOptions`，自动跟进链轮到发起步本人时放行未保存态并入新笔记重看（`allowUnsaved`）；`loopHint` 覆盖进行中发起回头的上游补料轮与待评审步骤的上游更新；大纲移除实证 `QUESTION_GATE`，从已定方向 / 上游已定方向 / 项目知识 / `screening.md` 预填定框架记录并跳过重问，第 5 问写章节草图时先落暂定「拟引用（可写）/（线索）」再进第 6 问覆盖检查（使 `outline-check` 当场能数），覆盖检查「补读」只准挑 `fulltextStatus=fulltext` 的篇（缺 PDF 的由 `outline-check` 报 `needs_human`）；补检与补读均落盘 `forSections` 并在有 `notes/extraction.md` 时同步补行。
+  - **前三步与脚本确定性**：检索步文献来源段不再声称「首次题录见 `references.bib`」（`references.bib` 由精读步生成），`lit_records.py write` 为纳入 / 待确认文献持久化确定性 `bibKey`（精读分路速读表、`cmd_bib`、`cmd_angles_facts` 共用同一键，摘要含 `{110` 等单边花括号不崩，未打勾排除重排仍按 DOI / 标题认出新加行，`check` 覆盖无 DOI 缺全文、部分漏标 `kind` 与预印本告警）；待获取追加 RIS 只写缺全文项；Zotero「带笔记」与 EndNote 同口径归精读步预期产物；旧项目缺 `manuscript/sections.json` 时初稿分路回退解析 `outline.md` 正文章节（`fan_out.rs`）；`extract_figure.py` / `figure_sources.py` 支持 `a–z` 面板、`Scheme / Chart` 题注、可移植相对 PDF 路径与零拼图友好说明。
 
 ## 科研流程补全（2026-11-07 拍板，design-research-completion.md）
 

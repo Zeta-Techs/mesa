@@ -111,7 +111,10 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 初稿挂可选技能 schematic-forge（技能清单一行）。只涨英文综述：实测 review 35564。
   // 2026-11-14 综述跨文献数据重绘综合图：大纲简报加「重绘 图N = 数据源 notes/extraction.md」、初稿简报加「重绘按 figure-forge 用脚本画并出配对 .csv」与完成标准一句，
   // 初稿挂可选技能 figure-forge（技能清单一行）。只涨英文综述：实测 review 35972。
-  const before: Record<string, number> = { review: 36100, "research-paper": 44400, "data-processing": 17800, thesis: 43350, "submission-rebuttal": 11550, "latex-paper": 18050 };
+  // 2026-11-16 英文综述前三步卡点与全流程衔接：工作区步骤加「不直接改 .ccode/project.toml」防呆句（六模板同涨）；
+  // 综述检索加预填已定方向与确定性 bibKey、精读速读表加代表图/表与抽取表说明、大纲加预填定框架记录 + 第 5 问暂定拟引用 + 补读限有全文 + 停工门识别。
+  // 实测 review 37056、论文 45005、数据 18015、学位 43945、投稿 11631、LaTeX 18228。
+  const before: Record<string, number> = { review: 37200, "research-paper": 45150, "data-processing": 18150, thesis: 44100, "submission-rebuttal": 11750, "latex-paper": 18350 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

@@ -39,6 +39,7 @@ export default function ReworkOrderCard({
 }) {
   const [steps, setSteps] = useState<ProjectStepDto[] | null>(null);
   const [saved, setSaved] = useState<Set<string>>(new Set());
+  const [live, setLive] = useState<Set<string>>(new Set());
   const [provides, setProvides] = useState<SkillProvides>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,9 +55,14 @@ export default function ReworkOrderCard({
     loadSkillProvides()
       .then((m) => !stale && setProvides(m))
       .catch(() => {});
-    // 补完后能接着自动跟进的：保存过的步骤（按工作副本名认）
+    // 补完后能接着自动跟进的：保存过的步骤，或发起补料且已有工作副本的那一步
     invoke<WorkspaceDto[]>("list_workspaces")
-      .then((list) => !stale && setSaved(new Set(list.filter((w) => w.mergedAt && w.status === "active").map((w) => w.name))))
+      .then((list) => {
+        if (stale) return;
+        const mine = list.filter((w) => w.repoPath === projectPath && w.status === "active");
+        setLive(new Set(mine.map((w) => w.name)));
+        setSaved(new Set(mine.filter((w) => w.mergedAt).map((w) => w.name)));
+      })
       .catch(() => {});
     return () => {
       stale = true;
@@ -196,8 +202,18 @@ export default function ReworkOrderCard({
           chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, provides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             targets.map((t) => {
-              const from = steps.indexOf(t);
-              return [t.name, steps.filter((x, i) => i > from && !!x.workspaceName && saved.has(x.workspaceName)).map((x) => x.name)];
+              const fromIdx = steps.indexOf(t);
+              return [
+                t.name,
+                steps
+                  .filter(
+                    (x, i) =>
+                      i > fromIdx &&
+                      !!x.workspaceName &&
+                      (saved.has(x.workspaceName) || (x.name === from?.name && live.has(x.workspaceName))),
+                  )
+                  .map((x) => x.name),
+              ];
             }),
           )}
           initial={{

@@ -12,12 +12,19 @@ test("search/空：无「文献来源」段", () => {
   assert.equal(litSourceSectionLines(undefined), null);
 });
 
-test("zotero/folder：段内容分版本", () => {
-  assert.match(litSourceSectionLines("zotero")!.join("\n"), /Zotero 库/);
-  assert.match(litSourceSectionLines("folder")!.join("\n"), /本地文件夹/);
-  assert.match(litSourceSectionLines("folder")!.join("\n"), /EndNote/);
-  assert.match(litSourceSectionLines("endnote")!.join("\n"), /不读 \.enl/);
-  assert.match(litSourceSectionLines("endnote")!.join("\n"), /同步到 EndNote/);
+test("zotero/folder/endnote：段内容分版本，且不在检索步宣称首次题录见 references.bib", () => {
+  const zotero = litSourceSectionLines("zotero")!.join("\n");
+  const folder = litSourceSectionLines("folder")!.join("\n");
+  const endnote = litSourceSectionLines("endnote")!.join("\n");
+  assert.match(zotero, /Zotero 库/);
+  assert.match(folder, /本地文件夹/);
+  assert.match(folder, /EndNote/);
+  assert.match(endnote, /不读 \.enl/);
+  assert.match(endnote, /同步到 EndNote/);
+  for (const s of [zotero, folder, endnote]) {
+    assert.doesNotMatch(s, /首次题录见 references\.bib/);
+    assert.match(s, /included\.json/);
+  }
 });
 
 test("已存任务书补上还没填的全局设定，已填的不进这一节", () => {

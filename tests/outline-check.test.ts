@@ -214,3 +214,28 @@ test("拼图里用了综述的图：按笔记 bibKey 或引文库 DOI 认出 kin
   assert.ok(fig.every((i) => i.status === "needs_human" && i.checker === MESA_CHECKER));
   assert.equal(fig[1].target?.line, 2);
 });
+
+test("覆盖检查：建议补读但索引里缺全文 PDF 的键会被标出，已有全文的不报", () => {
+  const indexes = [
+    JSON.stringify([
+      { id: "10.1/a", bibKey: "NoPdf2024", fulltextStatus: "abstract-only", reviewStatus: "pending", skimmed: true },
+      { id: "10.1/b", bibKey: "HasPdf2025", fulltextStatus: "fulltext", reviewStatus: "pending", skimmed: true },
+    ]),
+  ];
+  const bibs = ["@article{NoPdf2024, year={2024}}\n@article{HasPdf2025, year={2025}}"];
+  const outline = [
+    "## 覆盖检查",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 3.1 机理争议 | 0 | 2 | 2025 | 薄 | 补读：[@NoPdf2024] [@HasPdf2025] |",
+    "| 3.2 原位表征 | 0 | 1 | 2024 | 薄·不补：仅作背景提及 | 补读：[@NoPdf2024] |",
+    "",
+    "## 3. 机理与表征",
+    "### 3.1 机理争议",
+    "- 拟引用（线索）：[@NoPdf2024]; [@HasPdf2025]",
+  ].join("\n");
+  const hits = checkOutline({ outline, bibs, indexes }).items.filter((i) => i.id.startsWith("outline-read-nopdf-"));
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].title, /@NoPdf2024 还没有全文 PDF/);
+  assert.doesNotMatch(hits[0].title, /HasPdf2025/);
+});

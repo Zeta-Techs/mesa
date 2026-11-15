@@ -102,6 +102,8 @@ export interface NoteState {
   tier: NoteTier;
   /** 笔记记的它撑哪几节（二期 forSections），只留节号 */
   forSections: string[];
+  /** 索引明确记了缺全文（abstract-only / unavailable），没有任何索引记过 fulltext */
+  noFulltext?: boolean;
 }
 
 function sectionNumbers(v: unknown): string[] {
@@ -117,9 +119,17 @@ export function noteStates(indexTexts: readonly (string | null | undefined)[]): 
       const key = str(row.bibKey) || str(row.key);
       if (!key) continue;
       const tier = rowTier(row);
+      const ft = str(row.fulltextStatus).toLowerCase();
+      const hasFt = ft === "fulltext";
+      const missingFt = ft === "abstract-only" || ft === "unavailable";
       const prev = out.get(key);
       const forSections = [...new Set([...(prev?.forSections ?? []), ...sectionNumbers(row.forSections)])];
-      out.set(key, { tier: prev && TIER_RANK[prev.tier] >= TIER_RANK[tier] ? prev.tier : tier, forSections });
+      const noFulltext = hasFt ? false : prev?.noFulltext === false ? false : missingFt || Boolean(prev?.noFulltext);
+      out.set(key, {
+        tier: prev && TIER_RANK[prev.tier] >= TIER_RANK[tier] ? prev.tier : tier,
+        forSections,
+        noFulltext,
+      });
     }
   }
   return out;
@@ -583,9 +593,27 @@ export function checkOutline(input: OutlineCheckInput): OutlineCheckResult {
   const rowLine = (label: string) =>
     lines.findIndex((l, i) => i >= coverageLine && l.trim().startsWith("|") && l.replace(/^\s*\|/, "").trim().startsWith(label)) + 1;
   for (const row of coverage) {
-    const [label = "", w = "", h = "", latest = "", verdict = ""] = row;
+    const [label = "", w = "", h = "", latest = "", verdict = "", advice = ""] = row;
     const ai = { writable: countCell(w), hint: countCell(h), latest: latest.trim(), verdict: verdict.trim() };
     const nums = rowNumbers(label);
+    const short = shortLabel(label);
+    const rowLn = rowLine(label) || coverageLine;
+    if (/补读/.test(advice) && !/不补/.test(verdict)) {
+      const noPdfKeys = [...new Set(citedKeys(advice))].filter((k) => notes.get(k)?.noFulltext === true);
+      if (noPdfKeys.length > 0) {
+        items.push({
+          id: `outline-read-nopdf-${(nums.length ? nums.join("_") : short).replace(/\s+/g, "_")}`,
+          kind: "outline-coverage",
+          status: "needs_human",
+          title: `覆盖检查「${short}」建议补读的 ${joinKeys(noPdfKeys)} 还没有全文 PDF`,
+          target: target(rowLn),
+          evidence: {
+            detail: "索引里这几篇是仅摘要或题录级（无全文 PDF），退回精读也写不出可支撑正文的精读笔记。请先把 PDF 放进项目根 papers/ 再补读，或把建议改成「补检：…」另找有全文的文献。",
+          },
+          checker: MESA_CHECKER,
+        });
+      }
+    }
     const mine = cites.filter((c) => nums.some((n) => belongs(c.section, n)));
     if (!nums.length || !mine.length) {
       rows.push({ label, ai, mesa: null, mismatch: false });

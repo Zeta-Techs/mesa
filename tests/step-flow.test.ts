@@ -714,3 +714,25 @@ test("保存后才用得上的收尾标 afterSave，单独归进「保存后可�
   const plain = flow.nodes.filter((n) => n.section === "optional" && n.kind === "human" && n.human);
   assert.ok(plain.every((n) => !n.afterSave));
 });
+
+test("pickDiscussResume：只认项目根商量会话，跳过带 workspace 的工作树执行会话", async () => {
+  const { pickDiscussResume } = await import("../src/step-flow.ts");
+  const list = [
+    {
+      sessionId: "exec-1",
+      agent: "claude",
+      stepName: "文献检索与筛选",
+      workspace: "lit-search",
+      updatedAt: "2026-11-16T03:00:00Z",
+    },
+    {
+      sessionId: "disc-1",
+      agent: "claude",
+      stepName: "文献检索与筛选",
+      workspace: null,
+      updatedAt: "2026-11-16T01:00:00Z",
+    },
+  ];
+  assert.equal(pickDiscussResume(list, "文献检索与筛选")?.sessionId, "disc-1");
+  assert.equal(pickDiscussResume([list[0]], "文献检索与筛选"), null);
+});

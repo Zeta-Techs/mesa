@@ -1,4 +1,5 @@
 import type { StepDecisionDto } from "./types";
+import { syncDynamicTaskSections } from "./task-md-sections.ts";
 
 /** 决策项答案的落点：任务书草稿 `.ccode/drafts/<工作区名>.md` 里的固定小节。
  *
@@ -227,6 +228,7 @@ export function stripDecisions(draft: string): string {
  *  完整形如「## 上一步（lit-search）评审沉淀（2026-09-18T08:18:13Z）」；
  *  测试与旧调用也可能不带工作区名。`.+?` 非贪婪，避免把时间戳括号吞进去。 */
 const REVIEW_DISTILL_HEADING = /^##\s+上一步(?:（.+?）)?评审沉淀/;
+const DRAFT_META_HEADING = /^##\s+(?:本步补充要求|待拍板)\s*$/;
 
 function isAtxHeading(line: string): boolean {
   return /^#{1,6}\s/.test(line.trim());
@@ -236,27 +238,27 @@ function isH2(line: string): boolean {
   return /^##\s+/.test(line.trim());
 }
 
-/** 草稿里所有评审沉淀小节（标题+正文），多段之间空行分隔。 */
-export function reviewDistillSections(draft: string): string {
+function extractMatchingH2Sections(draft: string, headingRe: RegExp): string {
   const lines = draft.split(/\r?\n/);
   const out: string[] = [];
   let capturing = false;
   const chunk: string[] = [];
   const flush = () => {
+    const body = chunk.slice(1).join("\n").trim();
     const text = chunk.join("\n").trim();
-    if (text) out.push(text);
+    if (body && text) out.push(text);
     chunk.length = 0;
   };
   for (const line of lines) {
     const t = line.trim();
-    if (REVIEW_DISTILL_HEADING.test(t)) {
+    if (headingRe.test(t)) {
       if (capturing) flush();
       capturing = true;
       chunk.push(line);
       continue;
     }
     if (capturing) {
-      if (isH2(t) && !REVIEW_DISTILL_HEADING.test(t)) {
+      if (isH2(t) && !headingRe.test(t)) {
         flush();
         capturing = false;
       } else {
@@ -268,18 +270,23 @@ export function reviewDistillSections(draft: string): string {
   return out.join("\n\n").trim();
 }
 
-/** 去掉已定方向、评审沉淀和纯标题行后的剩余正文。空串 = 没有可执行任务书。 */
+/** 草稿里所有评审沉淀小节（标题+正文），多段之间空行分隔。 */
+export function reviewDistillSections(draft: string): string {
+  return extractMatchingH2Sections(draft, REVIEW_DISTILL_HEADING);
+}
+
+/** 去掉已定方向、本步补充要求、待拍板、评审沉淀和纯标题行后的剩余正文。空串 = 没有可执行任务书。 */
 export function stripTaskMdChrome(draft: string): string {
   const kept: string[] = [];
   let skipping = false;
   for (const line of stripDecisions(draft).split(/\r?\n/)) {
     const t = line.trim();
-    if (REVIEW_DISTILL_HEADING.test(t)) {
+    if (REVIEW_DISTILL_HEADING.test(t) || DRAFT_META_HEADING.test(t)) {
       skipping = true;
       continue;
     }
     if (skipping) {
-      if (isH2(t) && !REVIEW_DISTILL_HEADING.test(t)) {
+      if (isH2(t) && !REVIEW_DISTILL_HEADING.test(t) && !DRAFT_META_HEADING.test(t)) {
         skipping = false;
       } else {
         continue;
@@ -293,32 +300,49 @@ export function stripTaskMdChrome(draft: string): string {
 
 /** 这份草稿还没有可执行任务书正文。
  *
- *  空文件、只剩标题、只点了决策项、评审「沉淀到下一步」新建的小节——都不是任务书。
+ *  空文件、只剩标题、只点了决策项、仅含「本步补充要求 / 待拍板」、评审「沉淀到下一步」新建的小节——都不是全文任务书。
  *  开工/预览/播种若把它们当全文，会把模板简报、预期产物、技能、人工事项整份顶掉。 */
 export function isTaskMdStub(draft: string): boolean {
   if (!draft.trim()) return true;
   return stripTaskMdChrome(draft).length === 0;
 }
 
-/** 模板拼装后面接上草稿里的评审沉淀（已有同样段落不重复）。 */
+/** 模板拼装后面接上草稿里的评审沉淀与商量补充项（已有同样段落不重复）。 */
 export function withReviewDistill(
   assembled: string,
   draft: string | null | undefined,
 ): string {
-  const sections = reviewDistillSections(draft ?? "");
-  if (!sections) return assembled;
-  if (assembled.includes(sections)) return assembled;
-  return `${assembled.trimEnd()}\n\n${sections}\n`;
+  const raw = draft ?? "";
+  let out = assembled;
+  const meta = extractMatchingH2Sections(raw, DRAFT_META_HEADING);
+  if (meta && !out.includes(meta)) {
+    const anchor = "\n## 预期产物";
+    const idx = out.indexOf(anchor);
+    out = idx >= 0
+      ? `${out.slice(0, idx).trimEnd()}\n\n${meta}\n${out.slice(idx)}`
+      : `${out.trimEnd()}\n\n${meta}\n`;
+  }
+  const sections = reviewDistillSections(raw);
+  if (!sections || out.includes(sections)) return out;
+  return `${out.trimEnd()}\n\n${sections}\n`;
 }
 
-/** 开工弹层 / 预览 / 播种共用：有可执行正文用文件全文；否则模板拼装并接上评审沉淀。 */
+/** 开工弹层 / 预览 / 播种共用：有可执行正文时刷新动态系统段后用文件全文；否则模板拼装并接上商量结论与评审沉淀。 */
 export function resolveTaskMdSource(
   draft: string | null | undefined,
   assembled: string,
 ): string {
   const raw = draft?.trim() ?? "";
-  if (raw && !isTaskMdStub(raw)) return draft ?? assembled;
-  return withReviewDistill(assembled, raw);
+  if (raw && !isTaskMdStub(raw)) {
+    return syncDynamicTaskSections(draft ?? assembled, assembled);
+  }
+  const merged = withReviewDistill(assembled, raw);
+  const parsed = parseDecisions(raw);
+  if (parsed.size === 0 || merged.includes(DECISIONS_HEADING)) return merged;
+  return upsertDecisions(
+    merged,
+    [...parsed.entries()].map(([q, answer]) => ({ q, answer })),
+  );
 }
 
 /** 草稿是不是「只有拍板结果、没有正文」。
@@ -474,9 +498,12 @@ export function stepWaitItems(step: WaitStep): { during: string[]; after: string
     else if (mode === "soft_pause") during.push(`未答则只做无依赖准备：${q}`);
   }
   const brief = step.brief ?? "";
-  if (/help-wanted\.md/.test(brief) && /问用户/.test(brief)) {
+  if (
+    /help-wanted\.md/.test(brief) &&
+    /(?:问用户|问人|一问一答|一次只问一个|问哪些节|等人定|等你拍)/.test(brief)
+  ) {
     during.push(
-      "简报里要你写进 .ccode/help-wanted.md 问用户的那一项（带上依据再问）：问完按该条兜底做无依赖准备，未答不得锁死标准、核心篇目、大纲骨架或目标期刊",
+      "简报里要你写进 .ccode/help-wanted.md 问用户的那一项（带上依据、一次按规则问）：问完按该条兜底只做无依赖可逆准备，未答不得锁死标准、核心篇目、大纲骨架、薄节取舍或目标期刊",
     );
   }
   const isTwoRoundReview = /本步分两轮|写完报告就停/.test(brief);

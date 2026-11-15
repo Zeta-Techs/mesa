@@ -73,6 +73,11 @@ const WRITING_SKILLS = new Set([
   "rebuttal-crafter",
 ]);
 
+export interface UpstreamStepDecisions {
+  stepName: string;
+  items: { q: string; answer: string }[];
+}
+
 export function renderTaskMd(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
@@ -88,6 +93,8 @@ export function renderTaskMd(
   peers = 0,
   /** 研究档案（跨项目的习惯与偏好；设置里关掉时为空）；有才带一节 */
   profile = "",
+  /** 上游步骤在任务书草稿「已定方向」里已拍板的口径（本步同名项已覆盖的不重复列） */
+  upstreamDecisions?: UpstreamStepDecisions[],
 ): string {
   // 任务包参数（2026-11-03）：文字里的 {param:键} 先换成取值，后面各段照常拼
   const rawParams = step.params ?? [];
@@ -111,13 +118,35 @@ export function renderTaskMd(
     lines.push(
       "## 待确认的全局设定",
       ...pending.map((line) => `- ${line}`),
-      "这些还没有由人确定。先逐项问人，说明括号里可以怎么填。人确定一项后，把 .ccode/project.toml 的 settings 里对应那一行改成「名称：答案」，再按答案做。确定之前不得把括号里的提示当成已经决定的口径，也不得写进正文。",
+      "这些还没有由人确定。先逐项问人，说明括号里可以怎么填。开工前商量时人确定一项后，把项目根 .ccode/project.toml 的 settings 里对应那一行改成「名称：答案」；已开工的步骤工作区里经 .ccode/help-wanted.md 问人并在本步报告写明已定口径（不要在工作区直接改 .ccode/project.toml 免得合并冲突）。确定之前不得把括号里的提示当成已经决定的口径，也不得写进正文。",
       "",
     );
   }
   const litLines = litSourceSectionLines(cfg.litSource);
   if (litLines) {
     lines.push(...litLines, "");
+  }
+  const localKeys = new Set(
+    (decisions ?? []).map((d) => d.q.trim().toLowerCase()),
+  );
+  const inherited = (upstreamDecisions ?? [])
+    .map((group) => ({
+      stepName: group.stepName,
+      items: group.items.filter(
+        (item) => !localKeys.has(item.q.trim().toLowerCase()),
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
+  if (inherited.length > 0) {
+    lines.push(
+      "## 上游已定方向",
+      ...inherited.flatMap((group) =>
+        group.items.map((d) => `- [${group.stepName}] ${d.q}：${d.answer}`),
+      ),
+      "",
+      "以上为前面步骤商量或拍板定下的全流程口径（如核心判断、家族边界、骨架偏好、工况范围等），本步继续沿用、不再重问；若本步「已定方向」或最新产物有更新，以本步为准。",
+      "",
+    );
   }
   if (decisions && decisions.length > 0) {
     lines.push(
@@ -353,9 +382,22 @@ export function renderTaskMd(
     const escaped = pattern.replace(/[.+^${}()|[\\]\\\\]/g, "\\$&");
     return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`).test(value);
   };
+  const isInternalOrBackupArtifact = (relative: string, base: string) =>
+    relative === "notes/inbox.md" ||
+    relative === "papers/watch-seen.md" ||
+    relative === "papers/reading-list.md" ||
+    /-副本(?:\.[^/]+)?$/i.test(base);
   const scopedArtifacts =
     inputPatterns.length === 0
-      ? artifacts ?? []
+      ? (artifacts ?? []).filter((artifact) => {
+          const path = artifact.path.replace(/\\/g, "/");
+          const root = projectRoot.replace(/\\/g, "/");
+          const relative = path.startsWith(`${root}/`)
+            ? path.slice(root.length + 1)
+            : path;
+          const base = relative.split("/").pop() ?? relative;
+          return !isInternalOrBackupArtifact(relative, base);
+        })
       : (artifacts ?? []).filter((artifact) => {
           const path = artifact.path.replace(/\\/g, "/");
           const root = projectRoot.replace(/\\/g, "/");
@@ -363,6 +405,7 @@ export function renderTaskMd(
             ? path.slice(root.length + 1)
             : path;
           const base = relative.split("/").pop() ?? relative;
+          if (isInternalOrBackupArtifact(relative, base)) return false;
           return inputPatterns.some(
             (pattern) =>
               wildcardMatches(relative, pattern) || wildcardMatches(base, pattern),
@@ -376,7 +419,7 @@ export function renderTaskMd(
       );
     }
     lines.push(
-      "产物文件按路径直接读取，勿复制；新产物请通过改动面板登记进提货单。",
+      "产物文件按路径直接读取，勿复制；产出请按本步「预期产物」落盘，保存进项目后自动登记供下游读取。",
     );
   }
   if (cfg.artifactDir?.trim()) {

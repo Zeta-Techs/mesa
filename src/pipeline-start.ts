@@ -2,7 +2,7 @@ import { researchToolContractMatches } from "./research-tools";
 import { appendUpstreamAcceptance, type UpstreamAcceptance } from "./research-acceptance";
 import { invoke } from "@tauri-apps/api/core";
 import { isGitMissingError } from "./dep-check";
-import { decisionGate, orderedAnswers, parseDecisions } from "./step-decisions";
+import { decisionGate, orderedAnswers, parseDecisions, resolveTaskMdSource } from "./step-decisions";
 import {
   keepWorkspaceResume,
   pickLiveWorkspaceSession,
@@ -10,7 +10,7 @@ import {
   shouldResumeWorkspaceSession,
 } from "./workspace-resume";
 import { DEFAULT_KICKOFF_PROMPT } from "./pipeline-presets";
-import { renderTaskMd } from "./task-md";
+import { renderTaskMd, type UpstreamStepDecisions } from "./task-md";
 import { openPeerCount } from "./peek";
 import { fanOutSummary, laneReuseKey, lanePrompt, mergePrompt, type FanOutPending } from "./fan-out";
 import { IS_WINDOWS } from "./hotkeys";
@@ -37,11 +37,13 @@ import type {
 export async function gatherTaskMdExtras(
   projectPath: string,
   step: ProjectStepDto,
+  allSteps?: readonly ProjectStepDto[],
 ): Promise<{
   artifacts: ArtifactEntryDto[];
   skillMeta: Record<string, string> | undefined;
   providesByName: Record<string, string[]> | undefined;
   decisions: { q: string; answer: string }[];
+  upstreamDecisions: UpstreamStepDecisions[];
   upstream: UpstreamAcceptance[];
   ledger: string[];
   /** 研究档案（跨项目，设置里关掉时为空） */
@@ -89,6 +91,28 @@ export async function gatherTaskMdExtras(
   } catch {
     /* 草稿不可读时跳过「已定方向」段 */
   }
+  const upstreamDecisions: UpstreamStepDecisions[] = [];
+  if (allSteps && allSteps.length > 0) {
+    const idx = allSteps.findIndex((s) => s.name === step.name);
+    const prior = idx > 0 ? allSteps.slice(0, idx) : [];
+    for (const prev of prior) {
+      try {
+        const d = await invoke<{ relPath: string; text: string | null }>(
+          "read_task_draft",
+          { projectRoot: projectPath, stepName: prev.name },
+        );
+        const items = orderedAnswers(
+          prev.decisions ?? [],
+          parseDecisions(d?.text ?? ""),
+        );
+        if (items.length > 0) {
+          upstreamDecisions.push({ stepName: prev.name, items });
+        }
+      } catch {
+        /* 单步草稿读取失败跳过 */
+      }
+    }
+  }
   const upstream = await invoke<UpstreamAcceptance[]>("research_upstream_acceptances", { projectRoot: projectPath, stepName: step.name });
   // 项目知识：后端 project_memory_for_ai 算的那一份（已定 / 不做优先、按字数上限），与开对话、项目助手同一份（读失败只是不带这段）
   let ledger: string[] = [];
@@ -112,7 +136,7 @@ export async function gatherTaskMdExtras(
   } catch {
     /* 读不到就不带 */
   }
-  return { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers, profile };
+  return { artifacts, skillMeta, providesByName, decisions, upstreamDecisions, upstream, ledger, peers, profile };
 }
 
 /** 只读预览用的一步到位拼装（步骤级「预览 TASK.md」入口）：与开工落盘同一出处
@@ -122,12 +146,13 @@ export async function buildTaskMdPreview(
   step: ProjectStepDto,
   cfg: ProjectConfigDto,
 ): Promise<string> {
-  const { artifacts, skillMeta, providesByName, decisions, upstream, ledger, peers, profile } = await gatherTaskMdExtras(
+  const { artifacts, skillMeta, providesByName, decisions, upstreamDecisions, upstream, ledger, peers, profile } = await gatherTaskMdExtras(
     projectPath,
     step,
+    cfg.steps,
   );
   return appendUpstreamAcceptance(
-    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger, peers, profile),
+    renderTaskMd(step, cfg, projectPath, artifacts, skillMeta, providesByName, decisions, IS_WINDOWS, ledger, peers, profile, upstreamDecisions),
     upstream,
   );
 }
@@ -251,11 +276,12 @@ export async function startPipelineStep({
   if (taskMdOverride?.trim()) {
     content = taskMdOverride;
   } else {
-    const { artifacts, skillMeta, providesByName, decisions, ledger, peers, profile } = await gatherTaskMdExtras(
+    const { artifacts, skillMeta, providesByName, decisions, upstreamDecisions, ledger, peers, profile } = await gatherTaskMdExtras(
       projectPath,
       step,
+      cfg.steps,
     );
-    content = renderTaskMd(
+    const assembled = renderTaskMd(
       step,
       cfg,
       projectPath,
@@ -267,7 +293,19 @@ export async function startPipelineStep({
       ledger,
       peers,
       profile,
+      upstreamDecisions,
     );
+    let draftText: string | null = null;
+    try {
+      const d = await invoke<{ relPath: string; text: string | null }>(
+        "read_task_draft",
+        { projectRoot: projectPath, stepName: step.name },
+      );
+      draftText = d?.text ?? null;
+    } catch {
+      /* 无草稿回落拼装 */
+    }
+    content = resolveTaskMdSource(draftText, assembled);
   }
   content = appendUpstreamAcceptance(content, upstream);
   try {

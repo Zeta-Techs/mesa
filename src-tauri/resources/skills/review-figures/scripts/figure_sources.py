@@ -36,14 +36,24 @@ def bib_entries(text: str) -> dict[str, dict[str, str]]:
             if pos < len(text) and text[pos] == "{":
                 depth, i = 0, pos
                 while i < len(text):
+                    if text[i] == "\\":
+                        i += 2
+                        continue
                     depth += (text[i] == "{") - (text[i] == "}")
                     if depth == 0:
                         break
                     i += 1
                 value, pos = text[pos + 1:i], i + 1
             elif pos < len(text) and text[pos] == '"':
-                end = text.index('"', pos + 1)
-                value, pos = text[pos + 1:end], end + 1
+                i = pos + 1
+                while i < len(text):
+                    if text[i] == "\\":
+                        i += 2
+                        continue
+                    if text[i] == '"':
+                        break
+                    i += 1
+                value, pos = text[pos + 1:i], i + 1
             else:
                 v = re.compile(r"[^,}\s]+").match(text, pos)
                 value, pos = (v.group(0), v.end()) if v else ("", pos)
@@ -106,6 +116,22 @@ def _display_rel(figures: Path, p: Path) -> str:
         return p.resolve().relative_to(figures.parent.resolve()).as_posix()
     except ValueError:
         return p.as_posix()
+
+
+def _portable_pdf_label(figures: Path, raw_pdf: str) -> str:
+    if not raw_pdf:
+        return ""
+    p = Path(raw_pdf)
+    if not p.is_absolute():
+        return p.as_posix()
+    rel = _display_rel(figures, p)
+    if not Path(rel).is_absolute():
+        return rel
+    parts = p.parts
+    if "papers" in parts and "Zotero" not in parts:
+        idx = len(parts) - 1 - parts[::-1].index("papers")
+        return Path(*parts[idx:]).as_posix()
+    return p.as_posix()
 
 
 def manifest_panel_info(figures: Path, path: Path) -> dict | None:
@@ -251,10 +277,11 @@ def build(figures: Path, bib: Path) -> str:
             doi = fields.get("doi", "")
             doi_cell = f"[{doi}](https://doi.org/{doi})" if doi and doi not in PLACEHOLDERS else "（无 DOI）"
             paper = cite(fields) if fields else f"（引文库里没有键 {src.get('key', '?')}）"
-            pdf = f"`{src['pdf']}`" if src.get("pdf") else "—"
+            pdf_label = _portable_pdf_label(figures, str(src.get("pdf") or ""))
+            pdf = f"`{pdf_label}`" if pdf_label else "—"
             lines.append(f"| ({panel['letter']}) | {paper} [@{src.get('key', '?')}] | {where(src)} | {doi_cell} | {pdf} |")
     if not has_layout:
-        lines += ["", "（没有找到拼板记录 figN.json：先用 assemble_panels.py 拼板。）"]
+        lines += ["", "本稿无拼合文献图（全部为自绘示意图、重绘数据图或仅正文引用），无需替换出版社原图或申请转载许可。"]
     return "\n".join(lines) + "\n"
 
 

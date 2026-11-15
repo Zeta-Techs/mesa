@@ -49,10 +49,13 @@ function stepTakesEndnoteCite(step: Pick<ProjectStepDto, "workspaceName">): bool
     name === "journal-format"
   );
 }
-/** 文献库技能分阶段：精读只写通道报告，定稿才出域稿。挂载与开工提醒共用这一份。 */
+/** 文献库技能分阶段：检索写导入/通道说明，精读只读 papers/ 不写文件，定稿才出域稿。挂载与开工提醒共用这一份。 */
 const ZOTERO_READING_OUTPUTS = ["papers/zotero-sync.md"];
 const ZOTERO_CITE_OUTPUTS = ["output/zotero.docx", "papers/zotero-cite-report.md"];
 const ENDNOTE_CITE_OUTPUTS = ["output/endnote.docx", "papers/endnote-cite-report.md"];
+function zoteroReadingOutputs(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): string[] {
+  return stepFillsAnySlot(step.skills, ["lit-search"], providesByName) ? ZOTERO_READING_OUTPUTS : [];
+}
 function endnoteReadingOutputs(step: Pick<ProjectStepDto, "skills">, providesByName: SkillProvides): string[] {
   return stepFillsAnySlot(step.skills, ["lit-search"], providesByName) ? ["papers/endnote-import.ris"] : [];
 }
@@ -67,7 +70,7 @@ export function researchToolStageOutputs(
     return { "zotero-sync": ZOTERO_CITE_OUTPUTS, "endnote-bridge": ENDNOTE_CITE_OUTPUTS };
   }
   if (stepTakesReading(step, providesByName)) {
-    return { "zotero-sync": ZOTERO_READING_OUTPUTS, "endnote-bridge": endnoteReadingOutputs(step, providesByName) };
+    return { "zotero-sync": zoteroReadingOutputs(step, providesByName), "endnote-bridge": endnoteReadingOutputs(step, providesByName) };
   }
   return {};
 }
@@ -177,7 +180,14 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
   const illustration = stepTakesIllustration(step);
   const lit = litSource.trim();
   if (reading && (lit === "zotero" || tools.libraryExport === "zotero")) {
-    mount("zotero-sync", ZOTERO_READING_OUTPUTS, "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。");
+    const ownsSync = zoteroReadingOutputs(step, providesByName).length > 0;
+    mount(
+      "zotero-sync",
+      zoteroReadingOutputs(step, providesByName),
+      ownsSync
+        ? "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris，通道说明写 papers/zotero-sync.md。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。"
+        : "Zotero：精读步只读 papers/、不写 papers/zotero-sync.md；只按已对上 DOI 的 PDF 更新 references.bib 标题与摘要。初稿保存后人点「同步到文献库」时，Mesa 按引文库与笔记统一导入 Zotero。",
+    );
   }
   if (reading && (lit === "endnote" || tools.libraryExport === "endnote")) {
     const ownsImport = endnoteReadingOutputs(step, providesByName).length > 0;

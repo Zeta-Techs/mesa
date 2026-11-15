@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -531,6 +531,46 @@ test("来源清单与转载许可：自动从 manifest.json / figure.json 识别
     assert.match(permMd, /拼图共 4 块，其中 1 块要向出版社申请转载许可，1 块按开放获取许可注明出处即可，2 块为本综述自绘\/重绘（无需申请）。/);
     assert.match(permMd, /\| 3\(a\) \| 本综述自绘示意图（schematic-forge） \| `figures\/fig3\/figure\.json` \| — \| 作者自绘 \| 不用申请.*\| 无需申请 \|/);
     assert.match(permMd, /\| 11\(a\) \| 本综述重绘数据图（figure-forge） \| `figures\/make_figures\.py fig11a` \| — \| 作者自绘 \| 不用申请.*\| 无需申请 \|/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("extract_figure / figure_sources：支持 a–z 面板参数、可移植相对 PDF 路径、BibTeX 转义花括号与零拼图友好说明", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-fig-port-"));
+  try {
+    mkdirSync(join(dir, "papers"), { recursive: true });
+    const pdf = makePdf(join(dir, "papers"));
+    const figures = join(dir, "figures");
+    const src = join(figures, "src");
+    // --panel m 合法（不再被 --panel 用 a–h 参数解析器拒掉；2 格测试图切不出第 13 块退码 6）
+    const pRes = run(["--pdf", pdf, "--fig", "1", "--panel", "m", "--out", join(src, "Doe2020-fig1m.png")]);
+    assert.equal(pRes.status, 6, pRes.stderr);
+    // 裁出子图后 sidecar 记录相对路径 papers/paper.pdf，不写死机器绝对路径
+    const ok = run(["--pdf", pdf, "--fig", "1", "--panel", "b", "--out", join(src, "Doe2020-fig1b.png")]);
+    assert.equal(ok.status, 0, ok.stderr);
+    const sidecar = JSON.parse(readFileSync(join(src, "Doe2020-fig1b.json"), "utf8"));
+    assert.equal(sidecar.pdf, "papers/paper.pdf");
+
+    // 零拼板记录时输出友好说明，且 references.bib 含 \{ 转义不截断字段
+    writeFileSync(
+      join(dir, "references.bib"),
+      "@article{Doe2020,\n  title = {Facet \\{110\\} Activity},\n  author = {Doe, Jane},\n  year = {2020},\n  doi = {10.1/facet},\n}\n",
+    );
+    const emptyRes = spawnSync(python, [sourcesScript, "--figures", figures, "--bib", join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(emptyRes.status, 0, emptyRes.stderr);
+    assert.match(readFileSync(join(figures, "sources.md"), "utf8"), /本稿无拼合文献图/);
+
+    // 拼板后验证 \{110\} 标题未被 \{ 截断
+    const ok2 = run(["--pdf", pdf, "--fig", "1", "--panel", "a", "--out", join(src, "Doe2020-fig1a.png")]);
+    assert.equal(ok2.status, 0, ok2.stderr);
+    const asm = spawnSync(python, [assemble, "--out", join(figures, "fig1.png"), "--width-cm", "8.5", "--inputs", join(src, "Doe2020-fig1a.png"), join(src, "Doe2020-fig1b.png")], { encoding: "utf8" });
+    assert.equal(asm.status, 0, asm.stderr);
+    const fullRes = spawnSync(python, [sourcesScript, "--figures", figures, "--bib", join(dir, "references.bib")], { encoding: "utf8" });
+    assert.equal(fullRes.status, 0, fullRes.stderr);
+    const fullMd = readFileSync(join(figures, "sources.md"), "utf8");
+    assert.match(fullMd, /Facet \\110\\ Activity/);
+    assert.match(fullMd, /`papers\/paper\.pdf`/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

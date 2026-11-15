@@ -596,3 +596,86 @@ test("write：接着上一版编号的新篇，开头写「某天新加：第 x�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("write 持久化 bibKey 并与 bib/angles-facts 对齐；摘要含单边花括号不崩；未打勾排除重排仍记新加；无 DOI 缺全文与预印本可检", () => {
+  const root = mkdtempSync(join(tmpdir(), "lit-extra-"));
+  try {
+    mkdirSync(join(root, "papers"));
+    const mk = (id: string, title: string, extra: Record<string, unknown> = {}) => ({
+      id,
+      title,
+      decision: "included",
+      reason: "纳入",
+      authors: ["Zhang, Wei"],
+      year: "2024",
+      venue: "Adv. Mater.",
+      volume: "36",
+      issue: "无期号",
+      pages: "2400001",
+      date: "2024",
+      epubDate: "待补",
+      articleType: "Journal Article",
+      issn: "0935-9648",
+      journalAbbreviation: "Adv. Mater.",
+      abstract: "Active {110 facet under alkaline HER.",
+      keywords: ["HER"],
+      language: "en",
+      doi: id.startsWith("10.") ? id : "待补",
+      url: id.startsWith("10.") ? `https://doi.org/${id}` : "https://example.org/nodoi",
+      ...extra,
+    });
+    const jsonPath = join(root, "papers", "included.json");
+    writeFileSync(jsonPath, JSON.stringify([
+      mk("10.1/old1", "Old One", { kind: "review", year: "2021" }),
+      mk("10.1/old2", "Old Two", { kind: "research" }),
+    ], null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    const written1 = JSON.parse(readFileSync(jsonPath, "utf8"));
+    assert.equal(written1[0].bibKey, "Zhang2021");
+    assert.equal(written1[1].bibKey, "Zhang2024");
+
+    // 没人打 ✓ 时排除第 1 篇并新加 1 篇：编号从 1 重排，仍应写出「新加：第 2 篇」
+    written1[0].decision = "excluded";
+    written1.push(mk("no-doi-1", "No DOI Paper", { authors: ["Li, Na"], year: "2025", kind: "other" }));
+    writeFileSync(jsonPath, JSON.stringify(written1, null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    assert.match(readFileSync(join(root, "papers", "to-fetch.md"), "utf8"), /新加：第 2 篇。/);
+
+    // bib 接受单边 {110 花括号并复用 included.json 里的 bibKey
+    const bibRes = run(["bib"], root);
+    assert.equal(bibRes.status, 0, bibRes.stderr);
+    const bibOut = JSON.parse(bibRes.stdout);
+    assert.equal(bibOut.keys["10.1/old2"], "Zhang2024");
+    assert.equal(bibOut.keys["no-doi-1"], "Li2025");
+
+    // angles-facts 在没有 notes/index.json 时回退到 bibKey，且计入 kind=other
+    const rowsForAngles = JSON.parse(readFileSync(jsonPath, "utf8"));
+    rowsForAngles[0].decision = "included";
+    writeFileSync(jsonPath, JSON.stringify(rowsForAngles, null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    const af = run(["angles-facts"], root);
+    assert.equal(af.status, 0, af.stderr);
+    assert.match(af.stdout, /\[@Zhang2021\]/);
+    assert.match(af.stdout, /@Zhang2024; @Li2025/);
+
+    // 手删 to-fetch.md 里的无 DOI 条目 → check 报错；加预印本与漏填 kind → check 给告警
+    const fetchMd = readFileSync(join(root, "papers", "to-fetch.md"), "utf8")
+      .split("\n")
+      .filter((l) => !l.includes("No DOI Paper"))
+      .join("\n");
+    writeFileSync(join(root, "papers", "to-fetch.md"), fetchMd);
+    const badCheck = run(["check", "--root", root], root);
+    assert.notEqual(badCheck.status, 0);
+    assert.match(badCheck.stdout, /无 DOI 条目「No DOI Paper」不在 to-fetch\.md/);
+
+    rowsForAngles.push(mk("10.48550/arXiv.2401.00001", "Preprint HER", { kind: "" }));
+    writeFileSync(jsonPath, JSON.stringify(rowsForAngles, null, 2));
+    assert.equal(run(["write", "--root", root], root).status, 0);
+    const warnCheck = run(["check", "--root", root], root);
+    assert.equal(warnCheck.status, 0, warnCheck.stdout);
+    assert.match(warnCheck.stdout, /看起来是预印本/);
+    assert.match(warnCheck.stdout, /漏填 review \/ research \/ other/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -294,3 +294,56 @@ test("decisionAsk：合同口吻的初稿题改成人话，其它题原样", () 
   );
   assert.equal(decisionAsk("综述角度怎么收"), "综述角度怎么收");
 });
+
+test("stub 认『本步补充要求』『待拍板』；全文草稿动态刷新上游已定方向与项目知识，不丢人改的简报", async () => {
+  const { isTaskMdStub, stepWaitItems } = await import("../src/step-decisions.ts");
+  const { PIPELINE_TEMPLATES } = await import("../src/pipeline-presets.ts");
+  const stub = "# 文献精读与笔记\n\n## 已定方向\n\n- 抽取表列：过电位、Tafel斜率\n\n## 本步补充要求\n\n- 重点核对碱性条件\n\n## 待拍板\n\n- 是否收双功能催化剂\n";
+  assert.equal(isTaskMdStub(stub), true);
+  const assembled = [
+    "# 文献精读与笔记",
+    "",
+    "## 项目规则",
+    "",
+    "- 去向：Chem. Soc. Rev.",
+    "",
+    "## 上游已定方向",
+    "",
+    "- 文献检索与筛选 · 核心问题：聚焦过渡金属硼化物晶相—活性位关系",
+    "",
+    "## 项目知识",
+    "",
+    "### 已定",
+    "- 统一以 RHE 标度比较过电位",
+    "",
+    "## 本步目标与说明",
+    "",
+    "全程按 lit-notes 技能执行。",
+  ].join("\n");
+  const mergedFromStub = resolveTaskMdSource(stub, assembled);
+  assert.match(mergedFromStub, /全程按 lit-notes 技能执行/);
+  assert.match(mergedFromStub, /抽取表列：过电位/);
+  assert.match(mergedFromStub, /重点核对碱性条件/);
+  assert.match(mergedFromStub, /## 上游已定方向/);
+
+  const oldFull = [
+    "# 文献精读与笔记",
+    "",
+    "## 项目规则",
+    "",
+    "- 去向：旧期刊",
+    "",
+    "## 本步目标与说明",
+    "",
+    "用户手改过的全文任务书。",
+  ].join("\n");
+  const synced = resolveTaskMdSource(oldFull, assembled);
+  assert.match(synced, /用户手改过的全文任务书/);
+  assert.match(synced, /去向：Chem\. Soc\. Rev\./);
+  assert.doesNotMatch(synced, /旧期刊/);
+  assert.match(synced, /## 上游已定方向/);
+  assert.match(synced, /## 项目知识/);
+
+  const outlineStep = PIPELINE_TEMPLATES.find((t) => t.id === "review")!.steps.find((s) => s.workspaceName === "outline")!;
+  assert.ok(stepWaitItems(outlineStep).during.length > 0, "综述大纲『一问一答定框架』应触发本步必须停下来等你");
+});

@@ -37,6 +37,58 @@ fn value_text(v: &serde_json::Value) -> String {
     }
 }
 
+/// 存量项目还没生成 `manuscript/sections.json` 时，从 `outline.md` 提取正文各章（跳过引言/结论与定框架记录等元表）兜底切片
+fn outline_sections_fallback(dir: &Path) -> Option<Vec<FanOutItemDto>> {
+    let file = fs::File::open(dir.join("outline.md")).ok()?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut std::io::Read::take(file, ITEMS_CAP), &mut text).ok()?;
+    let collect = |prefix: &str| -> Vec<FanOutItemDto> {
+        let mut out = Vec::new();
+        let mut fenced = false;
+        for line in text.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                fenced = !fenced;
+                continue;
+            }
+            if fenced {
+                continue;
+            }
+            let Some(rest) = trimmed.strip_prefix(prefix) else {
+                continue;
+            };
+            let heading = rest.trim();
+            let numbered = heading.starts_with(|c: char| c.is_ascii_digit())
+                || heading.starts_with("Section ")
+                || heading.starts_with("第");
+            if !numbered {
+                continue;
+            }
+            let lower = heading.to_ascii_lowercase();
+            let is_intro_or_outro = lower.contains("introduction")
+                || lower.contains("conclusion")
+                || lower.contains("outlook")
+                || lower.contains("perspectives and conclusion")
+                || heading.contains("引言")
+                || heading.contains("结论")
+                || heading.contains("总结与展望");
+            if is_intro_or_outro {
+                continue;
+            }
+            let seq = out.len() + 1;
+            out.push(FanOutItemDto {
+                seq,
+                key: format!("S{seq}"),
+                label: heading.to_string(),
+            });
+        }
+        out
+    };
+    let h2 = collect("## ");
+    let items = if !h2.is_empty() { h2 } else { collect("### ") };
+    (!items.is_empty()).then_some(items)
+}
+
 /// 数据文件里的条目：数组本身，或对象里第一个数组字段
 pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutItemDto>, String> {
     let rel = spec.items.replace('\\', "/");
@@ -45,6 +97,11 @@ pub(crate) fn items_at(dir: &Path, spec: &StepFanOutDto) -> Result<Vec<FanOutIte
         return Err(format!("分路的数据文件要写项目内相对路径：{}", spec.items));
     }
     let path = dir.join(&rel);
+    if !path.is_file() && rel == "manuscript/sections.json" && spec.filter.trim().is_empty() {
+        if let Some(items) = outline_sections_fallback(dir) {
+            return Ok(items);
+        }
+    }
     let file = fs::File::open(&path).map_err(|_| format!("找不到分路用的数据文件 {rel}（上一步还没交？）"))?;
     let mut text = String::new();
     std::io::Read::read_to_string(&mut std::io::Read::take(file, ITEMS_CAP), &mut text).map_err(|e| e.to_string())?;
@@ -226,6 +283,45 @@ mod tests {
         for bad in ["/etc/x.json", "../x.json", "./x.json", ""] {
             assert!(items_at(&dir, &StepFanOutDto { items: bad.into(), ..s.clone() }).is_err(), "{bad}");
         }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn outline_fallback_extracts_body_sections_when_sections_json_missing() {
+        let dir = std::env::temp_dir().join(format!("mesa-fan-outline-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let outline = "\
+# 综述大纲
+## 定框架记录
+| 问 | 问题 | 人的选择 | 日期 |
+## 覆盖检查
+## 1. Introduction
+## 2. Catalyst Families and Electronic Structure
+### 2.1 Noble Metals
+## 3. Operando Characterization
+## 4. Machine-Learning Screening
+## 5. Conclusions and Outlook
+## 框架推演
+";
+        fs::write(dir.join("outline.md"), outline).unwrap();
+        let spec = StepFanOutDto {
+            items: "manuscript/sections.json".into(),
+            key: "id".into(),
+            label: "title".into(),
+            per: 2,
+            max: 4,
+            ..Default::default()
+        };
+        let items = items_at(&dir, &spec).unwrap();
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "2. Catalyst Families and Electronic Structure",
+                "3. Operando Characterization",
+                "4. Machine-Learning Screening",
+            ]
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }

@@ -41,9 +41,9 @@ def _need_fitz() -> object:
 
 def _caption_line_pat(n: int) -> re.Pattern[str]:
     # 题注常和上一行正文粘在同一个文本块里，不能要求整块以 Figure 开头。
-    # 只认单独成行、并且以题注开头的那一行；行内「Figure N shows」不算。
+    # 只认单独成行、并且以题注开头的那一行；行内「Figure N shows」不算。化学类期刊常用 Scheme N / Chart N。
     return re.compile(
-        rf"^(?:figure|fig\.?|图)\s*{n}(?!\d)",
+        rf"^(?:figure|fig\.?|scheme|chart|图)\s*{n}(?!\d)",
         re.IGNORECASE,
     )
 
@@ -55,7 +55,7 @@ def _line_text(line: dict) -> str:
     return re.sub(r"\s+", " ", "".join(parts)).strip()
 
 
-ANY_CAPTION_PAT = re.compile(r"^(?:figure|fig\.?|图)\s*(\d+)(?!\d)", re.IGNORECASE)
+ANY_CAPTION_PAT = re.compile(r"^(?:figure|fig\.?|scheme|chart|图)\s*(\d+)(?!\d)", re.IGNORECASE)
 
 
 def _caption_span(block: dict, start_idx: int, box) -> tuple[float, float, float]:
@@ -228,7 +228,7 @@ def locate(doc, fig: int):
         # 「Fig. 4 …」「Figure 4.」是题注；「Figure 4 further」是正文叙述。
         def caption_rank(item: tuple) -> tuple[int, float]:
             rect, text, _span = item
-            titled = bool(re.match(r"^(?:fig\.|图|figure\s+\d+\s*[.:：])", text, re.I))
+            titled = bool(re.match(r"^(?:fig\.|scheme\s+\d+|chart\s+\d+|图|figure\s+\d+\s*[.:：])", text, re.I))
             return (0 if titled else 1, rect.y0)
         captions.sort(key=caption_rank)
         cap = None
@@ -290,7 +290,7 @@ def locate(doc, fig: int):
     if found_caption:
         print(f"Fig. {fig} 题注旁没有可分离的图像对象：用 --page <页码> --grid 看整页坐标、--box 框出那一块；框不准就改为引用 Fig.{fig}", file=sys.stderr)
         sys.exit(5)
-    print(f"未找到 Fig./Figure/图 {fig} 题注", file=sys.stderr)
+    print(f"未找到 Fig./Figure/Scheme/Chart/图 {fig} 题注", file=sys.stderr)
     sys.exit(3)
 
 
@@ -537,6 +537,32 @@ def key_from_name(out: Path) -> str:
     return m.group(1) if m else out.stem
 
 
+def _portable_source_pdf(out: Path, pdf: Path) -> str:
+    if not pdf.is_absolute():
+        return pdf.as_posix()
+    resolved = pdf.resolve()
+    roots: list[Path] = []
+    for parent in out.resolve().parents:
+        if parent.name == "figures":
+            roots.append(parent.parent)
+            task = parent.parent / "TASK.md"
+            if task.is_file():
+                m = re.search(r"项目根：`([^`]+)`", task.read_text(encoding="utf-8", errors="replace"))
+                if m:
+                    roots.append(Path(m.group(1)).resolve())
+            break
+    for root in roots:
+        try:
+            return resolved.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            pass
+    parts = resolved.parts
+    if "papers" in parts and "Zotero" not in parts:
+        idx = len(parts) - 1 - parts[::-1].index("papers")
+        return Path(*parts[idx:]).as_posix()
+    return resolved.as_posix()
+
+
 def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel, box, erase, key: str, label: str = "",
                  edge_warning: dict[str, float] | None = None) -> None:
     """每块旁边落一份来源记录 <块>.json：用户投稿前要去期刊换高清原图、申请转载许可，
@@ -545,7 +571,7 @@ def write_source(out: Path, pdf: Path, page: int, fig: int, caption: str, panel,
         "key": key or key_from_name(out),
         # 原文里这一块叫什么（Fig. 2(b)、Scheme 1）：--label 给的为准，没给按图号和 --panel 拼
         "label": label or (f"Fig. {fig}" + (f"({panel})" if panel else "") if fig else ""),
-        "pdf": str(Path(pdf).resolve()),
+        "pdf": _portable_source_pdf(out, pdf),
         "page": page,
         "figure": fig or None,
         "caption": caption[:200],
@@ -580,8 +606,8 @@ def main() -> None:
     if not a.page and a.fig < 1 and not is_image(a.pdf):
         p.error("--fig 必须 ≥ 1")
     panel = a.panel.strip().lower()[:1]
-    if panel and panel not in "abcdefgh":
-        p.error("--panel 用 a–h")
+    if panel and (len(panel) != 1 or not ("a" <= panel <= "z")):
+        p.error("--panel 用 a–z")
     if sum(bool(x) for x in (panel, a.grid, a.box)) > 1:
         p.error("--panel、--grid、--box 一次只用一个")
     if not a.pdf.is_file():

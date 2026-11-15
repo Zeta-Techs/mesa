@@ -232,6 +232,9 @@ test("loopHint：前面在补一轮先指它；否则指第一个待跟进；正
   assert.match(b!.text, /到「精读」点「跟进更新」/);
   // 精读在跟进（进行中），大纲已完成 → 指精读
   assert.equal(loopHint(steps, [{ key: "done" }, { key: "active" }, { key: "done", staleUpstream: "检索" }, { key: "pending" }])?.index, 1);
+  // 大纲停在半途（review 等补料），精读正在补读 → 指精读；精读保存后大纲 review 带 staleUpstream → 指大纲点跟进
+  assert.equal(loopHint(steps, [{ key: "done" }, { key: "active" }, { key: "review" }, { key: "pending" }])?.index, 1);
+  assert.equal(loopHint(steps, [{ key: "done" }, { key: "done" }, { key: "review", staleUpstream: "精读" }, { key: "pending" }])?.index, 2);
 });
 
 test("latestNote：并进来的新内容附在开场指令后；没有就原样；超过 30 个只列前 30", () => {

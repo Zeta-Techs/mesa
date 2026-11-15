@@ -281,10 +281,18 @@ test("个性化技能顶位：声明 provides 的用户技能点亮文献库与�
   assert.ok(!outNoMap.skills.includes("zotero-sync"), "无映射时不点亮（名字兜底语义）");
 });
 
-test("多阶段文献库技能：精读步只认通道报告，定稿步只认域稿", () => {
+test("多阶段文献库技能：检索步认通道报告/导入文件，精读步不写 papers/，定稿步只认域稿", () => {
+  const search = { skills: ["lit-search", "zotero-sync"], workspaceName: "lit-search" };
+  assert.deepEqual(researchToolStageOutputs(search)["zotero-sync"], ["papers/zotero-sync.md"]);
+  assert.deepEqual(researchToolStageOutputs(search)["endnote-bridge"], ["papers/endnote-import.ris"]);
   const notes = { skills: ["lit-notes", "zotero-sync"], workspaceName: "lit-notes" };
-  assert.deepEqual(researchToolStageOutputs(notes)["zotero-sync"], ["papers/zotero-sync.md"]);
+  assert.deepEqual(researchToolStageOutputs(notes)["zotero-sync"], []);
   assert.deepEqual(researchToolStageOutputs(notes)["endnote-bridge"], []);
+  const mountedNotes = withResearchTools(
+    template("review").steps.find((s) => s.workspaceName === "lit-notes")!,
+    { ...DEFAULT_RESEARCH_TOOLS, libraryExport: "zotero" },
+  );
+  assert.equal(mountedNotes.expectedArtifacts.includes("papers/zotero-sync.md"), false);
   const polish = { skills: ["review-writing", "zotero-sync"], workspaceName: "polish" };
   assert.deepEqual(researchToolStageOutputs(polish)["zotero-sync"], ["output/zotero.docx", "papers/zotero-cite-report.md"]);
   assert.deepEqual(researchToolStageOutputs({ skills: ["data-eda"], workspaceName: "eda" }), {});

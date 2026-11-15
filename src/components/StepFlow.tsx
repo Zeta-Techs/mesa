@@ -591,6 +591,7 @@ export default function StepFlow({
   discussInline,
   litSource,
   openSettings,
+  projectSettings,
   onOpenResources,
   onSetLitSource,
   litBusy = false,
@@ -656,6 +657,8 @@ export default function StepFlow({
   litSource?: string;
   /** 项目规则里还没填实的全局设定（「综述角度：（…）」）。商量开场要逐项问。 */
   openSettings?: string[];
+  /** 项目规则里的全部全局设定：人在商量中主动改已填项时允许同步写回。 */
+  projectSettings?: string[];
   /** 展开项目的「文献与数据」面板：文献类交付统一引到那里，不在每个事项行复制入口。
    *  focus = 落地后高亮哪个进料入口（按所选文献来源给） */
   onOpenResources?: (focus?: "zotero" | "files") => void;
@@ -1809,6 +1812,7 @@ export default function StepFlow({
                 relPath: draft.relPath,
                 workspaceName: step.workspaceName,
                 openSettings,
+                projectSettings,
                 seeds,
               }) + (topic ? `\n\n先从这个问题聊起：${topic}` : ""),
             ...(projectLaunch ?? {}),
@@ -2370,9 +2374,11 @@ export default function StepFlow({
         disabled={!draft}
         onClick={() => void openDraftInline()}
         title={
-          draftHasBody
-            ? "这一步的 TASK.md 已改过，点此查看或再改"
-            : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
+          runStatus !== "pending"
+            ? "查看这一步的任务书草稿（当前轮已开工：这里改的只对重开生效；要让正在跑的这一轮改做法，点「回到对话」或评审「退回修改」）"
+            : draftHasBody
+              ? "这一步的 TASK.md 已改过，点此查看或再改"
+              : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
         }
         className={taskMdBtnClass}
       >
@@ -4074,9 +4080,11 @@ export default function StepFlow({
               />
             )}
             <p className="mt-2 shrink-0 text-micro text-l4">
-              {draftEdit.fromTemplate
-                ? "当前是模板默认拼装，还没改过；保存后开工就以这份为准。"
-                : "开工时这份内容将原样落成工作区的 TASK.md。"}
+              {runStatus !== "pending"
+                ? "注意：这一步已开工，此处保存只更新下次重开用的任务书草稿，正在运行的工作区看不到；要让当前这一轮 AI 调整做法，请点「回到对话」或评审里的「退回修改」。"
+                : draftEdit.fromTemplate
+                  ? "当前是模板默认拼装，还没改过；保存后开工就以这份为准。"
+                  : "开工时这份内容将落成工作区的 TASK.md（项目规则、文献来源、项目知识等动态小节会自动同步）。"}
             </p>
             <div className="mt-3 flex shrink-0 items-center gap-2">
               {!draftEdit.fromTemplate && (

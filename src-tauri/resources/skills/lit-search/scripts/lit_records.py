@@ -843,14 +843,22 @@ def number_ranges(numbers):
 
 
 def added_notes(path, previous, rows):
-    """「某天新加：第 x–y 篇」：上一版已有的说明照留（带日期，过后也不会说错），这次接在后面编号的新篇另起一行。
+    """「某天新加：第 x–y 篇」：上一版已有的说明照留（带日期，过后也不会说错），这次新进待获取的篇另起一行。
+    按 DOI / 标题身份识别新篇，不单看编号 > top（没人打 ✓ 时排除旧篇会从 1 重排，单看 n > top 会漏记新篇）；
     上一版没有编号（首次生成）时不写——全都是新的（2026-11-10 HER：退回修改后分不出哪些是意见新增的）。"""
     keep = []
     if path.is_file():
         keep = [l for l in path.read_text(encoding="utf-8", errors="replace").splitlines() if ADDED_NOTE.match(l.strip())]
     if previous:
-        top = max(n for n, _, _ in previous)
-        fresh = [n for n, _, _ in rows if n > top]
+        prev_dois = {bare_doi(text) for _, _, text in previous if bare_doi(text)}
+        prev_titles = {re.sub(r"\W+", "", text.rsplit(" — ", 1)[0].casefold()) for _, _, text in previous}
+        fresh = []
+        for n, rec, _ in rows:
+            doi = record_doi(rec)
+            tkey = re.sub(r"\W+", "", ris_value(rec.get("title")).casefold())
+            seen = (doi in prev_dois) if doi else (bool(tkey) and tkey in prev_titles)
+            if not seen:
+                fresh.append(n)
         if fresh:
             import datetime
             keep.append(f"{datetime.date.today().isoformat()} 新加：第 {number_ranges(fresh)} 篇。")
@@ -911,6 +919,27 @@ def cmd_pdfs(args):
     return 0
 
 
+def _existing_bib_maps(*candidates):
+    by_doi, by_title, taken = {}, {}, set()
+    for p in candidates:
+        if not p or not Path(p).is_file():
+            continue
+        text = Path(p).read_text(encoding="utf-8-sig", errors="replace")
+        for key, start, end in entry_spans(text):
+            taken.add(key.lower())
+            fields = bib_fields_of(text[start:end])
+            doi = bare_doi(fields.get("doi", ("",))[0])
+            if doi and doi not in by_doi:
+                by_doi[doi] = key
+            title = re.sub(r"\W+", "", re.sub(r"[{}]", "", fields.get("title", ("",))[0]).casefold())
+            if title and title not in by_title:
+                by_title[title] = key
+    return by_doi, by_title, taken
+
+
+PREPRINT_DOI_RE = re.compile(r"^10\.(?:48550/arxiv\.|21203/rs\.|26434/chemrxiv|1101/|20944/preprints)", re.I)
+
+
 def cmd_write(args):
     path = Path(args.json)
     root = project_root(args.root)
@@ -919,6 +948,23 @@ def cmd_write(args):
     included = [r for r in records if decision_of(r) == "included"]
     pending = [r for r in records if decision_of(r) == "pending"]
     excluded = [r for r in records if decision_of(r) == "excluded"]
+    by_doi, by_title, taken = _existing_bib_maps(Path("references.bib"), root / "references.bib")
+    # 先固定已有 bibKey 或引文库里的键，再给新条目起确定性 bibKey（精读分路、速读表与 bib 共用同一套键）
+    matched_keys = {}
+    for rec in included + pending:
+        doi = record_doi(rec)
+        tkey = re.sub(r"\W+", "", ris_value(rec.get("title")).casefold())
+        existing = (by_doi.get(doi) if doi else None) or by_title.get(tkey)
+        if existing:
+            matched_keys[id(rec)] = existing
+            taken.add(existing.lower())
+            continue
+        cur = as_text(rec.get("bibKey"))
+        if cur and re.match(r"^[A-Za-z][\w:-]*$", cur) and cur.lower() not in taken:
+            matched_keys[id(rec)] = cur
+            taken.add(cur.lower())
+    for rec in included + pending:
+        rec["bibKey"] = matched_keys.get(id(rec)) or bib_key(rec, taken)
     for rec in included:
         have = existing_pdf(rec, root)
         if have:
@@ -1001,6 +1047,15 @@ def cmd_check(args):
             warnings.append(f"{tag} 期刊缩写「{abbr}」不像 ISO 4（等于全称或没有句点）")
         if d == "included" and as_text(rec.get("pdf")) and not (root / as_text(rec.get("pdf"))).is_file():
             errors.append(f"{tag} pdf 指向的 {rec.get('pdf')} 不存在")
+        if d == "included" and not getattr(args, "allow_preprint", False):
+            doi = record_doi(rec)
+            atype = as_text(rec.get("articleType")).lower()
+            if (doi and PREPRINT_DOI_RE.match(doi)) or atype == "preprint":
+                warnings.append(f"{tag} 看起来是预印本（{doi or rec.get('articleType')}）：来源级别未允许预印本时请核对正式发表版或加 --allow-preprint")
+    active = [r for r in records if decision_of(r) in ("included", "pending")]
+    with_kind = sum(1 for r in active if as_text(r.get("kind")))
+    if 0 < with_kind < len(active):
+        warnings.append(f"纳入与待确认共 {len(active)} 篇，仅 {with_kind} 篇填了 kind（其余 {len(active) - with_kind} 篇漏填 review / research / other）")
     # 用户自己库里导进来的每条都要在 json 里，Agent 不替人排除（2026-10-23 HER：按检索年份窗口排掉 9 篇，
     # 只写在 screening.md，Mesa 文献清单里看不到也改不回）。人排除的理由以「排除：人工移出 / 评审确认」开头
     listed = [(as_text(r.get("id")), record_doi(r)) for r in records]
@@ -1038,9 +1093,20 @@ def cmd_check(args):
     numbers = [n for n, _, _ in previous]
     if len(set(numbers)) != len(numbers):
         errors.append("to-fetch.md 编号有重复")
+    fetch_titles = {re.sub(r"\W+", "", text.rsplit(" — ", 1)[0].casefold()) for _, _, text in previous}
+    fetch_tails = {text.rsplit(" — ", 1)[-1].strip() for _, _, text in previous}
     for rec in included:
-        if not existing_pdf(rec, root) and record_doi(rec) and record_doi(rec) not in fetch_dois:
-            errors.append(f"已纳入且没有全文的 {record_doi(rec)} 不在 to-fetch.md")
+        if existing_pdf(rec, root):
+            continue
+        doi = record_doi(rec)
+        if doi:
+            if doi not in fetch_dois:
+                errors.append(f"已纳入且没有全文的 {doi} 不在 to-fetch.md")
+        else:
+            tkey = re.sub(r"\W+", "", ris_value(rec.get("title")).casefold())
+            rid = as_text(rec.get("id"))
+            if (not tkey or tkey not in fetch_titles) and (not rid or rid not in fetch_tails):
+                errors.append(f"已纳入且没有全文的无 DOI 条目「{ris_value(rec.get('title'))[:40] or rid}」不在 to-fetch.md")
     for name, forbid in (("to-fetch.ris", ("JO", "JF", "JA", "N1", "N2", "M1", "M2", "M3", "DA", "ET", "LA")),
                          ("endnote-import.ris", ("JO", "JF", "JA", "N1", "N2", "M1"))):
         ris_path = out_dir / name
@@ -1156,6 +1222,9 @@ def bib_fields_of(entry):
         depth, i = 1, start
         while i < len(entry) and depth:
             ch = entry[i]
+            if ch == "\\":
+                i += 2
+                continue
             if opening == "{":
                 depth += (ch == "{") - (ch == "}")
             elif ch == '"':
@@ -1225,7 +1294,12 @@ def cmd_bib(args):
                 filled[key] = changed
             keys[as_text(rec.get("id"))] = key
             continue
-        key = bib_key(rec, taken)
+        preferred = as_text(rec.get("bibKey"))
+        if preferred and re.match(r"^[A-Za-z][\w:-]*$", preferred) and preferred.lower() not in taken:
+            key = preferred
+            taken.add(key.lower())
+        else:
+            key = bib_key(rec, taken)
         lines = []
         for src, name in BIB_FIELDS:
             value = bib_value(rec, src)
@@ -1234,8 +1308,8 @@ def cmd_bib(args):
                     value = PLACEHOLDER
                 else:
                     continue
-            if "\n@" in value or value.count("{") != value.count("}"):
-                raise ValueError(f"{key} 的 {name} 花括号不配对，先改 included.json")
+            if "\n@" in value:
+                raise ValueError(f"{key} 的 {name} 含有换行 @，先改 included.json")
             lines.append(f"  {name} = {{{B.escape_bib(value)}}},")
         appended.append(f"@article{{{key},\n" + "\n".join(lines) + "\n}\n")
         added.append(key)
@@ -1323,9 +1397,21 @@ def cmd_angles_facts(args):
         data = json.loads(index_path.read_text(encoding="utf-8-sig"))
         rows = data if isinstance(data, list) else next((data[k] for k in ("records", "items", "papers", "entries", "notes") if isinstance(data, dict) and isinstance(data.get(k), list)), [])
         index = {as_text(r.get("id")): r for r in rows if isinstance(r, dict)}
-    key_of = lambda rec: as_text(index.get(as_text(rec.get("id")), {}).get("bibKey")) or as_text(rec.get("id"))
+    taken_keys = set()
+    resolved_keys = {}
+    for r in records:
+        rid = as_text(r.get("id"))
+        k = as_text(index.get(rid, {}).get("bibKey")) or as_text(r.get("bibKey"))
+        if k:
+            taken_keys.add(k.lower())
+            resolved_keys[rid] = k
+    for r in records:
+        rid = as_text(r.get("id"))
+        if rid not in resolved_keys:
+            resolved_keys[rid] = bib_key(r, taken_keys)
+    key_of = lambda rec: resolved_keys.get(as_text(rec.get("id")), as_text(rec.get("id")))
     reviews = [r for r in records if as_text(r.get("kind")) == "review"]
-    research = [r for r in records if as_text(r.get("kind")) == "research"]
+    research = [r for r in records if as_text(r.get("kind")) in ("research", "other")]
     untyped = [r for r in records if not as_text(r.get("kind"))]
     lines = [f"纳入综述 {len(reviews)} 篇、研究论文 {len(research)} 篇" + (f"、未标类型 {len(untyped)} 篇（不算进下表）" if untyped else "") + "。", ""]
     if not reviews:
@@ -1423,6 +1509,7 @@ def main():
     common(sp)
     sp = sub.add_parser("check", help="校验 json、清单与两份 RIS 是否一致")
     common(sp)
+    sp.add_argument("--allow-preprint", action="store_true", help="来源级别允许预印本时不提示预印本告警")
     sp = sub.add_parser("bib", help="精读步：把 included.json 的题录写进 references.bib（已有条目只补空字段；检索排除了的篇移出）")
     common(sp, root=False)
     sp.add_argument("--bib", default="references.bib")

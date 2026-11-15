@@ -1196,9 +1196,11 @@ export default function TaskCardsSection({
         files = followupFiles(scope.files);
       }
       // AI 正在干活：先拦，别让人确认完才知道开不了（收起了的恢复后再查）。上一轮还没保存的，人点开时在确认框里
-      // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链自动往下时照旧停下，等人先保存
+      // 选「接着做，一起评审」（2026-11-10 用户拍板）；补料链回到发起补料的那一步（如大纲停在 Q6 等补料）也允许直接接着做，其他中途未存步骤照旧停下
       const unsaved = ws.status === "active" && (await hasUnsavedRound(ws));
-      if (ws.status === "active") await assertRoundable(ws, step.name, { allowUnsaved: !auto });
+      if (ws.status === "active") {
+        await assertRoundable(ws, step.name, { allowUnsaved: !auto || auto.rework?.fromStep === step.name });
+      }
       const scale = followupScale({ upstream, notesIds, droppedIds, files, reads, sections });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
@@ -1350,14 +1352,18 @@ export default function TaskCardsSection({
       { projectRoot: projectPath, stepName: step.name },
     );
     const raw = cur?.text?.trim() ?? "";
+    const assembled = await buildTaskMdPreview(projectPath, step, cfg);
     if (raw && !isTaskMdStub(raw)) {
       return {
-        text: upsertPendingSettingsSection(cur?.text ?? "", cfg.settings ?? []),
+        text: upsertPendingSettingsSection(
+          resolveTaskMdSource(cur?.text ?? "", assembled),
+          cfg.settings ?? [],
+        ),
         revision: cur?.revision ?? null,
       };
     }
     return {
-      text: resolveTaskMdSource(raw, await buildTaskMdPreview(projectPath, step, cfg)),
+      text: resolveTaskMdSource(raw, assembled),
       revision: cur?.revision ?? null,
     };
   }
@@ -1960,6 +1966,7 @@ export default function TaskCardsSection({
             discussResume={discussResume}
             litSource={cfg.litSource}
             openSettings={(cfg.settings ?? []).filter((line) => isSettingPlaceholder(line))}
+            projectSettings={cfg.settings ?? []}
             onOpenResources={onOpenResources}
             onSetLitSource={onSetLitSource}
             litBusy={litBusy}
@@ -2097,9 +2104,14 @@ export default function TaskCardsSection({
           chainOff={steps.filter((st) => chainDefaultOff(stepKind(st, skillProvides))).map((st) => st.name)}
           chainOptions={Object.fromEntries(
             reworkTargets(steps, focusIdx).map((st) => {
-              // 补完后能接着自动跟进的：目标之后、已保存（已完成）的步骤，按顺序；做到一半的不进链，它点「继续」时自己并进来
+              // 补完后能接着自动跟进的：目标之后已保存（已完成）的步骤，加上发起补料且已有工作副本的当前步（如大纲停在 Q6 等补料）
               const from = steps.indexOf(st);
-              return [st.name, steps.filter((_x, i) => i > from && stepKeys?.[i] === "done").map((x) => x.name)];
+              return [
+                st.name,
+                steps
+                  .filter((x, i) => i > from && (stepKeys?.[i] === "done" || (i === focusIdx && Boolean(activeWorkspaceFor(x.name, x.workspaceName)))))
+                  .map((x) => x.name),
+              ];
             }),
           )}
           prefill={reworkPrefill}

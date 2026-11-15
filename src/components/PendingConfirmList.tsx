@@ -503,10 +503,8 @@ export default forwardRef<PendingConfirmHandle, {
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
-      if (decision === "included") {
-        await appendImport([row]);
-      }
       if (decision === "included" && !paperHasDoiPdf(row, pdfFiles)) {
+        await appendImport([row]);
         const fetch = await readFirst([jsonRoot, ...roots], "papers/to-fetch.md");
         if (!fetch?.file.revision) {
           setError("已纳入，但没有可写入的 to-fetch.md，无法追加待获取。");
@@ -559,9 +557,9 @@ export default forwardRef<PendingConfirmHandle, {
         setMdRevision(nextMdRev);
       }
       if (decision === "included") {
-        await appendImport(rows);
         const missing = rows.filter((row) => !paperHasDoiPdf(row, pdfFiles));
         if (missing.length > 0) {
+          await appendImport(missing);
           const fetch = await readFirst([jsonRoot, ...roots], "papers/to-fetch.md");
           if (!fetch?.file.revision) {
             setError("已纳入，但没有可写入的 to-fetch.md，缺 PDF 的篇目没进待获取。");
@@ -612,9 +610,9 @@ export default forwardRef<PendingConfirmHandle, {
         setMdText(nextMd);
         setMdRevision(nextMdRev);
       }
-      await appendImport(pending);
       const missing = pending.filter((row) => !paperHasDoiPdf(row, pdfFiles));
       if (missing.length > 0) {
+        await appendImport(missing);
         const fetch = await readFirst([jsonRoot, ...roots], "papers/to-fetch.md");
         if (!fetch?.file.revision) {
           setError("已全部纳入，但没有可写入的 to-fetch.md，缺 PDF 的篇目没进待获取。");
