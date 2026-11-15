@@ -4678,11 +4678,14 @@ fn write_external_wrapper(
         text.push_str(&sh_script_quote(value));
         text.push('\n');
     }
-    // 窗口标题：终端默认显示目录，先用 OSC 2 写成对话名（CLI 自己改标题时以 CLI 为准）
+    // 窗口与标签标题：部分 CLI（如 agy）自身不发 OSC 0/2 标题，Ghostty 等终端在 surface 标题为空时
+    // 会回退显示默认的「👻」；同时写 OSC 2（窗口标题）与 OSC 0（图标+标签/窗口标题），CLI 自己改标题时以 CLI 为准
     if let Some(title) = title {
         let clean: String = title.chars().filter(|c| !c.is_control()).collect();
-        if !clean.trim().is_empty() {
-            text.push_str(&format!("printf '\\033]2;%s\\007' {}\n", sh_script_quote(&clean)));
+        let clean = clean.trim();
+        if !clean.is_empty() {
+            let q = sh_script_quote(clean);
+            text.push_str(&format!("printf '\\033]2;%s\\007\\033]0;%s\\007' {q} {q}\n"));
         }
     }
     text.push_str("exec ");
@@ -4832,6 +4835,39 @@ fn external_launch_args(
     Ok((args, plan.env, plan.env_remove))
 }
 
+/// 外部终端初始会话标题：有显式对话标题时优先用它；新建对话或尚未命名的旧对话回退为
+/// `<目录名> · <CLI>`（如 `HER催化综述 · agy`），避免不发 OSC 标题的 CLI（如 agy）在
+/// Ghostty 等终端里把顶栏与标签显示成默认回退符号 `👻`。
+fn effective_external_title(title: Option<&str>, agent_id: &str, cwd: &str) -> String {
+    if let Some(raw) = title {
+        let clean: String = raw.chars().filter(|c| !c.is_control()).collect();
+        let trimmed = clean.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    let cli = match binary_for(agent_id) {
+        Some("cursor-agent") => "cursor",
+        Some(b) => b,
+        None => agent_id,
+    };
+    let expanded = expand_home_path(cwd);
+    let trimmed_cwd = expanded.trim().trim_end_matches(['/', '\\']);
+    let folder: String = trimmed_cwd
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let folder = folder.trim();
+    if folder.is_empty() {
+        cli.to_string()
+    } else {
+        format!("{folder} · {cli}")
+    }
+}
+
 fn open_external_profiled(
     store: &ProfileStore,
     agent_id: &str,
@@ -4883,6 +4919,8 @@ fn open_external_profiled(
         .external_terminal
         .unwrap_or_else(|| "auto".into());
     let expanded_cwd = expand_home_path(cwd);
+    let effective_title = effective_external_title(title, agent_id, &expanded_cwd);
+    let title_ref = Some(effective_title.as_str());
     let agy_snapshot = if agent_id == "agy" && resume_session_id.is_none() {
         snapshot_agy_external_before(&profile)
     } else {
@@ -4898,15 +4936,20 @@ fn open_external_profiled(
                 &args,
                 &env,
                 &env_remove,
-                title,
+                title_ref,
             )
         }
         // macOS：终端经 launchd 拉起（open/AppleScript/已运行的 Ghostty 实例），父进程 env
         // 到不了新窗口，密钥只能随一次性包装脚本传递（0600 + 首行自删 + 60s 兜底清理）。
         #[cfg(target_os = "macos")]
         {
-            let wrapper =
-                write_external_wrapper(&binary.to_string_lossy(), &args, &env, &env_remove, title)?;
+            let wrapper = write_external_wrapper(
+                &binary.to_string_lossy(),
+                &args,
+                &env,
+                &env_remove,
+                title_ref,
+            )?;
             let cmd = external_wrapper_command(cwd, &wrapper);
             match open_external_terminal(&cmd, &pref, cwd, &wrapper) {
                 Ok(()) => Ok(()),
@@ -4921,7 +4964,7 @@ fn open_external_profiled(
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             let wrapper =
-                write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[], title)?;
+                write_external_wrapper(&binary.to_string_lossy(), &args, &[], &[], title_ref)?;
             let cmd = external_wrapper_command(cwd, &wrapper);
             match open_external_terminal(&cmd, &pref, cwd, &wrapper, &env, &env_remove) {
                 Ok(()) => Ok(()),
@@ -5729,6 +5772,9 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
             launch_args.drain(pos..end);
         }
     }
+    let is_headless = passthrough
+        .iter()
+        .any(|a| matches!(a.as_str(), "-p" | "--print" | "--prompt"));
     launch_args.extend(passthrough);
     let temp_settings = find_temp_agy_settings_arg(&launch_args);
     let binary = match binary_for(&agent_id).and_then(resolve_binary) {
@@ -5761,6 +5807,14 @@ pub fn helper_launch_cli(args: &[String]) -> i32 {
         &cwd_str,
         agy_snapshot.clone(),
     );
+
+    if !is_headless && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        use std::io::Write;
+        let term_title = effective_external_title(None, &agent_id, &cwd_str);
+        let mut out = std::io::stdout();
+        let _ = write!(out, "\x1b]2;{term_title}\x07\x1b]0;{term_title}\x07");
+        let _ = out.flush();
+    }
 
     let mut cmd = std::process::Command::new(&binary);
     cmd.args(&launch_args);
@@ -6017,29 +6071,34 @@ fn open_ghostty(cmd: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let running = Command::new("pgrep")
-        .args(["-x", "ghostty"])
+        .args(["-ix", "ghostty"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
     if !running {
-        // 未运行：open -na 拉起（仅此一次产生实例）；Ghostty -e 之后的参数整体作为命令
-        // 执行；-l -i 交互登录 shell（非交互模式 zsh 不加载 .zshrc / bash 不加载 .bashrc）
+        // 未运行：open -a 拉起唯一主实例（勿用 -na，否则后续 AppleScript 或 Dock 打开会另起第二个进程）；
+        // Ghostty -e 之后的参数整体作为命令执行；-l -i 交互登录 shell
         return spawn_status(
             Command::new("open").args([
-                "-na", "Ghostty", "--args", "-e", &shell, "-l", "-i", "-c", cmd,
+                "-a", "Ghostty", "--args", "-e", &shell, "-l", "-i", "-c", cmd,
             ]),
             "Ghostty",
         );
     }
-    // 已运行：使用 Ghostty 自带 AppleScript 字典直接创建带 command 的窗口。
-    // 旧实现通过 System Events 模拟 ⌘N/⌘V/回车：辅助功能权限或脚本任一步失败时，
-    // 命令可能已经贴进终端但 wrapper 随错误返回被删除，最终变成「No such file」。
-    // 原生 new surface configuration 不需要控制 System Events，也不经过剪贴板。
-    // Ghostty 的 command 字段会自动包装成 `exec -l <command>`，所以不能传
-    // `cd ... && ...`；否则会变成 `exec -l cd ...`。另外，command 字段对带空格
-    // 的 shell 命令路径（本机 wrapper 位于 `Application Support`）不会可靠保留
-    // POSIX 引号。让 Ghostty 先启动 /bin/sh，再通过 initial input 交给 shell
-    // 解析一次路径，避免出现“wrapper 不存在”的假错误。
+    let mut args = Vec::new();
+    for line in ghostty_script(cwd, wrapper) {
+        args.push("-e".to_string());
+        args.push(line);
+    }
+    spawn_status(Command::new("osascript").args(&args), "Ghostty")
+}
+
+/// Ghostty AppleScript：已有窗口时在同一窗口新建标签页（`new tab in w with configuration cfg`），
+/// 没有打开窗口时才建新窗口。原生 `new surface configuration` 不需要 System Events 辅助功能权限，
+/// 也不经过剪贴板；`command` 会被 Ghostty 自动包成 `exec -l <command>` 且对 `Application Support`
+/// 空格路径不保留 POSIX 引号，因此先启动 `/bin/sh`，再由 `initial input` 交 shell 解析 wrapper 路径。
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn ghostty_script(cwd: &str, wrapper: &Path) -> Vec<String> {
     let initial_working_directory = expand_home_path(cwd);
     let initial_input = format!(
         "exec /bin/sh {}\n",
@@ -6047,27 +6106,26 @@ fn open_ghostty(cmd: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
     );
     let escaped_cwd = applescript_escape(&initial_working_directory);
     let escaped_input = applescript_escape(&initial_input);
-    spawn_status(
-        Command::new("osascript").args([
-            "-e",
-            "tell application \"Ghostty\"",
-            "-e",
-            "set cfg to new surface configuration",
-            "-e",
-            &format!("set initial working directory of cfg to \"{escaped_cwd}\""),
-            "-e",
-            "set command of cfg to \"/bin/sh\"",
-            "-e",
-            &format!("set initial input of cfg to \"{escaped_input}\""),
-            "-e",
-            "new window with configuration cfg",
-            "-e",
-            "activate",
-            "-e",
-            "end tell",
-        ]),
-        "Ghostty",
-    )
+    vec![
+        "tell application \"Ghostty\"".into(),
+        "set cfg to new surface configuration".into(),
+        format!("set initial working directory of cfg to \"{escaped_cwd}\""),
+        "set command of cfg to \"/bin/sh\"".into(),
+        format!("set initial input of cfg to \"{escaped_input}\""),
+        "if exists front window then".into(),
+        "set w to front window".into(),
+        "new tab in w with configuration cfg".into(),
+        "activate window w".into(),
+        "else if (count of windows) > 0 then".into(),
+        "set w to window 1".into(),
+        "new tab in w with configuration cfg".into(),
+        "activate window w".into(),
+        "else".into(),
+        "new window with configuration cfg".into(),
+        "end if".into(),
+        "activate".into(),
+        "end tell".into(),
+    ]
 }
 
 #[cfg(target_os = "macos")]
@@ -6089,15 +6147,23 @@ fn open_iterm(cmd: &str) -> Result<(), String> {
     spawn_status(Command::new("osascript").args(&args), "iTerm")
 }
 
-/// iTerm2 AppleScript：命令写进**刚建的那个窗口**（用 create window 的返回值，不用 current window——
-/// 别的窗口抢到焦点时，旧写法会把命令打进用户正在用的窗口）。iTerm 没在运行时，拉起后它自己会开一个窗口：
-/// 等它出来直接用，免得一次出现两个窗口（等 3 秒还没有再自己建）。
+/// iTerm2 AppleScript：已在运行且有窗口时，在当前窗口新建标签页并把命令写进**刚建的标签页**
+///（用 `create tab` 返回的 `t`，绝不直接写用户正在用的当前会话）；无打开窗口时才建新窗口。
+/// iTerm 没在运行时，拉起后它自己会开一个窗口：等它出来直接用，免得一次出现两个窗口（等 3 秒还没有再自己建）。
 #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn iterm_script(cmd: &str, running: bool) -> Vec<String> {
-    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = applescript_escape(cmd);
     let mut lines = vec!["tell application \"iTerm\"".to_string(), "activate".to_string()];
     if running {
-        lines.push("set w to (create window with default profile)".into());
+        lines.extend([
+            "if (count of windows) > 0 then".to_string(),
+            "tell current window to set t to (create tab with default profile)".to_string(),
+            format!("tell current session of t to write text \"{escaped}\""),
+            "else".to_string(),
+            "set w to (create window with default profile)".to_string(),
+            format!("tell current session of w to write text \"{escaped}\""),
+            "end if".to_string(),
+        ]);
     } else {
         lines.extend(
             [
@@ -6113,8 +6179,8 @@ fn iterm_script(cmd: &str, running: bool) -> Vec<String> {
             ]
             .map(String::from),
         );
+        lines.push(format!("tell current session of w to write text \"{escaped}\""));
     }
-    lines.push(format!("tell current session of w to write text \"{escaped}\""));
     lines.push("end tell".into());
     lines
 }
@@ -6138,7 +6204,7 @@ fn open_terminal_app(cmd: &str) -> Result<(), String> {
 }
 
 /// AppleScript 字符串字面量转义（\ 和 "）
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn applescript_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }

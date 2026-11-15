@@ -3308,13 +3308,41 @@ fn external_wrapper_sets_window_title_before_exec() {
     )
     .unwrap();
     let body = std::fs::read_to_string(&wrapper).unwrap();
-    assert!(body.contains("printf '\\033]2;%s\\007' "));
+    assert!(body.contains("printf '\\033]2;%s\\007\\033]0;%s\\007' "));
     assert!(body.find("]2;").unwrap() < body.find("exec ").unwrap());
     let out = std::process::Command::new("/bin/sh").arg(&wrapper).output().unwrap();
     assert!(out.status.success());
     let s = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(s.starts_with("\u{1b}]2;1113|调研|它'的标题\u{7}"), "{s:?}");
+    assert!(
+        s.starts_with("\u{1b}]2;1113|调研|它'的标题\u{7}\u{1b}]0;1113|调研|它'的标题\u{7}"),
+        "{s:?}"
+    );
     assert!(s.ends_with("ok"));
+}
+
+#[test]
+fn effective_external_title_falls_back_to_folder_and_cli() {
+    assert_eq!(
+        effective_external_title(Some("  1115|功能|外部终端标题\n "), "agy", "/Users/a/Ccode"),
+        "1115|功能|外部终端标题"
+    );
+    assert_eq!(
+        effective_external_title(
+            None,
+            "agy",
+            "/Users/tongzhouhong/ccode/workspaces/HER催化综述"
+        ),
+        "HER催化综述 · agy"
+    );
+    assert_eq!(
+        effective_external_title(Some(" \t\n "), "claude-code", "/Users/a/Documents/Ccode/"),
+        "Ccode · claude"
+    );
+    assert_eq!(
+        effective_external_title(None, "cursor", r"C:\work\my-app\"),
+        "my-app · cursor"
+    );
+    assert_eq!(effective_external_title(None, "agy", "/"), "agy");
 }
 
 #[cfg(unix)]
@@ -3577,15 +3605,63 @@ fn expand_home_path_resolves_tilde_before_shell_quoting() {
 fn iterm_script_writes_into_the_window_it_created() {
     let cmd = r#"cd '/Users/a/Mesa project' && /bin/sh '/x/launch "q".sh'"#;
     let warm = iterm_script(cmd, true);
+    assert!(warm.contains(
+        &"tell current window to set t to (create tab with default profile)".to_string()
+    ));
     assert!(warm.contains(&"set w to (create window with default profile)".to_string()));
-    assert!(!warm.iter().any(|l| l.contains("current window")), "不能写进当前焦点窗口");
-    let last = &warm[warm.len() - 2];
-    assert!(last.starts_with("tell current session of w to write text \""));
-    assert!(last.contains(r#"launch \"q\".sh"#), "双引号要转义：{last}");
+    assert!(
+        !warm
+            .iter()
+            .any(|l| l.contains("tell current session of current window")),
+        "不能直接写进用户正在用的当前会话"
+    );
+    let tab_write = warm
+        .iter()
+        .find(|l| l.starts_with("tell current session of t to write text \""))
+        .expect("已有窗口分支应写进新建标签 t");
+    assert!(tab_write.contains(r#"launch \"q\".sh"#), "双引号要转义：{tab_write}");
     // 冷启动：等 iTerm 自己开的窗口，不另建第二个
     let cold = iterm_script(cmd, false);
     assert!(cold.iter().any(|l| l == "set w to current window"));
     assert!(cold.iter().any(|l| l.starts_with("repeat 30 times")));
+}
+
+#[cfg(unix)]
+#[test]
+fn ghostty_script_opens_tab_in_existing_window_and_falls_back_to_new_window() {
+    let wrapper = Path::new(r#"/Users/a/Library/Application Support/ccode/external-launch/launch "q".sh"#);
+    let lines = ghostty_script("~/Mesa project", wrapper);
+    assert!(lines.contains(&"if exists front window then".to_string()));
+    assert!(lines.contains(&"new tab in w with configuration cfg".to_string()));
+    assert!(lines.contains(&"new window with configuration cfg".to_string()));
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("set initial working directory of cfg to \"") && !l.contains("~/")),
+        "~ 必须先展开：{lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("set initial input of cfg to \"exec /bin/sh ") && l.contains(r#"\"q\""#)),
+        "Application Support 空格与双引号须经 shell + AppleScript 双层转义：{lines:?}"
+    );
+    #[cfg(target_os = "macos")]
+    if mac_app_installed("Ghostty.app") {
+        let scpt = std::env::temp_dir().join(format!("ccode-ghostty-{}.scpt", uuid::Uuid::new_v4()));
+        let mut cmd = std::process::Command::new("osacompile");
+        cmd.arg("-o").arg(&scpt);
+        for line in &lines {
+            cmd.arg("-e").arg(line);
+        }
+        let out = cmd.output().expect("osacompile 应可执行");
+        let _ = std::fs::remove_file(&scpt);
+        assert!(
+            out.status.success(),
+            "Ghostty AppleScript 编译失败：{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }
 
 #[cfg(unix)]
