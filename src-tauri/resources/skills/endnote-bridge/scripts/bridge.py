@@ -1156,11 +1156,11 @@ def main():
         elif hits:
             print(f'库体检：检出 {len(hits)} 条旧版导出的脏记录，不删掉它们，新导入的去重认不出、旧数据会残留：')
             for h in hits: print(f'- {h}')
-            print('处方：在 EndNote 里按上面的标题搜到这些记录删除（进废纸篓即可），再导入本次生成的 endnote-library.xml。')
+            print('处方：在 EndNote 里按上面的标题搜到这些记录删除（进废纸篓即可），再导入本次同步生成的 XML 文件。')
         else:
             unformatted = match.endnote_unformatted_subscripts(a.check_endnote_library)
             if unformatted:
-                print(f'库体检：检出 {len(unformatted)} 条由纯文本 RIS 导入的上下标记录（Word 更新引文后显示为 ₂ 字符而非真下标格式）——若要真上下标格式，先在 EndNote 删掉旧条目再导入 papers/endnote-library.xml。')
+                print(f'库体检：检出 {len(unformatted)} 条由纯文本 RIS 导入的上下标记录（Word 更新引文后显示为 ₂ 字符而非真下标格式）——若要真上下标格式，先在 EndNote 删掉旧条目再导入本次同步生成的 XML 文件。')
             else:
                 print('库体检：库里没有旧版导出的脏记录。')
         return 0

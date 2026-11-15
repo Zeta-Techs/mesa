@@ -560,10 +560,26 @@ fn is_endnote_bundle(path: &Path) -> bool {
     }
 }
 
-fn copy_to_downloads(src: &Path, name: &str) -> Option<PathBuf> {
-    let dest = crate::dirs::download_dir()?.join(name);
+fn copy_into_dir_fresh(src: &Path, dir: &Path, name: &str) -> Option<PathBuf> {
+    let dest = dir.join(name);
+    // 先删旧文件再复制，保证 macOS「下载」按添加时间排在第一位（原地覆盖会沿用旧添加时间沉在底下）
+    let _ = std::fs::remove_file(&dest);
     std::fs::copy(src, &dest).ok()?;
     Some(dest)
+}
+
+fn copy_to_downloads(src: &Path, name: &str) -> Option<PathBuf> {
+    let dir = crate::dirs::download_dir()?;
+    copy_into_dir_fresh(src, &dir, name)
+}
+
+fn endnote_download_xml_name(project_root: &Path) -> String {
+    let raw = project_root
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("文献");
+    let base = crate::paths::sanitize_fs_name(raw).unwrap_or_else(|_| "文献".to_string());
+    format!("{base}-EndNote导入.xml")
 }
 
 fn copy_path_to_clipboard(path: &Path) {
@@ -940,11 +956,19 @@ fn xml_titles_have_rich_style(xml_text: &str) -> bool {
     false
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EndnoteSyncDto {
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub xml_path: Option<String>,
+}
+
 #[tauri::command]
 pub async fn endnote_export_xml(
     project_root: String,
     attach: Option<String>,
-) -> Result<String, String> {
+) -> Result<EndnoteSyncDto, String> {
     let mode = crate::library_attach::AttachMode::parse(attach.as_deref());
     // 转换和打开 EndNote 都在后台线程，不占界面。
     tauri::async_runtime::spawn_blocking(move || {
@@ -960,22 +984,49 @@ pub async fn endnote_export_xml(
                 && std::fs::read_to_string(&xml)
                     .is_ok_and(|text| xml_titles_have_rich_style(&text));
             if needs_rich_xml {
-                copy_path_to_clipboard(&xml);
+                let dl_name = endnote_download_xml_name(root_path);
+                let downloaded = copy_to_downloads(&xml, &dl_name);
+                let target = downloaded.as_deref().unwrap_or(&xml);
+                copy_path_to_clipboard(target);
+                let xml_path = Some(target.to_string_lossy().into_owned());
                 let enl = endnote_library_pointer(root_path);
                 let health_note = if health.is_empty() {
                     String::new()
                 } else {
                     format!("\n{health}")
                 };
-                let import_steps = if cfg!(target_os = "macos") {
-                    "点「文件 → 导入...」（File → Import…），按 ⇧⌘G 粘贴路径回车；首次点底部「显示选项」（Options）把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项，直接粘贴回车即可"
+                let reveal_label = if cfg!(target_os = "macos") {
+                    "在访达中定位"
                 } else {
-                    "点「文件 → 导入 → 文件...」（File → Import → File…），在文件框粘贴路径；首次把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"
+                    "在文件夹中定位"
+                };
+                let (where_note, import_steps) = if downloaded.is_some() {
+                    if cfg!(target_os = "macos") {
+                        (
+                            format!("已放入「下载/{dl_name}」"),
+                            format!("点「文件 → 导入...」（File → Import…），在左侧「下载」里选最上面这份文件（也可点下方「{reveal_label}」直接拖进导入窗口）；首次点底部「显示选项」（Options）把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住目录和选项"),
+                        )
+                    } else {
+                        (
+                            format!("已放入「下载\\{dl_name}」"),
+                            format!("点「文件 → 导入 → 文件...」（File → Import → File…），在左侧「下载」里选这份文件（也可点下方「{reveal_label}」直接拖进导入窗口）；首次把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住目录和选项"),
+                        )
+                    }
+                } else if cfg!(target_os = "macos") {
+                    (
+                        format!("已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）"),
+                        format!("点「文件 → 导入...」（File → Import…），点下方「{reveal_label}」把高亮文件拖进导入窗口（或按 ⇧⌘G 粘贴路径）；首次点底部「显示选项」（Options）把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"),
+                    )
+                } else {
+                    (
+                        format!("已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）"),
+                        format!("点「文件 → 导入 → 文件...」（File → Import → File…），点下方「{reveal_label}」把高亮文件拖进导入窗口（或在文件框粘贴路径）；首次把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"),
+                    )
                 };
                 return match launch_endnote_app(enl.as_deref()) {
                     Ok(()) => {
                         let mut lines = vec![format!(
-                            "已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）并打开 EndNote：{import_steps}。{}",
+                            "{where_note}并打开 EndNote：{import_steps}。{}",
                             if mode == crate::library_attach::AttachMode::Items {
                                 "全文可点「打开 papers」拖入条目。"
                             } else {
@@ -989,11 +1040,17 @@ pub async fn endnote_export_xml(
                         if !health.is_empty() {
                             lines.push(health);
                         }
-                        Ok(lines.join("\n"))
+                        Ok(EndnoteSyncDto {
+                            message: lines.join("\n"),
+                            xml_path,
+                        })
                     }
-                    Err(e) => Ok(format!(
-                        "已生成 papers/{LIBRARY_XML}（路径已复制）。打开 EndNote 后{import_steps}。{e}{health_note}"
-                    )),
+                    Err(e) => Ok(EndnoteSyncDto {
+                        message: format!(
+                            "{where_note}。打开 EndNote 后{import_steps}。{e}{health_note}"
+                        ),
+                        xml_path,
+                    }),
                 };
             }
             let shown = ris
@@ -1020,11 +1077,17 @@ pub async fn endnote_export_xml(
                     if !health.is_empty() {
                         lines.push(health);
                     }
-                    Ok(lines.join("\n"))
+                    Ok(EndnoteSyncDto {
+                        message: lines.join("\n"),
+                        xml_path: None,
+                    })
                 }
-                Err(e) => Ok(format!(
-                    "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
-                )),
+                Err(e) => Ok(EndnoteSyncDto {
+                    message: format!(
+                        "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
+                    ),
+                    xml_path: None,
+                }),
             };
         }
         let Some(ris) = find_import_ris(root_path) else {
@@ -1039,13 +1102,17 @@ pub async fn endnote_export_xml(
             .unwrap_or_else(|| ris.display().to_string());
         copy_path_to_clipboard(&ris);
         match launch_endnote_with_file(&ris) {
-            Ok(()) => Ok(
-                "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。\n若此前已导过，请用 References → Find Duplicates 去重。"
+            Ok(()) => Ok(EndnoteSyncDto {
+                message: "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。\n若此前已导过，请用 References → Find Duplicates 去重。"
                     .to_string(),
-            ),
-            Err(e) => Ok(format!(
-                "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}"
-            )),
+                xml_path: None,
+            }),
+            Err(e) => Ok(EndnoteSyncDto {
+                message: format!(
+                    "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}"
+                ),
+                xml_path: None,
+            }),
         }
     })
     .await
@@ -1752,6 +1819,29 @@ mod tests {
             xml_titles_have_rich_style(formula_xml),
             "标题含化学上下标时必须走 XML 保留真上下标"
         );
+    }
+
+    #[test]
+    fn endnote_download_xml_helper_replaces_existing_file_cleanly() {
+        let dir = std::env::temp_dir().join(format!("ccode-endnote-dl-test-{}", uuid::Uuid::new_v4()));
+        let proj = dir.join("HER催化综述");
+        let dl = dir.join("Downloads");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&dl).unwrap();
+        let name = endnote_download_xml_name(&proj);
+        assert_eq!(name, "HER催化综述-EndNote导入.xml");
+
+        let src = proj.join("endnote-library.xml");
+        std::fs::write(&src, "<xml>v1</xml>").unwrap();
+        let first = copy_into_dir_fresh(&src, &dl, &name).unwrap();
+        assert_eq!(std::fs::read_to_string(&first).unwrap(), "<xml>v1</xml>");
+
+        // 覆盖写新内容应先 unlink 再拷，得到最新内容（macOS 上同时刷新 inode 添加时间排到下载顶部）
+        std::fs::write(&src, "<xml>v2</xml>").unwrap();
+        let second = copy_into_dir_fresh(&src, &dl, &name).unwrap();
+        assert_eq!(second, first);
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "<xml>v2</xml>");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

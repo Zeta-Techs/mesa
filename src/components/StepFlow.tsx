@@ -13,6 +13,7 @@ import {
   type JournalMetricsStatusDto,
 } from "../lit-watch";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { marked } from "marked";
@@ -920,7 +921,10 @@ export default function StepFlow({
   const [endnoteSyncing, setEndnoteSyncing] = useState(false);
   /** 同步到文献库导入哪些：只导条目 / 带 PDF / 带 PDF 和笔记，默认只导条目 */
   const [syncAttach, setSyncAttach] = useState<LibrarySyncAttach>("items");
-  const [endnoteSyncResult, setEndnoteSyncResult] = useState<string | null>(null);
+  const [endnoteSyncResult, setEndnoteSyncResult] = useState<{
+    line: string;
+    xmlPath?: string;
+  } | null>(null);
   /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
   const [endnoteLib, setEndnoteLib] = useState<
     { path: string | null; revision: string; legacy?: boolean } | undefined
@@ -1269,15 +1273,24 @@ export default function StepFlow({
     if (endnoteSyncing) return;
     setEndnoteSyncing(true);
     setZoteroSyncResult(null);
-    setEndnoteSyncResult("正在生成并打开 EndNote…");
+    setEndnoteSyncResult({ line: "正在生成并打开 EndNote…" });
     try {
-      const msg = await invoke<string>("endnote_export_xml", {
+      const res = await invoke<
+        string | { message: string; xmlPath?: string | null }
+      >("endnote_export_xml", {
         projectRoot: projectPath,
         attach: syncAttach,
       });
-      setEndnoteSyncResult(msg);
+      if (typeof res === "string") {
+        setEndnoteSyncResult({ line: res });
+      } else {
+        setEndnoteSyncResult({
+          line: res.message,
+          xmlPath: res.xmlPath ?? undefined,
+        });
+      }
     } catch (e) {
-      setEndnoteSyncResult(String(e));
+      setEndnoteSyncResult({ line: String(e) });
     } finally {
       setEndnoteSyncing(false);
     }
@@ -2775,15 +2788,40 @@ export default function StepFlow({
           node.hint && (
           <p
             className={`mt-1 pl-6 text-micro leading-5 ${
-              node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
+              node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult?.line)
                 ? "whitespace-pre-line text-l3"
                 : "text-l4"
             }`}
           >
-            {node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult)
-              ? zoteroSyncResult?.line || endnoteSyncResult
+            {node.key === "endnote-export" && (zoteroSyncResult?.line || endnoteSyncResult?.line)
+              ? zoteroSyncResult?.line || endnoteSyncResult?.line
               : node.hint}
           </p>
+        )}
+        {!dense &&
+          node.key === "endnote-export" &&
+          !zoteroSyncResult?.line &&
+          endnoteSyncResult?.xmlPath && (
+          <div className="mt-1.5 ml-6 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                void revealItemInDir(endnoteSyncResult.xmlPath!).catch((e) =>
+                  toast(String(e), "error"),
+                )
+              }
+              title={`${endnoteSyncResult.xmlPath}\n高亮打开后，也可直接把该文件拖进 EndNote 的「导入」文件窗口`}
+              className="rounded-sm border border-field bg-raised px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+            >
+              {IS_WINDOWS ? "在文件夹中定位" : "在访达中定位"}
+            </button>
+            <span
+              className="truncate text-micro text-l4"
+              title={endnoteSyncResult.xmlPath}
+            >
+              {endnoteSyncResult.xmlPath.split(/[\\/]/).pop()}
+            </span>
+          </div>
         )}
         {!dense && node.key === "endnote-export" && runStatus === "done" && (
           <div className="mt-1 ml-6">
