@@ -237,8 +237,14 @@ pub fn export_ris_only(
         Some(&terms),
         attach.as_ref().map(|p| p.file.as_path()),
     );
-    // 同步写出保留 <style face="subscript|superscript"> 真上下标格式的 EndNote XML（供 File → Import → EndNote generated XML 导入）
+    // 同步写出保留 <style face="subscript|superscript"> 真上下标格式的 EndNote XML：
+    // XML 走真实 papers/ 路径（不走 RIS 专用的临时单空格硬链目录，避免直接挂接绝对路径时指向临时目录）
     if dropped.is_ok() {
+        let xml_attach_file =
+            std::env::temp_dir().join(format!("ccode-endnote-xml-attach-{stamp}.json"));
+        let xml_attach = crate::library_attach::write_plan(&root, &bib, mode, &xml_attach_file)
+            .ok()
+            .flatten();
         let _ = run_bridge_terms(
             &py,
             &script,
@@ -251,8 +257,9 @@ pub fn export_ris_only(
             &root,
             false,
             None,
-            attach.as_ref().map(|p| p.file.as_path()),
+            xml_attach.as_ref().map(|p| p.file.as_path()),
         );
+        let _ = std::fs::remove_file(&xml_attach_file);
     }
     let _ = std::fs::remove_file(&report);
     let _ = std::fs::remove_file(&attach_file);
@@ -573,12 +580,17 @@ fn copy_to_downloads(src: &Path, name: &str) -> Option<PathBuf> {
     copy_into_dir_fresh(src, &dir, name)
 }
 
-fn endnote_download_xml_name(project_root: &Path) -> String {
+fn endnote_project_group_name(project_root: &Path) -> String {
     let raw = project_root
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("文献");
-    let base = crate::paths::sanitize_fs_name(raw).unwrap_or_else(|_| "文献".to_string());
+        .unwrap_or("");
+    crate::paths::sanitize_fs_name(raw).unwrap_or_default()
+}
+
+fn endnote_download_xml_name(project_root: &Path) -> String {
+    let base = endnote_project_group_name(project_root);
+    let base = if base.is_empty() { "文献" } else { base.as_str() };
     format!("{base}-EndNote导入.xml")
 }
 
@@ -956,6 +968,166 @@ fn xml_titles_have_rich_style(xml_text: &str) -> bool {
     false
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirectEndnoteImport {
+    count: usize,
+    library_name: String,
+    grouped: bool,
+}
+
+fn parse_direct_endnote_import_output(stdout: &str) -> Option<DirectEndnoteImport> {
+    let line = stdout.lines().rev().find(|l| !l.trim().is_empty())?.trim();
+    let mut parts = line.split('\t');
+    let count: usize = parts.next()?.trim().parse().ok()?;
+    if count == 0 {
+        return None;
+    }
+    let library_name = parts.next()?.trim().to_string();
+    let grouped = parts.next().is_some_and(|s| s.trim() == "1");
+    Some(DirectEndnoteImport {
+        count,
+        library_name,
+        grouped,
+    })
+}
+
+/// macOS 上直接经 EndNote 原生 AppleScript `import`（`ENImportCommand`，接收 RSXML）把整份 XML 静默导入目标库：
+/// 一次点按同时保留 `<style face="subscript|superscript">` 真上下标、PDF 附件链接与多行研究笔记，并自动归入课题名群组，
+/// 彻底绕开 macOS 导入文件框默认把「导入选项」藏在折叠「显示选项」里设为「PDF 文件或文件夹」导致点导入无反应的坑。
+#[cfg(target_os = "macos")]
+fn import_xml_into_endnote_macos(
+    xml: &Path,
+    enl: Option<&Path>,
+    group_name: &str,
+) -> Result<DirectEndnoteImport, String> {
+    if !xml.is_file() {
+        return Err("XML 文件不存在".into());
+    }
+    if find_endnote_app().is_none() {
+        return Err("未检测到已安装的 EndNote".into());
+    }
+    let enl_arg = enl
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| e.eq_ignore_ascii_case("enl"))
+                && !is_legacy_library(p)
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    const SCRIPT: &str = r#"
+on run argv
+    set xmlPath to item 1 of argv
+    set enlPath to item 2 of argv
+    set groupName to item 3 of argv
+    set xmlData to read (POSIX file xmlPath) as «class utf8»
+    set targetName to my baseName(enlPath)
+    tell application id "com.ThomsonResearchSoft.EndNote"
+        activate
+        set openedOnce to false
+        set targetDoc to missing value
+        repeat 30 times
+            if (count of documents) > 0 then
+                if targetName is "" then
+                    set targetDoc to document 1
+                    exit repeat
+                else
+                    repeat with d in documents
+                        try
+                            if (name of d as text) is equal to targetName then
+                                set targetDoc to contents of d
+                                exit repeat
+                            end if
+                        end try
+                    end repeat
+                    if targetDoc is not missing value then exit repeat
+                end if
+            end if
+            if (not openedOnce) and (enlPath is not "") then
+                open (POSIX file enlPath)
+                set openedOnce to true
+            end if
+            delay 0.25
+        end repeat
+        if targetDoc is missing value then error "NO_OPEN_LIBRARY"
+        set docName to name of targetDoc as text
+        set beforeIds to retrieve "all" records in targetDoc
+        import xmlData into targetDoc
+        set afterIds to retrieve "all" records in targetDoc
+        if (count of beforeIds) is 0 then
+            set newIds to afterIds
+        else
+            set AppleScript's text item delimiters to "|"
+            set beforeBlob to "|" & (beforeIds as text) & "|"
+            set AppleScript's text item delimiters to ""
+            set newIds to {}
+            repeat with recId in afterIds
+                set s to recId as text
+                if beforeBlob does not contain ("|" & s & "|") then
+                    set end of newIds to s
+                end if
+            end repeat
+        end if
+        set grouped to "0"
+        if (count of newIds) > 0 then
+            try
+                set targetWin to window docName
+                if groupName is not "" then
+                    set existingGroups to get groups of type "CUSTOM" in targetWin
+                    if existingGroups does not contain groupName then
+                        post records in newIds in targetWin as groupName of type "CUSTOM"
+                        set grouped to "1"
+                    end if
+                end if
+                show records in newIds in targetWin
+            end try
+        end if
+        return ((count of newIds) as text) & "\t" & docName & "\t" & grouped
+    end tell
+end run
+
+on baseName(posixPath)
+    if posixPath is "" then return ""
+    set AppleScript's text item delimiters to "/"
+    set lastPart to last text item of posixPath
+    set AppleScript's text item delimiters to ""
+    return lastPart
+end baseName
+"#;
+
+    let mut cmd = crate::process::background_command("osascript");
+    cmd.arg("-e")
+        .arg(SCRIPT)
+        .arg(xml)
+        .arg(&enl_arg)
+        .arg(group_name);
+    let out =
+        crate::process::capture_command(&mut cmd, std::time::Duration::from_secs(25), 256 * 1024)
+            .map_err(|e| format!("调用 osascript 失败: {e}"))?;
+    if out.timed_out || !out.status.is_some_and(|s| s.success()) {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "EndNote 未响应自动导入".into()
+        } else {
+            stderr
+        });
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_direct_endnote_import_output(&stdout)
+        .ok_or_else(|| "EndNote 返回的导入条数为 0".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn import_xml_into_endnote_macos(
+    _xml: &Path,
+    _enl: Option<&Path>,
+    _group_name: &str,
+) -> Result<DirectEndnoteImport, String> {
+    Err("non-macos".into())
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EndnoteSyncDto {
@@ -975,11 +1147,48 @@ pub async fn endnote_export_xml(
         let root = crate::sessions::expand_tilde(&project_root);
         let root_path = Path::new(&root);
         // 有引文库就按它生成整库 endnote-library.xml + endnote-library.ris（初稿/定稿同步时）；
-        // 标题含化学上下标时走 XML 保留 <style face="subscript|superscript"> 真上下标；不含时直接走 RIS 一键导入。
-        // 还没有引文库（检索步）才交检索清单那份 endnote-import.ris。
+        // macOS 优先经 EndNote 原生 RSXML AppleScript 一键直导（同时保留真上下标、PDF、多行笔记并自动建课题群组）；
+        // 未能直导（如 Windows 或未打开任何库）时：标题含上下标走 XML 手动导入指引，普通标题走 RIS 一键导入。
         if root_path.join("references.bib").is_file() {
             let (ris, health) = export_ris_only(root_path, mode)?;
             let xml = ris.with_file_name(LIBRARY_XML);
+            let enl = endnote_library_pointer(root_path);
+            let group_name = endnote_project_group_name(root_path);
+            if xml.is_file() {
+                if let Ok(imported) =
+                    import_xml_into_endnote_macos(&xml, enl.as_deref(), &group_name)
+                {
+                    // 新记录刚进 .enl 库：若定稿 output/endnote.docx 已写出且尚未在 Word 里保存改过，顺手按最新记录号静默重绑
+                    refresh_field_docx_if_stale(&root_path.join("output/endnote.docx"), root_path);
+                    let group_note = if imported.grouped && !group_name.is_empty() {
+                        format!("，已归入「{group_name}」群组")
+                    } else {
+                        String::new()
+                    };
+                    let mut lines = vec![format!(
+                        "已直接导入 EndNote 库「{}」（共 {} 条{}，保留上下标格式）。{}",
+                        imported.library_name,
+                        imported.count,
+                        group_note,
+                        if mode == crate::library_attach::AttachMode::Items {
+                            "全文可点「打开 papers」拖入条目。"
+                        } else {
+                            ""
+                        }
+                    )];
+                    lines.push(
+                        "若此前已导过同批文献，可在 EndNote 点「参考文献 → 查找重复项」（References → Find Duplicates）去重。"
+                            .to_string(),
+                    );
+                    if !health.is_empty() {
+                        lines.push(health);
+                    }
+                    return Ok(EndnoteSyncDto {
+                        message: lines.join("\n"),
+                        xml_path: None,
+                    });
+                }
+            }
             let needs_rich_xml = xml.is_file()
                 && std::fs::read_to_string(&xml)
                     .is_ok_and(|text| xml_titles_have_rich_style(&text));
@@ -989,7 +1198,6 @@ pub async fn endnote_export_xml(
                 let target = downloaded.as_deref().unwrap_or(&xml);
                 copy_path_to_clipboard(target);
                 let xml_path = Some(target.to_string_lossy().into_owned());
-                let enl = endnote_library_pointer(root_path);
                 let health_note = if health.is_empty() {
                     String::new()
                 } else {
@@ -1004,23 +1212,23 @@ pub async fn endnote_export_xml(
                     if cfg!(target_os = "macos") {
                         (
                             format!("已放入「下载/{dl_name}」"),
-                            format!("点「文件 → 导入...」（File → Import…），在左侧「下载」里选最上面这份文件（也可点下方「{reveal_label}」直接拖进导入窗口）；首次点底部「显示选项」（Options）把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住目录和选项"),
+                            format!("先在 EndNote 打开你的个人图书馆（.enl），点「文件 → 导入...」（File → Import…），在左侧「下载」里选最上面这份文件（或点下方「{reveal_label}」拖进导入窗口），务必先点窗口底部「显示选项」（Options）把「导入选项」从默认的「PDF 文件或文件夹」改为「EndNote 生成的 XML」（EndNote generated XML，不改直接点导入会完全没反应），之后 EndNote 会记住目录和选项"),
                         )
                     } else {
                         (
                             format!("已放入「下载\\{dl_name}」"),
-                            format!("点「文件 → 导入 → 文件...」（File → Import → File…），在左侧「下载」里选这份文件（也可点下方「{reveal_label}」直接拖进导入窗口）；首次把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住目录和选项"),
+                            format!("点「文件 → 导入 → 文件...」（File → Import → File…），在左侧「下载」里选这份文件（或点下方「{reveal_label}」拖进导入窗口），并把「导入选项」（Import Option）改为「EndNote 生成的 XML」（EndNote generated XML，默认是 PDF 或 EndNote Import，不改点导入会没反应），之后 EndNote 会记住目录和选项"),
                         )
                     }
                 } else if cfg!(target_os = "macos") {
                     (
                         format!("已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）"),
-                        format!("点「文件 → 导入...」（File → Import…），点下方「{reveal_label}」把高亮文件拖进导入窗口（或按 ⇧⌘G 粘贴路径）；首次点底部「显示选项」（Options）把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"),
+                        format!("先在 EndNote 打开你的个人图书馆（.enl），点「文件 → 导入...」（File → Import…），点下方「{reveal_label}」把高亮文件拖进导入窗口，务必先点窗口底部「显示选项」（Options）把「导入选项」从默认的「PDF 文件或文件夹」改为「EndNote 生成的 XML」（不改点导入会没反应），之后 EndNote 会记住该选项"),
                     )
                 } else {
                     (
                         format!("已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）"),
-                        format!("点「文件 → 导入 → 文件...」（File → Import → File…），点下方「{reveal_label}」把高亮文件拖进导入窗口（或在文件框粘贴路径）；首次把「导入选项」选为「EndNote 生成的 XML」（EndNote generated XML），之后 EndNote 会记住该选项"),
+                        format!("点「文件 → 导入 → 文件...」（File → Import → File…），点下方「{reveal_label}」把高亮文件拖进导入窗口，并把「导入选项」（Import Option）改为「EndNote 生成的 XML」（不改点导入会没反应），之后 EndNote 会记住该选项"),
                     )
                 };
                 return match launch_endnote_app(enl.as_deref()) {
@@ -1842,6 +2050,19 @@ mod tests {
         assert_eq!(second, first);
         assert_eq!(std::fs::read_to_string(&second).unwrap(), "<xml>v2</xml>");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_direct_endnote_import_output() {
+        assert_eq!(
+            parse_direct_endnote_import_output("33\t我的 EndNote 个人图书馆.enl\t1\n"),
+            Some(DirectEndnoteImport {
+                count: 33,
+                library_name: "我的 EndNote 个人图书馆.enl".to_string(),
+                grouped: true,
+            })
+        );
+        assert_eq!(parse_direct_endnote_import_output("0\tTest.enl\t0"), None);
     }
 
     #[test]
