@@ -93,8 +93,8 @@ def _legacy_note(path: Path) -> str:
     if (data / "rdb").is_dir():
         return (
             "这是 EndNote X9 及更早版本的库（记录在 .Data/rdb 里），脚本直接读不了。"
-            "在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存成项目里的 papers/endnote-library.xml，"
-            "再在 Mesa 初稿步「同步到文献库」那一行「选这个 EndNote 库」里选这份 XML，重出 EndNote 版 Word。"
+            "在 EndNote 里打开这个库，File → Export，「保存类型」选 XML，存成项目里的 papers/my-endnote-library.xml，"
+            "再在 Mesa 初稿步「同步到文献库」或定稿步那一行「选这个 EndNote 库」里选这份 XML，重出 EndNote 版 Word。"
         )
     return ""
 
@@ -218,9 +218,13 @@ for _src, _dst in zip("₊₋ₓᵧₙ⁺⁻ⁿ", "+-xyn+-n"):
     _TITLE_FOLD[ord(_src)] = _dst
 
 
+_INLINE_TAG_RE = re.compile(r"</?(?:sub|sup|i|b|sc|span)(?:\s+[^>]*)?>", re.I)
+
+
 def norm_title(raw: str) -> str:
-    """题名比对口径：大小写、空白、标点、上下标写法都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
-    return re.sub(r"[\W_]+", "", (raw or "").translate(_TITLE_FOLD).casefold())
+    """题名比对口径：大小写、空白、标点、HTML/TeX 上下标写法都不算，中文原样。只用于没有 DOI 的条目，仍要整段相等。"""
+    cleaned = _INLINE_TAG_RE.sub("", raw or "").replace("$", "")
+    return re.sub(r"[\W_]+", "", cleaned.translate(_TITLE_FOLD).casefold())
 
 
 def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
@@ -326,7 +330,15 @@ def zotero_app_dir() -> Path | None:
         root = os.environ.get("APPDATA", "").strip()
         path = Path(root) / "Zotero" / "Zotero" if root else None
     else:
-        path = home / ".zotero" / "zotero"
+        candidates = [
+            p
+            for p in (
+                home / ".zotero" / "zotero",
+                home / ".var" / "app" / "org.zotero.Zotero" / ".zotero" / "zotero",
+            )
+            if p.is_dir()
+        ]
+        path = candidates[0] if len(candidates) == 1 else None
     return path if path is not None and path.is_dir() else None
 
 
@@ -432,17 +444,71 @@ def zotero_index(path: Path) -> tuple[dict[str, list[str]], str, str]:
     return index, owner, ""
 
 
+def _zotero_year(raw: str) -> str:
+    text = (raw or "").strip()
+    m = re.match(r"(\d{4})-", text)
+    if m and m.group(1) != "0000":
+        return m.group(1)
+    m2 = re.search(r"(?:1[89]|20)\d{2}", text)
+    return m2.group(0) if m2 else ""
+
+
+def zotero_title_index(path: Path, owner: str) -> dict[tuple[str, str], list[str]]:
+    """(题名, 年份) → Zotero 条目 URI。只给没有 DOI 的书/学位论文/标准等用，命中恰好一条才绑。"""
+    if not path.is_file() or not owner:
+        return {}
+    try:
+        conn, copied = open_library_copy(path)
+    except (OSError, sqlite3.Error):
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT i.libraryID, i.itemID, i.key, f.fieldName, v.value FROM items i "
+            "JOIN libraries lib ON lib.libraryID = i.libraryID AND lib.type = 'user' "
+            "JOIN itemTypes t ON t.itemTypeID = i.itemTypeID "
+            "JOIN itemData d ON d.itemID = i.itemID "
+            "JOIN fields f ON f.fieldID = d.fieldID AND f.fieldName IN ('title', 'date') "
+            "JOIN itemDataValues v ON v.valueID = d.valueID "
+            "WHERE i.itemID NOT IN (SELECT itemID FROM deletedItems) "
+            "AND t.typeName NOT IN ('attachment', 'note', 'annotation')"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    finally:
+        conn.close()
+        copied.close()
+    if len({int(r[0]) for r in rows}) > 1:
+        return {}
+    per_item: dict[int, dict[str, str]] = {}
+    for _lib_id, item_id, item_key, field, value in rows:
+        key_str = str(item_key)
+        if not re.fullmatch(r"[A-Z0-9]{8}", key_str):
+            continue
+        entry = per_item.setdefault(int(item_id), {"key": key_str})
+        entry[str(field).lower()] = str(value or "")
+    index: dict[tuple[str, str], list[str]] = {}
+    for entry in per_item.values():
+        tkey = norm_title(entry.get("title", ""))
+        if not tkey:
+            continue
+        year = _zotero_year(entry.get("date", ""))
+        uri = f"http://zotero.org/{owner}/items/{entry['key']}"
+        index.setdefault((tkey, year), []).append(uri)
+    return index
+
+
 def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | None) -> list[str]:
     if database is None:
         database = zotero_db_path()
         if database is None:
             return ["未找到当前 Zotero 配置写明的数据目录，条目地址未绑定。"]
-    index, _user, note = zotero_index(database)
+    index, owner, note = zotero_index(database)
     lines = [f"Zotero 库：{database}"]
     if note:
         lines.append(note)
         lines.append("条目地址未写入域，没有编造占位 URI。")
         return lines
+    titles: dict[tuple[str, str], list[str]] | None = None
     bound = 0
     dup_count = 0
     for key in cited:
@@ -451,7 +517,18 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
             continue
         doi = norm_doi(rec.get("doi") or "")
         if not doi_ok(doi):
-            lines.append(f"- `{key}` 没有可用 DOI，未绑定")
+            if titles is None:
+                titles = zotero_title_index(database, owner)
+            hits = titles.get((norm_title(rec.get("title") or ""), str(rec.get("year") or "").strip()[:4])) or []
+            if len(hits) == 1:
+                rec["_zotero_uri"] = hits[0]
+                bound += 1
+                lines.append(f"- `{key}` 没有 DOI，按题名与年份对上条目 `{hits[0]}`")
+            elif len(hits) > 1:
+                dup_count += 1
+                lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
+            else:
+                lines.append(f"- `{key}` 没有可用 DOI，库里也没有同题名同年份的条目，未绑定")
             continue
         hits = index.get(doi) or []
         if len(hits) == 1:
@@ -465,7 +542,7 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
     lines.insert(1, f"已绑定 {bound} 条")
     if dup_count:
         lines.append(
-            f"提示：有 {dup_count} 篇在 Zotero 库里存在重复条目（多次导入 RIS 常见），为防绑错未写条目 URI；"
+            f"提示：有 {dup_count} 篇在 Zotero 库里存在重复条目（多次导入常见），为防绑错未写条目 URI；"
             "`output/zotero.docx` 已内嵌完整题录，可直接打开点 Refresh 使用。若想绑上本机库条目，可在 Zotero 左侧「重复条目（Duplicate Items）」合并重复项后重新生成。"
         )
     return lines

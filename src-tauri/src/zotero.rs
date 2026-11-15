@@ -1072,6 +1072,42 @@ mod tests {
         let dirty = "本次交给 Zotero 2 条。\n库体检：检出 1 条旧版导出的脏记录：\n- Bad item";
         assert!(clean_zotero_sync_health(dirty).contains("检出 1 条旧版导出的脏记录"));
     }
+
+    #[test]
+    fn refresh_library_ris_writes_rich_xml_and_pdf_attachments() {
+        let Some(_) = crate::dep_check::usable_python() else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("ccode-zotero-xml-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("papers")).unwrap();
+        std::fs::write(dir.join("papers/Masa2016.pdf"), b"%PDF-1.4\n").unwrap();
+        std::fs::write(
+            dir.join("papers/included.json"),
+            r#"[{"id":"Masa2016","title":"Amorphous Co2B for HER","doi":"10.1002/aenm.201502313","decision":"included","pdf":"papers/Masa2016.pdf"}]"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("references.bib"),
+            "@article{Masa2016,\n  title = {Amorphous Co2B at 10 mA cm-2},\n  author = {Masa, Justus},\n  year = {2016},\n  journal = {Adv. Energy Mater.},\n  journalabbreviation = {Adv. Energy Mater.},\n  doi = {10.1002/aenm.201502313},\n  volume = {6},\n  number = {6},\n  pages = {1502313},\n  keywords = {HER; boride},\n  abstract = {Dummy abstract.},\n  issn = {1614-6832},\n  date = {2016-01-01},\n}\n",
+        )
+        .unwrap();
+        let res = refresh_library_ris(&dir, crate::library_attach::AttachMode::Pdf);
+        let xml_text = std::fs::read_to_string(dir.join("papers/zotero-library.xml")).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+        let (ris_opt, health) = res.expect("refresh_library_ris");
+        assert!(ris_opt.is_some(), "{health}");
+        let xml_text = xml_text.expect("zotero-library.xml");
+        assert!(
+            xml_text.contains(r#"<style face="subscript" font="default" size="100%">2</style>"#),
+            "{xml_text}"
+        );
+        assert!(
+            xml_text.contains(r#"<style face="superscript" font="default" size="100%">−2</style>"#),
+            "{xml_text}"
+        );
+        assert!(xml_text.contains("<pdf-urls><url>"), "{xml_text}");
+        assert!(xml_text.contains("Masa2016.pdf</url></pdf-urls>"), "{xml_text}");
+    }
 }
 
 // ===== Tauri commands =====
@@ -1723,7 +1759,7 @@ pub fn refresh_library_ris(
 fn installed_zotero_version() -> Option<String> {
     #[allow(unused_mut)]
     let mut roots: Vec<PathBuf> = Vec::new();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     if let Some(dir) = zotero_exe().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
         roots.push(dir);
     }
@@ -1793,7 +1829,37 @@ fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
             .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        let url = file_url(path);
+        if let Some(exe) = zotero_exe() {
+            crate::process::background_command(&exe)
+                .arg("-url")
+                .arg(&url)
+                .spawn()
+                .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+            return Ok(());
+        }
+        if crate::process::background_command("flatpak")
+            .args(["info", "org.zotero.Zotero"])
+            .output()
+            .is_ok_and(|o| o.status.success())
+        {
+            crate::process::background_command("flatpak")
+                .args(["run", "org.zotero.Zotero", "-url", &url])
+                .spawn()
+                .map_err(|e| format!("没法交给 Zotero 打开: {e}"))?;
+            return Ok(());
+        }
+        tauri_plugin_opener::open_path(path, Some("zotero"))
+            .map_err(|_| {
+                format!(
+                    "没找到 Zotero。打开 Zotero 后用「文件 → 导入」选这份文件：{}",
+                    path.display()
+                )
+            })
+    }
+    #[cfg(target_os = "macos")]
     {
         tauri_plugin_opener::open_path(path, Some("Zotero"))
             .or_else(|_| tauri_plugin_opener::open_path(path, None::<&str>))
@@ -1802,7 +1868,7 @@ fn hand_file_to_zotero(path: &Path) -> Result<(), String> {
 }
 
 /// 本地路径 → 百分号编码的 file URL（`file:///D:/HER%E7%BB%BC%E8%BF%B0/…`）。盘符的冒号与目录分隔留着，其余非 unreserved 字节编码
-#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux", test)), allow(dead_code))]
 fn file_url(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     let segments: Vec<String> = text
@@ -1849,6 +1915,35 @@ fn zotero_exe() -> Option<PathBuf> {
     dirs.into_iter()
         .map(|dir| dir.join("zotero.exe"))
         .find(|exe| exe.is_file())
+}
+
+/// Linux 上的 zotero 可执行文件（$PATH、官方 tarball 常见解压目录、发行版包路径）：
+/// `.xml` 若走 xdg-open 会进浏览器/编辑器，且裸路径参数 Zotero 不导入，必须找可执行文件传 `-url file:///…`。
+#[cfg(target_os = "linux")]
+fn zotero_exe() -> Option<PathBuf> {
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join("zotero");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let mut candidates = vec![
+        PathBuf::from("/opt/zotero/zotero"),
+        PathBuf::from("/opt/Zotero_linux-x86_64/zotero"),
+        PathBuf::from("/opt/Zotero_linux-aarch64/zotero"),
+        PathBuf::from("/usr/bin/zotero"),
+        PathBuf::from("/usr/local/bin/zotero"),
+    ];
+    if let Some(home) = crate::dirs::home_dir() {
+        candidates.push(home.join("Zotero/zotero"));
+        candidates.push(home.join(".local/bin/zotero"));
+    }
+    candidates
+        .into_iter()
+        .find(|exe| exe.is_file())
+        .map(|exe| fs::canonicalize(&exe).unwrap_or(exe))
 }
 
 /// 用 Zotero 打开 RIS/BibTeX/CSL JSON（原生导入，不需要 Better BibTeX）。

@@ -947,10 +947,15 @@ pub async fn endnote_export_xml(
                 } else {
                     format!("\n{health}")
                 };
+                let import_steps = if cfg!(target_os = "macos") {
+                    "点「文件 → 导入...」（File → Import…），按 ⇧⌘G 粘贴路径回车，点底部「显示选项」（Options）把「导入选项」（Import Option）选为「EndNote 生成的 XML」（EndNote generated XML）导入"
+                } else {
+                    "点「文件 → 导入 → 文件...」（File → Import → File…），「导入选项」（Import Option）选「EndNote 生成的 XML」（EndNote generated XML），在文件框粘贴路径导入"
+                };
                 return match launch_endnote_app(enl.as_deref()) {
                     Ok(()) => {
                         let mut lines = vec![format!(
-                            "已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）并打开 EndNote：点 File → Import → File…，「Import Option」选 EndNote generated XML，粘贴路径导入。{}",
+                            "已生成保留上下标格式的 papers/{LIBRARY_XML}（路径已复制）并打开 EndNote：{import_steps}。{}",
                             if mode == crate::library_attach::AttachMode::Items {
                                 "全文可点「打开 papers」拖入条目。"
                             } else {
@@ -967,7 +972,7 @@ pub async fn endnote_export_xml(
                         Ok(lines.join("\n"))
                     }
                     Err(e) => Ok(format!(
-                        "已生成 papers/{LIBRARY_XML}（路径已复制）。打开 EndNote → File → Import → File…，「Import Option」选 EndNote generated XML，粘贴路径导入。{e}{health_note}"
+                        "已生成 papers/{LIBRARY_XML}（路径已复制）。打开 EndNote 后{import_steps}。{e}{health_note}"
                     )),
                 };
             }

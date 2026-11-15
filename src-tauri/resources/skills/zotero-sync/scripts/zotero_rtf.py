@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 CITE_RE = re.compile(
     r"\[((?:-?@[A-Za-z0-9_.:-]+(?:\s*,[^\];]*)?)(?:\s*;\s*-?@[A-Za-z0-9_.:-]+(?:\s*,[^\];]*)?)*)\]"
@@ -222,6 +222,16 @@ def write_library_ris(
     return len(written), duplicated, dropped
 
 
+def _zotero_pdf_url(raw: str) -> str:
+    """Zotero EndNote XML.js 按 `/` 截取文件名作附件标题，且 Windows 下 translate_item.js
+    不能处理正斜杠裸盘符路径（`replace('/', '\\\\', 'g')` 只替第一个 `/`）：
+    Windows 盘符/UNC 路径统一转成 `file:///D:/...`，POSIX 绝对路径保持原样。"""
+    text = (raw or "").strip()
+    if re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", text):
+        return PureWindowsPath(text).as_uri()
+    return text
+
+
 def write_library_xml(
     bib_text: str, dest: Path, skip_excluded: Path | None = None, attach: Path | None = None
 ) -> int:
@@ -310,7 +320,7 @@ def write_library_xml(
             if url:
                 ET.SubElement(ET.SubElement(urls, "web-urls"), "url").text = bridge.plain_id(url)
             if rec.get("attachPdf"):
-                ET.SubElement(ET.SubElement(urls, "pdf-urls"), "url").text = rec["attachPdf"]
+                ET.SubElement(ET.SubElement(urls, "pdf-urls"), "url").text = _zotero_pdf_url(rec["attachPdf"])
         if doi and code != 32:
             put("electronic-resource-num", doi)
         if rec.get("attachNote"):
