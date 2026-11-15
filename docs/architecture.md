@@ -458,9 +458,9 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
-### 2026-11-15 · 订阅余量官方卡只展示各平台自家订阅，并兼容 Codex 第三方切换登录暂存
+### 2026-11-15 · 订阅余量官方卡只展示各平台自家订阅，收起态维持纯滑动无额外按钮
 
-用户审视用量页「订阅余量」后要求：① 各官方卡仅展示自家订阅额度（否决在 Antigravity 卡内并排展示 `Claude / GPT` 第三方模型桶）；② 补回未退出的 GPT（Codex）官方订阅余量。定：`official_quota.rs` 中 Antigravity 仅映射 `gemini-*` 自身额度桶（统一归入 `5 小时` / `本周` / `Argon 本周`，过滤 `3p-*`）；Codex 在 `{CODEX_HOME|~/.codex}/auth.json` 不在盘时只读回落 `~/.cc-switch/codex-login-stash.json` 的 `logins[last]`（用户真登出时 `last` 为空不复活，切第三方暂存时正常显示 GPT 余量）；Claude 官方令牌因后台续期 `invalid_grant` 被清空但未手动登出时保留 `Claude · Pro/Max` 行并给「去连接页」重登入口。细则 safety.md「官方账号余量」。
+用户审视用量页「订阅余量」后要求：① 各官方卡仅展示自家订阅额度（否决在 Antigravity 卡内并排展示 `Claude / GPT` 第三方模型桶）；② 补回未退出的 GPT（Codex）官方订阅余量；③ 去掉卡头的 `‹ 1/N ›` 切换按钮与「去连接页」按钮（维持 2026-10-31 收起态不放切换按钮、仅左右滑动切换的简洁卡头，避免挤断平台胶囊）。定：`official_quota.rs` 中 Antigravity 仅映射 `gemini-*` 自身额度桶（统一归入 `5 小时` / `本周` / `Argon 本周`，过滤 `3p-*`）；Codex 在 `{CODEX_HOME|~/.codex}/auth.json` 不在盘时只读回落 `~/.cc-switch/codex-login-stash.json` 的 `logins[last]`（用户真登出时 `last` 为空不复活，切第三方暂存时正常显示 GPT 余量）；Claude 官方令牌因后台续期 `invalid_grant` 被清空但未手动登出时保留 `Claude · Pro/Max` 行并文字说明原因，卡头不额外加「去连接页」或收起态箭头切换钮。细则 safety.md「官方账号余量」。
 
 ### 2026-11-15 · 侧栏会话行左列统一顶格拉齐，接力 / 研讨 / 分支工作树 / 精读微标归入行尾
 

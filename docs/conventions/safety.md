@@ -72,7 +72,7 @@
   `auth.json`（若 `auth.json` 因第三方直连切换被 `cc-switch` 移走，则只读回落 `~/.cc-switch/codex-login-stash.json` 的 `logins[last]`；真登出时 `last` 为空不复活）取登录令牌，只拿去问官方用量接口（api.anthropic.com/api/oauth/usage、chatgpt.com/backend-api/wham/usage）；Antigravity CLI 先探
   `~/.gemini/antigravity-cli/antigravity-oauth-token` 是否在盘（不读令牌内容、不触发钥匙串），在盘时以净空 `GEMINI_API_KEY` / `GOOGLE_GEMINI_BASE_URL` +
   `official_outbound_env` 调 `agy --print /usage --output-format json` 取自家 Gemini 额度窗口（0 token、不建会话，过滤掉 `3p-*` 第三方模型桶）。
-  **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；Claude Code 因 `invalid_grant` 把 `claudeAiOauth` 令牌清空但保留登录痕迹时，保留官方行并提示去连接页重登而非静默隐藏；令牌不进 DTO / 日志 / 诊断包；
+  **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；Claude Code 因 `invalid_grant` 把 `claudeAiOauth` 令牌清空但保留登录痕迹时，保留官方行并文字提示到连接页重登而非静默隐藏；令牌不进 DTO / 日志 / 诊断包；
   钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）同用卡纪律：显式命令 + 前端确认，
   先重查「此刻能用几张」，为 0 不发请求；`redeem_request_id` 每次新生成，不自动重试。
 - **授权范围（2026-11-08，grant.rs；设计 docs/design-autonomy-roadmap.md §4）**：定时任务按授权跑，不再一律全权限（取代 2026-11-01 定时任务 Claude 加

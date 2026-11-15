@@ -61,7 +61,7 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
+import { ChevronRight, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { toast } from "../toast";
 import {
   barWidthPct,
@@ -1467,8 +1467,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
               {},
             );
             const row = active;
-            const rowIndex = Math.max(0, planRows.findIndex((r) => r.gatewayId === row.gatewayId));
-            const isOfficialRow = row.gatewayId.startsWith("official:");
             const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
             const now = Date.now();
             const windows = planWindowsByTightness(row.windows);
@@ -1499,32 +1497,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       <span className="shrink-0 font-medium text-l3">· {planLevelLabel(row.planLevel)}</span>
                     )}
                   </span>
-                  {!planOpen && planRows.length > 1 && (
-                    <span
-                      className="inline-flex shrink-0 items-center gap-0.5 text-micro tabular-nums text-l4"
-                      title={`共 ${planRows.length} 个订阅 / 官方账号（${planRows.map((r) => planProviderLabel(r.provider)).join(" · ")}），点箭头或左右滑动切换`}
-                    >
-                      <button
-                        type="button"
-                        aria-label="上一个订阅或官方账号"
-                        disabled={rowIndex <= 0}
-                        onClick={() => setPlanActive(planRows[Math.max(0, rowIndex - 1)].gatewayId)}
-                        className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-35"
-                      >
-                        <ChevronLeft aria-hidden="true" className="h-3 w-3" />
-                      </button>
-                      <span>{rowIndex + 1}/{planRows.length}</span>
-                      <button
-                        type="button"
-                        aria-label="下一个订阅或官方账号"
-                        disabled={rowIndex >= planRows.length - 1}
-                        onClick={() => setPlanActive(planRows[Math.min(planRows.length - 1, rowIndex + 1)].gatewayId)}
-                        className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-35"
-                      >
-                        <ChevronRight aria-hidden="true" className="h-3 w-3" />
-                      </button>
-                    </span>
-                  )}
                   {dataAt && <span className="hidden shrink-0 whitespace-nowrap text-micro text-l4 sm:inline">{dataAt}</span>}
                   <div className="ml-auto flex shrink-0 items-center gap-0.5">
                     <button
@@ -1536,16 +1508,6 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     >
                       <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${planLoading ? "animate-spin" : ""}`} />
                     </button>
-                    {isOfficialRow && !row.ok && Boolean(row.error) && (
-                      <button
-                        type="button"
-                        className={ghostActionClass}
-                        onClick={() => setPage("profiles")}
-                        title="前往连接页重新登录或核对该官方账号"
-                      >
-                        去连接页
-                      </button>
-                    )}
                     {Boolean(row.consoleUrl) && (
                       <button
                         type="button"

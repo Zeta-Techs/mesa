@@ -429,7 +429,7 @@ async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
     let mut dto = blank_row(CLAUDE_ROW_ID, "claude", creds.plan.clone(), "https://claude.ai/settings/usage");
     if creds.token.is_empty() {
         dto.error = Some(
-            "Claude 官方登录令牌已被服务端作废（你未手动退出，多因续期冲突失效）：点「去连接页」重新登录一次即可恢复".into(),
+            "Claude 官方登录令牌已被服务端作废（你未手动退出，多因续期冲突失效）：到连接页重新登录一次即可恢复".into(),
         );
         return dto;
     }
