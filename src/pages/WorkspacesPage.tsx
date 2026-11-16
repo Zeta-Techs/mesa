@@ -2912,13 +2912,16 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 : scan.added
                   ? `；扫到并登记了 ${scan.added} 个文献/数据文件`
                   : "";
-            setNotice(
-              skipTemplate
-                ? `已更新「${project.name}」${tail}`
-                : mode === "research"
-                  ? `已添加为科研项目${tail}：在「目标」里写这次想完成什么；要写整篇综述或论文时再套流程`
-                  : `已添加为${WORK_MODE_LABEL[mode]}项目${tail}`,
-            );
+            // 新建科研项目不报「已添加」：下面目标空态就在问「这次想完成什么」、给了套流程入口，再说一遍是重复（2026-11-16 用户）；
+            // 添加已有文件夹扫到文献 / 数据时才报扫描结果
+            const notice = skipTemplate
+              ? `已更新「${project.name}」${tail}`
+              : mode === "research"
+                ? tail
+                  ? `已添加为科研项目${tail}`
+                  : null
+                : `已添加为${WORK_MODE_LABEL[mode]}项目${tail}`;
+            setNotice(notice);
             void refresh();
           }}
         />,

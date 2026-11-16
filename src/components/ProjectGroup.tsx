@@ -1808,8 +1808,9 @@ export default function ProjectGroup({
         </NoticeBar>
       )}
 
-      {/* 默认 Agent 不是开工前提（开始时的确认弹层能选、会记住），这里只是可选的一步，口气不能像必做 */}
-      {registered && freshGitGuide && project && projectNeedsDefaultAgent(project) && onOpenAgents && (
+      {/* 默认 Agent 不是开工前提（开始时的确认弹层能选、会记住），这里只是可选的一步，口气不能像必做。
+          无流程科研项目不出这条横幅：目标空态最下一行小字给同一个入口（2026-11-16 用户：页面简洁，但要提示能设） */}
+      {registered && freshGitGuide && !liteResearch && project && projectNeedsDefaultAgent(project) && onOpenAgents && (
         <div className="ccode-well mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-xs text-l2">
           <span className="min-w-0 flex-1">
             可以先定这个项目默认用哪家、哪个模型；不定也行，点「开始」时再选。
@@ -1893,6 +1894,7 @@ export default function ProjectGroup({
           embed
           coexistsWithNewChat={pageVisible}
           onPickTemplate={onPickTemplate}
+          onSetDefaultAgent={projectNeedsDefaultAgent(project) ? onOpenAgents : undefined}
         />
       )}
 

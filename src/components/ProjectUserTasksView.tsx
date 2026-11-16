@@ -148,6 +148,7 @@ export default function ProjectUserTasksView({
   onPickTemplate,
   compactWhenEmpty = false,
   coexistsWithNewChat = false,
+  onSetDefaultAgent,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -163,6 +164,8 @@ export default function ProjectUserTasksView({
   compactWhenEmpty?: boolean;
   /** 与右上角「＋ 新对话」同屏可见：首次弹出对比气泡，标题旁留 ⓘ 可随时再看 */
   coexistsWithNewChat?: boolean;
+  /** 项目还没定默认 Agent：空态最下一行小字「先定默认用哪家 AI…」，点了去 Agent 分工（2026-11-16 用户：页面简洁，但要提示能设） */
+  onSetDefaultAgent?: () => void;
 }) {
   const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
@@ -807,6 +810,16 @@ export default function ProjectUserTasksView({
                     onClick={onPickTemplate}
                   >
                     要写整篇综述、论文或学位论文？套一整套流程…
+                  </button>
+                )}
+                {onSetDefaultAgent && (
+                  <button
+                    type="button"
+                    className="text-xs text-l4 underline decoration-dotted underline-offset-2 transition-colors hover:text-l2"
+                    title="不定也行，点「开始」时再选"
+                    onClick={onSetDefaultAgent}
+                  >
+                    先定默认用哪家 AI…
                   </button>
                 )}
               </div>
