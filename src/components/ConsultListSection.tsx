@@ -42,8 +42,9 @@ export default function ConsultListSection({
             className={`group mx-1.5 cursor-pointer rounded-lg px-2.5 py-1.5 text-sm hover:bg-hover ${activeId === c.id ? "bg-rail-sel" : ""}`}
           >
             <div className="flex min-w-0 items-center gap-1.5">
-              {c.busy && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok-text" aria-label="正在答" />}
               <span className="min-w-0 flex-1 truncate text-l1">{c.title}</span>
+              {/* 正在答放时间前（同对话行的运行光标），标题起点与下面的对话行对齐 */}
+              {c.busy && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok-text" aria-label="正在答" />}
               <span className="shrink-0 font-mono text-micro text-l4" title={absTime(c.updatedAt)}>
                 {relTime(c.updatedAt)}
               </span>

@@ -2439,31 +2439,6 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         />
                       </span>
                     )}
-                    {/* 开头只放运行状态，留等宽位：有没有状态标题都对齐（哪家 Agent 看第二行图标） */}
-                    {isLive ? (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          jumpToLive(s);
-                        }}
-                        disabled={
-                          !liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
-                        }
-                        title={
-                          waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "")
-                            ? "在等你确认（批准一个操作或选一项），点击跳到终端"
-                            : liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
-                              ? "正在终端中进行，点击跳转"
-                              : "CLI 仍在外部终端中运行"
-                        }
-                        className="flex h-6 w-3 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
-                      >
-                        <RunCaret state={liveCaret(s)} decorative />
-                      </button>
-                    ) : (
-                      <span aria-hidden="true" className="w-3 shrink-0" />
-                    )}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium leading-6 text-l1">
                       {sessionTitle(s)}
                     </span>
@@ -2488,6 +2463,29 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       >
                         失效
                       </span>
+                    )}
+                    {/* 运行光标放行尾、时间前（同侧栏）：标题前不留位，和研讨行同一条起点；悬停不藏，点了跳到终端 */}
+                    {isLive && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          jumpToLive(s);
+                        }}
+                        disabled={
+                          !liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
+                        }
+                        title={
+                          waitingTabs.has(liveSessions[sessionRuntimeKey(s.agent, s.sessionId)] ?? "")
+                            ? "在等你确认（批准一个操作或选一项），点击跳到终端"
+                            : liveSessions[sessionRuntimeKey(s.agent, s.sessionId)]
+                              ? "正在终端中进行，点击跳转"
+                              : "CLI 仍在外部终端中运行"
+                        }
+                        className="flex h-6 w-3 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
+                      >
+                        <RunCaret state={liveCaret(s)} decorative />
+                      </button>
                     )}
                     {/* 右侧：平时相对时间，悬停换成操作（同一槽，不留空） */}
                     <span
@@ -2561,7 +2559,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                   </div>
                   {/* 第二行归属：Agent 名称 · 项目名 · 工作区/目标 · 续链/分支/接力/标签 */}
-                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-[18px] text-micro text-l3">
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-micro text-l3">
                     {!agentScoped && (
                       <span className="flex shrink-0 items-center gap-1 font-medium text-l3">
                         <AgentIcon agent={s.agent} label={agentLabel(s.agent)} size={12} />
