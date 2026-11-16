@@ -580,6 +580,13 @@ pub(crate) fn agy_normalize_model_selection(raw: &str) -> String {
     slug
 }
 
+fn agy_is_model_enum(raw: &str) -> bool {
+    raw.starts_with("MODEL_")
+        && raw
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+}
+
 fn agy_extract_model_change(content: &str) -> Option<String> {
     const MARKER: &str = "changed setting `Model Selection` from ";
     let idx = content.find(MARKER)?;
@@ -639,8 +646,10 @@ where
             continue;
         }
         let day = get_str(&v, "created_at").map(day_of_iso).unwrap_or_default();
+        // 1.5.9 起每步带 `model`，但写的是内部枚举名（如自定义模型一律 MODEL_GOOGLE_GEMINI_INTERNAL_BYOM），
+        // 认不出真模型：枚举名一律不用，回落 Model Selection / 启动记录
         let step_model = get_str(&v, "model")
-            .filter(|m| !m.is_empty() && !m.eq_ignore_ascii_case("MODEL_UNSPECIFIED"))
+            .filter(|m| !m.is_empty() && !agy_is_model_enum(m))
             .map(agy_normalize_model_selection)
             .filter(|m| !m.is_empty());
         out.push(UsageEvent {
@@ -4041,6 +4050,15 @@ mod agy_usage_tests {
         assert_eq!(custom[0].model, "");
         fill_agy_launch_model(&mut custom, Some(&"mesa/gemini-2.5-flash".to_string()));
         assert_eq!(custom[0].model, "gemini-2.5-flash");
+
+        // 1.5.9 起步上的 `model` 是内部枚举名，自定义模型恒为 BYOM 占位：不当模型名，照旧回填启动记录
+        let byom_lines = [
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-15T01:00:01Z","model":"MODEL_GOOGLE_GEMINI_INTERNAL_BYOM","input_tokens":50,"output_tokens":8}"#,
+        ];
+        let mut byom = events_from_lines("agy", byom_lines, Some("conv-byom"));
+        assert_eq!(byom[0].model, "");
+        fill_agy_launch_model(&mut byom, Some(&"mesa/e2e-picked".to_string()));
+        assert_eq!(byom[0].model, "e2e-picked");
     }
 }
 
