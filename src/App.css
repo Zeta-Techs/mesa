@@ -1249,8 +1249,9 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 
 /* 侧栏 nav 不可用 scrollbar-gutter：经典滚动条（系统"始终显示"）下 stable 会在 56px
    收缩态里再占 ~14px，固定宽按钮的 hover/选中衬底被 overflow-x-hidden 裁掉一截 */
+/* 主区与 .ccode-page-frame 自己不滚（overflow hidden），不留滚动条槽：留了只在右边多出两条空白，
+   左右不对称（2026-11-16 用户反馈右侧文件栏和项目之间间隙大）。真正滚动的区域各自留位 */
 .ccode-app-main {
-  scrollbar-gutter: stable;
   /* 内容画布 = 圆角浮层面板（Codex/ZCode 式）：与 chrome（标题栏/侧栏，rail 底）之间留 8px 缝
      （App.tsx 行容器 gap-2 py-2 pr-2），四角随内容卡档圆角；overflow-hidden 把九页各自的
      全出血表面（canvas / 项目 rail2 / 会话双栏）统一裁进圆角。fixed 全屏层（阅读区/弹层/抽屉）
@@ -1283,7 +1284,10 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
 .ccode-page-frame {
   /* 页面内容与侧栏共享横向节奏，小窗口下自动收窄留白。 */
   padding-inline: clamp(1rem, 2.2vw, 2rem);
-  scrollbar-gutter: stable;
+}
+/* 右侧停靠着项目助手 / 文件栏时，那张卡本身就隔开了内容，页面右边距收窄（被轮下去的面板包在 .hidden 里，不算） */
+.ccode-app-shell:has(#ccode-assistant-dock > .contents > .ccode-docked-panel) .ccode-page-frame {
+  padding-right: 12px;
 }
 
 .ccode-page-content {
