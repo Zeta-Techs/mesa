@@ -146,7 +146,7 @@ npm run build
 ```
 
 - 一个适配一个提交；这家的基线文件跟着它的适配一起提交。只接受基线、没改代码的，单独一个提交。
-- 提交信息中文，第一行「fix：/ chore：」+ 改了什么，正文写为什么（哪个版本、哪一层变了）。
+- 提交信息按 AGENTS.md「提交信息格式」：第一行 `fix(canary): ` / `chore(canary): ` + 中文写改了什么，正文写为什么（哪个版本、哪一层变了）。
 - 只 `git add` 你改的文件。
 - 涉及用户能看到的变化，照 AGENTS.md 同步 `CHANGELOG.md`「未发布」段和 `docs/guide/user-guide.md`。
 

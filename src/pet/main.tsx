@@ -7,5 +7,5 @@ import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 document.documentElement.dataset.platform = IS_MAC ? "mac" : IS_WINDOWS ? "windows" : "linux";
 import PetApp from "./PetApp";
 
-// 桌宠小窗入口（pet.html）：不载主窗口那一整套，只有小桌和它的话
+// 桌宠小窗入口（src/pet/index.html）：不载主窗口那一整套，只有小桌和它的话
 ReactDOM.createRoot(document.getElementById("root")!).render(<PetApp />);

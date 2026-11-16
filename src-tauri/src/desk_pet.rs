@@ -59,7 +59,7 @@ pub fn sync(app: &AppHandle) {
         return;
     }
     let (x, y) = initial_position(app, &s, w, h);
-    let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("pet.html".into()))
+    let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("src/pet/index.html".into()))
         .title("小桌")
         .inner_size(w, h)
         .position(x, y)

@@ -78,7 +78,7 @@ fn open_sync(app: &AppHandle, mut state: FileViewerStateDto) -> Result<(), Strin
         return Ok(());
     }
 
-    let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("file-viewer.html".into()))
+    let win = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("src/file-viewer/index.html".into()))
         .title(&title)
         .inner_size(940.0, 740.0)
         .min_inner_size(MIN_W, MIN_H)

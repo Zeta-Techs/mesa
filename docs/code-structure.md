@@ -371,11 +371,11 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
   components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
                              # 按 buddy-sprite.ts 的帧时长换背景位置；motion 三档 lively（面板）/ calm（桌宠安静档：放一遍停 calmHold、隔 35–50 秒再动）/ still（Mesa 在前台）；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
-  pet/PetApp.tsx             # 桌宠小窗（pet.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
+  pet/PetApp.tsx             # 桌宠小窗（pet/index.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
                              # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
                              # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
                              # 先载 App.css 用主窗口同一套主题令牌（挂 data-theme，自定义主题按深浅退回沉浸黑），卡片带指向小桌的尾巴、按项目分组、整行点了去看看
-  file-viewer/FileViewerApp.tsx # 独立文件查看窗口（file-viewer.html 入口 file-viewer/main.tsx，file_window.rs 建窗）：按需懒载 ProjectFilePreview、FileVersionsPanel 与 FileSelectionTree（过 entryGuardPlugin），
+  file-viewer/FileViewerApp.tsx # 独立文件查看窗口（file-viewer/index.html 入口 file-viewer/main.tsx，file_window.rs 建窗）：按需懒载 ProjectFilePreview、FileVersionsPanel 与 FileSelectionTree（过 entryGuardPlugin），
                              # 双行紧凑栏头 + ⋯ 更多菜单（文件版本 / 系统默认打开 / 访达定位 / 复制路径）；收 file-viewer:state 实时切换文件与行号、跟主窗口同步主题与缩放、关窗前拦截未保存改动、支持左侧文件树收折与 ↑↓ 翻文件；跨窗口未保存草稿经 file-draft-handoff localStorage 5 秒交接
   components/MesaBuddyIcon.tsx # 小桌的线条小图标（笑脸气泡，currentColor），项目助手入口按钮、Agent 分工卡片用；与精灵图分开，别的页面不把图打进测试包
   components/TaskPanelPeek.tsx # 任务面板里开着的工作（有 runId、非定时）：改了哪些文件（peek_changes，打开时读一次，先列 8 个）+ 给它留话（mail_send）+ 问它一句（不打断，run_ask_aside，只给 Claude Code / Codex）与你留过的几条状态
@@ -2121,7 +2121,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   TeX 两平台都可由 Quarto 装 TinyTeX（install_tex_via_quarto，Windows 写 PATH、macOS 不写）
   desk_pet.rs                # 桌宠小窗：按设置建 / 关 / 重排（透明无边框置顶、不进任务栏、所有桌面可见、不抢焦点；权限单独 capabilities/desk-pet.json），
                              # 记位置（拔了外接屏回主屏右下角）、右键隐藏、「去看看」叫回主窗口发 desk-pet:open、desk_pet_cursor 给倾身用的鼠标位置；建窗命令一律 async；清单不在这里拼（主窗口 desk-pet-host.ts）
-  file_window.rs             # 独立文件查看窗口（label `file-viewer`，file-viewer.html，权限 capabilities/file-viewer.json）：file_viewer_open（async 防 Windows WebView2 死锁）/ file_viewer_state / file_viewer_is_open，
+  file_window.rs             # 独立文件查看窗口（label `file-viewer`，src/file-viewer/index.html，权限 capabilities/file-viewer.json）：file_viewer_open（async 防 Windows WebView2 死锁）/ file_viewer_state / file_viewer_is_open，
                              # 最小内尺寸 480×360 支持笔记本左右半屏贴靠，随 ui_zoom 同步原生缩放，关窗销毁清状态；DTO 统一 camelCase 对齐前端
   window_close.rs            # 关窗与退出：主窗口关窗默认藏到后台（Mac 程序坞叫回、Windows 收托盘 + 首次通知），退出唯一入口 request_quit（前端确认、1.5 秒无回执原生兜底）；禁用预置 quit()；Windows / Linux 单实例回调与更新重启前放锁（release_single_instance）
   win_snap.rs                # Windows 11 贴靠布局：自绘最大化按钮悬停够久，替用户按一次 Win+Z（只在 Win11、Mesa 在前台时）；is_windows_11 直接读注册表（建窗也用，不起子进程）

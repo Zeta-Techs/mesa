@@ -185,6 +185,9 @@ npm run tauri build    # 打包
   `update-ref HEAD <新> <H>`（HEAD 中途被人动过就失败重来；跑过基线的提交不用 `git commit`）；成功后同一条命令里 `git reset -q -- <这些文件>` 对齐共享暂存区。
   整文件放进去前先 `git diff <文件>` 看有没有别人的块；共用文档（CHANGELOG、user-guide、code-structure、architecture）只放自己那几处。
   文件清单在 zsh 里写成数组。提交后 `git show --stat HEAD` 核对文件数和文件名都是自己的。带走了别人的、或撤掉了别人的，不 amend / rebase，往前补一个提交，并告诉对方会话。
+  **提交信息格式（2026-11-16 用户拍板，GitHub 首页逐目录露出最后一条提交）**：第一行 `类型(范围): 中文说明`——类型只用
+  feat / fix / ui / docs / test / refactor / perf / chore / release，小写；范围可省；**半角冒号加一个空格**；说明用中文、不加句号。
+  不写「新增：」「修复：」这类中文类型，不用全角冒号，不写英文整句；合并提交写 `chore: 合并 origin/main，…`。已推送的旧提交不改写。
   **`node --test` 只剥类型
   不做类型检查**，tsc 错误只有 `npm run build` 抓得住，改了前端提交前必须跑（2026-09-22 实证：三处 tsc 错误
   带病进了 main，本地测试全绿）。

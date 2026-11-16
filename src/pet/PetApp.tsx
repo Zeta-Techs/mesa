@@ -1,5 +1,5 @@
 /**
- * 桌宠小窗（desk_pet.rs 建、pet.html 入口；设计稿 docs/design-desk-pet.md）。
+ * 桌宠小窗（desk_pet.rs 建、src/pet/index.html 入口；设计稿 docs/design-desk-pet.md）。
  * 只画小桌、数字角标、冒的一句话和点开的「等你的事」小卡片；清单由主窗口发来（desk-pet:feed），
  * 点的事发回主窗口原路办（desk-pet:act），「去看看」经 desk_pet_open 叫回主窗口跳过去。
  * 小窗平时只有小桌那么大（不挡桌面），冒话 / 点开时临时变大，小桌在屏幕上的位置不动。

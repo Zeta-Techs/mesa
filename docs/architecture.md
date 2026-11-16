@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-16 · 仓库首页收拾：入口 HTML 挪进源码目录，提交信息统一格式
+
+用户看 GitHub 仓库首页觉得文件列表「不专业」：根目录摆着桌宠、文件查看窗的 HTML 入口，旧图标源文件 `icon/`、构建顺带生成的 `vite.config.d.ts`，每个目录旁露出的最后一条提交格式五花八门（`feat:` / `feat：` / `新增：` / 英文整句）。用户拍板四项都收：`pet.html`、`file-viewer.html` 挪成 `src/pet/index.html`、`src/file-viewer/index.html`（根目录只留主窗口 `index.html`，Rust 建窗路径同步改）；删 `icon/` 与 `vite.config.d.ts`（后者进 .gitignore）；提交信息第一行统一 `类型(范围): 中文说明`，细则写进 AGENTS.md「git 提交」①。`.ccode/project.toml`（Mesa 自己的档案卡，按设计进 Git）与 `.vscode/extensions.json` 保留。已推送的旧提交不改写。
+
 ### 2026-11-16 · 对话管理列表与 Agent 分工的 Agent 标记用官方图标，不用品牌色 M / 胶囊
 
 用户问品牌色胶囊和标题前品牌色 M 哪种好，同意改成第三种。定：标题行开头只放运行状态（等宽空位，标题对齐），第二行 agent 名前放官方小图标、名字灰字；否决标题前品牌色 M（Mesa 自己的标志代指别家、只靠颜色分）与品牌色胶囊（满屏同一家时抢标题）。同日用户追问 Agent 分工卡片，一并换（`ProjectAgentsView` 卡片与选 Agent 列）；随后用量分布、技能、MCP 也换；聊天模型芯片与菜单起初保留，用户再问意见后同日拍板也换（芯片不写 Agent 名，M 只靠颜色最难认）——**品牌色 M 不再用来标 Agent**，思考档小 M（`EffortMark`）保留。规则见 design-system.md「Agent 标记」。细则 design-system.md「列表行」。

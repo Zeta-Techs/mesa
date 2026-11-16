@@ -67,7 +67,7 @@ function entryGuardPlugin(): Plugin {
     name: "entry-guard",
     apply: "build",
     generateBundle(_options, bundle) {
-      // 2026-11-09 起有两个入口（主窗口 index.html、桌宠 pet.html），每个入口都查
+      // 2026-11-09 起有两个入口（主窗口 index.html、桌宠 src/pet/index.html；另有文件查看窗口），每个入口都查
       const entries = Object.values(bundle).filter(
         (c): c is Rollup.OutputChunk => c.type === "chunk" && c.isEntry,
       );
@@ -128,8 +128,8 @@ export default defineConfig(async () => ({
       // 桌宠小窗与独立文件查看窗口各自一个入口：不载主窗口那一整套
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
-        pet: fileURLToPath(new URL("./pet.html", import.meta.url)),
-        fileViewer: fileURLToPath(new URL("./file-viewer.html", import.meta.url)),
+        pet: fileURLToPath(new URL("./src/pet/index.html", import.meta.url)),
+        fileViewer: fileURLToPath(new URL("./src/file-viewer/index.html", import.meta.url)),
       },
       output: {
         // 大依赖拆独立 vendor chunk：首屏只载 react + 当前页，

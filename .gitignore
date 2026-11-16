@@ -56,6 +56,8 @@ keys.json
 
 # tsc 增量构建产物
 *.tsbuildinfo
+# tsc -b（tsconfig.node.json composite）顺带生成的声明文件
+vite.config.d.ts
 
 # 本仓统一用 npm；pnpm 偶发运行留下的文件不提交
 pnpm-lock.yaml
