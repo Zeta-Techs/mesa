@@ -393,9 +393,21 @@ function AddProjectModal({
     <Modal open title={creating ? "新建项目" : "添加项目"} onClose={onClose} size="md">
       <form onSubmit={submit}>
         <h2 className="sr-only">{creating ? "新建项目" : "添加项目"}</h2>
+        {/* 2026-11-16 用户要简洁：名字为主，不另写「项目名」小标题与「也是文件夹名」——下面那行路径随输入变，本身就说明了；
+            工作方式三张卡收成一排分段按钮，只写选中那个的一句说明 */}
+        <input
+          className={fieldClass}
+          required
+          aria-label="项目名"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          disabled={creating && createdPath !== null}
+          placeholder={creating ? "项目名，比如：HER 催化综述" : "项目名"}
+          autoFocus
+        />
         {creating ? (
           <>
-          <div className={`${syncProvider && !createdPath ? "mb-1" : "mb-3"} flex items-center gap-2 text-xs text-l3`}>
+          <div className={`${syncProvider && !createdPath ? "mb-1" : "mb-4"} mt-1.5 flex items-center gap-2 text-xs text-l3`}>
             <span className="shrink-0">建在</span>
             {/* 截断只截父目录，末段（项目名）恒可见；没填名字时末段是浅灰「项目名」占位，不用「…」（像被截断） */}
             <span
@@ -418,7 +430,7 @@ function AddProjectModal({
             {!createdPath && (
               <button
                 type="button"
-                className="shrink-0 rounded-md px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1"
+                className="-my-1 shrink-0 rounded-md px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1"
                 onClick={() =>
                   void open({ directory: true, multiple: false }).then((dir) => {
                     if (typeof dir === "string" && dir.trim()) setParent(dir);
@@ -430,35 +442,19 @@ function AddProjectModal({
             )}
           </div>
           {!createdPath && cloudSyncHint(syncProvider) && (
-            <p className="mb-3 text-micro text-warn-text">{cloudSyncHint(syncProvider)}</p>
+            <p className="mb-4 text-micro text-warn-text">{cloudSyncHint(syncProvider)}</p>
           )}
           </>
         ) : (
           <p
-            className="mb-3 truncate font-mono text-xs text-l3"
+            className="mb-4 mt-1.5 truncate font-mono text-xs text-l3"
             title={path}
           >
             {path}
           </p>
         )}
-        <label className="mb-4 block text-sm">
-          <span className="mb-1 block text-xs text-l3">项目名</span>
-          <input
-            className={fieldClass}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            disabled={creating && createdPath !== null}
-            placeholder={creating ? "比如：HER 催化综述" : undefined}
-            autoFocus
-          />
-          {creating && (
-            <span className="mt-1 block text-micro text-l4">也是文件夹名</span>
-          )}
-        </label>
-        <p className="mb-1 text-xs text-l3">工作方式</p>
         <div
-          className="mb-4 grid gap-1.5"
+          className="grid grid-cols-3 gap-0.5 rounded-lg bg-inset p-0.5"
           role="radiogroup"
           aria-label="工作方式"
         >
@@ -472,20 +468,19 @@ function AddProjectModal({
               onClick={() => {
                 if (!modeLocked) setMode(id);
               }}
-              className={`rounded-md border px-3 py-2 text-left ${
-                mode === id
-                  ? "border-cta-bd bg-cta/15"
-                  : "border-field hover:bg-hover"
-              } disabled:cursor-not-allowed disabled:opacity-50`}
+              title={WORK_MODE_HINT[id]}
+              className={`h-7 rounded-md text-sm transition-colors ${
+                mode === id ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
+              } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-l3`}
             >
-              <span className="block text-sm text-l1">{WORK_MODE_LABEL[id]}</span>
-              <span className="block text-xs text-l2">
-                {WORK_MODE_HINT[id]}
-                {modeLocked && mode === id ? "（已选定，不可更改）" : ""}
-              </span>
+              {WORK_MODE_LABEL[id]}
             </button>
           ))}
         </div>
+        <p className="mb-4 mt-1.5 text-xs text-l3">
+          {WORK_MODE_HINT[mode]}
+          {modeLocked ? "（已选定，不可更改）" : ""}
+        </p>
         {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
         <div className="flex justify-end gap-2">
           <button
