@@ -59,6 +59,9 @@ function monacoClipboardCancelEsbuildPlugin(): EsbuildPlugin {
  * 启动包守卫（2026-10-26）：入口连同它静态引入的块里不得出现 monaco / mermaid / xterm / pdfjs / mammoth / xlsx。
  * 回退过两次（v1.6 首屏 224KB → 2026-10 约 8MB）：manualChunks 把共用小件收进大 vendor 块、
  * 挂在 App 上的弹层静态引了预览组件。出现就让构建失败，改成懒加载再提交。
+ * 主窗口启动模块 main-app.tsx 由入口懒加载，同样算启动包。
+ * 另守一条（2026-11-16）：从一个入口出发（含懒加载）不得引到另一个入口块——入口块顶层会渲染自己的窗口，
+ * 打包版独立文件窗口就因此渲染出整个 Mesa。
  */
 function entryGuardPlugin(): Plugin {
   const heavyChunk = /(^|\/)(monaco|mermaid|xterm)-[^/]*\.js$/;
@@ -72,8 +75,26 @@ function entryGuardPlugin(): Plugin {
         (c): c is Rollup.OutputChunk => c.type === "chunk" && c.isEntry,
       );
       if (!entries.length) return;
+      for (const entry of entries) {
+        const reached = new Set<string>();
+        const todo = [...entry.imports, ...entry.dynamicImports];
+        while (todo.length) {
+          const file = todo.pop()!;
+          if (reached.has(file)) continue;
+          reached.add(file);
+          const chunk = bundle[file];
+          if (chunk?.type !== "chunk") continue;
+          if (chunk.isEntry) {
+            this.error(`入口 ${entry.fileName} 会引到另一个入口块 ${file}（会在本窗口执行那个入口的顶层代码）`);
+          }
+          todo.push(...chunk.imports, ...chunk.dynamicImports);
+        }
+      }
+      const boot = Object.values(bundle).filter(
+        (c): c is Rollup.OutputChunk => c.type === "chunk" && /\/src\/main-app\.tsx$/.test(c.facadeModuleId ?? ""),
+      );
       const seen = new Set<string>();
-      const stack = entries.map((e) => e.fileName);
+      const stack = [...entries, ...boot].map((e) => e.fileName);
       while (stack.length) {
         const file = stack.pop()!;
         if (seen.has(file)) continue;
@@ -138,7 +159,10 @@ export default defineConfig(async () => ({
           // 入口和懒加载块都要用的小件单独成块：manualChunks 会把大 vendor 块的依赖一起收进去，
           // 入口为了 __vitePreload 静态带上整个 monaco、为了 dompurify 带上整个 mermaid
           //（2026-10-26 实测启动时多载约 6.5MB，见 architecture §10 当日「操作流畅性一批」）
-          if (id.includes("vite/preload-helper") || id.includes("commonjsHelpers")) return "runtime";
+          // modulepreload-polyfill 三个入口共用：不收进来会被并进 mermaid 的小块，三个窗口启动都带上整个 mermaid
+          if (id.includes("vite/preload-helper") || id.includes("vite/modulepreload-polyfill") || id.includes("commonjsHelpers")) {
+            return "runtime";
+          }
           if (!id.includes("node_modules")) return undefined;
           if (id.includes("node_modules/dompurify/")) return "dompurify";
           if (/node_modules\/(react|react-dom|scheduler)\//.test(id)) return "react";

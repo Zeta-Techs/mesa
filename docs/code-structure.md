@@ -661,7 +661,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
   mesa-errors.ts             # Mesa 出错记录纯逻辑：shouldRecordFailure（终端收发 / 插件 / 取消不记）、isRoutineFailure（探文件的「没找到」，配上红色提示才记，后端同口径）、attributeProject（参数里的路径落在项目根或其工作副本）、mesaErrorLine（tests/mesa-errors.test.ts）
-  mesa-error-capture.ts      # Mesa 出错记录的安装（main.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记；同一处 10 分钟内只送一次
+  mesa-error-capture.ts      # Mesa 出错记录的安装（main-app.tsx 启动时一次）：tauri-core-shim 的失败钩子按项目记 mesa_error_record，3 秒内的红色提示补到同一条；归不到项目的不记；同一处 10 分钟内只送一次
   tauri-core-shim.ts         # `@tauri-apps/api/core` 的薄包装（vite.config.ts 精确别名指到这里）：invoke 失败先通知出错记录再原样抛出，其余导出原样转出；rawInvoke 不经钩子。
                              # Tauri 注入的 __TAURI_INTERNALS__.invoke 不可改写，只能在导入层包；node / esbuild 测试不走别名
   project-mail.ts            # 项目内传话前端纯逻辑：mailStatusText / mailSummary（工作台那一行；held 写「来回了 4 次，等你看一眼」，MAIL_RELAY_CAP 镜像后端）（tests/peek.test.ts）；送达在 TerminalPage（15 秒一轮，空闲且无草稿才送）
@@ -741,6 +741,9 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              # tests/workspace-visibility.test.ts）
   git-commit-message.ts      # 空提交信息的本地默认信息生成
   diff-intraline.ts          # 改动面板（GitPanel）diff 纯逻辑：块头白话「第 N 行 · 上下文」、每行行号（加行与上下文取新行号、删行取旧行号）、成对删加行的行内高亮区间（去同头同尾，整句重写不标）；评审页 diff 解析在 diff-view.ts
+  main.tsx                   # 主窗口入口（index.html）：只懒加载 main-app.tsx 再调 boot()，不得静态 import 任何模块——否则与文件查看 / 桌宠窗口
+                             #   共用的模块会被打进入口块，那边一引就执行入口顶层、渲染整个 Mesa（entryGuardPlugin 守着「入口不得引到另一个入口」）
+  main-app.tsx               # 主窗口启动 boot()：平台标记、Windows WebView2 收口、出错记录、渲染 App；顶层只做声明不执行动作
   main-history-save.ts       # 科研步骤卡一键「存进历史」：冲突拦截 / 白话说明 / 路径（tests/main-history-save.test.ts）
   text-fences.ts             # 纯文本消息（用户气泡）的围栏代码拆分 splitFenced：只认行首的 ``` / ~~~，行中间的三个反引号是行内写法不开围栏（旧实现按任意位置切会吞掉后面整段）；未收尾按代码到结尾（tests/text-fences.test.ts）
   chat-image.ts              # 消息里的图片行（tests/chat-image.test.ts）：整行图片路径 imagePathFromLine、改图的「原图：」「标注图：」行
@@ -1080,7 +1083,7 @@ chrome-opacity.ts          # 侧栏/顶栏罩色挡位（CHROME_OPACITIES 0–10
   stream-text.ts             # 流式命令输出的 \r 展开（镜像 updater.rs collapse_cr）：后端保留 \r 原样推，
                              #   前端存原文、显示前对全文展开；依赖安装 / CLI 更新 / 字体安装三处日志共用
   windows-shell.ts           # Windows WebView2 默认行为收口纯判定（刷新/打印/查找/后退快捷键、鼠标侧键、默认右键、
-                             #   Win11 判定）；挂载在 main.tsx，仅 Windows
+                             #   Win11 判定）；挂载在 main-app.tsx 的 boot()，仅 Windows
   gateway-autoconfig.ts      # 一键配置纯逻辑（tests/gateway-autoconfig.test.ts）：型号认厂商 / 取版本号、各家最新旗舰与轻量、
                              #   单厂商网关全配这家 / 聚合网关原厂 CLI 配原厂模型、多厂商行不预选默认；只比版本号，不排厂商名次；
                              #   轻量先看名字、再看同代单价（≤ 旗舰 1/5，后端 usage.rs model_input_prices 给价）
