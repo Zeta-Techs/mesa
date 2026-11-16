@@ -662,6 +662,7 @@ mod tests {
         let (ris, note) = zotero.expect("zotero ris");
         let text = std::fs::read_to_string(ris.unwrap()).unwrap();
         assert!(note.contains("带上 1 篇全文 PDF、1 篇精读笔记"), "{note}");
+        // 分段 join：Windows 上写出的是 `papers\Co  B.pdf`，整段 "papers/…" 拼出混合分隔符对不上
         assert!(text.contains(&format!("L1  - {}", dir.join("papers").join("Co  B.pdf").display())), "{text}");
         assert!(text.contains("N1  - <h1>Co2B</h1><h2>一句话总结</h2><ul><li><strong>非晶</strong> Co2B 很好</li></ul>"), "{text}");
         assert!(!text.contains("Removed borate"), "{text}");
