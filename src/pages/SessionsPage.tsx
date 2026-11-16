@@ -1111,11 +1111,29 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     void loadSessions(true)
       .then((fresh) => {
         if (cancelled) return;
-        const hit = fresh.find(
-          (x) =>
-            x.agent === openSessionReq.agent &&
-            x.sessionId === openSessionReq.sessionId,
-        );
+        const same = (a: string, id: string) =>
+          a === openSessionReq.agent && id === openSessionReq.sessionId;
+        // 接力对话的前几段不单独成行（relay.rs apply_relay_chains 只留最后接手那段），从那一行的 relaySegments 里找，
+        // 照侧栏「打开 某某 那段」的拼法补成一条（接力卡「看完整记录」开的就是前一段）
+        const relayHost = fresh.find((x) => x.relaySegments?.some((seg) => same(seg.agent, seg.sessionId)));
+        const seg = relayHost?.relaySegments?.find((x) => same(x.agent, x.sessionId));
+        const hit =
+          fresh.find((x) => same(x.agent, x.sessionId)) ??
+          (relayHost && seg
+            ? {
+                ...relayHost,
+                agent: seg.agent,
+                sessionId: seg.sessionId,
+                filePath: seg.filePath,
+                title: seg.title,
+                customTitle: null,
+                updatedAt: seg.updatedAt ?? relayHost.updatedAt,
+                provider: null,
+                profileId: null,
+                relayAgents: undefined,
+                relaySegments: undefined,
+              }
+            : undefined);
         setOpenSessionReq(null);
         if (hit) {
           setFilter(hit.internal ? { kind: "internal" } : { kind: "all" });
