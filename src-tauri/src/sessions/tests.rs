@@ -2345,6 +2345,52 @@ fn qwen_meta_custom_title_cwd_version_and_archive() {
 // ===== Kimi =====
 
 #[test]
+fn kimi_turn_end_after_needs_this_turns_prompt_then_turn_ended() {
+    // 2026-11-16 用户会话的形状（Kimi Code 2.6.1）：提问后夹着注入、整份工具清单、思考与正文，最后 turn.ended
+    let dir = std::env::temp_dir().join(format!("ccode-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("wire.jsonl");
+    let prev = [
+        r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"你好"}],"origin":{"kind":"user"},"turnId":4,"time":1793113248890}"#,
+        r#"{"type":"turn.ended","agentId":"main","turnId":4,"reason":"completed","durationMs":19957,"time":1793113268847}"#,
+    ];
+    let prompt = r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"你好"}],"origin":{"kind":"user"},"promptId":"msg_1","turnId":9,"trigger":"normal","time":1794823680852}"#;
+    let body = [
+        r#"{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>x</system-reminder>"}],"origin":{"kind":"injection"}},"time":1794823680852}"#,
+        r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"step.begin","turnId":"9","step":1},"time":1794823680883}"#,
+        r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"content.part","turnId":"9","part":{"type":"text","text":"你好！"}}}"#,
+        r#"{"type":"context.append_loop_event","agentId":"main","event":{"type":"step.end","turnId":"9","finishReason":"end_turn"}}"#,
+    ];
+    let ended = r#"{"type":"turn.ended","agentId":"main","turnId":9,"reason":"completed","durationMs":9805,"time":1794823690657}"#;
+    let write = |rows: &[&str]| std::fs::write(&f, rows.join("\n") + "\n").unwrap();
+    // hook 日志按秒记、轮询读到才开回合：开始时刻比提问晚一点也认
+    let started = 1794823681000;
+    let mut all: Vec<&str> = prev.to_vec();
+    all.push(prompt);
+    all.extend(body);
+    write(&all);
+    assert_eq!(kimi_turn_end_after(&f, started), None, "这一轮还没说完：上一轮的 turn.ended 不算");
+    all.push(ended);
+    write(&all);
+    assert_eq!(kimi_turn_end_after(&f, started), Some("end_turn"));
+    // 说完后又排进一句（新提问还没收尾）：不收
+    let next = r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"再来"}],"origin":{"kind":"user"},"turnId":10,"time":1794823691000}"#;
+    all.push(next);
+    write(&all);
+    assert_eq!(kimi_turn_end_after(&f, started), None);
+    // 文件里最后一问比这一轮开始早得多（这一轮的提问还没落盘）：不拿上一轮的收尾充数
+    write(&[prev[0], prev[1]]);
+    assert_eq!(kimi_turn_end_after(&f, started), None);
+    // 打断
+    write(&[prompt, r#"{"type":"turn.ended","agentId":"main","turnId":9,"reason":"cancelled","time":1794823685000}"#]);
+    assert_eq!(kimi_turn_end_after(&f, started), Some("cancelled"));
+    // 子 agent 的收尾不算主对话的
+    write(&[prompt, r#"{"type":"turn.ended","agentId":"agent-0","turnId":9,"reason":"completed","time":1794823685000}"#]);
+    assert_eq!(kimi_turn_end_after(&f, started), None);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn kimi_wire_parse_dedup_injection_tools_usage() {
     let lines = s(&[
         r#"{"type":"metadata","protocol_version":"1.4","created_at":1785307071000}"#,

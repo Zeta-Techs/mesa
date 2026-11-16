@@ -553,6 +553,9 @@ Ccode 清单模型只收公共子集：stdio（command/args/env/cwd）+ remote�
   官方 migrate 命令的映射表确认 Claude→Gemini 对应（UserPromptSubmit→BeforeAgent / Stop→AfterAgent / Notification→Notification）。
 - **kimi（0.37.2）**：另有 SessionHeartbeat 每 60s 活性信号（本批未用）；`[[hooks]]` 是 TOML strict——event/matcher/command/timeout
   四字段多写一个整个配置加载失败，写入走 toml_edit 保格式、只增删条目。
+  **2.6.1 起交互界面一轮说完不触发 `Stop`**（2026-11-16 本机挂全部事件实测：一轮只有 SessionStart / UserPromptSubmit / TurnStarted，
+  退出才有 SessionEnd；二进制里 Stop 改由 `onDidFinishStep` 钩子触发，交互界面没走到）。开着 hooks 的标签旁路回合靠会话文件收：
+  `sessions/kimi.rs kimi_turn_end_after` 认这一轮的 `turn.prompt` 后面跟着同一轮的 `turn.ended`。Kimi 修回 Stop 后两条路都在，先到先收。
 - **codex（0.148.0）**：共 11 事件；另有 legacy `notify` 配置项（仅 agent-turn-complete 一个事件、payload 走 argv）——桥接不用它。
 - **grok（1.0.5）**：envelope 键是 camelCase（sessionId/hookEventName/transcriptPath）、事件值是 snake_case
   （user_prompt_submit/stop/notification）；Stop 在会话 teardown 时会以 reason=shutdown/channel_closed 重复 fire。

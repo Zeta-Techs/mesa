@@ -383,6 +383,51 @@ pub(super) fn parse_kimi(lines: &[String]) -> Vec<ChatMessageDto> {
     msgs
 }
 
+/// Kimi Code 2.6.1 起交互界面一轮说完不触发 Stop hook（2026-11-16 本机全事件实测：只有 SessionStart / UserPromptSubmit /
+/// TurnStarted），开了 hooks 精确注意力的标签旁路回合一直开着、聊天层挂着「还在回复」。这里从会话文件认这一轮说完没有：
+/// 最后一条用户提问（`turn.prompt`，origin user）不早于这一轮开始（留 5 秒：hook 日志是轮询读到的，回合开始记的是读到的时刻），
+/// 且后面跟着同一轮的 `turn.ended`。只比提问之后有没有收尾，不拿收尾时刻硬比——上一轮刚说完就发下一句时，上一轮的
+/// `turn.ended` 也晚于「这一轮开始减 5 秒」。返回结束原因（completed → end_turn，cancelled / failed 原样）
+pub(crate) fn kimi_turn_end_after(path: &Path, after_ms: i64) -> Option<&'static str> {
+    // 一轮再短，中间也夹着整份工具清单（llm.tools_snapshot，本机一轮「你好」约 94KB），尾窗要放宽
+    let lines = last_lines(path, 512 * 1024);
+    let main = |v: &Value| get_str(v, "agentId").is_none_or(|a| a == "main");
+    let mut prompt: Option<(i64, Option<i64>)> = None;
+    let mut ended = None;
+    for line in &lines {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if !main(&v) {
+            continue;
+        }
+        match get_str(&v, "type") {
+            Some("turn.prompt") if v.get("origin").and_then(|o| get_str(o, "kind")) == Some("user") => {
+                let at = v.get("time").and_then(Value::as_i64).unwrap_or(0);
+                prompt = Some((at, v.get("turnId").and_then(Value::as_i64)));
+                ended = None;
+            }
+            Some("turn.ended") => {
+                let Some((_, turn)) = prompt else { continue };
+                if turn.is_some() && v.get("turnId").and_then(Value::as_i64) != turn {
+                    continue;
+                }
+                ended = Some(match get_str(&v, "reason") {
+                    Some("cancelled") => "cancelled",
+                    Some("failed") => "failed",
+                    _ => "end_turn",
+                });
+            }
+            _ => {}
+        }
+    }
+    let (at, _) = prompt?;
+    if at < after_ms - 5_000 {
+        return None;
+    }
+    ended
+}
+
 /// 旧版 kimi-cli：~/.kimi/sessions/<md5(workDir)>/<uuid>/context.jsonl，
 /// bucket → 项目路径靠 kimi.json 的 work_dirs[].path 逐个 md5 反查
 pub(super) fn kimi_workdir_buckets(kimi_json: &Path) -> HashMap<String, String> {

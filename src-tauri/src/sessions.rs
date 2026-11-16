@@ -945,6 +945,7 @@ pub(crate) use claude::*;
 pub(crate) use codex::*;
 use gemini::*;
 use qwen::*;
+pub(crate) use kimi::kimi_turn_end_after;
 use kimi::*;
 use codebuddy::*;
 use cursor::*;

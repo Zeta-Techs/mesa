@@ -3238,24 +3238,48 @@ pub fn chat_channel_snapshot(tab_id: String) -> Option<ChannelSnapshot> {
 /// hooks 家（Claude Code）的回合在会话文件里已经收尾、旁路却还开着时收掉它：在审批菜单里拒绝工具或按 Esc 打断，
 /// Claude 不触发 Stop hook，回合一直开着，聊天层挂着「正在回复」（2026-10-21 用户实测：拒绝两个工具后终端已结束、
 /// 聊天层 1 分半仍在回复；三平台都有）。会话文件里有收尾标记（打断记一行 user「[Request interrupted…]」、
-/// 一轮结束记 system/turn_duration），时间晚于这一轮开始才算。前端读会话文件时顺带问；收了返回 true
+/// 一轮结束记 system/turn_duration），时间晚于这一轮开始才算。前端读会话文件时顺带问；收了返回 true。
+/// Kimi Code 2.6.1 起一轮说完根本不触发 Stop hook（sessions::kimi_turn_end_after），同样靠会话文件收；
+/// Kimi 的 hook 不带会话文件路径，按 hook 报来的会话 id 找
 #[tauri::command]
-pub fn chat_channel_settle_from_transcript(tab_id: String) -> bool {
-    let Some(ch) = channel_for_tab(&tab_id) else {
+pub async fn chat_channel_settle_from_transcript(tab_id: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || settle_from_transcript(&tab_id))
+        .await
+        .unwrap_or(false)
+}
+
+fn settle_from_transcript(tab_id: &str) -> bool {
+    let Some(ch) = channel_for_tab(tab_id) else {
         return false;
     };
-    let (path, started) = {
+    let (agent, path, session_id, started) = {
         let Ok(t) = ch.tracker.lock() else {
             return false;
         };
         let open = t.snap.turn.as_ref().filter(|turn| turn.ended_at.is_none());
-        match (t.snap.kind, open, t.snap.transcript_path.clone()) {
-            ("hooks", Some(turn), Some(path)) if t.snap.agent == "claude-code" => (path, turn.started_at),
+        match (t.snap.kind, open) {
+            ("hooks", Some(turn)) if matches!(t.snap.agent.as_str(), "claude-code" | "kimi") => (
+                t.snap.agent.clone(),
+                t.snap.transcript_path.clone(),
+                t.snap.session_id.clone(),
+                turn.started_at,
+            ),
             _ => return false,
         }
     };
-    // 只认这一轮开始之后的标记：上一轮的 turn_duration 一定早于这一轮的 UserPromptSubmit
-    let Some(reason) = crate::sessions::claude_turn_end_after(Path::new(&path), started) else {
+    let reason = if agent == "kimi" {
+        let Some(path) = session_id
+            .and_then(|sid| crate::sessions::find_session_sync("kimi", &sid))
+            .map(|meta| meta.file_path)
+        else {
+            return false;
+        };
+        crate::sessions::kimi_turn_end_after(Path::new(&path), started)
+    } else {
+        // 只认这一轮开始之后的标记：上一轮的 turn_duration 一定早于这一轮的 UserPromptSubmit
+        path.and_then(|path| crate::sessions::claude_turn_end_after(Path::new(&path), started))
+    };
+    let Some(reason) = reason else {
         return false;
     };
     feed(&ch, vec![ChannelEvent::TurnEnd { reason: Some(reason.into()) }]);
@@ -4908,7 +4932,7 @@ mod e2e {
                 }
             }
             // 同前端读会话文件时顺带问的那一下（chat_channel_settle_from_transcript）
-            if answered.as_deref() == Some("终端菜单 Esc") && chat_channel_settle_from_transcript("e2e-tab".into()) {
+            if answered.as_deref() == Some("终端菜单 Esc") && settle_from_transcript("e2e-tab") {
                 println!("{agent}: 会话文件收尾收掉了回合");
             }
             let ran = last.turn.as_ref().is_some_and(|t| t.status == "completed" || t.status == "cancelled");
