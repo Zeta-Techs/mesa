@@ -202,7 +202,7 @@ npm run tauri build    # 打包
   发版打包仍走 tag push（package job 只认 tag；Linux 2026-09-22 起同样移出发版矩阵——
   不再出新安装包，已装的 Linux 用户收不到更新，恢复开发时把 ubuntu-latest 加回两个矩阵）。
 - **UI 组件测试打包口径（2026-09-22）**：tests 用 esbuild 内联打包 .tsx 组件的（research-*-ui.test.ts 模式），
-  组件图拉进 monaco css、Vite `?worker`/`?url` 导入、pdfjs 时按桩处理：`.css` 配 empty loader（css 空了
+  组件图拉进 monaco css、Vite `?worker`/`?url`/`?raw` 导入（`?raw` 如 `AgentIcon` 的厂商 svg，凡引 `AgentMark` / `AgentIcon` 的组件都会拉进来）、pdfjs 时按桩处理：`.css` 配 empty loader（css 空了
   其中字体 url 不再解析）、query 后缀路径桩成惰性 data: URL **字符串**（pdfjs 校验 workerSrc 必须是字符串）、
   JSDOM globals 补空壳 `DOMMatrix`（pdfjs 模块初始化顶层 `new DOMMatrix()`，`pdf.mjs` 的 SCALE_MATRIX
   常量）。新组件测试照抄这三个文件的口径，别让打包问题冒充组件 bug。

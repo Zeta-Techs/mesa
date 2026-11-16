@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { AGENTS } from "../types";
 import { useAppStore } from "../store";
-import { agentBrand } from "../agent-colors";
+import AgentIcon from "./AgentIcon";
 import { connectionModels, readModelHistory } from "../model-history";
 import { relayAgentRows, relayModeRows, type RelayOptionDto, type RelayTarget } from "../chat-relay";
 
@@ -210,11 +210,14 @@ export default function RelayPicker({
   );
 }
 
-/** Agent 标记：Mesa 标志里的 M（与图标源同一条路径），染成这家的品牌色；紧挨文字时传 decorative 免重复念与悬停原生气泡 */
+/**
+ * Agent 标记：这家的官方图标，随字号缩放（2026-11-16 用户拍板取代品牌色 M——M 是 Mesa 标志，代指别家只靠颜色分）。
+ * 不写名字的地方（模型芯片）读屏与悬停靠它报名字；紧挨文字时传 decorative 免重复念与悬停原生气泡
+ */
 export function AgentMark({
   agentId,
   decorative = false,
-  className = "h-[0.8em] w-auto shrink-0",
+  className = "",
 }: {
   agentId: string;
   decorative?: boolean;
@@ -222,17 +225,12 @@ export function AgentMark({
 }) {
   const name = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
   return (
-    <svg
-      viewBox="232 284 560 456"
-      className={className}
-      {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": name })}
-      style={{ color: agentBrand(agentId) }}
+    <span
+      data-agent-mark={agentId}
+      className={`inline-flex shrink-0 ${className}`}
+      {...(decorative ? { "aria-hidden": true } : { role: "img", "aria-label": name, title: name })}
     >
-      {!decorative && <title>{name}</title>}
-      <path
-        d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z"
-        fill="currentColor"
-      />
-    </svg>
+      <AgentIcon agent={agentId} label={name} size="1em" />
+    </span>
   );
 }
