@@ -544,7 +544,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             ? "换模型、Agent 或连接"
             : "换模型"
       }`}
-      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs leading-[18px] text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
       {launch?.pick.resumePick && <span className="shrink-0 text-l4">接回用</span>}
       {agentId && <AgentMark agentId={agentId} />}
@@ -627,7 +627,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         disabled={!launch && !live && !next}
         onClick={() => setOpen((v) => !v)}
         title={beta.newer ? `${title}\n你装的 CLI 比 Mesa 核对过的新，点开看底部「${beta.badge}」` : title}
-        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
+        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-2 text-micro leading-[18px] text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
           open ? "bg-hover text-l1" : ""
         }`}
       >
