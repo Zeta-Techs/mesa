@@ -894,7 +894,9 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     // 否则版本没变不报成功，附手动更新提示
     if ok && method_used == "self" {
         if let (Some(before), Some(after)) = (&version_before, &version_after) {
-            if before == after && !self_update_already_latest(&output) {
+            if before == after && self_update_staged(&output) {
+                output.push_str("\n\n新版已下载好，下次启动该 CLI 时自动换上，到那时列表里的版本号才会变（Windows 上正在运行的程序换不掉，kimi 就是这样）。");
+            } else if before == after && !self_update_already_latest(&output) {
                 ok = false;
                 output.push_str(&format!(
                     "\n\n命令跑完了，版本仍是 {after}。上面要是写着已经是最新，就不用管；否则照上面的提示手动更新。"
@@ -1204,6 +1206,12 @@ fn script_latest(url: &str) -> Option<String> {
         return None;
     }
     install_script_version(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// 自更新只把新版下载到暂存区、下次启动才换上（kimi 原生安装：`applies on the next start`）
+fn self_update_staged(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("applies on the next start") || lower.contains("restart the cli to use the new version")
 }
 
 /// 自更新命令退出 0 且版本未变时，判断输出是否明确表示「已是最新版本」（如 agy / claude / grok / cursor 自更新）。
@@ -1800,6 +1808,10 @@ DOWNLOAD_URL="https://downloads.cursor.com/lab/2026.10.01-e373342/${OS}/${ARCH}/
         assert!(!self_update_already_latest(
             "Cannot auto-upgrade npm installation. Please run: npm i -g @moonshot-ai/kimi-code"
         ));
+        let staged = "Kimi Code 2.5.3 is already downloaded; it applies on the next start.\nUpdated @moonshot-ai/kimi-code to 2.5.3. Restart the CLI to use the new version.";
+        assert!(self_update_staged(staged));
+        assert!(!self_update_already_latest(staged));
+        assert!(!self_update_staged("claude is already up to date (2.1.212)"));
     }
 
     #[test]
