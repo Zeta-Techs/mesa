@@ -9,7 +9,6 @@
    "-",
    "running",
    "awaiting_approval",
-   "running",
    "completed"
   ]
  },
@@ -185,6 +184,7 @@
     "entrypoint",
     "gitBranch",
     "isSidechain",
+    "madeBy",
     "message",
     "parentUuid",
     "perTurnEffort",
@@ -357,5 +357,5 @@
    ]
   }
  },
- "version": "2.1.323"
+ "version": "2.1.325"
 }
