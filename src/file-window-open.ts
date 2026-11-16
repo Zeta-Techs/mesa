@@ -19,6 +19,8 @@ export interface OpenFileWindowInput {
   line?: number;
   showList?: boolean;
   from?: string;
+  /** 打开时直接停在「文件版本」（不叫 versions：文件栏请求里同名字段是版本视图的根目录对象） */
+  versionsView?: boolean;
 }
 
 export function resolveFileWindowTarget(input: OpenFileWindowInput): {
@@ -49,6 +51,7 @@ export async function openFileInWindow(input: OpenFileWindowInput): Promise<void
       line: input.line,
       showList: input.showList,
       from: input.from,
+      versions: input.versionsView,
       nonce: 0,
     },
   });

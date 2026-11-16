@@ -43,6 +43,9 @@ pub struct FileViewerStateDto {
     pub show_list: Option<bool>,
     #[serde(default)]
     pub from: Option<String>,
+    /// 打开时直接停在「文件版本」（从右侧文件栏的版本视图拆出来）
+    #[serde(default)]
+    pub versions: Option<bool>,
     #[serde(default)]
     pub nonce: u64,
 }
@@ -127,12 +130,14 @@ mod tests {
             line: Some(166),
             show_list: Some(true),
             from: Some("逐条决定审查报告".into()),
+            versions: Some(true),
             nonce: 3,
         };
         let json = serde_json::to_value(&dto).unwrap();
         assert_eq!(json["projectRoot"], "/p");
         assert_eq!(json["showList"], true);
         assert_eq!(json["line"], 166);
+        assert_eq!(json["versions"], true);
         let back: FileViewerStateDto = serde_json::from_value(json).unwrap();
         assert_eq!(back, dto);
     }

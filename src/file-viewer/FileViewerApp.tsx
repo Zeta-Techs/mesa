@@ -40,6 +40,8 @@ export interface FileViewerState {
   line?: number;
   showList?: boolean;
   from?: string;
+  /** 打开时直接停在「文件版本」 */
+  versions?: boolean;
   nonce: number;
 }
 
@@ -126,6 +128,7 @@ export default function FileViewerApp() {
       .then((initial) => {
         if (stale || !initial) return;
         setState(initial);
+        setVersionsOpen(!!initial.versions);
         if (initial.showList !== undefined) {
           setListOpen(initial.showList);
         } else if ((initial.list?.length ?? 0) > 1) {
@@ -142,7 +145,7 @@ export default function FileViewerApp() {
         return;
       }
       setError(null);
-      setVersionsOpen(false);
+      setVersionsOpen(!!incoming.versions);
       setMoreMenu(null);
       setState(incoming);
       if (incoming.showList !== undefined) {
@@ -183,6 +186,7 @@ export default function FileViewerApp() {
       root: next.root ?? state.root,
       line: undefined,
       showList: listOpen,
+      versions: undefined,
       nonce: state.nonce + 1,
     };
     setError(null);

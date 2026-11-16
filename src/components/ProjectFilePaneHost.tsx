@@ -110,10 +110,12 @@ export default function ProjectFilePaneHost() {
   const [listOpen, setListOpen] = useState(false);
   const [moreMenu, setMoreMenu] = useState<{ x: number; y: number } | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const versionsPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     setError(null);
     setMoreMenu(null);
+    versionsPathRef.current = null;
   }, [pane?.path]);
   useEffect(() => {
     if (!pane) {
@@ -180,6 +182,19 @@ export default function ProjectFilePaneHost() {
 
   async function popOutToWindow() {
     if (!pane) return;
+    if (pane.versions) {
+      // 版本视图：拆出当前选中的那份文件，新窗口直接停在「文件版本」
+      const path = versionsPathRef.current ?? pane.path;
+      await popOutFileToWindow({
+        projectRoot: pane.projectRoot,
+        root: pane.versions.root,
+        path,
+        list: pane.list,
+        versionsView: true,
+        onBeforeOpen: closePane,
+      }).catch((reason) => setError(String(reason)));
+      return;
+    }
     const snapshot = { ...pane, showList: listOpen };
     const wasDirty = dirty;
     await popOutFileToWindow({
@@ -360,17 +375,19 @@ export default function ProjectFilePaneHost() {
           </span>
         </>
       )}
-      {!pane.versions && (
-        <button
-          type="button"
-          className={iconAction}
-          onClick={() => void popOutToWindow()}
-          title="在新窗口打开：拆成独立系统窗口对照查看，主窗口保留全宽看意见；点意见里的行号会同步定位"
-          aria-label="在新窗口打开"
-        >
-          <AppWindow size={14} strokeWidth={1.8} aria-hidden="true" />
-        </button>
-      )}
+      <button
+        type="button"
+        className={iconAction}
+        onClick={() => void popOutToWindow()}
+        title={
+          pane.versions
+            ? "在新窗口打开：拆成独立系统窗口查看这份文件的版本"
+            : "在新窗口打开：拆成独立系统窗口对照查看，主窗口保留全宽看意见；点意见里的行号会同步定位"
+        }
+        aria-label="在新窗口打开"
+      >
+        <AppWindow size={14} strokeWidth={1.8} aria-hidden="true" />
+      </button>
       {!pane.versions && (
         <button
           ref={moreBtnRef}
@@ -426,6 +443,9 @@ export default function ProjectFilePaneHost() {
         path={pane.versions.workspaceId ? undefined : pane.path}
         workspaceId={pane.versions.workspaceId}
         onClose={(currentPath) => void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: currentPath ?? pane.path, list: pane.list })}
+        onChosenChange={(currentPath) => {
+          versionsPathRef.current = currentPath;
+        }}
       /> : (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
           {listOpen && total > 1 && (

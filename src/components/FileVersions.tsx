@@ -52,11 +52,13 @@ export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", l
   </span>;
 }
 
-export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
+export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenChange }: {
   root: string;
   path?: string;
   workspaceId?: string;
   onClose?: (currentPath?: string) => void;
+  /** 当前选中文件的绝对路径（右侧文件栏拆到新窗口时用） */
+  onChosenChange?: (currentPath: string) => void;
 }) {
   const [data, setData] = useState<FileVersionsDto | null>(null);
   const [file, setFile] = useState<VersionFile | null>(null);
@@ -87,6 +89,11 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose }: {
   const retained = !!version && !version.id.startsWith("git:");
   const compareLabel = compared ? compared.note || roundTime(compared.savedAt) : "当前文件（磁盘已保存）";
   useEffect(() => setMenu(null), [chosen, versionId]);
+  const onChosenChangeRef = useRef(onChosenChange);
+  onChosenChangeRef.current = onChosenChange;
+  useEffect(() => {
+    if (chosen) onChosenChangeRef.current?.(path ?? absolute(root, chosen));
+  }, [chosen, path, root]);
   useEffect(() => {
     let stale = false;
     setData(null); setFile(null); setError(null);
