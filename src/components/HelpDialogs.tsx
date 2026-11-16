@@ -37,10 +37,7 @@ import {
   type AppLogEntry,
 } from "../diagnostics";
 import { feedbackEnvLine } from "../feedback";
-import {
-  appUpdateProgressLabel,
-  appUpdateProgressPct,
-} from "../app-update";
+import { appUpdateActionLabel, appUpdateCheckedAtLabel } from "../app-update";
 import { useAppUpdateInstall } from "../app-update-install";
 import { REPO_URL } from "../help-links";
 import { revealFolderLabel } from "../path-utils";
@@ -50,7 +47,7 @@ import { toast } from "../toast";
 import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
 import UpdateNotes from "./UpdateNotes";
-import UpdateProgressBar from "./UpdateProgressBar";
+import { UpdateInstallProgress } from "./UpdateProgressBar";
 
 /** 帮助菜单弹窗族：诊断与日志 / 检查更新 / 关于。帮助菜单不跳设置页——
  *  内容能装进弹窗的都就地弹窗，弹窗里留「去完整页」的出口。 */
@@ -349,9 +346,10 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
   const appUpdate = useAppStore((s) => s.appUpdate);
   const status = useAppStore((s) => s.appUpdateStatus);
   const statusError = useAppStore((s) => s.appUpdateError);
+  const checkedAt = useAppStore((s) => s.appUpdateCheckedAt);
   const checkAppUpdate = useAppStore((s) => s.checkAppUpdate);
   const envLine = useEnvLine(open);
-  const { installing, progress, error: installError, install } = useAppUpdateInstall();
+  const { installing, phase, progress, error: installError, install } = useAppUpdateInstall();
 
   useEffect(() => {
     if (!open) return;
@@ -379,7 +377,6 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
   let body: ReactNode;
   let footer: ReactNode;
   if (appUpdate) {
-    const pct = progress ? appUpdateProgressPct(progress.downloaded, progress.total) : null;
     body = (
       <div className="space-y-3">
         <StatusBlock
@@ -392,14 +389,12 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
         >
           当前 v{appUpdate.currentVersion}。安装完成后 Mesa 会自动重启，进行中的对话请先保存。
         </StatusBlock>
-        {installing && (
-          <div>
-            <div className="mb-1 flex justify-between text-micro text-l3">
-              <span>{appUpdateProgressLabel(progress?.downloaded ?? 0, progress?.total ?? null)}</span>
-              {pct !== null && <span className="tabular-nums">{pct}%</span>}
-            </div>
-            <UpdateProgressBar downloaded={progress?.downloaded ?? 0} total={progress?.total ?? null} />
-          </div>
+        {installing && phase && (
+          <UpdateInstallProgress
+            phase={phase}
+            downloaded={progress?.downloaded ?? 0}
+            total={progress?.total ?? null}
+          />
         )}
         {installError && !installing && (
           <InlineNotice tone="err">{`安装失败：${installError}`}</InlineNotice>
@@ -421,7 +416,7 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
           disabled={installing}
           onClick={() => void install()}
         >
-          {installing ? "正在下载…" : "下载并安装"}
+          {appUpdateActionLabel(installing ? phase : null)}
         </button>
       </>
     );
@@ -484,6 +479,7 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
         title="已是最新版本"
       >
         {envLine ? <span className="font-mono">{envLine}</span> : "…"}
+        {checkedAt && ` · ${appUpdateCheckedAtLabel(checkedAt)}`}
       </StatusBlock>
     );
     footer = (

@@ -183,7 +183,7 @@ types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文�
   feedback.ts                # 反馈与提需求纯逻辑（2026-11-02 加 localStatsText：本机使用计数一行，勾选才进自动附带段与负载）：类型闭集/环境行/正文与主题拼装/mailto 与网页邮箱链接/端点负载/截图常量（≤3 张 ≤2MB）/发送方式闭集与默认（记本机 ccode.feedback.channel）/附件注记（tests/feedback.test.ts）
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
-  components/UpdateProgressBar.tsx # 更新下载进度条（总大小未知画不定进度、已知按真实字节，不用固定宽度占位）；设置→更新卡片与帮助「检查更新」弹窗共用
+  components/UpdateProgressBar.tsx # 更新下载进度条（总大小未知画不定进度、已知按真实字节，不用固定宽度占位）＋ UpdateInstallProgress 整块进度（分段文案 + 百分比 + 条，下完保持满格换字）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
 components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（SettingsPage 唯一挂载）：active_background_runs 2 秒轮询列 Mesa 替你跑的无头 Agent（定时任务、起名摘要等），run_cancel 停单条——给无头任务一个人能停的出口，不用干等超时（tests/background-tasks-panel.test.ts）
   components/ChatBetaBadge.tsx # 聊天层「测试版」说明（useChatBeta + ChatBetaNotes）：2026-10-23 起在模型菜单底部一行的二级页，说这一家的档与要回终端的事，CLI 比核对过的新时芯片带点并提醒
@@ -684,8 +684,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   inbox.ts                   # 收件箱分类胶囊纯逻辑（net: = 线路，route-watch 现算合并）：key 前缀→类别、分组、help dismiss 签名、人工请求通知 edge-trigger（tests/inbox.test.ts）；
                              #   sched: = 「定时任务」类（其他巡检待评审 / 自动暂停，不进一键已读；2026-10-23）；
                              #   phone: 类别（从手机添加还没处理的）与 update: 一样由 store.ts visibleInboxItems 现算合并
-  app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载进度
-  app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计；先 download 再存回放 + prepare_app_exit 收尾，最后 install + relaunch；模块级闸防双下载
+  app-update.ts              # 应用自更新展示纯逻辑：收件箱字段/合并、检查失败文案、http(s) 代理、下载 → 安装 → 重启分段文案、上次检查时刻
+  app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计（每 100ms 刷一次）并报所在段；失败只回 error 由入口写在卡片里；先 download 再存回放 + prepare_app_exit 收尾，最后 install + relaunch；模块级闸防双下载
   diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
   chat-handoff-log.ts        # 聊天层转到终端记数（2026-10-22，tests/chat-handoff-log.test.ts）：原因闭集 HANDOFF_REASONS（与 chat_handoff_log.rs

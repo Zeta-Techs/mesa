@@ -1023,6 +1023,8 @@ interface AppState {
   appUpdate: Update | null;
   appUpdateStatus: AppUpdateStatus;
   appUpdateError: string | null;
+  /** 最近一次从更新源拿到结果（有新版或已是最新）的时刻；失败不刷新 */
+  appUpdateCheckedAt: number | null;
   /** 启动时检查应用更新；开发模式跳过；失败写入 status 而不伪装成「已是最新」 */
   checkAppUpdate: () => Promise<void>;
   loadAll: () => Promise<void>;
@@ -1501,6 +1503,7 @@ export const useAppStore = create<AppState>((set, get) => {
   appUpdate: null,
   appUpdateStatus: "idle",
   appUpdateError: null,
+  appUpdateCheckedAt: null,
   checkAppUpdate: async () => {
     if (import.meta.env.DEV) {
       const prev = get().appUpdate;
@@ -1529,6 +1532,7 @@ export const useAppStore = create<AppState>((set, get) => {
         appUpdate: next,
         appUpdateStatus: next ? "available" : "none",
         appUpdateError: null,
+        appUpdateCheckedAt: Date.now(),
       });
     } catch (e) {
       if (gen !== appUpdateCheckGen) return;

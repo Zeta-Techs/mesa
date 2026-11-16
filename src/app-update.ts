@@ -94,16 +94,42 @@ export function appUpdateStatusHint(status: AppUpdateStatus): string {
   }
 }
 
+/** 「已是最新」后面跟上次查到结果的时刻：当天只写时分，跨天带月日——光写「已是最新」看不出是不是刚查的 */
+export function appUpdateCheckedAtLabel(checkedAt: number | null, now: number = Date.now()): string {
+  if (!checkedAt) return "";
+  const d = new Date(checkedAt);
+  const n = new Date(now);
+  const pad = (v: number) => String(v).padStart(2, "0");
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const sameDay =
+    d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return sameDay ? `${hm} 检查` : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm} 检查`;
+}
+
+/** 下载并安装分三段：下载 → 停终端并安装 → 重启。下完后要等几秒，不分段会一直停在「100%」像卡住了 */
+export type AppUpdateInstallPhase = "downloading" | "installing" | "restarting";
+
+/** 进度条上方左边那行：下载时写已下 / 总大小（百分比另在右边，不重复），下完写正在做哪一段 */
 export function appUpdateProgressLabel(
+  phase: AppUpdateInstallPhase,
   downloaded: number,
   total: number | null,
 ): string {
+  if (phase === "installing") return "下载完成，正在安装…";
+  if (phase === "restarting") return "安装完成，正在重启…";
   if (total && total > 0) {
-    const pct = Math.min(100, Math.round((downloaded / total) * 100));
-    return `已下载 ${pct}%`;
+    return `正在下载 ${formatUpdateBytes(Math.min(downloaded, total))} / ${formatUpdateBytes(total)}`;
   }
-  if (downloaded > 0) return `已下载 ${formatUpdateBytes(downloaded)}`;
+  if (downloaded > 0) return `正在下载 · 已下 ${formatUpdateBytes(downloaded)}`;
   return "正在下载…";
+}
+
+/** 「下载并安装」按钮在各段的字 */
+export function appUpdateActionLabel(phase: AppUpdateInstallPhase | null): string {
+  if (phase === "downloading") return "下载中…";
+  if (phase === "installing") return "安装中…";
+  if (phase === "restarting") return "正在重启…";
+  return "下载并安装";
 }
 
 export function appUpdateProgressPct(

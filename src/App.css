@@ -4709,9 +4709,12 @@ select:focus-visible {
 .ccode-progress-indeterminate {
   animation: ccode-progress-indeterminate 1.4s ease-in-out infinite;
 }
+/* 不动的时候别停成左边三分之一：看着像「已下 33%」，改成整条淡色表示「进行中、进度未知」 */
 @media (prefers-reduced-motion: reduce) {
   .ccode-progress-indeterminate {
     animation: none;
+    width: 100%;
+    opacity: 0.35;
   }
 }
 

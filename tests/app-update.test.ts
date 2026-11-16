@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  appUpdateActionLabel,
+  appUpdateCheckedAtLabel,
   appUpdateInboxFields,
   appUpdateProgressLabel,
   appUpdateProgressPct,
@@ -115,11 +117,29 @@ test("忽略当前版本后换新版本会复现", () => {
   );
 });
 
-test("appUpdateProgressLabel / pct：有总量给百分比，否则给已下载量", () => {
-  assert.equal(appUpdateProgressLabel(0, 100), "已下载 0%");
-  assert.equal(appUpdateProgressLabel(50, 100), "已下载 50%");
+test("appUpdateProgressLabel / pct：下载时写已下 / 总大小（百分比另算），下完写在哪一段", () => {
+  const MB = 1024 * 1024;
+  assert.equal(appUpdateProgressLabel("downloading", 12 * MB, 48 * MB), "正在下载 12 MB / 48 MB");
+  // 下载量偶尔比声明的总量多几个字节，不写出「49 MB / 48 MB」
+  assert.equal(appUpdateProgressLabel("downloading", 49 * MB, 48 * MB), "正在下载 48 MB / 48 MB");
   assert.equal(appUpdateProgressPct(50, 100), 50);
   assert.equal(appUpdateProgressPct(1, 0), null);
-  assert.equal(appUpdateProgressLabel(2048, null), "已下载 2.0 KB");
-  assert.equal(appUpdateProgressLabel(0, null), "正在下载…");
+  assert.equal(appUpdateProgressLabel("downloading", 2048, null), "正在下载 · 已下 2.0 KB");
+  assert.equal(appUpdateProgressLabel("downloading", 0, null), "正在下载…");
+  assert.equal(appUpdateProgressLabel("installing", 48 * MB, 48 * MB), "下载完成，正在安装…");
+  assert.equal(appUpdateProgressLabel("restarting", 0, null), "安装完成，正在重启…");
+});
+
+test("appUpdateActionLabel：按钮随段落换字，没在装时是「下载并安装」", () => {
+  assert.equal(appUpdateActionLabel(null), "下载并安装");
+  assert.equal(appUpdateActionLabel("downloading"), "下载中…");
+  assert.equal(appUpdateActionLabel("installing"), "安装中…");
+  assert.equal(appUpdateActionLabel("restarting"), "正在重启…");
+});
+
+test("appUpdateCheckedAtLabel：当天只写时分，跨天带月日，没查过为空", () => {
+  const now = new Date(2026, 10, 16, 15, 30).getTime();
+  assert.equal(appUpdateCheckedAtLabel(null, now), "");
+  assert.equal(appUpdateCheckedAtLabel(new Date(2026, 10, 16, 9, 5).getTime(), now), "09:05 检查");
+  assert.equal(appUpdateCheckedAtLabel(new Date(2026, 10, 15, 23, 59).getTime(), now), "11-15 23:59 检查");
 });

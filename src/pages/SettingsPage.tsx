@@ -111,10 +111,11 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
-import UpdateProgressBar from "../components/UpdateProgressBar";
+import { UpdateInstallProgress } from "../components/UpdateProgressBar";
 import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
-  appUpdateProgressLabel,
+  appUpdateActionLabel,
+  appUpdateCheckedAtLabel,
   appUpdateStatusHint,
 } from "../app-update";
 
@@ -1639,6 +1640,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   const appUpdate = useAppStore((s) => s.appUpdate);
   const appUpdateStatus = useAppStore((s) => s.appUpdateStatus);
   const appUpdateError = useAppStore((s) => s.appUpdateError);
+  const appUpdateCheckedAt = useAppStore((s) => s.appUpdateCheckedAt);
   const checkAppUpdate = useAppStore((s) => s.checkAppUpdate);
   // 依赖体检（诊断区 Row）：store 共享，启动时已静默探测一次；一键安装完成后就地刷新
   const depCheck = useAppStore((s) => s.depCheck);
@@ -1656,9 +1658,11 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   // 下载并安装：与帮助菜单「检查更新」弹窗同一流程（app-update-install.ts）
   const {
     installing,
+    phase: installPhase,
     progress: installProgress,
+    error: installError,
     install: installUpdate,
-  } = useAppUpdateInstall(setError);
+  } = useAppUpdateInstall();
   const autoOpenedUpdate = useRef(false);
   const [notice, setNotice] = useState<
     string | { text: string; openPath: string } | null
@@ -1913,7 +1917,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
   }, [visible, activeSection]);
 
   useEffect(() => {
-    if (!visible || activeSection !== "about" || appVersion !== null) return;
+    // 更新分区的「已是最新」也要写本机版本
+    if (!visible || (activeSection !== "about" && activeSection !== "update") || appVersion !== null) return;
     getVersion()
       .then(setAppVersion)
       .catch(() => toast("应用版本读取失败", "warning"));
@@ -4262,28 +4267,24 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             hint={`当前 v${appUpdate.currentVersion} · 安装完成后会自动重启，进行中的对话请先保存`}
             action={
               <button
-                onClick={() => {
-                  setError(null);
-                  void installUpdate();
-                }}
+                onClick={() => void installUpdate()}
                 disabled={installing}
                 className={`${primaryActionClass} shrink-0`}
               >
-                {installing
-                  ? appUpdateProgressLabel(
-                      installProgress?.downloaded ?? 0,
-                      installProgress?.total ?? null,
-                    )
-                  : "下载并安装"}
+                {appUpdateActionLabel(installing ? installPhase : null)}
               </button>
             }
           >
-            {installing && (
-              <UpdateProgressBar
+            {installing && installPhase && (
+              <UpdateInstallProgress
                 className="mb-2"
+                phase={installPhase}
                 downloaded={installProgress?.downloaded ?? 0}
                 total={installProgress?.total ?? null}
               />
+            )}
+            {installError && !installing && (
+              <InlineNotice tone="err" className="mb-2">{`安装失败：${installError}`}</InlineNotice>
             )}
             {appUpdateError && (
               <InlineNotice tone="err" className="mb-2">{appUpdateError}</InlineNotice>
@@ -4296,7 +4297,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             hint={
               appUpdateStatus === "error"
                 ? appUpdateError ?? appUpdateStatusHint("error")
-                : appUpdateStatusHint(appUpdateStatus)
+                : appUpdateStatus === "none"
+                  ? [
+                      appVersion ? `v${appVersion}` : "",
+                      appUpdateStatusHint("none"),
+                      appUpdateCheckedAtLabel(appUpdateCheckedAt),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : appUpdateStatusHint(appUpdateStatus)
             }
           >
             {appUpdateStatus !== "dev" && (
