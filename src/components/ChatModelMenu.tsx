@@ -544,11 +544,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             ? "换模型、Agent 或连接"
             : "换模型"
       }`}
-      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs leading-[18px] text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
       {launch?.pick.resumePick && <span className="shrink-0 text-l4">接回用</span>}
       {agentId && <AgentMark agentId={agentId} />}
-      <span className={`min-w-0 truncate ${pendingMark ? "italic" : ""}`}>{whoText}</span>
+      <span className={`min-w-0 truncate leading-[18px] ${pendingMark ? "italic" : ""}`}>{whoText}</span>
       {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
       {hasImages && currentModel && caps.vision[currentModel] === false && (
         <span className="shrink-0 text-caution-text">看不了图</span>
@@ -627,7 +627,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
         disabled={!launch && !live && !next}
         onClick={() => setOpen((v) => !v)}
         title={beta.newer ? `${title}\n你装的 CLI 比 Mesa 核对过的新，点开看底部「${beta.badge}」` : title}
-        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-2 text-micro leading-[18px] text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
+        className={`flex h-6 min-w-0 max-w-[20rem] items-center gap-1.5 rounded-md px-2 text-micro text-l3 hover:bg-hover hover:text-l1 disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-l3 ${
           open ? "bg-hover text-l1" : ""
         }`}
       >
@@ -635,7 +635,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
             不再写 Agent 名，悬停与读屏报名字；思考档写在后面的文字里 */}
         {chipAgent && <AgentMark agentId={chipAgent} />}
         {/* 模型与档名同一段文字：间距与「Agent · 模型」一致，太长时一起截断 */}
-        <span className={`truncate ${pendingMark ? "italic" : ""}`}>
+        <span className={`truncate leading-[18px] ${pendingMark ? "italic" : ""}`}>
           {label}
           {chipEffort ? ` · ${chipEffort}` : ""}
         </span>
