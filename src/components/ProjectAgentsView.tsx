@@ -38,7 +38,7 @@ import {
 } from "../types";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
 import MesaBuddyIcon from "./MesaBuddyIcon";
-import { AgentMark } from "./RelayPicker";
+import AgentIcon from "./AgentIcon";
 import EffortMark from "./EffortMark";
 import { effortDepth } from "../effort-depth";
 import {
@@ -1702,7 +1702,7 @@ function SlotBindingPopover({
           {boundProfile ? (
             <>
               <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-l1">
-                <AgentMark agentId={boundProfile.agent} decorative />
+                <AgentIcon agent={boundProfile.agent} label={boundAgentLabel} size={12} />
                 <span className="truncate">{boundAgentLabel} · {boundProfile.name}</span>
               </span>
               <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-l3">
@@ -1730,7 +1730,11 @@ function SlotBindingPopover({
               <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-l2">
                 {!stale && unboundAgentId && (
                   <span className="shrink-0 opacity-75">
-                    <AgentMark agentId={unboundAgentId} decorative />
+                    <AgentIcon
+                      agent={unboundAgentId}
+                      label={AGENTS.find((a) => a.id === unboundAgentId)?.label ?? unboundAgentId}
+                      size={12}
+                    />
                   </span>
                 )}
                 <span className="truncate">{unboundLine}</span>
@@ -1808,7 +1812,7 @@ function SlotBindingPopover({
                       : "text-l2 hover:bg-hover hover:text-l1"
                   }`}
                 >
-                  <AgentMark agentId={a.id} decorative />
+                  <AgentIcon agent={a.id} label={a.label} size={12} />
                   <span className="min-w-0 flex-1 truncate">{a.label}</span>
                 </button>
               );
