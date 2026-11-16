@@ -69,7 +69,7 @@ import {
   dangerActionClass,
   NoticeBar,
 } from "../components/PageFrame";
-import { AgentMark } from "../components/RelayPicker";
+import AgentIcon from "../components/AgentIcon";
 import {
   applyBlenderMcpProbe,
   applyMcpPreset,
@@ -1582,10 +1582,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                   notInstalled && !on ? "text-l4" : on ? "font-medium text-l1" : "text-l3"
                                 }`}
                               >
-                                <AgentMark
-                                  agentId={agent.id}
-                                  decorative
-                                  className={`h-3 w-auto shrink-0 ${on ? "" : "opacity-60"}`}
+                                <AgentIcon
+                                  agent={agent.id}
+                                  label={agent.label}
+                                  size={14}
+                                  className={on ? "" : "opacity-60"}
                                 />
                                 <span className="shrink-0 truncate">{agent.label}</span>
                                 {on && s.enabled && (
