@@ -1891,6 +1891,7 @@ export default function ProjectGroup({
         <ProjectUserTasksView
           project={project}
           embed
+          coexistsWithNewChat={pageVisible}
           onPickTemplate={onPickTemplate}
         />
       )}
@@ -2473,6 +2474,7 @@ export default function ProjectGroup({
               project={project}
               embed
               compactWhenEmpty
+              coexistsWithNewChat={pageVisible && outsideShown}
               onCount={setGoalCount}
               onUrgentGoals={setUrgentGoals}
             />

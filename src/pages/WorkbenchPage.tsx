@@ -1918,7 +1918,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                           <button
                             type="button"
                             className={`${ghostActionClass} h-7 gap-1.5 px-2`}
-                            title="只记下不开工：记进这个项目的目标列表，之后在项目页选 Agent 再开始"
+                            title="只记下要验收交付的目标（不开工），之后在项目页选 Agent 再开始；临时提问或顺手小改直接点侧栏「新对话」"
                             onClick={() => {
                               setGoalProject(card.path);
                               setGoalOpen(true);

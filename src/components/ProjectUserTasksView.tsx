@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Play, Plus, RotateCw, Square } from "lucide-react";
+import { Archive, Info, Play, Plus, RotateCw, Square } from "lucide-react";
+import CoachTip from "./CoachTip";
+import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
 import { runInboxAction, selectHiddenProfiles, useAppStore } from "../store";
 import {
   AGENTS,
@@ -145,6 +147,7 @@ export default function ProjectUserTasksView({
   onCount,
   onPickTemplate,
   compactWhenEmpty = false,
+  coexistsWithNewChat = false,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -158,6 +161,8 @@ export default function ProjectUserTasksView({
   onPickTemplate?: () => void;
   /** 有流程的科研项目：接在步骤线下面；没记过目标时不铺空态，只留「新建目标」一行入口 */
   compactWhenEmpty?: boolean;
+  /** 与右上角「＋ 新对话」同屏可见：首次弹出对比气泡，标题旁留 ⓘ 可随时再看 */
+  coexistsWithNewChat?: boolean;
 }) {
   const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
@@ -323,6 +328,81 @@ export default function ProjectUserTasksView({
       ),
     [hiddenProfiles, profiles, project.defaultProfiles],
   );
+
+  // 「目标」与右上角「＋ 新对话」同屏出现时的一次性对比气泡（coach-tips goalVsChat）：
+  // 首次真正同屏可见时自动弹出并记已读（切走去点「＋ 新对话」回来不再重复弹）；标题旁留 ⓘ 可随时再看。
+  const goalVsChatAnchorRef = useRef<HTMLSpanElement | null>(null);
+  const [goalVsChatOpen, setGoalVsChatOpen] = useState(false);
+  const [goalVsChatManual, setGoalVsChatManual] = useState(false);
+  const dismissGoalVsChatTip = useCallback(() => {
+    markCoachTipSeen("goalVsChat");
+    setGoalVsChatOpen(false);
+    setGoalVsChatManual(false);
+  }, []);
+  const anyOverlayOpen = Boolean(
+    createOpen || editTask || reviewTask || storageTaskId || adoptedPreviewPath || settingsOpen,
+  );
+
+  useEffect(() => {
+    if (!coexistsWithNewChat) {
+      if (goalVsChatOpen) {
+        setGoalVsChatOpen(false);
+        setGoalVsChatManual(false);
+      }
+      return;
+    }
+    if (
+      eligible &&
+      configReady &&
+      loaded &&
+      !loadError &&
+      !error &&
+      !anyOverlayOpen &&
+      !coachTipSeen("goalVsChat")
+    ) {
+      markCoachTipSeen("goalVsChat");
+      setGoalVsChatManual(false);
+      setGoalVsChatOpen(true);
+    }
+  }, [
+    anyOverlayOpen,
+    coexistsWithNewChat,
+    configReady,
+    eligible,
+    error,
+    goalVsChatOpen,
+    loadError,
+    loaded,
+  ]);
+
+  useEffect(() => {
+    if (!goalVsChatOpen || !anyOverlayOpen) return;
+    setGoalVsChatOpen(false);
+    setGoalVsChatManual(false);
+  }, [anyOverlayOpen, goalVsChatOpen]);
+
+  useEffect(() => {
+    if (!goalVsChatOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismissGoalVsChatTip();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!goalVsChatManual) return;
+      if (
+        event.target instanceof Node &&
+        goalVsChatAnchorRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+      dismissGoalVsChatTip();
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [dismissGoalVsChatTip, goalVsChatManual, goalVsChatOpen]);
 
   if (!configReady || !eligible) {
     return null;
@@ -504,13 +584,78 @@ export default function ProjectUserTasksView({
     }
   }
 
+  function openCreateModal() {
+    dismissGoalVsChatTip();
+    setCreateOpen(true);
+  }
+
+  function toggleGoalVsChatTip() {
+    if (goalVsChatOpen) {
+      dismissGoalVsChatTip();
+    } else {
+      markCoachTipSeen("goalVsChat");
+      setGoalVsChatManual(true);
+      setGoalVsChatOpen(true);
+    }
+  }
+
+  function renderGoalHeading(compact: boolean) {
+    const label = compact ? (
+      <span className="font-medium text-l1">目标</span>
+    ) : (
+      <h2 className="text-sm font-medium text-l1">目标</h2>
+    );
+    if (!coexistsWithNewChat) return label;
+    const popAbove = compactWhenEmpty;
+    return (
+      <span ref={goalVsChatAnchorRef} className="relative inline-flex items-center gap-1">
+        {label}
+        <button
+          type="button"
+          aria-label="目标与新对话的区别"
+          aria-expanded={goalVsChatOpen}
+          title="查看「目标」与右上角「＋ 新对话」的区别"
+          onClick={toggleGoalVsChatTip}
+          className={`inline-flex h-5 w-5 items-center justify-center rounded-sm transition-colors ${
+            goalVsChatOpen ? "text-l1" : "text-l4 hover:text-l2"
+          }`}
+        >
+          <Info size={13.5} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+        {goalVsChatOpen && (
+          <CoachTip
+            arrow={popAbove ? "down" : "up"}
+            arrowAt={compact ? 33 : 37}
+            title="「目标」与「＋ 新对话」怎么选？"
+            onClose={dismissGoalVsChatTip}
+            className={`absolute left-0 z-50 w-80 text-xs leading-5 font-normal ${
+              popAbove ? "bottom-full mb-2" : "top-full mt-2"
+            }`}
+            actions={[{ label: "知道了", onClick: dismissGoalVsChatTip }]}
+          >
+            <div className="space-y-1">
+              <p>
+                <strong className="font-semibold">＋ 新对话</strong>
+                （右上角）：临时提问、讨论或顺手小改，直接在项目文件夹里改。
+              </p>
+              <p>
+                <strong className="font-semibold">目标</strong>
+                ：要收进项目的正式成果，在独立副本里做，经你验收通过才写回项目。
+              </p>
+            </div>
+          </CoachTip>
+        )}
+      </span>
+    );
+  }
+
   return (
     <>
     <div className="mb-4">
       <section className="min-w-0" aria-label="项目目标">
         {loaded && quietEmpty && !loadError && !error ? (
           <div className={`${projectWellClass} flex flex-wrap items-center gap-2 py-2 text-xs`}>
-            <span className="font-medium text-l1">目标</span>
+            {renderGoalHeading(true)}
             <span className="min-w-0 flex-1 text-l3">
               流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。
             </span>
@@ -518,7 +663,7 @@ export default function ProjectUserTasksView({
               <button
                 type="button"
                 className={`${secondaryActionClass} gap-1.5`}
-                onClick={() => setCreateOpen(true)}
+                onClick={openCreateModal}
               >
                 <Plus size={13} aria-hidden="true" />
                 新建目标
@@ -538,7 +683,7 @@ export default function ProjectUserTasksView({
         <>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-            <h2 className="text-sm font-medium text-l1">目标</h2>
+            {renderGoalHeading(false)}
             {loaded && tasks.length > 0 && (() => {
               const reviewCount = buckets.review.length;
               const stuckCount = buckets.stuck.length;
@@ -599,7 +744,7 @@ export default function ProjectUserTasksView({
             <button
               type="button"
               className={`${primaryTaskId || quietEmpty ? secondaryActionClass : primaryActionClass} gap-1.5`}
-              onClick={() => setCreateOpen(true)}
+              onClick={openCreateModal}
             >
               <Plus size={13} aria-hidden="true" />
               新建目标
@@ -638,7 +783,7 @@ export default function ProjectUserTasksView({
                   <button
                     type="button"
                     className={`${primaryActionClass} gap-1.5`}
-                    onClick={() => setCreateOpen(true)}
+                    onClick={openCreateModal}
                   >
                     <Plus size={13} aria-hidden="true" />
                     新建目标

@@ -2332,6 +2332,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 project={selectedGroup.project}
                 chromeReq={identityChrome}
                 onChromeConsumed={consumeIdentityChrome}
+                coexistsWithNewChat={visible && selectedSurfaceTab === "tasks"}
               />
             ) : undefined
           }

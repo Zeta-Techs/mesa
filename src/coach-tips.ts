@@ -25,6 +25,9 @@ export const COACH_TIP_KEYS = {
   /** 写作 / 定稿步骤第一次出现「导入 Word 批注…」（保存过一次以后）时说清它干什么（2026-11-13 用户点名要，例外于
    *  「不首次即弹」与「一次打开只出一条」：按钮名看不出是「稿子发给导师批注完再导回来」）。点了按钮也算学会 */
   wordComments: "ccode.coachWordCommentsSeen",
+  /** 项目页同时出现「目标」与右上角「＋ 新对话」时简要说明两者的不同（2026-11-15 用户点名要，例外于
+   *  「不首次即弹」与「一次打开只出一条」：两个入口都能让 AI 干活，不提示容易用反）。旁留 ⓘ 可随时再看 */
+  goalVsChat: "ccode.coachGoalVsChatSeen",
 } as const;
 export type CoachTipId = keyof typeof COACH_TIP_KEYS;
 

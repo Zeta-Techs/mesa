@@ -73,11 +73,17 @@ async function renderGoals(options: {
   contextGate?: Promise<void>;
   configGate?: Promise<void>;
   protectedPaths?: string[];
+  coexistsWithNewChat?: boolean;
+  seenGoalVsChat?: boolean;
 } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
+  if (options.seenGoalVsChat) {
+    dom.window.localStorage.setItem("ccode.coachGoalVsChatSeen", "1");
+  }
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({
     window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     IS_REACT_ACT_ENVIRONMENT: true,
@@ -199,6 +205,7 @@ async function renderGoals(options: {
   await act(async () => root.render(h(View, {
     project: { path: "/project", name: "项目", workMode: options.mode ?? "office", defaultAgent: "codex", defaultProfiles: { codex: "codex-a" } },
     embed: options.embed ?? false,
+    coexistsWithNewChat: options.coexistsWithNewChat ?? false,
   })));
   function button(label: string, parent: ParentNode = host): HTMLButtonElement {
     const result = Array.from(parent.querySelectorAll("button")).find((b) =>
@@ -802,4 +809,30 @@ test("记下未开始的目标可在详情里核对设置并编辑；跑过的�
     await view.click(`目标详情：${ran.name}`, view.row(ran));
     assert.equal(Array.from(view.row(ran).querySelectorAll("button")).some((b) => b.textContent === "编辑"), false);
   } finally { await view.close(); }
+});
+
+test("与「＋ 新对话」同屏出现时首次弹出对比气泡，关闭后不再主动弹，点 ⓘ 可随时再看", async () => {
+  const first = await renderGoals({ coexistsWithNewChat: true });
+  try {
+    const tip = first.host.querySelector<HTMLElement>("[data-coach-tip]");
+    assert.ok(tip, "首次同屏应自动弹出气泡提醒");
+    assert.match(tip.textContent!, /「目标」与「＋ 新对话」怎么选？/);
+    assert.match(tip.textContent!, /＋ 新对话.*直接在项目文件夹里改/);
+    assert.match(tip.textContent!, /目标.*在独立副本里做.*验收通过才写回项目/);
+    assert.equal(first.dom.window.localStorage.getItem("ccode.coachGoalVsChatSeen"), "1");
+    await first.click("知道了", tip);
+    assert.equal(first.host.querySelector("[data-coach-tip]"), null, "点「知道了」后收起");
+  } finally { await first.close(); }
+
+  const second = await renderGoals({ coexistsWithNewChat: true, seenGoalVsChat: true });
+  try {
+    assert.equal(second.host.querySelector("[data-coach-tip]"), null, "已看过的不再自动弹");
+    await second.click("目标与新对话的区别");
+    const reopened = second.host.querySelector<HTMLElement>("[data-coach-tip]");
+    assert.ok(reopened, "点标题旁的 ⓘ 可重新打开对比气泡");
+    await second.act(async () => {
+      second.dom.window.dispatchEvent(new second.dom.window.KeyboardEvent("keydown", { key: "Escape" }));
+    });
+    assert.equal(second.host.querySelector("[data-coach-tip]"), null, "按 Esc 收起");
+  } finally { await second.close(); }
 });
