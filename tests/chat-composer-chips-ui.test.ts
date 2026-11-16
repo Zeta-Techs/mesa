@@ -327,6 +327,7 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
     await ui.click("glm-5.3");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     // 主屏：当前档大字 + 连接 · 模型一行 + 滑块，不列模型、不列最近搭配
+    assert.ok(!ui.el.ownerDocument.activeElement?.hasAttribute("data-beta-hint"), "打开时焦点不落到右上角测试版符号上");
     assert.match(ui.el.textContent ?? "", /默认思考强度/);
     assert.match(ui.el.textContent ?? "", /GLM-flash · glm-5\.3/);
     assert.doesNotMatch(ui.el.textContent ?? "", /200K · 思考/);
@@ -453,6 +454,7 @@ test("输入区收字（2026-10-23）：框里只有 + 与发送，下面那一�
     const hint = ui.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
     assert.ok(hint, "右上角有测试版提示符号");
     assert.match(hint.getAttribute("aria-label") ?? "", /以终端为准/, "一句话说明直接挂在符号上");
+    assert.notStrictEqual(hint.ownerDocument.activeElement, hint, "打开菜单时焦点不落到提示符号上（否则一打开就冒提示）");
     await ui.act(async () => hint.click());
     assert.match(ui.el.textContent ?? "", /以终端为准/);
     await ui.click("切到终端");

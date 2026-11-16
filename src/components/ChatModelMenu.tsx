@@ -787,7 +787,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           ) : view === "main" && effortSection ? (
             <>
               {/* 主屏（2026-11-05 用户）：只有思考强度——大字当前档，下面一行「M · 连接 · 模型 ›」点进模型屏 */}
-              {betaHint("top-1.5")}
               {effortChoices ? (
                 <EffortSlider
                   choices={effortChoices}
@@ -803,6 +802,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 </>
               )}
               {footerNote}
+              {/* 放在最后：打开菜单时焦点落第一个按钮，不能落到它身上（否则一打开就冒提示）；绝对定位，仍画在右上角 */}
+              {betaHint("top-1.5")}
             </>
           ) : (
             <>
@@ -1236,7 +1237,8 @@ function EffortHero({
   );
 }
 
-/** 模型菜单右上角的「测试版」提示符号：悬停在上方显示一句话说明，点进去看全文与反馈 */
+/** 模型菜单右上角的「测试版」提示符号：鼠标悬停在上方显示一句话说明，点进去看全文与反馈。
+ *  不随获得焦点弹出：打开菜单时焦点可能落到它身上，一打开就冒提示（2026-11-16 用户截图）；读屏读 aria-label */
 function BetaHint({ summary, warn, newer, top, onOpen }: {
   summary: string;
   warn: string | null;
@@ -1257,8 +1259,6 @@ function BetaHint({ summary, warn, newer, top, onOpen }: {
         onClick={onOpen}
         onMouseEnter={show}
         onMouseLeave={hide}
-        onFocus={show}
-        onBlur={hide}
         className={`absolute right-1.5 ${top} z-10 inline-flex size-6 items-center justify-center rounded-md text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover`}
       >
         <FlaskConical size={13} strokeWidth={1.8} aria-hidden="true" />
