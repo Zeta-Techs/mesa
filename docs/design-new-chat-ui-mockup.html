@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mesa · 新对话空态与输入框底部标签优化对比</title>
+  <style>
+    :root {
+      --bg-canvas: #111214;
+      --bg-page: #0b0c0e;
+      --bg-strip: #17191c;
+      --bg-well: rgba(255, 255, 255, 0.028);
+      --bg-hover: rgba(255, 255, 255, 0.055);
+      --bg-float: #1b1d21;
+      --bg-seg: rgba(255, 255, 255, 0.085);
+      --border-hairline: rgba(255, 255, 255, 0.075);
+      --border-field: rgba(255, 255, 255, 0.13);
+      --border-focus: rgba(255, 255, 255, 0.22);
+      --l1: #eceef2;
+      --l2: #b9bec8;
+      --l3: #858b97;
+      --l4: #5d636f;
+      --amber: #f5b83d;
+      --amber-soft: rgba(245, 184, 61, 0.14);
+      --claude: #d97757;
+      --codex: #7aa2f7;
+      --agy: #63a4ff;
+      --kimi: #6ec8b8;
+      --ok: #58a87c;
+      --warn: #d89b48;
+      --font-sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Inter", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-page);
+      color: var(--l1);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      padding: 28px 28px 64px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 12px;
+      z-index: 50;
+      max-width: 1360px;
+      margin: 0 auto 24px;
+      padding: 12px 18px;
+      border-radius: 14px;
+      background: rgba(23, 25, 28, 0.88);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border-field);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+    }
+
+    .topbar-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .badge-rec {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      border: 1px solid rgba(245, 184, 61, 0.28);
+    }
+
+    .seg-group {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-hairline);
+      gap: 2px;
+    }
+
+    .seg-btn {
+      border: 0;
+      background: transparent;
+      color: var(--l3);
+      font: inherit;
+      font-size: 12px;
+      padding: 5px 11px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .seg-btn:hover { color: var(--l1); }
+    .seg-btn.active {
+      background: var(--bg-seg);
+      color: var(--l1);
+      font-weight: 500;
+    }
+
+    .summary-strip {
+      max-width: 1360px;
+      margin: 0 auto 22px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .pain-card {
+      background: var(--bg-strip);
+      border: 1px solid var(--border-hairline);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .pain-card h4 {
+      margin: 0 0 5px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--l1);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .pain-num {
+      display: inline-flex;
+      width: 17px;
+      height: 17px;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      background: rgba(255,255,255,0.06);
+      font-size: 11px;
+      color: var(--amber);
+      font-family: var(--font-mono);
+    }
+    .pain-card p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--l3);
+    }
+
+    .grid-compare {
+      max-width: 1360px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+    .grid-compare.single {
+      grid-template-columns: minmax(0, 920px);
+      justify-content: center;
+    }
+
+    @media (max-width: 1120px) {
+      .summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .grid-compare { grid-template-columns: 1fr; }
+    }
+
+    .stage-panel {
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-field);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+    }
+    .stage-panel.recommended {
+      border-color: rgba(245, 184, 61, 0.34);
+    }
+
+    .stage-header {
+      padding: 11px 16px;
+      background: #15171a;
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+    }
+    .stage-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      color: var(--l1);
+    }
+    .tag-old {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--l3);
+    }
+
+    /* 模拟 Mesa 新对话主画布 */
+    .chat-viewport {
+      position: relative;
+      min-height: 490px;
+      padding: 64px 28px 36px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .chat-column {
+      width: 100%;
+      max-width: 660px;
+      margin: 0 auto;
+    }
+
+    /* Mesa 字标 */
+    .mesa-wordmark {
+      height: 0.86em;
+      width: auto;
+      overflow: visible;
+      flex-shrink: 0;
+    }
+
+    .greeting-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 4px 14px;
+    }
+    .greeting-main {
+      display: flex;
+      align-items: baseline;
+      gap: 11px;
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: -0.015em;
+      color: var(--l1);
+    }
+
+    /* 方案 A 页头右侧语境锚 / 快速切项目 */
+    .greeting-context {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--l3);
+      min-width: 0;
+    }
+    .ctx-proj-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: var(--bg-well);
+      border: 1px solid var(--border-hairline);
+      color: var(--l2);
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+      max-width: 185px;
+    }
+    .ctx-proj-pill:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-field);
+      color: var(--l1);
+    }
+    .ctx-badge-active {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-hairline);
+      color: var(--l2);
+      font-size: 11.5px;
+    }
+    .ctx-badge-active .sub {
+      color: var(--l4);
+    }
+
+    /* 输入框本体（严守规则：框内只留 + · 输入文字 · 发送块） */
+    .composer-shell {
+      border-radius: 16px;
+      background: var(--bg-strip);
+      border: 1px solid var(--border-field);
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .composer-shell:focus-within {
+      border-color: var(--border-focus);
+    }
+
+    .add-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 0;
+      background: transparent;
+      color: var(--l3);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .add-btn:hover { background: var(--bg-hover); color: var(--l1); }
+
+    .composer-input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      outline: none;
+      background: transparent;
+      color: var(--l1);
+      caret-color: var(--amber);
+      font: inherit;
+      font-size: 14px;
+      line-height: 24px;
+      padding: 4px 4px;
+      resize: none;
+    }
+    .composer-input::placeholder { color: var(--l3); }
+
+    .send-block {
+      width: 34px;
+      height: 24px;
+      border-radius: 6px;
+      border: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.15s ease;
+      background: transparent;
+      color: var(--l4);
+    }
+    .send-block.ready {
+      background: var(--amber);
+      color: #15120b;
+      box-shadow: 0 0 10px rgba(245, 184, 61, 0.25);
+    }
+
+    /* ======== 现状（Before）底部两排 ======== */
+    .old-footer {
+      margin-top: 4px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--l3);
+    }
+    .old-footer-left, .old-footer-right {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .old-bare-chip {
+      height: 24px;
+      padding: 0 6px;
+      border-radius: 6px;
+      border: 0;
+      background: transparent;
+      color: var(--l3);
+      font: inherit;
+      font-size: 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .old-bare-chip:hover { background: var(--bg-hover); color: var(--l1); }
+
+    .old-pills-wrap {
+      padding: 12px 4px 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .old-pill {
+      border-radius: 999px;
+      border: 1px solid var(--border-hairline);
+      background: transparent;
+      color: var(--l3);
+      font: inherit;
+      font-size: 12px;
+      padding: 6px 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .old-pill.well {
+      background: var(--bg-well);
+      color: var(--l2);
+    }
+    .old-pill .strong { color: var(--l1); font-weight: 500; }
+    .old-pill:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-field);
+      color: var(--l1);
+    }
+
+    /* 问题批注条 */
+    .callout-list {
+      padding: 13px 16px;
+      border-top: 1px solid var(--border-hairline);
+      background: rgba(255, 255, 255, 0.015);
+      font-size: 12px;
+      color: var(--l3);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .callout-item {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      line-height: 1.5;
+    }
+    .dot-warn { color: var(--warn); font-weight: 600; flex-shrink: 0; }
+    .dot-ok { color: var(--ok); font-weight: 600; flex-shrink: 0; }
+
+    /* ======== 方案 A（推荐）：同族配置微胶囊 + 2×2 起手轻井卡 + 独立研讨尾条 ======== */
+    .new-footer {
+      margin-top: 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 0 2px;
+    }
+    .new-footer-left, .new-footer-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+    }
+
+    .ctrl-chip {
+      height: 26px;
+      padding: 0 9px;
+      border-radius: 8px;
+      border: 1px solid var(--border-hairline);
+      background: rgba(255, 255, 255, 0.022);
+      color: var(--l2);
+      font: inherit;
+      font-size: 11.5px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .ctrl-chip:hover, .ctrl-chip.open {
+      background: var(--bg-hover);
+      border-color: var(--border-field);
+      color: var(--l1);
+    }
+    .ctrl-chip .chev {
+      opacity: 0.55;
+      font-size: 10px;
+    }
+    .ctrl-chip .muted-dot {
+      color: var(--l4);
+    }
+    .ctrl-chip .effort-tag {
+      color: var(--l3);
+    }
+
+    /* 品牌色 M 小标 */
+    .agent-m {
+      width: 11px;
+      height: 9px;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    /* 2×2 轻井起手提示网格 */
+    .starter-grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .starter-card {
+      text-align: left;
+      border-radius: 11px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-well);
+      padding: 9px 12px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      font: inherit;
+    }
+    .starter-card:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-field);
+    }
+    .starter-card-title {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--l1);
+      line-height: 1.35;
+      margin-bottom: 2px;
+    }
+    .starter-card-sub {
+      font-size: 11.5px;
+      color: var(--l4);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .starter-card:hover .starter-card-sub { color: var(--l3); }
+    .starter-enter {
+      font-size: 11px;
+      color: var(--l4);
+      opacity: 0;
+      transform: translateX(-2px);
+      transition: all 0.14s ease;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .starter-card:hover .starter-enter {
+      opacity: 0.85;
+      transform: translateX(0);
+      color: var(--l2);
+    }
+
+    /* 独立研讨横栏（与填词胶囊彻底解耦） */
+    .consult-bar {
+      margin-top: 10px;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px dashed rgba(255, 255, 255, 0.09);
+      background: transparent;
+      padding: 7px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      cursor: pointer;
+      font: inherit;
+      transition: all 0.14s ease;
+    }
+    .consult-bar:hover {
+      border-style: solid;
+      border-color: var(--border-field);
+      background: var(--bg-well);
+    }
+    .consult-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--l3);
+    }
+    .family-dots {
+      display: inline-flex;
+      align-items: center;
+    }
+    .family-dots span {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      margin-right: -2px;
+      border: 1px solid var(--bg-canvas);
+    }
+    .consult-action {
+      font-size: 12px;
+      color: var(--l2);
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    .consult-bar:hover .consult-action { color: var(--l1); }
+
+    /* ======== 方案 B：紧凑单排分组流 ======== */
+    .compact-flow {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .compact-prompts {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 6px;
+    }
+    .compact-pill {
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 8px;
+      border: 1px solid var(--border-hairline);
+      background: var(--bg-well);
+      color: var(--l2);
+      font: inherit;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .compact-pill:hover {
+      background: var(--bg-hover);
+      border-color: var(--border-field);
+      color: var(--l1);
+    }
+    .compact-consult-btn {
+      height: 28px;
+      padding: 0 11px;
+      border-radius: 8px;
+      border: 1px dashed var(--border-field);
+      background: transparent;
+      color: var(--l3);
+      font: inherit;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .compact-consult-btn:hover {
+      border-style: solid;
+      background: var(--bg-hover);
+      color: var(--l1);
+    }
+
+    /* ======== 开聊前一屏聚合快切弹层（点击模型芯片体验） ======== */
+    .launch-popover {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      width: 332px;
+      border-radius: 13px;
+      background: var(--bg-float);
+      border: 1px solid var(--border-field);
+      box-shadow: 0 18px 42px rgba(0, 0, 0, 0.55);
+      padding: 8px;
+      z-index: 40;
+      display: none;
+    }
+    .launch-popover.open { display: block; }
+
+    .pop-sec-label {
+      font-size: 11px;
+      color: var(--l3);
+      padding: 2px 6px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .agent-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .agent-tab {
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: rgba(255, 255, 255, 0.025);
+      color: var(--l2);
+      font: inherit;
+      font-size: 11.5px;
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+    .agent-tab:hover { background: var(--bg-hover); color: var(--l1); }
+    .agent-tab.active {
+      background: var(--bg-seg);
+      border-color: var(--border-field);
+      color: var(--l1);
+      font-weight: 500;
+    }
+
+    .pop-divider {
+      height: 1px;
+      background: var(--border-hairline);
+      margin: 6px 2px;
+    }
+
+    .model-row {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      border-radius: 8px;
+      padding: 6px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+      color: var(--l2);
+    }
+    .model-row:hover { background: var(--bg-hover); color: var(--l1); }
+    .model-row.active { color: var(--l1); }
+    .model-name { font-size: 13px; display: block; }
+    .model-caps { font-size: 11px; color: var(--l4); display: block; margin-top: 1px; }
+
+    .effort-inline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px 2px;
+      gap: 8px;
+    }
+    .effort-inline-label { font-size: 11.5px; color: var(--l3); }
+    .effort-pills {
+      display: inline-flex;
+      background: rgba(255,255,255,0.035);
+      border: 1px solid var(--border-hairline);
+      border-radius: 7px;
+      padding: 2px;
+      gap: 2px;
+    }
+    .effort-pill {
+      border: 0;
+      background: transparent;
+      color: var(--l3);
+      font: inherit;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .effort-pill.active {
+      background: var(--bg-seg);
+      color: var(--l1);
+      font-weight: 500;
+    }
+    .hint-click {
+      font-size: 11px;
+      color: var(--amber);
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="topbar-title">
+      <span>Mesa · 新对话页面 & 输入框底部标签优化对比</span>
+      <span class="badge-rec">交互可点选预览</span>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;">
+      <div class="seg-group" id="ctxSwitch">
+        <button class="seg-btn active" data-ctx="scratch">💬 随手聊（通用新对话）</button>
+        <button class="seg-btn" data-ctx="research">🧪 课题内（HER催化综述）</button>
+        <button class="seg-btn" data-ctx="coding">💻 仓库内（Ccode）</button>
+      </div>
+
+      <div class="seg-group" id="modeSwitch">
+        <button class="seg-btn active" data-mode="compareA">现状 vs 方案 A（推荐）</button>
+        <button class="seg-btn" data-mode="compareB">方案 A vs 方案 B（极简单排）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 诊断摘要 -->
+  <div class="summary-strip">
+    <div class="pain-card">
+      <h4><span class="pain-num">1</span> 底部两排标签混装打架</h4>
+      <p>现状框底把「换项目的胶囊」「填提示词胶囊」「开多模型研讨弹窗胶囊」全混成同一排药丸，且与正上方 4px 的项目芯片重复。</p>
+    </div>
+    <div class="pain-card">
+      <h4><span class="pain-num">2</span> 配置微芯片不像可点控件</h4>
+      <p>左下「请求批准」无边框无下拉箭头，像静态说明小字；与下排带框大圆胶囊视觉脱节，层次松散。</p>
+    </div>
+    <div class="pain-card">
+      <h4><span class="pain-num">3</span> 开聊前换 Agent 藏了 3 层</h4>
+      <p>新对话还没发第一句时，点右下芯片先停在「思考强度」，要再进「模型」→ 再点「换 ›」才能切 Agent（共点 3 次）。</p>
+    </div>
+    <div class="pain-card">
+      <h4><span class="pain-num">4</span> 在不在课题里抬头无感</h4>
+      <p>在课题内开新对话会自动附带「项目说明」，但抬头只写「M▁ 夜深了」，和随手聊完全一样，只能低头找 11px 灰字。</p>
+    </div>
+  </div>
+
+  <div class="grid-compare" id="compareStage">
+    <!-- 左栏：现状（或方案 A） -->
+    <section class="stage-panel" id="leftPanel">
+      <div class="stage-header">
+        <div class="stage-header-left" id="leftHeaderTitle">
+          <span class="tag-old">现状 Before</span>
+          <span>当前新对话空态与两排底部标签</span>
+        </div>
+        <span style="color:var(--l4); font-size:11.5px;" id="leftHeaderSub">3 类动作混在一排药丸里</span>
+      </div>
+
+      <div class="chat-viewport" id="leftViewport"></div>
+      <div class="callout-list" id="leftCallouts"></div>
+    </section>
+
+    <!-- 右栏：方案 A 推荐（或方案 B） -->
+    <section class="stage-panel recommended" id="rightPanel">
+      <div class="stage-header">
+        <div class="stage-header-left" id="rightHeaderTitle">
+          <span class="badge-rec">推荐 · 方案 A</span>
+          <span>语境微锚 + 同族控制底座 + 起手卡/研讨解耦</span>
+        </div>
+        <span class="hint-click" id="rightHeaderSub">✨ 点右下模型芯片试玩「开聊前一屏快切」</span>
+      </div>
+
+      <div class="chat-viewport" id="rightViewport"></div>
+      <div class="callout-list" id="rightCallouts"></div>
+    </section>
+  </div>
+
+  <script>
+    const M_PATH = "M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z";
+
+    function mesaWordmarkSvg() {
+      return `<svg viewBox="232 284 708 456" class="mesa-wordmark" aria-hidden="true">
+        <path d="${M_PATH}" fill="currentColor"></path>
+        <rect x="820" y="680" width="120" height="60" rx="6" fill="#f5b83d"></rect>
+      </svg>`;
+    }
+
+    function agentMSvg(color) {
+      return `<svg viewBox="232 284 560 456" class="agent-m" aria-hidden="true">
+        <path d="${M_PATH}" fill="${color}"></path>
+      </svg>`;
+    }
+
+    function permGlyphSvg() {
+      return `<svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <line x1="3" y1="3.5" x2="11" y2="3.5" />
+        <line x1="3" y1="7" x2="11" y2="7" stroke-dasharray="2 2" />
+        <line x1="3" y1="10.5" x2="11" y2="10.5" />
+      </svg>`;
+    }
+
+    const CONTEXT_DATA = {
+      scratch: {
+        chipIcon: "💬",
+        chipLabel: "随手聊",
+        greetingRightA: `
+          <div class="greeting-context">
+            <span style="color:var(--l4)">接着做</span>
+            <button class="ctx-proj-pill" onclick="switchCtx('research')" title="切到「HER催化综述」课题开始">🧪 HER催化综述</button>
+            <button class="ctx-proj-pill" onclick="switchCtx('coding')" title="切到「Ccode」仓库开始">💻 Ccode</button>
+          </div>
+        `,
+        oldPills: [
+          { kind: "proj", icon: "🧪", prefix: "接着做", label: "HER催化综述", targetCtx: "research" },
+          { kind: "proj", icon: "💻", prefix: "接着做", label: "Ccode", targetCtx: "coding" },
+          { kind: "prompt", label: "解释一个概念", text: "用通俗的话解释一下：\n" },
+          { kind: "prompt", label: "写个小脚本", text: "帮我写一个脚本，用来：\n" },
+          { kind: "consult", label: "请几家研讨" }
+        ],
+        starters: [
+          { label: "解释一个概念", sub: "用直白准确的语言拆解原理与边界", text: "用通俗的话解释一下：\n" },
+          { label: "写个小脚本", sub: "快速处理文件、转换格式或自动化小活", text: "帮我写一个脚本，用来：\n" },
+          { label: "看懂一段报错", sub: "定位报错根因并给出最小修复步骤", text: "这段报错是什么意思、该怎么处理：\n" },
+          { label: "润色一段文字", sub: "保留原意，改得更紧凑、专业好读", text: "帮我润色下面这段文字，保留原意、更专业：\n" }
+        ]
+      },
+      research: {
+        chipIcon: "🧪",
+        chipLabel: "HER催化综述",
+        greetingRightA: `
+          <div class="greeting-context">
+            <span class="ctx-badge-active" title="第一句发出时自动附上该课题的项目说明（在项目设置里可看可关）">
+              <span>🧪 HER催化综述</span>
+              <span class="sub">· 首句附项目说明</span>
+            </span>
+          </div>
+        `,
+        oldPills: [
+          { kind: "prompt", label: "梳理课题进度", text: "梳理一下这个课题现在的进度：已经做完了什么、卡在哪里、下一步最该做什么。" },
+          { kind: "prompt", label: "把新文献做成笔记", text: "看看 papers/ 里还有哪些文献没有笔记，挑最相关的一篇读完，按精读笔记的格式写进 notes/。" },
+          { kind: "prompt", label: "检查引用是否齐全", text: "检查正文里引用的文献在 references.bib 里是否都有条目，列出缺的和没被用到的。" },
+          { kind: "prompt", label: "起草下一节", text: "根据现有的笔记和大纲，起草下一节的初稿；没有依据的论断标出来，不要编造文献。" },
+          { kind: "consult", label: "请几家研讨" }
+        ],
+        starters: [
+          { label: "梳理课题进度", sub: "盘点已完成、卡点与下一步最该推进的事", text: "梳理一下这个课题现在的进度：已经做完了什么、卡在哪里、下一步最该做什么。" },
+          { label: "把新文献做成笔记", sub: "挑 papers/ 未读文献精读并写入 notes/", text: "看看 papers/ 里还有哪些文献没有笔记，挑最相关的一篇读完，按精读笔记的格式写进 notes/。" },
+          { label: "检查引用是否齐全", sub: "核对正文引用与 references.bib 缺漏项", text: "检查正文里引用的文献在 references.bib 里是否都有条目，列出缺的和没被用到的。" },
+          { label: "起草下一节", sub: "基于已有笔记与大纲写初稿，无依据标待核实", text: "根据现有的笔记和大纲，起草下一节的初稿；没有依据的论断标出来，不要编造文献。" }
+        ]
+      },
+      coding: {
+        chipIcon: "💻",
+        chipLabel: "Ccode",
+        greetingRightA: `
+          <div class="greeting-context">
+            <span class="ctx-badge-active" title="当前位于主仓 main 分支，首句自动附上仓库说明">
+              <span>💻 Ccode</span>
+              <span class="sub" style="font-family:var(--font-mono)">· main</span>
+            </span>
+          </div>
+        `,
+        oldPills: [
+          { kind: "prompt", label: "讲讲代码结构", text: "通读这个仓库，讲讲整体结构：入口在哪、主要模块各管什么。" },
+          { kind: "prompt", label: "找最近改动的问题", text: "看看最近的改动（git diff 和最近几次提交），找出可能的 bug 或遗漏。" },
+          { kind: "prompt", label: "补测试", text: "找出最缺测试的关键逻辑，补上测试并跑通。" },
+          { kind: "prompt", label: "解释一个报错", text: "帮我看这个报错是怎么回事、该怎么修：\n" },
+          { kind: "consult", label: "请几家研讨" }
+        ],
+        starters: [
+          { label: "讲讲代码结构", sub: "梳理入口、核心模块职责与数据流边界", text: "通读这个仓库，讲讲整体结构：入口在哪、主要模块各管什么。" },
+          { label: "找最近改动的问题", sub: "审查 git diff 与近期提交的潜在回归", text: "看看最近的改动（git diff 和最近几次提交），找出可能的 bug 或遗漏。" },
+          { label: "补测试", sub: "定位缺少单测的关键分支并补齐跑通", text: "找出最缺测试的关键逻辑，补上测试并跑通。" },
+          { label: "解释一个报错", sub: "结合源码排查报错原因与修复路径", text: "帮我看这个报错是怎么回事、该怎么修：\n" }
+        ]
+      }
+    };
+
+    const AGENTS = [
+      { id: "claude", name: "Claude", color: "#d97757", conn: "Claude 官方", models: [
+        { id: "claude-sonnet-4-6", caps: "200K · 思考 · 看图" },
+        { id: "claude-opus-4-7", caps: "200K · 深度思考 · 看图" }
+      ]},
+      { id: "codex", name: "Codex", color: "#7aa2f7", conn: "GPT Plus", models: [
+        { id: "gpt-5.4", caps: "272K · 思考 · 看图" },
+        { id: "gpt-5.3-codex", caps: "272K · 编程专精" }
+      ]},
+      { id: "agy", name: "Antigravity", color: "#63a4ff", conn: "Google 官方", models: [
+        { id: "gemini-4-carbon", caps: "1M · 思考 · 看图" },
+        { id: "gemini-3.1-pro", caps: "1M · 思考 · 看图" }
+      ]},
+      { id: "kimi", name: "Kimi", color: "#6ec8b8", conn: "Moonshot", models: [
+        { id: "kimi-k2.5", caps: "256K · 思考 · 看图" }
+      ]}
+    ];
+
+    let state = {
+      ctx: "scratch",
+      mode: "compareA",
+      agentIdx: 0,
+      modelIdx: 0,
+      effort: "high",
+      popOpen: false,
+      draft: ""
+    };
+
+    function switchCtx(ctx) {
+      state.ctx = ctx;
+      document.querySelectorAll("#ctxSwitch .seg-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.ctx === ctx);
+      });
+      render();
+    }
+
+    function fillDraft(text) {
+      state.draft = text;
+      render();
+    }
+
+    function renderOldVariant() {
+      const d = CONTEXT_DATA[state.ctx];
+      const ag = AGENTS[state.agentIdx];
+      const m = ag.models[state.modelIdx] || ag.models[0];
+      return `
+        <div class="chat-column">
+          <div class="greeting-row" style="justify-content:flex-start;">
+            <div class="greeting-main">${mesaWordmarkSvg()}<span>夜深了</span></div>
+          </div>
+
+          <div class="composer-shell">
+            <button class="add-btn" title="添加">＋</button>
+            <input class="composer-input" value="${escapeHtml(state.draft)}" oninput="state.draft=this.value" placeholder="问一个问题" />
+            <button class="send-block ${state.draft.trim() ? 'ready' : ''}">↑</button>
+          </div>
+
+          <div class="old-footer">
+            <div class="old-footer-left">
+              <button class="old-bare-chip" title="按 Shift+Tab 轮换">${permGlyphSvg()} 请求批准</button>
+              <button class="old-bare-chip">${d.chipIcon} ${d.chipLabel} <span style="opacity:0.6">⌄</span></button>
+            </div>
+            <div class="old-footer-right">
+              <button class="old-bare-chip">${agentMSvg(ag.color)} ${m.id} · ${state.effort} <span style="opacity:0.6">⌄</span></button>
+            </div>
+          </div>
+
+          <div class="old-pills-wrap">
+            ${d.oldPills.map(p => {
+              if (p.kind === "proj") {
+                return `<button class="old-pill well" onclick="switchCtx('${p.targetCtx}')"><span>${p.icon}</span><span>${p.prefix}</span><span class="strong">${p.label}</span></button>`;
+              }
+              if (p.kind === "consult") {
+                return `<button class="old-pill" onclick="alert('弹出「请几家研讨」窗口')">👥 ${p.label}</button>`;
+              }
+              return `<button class="old-pill" onclick="fillDraft(${JSON.stringify(p.text)})">${p.label}</button>`;
+            }).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPopoverHtml(popId) {
+      const ag = AGENTS[state.agentIdx];
+      return `
+        <div class="launch-popover ${state.popOpen === popId ? 'open' : ''}" onclick="event.stopPropagation()">
+          <div class="pop-sec-label">
+            <span>这次新对话用哪家 Agent</span>
+            <span style="color:var(--l4)">连接：${ag.conn} ▾</span>
+          </div>
+          <div class="agent-strip">
+            ${AGENTS.map((a, idx) => `
+              <button class="agent-tab ${idx === state.agentIdx ? 'active' : ''}" onclick="state.agentIdx=${idx}; state.modelIdx=0; render();">
+                ${agentMSvg(a.color)}
+                <span>${a.name}</span>
+              </button>
+            `).join("")}
+          </div>
+
+          <div class="pop-divider"></div>
+          <div class="pop-sec-label"><span>模型</span><span style="color:var(--l4)">一屏直选，免钻 3 层</span></div>
+          ${ag.models.map((mod, idx) => `
+            <button class="model-row ${idx === state.modelIdx ? 'active' : ''}" onclick="state.modelIdx=${idx}; render();">
+              <span>
+                <span class="model-name">${mod.id}</span>
+                <span class="model-caps">${mod.caps}</span>
+              </span>
+              <span style="color:var(--l2); font-size:13px;">${idx === state.modelIdx ? '✓' : ''}</span>
+            </button>
+          `).join("")}
+
+          <div class="pop-divider"></div>
+          <div class="effort-inline">
+            <span class="effort-inline-label">思考强度</span>
+            <div class="effort-pills">
+              ${["默认", "low", "medium", "high"].map(lv => `
+                <button class="effort-pill ${state.effort === lv ? 'active' : ''}" onclick="state.effort='${lv}'; render();">${lv}</button>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderVariantA(popId) {
+      const d = CONTEXT_DATA[state.ctx];
+      const ag = AGENTS[state.agentIdx];
+      const m = ag.models[state.modelIdx] || ag.models[0];
+      return `
+        <div class="chat-column">
+          <div class="greeting-row">
+            <div class="greeting-main">${mesaWordmarkSvg()}<span>夜深了</span></div>
+            ${d.greetingRightA}
+          </div>
+
+          <div class="composer-shell">
+            <button class="add-btn" title="添加文件、引用项目文件、提示词、技能或 MCP">＋</button>
+            <input class="composer-input" value="${escapeHtml(state.draft)}" oninput="state.draft=this.value" placeholder="问一个问题" />
+            <button class="send-block ${state.draft.trim() ? 'ready' : ''}">↑</button>
+          </div>
+
+          <div class="new-footer">
+            <div class="new-footer-left">
+              <button class="ctrl-chip" title="本次对话权限档位（可按 Shift+Tab 轮换）">
+                ${permGlyphSvg()}
+                <span>请求批准</span>
+                <span class="chev">⌄</span>
+              </button>
+              <button class="ctrl-chip" title="点击切换项目或文件夹">
+                <span>${d.chipIcon}</span>
+                <span>${d.chipLabel}</span>
+                <span class="chev">⌄</span>
+              </button>
+            </div>
+
+            <div class="new-footer-right">
+              <button class="ctrl-chip ${state.popOpen === popId ? 'open' : ''}" onclick="event.stopPropagation(); state.popOpen = state.popOpen === '${popId}' ? false : '${popId}'; render();">
+                ${agentMSvg(ag.color)}
+                <span>${m.id}</span>
+                <span class="muted-dot">·</span>
+                <span class="effort-tag">${state.effort}</span>
+                <span class="chev">⌄</span>
+              </button>
+              ${renderPopoverHtml(popId)}
+            </div>
+          </div>
+
+          <div class="starter-grid">
+            ${d.starters.map(s => `
+              <button class="starter-card" onclick="fillDraft(${JSON.stringify(s.text)})">
+                <div style="min-width:0">
+                  <div class="starter-card-title">${s.label}</div>
+                  <div class="starter-card-sub">${s.sub}</div>
+                </div>
+                <span class="starter-enter">↵ 填入</span>
+              </button>
+            `).join("")}
+          </div>
+
+          <button class="consult-bar" onclick="alert('打开发起研讨弹层（若输入框有草稿会自动带入）')">
+            <span class="consult-left">
+              <span class="family-dots">
+                <span style="background:#d97757"></span>
+                <span style="background:#7aa2f7"></span>
+                <span style="background:#63a4ff"></span>
+              </span>
+              <span>同一个问题想听几家不同模型独立作答、交叉补充？</span>
+            </span>
+            <span class="consult-action">请几家研讨 ›</span>
+          </button>
+        </div>
+      `;
+    }
+
+    function renderVariantB(popId) {
+      const d = CONTEXT_DATA[state.ctx];
+      const ag = AGENTS[state.agentIdx];
+      const m = ag.models[state.modelIdx] || ag.models[0];
+      return `
+        <div class="chat-column">
+          <div class="greeting-row">
+            <div class="greeting-main">${mesaWordmarkSvg()}<span>夜深了</span></div>
+            ${d.greetingRightA}
+          </div>
+
+          <div class="composer-shell">
+            <button class="add-btn" title="添加">＋</button>
+            <input class="composer-input" value="${escapeHtml(state.draft)}" oninput="state.draft=this.value" placeholder="问一个问题" />
+            <button class="send-block ${state.draft.trim() ? 'ready' : ''}">↑</button>
+          </div>
+
+          <div class="new-footer">
+            <div class="new-footer-left">
+              <button class="ctrl-chip">${permGlyphSvg()} <span>请求批准</span> <span class="chev">⌄</span></button>
+              <button class="ctrl-chip"><span>${d.chipIcon}</span> <span>${d.chipLabel}</span> <span class="chev">⌄</span></button>
+            </div>
+            <div class="new-footer-right">
+              <button class="ctrl-chip ${state.popOpen === popId ? 'open' : ''}" onclick="event.stopPropagation(); state.popOpen = state.popOpen === '${popId}' ? false : '${popId}'; render();">
+                ${agentMSvg(ag.color)}
+                <span>${m.id}</span>
+                <span class="muted-dot">·</span>
+                <span class="effort-tag">${state.effort}</span>
+                <span class="chev">⌄</span>
+              </button>
+              ${renderPopoverHtml(popId)}
+            </div>
+          </div>
+
+          <div class="compact-flow">
+            <div class="compact-prompts">
+              ${d.starters.map(s => `
+                <button class="compact-pill" title="填进输入框：${s.sub}" onclick="fillDraft(${JSON.stringify(s.text)})">${s.label}</button>
+              `).join("")}
+            </div>
+            <button class="compact-consult-btn" onclick="alert('打开发起研讨弹层')">
+              <span class="family-dots">
+                <span style="background:#d97757"></span>
+                <span style="background:#7aa2f7"></span>
+                <span style="background:#63a4ff"></span>
+              </span>
+              <span>请几家研讨 ›</span>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function render() {
+      const leftPanel = document.getElementById("leftPanel");
+      const rightPanel = document.getElementById("rightPanel");
+      const leftTitle = document.getElementById("leftHeaderTitle");
+      const leftSub = document.getElementById("leftHeaderSub");
+      const rightTitle = document.getElementById("rightHeaderTitle");
+      const rightSub = document.getElementById("rightHeaderSub");
+      const leftVp = document.getElementById("leftViewport");
+      const rightVp = document.getElementById("rightViewport");
+      const leftCall = document.getElementById("leftCallouts");
+      const rightCall = document.getElementById("rightCallouts");
+
+      if (state.mode === "compareA") {
+        leftPanel.classList.remove("recommended");
+        rightPanel.classList.add("recommended");
+        leftTitle.innerHTML = `<span class="tag-old">现状 Before</span><span>当前新对话空态与底部标签</span>`;
+        leftSub.textContent = "配置裸字 + 换目录/填词/弹窗混排";
+        rightTitle.innerHTML = `<span class="badge-rec">推荐 · 方案 A</span><span>语境微锚 + 同族底座 + 2×2 起手轻井卡</span>`;
+        rightSub.textContent = "✨ 点右下模型芯片体验一屏快切";
+
+        leftVp.innerHTML = renderOldVariant();
+        rightVp.innerHTML = renderVariantA("popRight");
+
+        leftCall.innerHTML = `
+          <div class="callout-item"><span class="dot-warn">×</span><span>左下「请求批准」无框无箭头，像不可点的状态文字；随手聊下通用提示词被 2 个项目胶囊挤得只剩 2 个。</span></div>
+          <div class="callout-item"><span class="dot-warn">×</span><span>「请几家研讨」与填词胶囊长得一模一样，点了却弹新窗口；切入课题后抬头也看不出会自动附「项目说明」。</span></div>
+        `;
+        rightCall.innerHTML = `
+          <div class="callout-item"><span class="dot-ok">✓</span><span><b>页头同基线微锚</b>：随手聊右侧放「接着做」快切项目；进课题后安静显示 <code>🧪 HER催化综述 · 首句附项目说明</code>。</span></div>
+          <div class="callout-item"><span class="dot-ok">✓</span><span><b>框底三颗同族轻胶囊 + 开聊前一屏快切</b>：权限/目录/模型高度与热区统一；新对话未开聊时点模型芯片一屏直切 Agent + 模型 + 思考档。</span></div>
+          <div class="callout-item"><span class="dot-ok">✓</span><span><b>起手词与研讨彻底分家</b>：4 张轻量双行起手卡（写出落点预期，点击填词不误发）+ 底部独立多模型研讨横条。</span></div>
+        `;
+      } else {
+        leftPanel.classList.add("recommended");
+        rightPanel.classList.remove("recommended");
+        leftTitle.innerHTML = `<span class="badge-rec">推荐 · 方案 A</span><span>2×2 双行起手轻井卡 + 独立研讨横条</span>`;
+        leftSub.textContent = "信息更清晰、桌面感更稳";
+        rightTitle.innerHTML = `<span class="tag-old">备选 · 方案 B</span><span>极简单排分组流（高留白）</span>`;
+        rightSub.textContent = "保留单行高度，靠虚线与右置分离研讨";
+
+        leftVp.innerHTML = renderVariantA("popLeft");
+        rightVp.innerHTML = renderVariantB("popRightB");
+
+        leftCall.innerHTML = `
+          <div class="callout-item"><span class="dot-ok">✓</span><span>适合科研/编程多场景：一眼看清每个起手提示具体会帮写什么（如「核对正文引用与 references.bib」），总高仅增约 56px。</span></div>
+        `;
+        rightCall.innerHTML = `
+          <div class="callout-item"><span class="dot-ok">✓</span><span>如果你更偏爱极致留白：同样采用「页头微锚 + 三颗同族配置胶囊 + 开聊前一屏快切」，下方只留单排 4 枚方圆角提示词，右端虚线框独立摆「请几家研讨 ›」。</span></div>
+        `;
+      }
+    }
+
+    document.querySelectorAll("#ctxSwitch .seg-btn").forEach(btn => {
+      btn.addEventListener("click", () => switchCtx(btn.dataset.ctx));
+    });
+    document.querySelectorAll("#modeSwitch .seg-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        state.mode = btn.dataset.mode;
+        state.popOpen = false;
+        document.querySelectorAll("#modeSwitch .seg-btn").forEach(b => {
+          b.classList.toggle("active", b.dataset.mode === state.mode);
+        });
+        render();
+      });
+    });
+    window.addEventListener("click", () => {
+      if (state.popOpen) {
+        state.popOpen = false;
+        render();
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>

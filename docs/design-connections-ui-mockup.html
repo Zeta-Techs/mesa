@@ -1,0 +1,1868 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 连接模块全链路 UI 优化对比（连接页 · 网关库 · 新建网关 · 添加连接 · 编辑连接）</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626;
+    --strip: #1c1c1c; --canvas: #111111; --inset: #212121; --raised: #272727;
+    --seg-sel: #2b2b2b; --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --cta: #0169cc; --cta-text: #eaf4ff;
+    --hover: rgb(255 255 255 / 0.05);
+    --mesa-amber: #f5b83d;
+    --err-text: #f07070; --ok-text: #4cc38a; --warn-text: #eab308;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --canvas-well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #1b1815; --rail-sel: #312d29;
+    --strip: #1e1b18; --canvas: #15130f; --inset: #23211d; --raised: #2c2925;
+    --seg-sel: #35322d; --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+    --cta: #f5b83d; --cta-text: #1d1608;
+    --hover: rgb(255 255 255 / 0.05);
+    --mesa-amber: #f5b83d;
+    --err-text: #f07178; --ok-text: #7fd962; --warn-text: #ffb454;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --canvas-well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f6f2e9; --rail-sel: #e1dcd3;
+    --strip: #fbf5ed; --canvas: #f2eee5; --inset: #fefaf6; --raised: #ffffff;
+    --seg-sel: #d2cdc3; --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --cta: #e39a1c; --cta-text: #241a02;
+    --hover: rgb(0 0 0 / 0.045);
+    --mesa-amber: #c9820a;
+    --err-text: #b91c1c; --ok-text: #16794b; --warn-text: #b45309;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --canvas-well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: #08090b;
+    color: #d4d4d8;
+    font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace; }
+
+  /* ── Top Sticky Control Bar ── */
+  .suite-nav {
+    position: sticky; top: 0; z-index: 60;
+    background: rgba(11, 12, 15, 0.93);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid #23252c;
+    padding: 10px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    font-size: 12px;
+  }
+  .brand-title {
+    font-weight: 600; color: #f4f4f6; font-size: 13px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .brand-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #f5b83d; box-shadow: 0 0 10px rgba(245,184,61,0.5);
+  }
+  .scene-tabs {
+    display: inline-flex; flex-wrap: wrap; gap: 3px;
+    background: #16181d; padding: 3px; border-radius: 9px; border: 1px solid #272a33;
+  }
+  .scene-tabs button {
+    background: none; border: 0; color: #9497a3;
+    padding: 4px 10px; border-radius: 6px; font: inherit; font-weight: 500;
+    cursor: pointer; transition: all .14s;
+  }
+  .scene-tabs button:hover { color: #e5e7eb; }
+  .scene-tabs button.on { background: #2b2f3a; color: #fff; }
+
+  .ctrl-right { margin-left: auto; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .seg {
+    display: inline-flex; gap: 2px;
+    background: #16181d; padding: 2px; border-radius: 8px; border: 1px solid #272a33;
+  }
+  .seg button {
+    background: none; border: 0; color: #9497a3;
+    padding: 4px 9px; border-radius: 6px; font: inherit; font-size: 11.5px; cursor: pointer;
+  }
+  .seg button:hover { color: #e5e7eb; }
+  .seg button.on { background: #2c303b; color: #fff; font-weight: 500; }
+
+  /* ── Page Container & Summary Cards ── */
+  .page-wrap { max-width: 1560px; margin: 18px auto 72px; padding: 0 20px; display: flex; flex-direction: column; gap: 24px; }
+
+  .hero-strip {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px;
+  }
+  @media (max-width: 1100px) { .hero-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .hero-card {
+    background: #111318; border: 1px solid #22252f; border-radius: 11px; padding: 12px 14px;
+  }
+  .hero-card .kicker { font-size: 11px; font-weight: 600; color: #f5b83d; letter-spacing: .02em; }
+  .hero-card .ttl { font-size: 13px; font-weight: 600; color: #f1f2f6; margin-top: 2px; }
+  .hero-card .desc { font-size: 12px; color: #8f93a1; margin-top: 4px; line-height: 1.48; }
+
+  /* ── Proposal Section Block ── */
+  .scene-section {
+    background: #0f1116; border: 1px solid #21242d; border-radius: 14px; padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .scene-section.hidden-scene { display: none; }
+  .scene-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .scene-head h2 {
+    margin: 0; font-size: 16px; color: #f4f4f7; display: flex; align-items: center; gap: 9px;
+  }
+  .step-pill {
+    font-size: 11px; padding: 2px 8px; border-radius: 6px;
+    background: rgba(245, 184, 61, 0.15); color: #f5b83d; font-weight: 700;
+  }
+  .scene-head p { margin: 5px 0 0; font-size: 12.5px; color: #9296a4; max-width: 1020px; }
+
+  .diff-bullets {
+    display: flex; flex-wrap: wrap; gap: 8px;
+  }
+  .diff-chip {
+    font-size: 11.5px; padding: 4px 10px; border-radius: 7px;
+    background: #171921; border: 1px solid #262a35; color: #c7cad4;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .diff-chip b { color: #f5b83d; font-weight: 600; }
+
+  /* ── Compare Grid ── */
+  .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  body[data-mode="after"] .ab-grid { grid-template-columns: minmax(0, 1fr); }
+  body[data-mode="after"] .ab-col.before-col { display: none; }
+  body[data-mode="before"] .ab-grid { grid-template-columns: minmax(0, 1fr); }
+  body[data-mode="before"] .ab-col.after-col { display: none; }
+  @media (max-width: 1180px) { .ab-grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .ab-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ab-label {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-size: 12px; font-weight: 600; padding: 0 2px;
+  }
+  .ab-label.before { color: #8f93a2; }
+  .ab-label.after { color: #f5b83d; }
+  .ab-sub { font-size: 11px; font-weight: 400; color: #7b7f8e; }
+
+  /* ── Simulated Mesa App Frame ── */
+  .mesa-frame {
+    background: var(--canvas);
+    color: var(--l2);
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--field) 85%, transparent);
+    overflow: hidden;
+    box-shadow: 0 14px 36px rgba(0,0,0,0.42);
+    display: flex;
+    min-height: 560px;
+  }
+  /* Leftmost global app rail (44px mini simulation to show PagePanel keeps left rail visible) */
+  .app-rail {
+    width: 46px; flex-shrink: 0;
+    background: var(--rail);
+    border-right: 1px solid var(--hairline);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px 0; gap: 8px;
+  }
+  .rail-ico {
+    width: 30px; height: 30px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--l3); font-size: 13px;
+  }
+  .rail-ico.active { background: var(--rail-sel); color: var(--l1); }
+  .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--canvas); }
+
+  /* ── Shared Mesa Primitives Inside Mockup ── */
+  .m-btn {
+    height: 30px; padding: 0 11px; border-radius: 7px;
+    font: inherit; font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    border: 1px solid var(--field); background: transparent; color: var(--l2);
+    cursor: pointer; white-space: nowrap; transition: background .12s, color .12s, border-color .12s;
+  }
+  .m-btn:hover { background: var(--hover); color: var(--l1); }
+  .m-btn.cta {
+    background: var(--cta); color: var(--cta-text); border-color: transparent; font-weight: 500;
+  }
+  .m-btn.cta:hover { filter: brightness(1.08); }
+  .m-btn.soft {
+    background: var(--raised); border-color: var(--hairline); color: var(--l1);
+  }
+  .m-btn.sm { height: 25px; padding: 0 8px; font-size: 11.5px; border-radius: 6px; }
+  .m-btn.xs { height: 22px; padding: 0 7px; font-size: 11px; border-radius: 5px; }
+  .m-btn.ghost { border-color: transparent; color: var(--l3); }
+  .m-btn.ghost:hover { background: var(--hover); color: var(--l1); }
+
+  .m-input {
+    height: 32px; padding: 0 10px; border-radius: 7px;
+    background: var(--inset); border: 1px solid var(--field);
+    color: var(--l1); font: inherit; font-size: 12.5px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  }
+  .m-input.sm { height: 28px; font-size: 12px; }
+  .m-well {
+    background: var(--well);
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+  }
+  .m-seg {
+    display: inline-flex; padding: 2px; border-radius: 7px;
+    background: var(--inset); border: 1px solid var(--hairline); gap: 2px;
+  }
+  .m-seg span, .m-seg button {
+    background: none; border: 0; font: inherit; font-size: 11.5px;
+    padding: 3px 9px; border-radius: 5px; color: var(--l3); cursor: pointer;
+  }
+  .m-seg .on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+
+  .v-badge {
+    width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700;
+    background: var(--raised); border: 1px solid var(--hairline); color: var(--l1);
+  }
+  .v-badge.claude { background: rgba(217, 119, 87, 0.16); color: #e89578; border-color: rgba(217,119,87,0.3); }
+  .v-badge.openai { background: rgba(16, 163, 127, 0.15); color: #4cc38a; border-color: rgba(16,163,127,0.3); }
+  .v-badge.gemini { background: rgba(79, 140, 255, 0.16); color: #7ab0ff; border-color: rgba(79,140,255,0.32); }
+  .v-badge.agy { background: rgba(168, 85, 247, 0.16); color: #c084fc; border-color: rgba(168,85,247,0.32); }
+  .v-badge.kimi { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border-color: rgba(56,189,248,0.3); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 6px; border-radius: 5px; font-size: 10.5px; font-weight: 500;
+    background: var(--raised); color: var(--l2); border: 1px solid var(--hairline);
+    white-space: nowrap;
+  }
+  .pill.ok { color: var(--ok-text); background: color-mix(in srgb, var(--ok-text) 11%, transparent); border-color: color-mix(in srgb, var(--ok-text) 28%, transparent); }
+  .pill.amber { color: var(--mesa-amber); background: color-mix(in srgb, var(--mesa-amber) 12%, transparent); border-color: color-mix(in srgb, var(--mesa-amber) 30%, transparent); }
+  .pill.err { color: var(--err-text); background: color-mix(in srgb, var(--err-text) 12%, transparent); border-color: color-mix(in srgb, var(--err-text) 28%, transparent); }
+  .pill.cta-tint { color: #6db8ff; background: rgba(1, 105, 204, 0.16); border-color: rgba(1, 105, 204, 0.35); }
+  [data-theme="ayu"] .pill.cta-tint, [data-theme="ayu-light"] .pill.cta-tint {
+    color: var(--mesa-amber); background: color-mix(in srgb, var(--mesa-amber) 14%, transparent); border-color: color-mix(in srgb, var(--mesa-amber) 32%, transparent);
+  }
+
+  .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot.ok { background: var(--ok-text); }
+  .dot.err { background: var(--err-text); }
+  .dot.warn { background: var(--warn-text); }
+  .dot.muted { background: var(--l4); }
+
+  /* ── PagePanel Chrome (h-12 top bar + body + h-14 sticky footer) ── */
+  .pp-head {
+    height: 46px; flex-shrink: 0;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--hairline);
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--canvas);
+  }
+  .pp-back {
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--l3); font-size: 12px; cursor: pointer;
+  }
+  .pp-back:hover { color: var(--l1); }
+  .pp-title { font-size: 13.5px; font-weight: 600; color: var(--l1); }
+  .pp-body { flex: 1; padding: 18px 22px; overflow-y: auto; }
+  .pp-body.narrow { max-width: 680px; width: 100%; margin: 0 auto; }
+  .pp-foot {
+    height: 52px; flex-shrink: 0;
+    padding: 0 18px;
+    border-top: 1px solid var(--hairline);
+    background: var(--canvas);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+
+  /* ── Scene 1 Specifics: Connections Main Page ── */
+  .conn-split { flex: 1; display: flex; min-height: 0; }
+  .conn-nav {
+    width: 186px; flex-shrink: 0;
+    background: var(--rail2);
+    border-right: 1px solid var(--hairline);
+    padding: 10px 8px;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .nav-sec-lbl {
+    font-size: 10.5px; font-weight: 600; color: var(--l4);
+    padding: 6px 8px 3px; letter-spacing: .03em;
+  }
+  .nav-row {
+    height: 30px; padding: 0 8px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    font-size: 12px; color: var(--l2); cursor: pointer;
+  }
+  .nav-row:hover { background: var(--hover); color: var(--l1); }
+  .nav-row.sel { background: var(--rail-sel); color: var(--l1); font-weight: 500; }
+  .nav-row .l { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .nav-row .r { font-size: 11px; color: var(--l3); display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+  .nav-num { min-width: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+
+  .conn-content { flex: 1; min-width: 0; padding: 14px 18px; display: flex; flex-direction: column; gap: 14px; }
+  .conn-top {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+    padding-bottom: 11px; border-bottom: 1px solid var(--hairline);
+  }
+  .agent-grp-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 4px 2px 6px;
+  }
+  .prof-list {
+    border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden;
+    background: color-mix(in srgb, var(--canvas) 75%, var(--rail2));
+  }
+  .prof-row {
+    padding: 9px 12px;
+    display: flex; align-items: center; gap: 10px;
+    border-top: 1px solid var(--hairline);
+    font-size: 12px;
+  }
+  .prof-row:first-child { border-top: 0; }
+  .prof-row:hover { background: var(--hover); }
+  .row-acts {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  }
+  .ico-btn {
+    width: 25px; height: 25px; border-radius: 6px;
+    border: 1px solid transparent; background: transparent; color: var(--l3);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; cursor: pointer;
+  }
+  .ico-btn:hover { background: var(--raised); border-color: var(--hairline); color: var(--l1); }
+
+  /* ── Callout Annotations ── */
+  .pain-note {
+    margin-top: auto;
+    padding: 8px 12px;
+    background: rgba(240, 112, 112, 0.07);
+    border-top: 1px dashed rgba(240, 112, 112, 0.28);
+    font-size: 11.5px; color: var(--l3);
+  }
+  .pain-note b { color: var(--err-text); font-weight: 600; }
+  .win-note {
+    margin-top: auto;
+    padding: 8px 12px;
+    background: rgba(76, 195, 138, 0.07);
+    border-top: 1px dashed rgba(76, 195, 138, 0.28);
+    font-size: 11.5px; color: var(--l3);
+  }
+  .win-note b { color: var(--ok-text); font-weight: 600; }
+
+  /* ── Form Layout Helpers ── */
+  .f-sec { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .f-sec-head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 11.5px; font-weight: 600; color: var(--l2);
+  }
+  .f-sec-head .step-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: var(--raised); border: 1px solid var(--field);
+    font-size: 10.5px; color: var(--l1); margin-right: 6px;
+  }
+  .f-grid-2 { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; }
+  .f-lbl { font-size: 11.5px; color: var(--l3); margin-bottom: 4px; display: flex; justify-content: space-between; }
+
+  .src-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .src-card {
+    padding: 9px 11px; border-radius: 8px;
+    border: 1px solid var(--hairline); background: var(--inset);
+    cursor: pointer; transition: all .12s;
+  }
+  .src-card:hover { border-color: var(--field); }
+  .src-card.sel {
+    border-color: var(--cta);
+    background: color-mix(in srgb, var(--cta) 10%, var(--inset));
+  }
+  .src-card .t { font-size: 12px; font-weight: 600; color: var(--l1); display: flex; align-items: center; justify-content: space-between; }
+  .src-card .s { font-size: 11px; color: var(--l3); margin-top: 2px; }
+
+  .gw-pick-row {
+    padding: 8px 10px; border-radius: 7px;
+    border: 1px solid var(--hairline); background: var(--canvas);
+    display: flex; align-items: center; gap: 9px; cursor: pointer;
+  }
+  .gw-pick-row.sel {
+    border-color: var(--cta);
+    background: color-mix(in srgb, var(--cta) 8%, var(--canvas));
+  }
+  .gw-pick-row.disabled { opacity: 0.58; cursor: default; }
+
+  .fold-list {
+    border: 1px solid var(--hairline); border-radius: 9px; overflow: hidden;
+    background: var(--canvas-well);
+  }
+  .fold-row {
+    padding: 9px 12px; display: flex; align-items: center; justify-content: space-between;
+    border-top: 1px solid var(--hairline); font-size: 12px; color: var(--l2);
+  }
+  .fold-row:first-child { border-top: 0; }
+
+  .preset-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+  .preset-chip {
+    padding: 4px 9px; border-radius: 6px; font-size: 11.5px;
+    border: 1px solid var(--hairline); background: var(--inset); color: var(--l2);
+    cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .preset-chip:hover { border-color: var(--field); color: var(--l1); }
+  .preset-chip.sel { border-color: var(--cta); background: color-mix(in srgb, var(--cta) 12%, var(--inset)); color: var(--l1); font-weight: 500; }
+
+  .agent-check-chip {
+    padding: 5px 9px; border-radius: 7px; font-size: 11.5px;
+    border: 1px solid var(--hairline); background: var(--canvas); color: var(--l2);
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .agent-check-chip.on {
+    border-color: var(--cta);
+    background: color-mix(in srgb, var(--cta) 12%, var(--canvas));
+    color: var(--l1);
+  }
+</style>
+</head>
+<body data-mode="split">
+
+<!-- ═══════════════════════ Sticky Control Header ═══════════════════════ -->
+<header class="suite-nav">
+  <span class="brand-title"><span class="brand-dot"></span>Mesa 连接模块全链路 UI 优化对比</span>
+
+  <div class="scene-tabs" id="sceneTabs">
+    <button class="on" data-scene="all">全部展开 (5)</button>
+    <button data-scene="s1">① 连接页面</button>
+    <button data-scene="s2">② 网关库</button>
+    <button data-scene="s3">③ 新建网关</button>
+    <button data-scene="s4">④ 添加连接</button>
+    <button data-scene="s5">⑤ 编辑连接</button>
+  </div>
+
+  <div class="ctrl-right">
+    <div class="seg" id="modeSeg" title="对比视图切换">
+      <button class="on" data-mode="split">左右对比</button>
+      <button data-mode="after">只看优化方案</button>
+      <button data-mode="before">只看现状</button>
+    </div>
+    <div class="seg" id="themeSeg" title="Mesa 主题切换">
+      <button class="on" data-theme="neutral">Neutral 暗</button>
+      <button data-theme="ayu">Ayu 暖暗</button>
+      <button data-theme="ayu-light">Ayu 暖浅</button>
+    </div>
+  </div>
+</header>
+
+<main class="page-wrap">
+
+  <!-- ── 4 Core Design Principles Strip ── -->
+  <section class="hero-strip">
+    <div class="hero-card">
+      <div class="kicker">01 · 两层心智一眼看懂</div>
+      <div class="ttl">「网关存钥匙」→「连接绑 Agent」</div>
+      <div class="desc">入口按钮直接带网关数与健康点（<code>网关库 · 4</code>），编辑连接顶部固定单行「来源网关摘要条」，不再靠零散说明文字解释两层关系。</div>
+    </div>
+    <div class="hero-card">
+      <div class="kicker">02 · 砍掉断头路与双层开关</div>
+      <div class="ttl">新建即闭环 · 来源三选一平铺</div>
+      <div class="desc">「新建网关」合并 <b>验证连通并拉取模型</b>，并支持顺手勾选绑给哪些 Agent（告别建完 0 连接）；「添加连接」把叠两层的 SegTabs 收成一行三卡片。</div>
+    </div>
+    <div class="hero-card">
+      <div class="kicker">03 · 高频信息外露、低频收拢</div>
+      <div class="ttl">不靠悬停猜，不被冷门项刷屏</div>
+      <div class="desc">网关库直接展示密钥尾号、已通协议槽、模型数与「一键配齐 CLI」；连接页左栏折叠未安装 CLI、对齐数字，行内突出<b>默认启动模型</b>。</div>
+    </div>
+    <div class="hero-card">
+      <div class="kicker">04 · 严守 Mesa 设计语言</div>
+      <div class="ttl">全幅 PagePanel · 无嵌套卡片棋盘</div>
+      <div class="desc">保持全内容区推入页（不回退小弹窗、不加无用表单左侧目录），严守 <code>--l1..--l4</code> 四级字色、<code>--well</code> 凹槽与第三方首字图标规范。</div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ① 连接页面（Connections Main Page） ═══════════════════════ -->
+  <section class="scene-section" id="s1">
+    <div class="scene-head">
+      <div>
+        <h2><span class="step-pill">场景 ①</span> 连接页面（ProfilesPage 主视图）</h2>
+        <p>日常切默认连接、看全局写入状态、一键开新对话或外部终端的主阵地。重点解决：顶部副标题像说明书、左栏「新版 / 未安装」挤乱数字对齐、连接行里启动主模型与备选模型糊成一串、悬停按钮无主次。</p>
+      </div>
+      <div class="diff-bullets">
+        <span class="diff-chip"><b>入口</b> 网关库按钮带数量与异常点</span>
+        <span class="diff-chip"><b>左栏</b> 未安装折叠收底 · 新版微标不挤数字</span>
+        <span class="diff-chip"><b>行节奏</b> 主启动模型高亮 + 备选 <code>+N</code> 收敛</span>
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE ① -->
+      <div class="ab-col before-col">
+        <div class="ab-label before">
+          <span>现状 · 连接页面</span>
+          <span class="ab-sub">左栏未安装平铺占高 · 模型串横向拥挤 · 网关库无计数感知</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail">
+            <div class="rail-ico">⌂</div>
+            <div class="rail-ico active">⇄</div>
+            <div class="rail-ico">⌘</div>
+          </aside>
+          <div class="app-main">
+            <div class="conn-split">
+              <div class="conn-nav">
+                <div class="nav-row sel"><span class="l">全部</span><span class="r">7</span></div>
+                <div class="nav-sec-lbl">Agent</div>
+                <div class="nav-row"><span class="l"><span class="v-badge claude" style="width:16px;height:16px;font-size:9px">C</span>Claude Code</span><span class="r"><span style="color:var(--mesa-amber)">新版</span> · 3</span></div>
+                <div class="nav-row"><span class="l"><span class="v-badge openai" style="width:16px;height:16px;font-size:9px">O</span>Codex</span><span class="r">2</span></div>
+                <div class="nav-row"><span class="l"><span class="v-badge agy" style="width:16px;height:16px;font-size:9px">A</span>Antigravity</span><span class="r">2</span></div>
+                <div class="nav-row" style="opacity:.55"><span class="l"><span class="v-badge" style="width:16px;height:16px;font-size:9px">Q</span>Qwen Code</span><span class="r">未安装</span></div>
+                <div class="nav-row" style="opacity:.55"><span class="l"><span class="v-badge" style="width:16px;height:16px;font-size:9px">B</span>CodeBuddy</span><span class="r">未安装</span></div>
+                <div class="nav-row" style="opacity:.55"><span class="l"><span class="v-badge" style="width:16px;height:16px;font-size:9px">G</span>Grok Build</span><span class="r">未安装</span></div>
+                <div class="nav-sec-lbl">按服务商</div>
+                <div class="nav-row"><span class="l">DeepSeek</span><span class="r">2</span></div>
+              </div>
+
+              <div class="conn-content">
+                <div class="conn-top">
+                  <div>
+                    <div style="font-size:15px;font-weight:600;color:var(--l1)">连接</div>
+                    <div style="font-size:11.5px;color:var(--l3)">每个 Agent 绑哪个网关、用哪些模型 · 7 个连接</div>
+                  </div>
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <div class="m-input sm" style="width:136px;color:var(--l4)">搜索连接…</div>
+                    <button class="m-btn sm">网关库</button>
+                    <button class="m-btn sm cta">＋ 添加连接</button>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="agent-grp-head">
+                    <span style="font-size:12.5px;font-weight:600;color:var(--l1)">Claude Code <span style="color:var(--l4);font-weight:400">3</span></span>
+                    <span style="font-size:11px;color:var(--l3)">+ 添加</span>
+                  </div>
+                  <div class="prof-list">
+                    <div class="prof-row">
+                      <span class="dot ok"></span>
+                      <span style="font-weight:500;color:var(--l1)">DeepSeek 主力</span>
+                      <span class="pill">默认</span>
+                      <span style="font-size:11px;color:var(--ok-text)">● 全局</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3)">api.deepseek.com</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">deepseek-chat, deepseek-reasoner</span>
+                      <span class="row-acts">
+                        <span class="ico-btn" title="新对话">💬</span>
+                        <span class="ico-btn" title="外部终端">↗</span>
+                        <span class="ico-btn" title="测试">⚡</span>
+                        <span class="ico-btn" title="更多">⋯</span>
+                      </span>
+                    </div>
+                    <div class="prof-row">
+                      <span class="dot err"></span>
+                      <span style="font-weight:500;color:var(--l1)">硅基中转</span>
+                      <span style="font-size:11px;color:var(--err-text)">401</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3)">api.siliconflow.cn</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3)">claude-sonnet-4-5, haiku…</span>
+                      <span class="row-acts"><span class="ico-btn">⋯</span></span>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="agent-grp-head">
+                    <span style="font-size:12.5px;font-weight:600;color:var(--l1)">Antigravity CLI <span style="color:var(--l4);font-weight:400">2</span></span>
+                    <span style="font-size:11px;color:var(--l3)">+ 添加</span>
+                  </div>
+                  <div class="prof-list">
+                    <div class="prof-row">
+                      <span class="dot ok"></span>
+                      <span style="font-weight:500;color:var(--l1)">Gemini</span>
+                      <span class="pill">默认</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3)">generativelanguage…</span>
+                      <span class="mono" style="font-size:11px;color:var(--l3)">gemini-4-carbon, gemini-2.5-flash</span>
+                      <span class="row-acts"><span class="ico-btn">⋯</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pain-note">
+              <b>痛点：</b>① 左栏未安装 CLI 长期占满半屏，「新版 · 3」挤歪数字列；② 行里多个模型逗号拼成一长串，看不出哪个是默认启动模型；③ 「网关库」按钮看不出里面有几个网关、有没有报错。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER ① -->
+      <div class="ab-col after-col">
+        <div class="ab-label after">
+          <span>优化方案 · 连接页面（支持点击左栏切换全部 / 单 Agent）</span>
+          <span class="ab-sub">数字严整对齐 · 未安装折叠收底 · 启动主模型胶囊化 · 常用动作清楚</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail">
+            <div class="rail-ico">⌂</div>
+            <div class="rail-ico active">⇄</div>
+            <div class="rail-ico">⌘</div>
+          </aside>
+          <div class="app-main">
+            <div class="conn-split">
+              <div class="conn-nav" id="afterConnNav">
+                <div class="nav-row sel" data-agent="all">
+                  <span class="l">全部连接</span>
+                  <span class="r"><span class="nav-num">7</span></span>
+                </div>
+                <div class="nav-sec-lbl">已安装 CLI</div>
+                <div class="nav-row" data-agent="claude">
+                  <span class="l"><span class="v-badge claude" style="width:17px;height:17px;font-size:9.5px">C</span>Claude Code</span>
+                  <span class="r"><span class="pill amber" style="padding:0 4px;font-size:9.5px">可升</span><span class="nav-num">3</span></span>
+                </div>
+                <div class="nav-row" data-agent="codex">
+                  <span class="l"><span class="v-badge openai" style="width:17px;height:17px;font-size:9.5px">O</span>Codex</span>
+                  <span class="r"><span class="nav-num">2</span></span>
+                </div>
+                <div class="nav-row" data-agent="agy">
+                  <span class="l"><span class="v-badge agy" style="width:17px;height:17px;font-size:9.5px">A</span>Antigravity</span>
+                  <span class="r"><span class="nav-num">2</span></span>
+                </div>
+
+                <div class="nav-row" id="toggleUninstalled" style="margin-top:4px;color:var(--l4);font-size:11.5px">
+                  <span class="l"><span id="uninstArrow">▸</span> 未安装 CLI</span>
+                  <span class="r"><span class="nav-num">3</span></span>
+                </div>
+                <div id="uninstalledBox" style="display:none;padding-left:6px">
+                  <div class="nav-row" style="opacity:.6;height:26px"><span class="l">Qwen Code</span><span class="r" style="font-size:10px">去安装</span></div>
+                  <div class="nav-row" style="opacity:.6;height:26px"><span class="l">CodeBuddy</span><span class="r" style="font-size:10px">去安装</span></div>
+                  <div class="nav-row" style="opacity:.6;height:26px"><span class="l">Grok Build</span><span class="r" style="font-size:10px">去安装</span></div>
+                </div>
+
+                <div class="nav-sec-lbl" style="margin-top:6px">按网关筛选</div>
+                <div class="nav-row"><span class="l"><span class="dot ok"></span>DeepSeek 官方</span><span class="r"><span class="nav-num">2</span></span></div>
+                <div class="nav-row"><span class="l"><span class="dot ok"></span>Gemini 网关</span><span class="r"><span class="nav-num">2</span></span></div>
+                <div class="nav-row"><span class="l"><span class="dot err"></span>硅基流动</span><span class="r"><span class="nav-num">1</span></span></div>
+              </div>
+
+              <div class="conn-content">
+                <div class="conn-top">
+                  <div>
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <span style="font-size:15px;font-weight:600;color:var(--l1)" id="connMainTitle">连接</span>
+                      <span class="pill" id="connMainCount">7 条 · 覆盖 3 个 CLI</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--l3);margin-top:2px" id="connMainSub">启动对话默认走各 CLI 标「默认」的连接；点网关库统一改密钥与模型池</div>
+                  </div>
+                  <div style="display:flex;gap:7px;align-items:center">
+                    <div class="m-input sm" style="width:142px;color:var(--l4)"><span>⌕ 搜索名称/模型…</span></div>
+                    <button class="m-btn sm soft" title="1 个网关待修复">
+                      <span>网关库</span>
+                      <span class="pill" style="padding:0 5px">4</span>
+                      <span class="dot err" title="硅基流动 401"></span>
+                    </button>
+                    <button class="m-btn sm cta">＋ 添加连接</button>
+                  </div>
+                </div>
+
+                <!-- Group: Claude Code -->
+                <div class="agent-group" data-grp="claude">
+                  <div class="agent-grp-head">
+                    <div style="display:flex;align-items:center;gap:7px">
+                      <span class="v-badge claude" style="width:20px;height:20px;font-size:10px">C</span>
+                      <span style="font-size:13px;font-weight:600;color:var(--l1)">Claude Code</span>
+                      <span class="mono" style="font-size:11px;color:var(--l4)">v2.0.31</span>
+                      <span class="pill amber" style="cursor:pointer">↑ 升至 2.0.34</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <button class="m-btn xs ghost">配置文件</button>
+                      <button class="m-btn xs ghost">+ 添加</button>
+                    </div>
+                  </div>
+                  <div class="prof-list">
+                    <div class="prof-row">
+                      <span class="dot ok" title="210ms 正常"></span>
+                      <div style="min-width:140px">
+                        <div style="display:flex;align-items:center;gap:5px">
+                          <span style="font-weight:600;color:var(--l1)">DeepSeek 主力</span>
+                          <span class="pill cta-tint">默认</span>
+                          <span class="pill ok" title="已写入 ~/.claude/settings.json">● 全局默认</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--l3);margin-top:1px">来自网关：DeepSeek 官方 · <span class="mono">api.deepseek.com</span></div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:5px;margin-left:8px">
+                        <span class="pill mono" style="color:var(--l1);background:var(--inset)">deepseek-chat</span>
+                        <span class="pill" style="color:var(--l3)" title="备选：deepseek-reasoner">+1 备选</span>
+                      </div>
+                      <div class="row-acts">
+                        <button class="m-btn xs">新对话</button>
+                        <button class="ico-btn" title="在外部终端打开">↗</button>
+                        <button class="ico-btn" title="连通测试">⚡</button>
+                        <button class="ico-btn" title="编辑 / 复制 / 删除">⋯</button>
+                      </div>
+                    </div>
+
+                    <div class="prof-row">
+                      <span class="dot err"></span>
+                      <div style="min-width:140px">
+                        <div style="display:flex;align-items:center;gap:5px">
+                          <span style="font-weight:500;color:var(--l1)">硅基中转</span>
+                          <span class="pill err">401 密钥失效 · 去网关修 ↗</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--l3);margin-top:1px">来自网关：硅基流动 · <span class="mono">api.siliconflow.cn</span></div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:5px;margin-left:8px">
+                        <span class="pill mono" style="color:var(--l2);background:var(--inset)">claude-sonnet-4-5</span>
+                        <span class="pill" style="color:var(--l3)">+2</span>
+                      </div>
+                      <div class="row-acts">
+                        <button class="m-btn xs ghost">设默认</button>
+                        <button class="ico-btn" title="编辑">⋯</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Group: Antigravity CLI -->
+                <div class="agent-group" data-grp="agy">
+                  <div class="agent-grp-head">
+                    <div style="display:flex;align-items:center;gap:7px">
+                      <span class="v-badge agy" style="width:20px;height:20px;font-size:10px">A</span>
+                      <span style="font-size:13px;font-weight:600;color:var(--l1)">Antigravity CLI</span>
+                      <span class="mono" style="font-size:11px;color:var(--l4)">v0.2.9 · 已最新</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <button class="m-btn xs ghost">配置文件</button>
+                      <button class="m-btn xs ghost">+ 添加</button>
+                    </div>
+                  </div>
+                  <div class="prof-list">
+                    <div class="prof-row">
+                      <span class="dot ok"></span>
+                      <div style="min-width:140px">
+                        <div style="display:flex;align-items:center;gap:5px">
+                          <span style="font-weight:600;color:var(--l1)">Gemini</span>
+                          <span class="pill cta-tint">默认</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--l3);margin-top:1px">来自网关：Gemini 网关 · <span class="mono">generativelanguage…</span></div>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:5px;margin-left:8px">
+                        <span class="pill mono" style="color:var(--l1);background:var(--inset)">gemini-4-carbon</span>
+                        <span class="pill" style="color:var(--l3)">+1 备选</span>
+                      </div>
+                      <div class="row-acts">
+                        <button class="m-btn xs">新对话</button>
+                        <button class="ico-btn" title="在外部终端打开">↗</button>
+                        <button class="ico-btn" title="连通测试">⚡</button>
+                        <button class="ico-btn" title="更多">⋯</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="win-note">
+              <b>优化亮点：</b>① 顶部「网关库 · 4」直接带异常红点提示；② 左栏未安装折叠收底，「按服务商」改为更准确的「按网关筛选」；③ 每行结构固定为「名称+角色胶囊 / 来源网关 / 主启动模型胶囊 +N / 常用动作」，报错直接给「去网关修 ↗」。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ② 网关库（Gateway Library List） ═══════════════════════ -->
+  <section class="scene-section" id="s2">
+    <div class="scene-head">
+      <div>
+        <h2><span class="step-pill">场景 ②</span> 网关库列表（GatewayLibrary PagePanel）</h2>
+        <p>管所有 API 钥匙与模型池的总账本。重点解决：行太素而关键信息（密钥尾号、协议槽、模型数）全藏在鼠标悬停 tooltip 里；最有价值的「一键配齐各 CLI」只是个没字的魔棒小图标；底栏右边多了个和左上返回重复的「关闭」。</p>
+      </div>
+      <div class="diff-bullets">
+        <span class="diff-chip"><b>免悬停</b> 密钥尾号 <code>sk-…8f2a</code>、协议槽、模型数直接外露</span>
+        <span class="diff-chip"><b>核心动作显性化</b> 魔棒图标改为带字「配齐 CLI」</span>
+        <span class="diff-chip"><b>底栏减负</b> 去掉与左上角重复的「关闭」，改成健康统计栏</span>
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE ② -->
+      <div class="ab-col before-col">
+        <div class="ab-label before">
+          <span>现状 · 网关库</span>
+          <span class="ab-sub">密钥尾号/协议槽全藏 title · 魔棒图标含义不明 · 底栏重复「关闭」</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail">
+            <div class="rail-ico">⌂</div>
+            <div class="rail-ico active">⇄</div>
+          </aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回</span>
+                <span class="pp-title">网关库</span>
+              </div>
+              <button class="m-btn sm cta">＋ 新建网关</button>
+            </div>
+            <div class="pp-body">
+              <div style="font-size:12px;color:var(--l3);margin-bottom:12px">
+                网关存地址、密钥和可用模型，改一次所有绑定它的连接一起生效。
+              </div>
+              <div class="prof-list">
+                <div class="prof-row" style="font-size:11px;color:var(--l4);background:var(--rail2);padding:6px 12px">
+                  <span style="width:150px">网关</span>
+                  <span style="flex:1">地址</span>
+                  <span style="width:66px">连接</span>
+                  <span style="width:90px;text-align:right">近 30 天</span>
+                  <span style="width:88px"></span>
+                </div>
+                <div class="prof-row">
+                  <div style="width:150px;display:flex;align-items:center;gap:7px">
+                    <span class="dot ok"></span>
+                    <span class="v-badge">D</span>
+                    <span style="color:var(--l1);font-weight:500">DeepSeek</span>
+                  </div>
+                  <span class="mono" style="flex:1;color:var(--l3);font-size:11.5px">api.deepseek.com</span>
+                  <span style="width:66px;color:var(--l3)">2 个连接</span>
+                  <span class="mono" style="width:90px;text-align:right;color:var(--l3)">1.4M tok</span>
+                  <span class="row-acts" style="width:88px;justify-content:flex-end">
+                    <span class="ico-btn" title="测试">⚡</span>
+                    <span class="ico-btn" title="获取模型">↻</span>
+                    <span class="ico-btn" title="一键配置各 CLI">🪄</span>
+                    <span class="ico-btn" title="删除">🗑</span>
+                  </span>
+                </div>
+                <div class="prof-row">
+                  <div style="width:150px;display:flex;align-items:center;gap:7px">
+                    <span class="dot ok"></span>
+                    <span class="v-badge">N</span>
+                    <span style="color:var(--l1);font-weight:500">实验室 NewAPI</span>
+                  </div>
+                  <span class="mono" style="flex:1;color:var(--l3);font-size:11.5px">ai-hub.lab.internal</span>
+                  <span style="width:66px;color:var(--l3)">3 个连接</span>
+                  <span class="mono" style="width:90px;text-align:right;color:var(--l3)">¥ 84.20</span>
+                  <span class="row-acts" style="width:88px;justify-content:flex-end">
+                    <span class="ico-btn">⚡</span><span class="ico-btn">↻</span><span class="ico-btn">🪄</span><span class="ico-btn">🗑</span>
+                  </span>
+                </div>
+                <div class="prof-row">
+                  <div style="width:150px;display:flex;align-items:center;gap:7px">
+                    <span class="dot err"></span>
+                    <span class="v-badge">硅</span>
+                    <span style="color:var(--l1);font-weight:500">硅基流动</span>
+                  </div>
+                  <span class="mono" style="flex:1;color:var(--err-text);font-size:11.5px">HTTP 401 Unauthorized</span>
+                  <span style="width:66px;color:var(--l3)">1 个连接</span>
+                  <span class="mono" style="width:90px;text-align:right;color:var(--l4)">—</span>
+                  <span class="row-acts" style="width:88px;justify-content:flex-end">
+                    <span class="ico-btn">⚡</span><span class="ico-btn">↻</span><span class="ico-btn">🪄</span><span class="ico-btn">🗑</span>
+                  </span>
+                </div>
+                <div class="prof-row">
+                  <div style="width:150px;display:flex;align-items:center;gap:7px">
+                    <span class="dot muted"></span>
+                    <span class="v-badge gemini">G</span>
+                    <span style="color:var(--l1);font-weight:500">Gemini 网关</span>
+                  </div>
+                  <span class="mono" style="flex:1;color:var(--l3);font-size:11.5px">generativelanguage.googleapis.com</span>
+                  <span style="width:66px;color:var(--l4)">0 个连接</span>
+                  <span class="mono" style="width:90px;text-align:right;color:var(--l4)">—</span>
+                  <span class="row-acts" style="width:88px;justify-content:flex-end">
+                    <span class="ico-btn">⚡</span><span class="ico-btn">↻</span><span class="ico-btn">🪄</span><span class="ico-btn">🗑</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="pp-foot">
+              <span style="font-size:11.5px;color:var(--l3)">撤销自动合并</span>
+              <button class="m-btn sm">关闭</button>
+            </div>
+            <div class="pain-note">
+              <b>痛点：</b>① 同一家建了两个账号时，列表看不到密钥尾号（如 <code>sk-…9a2f</code>）没法区分；② 支持哪些协议（Anthropic / OpenAI / Gemini）、拉到了几个模型全看不到；③ 🪄「一键配置各 CLI」藏在四个无字图标中间。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER ② -->
+      <div class="ab-col after-col">
+        <div class="ab-label after">
+          <span>优化方案 · 网关库（可点协议胶囊过滤）</span>
+          <span class="ab-sub">密钥尾号+协议槽+已绑 CLI 徽标一目了然 · 0 连接网关主动引导「配齐 CLI」</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail">
+            <div class="rail-ico">⌂</div>
+            <div class="rail-ico active">⇄</div>
+          </aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回连接</span>
+                <span class="pp-title">网关库</span>
+                <span class="pill">4 个网关</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:7px">
+                <button class="m-btn sm">全部测速</button>
+                <button class="m-btn sm cta">＋ 新建网关</button>
+              </div>
+            </div>
+
+            <div class="pp-body" style="display:flex;flex-direction:column;gap:12px">
+              <!-- Filter & Search Bar -->
+              <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px">
+                <div class="m-seg" id="gwProtoFilter">
+                  <button class="on" data-proto="all">全部 (4)</button>
+                  <button data-proto="anthropic">Anthropic (3)</button>
+                  <button data-proto="openai">OpenAI (3)</button>
+                  <button data-proto="gemini">Gemini (2)</button>
+                </div>
+                <div class="m-input sm" style="width:180px;color:var(--l4)">⌕ 搜网关名 / 地址 / 尾号…</div>
+              </div>
+
+              <div class="prof-list" id="gwAfterList">
+                <!-- Row 1 -->
+                <div class="prof-row" data-protos="anthropic openai" style="padding:11px 13px">
+                  <span class="v-badge">D</span>
+                  <div style="min-width:175px;flex:1.1">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:600;color:var(--l1)">DeepSeek 官方</span>
+                      <span class="pill ok"><span class="dot ok"></span>198ms</span>
+                    </div>
+                    <div class="mono" style="font-size:11px;color:var(--l3);margin-top:2px">
+                      api.deepseek.com · 密钥 <span style="color:var(--l2)">sk-…8f2a</span>
+                    </div>
+                  </div>
+                  <div style="flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+                    <span class="pill">OpenAI</span>
+                    <span class="pill">Anthropic</span>
+                    <span style="font-size:11px;color:var(--l3);margin-left:4px">2 个模型</span>
+                  </div>
+                  <div style="width:105px;display:flex;align-items:center;gap:4px">
+                    <span class="v-badge claude" style="width:18px;height:18px;font-size:9px" title="Claude Code">C</span>
+                    <span class="v-badge kimi" style="width:18px;height:18px;font-size:9px" title="Kimi Code">K</span>
+                    <span style="font-size:11.5px;color:var(--l2)">2 连接</span>
+                  </div>
+                  <div class="mono" style="width:76px;text-align:right;font-size:11.5px;color:var(--l2)">1.4M tok</div>
+                  <div class="row-acts">
+                    <button class="m-btn xs">配齐 CLI</button>
+                    <button class="ico-btn" title="刷新模型">↻</button>
+                    <button class="ico-btn" title="编辑 / 删除">⋯</button>
+                  </div>
+                </div>
+
+                <!-- Row 2 -->
+                <div class="prof-row" data-protos="anthropic openai gemini" style="padding:11px 13px">
+                  <span class="v-badge">N</span>
+                  <div style="min-width:175px;flex:1.1">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:600;color:var(--l1)">实验室 NewAPI</span>
+                      <span class="pill ok"><span class="dot ok"></span>84ms</span>
+                    </div>
+                    <div class="mono" style="font-size:11px;color:var(--l3);margin-top:2px">
+                      ai-hub.lab.internal · 密钥 <span style="color:var(--l2)">sk-…31c0</span>
+                    </div>
+                  </div>
+                  <div style="flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+                    <span class="pill">OpenAI</span>
+                    <span class="pill">Anthropic</span>
+                    <span class="pill">Gemini</span>
+                    <span style="font-size:11px;color:var(--l3);margin-left:4px">46 个模型</span>
+                  </div>
+                  <div style="width:105px;display:flex;align-items:center;gap:4px">
+                    <span class="v-badge claude" style="width:18px;height:18px;font-size:9px">C</span>
+                    <span class="v-badge openai" style="width:18px;height:18px;font-size:9px">O</span>
+                    <span class="v-badge agy" style="width:18px;height:18px;font-size:9px">A</span>
+                    <span style="font-size:11.5px;color:var(--l2)">3</span>
+                  </div>
+                  <div class="mono" style="width:76px;text-align:right;font-size:11.5px;color:var(--ok-text)" title="剩余额度">余 ¥84.2</div>
+                  <div class="row-acts">
+                    <button class="m-btn xs">配齐 CLI</button>
+                    <button class="ico-btn" title="刷新模型">↻</button>
+                    <button class="ico-btn" title="更多">⋯</button>
+                  </div>
+                </div>
+
+                <!-- Row 3: Error -->
+                <div class="prof-row" data-protos="anthropic openai" style="padding:11px 13px;background:rgba(240,112,112,0.04)">
+                  <span class="v-badge">硅</span>
+                  <div style="min-width:175px;flex:1.1">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:600;color:var(--l1)">硅基流动</span>
+                      <span class="pill err">401 密钥失效</span>
+                    </div>
+                    <div class="mono" style="font-size:11px;color:var(--l3);margin-top:2px">
+                      api.siliconflow.cn · 密钥 <span style="color:var(--err-text)">sk-…009e</span>
+                    </div>
+                  </div>
+                  <div style="flex:1;display:flex;flex-wrap:wrap;align-items:center;gap:4px">
+                    <span class="pill">OpenAI</span>
+                    <span class="pill">Anthropic</span>
+                    <span style="font-size:11px;color:var(--l3);margin-left:4px">18 个模型</span>
+                  </div>
+                  <div style="width:105px;display:flex;align-items:center;gap:4px">
+                    <span class="v-badge claude" style="width:18px;height:18px;font-size:9px">C</span>
+                    <span style="font-size:11.5px;color:var(--l2)">1 连接</span>
+                  </div>
+                  <div class="mono" style="width:76px;text-align:right;font-size:11.5px;color:var(--l4)">—</div>
+                  <div class="row-acts">
+                    <button class="m-btn xs soft" style="border-color:color-mix(in srgb,var(--err-text) 45%,var(--field));color:var(--err-text)">更换密钥</button>
+                    <button class="ico-btn">⋯</button>
+                  </div>
+                </div>
+
+                <!-- Row 4: 0 Connections -->
+                <div class="prof-row" data-protos="gemini" style="padding:11px 13px">
+                  <span class="v-badge gemini">G</span>
+                  <div style="min-width:175px;flex:1.1">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:600;color:var(--l1)">Gemini 官方</span>
+                      <span class="pill"><span class="dot muted"></span>未测</span>
+                    </div>
+                    <div class="mono" style="font-size:11px;color:var(--l3);margin-top:2px">
+                      generativelanguage… · 密钥 <span style="color:var(--l2)">AIza…89Q</span>
+                    </div>
+                  </div>
+                  <div style="flex:1;display:flex;align-items:center;gap:4px">
+                    <span class="pill">Gemini</span>
+                    <span style="font-size:11px;color:var(--l3);margin-left:4px">8 个模型</span>
+                  </div>
+                  <div style="width:105px">
+                    <span class="pill amber">暂未绑 CLI</span>
+                  </div>
+                  <div class="mono" style="width:76px;text-align:right;font-size:11.5px;color:var(--l4)">—</div>
+                  <div class="row-acts">
+                    <button class="m-btn xs cta">一键绑 CLI</button>
+                    <button class="ico-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pp-foot">
+              <span style="font-size:11.5px;color:var(--l3)">共 4 个网关 · <span style="color:var(--ok-text)">2 正常</span> · <span style="color:var(--err-text)">1 待换密钥</span> · 1 未绑定连接</span>
+              <span style="font-size:11.5px;color:var(--l3);cursor:pointer;text-decoration:underline">撤销上次自动合并</span>
+            </div>
+            <div class="win-note">
+              <b>优化亮点：</b>① 密钥尾号、协议胶囊、模型数、已绑哪些 CLI 图标全部免悬停直看；② 401 网关直接出「更换密钥」，0 连接网关高亮「一键绑 CLI」；③ 顶部支持按协议过滤并一键「全部测速」。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ③ 新建 / 编辑网关（New / Edit Gateway） ═══════════════════════ -->
+  <section class="scene-section" id="s3">
+    <div class="scene-head">
+      <div>
+        <h2><span class="step-pill">场景 ③</span> 新建网关（GatewayLibrary 编辑态）</h2>
+        <p>填一次服务商钥匙的地方。重点解决：服务商下拉找得慢、<code>[测试]</code> 和 <code>[获取模型]</code> 拆成两个按钮让人犹豫先点谁、<b>建完新网关无法当场勾绑给哪些 Agent</b>（导致保存后落回 0 连接还要再点一轮）。</p>
+      </div>
+      <div class="diff-bullets">
+        <span class="diff-chip"><b>快捷预设</b> 常用服务商胶囊一点填好地址与协议槽</span>
+        <span class="diff-chip"><b>二合一验证</b> 密钥旁直接点「验证连通并拉取模型」</span>
+        <span class="diff-chip"><b>新建即闭环</b> 底部可选「保存后顺便为这些 CLI 建连接」</span>
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE ③ -->
+      <div class="ab-col before-col">
+        <div class="ab-label before">
+          <span>现状 · 新建网关</span>
+          <span class="ab-sub">平铺输入框 · [测试] 与 [获取模型] 分裂 · 保存后 0 连接需二次绑定</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回网关库</span>
+                <span class="pp-title">新建网关</span>
+              </div>
+            </div>
+            <div class="pp-body narrow">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div>
+                  <div class="f-lbl">服务商</div>
+                  <div class="m-input"><span>自定义</span><span style="color:var(--l4)">▾</span></div>
+                </div>
+                <div>
+                  <div class="f-lbl">名称</div>
+                  <div class="m-input"><span>实验室 NewAPI</span></div>
+                </div>
+                <div>
+                  <div class="f-lbl">地址</div>
+                  <div class="m-input mono"><span>https://ai-hub.lab.internal/v1</span></div>
+                </div>
+                <div>
+                  <div class="f-lbl">密钥</div>
+                  <div class="m-input mono"><span>sk-••••••••••••••••••••31c0</span><span style="color:var(--l3)">👁</span></div>
+                </div>
+                <div style="display:flex;gap:8px;padding-top:2px">
+                  <button class="m-btn sm">测试</button>
+                  <button class="m-btn sm">获取模型</button>
+                </div>
+
+                <div style="font-size:11.5px;font-weight:600;color:var(--l3);margin-top:10px">模型与连接</div>
+                <div class="m-well" style="padding:10px 12px;font-size:12px;color:var(--l3)">
+                  ▸ 模型 (0 个) — 点上方「获取模型」或手动输入
+                </div>
+                <!-- Notice: editing === "new" hides connections completely! -->
+
+                <div style="font-size:11.5px;font-weight:600;color:var(--l3);margin-top:10px">高级设置</div>
+                <div class="fold-list">
+                  <div class="fold-row"><span>▸ 多协议地址</span></div>
+                  <div class="fold-row"><span>▸ 请求头与中转兼容</span></div>
+                  <div class="fold-row"><span>▸ 余额查询令牌 (New API)</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="pp-foot">
+              <span></span>
+              <div style="display:flex;gap:8px">
+                <button class="m-btn sm">取消</button>
+                <button class="m-btn sm cta">保存</button>
+              </div>
+            </div>
+            <div class="pain-note">
+              <b>痛点：</b>① 用户总是要先点「测试」再点「获取模型」两下；② `editing === "new"` 时完全没有绑定 Agent 的入口，点完保存回到网关库是 `0 个连接`，还得再去添加连接里重新选一遍。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER ③ -->
+      <div class="ab-col after-col">
+        <div class="ab-label after">
+          <span>优化方案 · 新建网关（可点预设胶囊、验证按钮、顺便绑 CLI）</span>
+          <span class="ab-sub">三段式清晰节奏：选预设填钥匙 → 一键验证拉模型 → 顺手勾要绑的 CLI</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回网关库</span>
+                <span class="pp-title">新建网关</span>
+              </div>
+              <span style="font-size:11.5px;color:var(--l3)">保存一次密钥，多 CLI 共享</span>
+            </div>
+
+            <div class="pp-body narrow">
+              <!-- Zone 1: Vendor & Credentials -->
+              <div class="f-sec">
+                <div class="f-sec-head">
+                  <span><span class="step-num">1</span>服务商预设与接口凭证</span>
+                  <span style="font-size:11px;color:var(--l3);font-weight:400;cursor:pointer">更多 18 家预设 ▾</span>
+                </div>
+                <div class="preset-bar" id="gwPresetBar">
+                  <span class="preset-chip sel" data-name="实验室 NewAPI" data-url="https://ai-hub.lab.internal">New API / OneAPI</span>
+                  <span class="preset-chip" data-name="DeepSeek 官方" data-url="https://api.deepseek.com">DeepSeek</span>
+                  <span class="preset-chip" data-name="OpenRouter" data-url="https://openrouter.ai/api/v1">OpenRouter</span>
+                  <span class="preset-chip" data-name="硅基流动" data-url="https://api.siliconflow.cn/v1">硅基流动</span>
+                  <span class="preset-chip" data-name="自建 / 其他" data-url="https://">自定义地址</span>
+                </div>
+
+                <div class="m-well" style="padding:12px;display:flex;flex-direction:column;gap:10px">
+                  <div class="f-grid-2">
+                    <div>
+                      <div class="f-lbl"><span>网关名称</span><span style="color:var(--l4)">好认即可</span></div>
+                      <div class="m-input"><span id="gwMockName">实验室 NewAPI</span></div>
+                    </div>
+                    <div>
+                      <div class="f-lbl"><span>主接口地址</span><span style="color:var(--ok-text)">自动识别 /v1 后缀</span></div>
+                      <div class="m-input mono"><span id="gwMockUrl">https://ai-hub.lab.internal</span></div>
+                    </div>
+                  </div>
+                  <div>
+                    <div class="f-lbl"><span>API 密钥</span><span style="color:var(--l4)">本机保存，不上传云端</span></div>
+                    <div style="display:flex;gap:8px">
+                      <div class="m-input mono" style="flex:1">
+                        <span>sk-••••••••••••••••••••••••31c0</span>
+                        <span style="color:var(--l3);font-size:11px">粘贴 / 👁</span>
+                      </div>
+                      <button class="m-btn soft" id="btnVerifyGw" style="height:32px">⚡ 验证连通并拉取模型</button>
+                    </div>
+                  </div>
+
+                  <!-- Verification Banner -->
+                  <div id="gwVerifyBanner" style="padding:8px 10px;border-radius:7px;background:color-mix(in srgb,var(--ok-text) 10%,transparent);border:1px solid color-mix(in srgb,var(--ok-text) 28%,transparent);display:flex;align-items:center;justify-content:space-between;font-size:11.5px">
+                    <span style="color:var(--ok-text);font-weight:500">✓ 连通正常 (92ms) · 自动识出 OpenAI / Anthropic 双协议 · 拉取到 46 个模型</span>
+                    <span style="color:var(--l2);cursor:pointer;text-decoration:underline">查看/设温度 (46) ▸</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Zone 2: One-Step Bind CLI -->
+              <div class="f-sec">
+                <div class="f-sec-head">
+                  <span><span class="step-num">2</span>顺便给哪些 CLI 建连接（可选，免去保存后再配一轮）</span>
+                  <span style="font-size:11px;color:var(--l3);font-weight:400">按已通协议自动筛出兼容 CLI</span>
+                </div>
+                <div class="m-well" style="padding:11px 12px;display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;flex-wrap:wrap;gap:7px" id="gwAutoBindBar">
+                    <span class="agent-check-chip on"><span class="v-badge claude" style="width:16px;height:16px;font-size:9px">C</span>Claude Code ✓</span>
+                    <span class="agent-check-chip on"><span class="v-badge openai" style="width:16px;height:16px;font-size:9px">O</span>Codex ✓</span>
+                    <span class="agent-check-chip"><span class="v-badge agy" style="width:16px;height:16px;font-size:9px">A</span>Antigravity CLI</span>
+                    <span class="agent-check-chip"><span class="v-badge kimi" style="width:16px;height:16px;font-size:9px">K</span>Kimi Code</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--l3)">
+                    将为勾选的 CLI 自动挑最匹配的默认模型（如 Claude 绑 <code class="mono">claude-sonnet-4-5</code>、Codex 绑 <code class="mono">gpt-5</code>），保存后立即可开聊。
+                  </div>
+                </div>
+              </div>
+
+              <!-- Zone 3: Advanced Fold -->
+              <div class="f-sec" style="margin-bottom:0">
+                <div class="f-sec-head"><span>高级选项（按需展开）</span></div>
+                <div class="fold-list">
+                  <div class="fold-row"><span>▸ 多协议独立地址（Anthropic / OpenAI / Gemini 分开填）</span><span style="font-size:11px;color:var(--l4)">当前跟随主地址</span></div>
+                  <div class="fold-row"><span>▸ 自定义请求头 & 中转兼容开关</span><span style="font-size:11px;color:var(--l4)">默认</span></div>
+                  <div class="fold-row"><span>▸ New API 余额查询令牌</span><span style="font-size:11px;color:var(--l4)">未设置</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pp-foot">
+              <span style="font-size:11.5px;color:var(--l3)" id="gwFootSummary">将保存网关，并同步创建 <b>2 条</b> CLI 连接</span>
+              <div style="display:flex;gap:8px">
+                <button class="m-btn sm">取消</button>
+                <button class="m-btn sm cta" id="gwSaveBtn">保存网关并建 2 条连接</button>
+              </div>
+            </div>
+            <div class="win-note">
+              <b>优化亮点：</b>① 热门服务商预设胶囊化；② 「验证连通并拉取模型」合成一步并当场反馈通了哪几个协议槽；③ 新增「顺便给哪些 CLI 建连接」，一次点击完成「建网关 + 配连接」全闭环。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ④ 添加连接（Add Connection） ═══════════════════════ -->
+  <section class="scene-section" id="s4">
+    <div class="scene-head">
+      <div>
+        <h2><span class="step-pill">场景 ④</span> 添加连接（ProfileForm 新建态）</h2>
+        <p>给具体某个 CLI 增加一条可用配置。重点解决：顶部两排 SegTabs（<code>API 密钥 | 官方账号</code> 紧贴 <code>新建 | 选用已有</code>）叠罗汉；模型选择拆成「下拉挑」和「编号输入框」两块割裂区域；「连接名称」掉在最底下容易漏看。</p>
+      </div>
+      <div class="diff-bullets">
+        <span class="diff-chip"><b>砍双层开关</b> 2×2 嵌套 SegTabs 收成一行三卡片来源选择</span>
+        <span class="diff-chip"><b>模型工作台合一</b> 已选排序（#1 默认启动）与目录抽屉收进同一容器</span>
+        <span class="diff-chip"><b>名称归位</b> 自动生成好名字并支持就地微调</span>
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE ④ -->
+      <div class="ab-col before-col">
+        <div class="ab-label before">
+          <span>现状 · 添加连接</span>
+          <span class="ab-sub">两层 SegTabs 上下紧贴 · 模型选择割裂为上下两摊 · 名称沉在最底</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回</span>
+                <span class="pp-title">添加连接</span>
+              </div>
+            </div>
+            <div class="pp-body narrow">
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <!-- Double SegTabs pain! -->
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <div class="m-input sm" style="width:180px"><span>Antigravity CLI</span><span>▾</span></div>
+                  <div class="m-seg"><span class="on">API 密钥</span><span>官方账号</span></div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between">
+                  <span style="font-size:12px;color:var(--l3)">网关</span>
+                  <div class="m-seg"><span>新建</span><span class="on">选用已有</span></div>
+                </div>
+
+                <!-- Loose gateway list -->
+                <div class="m-well" style="padding:6px">
+                  <div style="padding:6px 8px;border-radius:6px;background:var(--seg-sel);display:flex;justify-content:space-between;font-size:12px">
+                    <span>Gemini 网关 <span class="mono" style="color:var(--l3);font-size:11px">generativelanguage…</span></span>
+                    <span style="color:var(--l3);font-size:11px">更换</span>
+                  </div>
+                </div>
+
+                <!-- Disconnected Model Picker + Numbered Inputs -->
+                <div>
+                  <div class="f-lbl">模型</div>
+                  <div class="m-input sm" style="margin-bottom:8px;color:var(--l3)"><span>从 8 个模型中选择（已选 2）…</span><span>▾</span></div>
+                  <div style="display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span class="mono" style="font-size:11px;color:var(--l4);width:14px">1</span>
+                      <div class="m-input sm mono" style="flex:1"><span>gemini-4-carbon</span><span class="pill">默认</span></div>
+                      <span style="color:var(--l4)">×</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span class="mono" style="font-size:11px;color:var(--l4);width:14px">2</span>
+                      <div class="m-input sm mono" style="flex:1"><span>gemini-2.5-flash</span><span style="font-size:10.5px;color:var(--l4)">设默认</span></div>
+                      <span style="color:var(--l4)">×</span>
+                    </div>
+                    <span style="font-size:11.5px;color:var(--l3)">+ 手填目录里没有的模型</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="f-lbl">名称</div>
+                  <div class="m-input sm"><span>Gemini 网关</span></div>
+                </div>
+                <div style="font-size:12px;color:var(--l3)">▸ 高级设置</div>
+              </div>
+            </div>
+            <div class="pp-foot">
+              <span></span>
+              <div style="display:flex;gap:8px"><button class="m-btn sm">取消</button><button class="m-btn sm cta">添加</button></div>
+            </div>
+            <div class="pain-note">
+              <b>痛点：</b>① 先选「API 密钥 / 官方账号」，下一行又选「新建 / 选用已有」，两排相似分段开关叠在一起增加理解负担；② 模型上面一个下拉框、下面一列输入框，视觉重复且占纵向高度。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER ④ -->
+      <div class="ab-col after-col">
+        <div class="ab-label after">
+          <span>优化方案 · 添加连接（可点击切换 3 种接入来源体验）</span>
+          <span class="ab-sub">一行三卡片直选来源 · 模型「排序+挑选」一体化工作盒 · 不兼容网关给补救入口</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回连接</span>
+                <span class="pp-title">添加连接</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--l3)">
+                <span>目标 CLI：</span>
+                <div class="m-input sm" style="height:27px;gap:8px">
+                  <span class="v-badge agy" style="width:16px;height:16px;font-size:9px">A</span>
+                  <span style="font-weight:500;color:var(--l1)">Antigravity CLI</span>
+                  <span style="color:var(--l3)">▾</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pp-body narrow">
+              <!-- Step 1: Unified 3-way Source Cards -->
+              <div class="f-sec">
+                <div class="f-sec-head">
+                  <span><span class="step-num">1</span>选择凭证来源</span>
+                  <span style="font-size:11px;color:var(--l3);font-weight:400">把「官方账号 / 已有网关 / 新密钥」平铺在同一层</span>
+                </div>
+                <div class="src-cards" id="addSrcCards">
+                  <div class="src-card sel" data-src="existing">
+                    <div class="t"><span>选用已有网关</span><span class="pill cta-tint">推荐 · 4</span></div>
+                    <div class="s">直接复用网关库里存好的钥匙</div>
+                  </div>
+                  <div class="src-card" data-src="newkey">
+                    <div class="t"><span>填入新 API 密钥</span></div>
+                    <div class="s">自动沉淀进网关库供以后复用</div>
+                  </div>
+                  <div class="src-card" data-src="official">
+                    <div class="t"><span>Google 官方账号</span></div>
+                    <div class="s">免填密钥，走浏览器 OAuth 登录</div>
+                  </div>
+                </div>
+
+                <!-- Source Panel A: Existing Gateways -->
+                <div id="srcPaneExisting" class="m-well" style="padding:8px;display:flex;flex-direction:column;gap:6px;margin-top:2px">
+                  <div class="gw-pick-row sel">
+                    <span class="v-badge gemini">G</span>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:12px;font-weight:600;color:var(--l1)">Gemini 官方 <span class="mono" style="font-weight:400;color:var(--l3);font-size:11px">· AIza…89Q</span></div>
+                      <div class="mono" style="font-size:11px;color:var(--l3)">generativelanguage.googleapis.com · 8 个模型</div>
+                    </div>
+                    <span class="pill ok">原生兼容</span>
+                  </div>
+                  <div class="gw-pick-row">
+                    <span class="v-badge">N</span>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:12px;font-weight:500;color:var(--l1)">实验室 NewAPI <span class="mono" style="font-weight:400;color:var(--l3);font-size:11px">· sk-…31c0</span></div>
+                      <div class="mono" style="font-size:11px;color:var(--l3)">ai-hub.lab.internal · 46 个模型</div>
+                    </div>
+                    <span class="pill">OpenAI 兼容槽</span>
+                  </div>
+                  <div class="gw-pick-row disabled">
+                    <span class="v-badge">D</span>
+                    <div style="flex:1;min-width:0">
+                      <div style="font-size:12px;color:var(--l2)">DeepSeek 官方 <span style="font-size:11px;color:var(--l4)">· 暂缺 Antigravity 所需协议槽</span></div>
+                    </div>
+                    <span style="font-size:11px;color:var(--l2);text-decoration:underline;cursor:pointer">去补地址 ↗</span>
+                  </div>
+                </div>
+
+                <!-- Source Panel B: New Key (hidden unless clicked) -->
+                <div id="srcPaneNewkey" class="m-well" style="display:none;padding:10px 12px;flex-direction:column;gap:8px;margin-top:2px">
+                  <div class="f-grid-2">
+                    <div><div class="f-lbl">服务商预设</div><div class="m-input sm"><span>Google Gemini</span><span>▾</span></div></div>
+                    <div><div class="f-lbl">接口地址</div><div class="m-input sm mono"><span>https://generativelanguage.googleapis.com</span></div></div>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <div class="m-input sm mono" style="flex:1"><span>AIzaSy••••••••••••••••••••••</span></div>
+                    <button class="m-btn sm soft">⚡ 验证并拉取</button>
+                  </div>
+                </div>
+
+                <!-- Source Panel C: Official Account (hidden unless clicked) -->
+                <div id="srcPaneOfficial" class="m-well" style="display:none;padding:12px;font-size:12px;color:var(--l2);margin-top:2px">
+                  <div style="font-weight:600;color:var(--l1);margin-bottom:4px">使用 Antigravity CLI 官方 Google 登录态</div>
+                  <div style="color:var(--l3);font-size:11.5px">Mesa 启动时不会注入第三方端点与密钥，直接复用你在终端登录过的 Google 账号，且支持「设为全局默认」。</div>
+                </div>
+              </div>
+
+              <!-- Step 2: Unified Model Workbench -->
+              <div class="f-sec" id="step2Models">
+                <div class="f-sec-head">
+                  <span><span class="step-num">2</span>挑模型与启动默认（第 1 位为启动默认模型）</span>
+                  <span style="font-size:11px;color:var(--l3);font-weight:400">写入 Antigravity <code class="mono">--settings</code> 模型表</span>
+                </div>
+                <div class="m-well" style="overflow:hidden">
+                  <!-- Ordered Selected Models -->
+                  <div style="padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline)">
+                      <span style="color:var(--l4);cursor:grab">⋮⋮</span>
+                      <span class="mono" style="font-size:12px;color:var(--l1);font-weight:600;flex:1">gemini-4-carbon</span>
+                      <span class="pill cta-tint">★ 默认启动</span>
+                      <span style="color:var(--l4);cursor:pointer;padding:0 4px">×</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline)">
+                      <span style="color:var(--l4);cursor:grab">⋮⋮</span>
+                      <span class="mono" style="font-size:12px;color:var(--l2);flex:1">gemini-2.5-flash</span>
+                      <button class="m-btn xs ghost">设为默认</button>
+                      <span style="color:var(--l4);cursor:pointer;padding:0 4px">×</span>
+                    </div>
+                  </div>
+                  <!-- Integrated Picker Bar -->
+                  <div style="padding:7px 10px;background:var(--rail2);border-top:1px solid var(--hairline);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px">
+                    <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                      <span style="font-size:11px;color:var(--l3)">点选追加入列：</span>
+                      <span class="pill mono" style="cursor:pointer">+ gemini-2.5-pro</span>
+                      <span class="pill mono" style="cursor:pointer">+ gemini-2.0-flash-thinking</span>
+                    </div>
+                    <span style="font-size:11px;color:var(--l2);cursor:pointer">+ 手填模型 ID</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Step 3: Name & Default toggle -->
+              <div class="f-sec" style="margin-bottom:0">
+                <div class="f-grid-2" style="align-items:end">
+                  <div>
+                    <div class="f-lbl"><span>连接名称</span><span class="pill" style="font-size:9.5px;padding:0 4px">自动跟随网关</span></div>
+                    <div class="m-input sm"><span>Gemini</span></div>
+                  </div>
+                  <label style="display:flex;align-items:center;gap:7px;height:28px;font-size:12px;color:var(--l2);cursor:pointer">
+                    <input type="checkbox" checked style="accent-color:var(--cta)" />
+                    <span>设为 Antigravity CLI 的默认连接</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="pp-foot">
+              <span style="font-size:11.5px;color:var(--l3)">▸ 展开高级设置（附加环境变量 / 角色分工模型）</span>
+              <div style="display:flex;gap:8px">
+                <button class="m-btn sm">取消</button>
+                <button class="m-btn sm cta">创建连接</button>
+              </div>
+            </div>
+            <div class="win-note">
+              <b>优化亮点：</b>① 目标 CLI 提至页头右侧，正文第一步直接平铺 3 张来源卡，彻底消灭双层 SegTabs；② 已选模型队列与目录快选合进同一个工作盒，支持拖拽/一键设默认；③ 底部顺手可勾「设为该 CLI 默认连接」。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════ ⑤ 编辑连接（Edit Connection） ═══════════════════════ -->
+  <section class="scene-section" id="s5">
+    <div class="scene-head">
+      <div>
+        <h2><span class="step-pill">场景 ⑤</span> 编辑连接（ProfileForm 编辑态 + 配置/生效预览）</h2>
+        <p>微调某条已有连接的模型顺序、分工或核对实际落盘环境变量。重点解决：网关跳转提示在页面顶和底散落两处；底部长篇「生效预览（启动注入 vs 设为全局）」与右上角「配置」Tab 语义重叠，把表单拉得很长。</p>
+      </div>
+      <div class="diff-bullets">
+        <span class="diff-chip"><b>单一来源卡</b> 网关地址/尾号/模型参数入口收进顶部一张紧凑摘要条</span>
+        <span class="diff-chip"><b>边界清晰</b> 表单只管「这条连接的设置」，不再两处重复跳网关库</span>
+        <span class="diff-chip"><b>预览合一</b> 右上角切换「表单 | 注入与全局预览」，主表单清爽一屏到底</span>
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE ⑤ -->
+      <div class="ab-col before-col">
+        <div class="ab-label before">
+          <span>现状 · 编辑连接</span>
+          <span class="ab-sub">两处散落「去网关库」提示 · 底部常驻大块生效预览与右上「配置」Tab 重叠</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:10px">
+                <span class="pp-back">‹ 返回</span>
+                <span class="pp-title">编辑连接</span>
+              </div>
+              <div class="m-seg"><span class="on">表单</span><span>配置</span></div>
+            </div>
+            <div class="pp-body narrow">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="font-size:12px;color:var(--l3)">Claude Code</div>
+                <!-- Link #1 to Gateway -->
+                <div class="m-well" style="padding:8px 10px;display:flex;justify-content:space-between;font-size:12px">
+                  <span>网关 DeepSeek · <span class="mono" style="color:var(--l3)">api.deepseek.com</span> · 密钥 ****</span>
+                  <span style="color:var(--l2);text-decoration:underline">在网关库改</span>
+                </div>
+
+                <div>
+                  <div class="f-lbl">名称</div>
+                  <div class="m-input sm"><span>DeepSeek 主力</span></div>
+                </div>
+                <div>
+                  <div class="f-lbl">模型</div>
+                  <div class="m-input sm" style="margin-bottom:6px;color:var(--l3)"><span>从 2 个模型中选择…</span><span>▾</span></div>
+                  <div class="m-input sm mono"><span>1  deepseek-chat (默认)</span></div>
+                </div>
+
+                <!-- Link #2 to Gateway inside Advanced -->
+                <div style="font-size:12px;color:var(--l2)">▾ 高级设置</div>
+                <div class="m-well" style="padding:9px 11px;font-size:11.5px;color:var(--l3)">
+                  思考档、温度、输出上限按模型在网关库里设置。<u style="color:var(--l2)">打开网关库</u>
+                  <div style="margin-top:8px">附加环境变量 (JSON)…</div>
+                </div>
+
+                <!-- Heavy EffectPreview stuck at bottom of form -->
+                <div class="m-well" style="padding:10px 12px;font-size:11.5px">
+                  <div style="font-weight:600;color:var(--l2);margin-bottom:4px">生效预览</div>
+                  <div class="mono" style="font-size:11px;color:var(--l3);line-height:1.6">
+                    ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic<br/>
+                    ANTHROPIC_AUTH_TOKEN=sk-••••8f2a<br/>
+                    ANTHROPIC_MODEL=deepseek-chat<br/>
+                    全局写入目标：~/.claude/settings.json
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pp-foot">
+              <span></span>
+              <div style="display:flex;gap:8px"><button class="m-btn sm">取消</button><button class="m-btn sm cta">保存</button></div>
+            </div>
+            <div class="pain-note">
+              <b>痛点：</b>① 顶部有个「在网关库改」，展开高级设置又有一段话跳「打开网关库」；② 右上角已经有 `表单 | 配置`，表单最底下又铺一块 `生效预览`，信息一式两份显得啰嗦。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER ⑤ -->
+      <div class="ab-col after-col">
+        <div class="ab-label after">
+          <span>优化方案 · 编辑连接（可点右上角「连接设置 | 注入与全局预览」切换）</span>
+          <span class="ab-sub">一屏清爽改完本连接设置 · 配置片段与双模式生效核对合并进专属预览页</span>
+        </div>
+        <div class="mesa-frame">
+          <aside class="app-rail"><div class="rail-ico active">⇄</div></aside>
+          <div class="app-main">
+            <div class="pp-head">
+              <div style="display:flex;align-items:center;gap:9px">
+                <span class="pp-back">‹ 返回连接</span>
+                <span class="v-badge claude" style="width:19px;height:19px;font-size:10px">C</span>
+                <span class="pp-title">编辑连接 · DeepSeek 主力</span>
+                <span class="pill ok">● 当前全局默认</span>
+              </div>
+              <div class="m-seg" id="editTabSeg">
+                <button class="on" data-etab="form">连接设置</button>
+                <button data-etab="preview">注入与全局预览</button>
+              </div>
+            </div>
+
+            <!-- Tab A: Clean Form -->
+            <div class="pp-body narrow" id="editPaneForm">
+              <!-- Unified Gateway Source Card -->
+              <div class="m-well" style="padding:10px 13px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <div style="display:flex;align-items:center;gap:9px;min-width:0">
+                  <span class="v-badge">D</span>
+                  <div style="min-width:0">
+                    <div style="font-size:12px;color:var(--l1);font-weight:600;display:flex;align-items:center;gap:6px">
+                      <span>来源网关：DeepSeek 官方</span>
+                      <span class="pill ok"><span class="dot ok"></span>正常</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--l3);margin-top:1px">
+                      <span class="mono">api.deepseek.com</span> · 尾号 <span class="mono">sk-…8f2a</span> · 改密钥、地址或单模型温度/思考档统一在网关改
+                    </div>
+                  </div>
+                </div>
+                <button class="m-btn xs soft">打开所属网关 ↗</button>
+              </div>
+
+              <!-- Connection-owned fields -->
+              <div class="f-sec">
+                <div class="f-grid-2">
+                  <div>
+                    <div class="f-lbl">连接名称</div>
+                    <div class="m-input sm"><span>DeepSeek 主力</span></div>
+                  </div>
+                  <div>
+                    <div class="f-lbl"><span>接口协议槽</span><span style="color:var(--l4)">网关支持双协议</span></div>
+                    <div class="m-input sm"><span>Anthropic Messages (/anthropic)</span><span>▾</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="f-sec">
+                <div class="f-sec-head">
+                  <span>启用模型与 Claude 角色分工</span>
+                  <span style="font-size:11px;color:var(--l3);font-weight:400">可换绑其他网关</span>
+                </div>
+                <div class="m-well" style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+                  <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline)">
+                    <span style="color:var(--l4)">⋮⋮</span>
+                    <span class="mono" style="font-size:12px;color:var(--l1);font-weight:600;flex:1">deepseek-chat</span>
+                    <span class="pill cta-tint">★ 主模型 & Sonnet 槽</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline)">
+                    <span style="color:var(--l4)">⋮⋮</span>
+                    <span class="mono" style="font-size:12px;color:var(--l2);flex:1">deepseek-reasoner</span>
+                    <span class="pill">Opus 推理槽</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--l3);padding-top:2px">
+                    <span>小任务 (Haiku) 槽：<code class="mono" style="color:var(--l2)">deepseek-chat</code></span>
+                    <span style="color:var(--l2);cursor:pointer">调整三槽分工 ▾</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="fold-list">
+                <div class="fold-row">
+                  <span>▸ 专属附加环境变量（仅对这条 Claude 连接追加）</span>
+                  <span class="mono" style="font-size:11px;color:var(--l4)">已设 1 项</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab B: Unified Config & Effect Preview (Interactive!) -->
+            <div class="pp-body narrow" id="editPanePreview" style="display:none">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div class="m-well" style="padding:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-size:12px;font-weight:600;color:var(--l1)">① Mesa 内启动 / 外部终端注入（零污染，不改磁盘）</span>
+                    <button class="m-btn xs">复制 env</button>
+                  </div>
+                  <div class="mono" style="padding:9px 11px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline);font-size:11.5px;color:var(--l2);line-height:1.65">
+                    ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic"<br/>
+                    ANTHROPIC_AUTH_TOKEN="sk-••••••••••••8f2a"<br/>
+                    ANTHROPIC_MODEL="deepseek-chat"<br/>
+                    ANTHROPIC_DEFAULT_OPUS_MODEL="deepseek-reasoner"
+                  </div>
+                </div>
+
+                <div class="m-well" style="padding:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                    <span style="font-size:12px;font-weight:600;color:var(--l1)">② 「设为全局默认」写入预览（<code class="mono">~/.claude/settings.json</code>）</span>
+                    <span class="pill ok">当前已生效 · 只管 Mesa 写的键</span>
+                  </div>
+                  <div class="mono" style="padding:9px 11px;border-radius:7px;background:var(--canvas);border:1px solid var(--hairline);font-size:11.5px;color:var(--l2);line-height:1.65">
+                    {<br/>
+                    &nbsp;&nbsp;"env": {<br/>
+                    &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",<br/>
+                    &nbsp;&nbsp;&nbsp;&nbsp;"ANTHROPIC_MODEL": "deepseek-chat"<br/>
+                    &nbsp;&nbsp;}<br/>
+                    }
+                  </div>
+                  <div style="font-size:11px;color:var(--l3);margin-top:6px">
+                    注：若你的 shell（如 <code>~/.zshrc</code>）导出了同名环境变量，shell 会盖过全局文件。
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pp-foot">
+              <div style="display:flex;align-items:center;gap:8px">
+                <button class="m-btn xs">⚡ 测试这条连接</button>
+                <span style="font-size:11px;color:var(--l3)">改动保存后自动同步更新全局默认配置</span>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="m-btn sm">取消</button>
+                <button class="m-btn sm cta">保存修改</button>
+              </div>
+            </div>
+            <div class="win-note">
+              <b>优化亮点：</b>① 顶部唯一一张「来源网关条」说清哪些归网关管，删除高级设置里的重复跳转话术；② 把原本散在右上角「配置」和表单底部的「生效预览」合进「注入与全局预览」Tab，主表单一屏干净到底，核对写入也更透彻。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // 1. Scene filter tabs
+  const sceneBtns = document.querySelectorAll('#sceneTabs button');
+  const sections = document.querySelectorAll('.scene-section');
+  sceneBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      sceneBtns.forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const target = btn.dataset.scene;
+      sections.forEach(sec => {
+        sec.classList.toggle('hidden-scene', target !== 'all' && sec.id !== target);
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  });
+
+  // 2. Compare mode switcher (split / after / before)
+  const modeBtns = document.querySelectorAll('#modeSeg button');
+  modeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      modeBtns.forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      document.body.dataset.mode = btn.dataset.mode;
+    });
+  });
+
+  // 3. Theme switcher (neutral / ayu / ayu-light)
+  const themeBtns = document.querySelectorAll('#themeSeg button');
+  themeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      themeBtns.forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      document.documentElement.setAttribute('data-theme', btn.dataset.theme);
+    });
+  });
+
+  // 4. Scene 1 interactive: Uninstalled fold & Agent filter
+  const toggleUninst = document.getElementById('toggleUninstalled');
+  const uninstBox = document.getElementById('uninstalledBox');
+  const uninstArrow = document.getElementById('uninstArrow');
+  toggleUninst?.addEventListener('click', () => {
+    const open = uninstBox.style.display !== 'none';
+    uninstBox.style.display = open ? 'none' : 'block';
+    uninstArrow.textContent = open ? '▸' : '▾';
+  });
+
+  const navRows = document.querySelectorAll('#afterConnNav .nav-row[data-agent]');
+  const agentGroups = document.querySelectorAll('.agent-group');
+  const connTitle = document.getElementById('connMainTitle');
+  const connCount = document.getElementById('connMainCount');
+  navRows.forEach(row => {
+    row.addEventListener('click', () => {
+      navRows.forEach(r => r.classList.remove('sel'));
+      row.classList.add('sel');
+      const ag = row.dataset.agent;
+      agentGroups.forEach(g => {
+        g.style.display = (ag === 'all' || g.dataset.grp === ag) ? 'block' : 'none';
+      });
+      if (ag === 'all') {
+        connTitle.textContent = '连接';
+        connCount.textContent = '7 条 · 覆盖 3 个 CLI';
+      } else if (ag === 'claude') {
+        connTitle.textContent = 'Claude Code 连接';
+        connCount.textContent = '3 条连接';
+      } else if (ag === 'agy') {
+        connTitle.textContent = 'Antigravity CLI 连接';
+        connCount.textContent = '2 条连接';
+      } else {
+        connTitle.textContent = 'Codex 连接';
+        connCount.textContent = '2 条连接（示例略）';
+      }
+    });
+  });
+
+  // 5. Scene 2 interactive: Protocol filter in Gateway Library
+  const protoBtns = document.querySelectorAll('#gwProtoFilter button');
+  const gwRows = document.querySelectorAll('#gwAfterList .prof-row');
+  protoBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      protoBtns.forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const p = btn.dataset.proto;
+      gwRows.forEach(r => {
+        const list = (r.dataset.protos || '').split(' ');
+        r.style.display = (p === 'all' || list.includes(p)) ? 'flex' : 'none';
+      });
+    });
+  });
+
+  // 6. Scene 3 interactive: Preset chips & Auto-bind CLI counter
+  const presetChips = document.querySelectorAll('#gwPresetBar .preset-chip');
+  const gwMockName = document.getElementById('gwMockName');
+  const gwMockUrl = document.getElementById('gwMockUrl');
+  presetChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      presetChips.forEach(c => c.classList.remove('sel'));
+      chip.classList.add('sel');
+      gwMockName.textContent = chip.dataset.name;
+      gwMockUrl.textContent = chip.dataset.url;
+    });
+  });
+
+  const bindChips = document.querySelectorAll('#gwAutoBindBar .agent-check-chip');
+  const gwFootSummary = document.getElementById('gwFootSummary');
+  const gwSaveBtn = document.getElementById('gwSaveBtn');
+  function syncBindCount() {
+    const n = document.querySelectorAll('#gwAutoBindBar .agent-check-chip.on').length;
+    gwFootSummary.innerHTML = n > 0
+      ? `将保存网关，并同步创建 <b>${n} 条</b> CLI 连接`
+      : `仅保存网关（暂不自动创建连接）`;
+    gwSaveBtn.textContent = n > 0 ? `保存网关并建 ${n} 条连接` : `保存网关`;
+  }
+  bindChips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chip.classList.toggle('on');
+      const base = chip.textContent.replace(' ✓', '').trim();
+      chip.innerHTML = chip.innerHTML.replace(/✓/g, '').trim() + (chip.classList.contains('on') ? ' ✓' : '');
+      syncBindCount();
+    });
+  });
+
+  const btnVerifyGw = document.getElementById('btnVerifyGw');
+  const gwVerifyBanner = document.getElementById('gwVerifyBanner');
+  btnVerifyGw?.addEventListener('click', () => {
+    btnVerifyGw.textContent = '验证中…';
+    setTimeout(() => {
+      btnVerifyGw.textContent = '⚡ 重新验证并拉取';
+      gwVerifyBanner.style.display = 'flex';
+    }, 240);
+  });
+
+  // 7. Scene 4 interactive: 3-way Source Switcher in Add Connection
+  const srcCards = document.querySelectorAll('#addSrcCards .src-card');
+  const paneEx = document.getElementById('srcPaneExisting');
+  const paneNk = document.getElementById('srcPaneNewkey');
+  const paneOf = document.getElementById('srcPaneOfficial');
+  const step2Models = document.getElementById('step2Models');
+  srcCards.forEach(card => {
+    card.addEventListener('click', () => {
+      srcCards.forEach(c => c.classList.remove('sel'));
+      card.classList.add('sel');
+      const s = card.dataset.src;
+      paneEx.style.display = s === 'existing' ? 'flex' : 'none';
+      paneNk.style.display = s === 'newkey' ? 'flex' : 'none';
+      paneOf.style.display = s === 'official' ? 'block' : 'none';
+      step2Models.style.opacity = s === 'official' ? '0.65' : '1';
+    });
+  });
+
+  // 8. Scene 5 interactive: Edit Connection Form vs Preview Tab
+  const editBtns = document.querySelectorAll('#editTabSeg button');
+  const editPaneForm = document.getElementById('editPaneForm');
+  const editPanePreview = document.getElementById('editPanePreview');
+  editBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      editBtns.forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const isForm = btn.dataset.etab === 'form';
+      editPaneForm.style.display = isForm ? 'block' : 'none';
+      editPanePreview.style.display = isForm ? 'none' : 'block';
+    });
+  });
+</script>
+</body>
+</html>

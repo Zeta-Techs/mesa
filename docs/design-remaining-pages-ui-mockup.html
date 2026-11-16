@@ -1,0 +1,984 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 全局巡检 · 剩余 6 大页面与交互面 UI 优化设计对比</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #252525;
+    --strip: #1c1c1c; --canvas: #121212; --inset: #202020; --raised: #272727;
+    --seg-sel: #2c2c2c; --hairline: #292929; --field: #383838;
+    --l1: #ebebeb; --l2: #c4c4c4; --l3: #969696; --l4: #6b6b6b;
+    --cta: #0169cc; --cta-bd: #1d82e2; --cta-text: #eef6ff;
+    --hover: rgb(255 255 255 / 0.05);
+    --mesa-amber: #f5b83d;
+    --err-bg: rgba(240, 112, 112, 0.14); --err-text: #f07070;
+    --warn-bg: rgba(245, 184, 61, 0.15); --warn-text: #f5b83d;
+    --ok-bg: rgba(76, 195, 138, 0.14); --ok-text: #4cc38a;
+    --well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+    --rail-well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #191613; --rail-sel: #2e2a25;
+    --strip: #1e1b18; --canvas: #14120e; --inset: #22201c; --raised: #2b2823;
+    --seg-sel: #35312b; --hairline: #2b2824; --field: #403d39;
+    --l1: #e7e1d8; --l2: #c6bfb5; --l3: #948d84; --l4: #6d6860;
+    --cta: #f5b83d; --cta-bd: #f7c55f; --cta-text: #1c1507;
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f5f1e8; --rail-sel: #e2ddd3;
+    --strip: #faf4ec; --canvas: #f1ede4; --inset: #fcf9f4; --raised: #ffffff;
+    --seg-sel: #d5cfc5; --hairline: #dcd6ce; --field: #bdb7ad;
+    --l1: #282018; --l2: #463c33; --l3: #786e65; --l4: #a29a92;
+    --cta: #de9416; --cta-bd: #c8830f; --cta-text: #231903;
+    --hover: rgb(0 0 0 / 0.045);
+    --mesa-amber: #d88f12;
+    --err-bg: rgba(185, 28, 28, 0.1); --err-text: #b91c1c;
+    --warn-bg: rgba(180, 110, 12, 0.12); --warn-text: #a16207;
+    --ok-bg: rgba(22, 121, 75, 0.11); --ok-text: #16794b;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: #090a0d; color: #d4d6dd;
+    font: 13.5px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "SF Pro Text", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; }
+
+  /* 顶部导览栏 */
+  .suite-nav {
+    position: sticky; top: 0; z-index: 60;
+    background: rgba(12, 13, 17, 0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #232630; padding: 10px 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+    font-size: 12.5px;
+  }
+  .brand-title { font-weight: 600; color: #f3f4f6; display: inline-flex; align-items: center; gap: 8px; }
+  .brand-dot { width: 10px; height: 3px; border-radius: 2px; background: #f5b83d; display: inline-block; }
+  .jump-links { display: inline-flex; flex-wrap: wrap; gap: 3px; background: #16181e; padding: 3px; border-radius: 9px; border: 1px solid #262934; }
+  .jump-links a { color: #9498a6; text-decoration: none; padding: 4px 9px; border-radius: 6px; font-weight: 500; font-size: 12px; transition: 120ms; }
+  .jump-links a:hover { color: #fff; background: rgba(255,255,255,0.05); }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+  .seg { display: inline-flex; background: #16181e; padding: 2px; border-radius: 8px; border: 1px solid #262934; gap: 2px; }
+  .seg button { background: none; border: 0; color: #9498a6; padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: #2b2f3c; color: #fff; font-weight: 500; }
+
+  .container { max-width: 1520px; margin: 20px auto 64px; padding: 0 20px; display: flex; flex-direction: column; gap: 26px; }
+
+  /* 顶部全景完成度总览 */
+  .audit-banner {
+    background: linear-gradient(180deg, #13151c 0%, #101217 100%);
+    border: 1px solid #242834; border-radius: 14px; padding: 16px 20px;
+    display: grid; grid-template-columns: 1.1fr 1.4fr; gap: 18px; align-items: center;
+  }
+  .audit-banner h1 { margin: 0 0 6px; font-size: 16px; color: #f5f6f8; }
+  .audit-banner p { margin: 0; font-size: 12.5px; color: #9498a6; line-height: 1.6; }
+  .status-pills { display: flex; flex-wrap: wrap; gap: 7px; }
+  .s-pill { font-size: 11.5px; padding: 4px 9px; border-radius: 999px; display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
+  .s-pill.done { background: rgba(76, 195, 138, 0.12); color: #5fd09a; border: 1px solid rgba(76, 195, 138, 0.25); }
+  .s-pill.todo { background: rgba(245, 184, 61, 0.14); color: #f6c156; border: 1px solid rgba(245, 184, 61, 0.3); text-decoration: none; }
+  .s-pill.todo:hover { filter: brightness(1.1); }
+
+  /* 模块容器 */
+  .proposal-block {
+    background: #111318; border: 1px solid #222530; border-radius: 14px; padding: 18px 20px;
+    scroll-margin-top: 66px;
+  }
+  .block-head { margin-bottom: 14px; display: flex; flex-direction: column; gap: 5px; }
+  .block-head-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .block-head h2 { margin: 0; font-size: 15.5px; color: #f3f4f7; }
+  .num-tag { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: rgba(245, 184, 61, 0.16); color: #f5b83d; font-weight: 700; }
+  .file-tag { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: #1b1e27; color: #9399a8; border: 1px solid #2a2e3b; }
+  .block-head p { margin: 0; font-size: 12.5px; color: #9095a4; max-width: 1200px; line-height: 1.55; }
+
+  .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  @media (max-width: 1120px) { .ab-grid, .audit-banner { grid-template-columns: 1fr; } }
+  .ab-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .ab-tag { font-size: 11.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .ab-tag.before { color: #8f93a2; }
+  .ab-tag.after { color: #f5b83d; }
+
+  /* 模拟真实 Mesa 画布 */
+  .demo-box {
+    background: var(--canvas); color: var(--l2);
+    border-radius: 11px; border: 1px solid color-mix(in srgb, var(--field) 80%, transparent);
+    overflow: hidden; position: relative; min-height: 330px; display: flex; flex-direction: column;
+  }
+  .well {
+    background: var(--well);
+    border: 0.5px solid color-mix(in srgb, var(--hairline) 82%, transparent);
+    border-radius: 10px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 7px; border-radius: 999px; font-size: 11px;
+    background: var(--inset); color: var(--l2);
+  }
+  .chip-code {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 1px 6px; border-radius: 5px; font-size: 11px;
+    background: var(--inset); color: var(--l1); border: 0.5px solid var(--hairline);
+  }
+  .btn-pri {
+    display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px;
+    border-radius: 7px; background: var(--cta); border: 1px solid var(--cta-bd);
+    color: var(--cta-text); font-size: 12px; font-weight: 500;
+  }
+  .btn-sec {
+    display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px;
+    border-radius: 7px; background: var(--strip); border: 1px solid var(--field);
+    color: var(--l2); font-size: 12px;
+  }
+  .btn-quiet {
+    display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px;
+    border-radius: 7px; color: var(--l3); font-size: 12px;
+  }
+  .seg-box {
+    display: inline-flex; align-items: center; padding: 2px; border-radius: 7px;
+    background: var(--inset); border: 0.5px solid var(--hairline); gap: 2px; font-size: 11.5px;
+  }
+  .seg-box span { padding: 2px 8px; border-radius: 5px; color: var(--l3); }
+  .seg-box span.on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+
+  .toggle {
+    width: 30px; height: 17px; border-radius: 999px; background: var(--field);
+    position: relative; display: inline-block; flex-shrink: 0;
+  }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
+    border-radius: 50%; background: #fff;
+  }
+  .toggle.on { background: var(--cta); }
+  .toggle.on::after { left: 15px; }
+
+  .brand-m {
+    font-weight: 800; font-size: 10px; width: 15px; height: 15px; border-radius: 4px;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .m-claude { background: rgba(217, 119, 87, 0.18); color: #e08b6d; }
+  .m-codex { background: rgba(16, 163, 127, 0.18); color: #3ec49d; }
+  .m-agy { background: rgba(77, 158, 255, 0.18); color: #67adff; }
+  .m-kimi { background: rgba(167, 139, 250, 0.18); color: #b79dfa; }
+
+  .kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+    padding: 1px 5px; border-radius: 4px; background: var(--inset);
+    border: 1px solid var(--field); color: var(--l3); line-height: 1.3;
+  }
+  .divider { border-top: 1px solid var(--hairline); }
+</style>
+</head>
+<body>
+
+<nav class="suite-nav">
+  <span class="brand-title"><span class="brand-dot"></span> Mesa 剩余页面 UI 全局巡检</span>
+  <div class="jump-links">
+    <a href="#mod-sessions">① 对话管理</a>
+    <a href="#mod-skills">② 技能与预览栏</a>
+    <a href="#mod-mcp">③ MCP 服务</a>
+    <a href="#mod-stats">④ 用量仪表盘</a>
+    <a href="#mod-settings">⑤ 设置分组化</a>
+    <a href="#mod-consult-shell">⑥ 研讨 · 侧栏底坞 · ⌘K</a>
+  </div>
+  <div class="ctrl-group">
+    <span style="color:#888c99;font-size:12px;">主题预览</span>
+    <div class="seg" id="theme-seg">
+      <button data-t="neutral" class="on">Neutral 深色</button>
+      <button data-t="ayu">Ayu 暖深</button>
+      <button data-t="ayu-light">Ayu 暖浅</button>
+    </div>
+  </div>
+</nav>
+
+<main class="container">
+
+  <!-- 顶部巡检总览 -->
+  <section class="audit-banner">
+    <div>
+      <h1>全站页面盘点结论：主工作流已完成，还剩 6 处页面 / 全局面板待收口</h1>
+      <p>
+        已升级统一：工作台及右侧抽屉、项目页全套（科研/编程/目标/定时/文件/Agent 分工）、连接与网关全链路、聊天层五态光标与新对话面板、顶栏。<br/>
+        下方列出的 <b>6 个模块</b> 仍保留早期「无容器裸行 / 硬切全宽横线 / 顶栏控件叠罗汉」形态，统一打磨后整套 Mesa 视觉体系即 100% 闭环。
+      </p>
+    </div>
+    <div class="status-pills">
+      <span class="s-pill done">✓ 工作台 + 抽屉</span>
+      <span class="s-pill done">✓ 项目页 6 大页签</span>
+      <span class="s-pill done">✓ 连接 & 网关库</span>
+      <span class="s-pill done">✓ 聊天层 & 新对话</span>
+      <a class="s-pill todo" href="#mod-sessions">① 对话管理页</a>
+      <a class="s-pill todo" href="#mod-skills">② 技能页 + 预览抽屉</a>
+      <a class="s-pill todo" href="#mod-mcp">③ MCP 服务页</a>
+      <a class="s-pill todo" href="#mod-stats">④ 用量统计页</a>
+      <a class="s-pill todo" href="#mod-settings">⑤ 设置页分组卡</a>
+      <a class="s-pill todo" href="#mod-consult-shell">⑥ 研讨 + 底栏坞 + ⌘K</a>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 1：对话管理页 ==================== -->
+  <section class="proposal-block" id="mod-sessions">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 01</span>
+        <h2>对话管理页（跨项目历史检索与回放）</h2>
+        <span class="file-tag mono">src/pages/SessionsPage.tsx</span>
+      </div>
+      <p>
+        <b>现状问题：</b>① 左栏顶部「栏头 + 搜索框 + 快筛分段盒 + 整行宽『范围 全部对话 ▾』」竖向叠了 4 层，点开「范围」还会把整个会话列表顶掉；② 会话列表行只有单行标题，在「全部对话」下分不清哪家 Agent、属于哪个项目；③ 右栏回放头 <code>[继续] [换 Agent] [导出]</code> 同质细框无主次，底部只读灰条与免责声明占两层高度。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 筛选叠 4 层 + 单行列表缺归属 + 回放头主次弱</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <!-- 左栏 -->
+          <div style="width:43%;background:var(--rail2);border-right:1px solid var(--hairline);padding:10px;display:flex;flex-direction:column;gap:7px;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;">
+              <div><b style="color:var(--l1);font-size:15px;">对话</b> <span style="font-size:10.5px;color:var(--l4);">当前 48 · 总计 126</span></div>
+              <div style="font-size:11px;color:var(--l3);display:flex;gap:6px;"><span>研讨</span><span>导入</span><span>批量管理</span></div>
+            </div>
+            <div style="height:28px;border:1px solid var(--field);border-radius:7px;padding:0 8px;display:flex;align-items:center;font-size:11.5px;color:var(--l4);">🔍 搜索标题、标签，或说过的话</div>
+            <div style="display:flex;gap:4px;align-items:center;">
+              <div class="seg-box"><span class="on">保留</span><span>未读</span><span>进行中</span></div>
+              <span style="font-size:11px;color:var(--l3);">更多 ▾</span>
+            </div>
+            <div style="height:28px;border:1px solid var(--field);border-radius:7px;padding:0 8px;display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--l3);">
+              <span><span style="color:var(--l4);">范围</span> 全部对话</span><span>▾</span>
+            </div>
+            <div style="font-size:11px;color:var(--l4);padding-top:4px;">▤ 未归置</div>
+            <div style="background:var(--rail-sel);border-radius:7px;padding:6px 8px;display:flex;justify-content:space-between;font-size:12.5px;color:var(--l1);">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">0214|写作|定稿引文核查与润色</span>
+              <span class="mono" style="font-size:10.5px;color:var(--l4);flex-shrink:0;">2 小时前</span>
+            </div>
+            <div style="padding:6px 8px;display:flex;justify-content:space-between;font-size:12.5px;color:var(--l1);">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">排查 MesaMark 热更新导出缓存</span>
+              <span class="mono" style="font-size:10.5px;color:var(--l4);flex-shrink:0;">昨天</span>
+            </div>
+            <div style="padding:6px 8px;display:flex;justify-content:space-between;font-size:12.5px;color:var(--l1);">
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">补充碱性 HER 火山图描述符</span>
+              <span class="mono" style="font-size:10.5px;color:var(--l4);flex-shrink:0;">3 天前</span>
+            </div>
+          </div>
+          <!-- 右栏 -->
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;">
+            <div style="padding:10px 12px;border-bottom:1px solid var(--hairline);">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <b style="color:var(--l1);font-size:13px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">定稿引文核查与润色</b>
+                <span class="btn-sec" style="height:25px;font-size:11px;">继续</span>
+                <span class="btn-sec" style="height:25px;font-size:11px;">换 Agent</span>
+                <span class="btn-sec" style="height:25px;font-size:11px;">导出</span>
+                <span style="color:var(--l3);">⋯</span>
+              </div>
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--l3);">
+                <span class="chip">Antigravity CLI</span><span>HER催化综述</span><span>⎇ 润色与定稿</span>
+                <div class="seg-box" style="margin-left:auto;"><span class="on">对话</span><span>当前项目改动</span></div>
+              </div>
+            </div>
+            <div style="padding:14px;font-size:12px;color:var(--l3);">
+              <div style="margin-left:auto;max-width:78%;background:var(--inset);padding:8px 11px;border-radius:12px;color:var(--l1);margin-bottom:10px;">帮我核对 manuscript/draft.md 里所有未解析的 bib 键。</div>
+              <div>已扫描全部 64 处正文引用，均在 references.bib 解析通过……</div>
+            </div>
+            <div style="padding:8px 12px;">
+              <div style="background:var(--inset);border-radius:10px;padding:6px 10px;display:flex;justify-content:space-between;font-size:11px;color:var(--l4);">
+                <span>历史回放 · 只读</span><span>在外部继续 &nbsp; 在客户端打开</span>
+              </div>
+              <div style="text-align:center;font-size:10px;color:var(--l4);margin-top:4px;">内容由 AI 生成，请核对后使用</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 单行复合筛选浮层 + 双层归属会话卡 + 主次分明回放头</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <!-- 左栏 -->
+          <div style="width:43%;background:var(--rail2);border-right:1px solid var(--hairline);padding:10px;display:flex;flex-direction:column;gap:7px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <b style="color:var(--l1);font-size:15px;">对话</b>
+                <span class="chip mono" style="font-size:10.5px;">48 / 126</span>
+              </div>
+              <div style="display:flex;gap:3px;">
+                <span class="btn-quiet" style="height:25px;font-size:11px;background:var(--hover);">👥 研讨</span>
+                <span class="btn-quiet" style="height:25px;font-size:11px;">批量</span>
+                <span class="btn-quiet" style="height:25px;padding:0 6px;">⋯</span>
+              </div>
+            </div>
+            <div style="height:29px;background:var(--canvas);border:1px solid var(--field);border-radius:8px;padding:0 9px;display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:var(--l4);">
+              <span>🔍 搜索标题、标签或对话内容…</span>
+              <span class="kbd">⌘F</span>
+            </div>
+            <!-- 合并为一行：左范围胶囊（弹浮层不顶列表）+ 右快筛 -->
+            <div style="display:flex;align-items:center;gap:5px;">
+              <span class="btn-sec" style="height:25px;font-size:11px;padding:0 8px;border-radius:6px;flex:1;justify-content:space-between;">
+                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">📁 全部范围</span><span style="color:var(--l4);">▾</span>
+              </span>
+              <div class="seg-box">
+                <span class="on">保留</span><span>未读</span><span>进行中</span><span>▾</span>
+              </div>
+            </div>
+            <!-- 双层会话行：带 Agent 品牌微标 + 项目归属 + 选中琥珀左锚线 -->
+            <div style="display:flex;flex-direction:column;gap:3px;margin-top:2px;">
+              <div style="position:relative;background:var(--rail-sel);border-radius:8px;padding:7px 9px 7px 11px;">
+                <span style="position:absolute;left:0;top:7px;bottom:7px;width:2.5px;border-radius:0 2px 2px 0;background:var(--mesa-amber);"></span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="brand-m m-agy">M</span>
+                  <span style="font-size:12.5px;font-weight:500;color:var(--l1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">定稿引文核查与润色</span>
+                  <span class="mono" style="font-size:10.5px;color:var(--l3);">2h</span>
+                </div>
+                <div style="margin-top:2px;padding-left:21px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--l3);">
+                  <span>HER催化综述</span><span>·</span><span style="color:var(--l4);">⎇ 润色与定稿</span>
+                </div>
+              </div>
+              <div style="border-radius:8px;padding:7px 9px 7px 11px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="brand-m m-claude">M</span>
+                  <span style="font-size:12.5px;font-weight:500;color:var(--l1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">排查 MesaMark 热更新导出缓存</span>
+                  <span class="mono" style="font-size:10.5px;color:var(--l4);">昨天</span>
+                </div>
+                <div style="margin-top:2px;padding-left:21px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--l4);">
+                  <span>Ccode</span><span>·</span><span>3 次继续</span>
+                </div>
+              </div>
+              <div style="border-radius:8px;padding:7px 9px 7px 11px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span class="brand-m m-codex">M</span>
+                  <span style="font-size:12.5px;font-weight:500;color:var(--l1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">补充碱性 HER 火山图描述符</span>
+                  <span class="mono" style="font-size:10.5px;color:var(--l4);">3天前</span>
+                </div>
+                <div style="margin-top:2px;padding-left:21px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--l4);">
+                  <span>HER催化综述</span><span>·</span><span>🔖 已保留</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 右栏 -->
+          <div style="flex:1;display:flex;flex-direction:column;justify-content:space-between;">
+            <div style="padding:10px 14px;background:color-mix(in oklab, var(--strip) 50%, var(--canvas));border-bottom:1px solid var(--hairline);">
+              <div style="display:flex;align-items:center;gap:7px;">
+                <b style="color:var(--l1);font-size:13.5px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">定稿引文核查与润色</b>
+                <div class="seg-box"><span class="on">对话</span><span>项目改动</span></div>
+                <span class="btn-pri" style="height:27px;">💬 继续对话</span>
+                <span class="btn-sec" style="height:27px;">⇄ 换 Agent</span>
+                <span class="btn-quiet" style="height:27px;padding:0 6px;">⋯</span>
+              </div>
+              <div style="margin-top:5px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--l3);">
+                <span class="brand-m m-agy" style="width:14px;height:14px;font-size:9px;">M</span>
+                <span>Antigravity CLI</span><span>·</span>
+                <span style="color:var(--l2);text-decoration:underline;text-underline-offset:2px;">HER催化综述 ↗</span>
+                <span class="chip-code">⎇ 润色与定稿</span>
+                <span class="mono" style="margin-left:auto;color:var(--l4);">42.8k tokens · 2 小时前</span>
+              </div>
+            </div>
+            <div style="padding:14px;font-size:12px;color:var(--l2);">
+              <div style="margin-left:auto;max-width:78%;background:var(--inset);padding:8px 11px;border-radius:12px;color:var(--l1);margin-bottom:10px;">帮我核对 <code class="chip-code">manuscript/draft.md</code> 里所有未解析的 bib 键。</div>
+              <div>已扫描全部 64 处正文引用，均在 <code class="chip-code">references.bib</code> 解析通过……</div>
+            </div>
+            <div style="padding:7px 14px;border-top:1px solid var(--hairline);display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--l4);">
+              <span>只读历史回放 · 内容由 AI 生成，请核对后使用</span>
+              <span style="color:var(--l3);">在外部终端继续 ↗</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 2：技能页 + SKILL.md 预览抽屉 ==================== -->
+  <section class="proposal-block" id="mod-skills">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 02</span>
+        <h2>技能页与右侧 SKILL.md 预览面板</h2>
+        <span class="file-tag mono">src/pages/SkillsPage.tsx</span>
+      </div>
+      <p>
+        <b>现状问题：</b>① 主列表拆掉卡片后在宽屏变成无边界裸行，左右跨度过散，且缺「已启用 / 待同步或有更新」快筛；② 右侧预览面板仍沿用早期四道横贯全宽 <code>border-b</code> 硬切线 + <code>bg-strip</code> 整块色带 + 2 列大框按钮，且面板顶栏没有「编辑 / AI 优化」快捷入口。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 宽屏裸行无快筛 + 右侧预览栏四道硬横线切块</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <div style="flex:1;padding:12px 14px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div><b style="color:var(--l1);font-size:15px;">技能</b> <span style="font-size:11px;color:var(--l4);">24 个 · 已应用 18</span></div>
+              <span class="btn-pri">＋ 创建技能</span>
+            </div>
+            <div style="height:28px;width:210px;border:1px solid var(--field);border-radius:7px;padding:0 8px;display:flex;align-items:center;font-size:11.5px;color:var(--l4);margin-bottom:10px;">🔍 搜索技能…</div>
+            <div style="font-weight:600;color:var(--l1);font-size:13px;margin-bottom:6px;">▾ Mesa 内置 <span style="font-weight:400;font-size:11px;color:var(--l4);">19 个</span></div>
+            <div style="padding:7px 8px;background:var(--inset);border-radius:7px;display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+              <div>
+                <div style="font-size:13px;color:var(--l1);font-weight:500;">lit-search <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn-text);"></span> <span style="font-size:10.5px;color:var(--l3);">同步副本</span></div>
+                <div style="font-size:11px;color:var(--l4);">文献检索与筛选规范。按深度分档执行…</div>
+              </div>
+              <span style="font-size:11px;color:var(--l3);">4 个 Agent</span>
+            </div>
+            <div style="padding:7px 8px;display:flex;justify-content:space-between;align-items:center;">
+              <div>
+                <div style="font-size:13px;color:var(--l1);font-weight:500;">figure-forge</div>
+                <div style="font-size:11px;color:var(--l4);">投稿级图表生产规范，按期刊规格出图…</div>
+              </div>
+              <span style="font-size:11px;color:var(--l3);">4 个 Agent</span>
+            </div>
+          </div>
+          <!-- 老预览栏 -->
+          <div style="width:45%;border-left:1px solid var(--hairline);display:flex;flex-direction:column;">
+            <div style="height:34px;padding:0 10px;display:flex;align-items:center;justify-content:space-between;font-size:12.5px;color:var(--l1);">
+              <b>lit-search</b><span style="color:var(--l4);">×</span>
+            </div>
+            <div style="padding:8px 10px;border-bottom:1px solid var(--hairline);font-size:11.5px;color:var(--l3);">文献检索与筛选规范。当用户要求围绕课题检索学术文献时使用。</div>
+            <div style="padding:8px 10px;border-bottom:1px solid var(--hairline);font-size:11.5px;color:var(--l4);">哪些步骤在用：HER催化综述 · 文献检索与筛选</div>
+            <div style="padding:8px 10px;border-bottom:1px solid var(--hairline);font-size:11.5px;color:var(--l3);">Mesa 内置 &nbsp;<span style="color:var(--warn-text);">副本需同步</span></div>
+            <div style="padding:10px;background:var(--strip);border-bottom:1px solid var(--hairline);">
+              <div style="font-size:12px;color:var(--l2);margin-bottom:6px;display:flex;justify-content:space-between;"><span>应用到 Agent</span><span style="color:var(--l4);">4/10</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11.5px;">
+                <div style="border:1px solid var(--cta-bd);background:var(--inset);padding:5px 7px;border-radius:6px;color:var(--l1);">● Claude Code</div>
+                <div style="border:1px solid var(--cta-bd);background:var(--inset);padding:5px 7px;border-radius:6px;color:var(--l1);">● Codex</div>
+                <div style="border:1px solid var(--hairline);padding:5px 7px;border-radius:6px;color:var(--l4);">● Gemini CLI</div>
+                <div style="border:1px solid var(--cta-bd);background:var(--inset);padding:5px 7px;border-radius:6px;color:var(--l1);">● Antigravity</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 快筛工具栏 + 分组浅卡 + 对齐新版抽屉顶盖与品牌胶囊矩阵</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <div style="flex:1;padding:12px 14px;display:flex;flex-direction:column;gap:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <div style="display:flex;align-items:baseline;gap:7px;"><b style="color:var(--l1);font-size:15px;">技能</b> <span style="font-size:11px;color:var(--l4);">24 个 · 已应用 18</span></div>
+              <div style="display:flex;gap:5px;"><span class="btn-pri">＋ 创建技能</span><span class="btn-sec" style="padding:0 7px;">⋯</span></div>
+            </div>
+            <!-- 搜索 + 状态快筛一行对齐 -->
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="height:28px;flex:1;background:var(--strip);border:1px solid var(--field);border-radius:7px;padding:0 8px;display:flex;align-items:center;font-size:11.5px;color:var(--l4);">🔍 搜索名称、描述或标签…</div>
+              <div class="seg-box"><span class="on">全部</span><span>已启用 18</span><span style="color:var(--warn-text);">待同步 1</span></div>
+            </div>
+            <!-- 分组卡片容器 -->
+            <div style="font-size:12px;font-weight:600;color:var(--l2);display:flex;align-items:center;gap:6px;">▾ Mesa 内置 · 文献与写作 <span class="chip" style="font-size:10px;">12</span></div>
+            <div class="well" style="padding:4px;">
+              <div style="padding:7px 9px;background:var(--rail-sel);border-radius:7px;display:flex;justify-content:space-between;align-items:center;gap:8px;position:relative;">
+                <span style="position:absolute;left:0;top:7px;bottom:7px;width:2.5px;border-radius:0 2px 2px 0;background:var(--mesa-amber);"></span>
+                <div style="min-width:0;padding-left:4px;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="mono" style="font-size:12.5px;color:var(--l1);font-weight:600;">lit-search</span>
+                    <span style="font-size:10.5px;padding:1px 6px;border-radius:999px;background:var(--warn-bg);color:var(--warn-text);">副本待同步</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--l3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">文献检索与筛选规范，按快筛 / 标准 / 严格三档可复现执行</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                  <span class="brand-m m-claude">M</span><span class="brand-m m-codex">M</span><span class="brand-m m-agy">M</span>
+                  <span class="mono" style="font-size:11px;color:var(--l3);margin-left:2px;">4</span>
+                </div>
+              </div>
+              <div style="padding:7px 9px 7px 13px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div style="min-width:0;">
+                  <div style="font-size:12.5px;color:var(--l1);font-weight:600;" class="mono">figure-forge</div>
+                  <div style="font-size:11px;color:var(--l3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">投稿级图表生产规范，先立论点契约再按期刊规格脚本出图</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                  <span class="brand-m m-claude">M</span><span class="brand-m m-codex">M</span><span class="brand-m m-kimi">M</span>
+                  <span class="mono" style="font-size:11px;color:var(--l3);margin-left:2px;">4</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- 新预览抽屉 -->
+          <div style="width:46%;border-left:1px solid var(--field);background:var(--canvas);display:flex;flex-direction:column;">
+            <div style="padding:10px 12px;background:color-mix(in oklab, var(--strip) 52%, var(--canvas));border-bottom:1px solid var(--field);">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <b class="mono" style="font-size:13.5px;color:var(--l1);">lit-search</b>
+                  <span class="chip" style="font-size:10px;">Mesa 内置</span>
+                </div>
+                <span style="color:var(--l3);font-size:13px;">✕</span>
+              </div>
+              <div style="margin-top:7px;display:flex;gap:5px;">
+                <span class="btn-pri" style="height:26px;font-size:11.5px;">↻ 同步副本</span>
+                <span class="btn-sec" style="height:26px;font-size:11.5px;">✎ 编辑</span>
+                <span class="btn-sec" style="height:26px;font-size:11.5px;">✨ 优化</span>
+                <span class="btn-quiet" style="height:26px;font-size:11.5px;margin-left:auto;">＋ 挂到步骤</span>
+              </div>
+            </div>
+            <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+              <div class="well" style="padding:8px 10px;font-size:11.5px;color:var(--l2);">
+                文献检索与筛选规范。围绕课题按深度分档检索筛选并全程留痕。
+                <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--hairline);font-size:11px;color:var(--l3);">
+                  正在使用：<span style="color:var(--l1);">HER催化综述</span> · 文献检索与筛选 ↗
+                </div>
+              </div>
+              <div class="well" style="padding:8px 10px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--l3);margin-bottom:6px;">
+                  <span>分发到已安装 Agent（4 / 6）</span>
+                  <span style="color:var(--cta);font-weight:500;">一键全开</span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:11.5px;">
+                  <div style="background:var(--inset);border:1px solid var(--cta-bd);padding:4px 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--l1);"><span class="brand-m m-claude">M</span>Claude Code</div>
+                  <div style="background:var(--inset);border:1px solid var(--cta-bd);padding:4px 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--l1);"><span class="brand-m m-codex">M</span>Codex</div>
+                  <div style="border:1px solid var(--hairline);padding:4px 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--l3);"><span class="brand-m m-kimi">M</span>Kimi Code</div>
+                  <div style="background:var(--inset);border:1px solid var(--cta-bd);padding:4px 7px;border-radius:6px;display:flex;align-items:center;gap:5px;color:var(--l1);"><span class="brand-m m-agy">M</span>Antigravity</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 3：MCP 服务页 ==================== -->
+  <section class="proposal-block" id="mod-mcp">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 03</span>
+        <h2>MCP 服务页（连通健康度 + 分发矩阵结构化）</h2>
+        <span class="file-tag mono">src/pages/McpPage.tsx</span>
+      </div>
+      <p>
+        <b>现状问题：</b>页头缺少整体健康度摘要；列表无卡片容器，展开后靠一根左细线把「命令全文、环境变量、路径告警、OAuth 登录、10 家 Agent 分发开关」全摊在画布上，配置信息与分发状态混在一起。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 无健康总览 + 展开区纯文本与开关混排</span>
+        <div class="demo-box" style="padding:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div><b style="color:var(--l1);font-size:15px;">MCP</b> <span style="font-size:11px;color:var(--l4);">4 个</span></div>
+            <div style="display:flex;gap:6px;"><span class="btn-pri">＋ 添加 MCP ▾</span><span class="btn-sec">全部检测</span></div>
+          </div>
+          <div style="background:var(--inset);border-radius:8px;padding:8px 10px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span>▾</span><span style="width:7px;height:7px;border-radius:50%;background:var(--warn-text);"></span>
+              <b style="color:var(--l1);">zotero-mcp</b>
+              <span style="font-size:11px;color:var(--warn-text);">· 1 处异常</span>
+              <span style="margin-left:auto;font-size:11.5px;color:var(--l3);">3 个 Agent</span>
+              <span class="toggle on"></span>
+            </div>
+            <div style="padding-left:28px;font-size:11.5px;color:var(--l4);margin-top:2px;">相对路径 · stdio · <span class="mono">uvx zotero-mcp</span></div>
+            <div style="margin:8px 0 4px 22px;padding-left:10px;border-left:1px solid var(--hairline);font-size:11.5px;color:var(--l3);display:flex;flex-direction:column;gap:5px;">
+              <div class="mono" style="color:var(--l2);">uvx zotero-mcp --library local</div>
+              <div style="color:var(--warn-text);">相对路径命令：换个工作目录启动就找不到 &nbsp;<span class="btn-sec" style="height:22px;font-size:11px;">修复为绝对路径</span></div>
+              <div class="mono" style="font-size:10.5px;color:var(--l4);">环境变量：ZOTERO_LOCAL=true</div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:4px;">
+                <div style="display:flex;justify-content:space-between;"><span>● Claude Code</span><span class="toggle on"></span></div>
+                <div style="display:flex;justify-content:space-between;"><span>● Codex <span style="color:var(--err-text);font-size:10px;">缺失</span></span><span class="toggle on"></span></div>
+                <div style="display:flex;justify-content:space-between;"><span style="color:var(--l4);">Gemini CLI</span><span class="toggle"></span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 顶部健康筛选胶囊 + 服务卡片 +「配置 / 分发」双内嵌区</span>
+        <div class="demo-box" style="padding:14px;gap:10px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <b style="color:var(--l1);font-size:15px;">MCP</b>
+              <div class="seg-box">
+                <span class="on">全部 4</span>
+                <span style="color:var(--ok-text);">● 正常 3</span>
+                <span style="color:var(--warn-text);">● 待处理 1</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;"><span class="btn-sec">⚡ 全部检测</span><span class="btn-pri">＋ 添加 MCP ▾</span></div>
+          </div>
+          <!-- 服务卡片 -->
+          <div class="well" style="padding:10px 12px;border-color:color-mix(in srgb, var(--mesa-amber) 35%, var(--hairline));">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span>▾</span>
+              <span style="width:8px;height:8px;border-radius:50%;background:var(--ok-text);"></span>
+              <b style="color:var(--l1);font-size:13.5px;">zotero-mcp</b>
+              <span class="chip-code mono">stdio</span>
+              <span style="font-size:11px;padding:1px 7px;border-radius:999px;background:var(--warn-bg);color:var(--warn-text);">1 处配置待重写</span>
+              <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+                <span style="display:inline-flex;gap:3px;"><span class="brand-m m-claude">M</span><span class="brand-m m-codex">M</span><span class="brand-m m-agy">M</span></span>
+                <span class="toggle on"></span>
+              </div>
+            </div>
+            <!-- 展开双子卡 -->
+            <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1.15fr;gap:8px;">
+              <div style="background:var(--canvas);border:0.5px solid var(--hairline);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;">
+                <div style="font-size:11px;color:var(--l3);display:flex;justify-content:space-between;"><span>启动命令与环境</span><span style="color:var(--l2);">✎ 编辑</span></div>
+                <div class="mono" style="font-size:11px;color:var(--l1);background:var(--inset);padding:4px 6px;border-radius:5px;">uvx zotero-mcp --library local</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;background:var(--warn-bg);padding:4px 7px;border-radius:6px;font-size:11px;color:var(--warn-text);">
+                  <span>相对路径命令</span><span style="font-weight:600;text-decoration:underline;">转绝对路径</span>
+                </div>
+                <div style="display:flex;gap:4px;flex-wrap:wrap;"><span class="chip-code mono">ZOTERO_LOCAL=true</span></div>
+              </div>
+              <div style="background:var(--canvas);border:0.5px solid var(--hairline);border-radius:8px;padding:8px 10px;">
+                <div style="font-size:11px;color:var(--l3);margin-bottom:6px;display:flex;justify-content:space-between;"><span>分发到各 Agent（实时核对磁盘）</span><span>3 已开</span></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11.5px;">
+                  <div style="background:var(--inset);padding:4px 7px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;">
+                    <span style="display:flex;align-items:center;gap:5px;color:var(--l1);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-text);"></span>Claude</span>
+                    <span class="toggle on"></span>
+                  </div>
+                  <div style="background:var(--err-bg);padding:4px 7px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;">
+                    <span style="color:var(--err-text);font-size:11px;">Codex · 缺失 <u>重写</u></span>
+                    <span class="toggle on"></span>
+                  </div>
+                  <div style="background:var(--inset);padding:4px 7px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;">
+                    <span style="display:flex;align-items:center;gap:5px;color:var(--l1);"><span style="width:6px;height:6px;border-radius:50%;background:var(--ok-text);"></span>Antigravity</span>
+                    <span class="toggle on"></span>
+                  </div>
+                  <div style="padding:4px 7px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;color:var(--l4);">
+                    <span>Gemini CLI</span><span class="toggle"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 4：用量统计页 ==================== -->
+  <section class="proposal-block" id="mod-stats">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 04</span>
+        <h2>用量统计页（结构占比条、卡头减负与分布排行榜）</h2>
+        <span class="file-tag mono">src/pages/StatsPage.tsx</span>
+      </div>
+      <p>
+        <b>现状问题：</b>① <code>花费</code> 与 <code>tokens</code> 概览卡下方只是纯文字列表，缺少「输入 / 输出 / 缓存」可视化结构条，周环比无趋势胶囊；② <code>订阅余量</code> 卡头把 6~7 个信息挤在一行；③ 底部分布榜缺少列头对齐与厂商标识锚点。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 纯文字键值堆叠，缺构成比例条与列头对齐</span>
+        <div class="demo-box" style="padding:14px;gap:10px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="well" style="padding:12px;">
+              <div style="font-size:13px;color:var(--l1);">花费</div>
+              <div style="font-size:21px;font-weight:600;color:var(--l1);margin:4px 0;">$18.42 <span style="font-size:11.5px;font-weight:400;color:var(--l3);">按官方价估算</span></div>
+              <div style="font-size:12px;display:flex;flex-direction:column;gap:3px;color:var(--l3);">
+                <div style="display:flex;justify-content:space-between;"><span>周环比</span><span style="color:var(--ok-text);">比上周少 14%</span></div>
+                <div style="display:flex;justify-content:space-between;"><span>对话</span><span style="color:var(--l1);">42 次</span></div>
+                <div style="display:flex;justify-content:space-between;"><span>订阅（不计费）</span><span style="color:var(--l1);">3.2M tokens</span></div>
+              </div>
+            </div>
+            <div class="well" style="padding:12px;">
+              <div style="font-size:13px;color:var(--l1);">tokens</div>
+              <div style="font-size:21px;font-weight:600;color:var(--l1);margin:4px 0;">6.8M <span style="font-size:11.5px;font-weight:400;color:var(--l3);">输入 + 输出</span></div>
+              <div style="font-size:12px;display:flex;flex-direction:column;gap:3px;color:var(--l3);">
+                <div style="display:flex;justify-content:space-between;"><span>输入</span><span class="mono" style="color:var(--l1);">5,712,400</span></div>
+                <div style="display:flex;justify-content:space-between;"><span>输出</span><span class="mono" style="color:var(--l1);">1,087,600</span></div>
+                <div style="display:flex;justify-content:space-between;"><span>缓存读</span><span class="mono" style="color:var(--l1);">19,420,110</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="well" style="padding:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:8px;border-bottom:1px solid var(--hairline);">
+              <b style="color:var(--l1);font-size:13px;">分布</b>
+              <div class="seg-box"><span class="on">模型</span><span>Agent</span><span>项目</span><span>网关</span></div>
+            </div>
+            <div style="padding-top:8px;font-size:12px;display:flex;flex-direction:column;gap:6px;">
+              <div style="display:flex;align-items:center;gap:8px;"><span style="width:120px;color:var(--l1);">claude-opus-4-6</span><div style="flex:1;height:6px;background:var(--inset);border-radius:3px;"><div style="width:68%;height:100%;background:var(--cta);border-radius:3px;"></div></div><span class="mono" style="font-size:11px;">$12.50</span></div>
+              <div style="display:flex;align-items:center;gap:8px;"><span style="width:120px;color:var(--l1);">gpt-5.4</span><div style="flex:1;height:6px;background:var(--inset);border-radius:3px;"><div style="width:32%;height:100%;background:var(--cta);border-radius:3px;"></div></div><span class="mono" style="font-size:11px;">$5.92</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 趋势胶囊 + 双色构成比例条 + 缓存命中徽标 + 对齐分布表</span>
+        <div class="demo-box" style="padding:14px;gap:10px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="well" style="padding:12px;display:flex;flex-direction:column;justify-content:space-between;">
+              <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;color:var(--l3);font-weight:500;">估算花费（近 7 天）</span>
+                  <span style="font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--ok-bg);color:var(--ok-text);font-weight:500;">↓ 14% 较上周</span>
+                </div>
+                <div style="font-size:23px;font-weight:700;color:var(--l1);margin:4px 0 8px;" class="mono">$18.42 <span style="font-family:sans-serif;font-size:11px;font-weight:400;color:var(--l4);">官方价口径</span></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding-top:8px;border-top:1px solid var(--hairline);font-size:11.5px;">
+                <div><div style="color:var(--l4);font-size:10.5px;">计入对话</div><div style="color:var(--l1);font-weight:600;" class="mono">42 次</div></div>
+                <div><div style="color:var(--l4);font-size:10.5px;">官方订阅免计费</div><div style="color:var(--l2);" class="mono">3.2M tok</div></div>
+              </div>
+            </div>
+            <div class="well" style="padding:12px;display:flex;flex-direction:column;justify-content:space-between;">
+              <div>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                  <span style="font-size:12px;color:var(--l3);font-weight:500;">Tokens 构成</span>
+                  <span class="chip" style="font-size:10.5px;color:var(--mesa-amber);">⚡ 缓存复用 77%</span>
+                </div>
+                <div style="font-size:23px;font-weight:700;color:var(--l1);margin:4px 0 6px;" class="mono">6.8M <span style="font-family:sans-serif;font-size:11px;font-weight:400;color:var(--l4);">输入 84% · 输出 16%</span></div>
+                <!-- 双色比例条 -->
+                <div style="display:flex;height:6px;border-radius:999px;overflow:hidden;gap:2px;margin-bottom:8px;">
+                  <div style="width:84%;background:var(--cta);"></div>
+                  <div style="width:16%;background:var(--mesa-amber);"></div>
+                </div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--l3);" class="mono">
+                <span>入 5.71M</span><span>出 1.09M</span><span style="color:var(--l4);">缓存读 19.4M</span>
+              </div>
+            </div>
+          </div>
+          <div class="well" style="padding:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <b style="color:var(--l1);font-size:13px;">消耗分布</b>
+              <div class="seg-box"><span class="on">模型</span><span>Agent</span><span>项目</span><span>网关</span></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.3fr 1.4fr 4.5rem 4.2rem;gap:8px;font-size:10.5px;color:var(--l4);padding:0 4px 5px;border-bottom:1px solid var(--hairline);">
+              <span>名称</span><span>占比</span><span style="text-align:right;">Tokens</span><span style="text-align:right;">估算</span>
+            </div>
+            <div style="padding-top:6px;display:flex;flex-direction:column;gap:6px;font-size:12px;">
+              <div style="display:grid;grid-template-columns:1.3fr 1.4fr 4.5rem 4.2rem;gap:8px;align-items:center;padding:2px 4px;">
+                <span style="display:flex;align-items:center;gap:6px;color:var(--l1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="brand-m m-claude">M</span>claude-opus-4-6</span>
+                <div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:6px;background:var(--inset);border-radius:999px;"><div style="width:68%;height:100%;background:var(--cta);border-radius:999px;"></div></div><span class="mono" style="font-size:10.5px;color:var(--l3);">68%</span></div>
+                <span class="mono" style="font-size:11px;color:var(--l3);text-align:right;">4.6M</span>
+                <span class="mono" style="font-size:11.5px;color:var(--l1);text-align:right;font-weight:500;">$12.50</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1.3fr 1.4fr 4.5rem 4.2rem;gap:8px;align-items:center;padding:2px 4px;">
+                <span style="display:flex;align-items:center;gap:6px;color:var(--l1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span class="brand-m m-codex">M</span>gpt-5.4</span>
+                <div style="display:flex;align-items:center;gap:6px;"><div style="flex:1;height:6px;background:var(--inset);border-radius:999px;"><div style="width:32%;height:100%;background:var(--cta);opacity:0.75;border-radius:999px;"></div></div><span class="mono" style="font-size:10.5px;color:var(--l3);">32%</span></div>
+                <span class="mono" style="font-size:11px;color:var(--l3);text-align:right;">2.2M</span>
+                <span class="mono" style="font-size:11.5px;color:var(--l1);text-align:right;font-weight:500;">$5.92</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 5：设置页分组卡 ==================== -->
+  <section class="proposal-block" id="mod-settings">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 05</span>
+        <h2>设置页（左栏锚线 + 右侧收拢为圆角设置分组卡）</h2>
+        <span class="file-tag mono">src/pages/SettingsPage.tsx</span>
+      </div>
+      <p>
+        <b>现状问题：</b>右侧所有设置项铺满宽屏裸细线行，左边标题、隔着大片空白在最右边放一个小小开关或参差不齐（<code>selectSm / Md / Lg</code>）的下拉框，视线跨度极大；子标题（如「桌宠」「外部终端」）与普通行粘连。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 宽屏全裸细线行，左右视线跨度过远、下拉框宽窄不一</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <div style="width:27%;padding:12px 10px;border-right:1px solid var(--hairline);">
+            <div style="font-size:11px;color:var(--l4);margin-bottom:6px;">常用</div>
+            <div style="padding:6px 8px;font-size:12.5px;color:var(--l2);">🎨 外观</div>
+            <div style="padding:6px 8px;font-size:12.5px;background:var(--rail-sel);border-radius:7px;color:var(--l1);">🚀 启动与窗口</div>
+            <div style="padding:6px 8px;font-size:12.5px;color:var(--l2);">⌨️ 终端与对话</div>
+          </div>
+          <div style="flex:1;padding:12px 16px;font-size:12.5px;">
+            <div style="padding:10px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+              <div><div style="color:var(--l1);">启动时进入</div><div style="font-size:11px;color:var(--l4);">打开 Mesa 时首先落到哪一页</div></div>
+              <span class="btn-sec" style="width:92px;justify-content:space-between;">工作台 <span>▾</span></span>
+            </div>
+            <div style="padding:10px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+              <div><div style="color:var(--l1);">关闭窗口时</div><div style="font-size:11px;color:var(--l4);">窗口藏起来，Mesa 继续跑</div></div>
+              <span class="btn-sec" style="width:136px;justify-content:space-between;">留在后台 <span>▾</span></span>
+            </div>
+            <div style="padding:10px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+              <div><div style="color:var(--l1);">系统通知</div><div style="font-size:11px;color:var(--l4);">Agent 停下等你确认时弹通知</div></div>
+              <span class="toggle on"></span>
+            </div>
+            <div style="padding-top:12px;font-weight:600;color:var(--l1);font-size:12.5px;">桌宠</div>
+            <div style="padding:8px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+              <span style="color:var(--l1);">在桌面上显示小桌</span><span class="toggle on"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 限宽 760px + macOS 式圆角设置分组卡 + 控件等宽对齐</span>
+        <div class="demo-box" style="flex-direction:row;">
+          <div style="width:27%;background:var(--rail2);padding:12px 10px;border-right:1px solid var(--hairline);">
+            <div style="font-size:11px;color:var(--l4);margin-bottom:6px;padding-left:6px;">常用</div>
+            <div style="padding:6px 8px;font-size:12.5px;color:var(--l2);">🎨 外观与主题</div>
+            <div style="position:relative;padding:6px 8px 6px 11px;font-size:12.5px;background:var(--rail-sel);border-radius:7px;color:var(--l1);font-weight:500;">
+              <span style="position:absolute;left:0;top:6px;bottom:6px;width:2.5px;border-radius:0 2px 2px 0;background:var(--mesa-amber);"></span>
+              🚀 启动与桌面
+            </div>
+            <div style="padding:6px 8px;font-size:12.5px;color:var(--l2);">⌨️ 终端与对话</div>
+          </div>
+          <div style="flex:1;padding:12px 16px;display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:11.5px;font-weight:600;color:var(--l3);">窗口与后台行为</div>
+            <div class="well" style="padding:2px 12px;">
+              <div style="padding:8px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+                <div><div style="color:var(--l1);font-size:12.5px;font-weight:500;">启动时进入</div><div style="font-size:11px;color:var(--l3);">打开 Mesa 默认展示的工作视图</div></div>
+                <span class="btn-sec" style="width:132px;height:27px;justify-content:space-between;">工作台 <span>▾</span></span>
+              </div>
+              <div style="padding:8px 0;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;align-items:center;">
+                <div><div style="color:var(--l1);font-size:12.5px;font-weight:500;">关闭主窗口时</div><div style="font-size:11px;color:var(--l3);">点程序坞图标叫回，⌘Q 完全退出</div></div>
+                <span class="btn-sec" style="width:132px;height:27px;justify-content:space-between;">留在后台 <span>▾</span></span>
+              </div>
+              <div style="padding:8px 0;display:flex;justify-content:space-between;align-items:center;">
+                <div><div style="color:var(--l1);font-size:12.5px;font-weight:500;">系统通知</div><div style="font-size:11px;color:var(--l3);">后台有审批或人工请求时提醒</div></div>
+                <span class="toggle on"></span>
+              </div>
+            </div>
+            <div style="font-size:11.5px;font-weight:600;color:var(--l3);display:flex;justify-content:space-between;"><span>桌面小桌（跨项目报信）</span><span style="color:var(--ok-text);font-weight:400;font-size:11px;">● 已开启</span></div>
+            <div class="well" style="padding:2px 12px;">
+              <div style="padding:8px 0;display:flex;justify-content:space-between;align-items:center;">
+                <div><div style="color:var(--l1);font-size:12.5px;font-weight:500;">在桌面上显示小桌</div><div style="font-size:11px;color:var(--l3);">就地答复提问、跑完或出错轻声提醒</div></div>
+                <span class="toggle on"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 模块 6：研讨页 + 侧栏底坞 + ⌘K 命令面板 ==================== -->
+  <section class="proposal-block" id="mod-consult-shell">
+    <div class="block-head">
+      <div class="block-head-top">
+        <span class="num-tag">模块 06</span>
+        <h2>研讨圆桌视图 · 侧栏左下角资源坞 · ⌘K 命令面板细节收口</h2>
+        <span class="file-tag mono">ConsultView.tsx · App.tsx · CommandPalette.tsx</span>
+      </div>
+      <p>
+        <b>三处收口细节：</b>① <b>研讨页</b>：升级圆桌顶栏标题层级，给「各家结论对照表」补模型族品牌左锚线与「改口 / 依据核验」语义微标，并在输入框上方加一键 <code>@成员</code> 追问芯片；② <b>侧栏左下角</b>：截图里裸悬的 <code>[🎛️] [📊] [›]</code> 加轻量胶囊托盘底座，展开时平滑成五格资源坞；③ <b>⌘K 命令面板</b>：快捷键由普通灰字升级为真实 <code>&lt;kbd&gt;</code> 键帽，并补底部极简键盘导航提示栏。
+      </p>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE -->
+      <div class="ab-col">
+        <span class="ab-tag before">● 现状 Before · 研讨标题偏弱 + 侧栏底角裸图标悬空 + ⌘K 无键帽底栏</span>
+        <div class="demo-box" style="padding:14px;gap:12px;justify-content:space-between;">
+          <!-- 研讨对照表 -->
+          <div>
+            <div style="font-size:12px;color:var(--l2);margin-bottom:6px;">👥 HER 碱性火山图该不该把 OH* 吸附单列一节？</div>
+            <div style="border:1px solid var(--hairline);border-radius:10px;overflow:hidden;font-size:11.5px;">
+              <div style="padding:5px 10px;border-bottom:1px solid var(--hairline);color:var(--l4);font-size:10.5px;">各家结论（原话，Mesa 只排在一起，不判谁对）</div>
+              <div style="padding:7px 10px;border-bottom:1px solid var(--hairline);display:flex;gap:10px;">
+                <span style="width:90px;color:var(--l1);">Claude Opus</span>
+                <span style="flex:1;color:var(--l2);">应单列 3.2 节，否则水裂解决速步与酸碱差异讲不透。<div style="color:var(--l4);font-size:10.5px;">交叉：没补充</div></span>
+              </div>
+              <div style="padding:7px 10px;display:flex;gap:10px;">
+                <span style="width:90px;color:var(--l1);">GPT-5.4</span>
+                <span style="flex:1;color:var(--l2);">并入双功能机理即可。<div style="color:var(--l4);font-size:10.5px;">后来改成：赞成单列一节 · 依据里 1 处找不到</div></span>
+              </div>
+            </div>
+          </div>
+          <!-- 侧栏底角 + ⌘K -->
+          <div style="display:grid;grid-template-columns:0.85fr 1.15fr;gap:10px;align-items:end;">
+            <div style="background:var(--rail);padding:10px;border-radius:8px;border:1px solid var(--hairline);">
+              <div style="font-size:10.5px;color:var(--l4);margin-bottom:8px;">侧栏左下角现状（裸挂 3 个无字图标）</div>
+              <div style="display:flex;gap:10px;color:var(--l3);font-size:14px;padding:4px 2px;">
+                <span>🎛️</span><span>📊</span><span>›</span>
+              </div>
+            </div>
+            <div style="background:var(--raised);border:1px solid var(--field);border-radius:9px;padding:6px;font-size:12px;">
+              <div style="padding:5px 8px;background:var(--seg-sel);border-radius:5px;display:flex;justify-content:space-between;color:var(--l1);">
+                <span>前往 工作台</span><span style="color:var(--l4);font-size:11px;" class="mono">⌘1</span>
+              </div>
+              <div style="padding:5px 8px;display:flex;justify-content:space-between;color:var(--l2);">
+                <span>切换主题…</span><span style="color:var(--l4);font-size:11px;">Neutral</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER -->
+      <div class="ab-col">
+        <span class="ab-tag after">✦ 优化设计 After · 圆桌结论色锚与 @追问条 + 侧栏胶囊资源坞 + ⌘K 键帽底栏</span>
+        <div class="demo-box" style="padding:14px;gap:12px;justify-content:space-between;">
+          <!-- 研讨对照表 -->
+          <div>
+            <div style="display:flex;align-items:center;gap:7px;margin-bottom:7px;">
+              <span class="chip" style="background:var(--warn-bg);color:var(--warn-text);font-weight:600;">圆桌研讨 · 已交叉 1 轮</span>
+              <b style="font-size:13px;color:var(--l1);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">HER 碱性火山图该不该把 OH* 吸附单列一节？</b>
+            </div>
+            <div class="well" style="overflow:hidden;font-size:11.5px;">
+              <div style="padding:6px 12px;border-bottom:1px solid var(--hairline);color:var(--l3);font-size:10.5px;display:flex;justify-content:space-between;">
+                <span>各家结论对照（原话并列 · 点击可记入项目知识或转派活）</span><span>2 位能看项目</span>
+              </div>
+              <div style="padding:8px 12px;border-bottom:1px solid var(--hairline);display:flex;gap:10px;position:relative;">
+                <span style="position:absolute;left:0;top:6px;bottom:6px;width:2.5px;background:#e08b6d;border-radius:0 2px 2px 0;"></span>
+                <span style="width:98px;color:var(--l1);font-weight:500;display:flex;align-items:center;gap:5px;"><span class="brand-m m-claude">M</span>Claude</span>
+                <div style="flex:1;color:var(--l1);">应单列 3.2 节，否则水裂解决速步与酸碱差异讲不透。 <span class="chip" style="font-size:10px;color:var(--ok-text);">✓ 4 处依据全中</span></div>
+              </div>
+              <div style="padding:8px 12px;display:flex;gap:10px;position:relative;">
+                <span style="position:absolute;left:0;top:6px;bottom:6px;width:2.5px;background:#3ec49d;border-radius:0 2px 2px 0;"></span>
+                <span style="width:98px;color:var(--l1);font-weight:500;display:flex;align-items:center;gap:5px;"><span class="brand-m m-codex">M</span>GPT-5.4</span>
+                <div style="flex:1;color:var(--l1);">
+                  <span style="font-size:10px;padding:1px 5px;border-radius:4px;background:var(--inset);color:var(--mesa-amber);margin-right:4px;">交叉后更新</span>赞成单列一节，重点对比 PtRu 双位点。
+                  <span style="font-size:10px;color:var(--warn-text);margin-left:4px;">⚠ 1 处路径未命中</span>
+                </div>
+              </div>
+            </div>
+            <!-- 底部快捷点名追问芯片 -->
+            <div style="margin-top:6px;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--l3);">
+              <span>点名追问：</span>
+              <span class="chip" style="cursor:pointer;">@Claude Opus</span>
+              <span class="chip" style="cursor:pointer;">@GPT-5.4</span>
+              <span class="chip" style="cursor:pointer;">@全员再评一轮</span>
+            </div>
+          </div>
+
+          <!-- 侧栏底角 + ⌘K -->
+          <div style="display:grid;grid-template-columns:0.85fr 1.15fr;gap:10px;align-items:end;">
+            <div style="background:var(--rail);padding:10px;border-radius:8px;border:1px solid var(--hairline);">
+              <div style="font-size:10.5px;color:var(--l3);margin-bottom:7px;">侧栏左下角资源胶囊坞（悬停滑开 5 格）</div>
+              <div style="display:inline-flex;align-items:center;gap:4px;background:var(--rail2);border:0.5px solid var(--hairline);padding:3px 6px;border-radius:9px;">
+                <span style="padding:3px 6px;border-radius:6px;background:var(--rail-sel);color:var(--l1);font-size:11.5px;">🎛️ 连接</span>
+                <span style="padding:3px 6px;color:var(--l3);font-size:12px;" title="用量">📊</span>
+                <span style="padding:3px 6px;color:var(--l3);font-size:12px;" title="展开技能 / MCP / 设置">›</span>
+              </div>
+            </div>
+            <div style="background:var(--raised);border:1px solid var(--field);border-radius:10px;overflow:hidden;font-size:12px;">
+              <div style="padding:5px;">
+                <div style="padding:5px 8px;background:var(--seg-sel);border-radius:6px;display:flex;justify-content:space-between;align-items:center;color:var(--l1);">
+                  <span>⊞ 前往 工作台</span><span class="kbd">⌘1</span>
+                </div>
+                <div style="padding:5px 8px;display:flex;justify-content:space-between;align-items:center;color:var(--l2);">
+                  <span>🎨 切换主题…</span><span class="chip" style="font-size:10px;">Neutral</span>
+                </div>
+              </div>
+              <div style="padding:4px 9px;background:var(--inset);border-top:1px solid var(--hairline);display:flex;gap:10px;font-size:10.5px;color:var(--l4);">
+                <span><span class="kbd">↑↓</span> 选择</span>
+                <span><span class="kbd">↵</span> 执行</span>
+                <span><span class="kbd">Esc</span> 关闭</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  document.getElementById("theme-seg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-t]");
+    if (!btn) return;
+    document.documentElement.setAttribute("data-theme", btn.dataset.t);
+    for (const b of e.currentTarget.querySelectorAll("button")) b.classList.toggle("on", b === btn);
+  });
+</script>
+</body>
+</html>

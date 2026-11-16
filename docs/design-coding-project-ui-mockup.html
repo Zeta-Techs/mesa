@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa · 编程项目面板（CodingProjectView + PortsSection）UI 优化设计对比</title>
+<style>
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #252525;
+    --strip: #1c1c1c; --canvas: #121212; --inset: #202020; --raised: #272727;
+    --seg-sel: #2c2c2c; --hairline: #292929; --field: #383838;
+    --l1: #ebebeb; --l2: #c4c4c4; --l3: #969696; --l4: #6b6b6b;
+    --cta: #0169cc; --cta-bd: #1d82e2; --cta-text: #eef6ff;
+    --hover: rgb(255 255 255 / 0.05);
+    --mesa-amber: #f5b83d;
+    --err-bg: rgba(240, 112, 112, 0.14); --err-text: #f07070;
+    --warn-bg: rgba(245, 184, 61, 0.15); --warn-text: #f5b83d;
+    --ok-bg: rgba(76, 195, 138, 0.14); --ok-text: #4cc38a;
+    --info-bg: rgba(29, 130, 226, 0.15); --info-text: #6cb6ff;
+    --well: color-mix(in srgb, var(--canvas) 65%, var(--raised));
+  }
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #191613; --rail-sel: #2e2a25;
+    --strip: #1e1b18; --canvas: #14120e; --inset: #22201c; --raised: #2b2823;
+    --seg-sel: #35312b; --hairline: #2b2824; --field: #403d39;
+    --l1: #e7e1d8; --l2: #c6bfb5; --l3: #948d84; --l4: #6d6860;
+    --cta: #f5b83d; --cta-bd: #f7c55f; --cta-text: #1c1507;
+    --info-bg: rgba(245, 184, 61, 0.16); --info-text: #f7c55f;
+  }
+  [data-theme="ayu-light"] {
+    --rail: #e7e2db; --rail2: #f5f1e8; --rail-sel: #e2ddd3;
+    --strip: #faf4ec; --canvas: #f1ede4; --inset: #fcf9f4; --raised: #ffffff;
+    --seg-sel: #d5cfc5; --hairline: #dcd6ce; --field: #bdb7ad;
+    --l1: #282018; --l2: #463c33; --l3: #786e65; --l4: #a29a92;
+    --cta: #de9416; --cta-bd: #c8830f; --cta-text: #231903;
+    --hover: rgb(0 0 0 / 0.045);
+    --err-bg: rgba(185, 28, 28, 0.1); --err-text: #b91c1c;
+    --warn-bg: rgba(180, 110, 12, 0.12); --warn-text: #a16207;
+    --ok-bg: rgba(22, 121, 75, 0.11); --ok-text: #16794b;
+    --info-bg: rgba(1, 105, 204, 0.11); --info-text: #0158ab;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #090a0d; color: #d4d6dd;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "SF Pro Text", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  code, .mono { font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+  /* 顶部导览条 */
+  .suite-nav {
+    position: sticky; top: 0; z-index: 60;
+    background: rgba(12, 13, 17, 0.92); backdrop-filter: blur(16px);
+    border-bottom: 1px solid #232630; padding: 10px 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px;
+  }
+  .brand-title { font-weight: 600; color: #f3f4f6; display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; }
+  .brand-dot { width: 10px; height: 3px; border-radius: 2px; background: #f5b83d; display: inline-block; }
+  .ctrl-group { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+  .seg { display: inline-flex; background: #16181e; padding: 2px; border-radius: 8px; border: 1px solid #262934; gap: 2px; }
+  .seg button { background: none; border: 0; color: #9498a6; padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer; }
+  .seg button.on { background: #2b2f3c; color: #fff; font-weight: 500; }
+
+  .container { max-width: 1560px; margin: 18px auto 60px; padding: 0 20px; display: flex; flex-direction: column; gap: 20px; }
+
+  /* 顶部诊断摘要横幅 */
+  .summary-card {
+    background: linear-gradient(180deg, #13161f 0%, #101218 100%);
+    border: 1px solid #252936; border-radius: 14px; padding: 16px 20px;
+    display: grid; grid-template-columns: 1fr 1.35fr; gap: 18px; align-items: start;
+  }
+  .summary-card h1 { margin: 0 0 6px; font-size: 16px; color: #f5f6f8; }
+  .summary-card p { margin: 0; font-size: 12.5px; color: #969ba9; line-height: 1.6; }
+  .points-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+  .point-item {
+    background: rgba(255, 255, 255, 0.025); border: 1px solid #232734; border-radius: 10px;
+    padding: 9px 11px; font-size: 12px; color: #c5c9d6; line-height: 1.45;
+  }
+  .point-item strong { color: #f3f4f7; display: block; margin-bottom: 2px; font-size: 12.5px; }
+  .badge-fix { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: rgba(76,195,138,0.14); color: #5fd09a; border: 1px solid rgba(76,195,138,0.28); margin-top: 8px; }
+
+  /* 对比网格 */
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  body[data-view="after"] .compare-grid { grid-template-columns: 1fr; max-width: 1040px; margin: 0 auto; width: 100%; }
+  body[data-view="after"] .col-before { display: none; }
+  body[data-view="before"] .compare-grid { grid-template-columns: 1fr; max-width: 1040px; margin: 0 auto; width: 100%; }
+  body[data-view="before"] .col-after { display: none; }
+
+  .pane-label {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px; padding: 0 4px; font-size: 12px; font-weight: 600;
+  }
+  .pane-label.before { color: #9498a6; }
+  .pane-label.after { color: #5fd09a; }
+  .pane-sub { font-weight: 400; font-size: 11.5px; color: #7d8290; }
+
+  /* 真实页面画布还原 */
+  .app-canvas {
+    background: var(--canvas); color: var(--l1);
+    border: 1px solid var(--hairline); border-radius: 14px;
+    padding: 18px 20px 20px; box-shadow: 0 16px 38px rgba(0,0,0,0.38);
+  }
+  .proj-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .proj-title { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+  .proj-mode { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--inset); color: var(--l3); }
+  .proj-path { font-size: 12px; color: var(--l4); }
+  .proj-more { margin-left: auto; color: var(--l3); padding: 2px 6px; border-radius: 6px; }
+
+  /* Tab bar */
+  .subnav-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .seg-tabs { display: inline-flex; background: var(--inset); padding: 3px; border-radius: 10px; gap: 2px; }
+  .seg-tab { padding: 4px 10px; border-radius: 7px; font-size: 12px; color: var(--l3); display: inline-flex; align-items: center; gap: 5px; }
+  .seg-tab.active { background: var(--seg-sel); color: var(--l1); font-weight: 500; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+  .head-right-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+  .top-ghost { font-size: 12px; color: var(--l2); padding: 4px 9px; border-radius: 7px; background: transparent; border: 0; display: inline-flex; align-items: center; gap: 5px; }
+
+  /* 通用 Well 卡 */
+  .well {
+    background: var(--well);
+    border: 1px solid color-mix(in srgb, var(--hairline) 82%, transparent);
+    border-radius: 11px;
+  }
+
+  /* 按钮与图标按钮 */
+  .btn-cta {
+    height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--cta-bd);
+    background: var(--cta); color: var(--cta-text); font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap;
+  }
+  .btn-row {
+    height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--field);
+    background: color-mix(in srgb, var(--raised) 80%, transparent); color: var(--l1);
+    font-size: 12px; font-weight: 500; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  }
+  .btn-row:hover { background: var(--raised); }
+  .btn-soft {
+    height: 26px; padding: 0 8.5px; border-radius: 7px; border: 1px solid var(--hairline);
+    background: var(--inset); color: var(--l2); font-size: 11.5px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  }
+  .btn-soft.warn { background: var(--warn-bg); color: var(--warn-text); border-color: rgba(245,184,61,0.28); }
+  .btn-soft.info { background: var(--info-bg); color: var(--info-text); border-color: rgba(29,130,226,0.32); }
+  .btn-ghost {
+    height: 28px; padding: 0 9px; border-radius: 7px; border: 0; background: transparent;
+    color: var(--l2); font-size: 12px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  }
+  .btn-ghost:hover { background: var(--hover); color: var(--l1); }
+  .icon-cluster { display: inline-flex; align-items: center; gap: 2px; background: color-mix(in srgb, var(--inset) 70%, transparent); padding: 2px; border-radius: 8px; }
+  .icon-btn {
+    width: 25px; height: 25px; border-radius: 6px; border: 0; background: transparent;
+    color: var(--l3); display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--hover); color: var(--l1); }
+  .icon-btn.disabled { opacity: 0.32; cursor: not-allowed; }
+
+  /* 分支地图轨道 */
+  .branch-map { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
+  .rail-item { position: relative; padding-bottom: 8px; }
+  .rail-item:last-child { padding-bottom: 0; }
+  .rail-item.root { padding-left: 22px; }
+  .rail-item.child { padding-left: 34px; }
+  .rail-trunk { position: absolute; left: 7px; top: 0; bottom: 0; width: 1px; background: var(--field); }
+  .rail-item.root .rail-trunk { top: 31px; }
+  .rail-item:last-child .rail-trunk { display: none; }
+  .rail-elbow {
+    position: absolute; left: 7px; top: 0; width: 13px; height: 27px;
+    border-left: 1px solid var(--field); border-bottom: 1px solid var(--field);
+    border-bottom-left-radius: 6px;
+  }
+  .rail-node-base {
+    position: absolute; left: 2px; top: 21px; width: 11px; height: 11px; border-radius: 999px;
+    border: 1.5px solid var(--l2); display: flex; align-items: center; justify-content: center;
+    background: var(--canvas);
+  }
+  .rail-node-base::after { content: ""; width: 3px; height: 3px; border-radius: 999px; background: var(--l2); }
+  .rail-node-tree {
+    position: absolute; left: 20px; top: 22px; width: 9px; height: 9px; border-radius: 999px;
+    background: var(--l3);
+  }
+  .rail-node-tree.ready { background: var(--info-text); box-shadow: 0 0 0 3px var(--info-bg); }
+  .rail-node-tree.warn { background: var(--warn-text); }
+
+  /* 卡片内部 */
+  .tree-card { padding: 10px 12px; position: relative; transition: border-color 140ms, background 140ms; }
+  .tree-card.ready-lane { border-left: 2.5px solid var(--info-text); }
+  .tree-row-1 { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+  .branch-name { font-size: 13px; font-weight: 500; color: var(--l1); }
+  .tag-base { font-size: 11px; padding: 1px 6px; border-radius: 5px; background: var(--inset); color: var(--l3); }
+  .tag-idle-noise { font-size: 11px; color: var(--l4); }
+  .tree-row-2 { margin-top: 5px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; font-size: 11.5px; }
+  .meta-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; color: var(--l4); font-size: 11.5px; }
+
+  /* Before 里的冗长散装事实文字 */
+  .old-fact { display: inline-flex; align-items: center; gap: 4px; color: var(--l3); }
+  .old-fact .num-warn { color: var(--warn-text); font-weight: 600; }
+  .old-fact.warn { color: var(--warn-text); }
+
+  /* After 里的紧凑结构化徽标 */
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px; height: 21px; padding: 0 7px;
+    border-radius: 6px; font-size: 11px; font-weight: 500; border: 1px solid transparent;
+  }
+  .pill.neutral { background: var(--inset); color: var(--l3); border-color: var(--hairline); }
+  .pill.warn { background: var(--warn-bg); color: var(--warn-text); border-color: rgba(245,184,61,0.22); }
+  .pill.info { background: var(--info-bg); color: var(--info-text); border-color: rgba(29,130,226,0.26); }
+  .pill.ok { background: var(--ok-bg); color: var(--ok-text); border-color: rgba(76,195,138,0.25); }
+  .pill.quiet { background: transparent; color: var(--l4); border-color: var(--hairline); }
+
+  /* After：整合式仓库顶栏 + 开工台 */
+  .kickoff-card { padding: 10px 12px; margin-bottom: 14px; position: relative; }
+  .kickoff-top {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+    padding-bottom: 9px; margin-bottom: 9px; border-bottom: 1px solid var(--hairline);
+  }
+  .origin-badge {
+    display: inline-flex; align-items: center; gap: 5px; height: 23px; padding: 0 8px;
+    border-radius: 6px; background: var(--inset); color: var(--l2); font-size: 11.5px;
+    border: 1px solid var(--hairline);
+  }
+  .kickoff-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .base-chip {
+    height: 32px; padding: 0 10px; border-radius: 8px; background: var(--inset);
+    color: var(--l2); font-size: 12px; display: inline-flex; align-items: center; gap: 5px;
+    border: 1px solid var(--hairline);
+  }
+  .input-wrap {
+    flex: 1; min-width: 210px; height: 32px; border-radius: 8px; border: 1px solid var(--field);
+    background: var(--canvas); display: flex; align-items: center; padding: 0 6px 0 10px; gap: 6px;
+  }
+  .input-wrap:focus-within { border-color: var(--cta-bd); }
+  .input-wrap input {
+    flex: 1; min-width: 80px; border: 0; outline: none; background: transparent;
+    color: var(--l1); font: inherit; font-size: 12px;
+  }
+  .input-wrap input::placeholder { color: var(--l4); }
+  .prefix-chips { display: inline-flex; align-items: center; gap: 3px; }
+  .prefix-chip {
+    font-size: 10.5px; padding: 1px 5.5px; border-radius: 5px; border: 1px solid var(--hairline);
+    background: var(--inset); color: var(--l3); cursor: pointer;
+  }
+  .prefix-chip:hover { color: var(--l1); border-color: var(--field); }
+
+  /* 已有分支浮层演示 */
+  .branch-popover {
+    margin-top: 8px; padding: 8px; border-radius: 10px; background: var(--raised);
+    border: 1px solid var(--field); box-shadow: 0 10px 26px rgba(0,0,0,0.42);
+    display: none;
+  }
+  .branch-popover.open { display: block; }
+  .pop-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; border-radius: 6px; font-size: 12px; color: var(--l2); cursor: pointer;
+  }
+  .pop-row:hover { background: var(--hover); color: var(--l1); }
+
+  /* After：端口卡片化底栏 */
+  .ports-card { margin-top: 12px; overflow: hidden; }
+  .ports-head {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px; cursor: pointer;
+    user-select: none;
+  }
+  .ports-head:hover { background: var(--hover); }
+  .port-preview-chip {
+    display: inline-flex; align-items: center; gap: 5px; height: 21px; padding: 0 7px;
+    border-radius: 6px; background: var(--inset); border: 1px solid var(--hairline);
+    font-size: 11px; color: var(--l2);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 999px; display: inline-block; }
+  .dot.ok { background: var(--ok-text); }
+  .dot.warn { background: var(--warn-text); }
+  .dot.muted { background: var(--l4); }
+  .ports-table { border-top: 1px solid var(--hairline); padding: 6px 8px 8px; display: none; }
+  .ports-card.open .ports-table { display: block; }
+  .port-tr {
+    display: grid; grid-template-columns: 68px 110px 104px 1fr auto; align-items: center;
+    gap: 8px; padding: 5px 8px; border-radius: 7px; font-size: 12px;
+  }
+  .port-tr:hover { background: var(--hover); }
+  .port-th { font-size: 11px; color: var(--l4); padding-bottom: 3px; }
+</style>
+</head>
+<body data-view="split">
+
+<header class="suite-nav">
+  <span class="brand-title"><span class="brand-dot"></span>Mesa · 编程项目面板（CodingProjectView + PortsSection）优化方案</span>
+  <div class="ctrl-group">
+    <div class="seg" id="viewSeg">
+      <button class="on" data-v="split">左右对比</button>
+      <button data-v="after">只看优化后</button>
+      <button data-v="before">只看优化前</button>
+    </div>
+    <div class="seg" id="themeSeg">
+      <button class="on" data-t="neutral">Neutral 深色</button>
+      <button data-t="ayu">Ayu 暖深</button>
+      <button data-t="ayu-light">Ayu 浅色</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  <section class="summary-card">
+    <div>
+      <h1>编程项目页（Ccode）诊断与 4 项结构打磨</h1>
+      <p>
+        基于你刚发的真实截图逐项核对：当前分支地图骨架清晰，但存在<strong>顶栏松散断层、主仓高频按钮藏进菜单、每张工作树卡重复刷「空闲 / 比 main 落后 N 个提交 / 未关联远程分支」文字噪音、无上游分支常驻灰掉的 PR 按钮、底部监听端口裸露无预览</strong>五个体验痛点。
+      </p>
+      <span class="badge-fix">✓ 「＋ 新对话」与主仓「进入」因 <code>coding:</code>/<code>lane:</code> 复用键误判为隔离工作树而拒跑的问题已同步修好热更新生效</span>
+    </div>
+    <div class="points-grid">
+      <div class="point-item">
+        <strong>① 仓库状态条并入「开工台」卡片</strong>
+        把悬空的 <code>Zeta-Techs/mesa</code> 顶条与新分支输入栏收进同一张卡片；把笼统的「4 个需同步」拆成可读胶囊；输入框空态给 <code>feat/</code> <code>fix/</code> 快捷前缀，<code>已有分支</code> 改为浮层不再把整张地图往下顶。
+      </div>
+      <div class="point-item">
+        <strong>② 主仓（基准）补齐「查看改动 / 推送」直达按钮</strong>
+        截图里 <code>main</code> 有 3 个未提交、38 个待推送，但卡片上反而只有灰冷的 PR 图标，真正要点的「查看改动 (3)」「推送 (38)」却藏在 <code>⋯</code> 里——优化后按状态直接浮出。
+      </div>
+      <div class="point-item">
+        <strong>③ 工作树卡片降噪 + 待合入 / 待拉取高亮</strong>
+        去掉每行重复的灰色「空闲」；用紧凑等宽胶囊 <code>↑1</code> <code>↓58</code> 替代整屏重复长句，让真正有产出的 <code>↑1 待合入</code>（如最后一条分支）和 <code>↓2 可拉取</code> 一眼跳出来；未关联远程时不再摆一排禁用的 PR 按钮。
+      </div>
+      <div class="point-item">
+        <strong>④ 底部「监听端口」卡片化 + 折叠态直看常用端口</strong>
+        把底部孤零零的 <code>&gt; 端口 10 个监听中</code> 升级为轻卡片底栏：收起时直接露出本项目的活跃端口胶囊（如 <code>:17575 node</code>），点击可展开对齐表（点击试试下方优化后卡片）。
+      </div>
+    </div>
+  </section>
+
+  <section class="compare-grid">
+    <!-- ==================== BEFORE ==================== -->
+    <div class="col-before">
+      <div class="pane-label before">
+        <span>优化前（当前界面现状还原）</span>
+        <span class="pane-sub">信息重复率高 · 主仓缺快捷动作 · 端口折叠态无信息</span>
+      </div>
+      <div class="app-canvas">
+        <div class="proj-head">
+          <span class="proj-title">Ccode</span>
+          <span class="proj-mode">编程</span>
+          <span class="proj-path mono">~/Documents/Ccode</span>
+          <span class="proj-more">⋯</span>
+        </div>
+
+        <div class="subnav-row">
+          <div class="seg-tabs">
+            <span class="seg-tab active">⇄ 编程任务</span>
+            <span class="seg-tab">◷ 定时任务</span>
+            <span class="seg-tab">▤ 文件</span>
+            <span class="seg-tab">⊞ Agent 分工</span>
+          </div>
+          <div class="head-right-actions">
+            <span class="top-ghost">💬 项目助手</span>
+            <span class="top-ghost">＋ 新对话</span>
+          </div>
+        </div>
+
+        <!-- 散落的顶条 -->
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px;">
+          <span class="mono" style="background:var(--inset);padding:2px 8px;border-radius:6px;color:var(--l2);font-size:11px;">Zeta-Techs/mesa</span>
+          <span style="color:var(--l4);font-size:11px;">5 个工作树 · 4 个需同步</span>
+          <span style="margin-left:auto;display:inline-flex;gap:2px;">
+            <button class="icon-btn" title="复制路径">⧉</button>
+            <button class="icon-btn" title="打开目录">📁</button>
+            <button class="icon-btn" title="从 GitHub 更新">↓</button>
+            <button class="icon-btn" title="刷新">↻</button>
+          </span>
+        </div>
+
+        <!-- 孤立的开工栏 -->
+        <div class="well" style="padding:8px;display:flex;align-items:center;gap:8px;margin-bottom:14px;">
+          <span class="base-chip mono" style="height:30px;">⑂ main →</span>
+          <div class="input-wrap" style="height:30px;">
+            <input placeholder="新分支名，如 feature/login" readonly />
+          </div>
+          <button class="btn-cta">从 main 开工</button>
+          <button class="btn-ghost">已有分支</button>
+        </div>
+
+        <!-- 分支地图（Before） -->
+        <ul class="branch-map">
+          <li class="rail-item root">
+            <span class="rail-trunk"></span>
+            <span class="rail-node-base"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name mono">⑂ main</span>
+                <span class="tag-base">基准</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-ghost">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="打开 Pull Request（主仓开 PR 无意义）">⑃</button>
+                    <button class="icon-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="old-fact warn">± 3 个文件未提交</span>
+                <span class="old-fact warn">↑ 38 个提交待推送</span>
+                <span class="meta-right">最近提交 9 分钟前</span>
+              </div>
+            </div>
+          </li>
+
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name">windows/feat/1025</span>
+                <span class="tag-idle-noise">空闲</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn">⇄</button>
+                    <button class="icon-btn">↓</button>
+                    <button class="icon-btn">↑</button>
+                    <button class="icon-btn">⑃</button>
+                    <button class="icon-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="old-fact">⑂ 比 main 落后 <span class="num-warn">1296</span> 个提交</span>
+                <span class="old-fact warn">↓ GitHub 有 2 个新提交</span>
+                <span class="meta-right"><span>最近提交 21 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name">feat/agy</span>
+                <span class="tag-idle-noise">空闲</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn">⇄</button>
+                    <button class="icon-btn">↓</button>
+                    <button class="icon-btn">↑</button>
+                    <button class="icon-btn disabled">⑃</button>
+                    <button class="icon-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="old-fact">⑂ 比 main 落后 <span class="num-warn">58</span> 个提交</span>
+                <span class="old-fact" style="color:var(--l4);">☁ 未关联远程分支</span>
+                <span class="meta-right"><span>最近提交 19 小时前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name">claude/elated-goldstine-890cb7</span>
+                <span class="tag-idle-noise">空闲</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn">⇄</button>
+                    <button class="icon-btn">↓</button>
+                    <button class="icon-btn">↑</button>
+                    <button class="icon-btn disabled">⑃</button>
+                    <button class="icon-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="old-fact">⑂ 比 main 落后 <span class="num-warn">611</span> 个提交</span>
+                <span class="old-fact" style="color:var(--l4);">☁ 未关联远程分支</span>
+                <span class="meta-right"><span>最近提交 10 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <li class="rail-item child">
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name">claude/eloquent-khayyam-acb8d6</span>
+                <span class="tag-idle-noise">空闲</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn">⇄</button>
+                    <button class="icon-btn">↓</button>
+                    <button class="icon-btn">↑</button>
+                    <button class="icon-btn disabled">⑃</button>
+                    <button class="icon-btn">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="old-fact">⑂ 比 main 领先 <b>1</b> · 落后 <span class="num-warn">1097</span> 个提交</span>
+                <span class="old-fact" style="color:var(--l4);">☁ 未关联远程分支</span>
+                <span class="meta-right"><span>最近提交 18 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <!-- 裸露的端口行 -->
+        <div style="margin-top:14px;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--l2);">
+          <span style="width:22px;height:22px;border-radius:6px;background:var(--inset);display:inline-flex;align-items:center;justify-content:center;color:var(--l3);">›</span>
+          <span>端口</span>
+          <span style="color:var(--l4);font-size:11px;">10 个监听中</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== AFTER ==================== -->
+    <div class="col-after">
+      <div class="pane-label after">
+        <span>优化后（推荐执行方案 · 可交互体验）</span>
+        <span class="pane-sub">顶栏收口 · 主仓动作直达 · 差异胶囊化 · 端口速览卡</span>
+      </div>
+      <div class="app-canvas">
+        <div class="proj-head">
+          <span class="proj-title">Ccode</span>
+          <span class="proj-mode">编程</span>
+          <span class="proj-path mono">~/Documents/Ccode</span>
+          <span class="proj-more">⋯</span>
+        </div>
+
+        <div class="subnav-row">
+          <div class="seg-tabs">
+            <span class="seg-tab active">⇄ 编程任务</span>
+            <span class="seg-tab">◷ 定时任务</span>
+            <span class="seg-tab">▤ 文件</span>
+            <span class="seg-tab">⊞ Agent 分工</span>
+          </div>
+          <div class="head-right-actions">
+            <span class="top-ghost">💬 项目助手</span>
+            <span class="top-ghost">＋ 新对话</span>
+          </div>
+        </div>
+
+        <!-- ① 整合后的仓库状态 + 新分支开工卡 -->
+        <div class="well kickoff-card">
+          <div class="kickoff-top">
+            <span class="origin-badge mono" title="https://github.com/Zeta-Techs/mesa.git">
+              <span style="opacity:0.7;">⌂</span> Zeta-Techs/mesa
+            </span>
+            <span class="pill neutral">5 棵工作树</span>
+            <span class="pill info">1 棵有新提交待合入</span>
+            <span class="pill warn">1 棵远程可拉取</span>
+            <div style="margin-left:auto;display:inline-flex;align-items:center;gap:4px;">
+              <button class="btn-soft" title="git fetch 更新远程引用">↓ 更新远程</button>
+              <div class="icon-cluster">
+                <button class="icon-btn" title="复制仓库路径">⧉</button>
+                <button class="icon-btn" title="在访达中打开">📁</button>
+                <button class="icon-btn" title="刷新状态">↻</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="kickoff-bar">
+            <span class="base-chip mono">⑂ main <span style="color:var(--l4);">→</span></span>
+            <div class="input-wrap">
+              <input id="demoBranchInput" placeholder="输入新分支名拉出独立工作树，如 feat/login" />
+              <span class="prefix-chips" id="prefixGroup">
+                <button type="button" class="prefix-chip mono" data-p="feat/">feat/</button>
+                <button type="button" class="prefix-chip mono" data-p="fix/">fix/</button>
+                <button type="button" class="prefix-chip mono" data-p="refactor/">refactor/</button>
+              </span>
+            </div>
+            <button class="btn-cta">从 main 开工</button>
+            <button class="btn-soft" id="toggleExistBtn" style="height:30px;padding:0 10px;">已有分支 ▾</button>
+          </div>
+
+          <div class="branch-popover" id="existPopover">
+            <div class="input-wrap" style="height:28px;margin-bottom:6px;">
+              <input placeholder="搜索未检出的本地或 origin 分支…" />
+            </div>
+            <div class="pop-row"><span class="mono">release/v0.2</span><span class="pill neutral">origin</span></div>
+            <div class="pop-row"><span class="mono">fix/tray-quit</span><span class="pill neutral">本地</span></div>
+          </div>
+        </div>
+
+        <!-- ② & ③ 分支地图（After） -->
+        <ul class="branch-map">
+          <!-- 主仓基准卡：直接露出 查看改动(3) 与 推送(38)，去掉无意义的 PR 图标 -->
+          <li class="rail-item root">
+            <span class="rail-trunk"></span>
+            <span class="rail-node-base"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name mono">⑂ main</span>
+                <span class="tag-base">基准 · 主仓</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-soft warn" title="打开右侧 Git 改动面板">⇄ 查看改动 · 3</button>
+                  <button class="btn-soft warn" title="推送到 origin/main">↑ 推送 · 38</button>
+                  <button class="btn-ghost" title="在主仓直接启动终端/对话">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="更多操作（拉取、打开目录、GitHub Desktop…）">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="pill warn">± 3 处未提交</span>
+                <span class="pill warn mono">↑ 38 待推送</span>
+                <span class="meta-right"><span>最近提交 9 分钟前</span></span>
+              </div>
+            </div>
+          </li>
+
+          <!-- 工作树 1：远程有 2 个新提交 → 直接亮出「↓ 拉取 · 2」按钮 -->
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree warn"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name mono">windows/feat/1025</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-soft warn" title="拉取 GitHub 上的 2 个新提交">↓ 拉取 · 2</button>
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="查看改动">⇄</button>
+                    <button class="icon-btn" title="打开 Pull Request">⑃</button>
+                    <button class="icon-btn" title="更多操作">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="pill warn mono" title="GitHub 上该分支有 2 个新提交，可拉取">↓ GitHub 2 个新提交</span>
+                <span class="pill neutral mono" title="落后基准 main 1296 个提交">基准 ↓1296</span>
+                <span class="meta-right"><span>21 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <!-- 工作树 2：近期分支、仅本地 -->
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name mono">feat/agy</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="查看改动">⇄</button>
+                    <button class="icon-btn" title="首次推送并关联 origin/feat/agy">↑</button>
+                    <button class="icon-btn" title="更多操作">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="pill neutral mono" title="落后基准 main 58 个提交">基准 ↓58</span>
+                <span class="pill quiet" title="尚未关联远程分支，推送时自动建立">仅本地</span>
+                <span class="meta-right"><span>19 小时前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <!-- 工作树 3：无领先且久未动 → 低调安静 -->
+          <li class="rail-item child">
+            <span class="rail-trunk"></span>
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree"></span>
+            <div class="well tree-card">
+              <div class="tree-row-1">
+                <span class="branch-name mono">claude/elated-goldstine-890cb7</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="查看改动">⇄</button>
+                    <button class="icon-btn" title="首次推送并关联远程">↑</button>
+                    <button class="icon-btn" title="更多操作（含删除工作树）">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="pill neutral mono" title="落后基准 main 611 个提交">基准 ↓611</span>
+                <span class="pill quiet">仅本地</span>
+                <span class="meta-right"><span>10 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+
+          <!-- 工作树 4：领先 main 1 个提交 → 左边色条 + 「↑1 待合入」高亮，一眼识别未收口成果！ -->
+          <li class="rail-item child">
+            <span class="rail-elbow"></span>
+            <span class="rail-node-tree ready"></span>
+            <div class="well tree-card ready-lane">
+              <div class="tree-row-1">
+                <span class="branch-name mono">claude/eloquent-khayyam-acb8d6</span>
+                <span class="pill info mono">↑1 待合入</span>
+                <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                  <button class="btn-soft info" title="合并进 main 或查看领先提交">⑂ 合并进 main</button>
+                  <button class="btn-row">&gt;_ 进入</button>
+                  <div class="icon-cluster">
+                    <button class="icon-btn" title="查看改动">⇄</button>
+                    <button class="icon-btn" title="首次推送并开 PR">↑</button>
+                    <button class="icon-btn" title="更多操作">⋯</button>
+                  </div>
+                </div>
+              </div>
+              <div class="tree-row-2">
+                <span class="pill info mono" title="领先基准 main 1 个提交，落后 1097 个">基准 ↑1 · ↓1097</span>
+                <span class="pill quiet">仅本地</span>
+                <span class="meta-right"><span>18 天前</span><span>📁 目录</span></span>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <!-- ④ 底部监听端口卡片（点击可展开/收起） -->
+        <div class="well ports-card" id="demoPortsCard">
+          <div class="ports-head" onclick="document.getElementById('demoPortsCard').classList.toggle('open')">
+            <span style="width:20px;height:20px;border-radius:5px;background:var(--inset);display:inline-flex;align-items:center;justify-content:center;color:var(--l3);font-size:11px;">▸</span>
+            <span style="font-size:12px;font-weight:500;color:var(--l2);">监听端口</span>
+            <span class="pill neutral mono">10</span>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;margin-left:4px;">
+              <span class="port-preview-chip mono"><span class="dot ok"></span>:17575 <span style="color:var(--l3);">node (Vite)</span></span>
+              <span class="port-preview-chip mono"><span class="dot ok"></span>:1420 <span style="color:var(--l3);">ccode</span></span>
+              <span class="pill quiet">+8 个其他进程 · 点击展开</span>
+            </div>
+          </div>
+          <div class="ports-table">
+            <div class="port-tr port-th">
+              <span>端口</span><span>进程</span><span>归属</span><span>工作目录</span><span>操作</span>
+            </div>
+            <div class="port-tr">
+              <span class="mono" style="color:var(--l1);font-weight:600;">:17575</span>
+              <span>node <span class="mono" style="color:var(--l4);font-size:11px;">#2083</span></span>
+              <span class="pill ok"><span class="dot ok"></span>主仓</span>
+              <span class="mono" style="color:var(--l4);font-size:11px;overflow:hidden;text-overflow:ellipsis;">~/Documents/Ccode</span>
+              <button class="btn-ghost" style="height:24px;font-size:11.5px;color:var(--err-text);">终止</button>
+            </div>
+            <div class="port-tr">
+              <span class="mono" style="color:var(--l1);font-weight:600;">:5173</span>
+              <span>node <span class="mono" style="color:var(--l4);font-size:11px;">#9412</span></span>
+              <span class="pill ok"><span class="dot ok"></span>feat/agy</span>
+              <span class="mono" style="color:var(--l4);font-size:11px;overflow:hidden;text-overflow:ellipsis;">~/ccode/worktrees/Ccode/feat-agy</span>
+              <button class="btn-ghost" style="height:24px;font-size:11.5px;color:var(--err-text);">终止</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  document.getElementById("viewSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-v]");
+    if (!btn) return;
+    document.querySelectorAll("#viewSeg button").forEach((b) => b.classList.toggle("on", b === btn));
+    document.body.setAttribute("data-view", btn.dataset.v);
+  });
+  document.getElementById("themeSeg").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-t]");
+    if (!btn) return;
+    document.querySelectorAll("#themeSeg button").forEach((b) => b.classList.toggle("on", b === btn));
+    document.documentElement.setAttribute("data-theme", btn.dataset.t);
+  });
+  document.getElementById("toggleExistBtn").addEventListener("click", () => {
+    document.getElementById("existPopover").classList.toggle("open");
+  });
+  const input = document.getElementById("demoBranchInput");
+  const prefixGroup = document.getElementById("prefixGroup");
+  prefixGroup.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-p]");
+    if (!chip) return;
+    input.value = chip.dataset.p;
+    prefixGroup.style.display = "none";
+    input.focus();
+  });
+  input.addEventListener("input", () => {
+    prefixGroup.style.display = input.value.trim() ? "none" : "inline-flex";
+  });
+</script>
+</body>
+</html>

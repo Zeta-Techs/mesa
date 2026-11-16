@@ -1,0 +1,2569 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="neutral">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mesa 项目六大核心视图 UI 优化对比稿</title>
+<style>
+  /* ── 1. Mesa 真实主题令牌（严格同步 src/App.css） ── */
+  :root, [data-theme="neutral"] {
+    --rail: #0d0d0d; --rail2: #161616; --rail-sel: #262626;
+    --strip: #1c1c1c; --canvas: #111111; --inset: #212121; --raised: #272727;
+    --seg-sel: #2b2b2b; --hairline: #2c2c2c; --field: #383838;
+    --l1: #e5e5e5; --l2: #c2c2c2; --l3: #989898; --l4: #6e6e6e;
+    --cta: #0169cc; --cta-text: #eaf4ff; --cta-bd: #014a8f;
+    --cta-pill: #0d2d4d; --cta-pill-text: #63a9ef;
+    --folder: #999999; --done: #5c987a;
+    --ok: #10331f; --ok-text: #4cc38a;
+    --err: #381e24; --err-text: #f07070;
+    --warn: #37300f; --warn-text: #f0c010;
+    --mesa-amber: #f5b83d; --mesa-amber-ink: #1d1608;
+    --hover: rgb(255 255 255 / 0.05);
+    --switch-off: #262626; --switch-knob: #e9e6e2;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --sub-well: color-mix(in srgb, var(--canvas) 55%, var(--rail2));
+  }
+
+  [data-theme="ayu"] {
+    --rail: #0d0b08; --rail2: #1b1815; --rail-sel: #312d29;
+    --strip: #1e1b18; --canvas: #15130f; --inset: #23211d; --raised: #2c2925;
+    --seg-sel: #35322d; --hairline: #2c2a26; --field: #413f3c;
+    --l1: #e5e0d9; --l2: #c5bfb6; --l3: #928c84; --l4: #6b675f;
+    --cta: #f5b83d; --cta-text: #1d1608; --cta-bd: #855d00;
+    --cta-pill: #3a2b0f; --cta-pill-text: #ffc65d;
+    --folder: #9c896a; --done: #7fa56a;
+    --switch-off: #23211d;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --sub-well: color-mix(in srgb, var(--canvas) 55%, var(--rail2));
+  }
+
+  [data-theme="midnight"] {
+    --rail: #0c0b09; --rail2: #1a1917; --rail-sel: #31302d;
+    --strip: #1e1d1b; --canvas: #131210; --inset: #232220; --raised: #2b2a28;
+    --seg-sel: #373633; --hairline: #31302d; --field: #464542;
+    --l1: #e9e6e2; --l2: #bdbab4; --l3: #95959a; --l4: #6b6b72;
+    --cta: #faa8d4; --cta-text: #2a1220; --cta-bd: #b06a8e;
+    --cta-pill: #3d1f31; --cta-pill-text: #f6a9d6;
+    --folder: #939189; --done: #47967a;
+    --switch-off: #232220;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --sub-well: color-mix(in srgb, var(--canvas) 55%, var(--rail2));
+  }
+
+  [data-theme="ayu-light"] {
+    color-scheme: light;
+    --rail: #e7e2db; --rail2: #f6f2e9; --rail-sel: #e1dcd3;
+    --strip: #fbf5ed; --canvas: #f2eee5; --inset: #fefaf6; --raised: #ffffff;
+    --seg-sel: #d2cdc3; --hairline: #dad4cc; --field: #bab4aa;
+    --l1: #2a2119; --l2: #443a31; --l3: #7b7068; --l4: #a79f98;
+    --cta: #e39a1c; --cta-text: #241a02; --cta-bd: #ab7000;
+    --cta-pill: #fce4c5; --cta-pill-text: #7e5000;
+    --folder: #a28763; --done: #4f7a3a;
+    --ok: #d9f2e2; --ok-text: #177245;
+    --err: #fbe3e6; --err-text: #b02a42;
+    --warn: #fdf1cd; --warn-text: #8a6100;
+    --mesa-amber: #e39a1c;
+    --hover: rgb(0 0 0 / 0.05);
+    --switch-off: #d5d0c8; --switch-knob: #ffffff;
+    --well: color-mix(in srgb, var(--rail2) 65%, var(--raised));
+    --sub-well: color-mix(in srgb, var(--canvas) 55%, var(--rail2));
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    background: #090a0d;
+    color: #d4d4d8;
+    font: 13.5px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono {
+    font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, "Cascadia Mono", Consolas, monospace;
+  }
+
+  /* ── 2. 顶部全局对比控制台 ── */
+  .topbar {
+    position: sticky; top: 0; z-index: 60;
+    background: rgba(11, 12, 16, 0.92);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid #22252d;
+    padding: 10px 22px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px;
+  }
+  .brand-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13.5px; font-weight: 600; color: #f4f4f6;
+    margin-right: 4px;
+  }
+  .brand-cursor {
+    display: inline-block; width: 10px; height: 4px; border-radius: 1.5px; background: #f5b83d;
+  }
+  .nav-pills {
+    display: inline-flex; flex-wrap: wrap; gap: 3px;
+    background: #15171d; padding: 3px; border-radius: 9px; border: 1px solid #252832;
+  }
+  .nav-pills button {
+    border: 0; background: transparent; color: #9094a2;
+    padding: 4px 10px; border-radius: 6px; font: inherit; font-size: 12px;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .nav-pills button:hover { color: #e4e4e7; }
+  .nav-pills button.on { background: #282c37; color: #ffffff; font-weight: 500; }
+
+  .ctrl-right {
+    margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  }
+  .ctrl-label { font-size: 11.5px; color: #7e8290; display: inline-flex; align-items: center; gap: 5px; }
+
+  /* ── 3. 页面骨架与说明区 ── */
+  .page-wrap {
+    max-width: 1560px; margin: 20px auto 72px; padding: 0 22px;
+    display: flex; flex-direction: column; gap: 28px;
+  }
+  .intro-banner {
+    background: linear-gradient(180deg, #13151b 0%, #101217 100%);
+    border: 1px solid #232631; border-radius: 12px; padding: 16px 20px;
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px;
+  }
+  .intro-banner h1 { margin: 0; font-size: 17px; color: #f4f4f7; font-weight: 600; }
+  .intro-banner p { margin: 5px 0 0; font-size: 12.5px; color: #9498a6; max-width: 1020px; }
+  .principle-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .p-chip {
+    font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
+    background: #1a1d26; border: 1px solid #2a2e3b; color: #c8cbd6;
+  }
+  .p-chip b { color: #f5b83d; font-weight: 600; }
+
+  /* ── 4. 模块卡片与 Before/After 网格 ── */
+  .mod-section {
+    background: #111318; border: 1px solid #222530; border-radius: 14px; padding: 18px 20px 22px;
+  }
+  .mod-header {
+    display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+    gap: 12px; margin-bottom: 14px;
+  }
+  .mod-title-row { display: flex; align-items: center; gap: 9px; }
+  .mod-badge {
+    font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
+    background: rgba(245, 184, 61, 0.15); color: #f5b83d; letter-spacing: 0.02em;
+  }
+  .mod-header h2 { margin: 0; font-size: 16px; color: #f3f4f6; font-weight: 600; }
+  .mod-file-ref { font-size: 11.5px; color: #787c8c; }
+  .diff-summary {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+    margin-bottom: 14px; font-size: 12px;
+  }
+  @media (max-width: 1100px) { .diff-summary { grid-template-columns: 1fr; } }
+  .diff-box {
+    border-radius: 9px; padding: 9px 12px; line-height: 1.5;
+  }
+  .diff-box.pain { background: rgba(240, 112, 112, 0.06); border: 1px solid rgba(240, 112, 112, 0.18); color: #c7b8b8; }
+  .diff-box.gain { background: rgba(76, 195, 138, 0.06); border: 1px solid rgba(76, 195, 138, 0.2); color: #bfd4c8; }
+  .diff-box b { color: #f1f1f4; font-weight: 600; }
+
+  .ab-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start;
+  }
+  body[data-layout="stack"] .ab-grid { grid-template-columns: 1fr; }
+  body[data-layout="after"] .ab-col.is-before { display: none; }
+  body[data-layout="after"] .ab-grid { grid-template-columns: 1fr; }
+  body[data-layout="before"] .ab-col.is-after { display: none; }
+  body[data-layout="before"] .ab-grid { grid-template-columns: 1fr; }
+  @media (max-width: 1160px) { .ab-grid { grid-template-columns: 1fr; } }
+
+  .ab-col { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .ab-label {
+    display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; padding: 0 2px;
+  }
+  .ab-label.before { color: #8e92a0; }
+  .ab-label.after { color: #f5b83d; }
+  .ab-label .tag-pill {
+    font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px;
+  }
+  .ab-label.before .tag-pill { background: #232630; color: #a0a4b4; }
+  .ab-label.after .tag-pill { background: rgba(245, 184, 61, 0.18); color: #f5b83d; }
+
+  /* ── 5. 仿真 Mesa 项目工作区画布（data-surface="workspace" 基色 rail2） ── */
+  .mesa-frame {
+    background: var(--rail2);
+    color: var(--l2);
+    border-radius: 11px;
+    border: 1px solid color-mix(in srgb, var(--field) 75%, transparent);
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .mesa-pad { padding: 14px 16px 18px; }
+
+  /* 项目页身份头 + 页签行 */
+  .proj-head {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 8px; min-width: 0;
+  }
+  .proj-name { font-size: 15.5px; font-weight: 600; color: var(--l1); white-space: nowrap; }
+  .mode-pill {
+    font-size: 11px; padding: 1px 7px; border-radius: 999px;
+    background: var(--inset); color: var(--l3); white-space: nowrap;
+  }
+  .proj-topic {
+    font-size: 12px; color: var(--l3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .proj-chip {
+    font-size: 11px; padding: 2px 7px; border-radius: 6px;
+    background: var(--well); color: var(--l3); cursor: pointer; white-space: nowrap; border: 0; font: inherit;
+  }
+  .proj-chip:hover { background: var(--hover); color: var(--l1); }
+
+  /* 页签行：Before 有全宽底边线；After 去线条化 */
+  .tabs-before {
+    display: flex; align-items: flex-end; gap: 4px;
+    border-bottom: 0.5px solid var(--hairline); margin-bottom: 12px;
+  }
+  .tabs-before .tab {
+    height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--l3); border-bottom: 2px solid transparent;
+    background: none; border-top: 0; border-left: 0; border-right: 0; cursor: pointer; font-family: inherit;
+  }
+  .tabs-before .tab.on { color: var(--l1); border-bottom-color: var(--cta); font-weight: 500; }
+
+  .tabs-after {
+    display: flex; align-items: center; gap: 3px; margin-bottom: 12px;
+  }
+  .tabs-after .tab {
+    height: 28px; padding: 0 10px; border-radius: 7px;
+    display: inline-flex; align-items: center; gap: 5.5px;
+    font-size: 12px; color: var(--l3); background: transparent; border: 0; cursor: pointer; font-family: inherit;
+  }
+  .tabs-after .tab:hover { background: var(--hover); color: var(--l1); }
+  .tabs-after .tab.on { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+  .tab-dot {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--mesa-amber); display: inline-block;
+  }
+
+  /* 共用基础原子 */
+  .well { background: var(--well); border-radius: 8px; }
+  .sub-well { background: var(--sub-well); border-radius: 7px; }
+  .btn {
+    height: 28px; padding: 0 10px; border-radius: 6px; font: inherit; font-size: 12px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    cursor: pointer; border: 0; white-space: nowrap; transition: background .12s, color .12s;
+  }
+  .btn-primary {
+    height: 30px; padding: 0 12px; font-weight: 500;
+    background: var(--cta); color: var(--cta-text);
+  }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-sec {
+    background: var(--raised); color: var(--l1); border: 0.5px solid var(--field);
+  }
+  .btn-sec:hover { background: var(--seg-sel); }
+  .btn-ghost {
+    background: transparent; color: var(--l3); height: 26px; padding: 0 7px;
+  }
+  .btn-ghost:hover { background: var(--hover); color: var(--l1); }
+  .btn-icon {
+    width: 26px; height: 26px; padding: 0; border-radius: 6px;
+    background: transparent; color: var(--l3); border: 0;
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .btn-icon:hover { background: var(--hover); color: var(--l1); }
+  .dotted-link {
+    background: none; border: 0; padding: 0 2px; font: inherit; font-size: 11.5px;
+    color: var(--l3); text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer;
+  }
+  .dotted-link:hover { color: var(--l1); }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; line-height: 16px; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+  }
+  .pill-cta { background: var(--cta-pill); color: var(--cta-pill-text); border: 0.5px solid var(--cta-bd); }
+  .pill-inset { background: var(--inset); color: var(--l3); }
+  .pill-raised { background: var(--raised); color: var(--l2); }
+  .pill-ok { background: var(--ok); color: var(--ok-text); }
+  .pill-warn { background: var(--warn); color: var(--warn-text); }
+  .pill-err { background: var(--err); color: var(--err-text); }
+
+  .field-input {
+    height: 30px; border-radius: 6px; border: 0.5px solid var(--field);
+    background: var(--canvas); color: var(--l1); padding: 0 9px; font: inherit; font-size: 12px; outline: none;
+  }
+  .search-shell {
+    height: 29px; border-radius: 7px; background: var(--inset);
+    display: flex; align-items: center; gap: 6px; padding: 0 9px; color: var(--l3); font-size: 12px;
+  }
+  .search-shell input {
+    border: 0; background: transparent; color: var(--l1); font: inherit; font-size: 12px;
+    width: 100%; outline: none;
+  }
+
+  .toggle {
+    width: 30px; height: 17px; border-radius: 999px; background: var(--switch-off);
+    position: relative; border: 0; cursor: pointer; padding: 0; flex-shrink: 0; transition: background .15s;
+  }
+  .toggle.on { background: var(--cta); }
+  .toggle::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 13px; height: 13px; border-radius: 50%; background: var(--switch-knob);
+    transition: transform .15s;
+  }
+  .toggle.on::after { transform: translateX(13px); }
+
+  /* ── 6. 模块 ①：大圆步进器（规格保留）+ 步骤流程线 ── */
+  .stepper-well { padding: 9px 12px 10px; margin-bottom: 10px; }
+  .stepper-grid {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; align-items: center;
+  }
+  .step-name-cell {
+    font-size: 11.5px; color: var(--l2); text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: flex; align-items: center; justify-content: center; gap: 4px; height: 22px;
+  }
+  .step-chain-row {
+    position: relative; display: flex; align-items: center; margin: 3px 0;
+  }
+  .step-dash-bg {
+    position: absolute; left: 8%; right: 18px; top: 50%; height: 2px; transform: translateY(-50%);
+    background: repeating-linear-gradient(90deg, var(--hairline) 0 6px, transparent 6px 12px);
+    z-index: 0;
+  }
+  .step-circles {
+    position: relative; z-index: 1; flex: 1;
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px;
+  }
+  .step-cell-btn {
+    display: flex; align-items: center; justify-content: center; background: none; border: 0; cursor: pointer; padding: 2px 0;
+  }
+  .step-circle-mask {
+    width: 28px; height: 28px; border-radius: 50%; background: var(--well);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-circle {
+    width: 20px; height: 20px; border-radius: 50%; transition: all .15s;
+    border: 1.5px solid var(--field); background: transparent;
+  }
+  .step-circle.done { background: var(--done); border-color: var(--done); }
+  .step-circle.active { background: var(--cta); border-color: var(--cta); }
+  .step-circle.rework { border-color: var(--cta); background: transparent; }
+  .step-circle.selected { box-shadow: 0 0 0 2px var(--well), 0 0 0 3.5px var(--l1); }
+  .step-diamond {
+    width: 8px; height: 8px; transform: rotate(45deg); background: var(--hairline); flex-shrink: 0; margin-left: 4px;
+  }
+  .step-sub-cell {
+    font-size: 10.5px; text-align: center; height: 15px; color: var(--l4);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* 流程线 Before vs After */
+  .flow-list { list-style: none; margin: 0; padding: 0; }
+  .flow-li { position: relative; padding: 5px 0 7px 26px; }
+  .flow-li:not(:last-child)::before {
+    content: ""; position: absolute; left: 9px; top: 20px; bottom: -6px;
+    width: 1px; background: var(--hairline);
+  }
+  .flow-num {
+    position: absolute; left: 0; top: 5px; width: 19px; height: 19px; border-radius: 50%;
+    font-size: 11px; display: flex; align-items: center; justify-content: center;
+    background: var(--inset); color: var(--l3); font-weight: 500;
+  }
+  .flow-num.cur { background: var(--cta); color: var(--cta-text); font-weight: 600; }
+  .flow-num.done { background: transparent; color: var(--ok-text); }
+
+  /* After 专属：当前节点轻聚光面，无满屏虚线，无横切线 */
+  .flow-li-after {
+    position: relative; padding: 6px 8px 6px 30px; border-radius: 8px; transition: background .15s;
+  }
+  .flow-li-after.is-cur {
+    background: var(--sub-well);
+    padding-top: 9px; padding-bottom: 10px; margin: 4px 0;
+  }
+  .flow-li-after:not(:last-child)::before {
+    content: ""; position: absolute; left: 15px; top: 24px; bottom: -6px;
+    width: 1px; background: var(--hairline);
+  }
+  .flow-li-after .flow-num { left: 6px; top: 6px; }
+  .flow-li-after.is-cur .flow-num { top: 9px; }
+
+  .tool-cluster {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    background: var(--well); padding: 3px; border-radius: 7px;
+  }
+  .tool-cluster button {
+    height: 23px; padding: 0 8px; border-radius: 5px; border: 0;
+    background: transparent; color: var(--l2); font: inherit; font-size: 11.5px;
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  }
+  .tool-cluster button:hover { background: var(--hover); color: var(--l1); }
+
+  /* 步骤切换选择器（演示台顶栏） */
+  .step-switcher-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin-bottom: 12px; padding: 7px 10px; border-radius: 8px;
+    background: #171a22; border: 1px solid #272b38; font-size: 12px; color: #a0a5b5;
+  }
+  .step-switcher-bar button {
+    border: 0; background: transparent; color: #9499aa; padding: 3px 9px;
+    border-radius: 6px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .step-switcher-bar button.on { background: #2c3140; color: #fff; font-weight: 500; }
+
+  /* ── 7. 模块 ②：分支地图轨道 ── */
+  .branch-map { list-style: none; margin: 0; padding: 0; }
+  .b-row { position: relative; padding-left: 24px; margin-bottom: 8px; }
+  .b-row.root { padding-left: 24px; }
+  .b-rail-v {
+    position: absolute; left: 8px; top: 0; bottom: -8px; width: 1px; background: var(--field);
+  }
+  .b-row.last .b-rail-v { height: 18px; bottom: auto; }
+  .b-elbow {
+    position: absolute; left: 8px; top: 10px; width: 12px; height: 10px;
+    border-left: 1px solid var(--field); border-bottom: 1px solid var(--field);
+    border-bottom-left-radius: 6px;
+  }
+  .b-node {
+    position: absolute; left: 4px; top: 13px; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--l3); z-index: 2;
+  }
+  .b-node.base {
+    width: 11px; height: 11px; left: 3px; top: 12px;
+    background: var(--rail2); border: 2px solid var(--l2);
+  }
+  .b-node.base::after {
+    content: ""; display: block; width: 3px; height: 3px; border-radius: 50%;
+    background: var(--l2); margin: 2px auto 0;
+  }
+  .b-node.live { background: var(--ok-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok-text) 22%, transparent); }
+  .b-node.err { background: var(--err-text); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err-text) 22%, transparent); }
+  .b-node.loose { background: var(--rail2); border: 1.5px solid var(--l4); top: 9px; }
+
+  .action-capsule {
+    display: inline-flex; align-items: center; gap: 1px;
+    background: var(--sub-well); padding: 2px; border-radius: 7px;
+  }
+
+  /* ── 8. 模块 ⑤：文件双栏 ── */
+  .files-split {
+    display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 12px; height: 370px;
+  }
+  @media (max-width: 720px) { .files-split { grid-template-columns: 1fr; height: auto; } }
+  .ftree-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  .ftree-row {
+    height: 29px; padding: 0 7px; border-radius: 6px;
+    display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--l2);
+    cursor: pointer; user-select: none;
+  }
+  .ftree-row:hover { background: var(--hover); }
+  .ftree-row.sel { background: var(--seg-sel); color: var(--l1); font-weight: 500; }
+  .indent-guide {
+    border-left: 0.5px solid var(--hairline); margin-left: 13px; padding-left: 7px;
+  }
+
+  /* ── 9. 模块 ⑥：Agent 分工 ── */
+  .agent-grid-before {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px;
+  }
+  .slot-row-after {
+    display: flex; align-items: center; gap: 8px; min-height: 34px;
+    padding: 4px 8px; border-radius: 6px; transition: background .12s;
+  }
+  .slot-row-after:hover { background: var(--hover); }
+  .brand-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── 6B. 模块 ①-B：步骤工作区与本步文件清单（ArtifactChecklist） ── */
+  .art-row-before {
+    height: 27px; padding: 0 6px; border-radius: 4px;
+    display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--l2);
+    cursor: pointer;
+  }
+  .art-row-before:hover, .art-row-before.active-demo { background: var(--hover); color: var(--l1); }
+  .art-ic {
+    font-size: 11px; color: var(--l4); width: 16px; height: 16px;
+    display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+
+  .deliverable-grid {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px;
+  }
+  @media (max-width: 640px) { .deliverable-grid { grid-template-columns: 1fr; } }
+  .deliverable-card {
+    background: var(--sub-well); border-radius: 7px; padding: 7px 9px;
+    display: flex; align-items: center; gap: 8px; cursor: pointer; transition: background .12s;
+  }
+  .deliverable-card:hover { background: var(--hover); }
+  .ftype-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 5px; border-radius: 4px; flex-shrink: 0; letter-spacing: 0.02em;
+  }
+  .ftype-pdf { background: color-mix(in srgb, #e5534b 18%, transparent); color: #f0766f; }
+  .ftype-doc { background: color-mix(in srgb, #3b82f6 18%, transparent); color: #69a5ff; }
+  .ftype-md  { background: var(--inset); color: var(--l3); }
+
+  .art-row-after {
+    height: 28px; padding: 0 8px; border-radius: 6px;
+    display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--l2);
+    cursor: pointer; transition: background .12s;
+  }
+  .art-row-after:hover, .art-row-after.active-demo { background: var(--hover); color: var(--l1); }
+  .art-row-after .hover-ops { display: none; align-items: center; gap: 2px; }
+  .art-row-after:hover .hover-ops, .art-row-after.active-demo .hover-ops { display: inline-flex; }
+  .art-row-after:hover .quiet-meta { display: none; }
+
+  /* 辅助响应式微调 */
+  .muted-sep { color: var(--l4); margin: 0 3px; }
+  .flex-row-between { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+</style>
+</head>
+<body data-layout="side">
+
+<!-- ==================== 顶部固定对比控制栏 ==================== -->
+<header class="topbar">
+  <div class="brand-title">
+    <span class="brand-cursor"></span>
+    <span>Mesa 项目视图 UI 优化对比</span>
+  </div>
+
+  <nav class="nav-pills" id="modFilter" aria-label="模块筛选">
+    <button type="button" class="on" data-mod="all">全部视图</button>
+    <button type="button" data-mod="m1">① 科研步骤</button>
+    <button type="button" data-mod="m1b" style="color:#f5b83d">①-B 本步文件与工作区</button>
+    <button type="button" data-mod="m2">② 编程任务</button>
+    <button type="button" data-mod="m3">③ 工作任务</button>
+    <button type="button" data-mod="m4">④ 定时任务</button>
+    <button type="button" data-mod="m5">⑤ 文件</button>
+    <button type="button" data-mod="m6">⑥ Agent 分工</button>
+  </nav>
+
+  <div class="ctrl-right">
+    <span class="ctrl-label">对比方式</span>
+    <div class="nav-pills" id="layoutSwitch">
+      <button type="button" class="on" data-layout="side">左右同屏</button>
+      <button type="button" data-layout="after">只看优化版</button>
+      <button type="button" data-layout="stack">上下宽屏</button>
+    </div>
+
+    <span class="ctrl-label">主题</span>
+    <div class="nav-pills" id="themeSwitch">
+      <button type="button" class="on" data-theme="neutral">极简灰蓝</button>
+      <button type="button" data-theme="ayu">暖炭(琥珀)</button>
+      <button type="button" data-theme="midnight">沉浸黑</button>
+      <button type="button" data-theme="ayu-light">暖炭·浅</button>
+    </div>
+  </div>
+</header>
+
+<main class="page-wrap">
+
+  <!-- 总纲说明 -->
+  <section class="intro-banner">
+    <div>
+      <h1>六个项目子视图的共性诊断与统一收敛方向</h1>
+      <p>
+        严格遵守现有设计系统硬约束（<code>.ccode-well</code> 统一内容井、零 1px 描边、去线条化、大圆步进器骨架不动、每屏唯一主 CTA、文案 ≤20 字），重点解决当前界面在真实高频使用中长出来的<b>「碎虚线多、同权重卡片泛滥、跨行散落、切换跳宽」</b>四大视觉噪音。所有卡片均可直接点击交互体验。
+      </p>
+    </div>
+    <div class="principle-chips">
+      <span class="p-chip"><b>去虚线化</b>：清掉满屏 <code>dotted underline</code> 碎链接</span>
+      <span class="p-chip"><b>继承静默</b>：跟随默认只写淡字，定制项才亮色</span>
+      <span class="p-chip"><b>消除横切</b>：用内嵌微底替代 <code>border-t</code> 分割线</span>
+      <span class="p-chip"><b>骨架稳定</b>：双栏与紧凑卡高不随点击剧烈跳变</span>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ①：科研任务每个步骤的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m1">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 01</span>
+          <h2>科研任务 · 每个步骤的 UI（可点下方 5 个步骤逐一对比）</h2>
+        </div>
+        <div class="mod-file-ref mono">ProjectGroup.tsx · TaskCardsSection.tsx · StepFlow.tsx · ProjectSurfaceTabs.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>① 步进器上方散落模板/设定/回路多行碎提示，页签行带全宽横线；② 流程线里已完成、当前、未到节点平铺无聚光，到处是 <code>更改 / 全部用推荐值 / 去补几篇</code> 虚线下划线；③ <code>可选</code> 与 <code>保存后可做</code> 用两条实/虚横线把步骤卡切成三截，选项胶囊底色（<code>bg-inset</code> / <code>bg-strip</code>）混用。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 大圆步进器规格不动，零散提醒合为单条安静胶囊，当前步骤卡头统一为「步骤序号·名称 + 角色标 + 白话状态 | ‹ n/5 ›」；② <b>当前待办节点微底聚光</b>，已完成节点单行静默；③ 商量 / TASK.md / 研讨收成规整轻工具簇，<code>可选 / 保存后可做</code> 改无横线折叠抽屉，五个步骤各自的关键动作一眼聚焦。
+      </div>
+    </div>
+
+    <!-- 5 步切换器（同时驱动左右两栏） -->
+    <div class="step-switcher-bar" id="researchStepBar">
+      <span>切换查看科研全流程每一步：</span>
+      <button type="button" class="on" data-step="0">① 文献检索与筛选（开工前）</button>
+      <button type="button" data-step="1">② 文献精读与笔记（补付费墙全文）</button>
+      <button type="button" data-step="2">③ 综述大纲（一起定 + 节回路）</button>
+      <button type="button" data-step="3">④ 初稿与科研做图（待评审）</button>
+      <button type="button" data-step="4">⑤ 润色定稿与渲染（批注与成稿）</button>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 科研步骤 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：提示散落 · 虚线链接密集 · 横线三段切分</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="proj-head">
+              <span class="proj-name">HER 单原子催化剂综述</span>
+              <span class="mode-pill">科研</span>
+              <span class="proj-topic">过渡金属单原子析氢机理与载体效应</span>
+              <span style="margin-left:auto" class="proj-chip">全局设定</span>
+            </div>
+            <div class="tabs-before">
+              <button class="tab on">研究流程</button>
+              <button class="tab">定时任务</button>
+              <button class="tab">文件</button>
+              <button class="tab">Agent 分工</button>
+              <span style="margin-left:auto;padding-bottom:3px"><button class="btn btn-ghost">＋ 新对话</button></span>
+            </div>
+
+            <!-- 现状上方散落的多行小字提示 -->
+            <div style="font-size:11px;color:var(--warn-text);margin-bottom:4px">
+              第 3 步「综述大纲」发起了补文献，先去第 1 步补齐后再跟进 <button class="dotted-link">去这一步</button>
+            </div>
+            <div style="font-size:11px;color:var(--l3);margin-bottom:8px">
+              内置模板「系统综述」有更新：文献精读、综述大纲可以换成新版。 <button class="dotted-link">去看看</button> <span style="color:var(--l4);margin-left:4px;cursor:pointer">不用了</span>
+            </div>
+
+            <!-- 大圆步进器 -->
+            <div class="well stepper-well" id="stepperBefore"></div>
+
+            <!-- 现状当前步骤卡 -->
+            <div class="well" style="padding:12px" id="stepCardBefore"></div>
+
+            <div style="margin-top:8px;font-size:11px;color:var(--l4)">▸ 流程之外：目标 2 · 工作区 3</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 科研步骤 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：单行收纳提示 · 当前节点聚光 · 去虚线与横切线</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="proj-head">
+              <span class="proj-name">HER 单原子催化剂综述</span>
+              <span class="mode-pill">科研</span>
+              <span class="proj-topic">过渡金属单原子析氢机理与载体效应</span>
+              <button style="margin-left:auto" class="proj-chip" title="篇幅：8000词 · 去向：ACS Catalysis · 引用：numbered">全局设定 · 3</button>
+            </div>
+            <div class="tabs-after">
+              <button class="tab on">研究流程</button>
+              <button class="tab">定时任务 <span class="tab-dot" title="雷达有 2 篇新命中待过目"></span></button>
+              <button class="tab">文件</button>
+              <button class="tab">Agent 分工</button>
+              <span style="margin-left:auto"><button class="btn btn-sec" style="height:26px;font-size:11.5px">＋ 新对话</button></span>
+            </div>
+
+            <!-- 大圆步进器（规格不变，在途回路与模板提示优雅收进卡头右侧/底栏） -->
+            <div class="well stepper-well" id="stepperAfter"></div>
+
+            <!-- 优化后当前步骤卡 -->
+            <div class="well" style="padding:13px 14px;box-shadow:0 1px 2px rgb(0 0 0 / 0.14)" id="stepCardAfter"></div>
+
+            <div class="flex-row-between" style="margin-top:9px;padding:0 2px;font-size:11px;color:var(--l4)">
+              <span>▾ 流程之外与本步工作区（见下方模块 01-B 展开对比）</span>
+              <span>模板有 2 步可选更新 · <button class="btn-ghost" style="font-size:11px;height:20px;padding:0 5px;border-radius:4px;border:0;cursor:pointer">查看差异</button></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ①-B：科研步骤下方 · 流程之外 + 工作区卡 +「本步文件」清单（对应上传截图） -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m1b" style="border-color:rgba(245, 184, 61, 0.35)">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 01-B · 新增补齐</span>
+          <h2>步骤下方「流程之外 · 工作区卡 · 本步文件清单」（1:1 对应你的截图）</h2>
+        </div>
+        <div class="mod-file-ref mono">WorkspacesPage.tsx (工作区列表) · ArtifactChecklist.tsx (本步文件核验清单) · ProjectGroup.tsx (流程之外折叠区)</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点（直击截图）：</b>① 顶部一句无头灰字说明与下方 <code>润色与定稿 · 工作区 (1) | 新建工作区</code> 粘连，一步默认一工作区却把 <code>新建工作区</code> 摆在显眼处易误点；② 外卡写内部英文名 <code>polish</code>，内嵌同色 <code>ccode-well</code> 又写一遍 <code>「润色与定稿」本步文件</code>，且右上角 <code>⟳ 刷新</code> 描边大胶囊喧宾夺主，<code>● 可评审</code> 点了只弹状态气泡而非去评审；③ <b>14 个文件无差别平铺成英文代码墙</b>：用户最要拿走的 PDF/Word 定稿埋在第 9~12 行，与 <code>evidence.json</code> 等内部核验账本混排，每行右侧常驻 <code>↗</code> + <code>⠿</code> 共 28 个重复小灰图标。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 「流程之外」空态收成<b>单行轻入口条（配 <code>＋ 新建目标</code>）</b>，<code>另建工作区</code> 收进 <code>⋯</code>；② <b>消除同色套娃与中英双标题</b>：合并为单层卡头 <code>润色与定稿 · 本步文件 (14/14 已齐)</code>，<code>⟳ 刷新</code> 降为 26px 安静图标钮；③ <b>按交付价值分三层</b>：<b>最终成稿（PDF / 纯享 Word / EndNote 版 / Zotero 版）置顶双列卡片</b>一键打开或拖走 → <b>源稿与投稿配套</b>居中对齐且 <code>↗ / ⠿</code> 悬停才现 → <b>核验与引文账本（5 份）默认折叠</b>一行摘要！
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 1:1 还原用户截图 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状（1:1 还原截图）：同色套娃 · 英文名无分类长墙 · 28 个常驻图标麻点</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <!-- 顶上孤立的一句目标空态文字 -->
+            <div style="font-size:12px;color:var(--l3);margin-bottom:14px">
+              流程步骤之外的事（组会材料、整理一批数据、补一个实验……）记成目标，单独做、单独验收。
+            </div>
+
+            <!-- 工作区头 -->
+            <div class="flex-row-between" style="margin-bottom:8px">
+              <span style="font-size:12px;color:var(--l3)">润色与定稿 · 工作区 (1)</span>
+              <button class="btn-ghost" style="font-size:12px;color:var(--l2);border:0;cursor:pointer">新建工作区</button>
+            </div>
+
+            <!-- polish 外卡 -->
+            <div class="well" style="padding:12px">
+              <div class="flex-row-between">
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span style="font-size:13.5px;font-weight:600;color:var(--l1)">polish</span>
+                    <span style="display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:6px;background:var(--raised);font-size:11.5px;color:var(--l2)">
+                      <span style="width:7px;height:7px;border-radius:50%;background:var(--ok-text)"></span>可评审
+                    </span>
+                  </div>
+                  <div style="font-size:11px;color:var(--l4);margin-top:2px">创建于 5 小时前</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                  <button class="btn-ghost" style="font-size:12.5px;color:var(--l1);border:0;cursor:pointer">收起文件</button>
+                  <button class="btn-icon">⋯</button>
+                </div>
+              </div>
+
+              <!-- 内嵌同色 ArtifactChecklist -->
+              <div class="well" style="margin-top:10px;padding:8px">
+                <div class="flex-row-between" style="margin-bottom:6px;padding:0 4px">
+                  <div style="display:flex;align-items:center;gap:7px">
+                    <span style="font-size:12px;color:var(--l2)">「润色与定稿」本步文件</span>
+                    <span class="mono" style="font-size:11px;color:var(--l4)">工作区</span>
+                  </div>
+                  <button style="height:26px;padding:0 11px;border-radius:999px;border:0.5px solid var(--field);background:transparent;color:var(--l2);font-size:11.5px;cursor:pointer">⟳ 刷新</button>
+                </div>
+
+                <!-- 14 个无分类平铺文件 -->
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">review-report.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">3 小时前 &nbsp;5.3 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">review-final.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;69.6 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">changelog.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;20.2 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">citation-check.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;10.4 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">verification-decisions.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;6.7 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">evidence.json</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;99.6 KB</span></div>
+                  <div class="art-row-before active-demo"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">figure-permissions.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">3 小时前 &nbsp;23.4 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">declarations.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">3 小时前 &nbsp;2.5 KB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">review-final.pdf</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;10.4 MB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">review-final.docx</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;10.2 MB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">endnote.docx</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">11 分钟前 &nbsp;10.2 MB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">zotero.docx</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">11 分钟前 &nbsp;10.2 MB</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">endnote-cite-report.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;764 B</span></div>
+                  <div class="art-row-before"><span style="color:var(--done)">✓</span><span class="mono truncate" style="flex:1">zotero-cite-report.md</span><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l4)">2 小时前 &nbsp;3.3 KB</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 优化方案 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：去双层套娃 · 4 份成稿置顶拿走 · 中文角色附注 + 悬停才现操作</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <!-- 1. 流程之外空态收成紧凑有头有尾的一行条 -->
+            <div class="well flex-row-between" style="padding:7px 11px;margin-bottom:10px">
+              <span class="truncate" style="font-size:11.5px;color:var(--l3)">流程之外：组会材料、整理数据、补实验可单独记目标验收</span>
+              <button class="btn btn-sec" style="height:24px;font-size:11px;padding:0 8px">＋ 新建目标</button>
+            </div>
+
+            <!-- 2. 单层合并工作区与本步文件卡（去掉外 polish / 内中文名的重复套娃；新建工作区收进 ⋯） -->
+            <div class="well" style="padding:12px 13px">
+              <div class="flex-row-between" style="margin-bottom:10px;flex-wrap:wrap;gap:6px">
+                <div style="display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:wrap">
+                  <span style="font-size:13.5px;font-weight:600;color:var(--l1)">润色与定稿 · 本步文件</span>
+                  <span class="pill pill-ok">✓ 14 / 14 已产出</span>
+                  <span style="font-size:11px;color:var(--l4)" title="分支 ccode/polish · 创建于 5 小时前">工作区副本（待评审合并） · 5 小时前</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:3px">
+                  <button class="btn-icon" title="刷新产物状态">↻</button>
+                  <button class="btn btn-ghost" style="height:25px;font-size:11.5px" onclick="toggleId('polishFilesBody')">收起 ▴</button>
+                  <button class="btn-icon" title="状态诊断 / 在访达显示工作区 / 另建平行工作区 / 归档">⋯</button>
+                </div>
+              </div>
+
+              <div id="polishFilesBody">
+                <!-- 第一层：最终可交付成稿（PDF / Word 置顶双列，一眼拿走、外部打开或按住拖进投稿系统） -->
+                <div style="font-size:11px;color:var(--l3);margin-bottom:5px;padding:0 2px">成稿交付（点卡片右侧预览，↗ 用系统应用打开，⠿ 按住拖出）</div>
+                <div class="deliverable-grid">
+                  <div class="deliverable-card" title="在右侧预览 review-final.pdf">
+                    <span class="ftype-badge ftype-pdf">PDF</span>
+                    <div style="min-width:0;flex:1">
+                      <div class="mono truncate" style="font-size:12px;font-weight:500;color:var(--l1)">review-final.pdf</div>
+                      <div style="font-size:10.5px;color:var(--l4)">排版定稿 · 10.4 MB · 2h前</div>
+                    </div>
+                    <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="用默认 PDF 阅读器打开">↗</button>
+                    <button class="btn-icon" style="width:20px;height:22px;font-size:11px;cursor:grab" title="按住拖进投稿页或邮件">⠿</button>
+                  </div>
+
+                  <div class="deliverable-card" title="在右侧预览 review-final.docx">
+                    <span class="ftype-badge ftype-doc">DOCX</span>
+                    <div style="min-width:0;flex:1">
+                      <div class="mono truncate" style="font-size:12px;font-weight:500;color:var(--l1)">review-final.docx</div>
+                      <div style="font-size:10.5px;color:var(--l4)">纯文本引文版 · 10.2 MB · 2h前</div>
+                    </div>
+                    <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="用 Word 打开">↗</button>
+                    <button class="btn-icon" style="width:20px;height:22px;font-size:11px;cursor:grab" title="按住拖出">⠿</button>
+                  </div>
+
+                  <div class="deliverable-card" title="带 ADDIN EN.CITE 域代码，供 EndNote 桌面端刷新">
+                    <span class="ftype-badge ftype-doc">EN</span>
+                    <div style="min-width:0;flex:1">
+                      <div class="mono truncate" style="font-size:12px;font-weight:500;color:var(--l1)">endnote.docx</div>
+                      <div style="font-size:10.5px;color:var(--l4)">EndNote 引文域版 · 10.2 MB · 11m前</div>
+                    </div>
+                    <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="用 Word 打开">↗</button>
+                    <button class="btn-icon" style="width:20px;height:22px;font-size:11px;cursor:grab" title="按住拖出">⠿</button>
+                  </div>
+
+                  <div class="deliverable-card" title="带 Zotero 引文域代码，供 Zotero 插件接着排">
+                    <span class="ftype-badge ftype-doc">ZOT</span>
+                    <div style="min-width:0;flex:1">
+                      <div class="mono truncate" style="font-size:12px;font-weight:500;color:var(--l1)">zotero.docx</div>
+                      <div style="font-size:10.5px;color:var(--l4)">Zotero 引文域版 · 10.2 MB · 11m前</div>
+                    </div>
+                    <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="用 Word 打开">↗</button>
+                    <button class="btn-icon" style="width:20px;height:22px;font-size:11px;cursor:grab" title="按住拖出">⠿</button>
+                  </div>
+                </div>
+
+                <!-- 第二层：Markdown 源稿与投稿配套（悬停才出现 ↗ 与 ⠿，平时右侧干净对齐） -->
+                <div style="font-size:11px;color:var(--l3);margin:8px 0 3px;padding:0 2px">源稿与投稿材料（鼠标移入行显示外部打开与拖出）</div>
+                <div style="display:flex;flex-direction:column;gap:1px">
+                  <div class="art-row-after">
+                    <span style="color:var(--done);font-size:11px">✓</span>
+                    <span class="mono" style="color:var(--l1)">review-final.md</span>
+                    <span style="font-size:11px;color:var(--l4)">定稿主源文</span>
+                    <span style="margin-left:auto" class="quiet-meta"><span style="font-size:11px;color:var(--l4)">2 小时前 · 69.6 KB</span></span>
+                    <span style="margin-left:auto" class="hover-ops"><span class="art-ic" title="外部打开">↗</span><span class="art-ic" title="按住拖出">⠿</span><span style="font-size:11px;color:var(--l3)">69.6 KB</span></span>
+                  </div>
+                  <div class="art-row-after active-demo">
+                    <span style="color:var(--done);font-size:11px">✓</span>
+                    <span class="mono" style="color:var(--l1)">figure-permissions.md</span>
+                    <span style="font-size:11px;color:var(--l3)">配图版权核对清单（右侧预览中）</span>
+                    <span style="margin-left:auto" class="hover-ops"><span class="art-ic" title="外部打开">↗</span><span class="art-ic" title="按住拖出">⠿</span><span style="font-size:11px;color:var(--l3)">23.4 KB</span></span>
+                  </div>
+                  <div class="art-row-after">
+                    <span style="color:var(--done);font-size:11px">✓</span>
+                    <span class="mono">declarations.md</span>
+                    <span style="font-size:11px;color:var(--l4)">利益冲突与作者贡献声明</span>
+                    <span style="margin-left:auto" class="quiet-meta"><span style="font-size:11px;color:var(--l4)">3 小时前 · 2.5 KB</span></span>
+                    <span style="margin-left:auto" class="hover-ops"><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l3)">2.5 KB</span></span>
+                  </div>
+                  <div class="art-row-after">
+                    <span style="color:var(--done);font-size:11px">✓</span>
+                    <span class="mono">changelog.md</span>
+                    <span style="font-size:11px;color:var(--l4)">润色修改对照记要</span>
+                    <span style="margin-left:auto" class="quiet-meta"><span style="font-size:11px;color:var(--l4)">2 小时前 · 20.2 KB</span></span>
+                    <span style="margin-left:auto" class="hover-ops"><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l3)">20.2 KB</span></span>
+                  </div>
+                  <div class="art-row-after">
+                    <span style="color:var(--done);font-size:11px">✓</span>
+                    <span class="mono">review-report.md</span>
+                    <span style="font-size:11px;color:var(--l4)">全文审校总结</span>
+                    <span style="margin-left:auto" class="quiet-meta"><span style="font-size:11px;color:var(--l4)">3 小时前 · 5.3 KB</span></span>
+                    <span style="margin-left:auto" class="hover-ops"><span class="art-ic">↗</span><span class="art-ic">⠿</span><span style="font-size:11px;color:var(--l3)">5.3 KB</span></span>
+                  </div>
+                </div>
+
+                <!-- 第三层：过程核验与引文检查账本默认折叠，点一下就地展开 -->
+                <div style="margin-top:7px">
+                  <button type="button" class="btn-ghost" style="height:24px;padding:0 6px;font-size:11.5px;color:var(--l3);border:0;cursor:pointer" onclick="toggleId('auditFilesFold')">
+                    ▸ 核验与引文检查报告（5 份均已产出 · 点击展开）
+                  </button>
+                  <div id="auditFilesFold" hidden class="sub-well" style="margin-top:4px;padding:4px 6px">
+                    <div class="art-row-after"><span style="color:var(--done);font-size:11px">✓</span><span class="mono">citation-check.md</span><span style="font-size:11px;color:var(--l4)">正文与 bib 闭环报告</span><span style="margin-left:auto;font-size:11px;color:var(--l4)">10.4 KB</span></div>
+                    <div class="art-row-after"><span style="color:var(--done);font-size:11px">✓</span><span class="mono">endnote-cite-report.md</span><span style="font-size:11px;color:var(--l4)">EndNote 域转换报告</span><span style="margin-left:auto;font-size:11px;color:var(--l4)">764 B</span></div>
+                    <div class="art-row-after"><span style="color:var(--done);font-size:11px">✓</span><span class="mono">zotero-cite-report.md</span><span style="font-size:11px;color:var(--l4)">Zotero 域转换报告</span><span style="margin-left:auto;font-size:11px;color:var(--l4)">3.3 KB</span></div>
+                    <div class="art-row-after"><span style="color:var(--done);font-size:11px">✓</span><span class="mono">verification-decisions.md</span><span style="font-size:11px;color:var(--l4)">人工拍板记录</span><span style="margin-left:auto;font-size:11px;color:var(--l4)">6.7 KB</span></div>
+                    <div class="art-row-after"><span style="color:var(--done);font-size:11px">✓</span><span class="mono">evidence.json</span><span style="font-size:11px;color:var(--l4)">论断出处核验索引</span><span style="margin-left:auto;font-size:11px;color:var(--l4)">99.6 KB</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ②：编程任务的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m2">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 02</span>
+          <h2>编程任务的 UI（分支地图与功能工作树）</h2>
+        </div>
+        <div class="mod-file-ref mono">CodingProjectView.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>① 顶栏仓库文字、多余的 <code>分支与工作树</code> 小标题、全宽新分支输入框叠成三层；② 工作树卡拆成三行（标题与一排无框裸图标 / Git 领先落后芯片 / 单独一行提交时间+目录），纵向偏松散；③ 右侧「进入」与 5 个裸图标挤成一排，主次操作缺乏触感分组。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 保留「基准为根圆角肘线分支地图」与 GitHub 中文领先/落后口径，砍掉冗余标题，仓库状态与一体式「新建分支开工」合为紧凑顶栏；② <b>工作树卡收敛为高密度双行</b>（Git 事实与最近提交时间、目录同层对齐，高度省 24%）；③ 右侧动作分簇为 <code>进入</code> + 轻底色 Git 工具胶囊 <code>[改动 · 拉 · 推 · PR · ⋯]</code>，Agent 运行态呼吸绿点清晰直观。
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 编程任务 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：三层头部 · 卡片三行松散 · 裸图标连排</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="proj-head">
+              <span class="proj-name">mesa</span>
+              <span class="mode-pill">编程</span>
+            </div>
+            <div class="tabs-before">
+              <button class="tab on">工作树</button>
+              <button class="tab">定时任务</button>
+              <button class="tab">文件</button>
+              <button class="tab">Agent 分工</button>
+            </div>
+
+            <!-- 现状第 1 层：散装状态 -->
+            <div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--l3);margin-bottom:10px">
+              <span class="mono">Zeta-Techs/mesa</span><span>·</span><span style="color:var(--l4)">3 棵工作树 · 1 处冲突</span>
+              <span style="margin-left:auto;display:flex;gap:2px">
+                <button class="btn-icon" title="访达">📂</button>
+                <button class="btn-icon" title="GitHub Desktop">🪟</button>
+                <button class="btn-icon" title="更新引用">↓</button>
+                <button class="btn-icon" title="刷新">↻</button>
+              </span>
+            </div>
+            <!-- 现状第 2 层：冗余标题 -->
+            <div style="font-size:12px;font-weight:500;color:var(--l2);margin-bottom:8px">⑂ 分支与工作树</div>
+            <!-- 现状第 3 层：全宽输入 -->
+            <div style="display:flex;gap:6px;margin-bottom:14px">
+              <input class="field-input" style="flex:1" placeholder="新分支名，如 feature/login" value="" readonly />
+              <button class="btn btn-primary">从 main 开工</button>
+              <button class="btn btn-ghost">已有分支</button>
+            </div>
+
+            <!-- 现状分支树 -->
+            <ul class="branch-map">
+              <li class="b-row root">
+                <span class="b-rail-v"></span>
+                <span class="b-node base"></span>
+                <div class="well" style="padding:10px 12px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:500;color:var(--l1)">主仓</span>
+                      <span class="mono" style="font-size:12px;color:var(--l2)">⑂ main</span>
+                      <span style="font-size:10.5px;background:var(--inset);padding:0 5px;border-radius:4px;color:var(--l4)">基准</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:2px">
+                      <button class="btn btn-ghost">▸ 进入</button>
+                      <button class="btn-icon">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:5px;font-size:11px;color:var(--l4)">工作区干净 · 最近提交 25 分钟前</div>
+                </div>
+              </li>
+
+              <li class="b-row">
+                <span class="b-rail-v"></span><span class="b-elbow"></span><span class="b-node err"></span>
+                <div class="well" style="padding:10px 12px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:6px;min-width:0">
+                      <span style="font-weight:500;color:var(--l1)">feat/scheduler-daemon</span>
+                      <span style="font-size:11px;color:var(--l4)">空闲</span>
+                      <span style="font-size:11.5px;color:var(--warn-text)">有冲突</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:2px">
+                      <button class="btn btn-primary" style="height:26px;font-size:11.5px">去解决</button>
+                      <button class="btn-icon">⇄</button>
+                      <button class="btn-icon">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:6px;font-size:11px;color:var(--l3)">
+                    ⇄ 比 <span class="mono">main</span> 领先 <b style="color:var(--l1)">4</b> · 落后 <b style="color:var(--warn-text)">2</b> 个提交 &nbsp;·&nbsp; <span style="color:var(--warn-text)">±</span> 2 个文件未提交
+                  </div>
+                  <div style="margin-top:5px;font-size:11px;color:var(--l4)">
+                    最近提交 12 分钟前 &nbsp;<button class="btn-ghost" style="font-size:11px;height:20px;padding:0 4px;border:0;cursor:pointer">📁 目录</button>
+                  </div>
+                </div>
+              </li>
+
+              <li class="b-row last">
+                <span class="b-rail-v"></span><span class="b-elbow"></span><span class="b-node live"></span>
+                <div class="well" style="padding:10px 12px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-weight:500;color:var(--l1)">fix/pdf-canvas-light</span>
+                      <span style="font-size:11px;color:var(--l2)">Codex 在跑</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:2px">
+                      <button class="btn btn-sec" style="height:26px">▸ 进入</button>
+                      <button class="btn-icon" title="查看改动">±</button>
+                      <button class="btn-icon" title="拉取">↓</button>
+                      <button class="btn-icon" title="推送">↑</button>
+                      <button class="btn-icon" title="Pull Request">⑃</button>
+                      <button class="btn-icon">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:6px;font-size:11px;color:var(--l3)">
+                    ⇄ 比 <span class="mono">main</span> 领先 <b style="color:var(--l1)">2</b> 个提交 &nbsp;·&nbsp; <span style="color:var(--ok-text)">↑</span> 2 个提交待推送
+                  </div>
+                  <div style="margin-top:5px;font-size:11px;color:var(--l4)">
+                    最近提交 3 分钟前 &nbsp;<button class="btn-ghost" style="font-size:11px;height:20px;padding:0 4px;border:0;cursor:pointer">📁 目录</button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 编程任务 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：紧凑一体开工栏 · 双层高密度车道卡 · 分簇工具条</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="proj-head">
+              <span class="proj-name">mesa</span>
+              <span class="mode-pill">编程</span>
+              <span class="mono" style="font-size:11.5px;color:var(--l3)">Zeta-Techs/mesa</span>
+              <span style="margin-left:auto;display:flex;align-items:center;gap:3px">
+                <span class="pill pill-inset" style="font-size:11px" title="本地正在监听的开发端口">● :17575 Mesa Dev ↗</span>
+                <button class="btn-icon" title="从 GitHub 更新引用 (git fetch)">↓</button>
+                <button class="btn-icon" title="在 GitHub Desktop 打开">⊞</button>
+                <button class="btn-icon" title="刷新">↻</button>
+              </span>
+            </div>
+            <div class="tabs-after">
+              <button class="tab on">工作树</button>
+              <button class="tab">定时任务</button>
+              <button class="tab">文件</button>
+              <button class="tab">Agent 分工</button>
+            </div>
+
+            <!-- 优化后：紧凑一体式开工栏（砍掉多余 h2） -->
+            <div class="well" style="padding:7px 8px 7px 11px;margin-bottom:13px;display:flex;flex-wrap:wrap;align-items:center;gap:7px">
+              <span class="mono" style="font-size:11.5px;color:var(--l4)">⑂ main →</span>
+              <input class="field-input mono" style="flex:1;min-width:160px;height:28px;border-color:transparent;background:var(--sub-well)" placeholder="输入新分支名，如 feat/ui-polish（回车直接拉出工作树）" />
+              <button class="btn btn-primary" style="height:28px">从 main 开工</button>
+              <button class="btn btn-sec" style="height:28px">已有分支 ▾</button>
+            </div>
+
+            <!-- 优化后分支树：卡片两行到位，右侧工具胶囊分簇 -->
+            <ul class="branch-map">
+              <li class="b-row root">
+                <span class="b-rail-v"></span>
+                <span class="b-node base"></span>
+                <div class="well" style="padding:8px 11px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:7px">
+                      <span class="mono" style="font-weight:600;color:var(--l1);font-size:12.5px">main</span>
+                      <span class="pill pill-inset">基准 · 主仓</span>
+                      <span style="font-size:11.5px;color:var(--l4)">干净 · 25 分钟前</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <button class="btn btn-ghost" style="height:25px">终端进入</button>
+                      <button class="btn-icon">⋯</button>
+                    </div>
+                  </div>
+                </div>
+              </li>
+
+              <!-- 冲突置顶：左缘细警示色锚点 + 唯一醒目「去解决」 -->
+              <li class="b-row">
+                <span class="b-rail-v"></span><span class="b-elbow"></span><span class="b-node err"></span>
+                <div class="well" style="padding:9px 11px;border-left:2.5px solid var(--err-text)">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                      <span class="mono truncate" style="font-weight:600;color:var(--l1);font-size:12.5px">feat/scheduler-daemon</span>
+                      <span class="pill pill-err">合并冲突</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:5px">
+                      <button class="btn btn-primary" style="height:26px;font-size:11.5px">去解决冲突</button>
+                      <button class="btn-icon" title="更多操作">⋯</button>
+                    </div>
+                  </div>
+                  <div class="flex-row-between" style="margin-top:5px;font-size:11px;color:var(--l3)">
+                    <span>⇄ 比 <span class="mono" style="color:var(--l2)">main</span> 领先 <b style="color:var(--l1)">4</b> · 落后 <b style="color:var(--warn-text)">2</b> 个提交 <span class="muted-sep">·</span> <span style="color:var(--warn-text)">±</span> 2 个未提交</span>
+                    <span style="color:var(--l4)">12 分钟前</span>
+                  </div>
+                </div>
+              </li>
+
+              <!-- Agent 运行中：双层结构 + 右侧分组工具胶囊 -->
+              <li class="b-row">
+                <span class="b-rail-v"></span><span class="b-elbow"></span><span class="b-node live"></span>
+                <div class="well" style="padding:9px 11px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:7px;min-width:0">
+                      <span class="mono truncate" style="font-weight:600;color:var(--l1);font-size:12.5px">fix/pdf-canvas-light</span>
+                      <span class="pill pill-ok"><span style="width:5px;height:5px;border-radius:50%;background:currentColor"></span> Codex 运行中</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:5px">
+                      <button class="btn btn-sec" style="height:26px;padding:0 9px">▸ 进入</button>
+                      <div class="action-capsule">
+                        <button class="btn-icon" style="width:24px;height:24px;font-size:11.5px" title="查看改动 (+38 -12)">±</button>
+                        <button class="btn-icon" style="width:24px;height:24px;font-size:11.5px" title="拉取">↓</button>
+                        <button class="btn-icon" style="width:24px;height:24px;font-size:11.5px;color:var(--ok-text)" title="推送 2 个提交到 origin">↑</button>
+                        <button class="btn-icon" style="width:24px;height:24px;font-size:11.5px" title="打开 Pull Request">PR</button>
+                        <button class="btn-icon" style="width:24px;height:24px" title="合并进 main / 打开目录 / 分组 / 删除">⋯</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex-row-between" style="margin-top:5px;font-size:11px;color:var(--l3)">
+                    <span>⇄ 比 <span class="mono" style="color:var(--l2)">main</span> 领先 <b style="color:var(--l1)">2</b> 个提交 <span class="muted-sep">·</span> <span style="color:var(--ok-text)">↑</span> 2 个待推送</span>
+                    <span style="color:var(--l4)">3 分钟前 · 访达 ↗</span>
+                  </div>
+                </div>
+              </li>
+
+              <!-- 未检出折叠行 -->
+              <li class="b-row last" style="margin-bottom:0">
+                <span class="b-rail-v" style="height:14px"></span><span class="b-elbow" style="top:4px"></span><span class="b-node loose" style="top:8px"></span>
+                <div style="display:flex;align-items:center;gap:8px;height:26px;font-size:11.5px;color:var(--l4)">
+                  <span>▸ 未检出的本地分支 2（chore/bump-deps、experiment/webgl）</span>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ③：工作任务（目标）的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m3">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 03</span>
+          <h2>工作任务 / 目标的 UI（可点击「详情」体验展开态差异）</h2>
+        </div>
+        <div class="mod-file-ref mono">ProjectUserTasksView.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>① 待验收、进行中、待开始的目标卡外观几乎一致，全靠小字拼接 <code>Claude Code · 写入项目需接受 · 3 个文件</code>；② 点开「详情」后，卡片内画两条 <code>border-t</code> 全宽横线，把要求、裸路径列表、时间线、四行「资料：/权限：/技能：/Agent：」竖着排成一面文字墙，底部再堆三个管理按钮。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 按紧急度分层着色（<b>待验收左缘琥珀指示 + 唯一实心 CTA</b>，进行中呼吸绿点，已完成静默单行）；② 元信息改为「品牌色圆点 + 权限芯片 + 可点产出文件数」；③ <b>详情收进无描边内嵌微井</b>，配置四要素压成紧凑标签行，产出文件带图标可直点预览，低频动作（编辑/释放副本/归档）收进 <code>⋯</code>。
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 工作任务 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：卡片同质化 · 详情展开两道横线 + 四行冒号说明书</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="flex-row-between" style="margin-bottom:10px">
+              <div style="display:flex;align-items:baseline;gap:6px">
+                <span style="font-size:13.5px;font-weight:500;color:var(--l1)">目标</span>
+                <span style="font-size:11.5px;color:var(--l3)">3 个</span>
+              </div>
+              <div style="display:flex;gap:5px">
+                <button class="btn btn-sec">＋ 新建目标</button>
+                <button class="btn-icon">↻</button>
+              </div>
+            </div>
+
+            <div style="font-size:11.5px;color:var(--l3);margin-bottom:6px">待接受 <span style="color:var(--l4)">1</span></div>
+            <div class="well" style="padding:11px 12px;margin-bottom:12px">
+              <div class="flex-row-between" style="align-items:flex-start">
+                <div style="min-width:0;flex:1">
+                  <div style="font-size:13.5px;font-weight:500;color:var(--l1)">整理近三年双金属催化剂过电位对比表并出组会简报</div>
+                  <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">Claude Code · 写入项目需接受 · 3 个文件</div>
+                </div>
+                <div style="display:flex;gap:4px;flex-shrink:0">
+                  <button class="btn btn-primary">查看并接受</button>
+                  <button class="btn btn-ghost" onclick="toggleId('goalBeforeDetail')">▾ 详情</button>
+                </div>
+              </div>
+
+              <div id="goalBeforeDetail" style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--hairline);display:flex;flex-direction:column;gap:10px">
+                <div>
+                  <div style="font-size:11px;color:var(--l3)">要求</div>
+                  <div style="font-size:12.5px;color:var(--l1);margin-top:3px">从 papers/ 下 14 篇实证文献抽取 η10 过电位、Tafel 斜率与稳定性时长，末两列保留来源 DOI 与原图页码，输出汇总表和 6 页组会幻灯片。</div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:var(--l3)">输出范围 · 3</div>
+                  <div class="mono" style="font-size:11.5px;color:var(--l2);margin-top:3px;line-height:1.6">
+                    output/overpotential-table.xlsx<br/>
+                    output/group-meeting-slides.html<br/>
+                    notes/extraction-audit.md
+                  </div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:var(--l3)">历程</div>
+                  <div style="border-left:1px solid var(--hairline);padding-left:9px;margin-top:4px;font-size:11.5px;color:var(--l3)">
+                    <div>等待接受 · 8 分钟前</div>
+                    <div style="margin-top:3px">已开始第 1 轮 · 26 分钟前</div>
+                  </div>
+                </div>
+                <div>
+                  <div style="font-size:11px;color:var(--l3)">设置</div>
+                  <div style="font-size:11.5px;color:var(--l2);margin-top:3px;line-height:1.6">
+                    资料：papers/（14 项）<br/>
+                    权限：写入项目需接受<br/>
+                    技能：data-clean、slides-deck<br/>
+                    Agent：跟随项目默认（开始时按「Agent 分工」页签的项目默认）
+                  </div>
+                </div>
+                <div style="border-top:0.5px solid var(--hairline);padding-top:9px;display:flex;justify-content:flex-end;gap:6px">
+                  <button class="btn btn-sec">释放副本空间</button>
+                  <button class="btn btn-ghost">归档目标</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size:11.5px;color:var(--l3);margin-bottom:6px">进行中 <span style="color:var(--l4)">2</span></div>
+            <div class="well" style="padding:11px 12px;margin-bottom:7px">
+              <div class="flex-row-between">
+                <div>
+                  <div style="font-size:13.5px;font-weight:500;color:var(--l1)">核查补充材料 S1-S4 单位量纲一致性</div>
+                  <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">Codex · 只讨论</div>
+                </div>
+                <div style="display:flex;gap:4px">
+                  <button class="btn btn-sec">继续</button>
+                  <button class="btn btn-ghost">■ 停止</button>
+                  <button class="btn btn-ghost">▸ 详情</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 工作任务 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：紧急度视觉分层 · 内嵌详情微井 · 可直点产物芯片</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="flex-row-between" style="margin-bottom:11px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:13.5px;font-weight:600;color:var(--l1)">目标</span>
+                <span class="pill pill-warn">1 待接受</span>
+                <span class="pill pill-inset">1 进行中 · 1 已完成</span>
+              </div>
+              <div style="display:flex;gap:5px">
+                <button class="btn btn-ghost" title="说一句想做什么，项目助手帮你起草任务合同">问项目助手</button>
+                <button class="btn btn-sec">＋ 新建目标</button>
+              </div>
+            </div>
+
+            <!-- 待验收主卡：左缘琥珀色强调 + 唯一 CTA + 紧凑详情井 -->
+            <div class="well" style="padding:11px 13px;border-left:2.5px solid var(--mesa-amber);margin-bottom:8px">
+              <div class="flex-row-between" style="align-items:flex-start">
+                <div style="min-width:0;flex:1">
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                    <span style="font-size:13.5px;font-weight:600;color:var(--l1)">整理近三年双金属催化剂过电位对比表并出组会简报</span>
+                  </div>
+                  <div style="margin-top:5px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11.5px;color:var(--l3)">
+                    <span style="display:inline-flex;align-items:center;gap:4px;color:var(--l2)"><span class="brand-dot" style="background:#d97757"></span>Claude Code</span>
+                    <span class="muted-sep">·</span>
+                    <span>生成 3 个待接受文件</span>
+                    <span class="muted-sep">·</span>
+                    <span style="color:var(--l4)">8 分钟前完成</span>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                  <button class="btn btn-primary" style="height:28px">查看并接受</button>
+                  <button class="btn btn-ghost" style="height:28px" onclick="toggleId('goalAfterDetail')">详情 ▾</button>
+                  <button class="btn-icon" title="释放副本空间 / 另存为我的任务 / 归档目标">⋯</button>
+                </div>
+              </div>
+
+              <!-- 优化后的详情展开：零横线，内嵌 sub-well 分栏 -->
+              <div id="goalAfterDetail" class="sub-well" style="margin-top:9px;padding:9px 11px;display:flex;flex-direction:column;gap:8px">
+                <div style="font-size:12px;color:var(--l2);line-height:1.55">
+                  从 <code class="mono" style="font-size:11px">papers/</code> 下 14 篇实证文献抽取 η10 过电位、Tafel 斜率与稳定性时长，末两列保留来源 DOI 与原图页码，输出汇总表和 6 页组会幻灯片。
+                </div>
+                <!-- 产出文件直接做成可点预览芯片，不再是一列枯燥裸路径 -->
+                <div style="display:flex;flex-wrap:wrap;gap:5px">
+                  <span class="pill pill-raised mono" style="font-size:11px;cursor:pointer" title="点击预览">📊 overpotential-table.xlsx</span>
+                  <span class="pill pill-raised mono" style="font-size:11px;cursor:pointer" title="点击预览">🖥 group-meeting-slides.html</span>
+                  <span class="pill pill-raised mono" style="font-size:11px;cursor:pointer" title="点击预览">📄 extraction-audit.md</span>
+                </div>
+                <!-- 四行设置浓缩为单行结构化微标签 + 历程尾注 -->
+                <div class="flex-row-between" style="font-size:11px;color:var(--l4);flex-wrap:wrap;gap:6px">
+                  <span>资料：<b style="color:var(--l3);font-weight:400">papers/ (14)</b> · 权限：<b style="color:var(--l3);font-weight:400">评审后写入</b> · 技能：<b style="color:var(--l3);font-weight:400">data-clean, slides-deck</b></span>
+                  <span>第 1 轮 · 耗时 18m</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 进行中卡：呼吸绿点 + 对齐右栏 -->
+            <div class="well" style="padding:10px 13px;margin-bottom:8px">
+              <div class="flex-row-between">
+                <div style="min-width:0;flex:1">
+                  <div style="font-size:13px;font-weight:500;color:var(--l1)">核查补充材料 S1–S4 单位量纲一致性</div>
+                  <div style="margin-top:4px;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--l3)">
+                    <span style="color:var(--ok-text);display:inline-flex;align-items:center;gap:4px">● 正在核对表 S3</span>
+                    <span class="muted-sep">·</span>
+                    <span style="display:inline-flex;align-items:center;gap:4px"><span class="brand-dot" style="background:#10a37f"></span>Codex</span>
+                    <span class="muted-sep">·</span>
+                    <span>只读讨论</span>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px">
+                  <button class="btn btn-sec" style="height:27px">打开对话</button>
+                  <button class="btn-icon" title="停止运行">■</button>
+                  <button class="btn-icon" title="详情与操作">⋯</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 已完成目标：自动降权为紧凑单行，不抢视觉重心 -->
+            <div class="well" style="padding:8px 13px;opacity:0.82">
+              <div class="flex-row-between">
+                <div style="display:flex;align-items:center;gap:7px;min-width:0;font-size:12.5px">
+                  <span style="color:var(--done)">✓</span>
+                  <span class="truncate" style="color:var(--l2)">绘制 TOC 图形摘要初版可编辑图纸（PPTX + SVG）</span>
+                  <span class="pill pill-inset">已接受 2 个文件</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0">
+                  <button class="btn btn-ghost" style="font-size:11.5px">再来一版</button>
+                  <button class="btn-icon">⋯</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ④：定时任务的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m4">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 04</span>
+          <h2>定时任务的 UI（独立后台 · 文献雷达联动 · 双行巡检项）</h2>
+        </div>
+        <div class="mod-file-ref mono">ProjectSchedulesView.tsx · LitWatchCard.tsx · ScheduleSection.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>① 顶部「独立后台」用原生小复选框配三行解释规则的长段落（违反 <code>Toggle</code> 令牌与 20 字原则）；② 科研「文献雷达」看命中在上面，但开关和立即巡检却要去下面「定时任务」找同名行；③ 定时任务行把开关、名称、周期、关键词、连接名、历史、停止等 8 个碎片挤在同一行，且不点「历史」看不到上次跑的结果。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① <b>独立后台改标准 Toggle 单行状态条</b>，机制细节收进悬浮提示；② 雷达卡头内联显示巡检节奏与一键 <code>立即巡检</code>，看文献与触发巡检不再上下找两处；③ <b>巡检列表升级为清晰双行</b>（首行：开关 + 名称 + 触发规则 + 动作；次行：上次运行结果摘要与直达「去评审」入口）。
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 定时任务 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：原生复选框配长文 · 雷达与任务割裂 · 单行拥挤不露上次结果</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <!-- 现状长段落 checkbox -->
+            <label style="display:flex;align-items:flex-start;gap:7px;font-size:11.5px;color:var(--l2);margin-bottom:14px;line-height:1.5">
+              <input type="checkbox" checked readonly style="margin-top:3px" />
+              <span>独立后台：退出桌面后继续运行已授权的定时任务。后台正在运行。电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审。</span>
+            </label>
+
+            <!-- 现状文献雷达 -->
+            <div style="margin-bottom:14px">
+              <div class="flex-row-between" style="margin-bottom:7px">
+                <span style="font-size:12px;font-weight:500;color:var(--l2)">▾ 文献雷达 · 6 篇 <span style="font-weight:400;color:var(--l4);font-size:11px">上次巡检 3 小时前</span></span>
+                <div style="display:flex;gap:4px;font-size:11px;color:var(--l3)">
+                  <button class="btn-ghost" style="height:24px;border:0;cursor:pointer">📊 表格</button>
+                  <button class="btn-ghost" style="height:24px;border:0;cursor:pointer">📡 订阅</button>
+                  <button class="btn-ghost" style="height:24px;border:0;cursor:pointer">⫶</button>
+                </div>
+              </div>
+              <div class="well" style="padding:10px 12px">
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px">
+                  <span style="background:var(--seg-sel);color:var(--l1);padding:2px 8px;border-radius:5px;font-size:11px"><b>single-atom HER</b> 4</span>
+                  <span style="background:var(--inset);color:var(--l3);padding:2px 8px;border-radius:5px;font-size:11px"><b>Ru-N4 support</b> 2</span>
+                </div>
+                <div style="font-size:12px;color:var(--l1);padding:4px 0">Modulating d-band center of single-atom Ru for alkaline HER <span class="pill pill-cta" style="font-size:10px">1区 TOP</span></div>
+                <div style="font-size:12px;color:var(--l1);padding:4px 0">Operando XAS study on axial coordination of Co-N-C <span class="pill pill-ok" style="font-size:10px">IF 14.2</span></div>
+              </div>
+            </div>
+
+            <!-- 现状定时任务卡 -->
+            <div class="well" style="padding:10px 12px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="font-size:12px;font-weight:500;color:var(--l2)">定时任务（3）</span>
+                <button class="btn-ghost" style="font-size:12px;border:0;cursor:pointer">＋ 新建定时任务</button>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px">
+                  <button class="toggle on" aria-label="开关"></button>
+                  <span style="color:var(--l2)">文献雷达</span>
+                  <span style="font-size:11px;color:var(--l4)">每天 08:00 · 明天 08:00</span>
+                  <span style="font-size:11.5px;color:var(--l3)">关键词 2</span>
+                  <span style="font-size:11px;color:var(--l4)">OpenAI 官方</span>
+                  <span style="margin-left:auto;display:flex;gap:4px">
+                    <button class="btn-ghost" style="font-size:11.5px;border:0;cursor:pointer">↺ 历史</button>
+                    <button class="btn-icon">▶</button><button class="btn-icon">⋯</button>
+                  </span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px">
+                  <button class="toggle on" aria-label="开关"></button>
+                  <span style="color:var(--l2)">生信原始表入库质检</span>
+                  <span style="font-size:11px;color:var(--l3)">等你回答 · 未占进程</span>
+                  <span style="font-size:11px;color:var(--l4)">盯 data/raw/*.csv · 直接跑</span>
+                  <span style="margin-left:auto;display:flex;gap:4px">
+                    <button class="btn-ghost" style="font-size:11.5px;border:0;cursor:pointer">↺ 历史</button>
+                    <button class="btn-icon">▶</button><button class="btn-icon">⋯</button>
+                  </span>
+                </div>
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:7px">
+                  <button class="toggle" aria-label="开关"></button>
+                  <span style="color:var(--l2)">每周引文死链巡检</span>
+                  <span style="font-size:11px;color:var(--warn-text)">已自动暂停</span>
+                  <span style="font-size:11px;color:var(--l4)">每周一 09:00</span>
+                  <span style="font-size:11px;color:var(--warn-text)">原连接已删除</span>
+                  <span style="margin-left:auto;display:flex;gap:4px">
+                    <button class="btn-ghost" style="font-size:11.5px;border:0;cursor:pointer">↺ 历史</button>
+                    <button class="btn-icon">⋯</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 定时任务 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：单行后台开关 · 雷达头直连巡检 · 双行巡检项直接露上次结论</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <!-- 优化后：标准 Toggle 状态条，一句话自明 -->
+            <div class="well flex-row-between" style="padding:8px 12px;margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:9px;min-width:0">
+                <button class="toggle on" onclick="this.classList.toggle('on')" aria-label="独立后台"></button>
+                <span style="font-size:12.5px;font-weight:500;color:var(--l1)">独立后台</span>
+                <span class="pill pill-ok">● 运行中</span>
+                <span class="truncate" style="font-size:11.5px;color:var(--l3)" title="电脑关机或睡眠时不运行；交互对话不在此范围，成果仍回桌面评审">关掉窗口后继续运行已批准的定时任务，成果回桌面评审</span>
+              </div>
+            </div>
+
+            <!-- 优化后文献雷达：卡头直接显示节奏 + 立即巡检，不必去底下找同名行 -->
+            <div class="well" style="padding:11px 13px;margin-bottom:12px">
+              <div class="flex-row-between" style="margin-bottom:8px;flex-wrap:wrap;gap:6px">
+                <div style="display:flex;align-items:center;gap:7px">
+                  <span style="font-size:13px;font-weight:600;color:var(--l1)">▾ 文献雷达</span>
+                  <span class="pill pill-raised">6 篇命中</span>
+                  <span style="font-size:11px;color:var(--l4)">每天 08:00 · 3 小时前更新</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:3px">
+                  <button class="btn btn-ghost" style="height:25px;font-size:11.5px">订阅词 (2)</button>
+                  <button class="btn btn-ghost" style="height:25px;font-size:11.5px">筛选：仅 1 区/TOP</button>
+                  <button class="btn btn-sec" style="height:25px;font-size:11.5px">▶ 立即巡检</button>
+                </div>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+                <span style="background:var(--seg-sel);color:var(--l1);padding:2px 8px;border-radius:5px;font-size:11px;border-left:2px solid var(--cta)"><b>single-atom HER</b> · 4</span>
+                <span style="background:var(--sub-well);color:var(--l3);padding:2px 8px;border-radius:5px;font-size:11px">Ru-N4 support · 2</span>
+                <div class="search-shell" style="height:24px;margin-left:auto;width:165px">
+                  <input placeholder="搜标题 / 期刊…" />
+                </div>
+              </div>
+
+              <div class="sub-well" style="padding:6px 9px;display:flex;flex-direction:column;gap:4px">
+                <div class="flex-row-between" style="font-size:12px">
+                  <span class="truncate" style="color:var(--l1)">Modulating d-band center of single-atom Ru for alkaline HER</span>
+                  <span style="display:flex;gap:4px;flex-shrink:0"><span class="pill pill-cta" style="font-size:10px">1区 TOP</span><button class="btn-ghost" style="height:20px;font-size:11px;border:0;cursor:pointer">加入积累</button></span>
+                </div>
+                <div class="flex-row-between" style="font-size:12px">
+                  <span class="truncate" style="color:var(--l1)">Operando XAS study on axial coordination of Co-N-C</span>
+                  <span style="display:flex;gap:4px;flex-shrink:0"><span class="pill pill-ok" style="font-size:10px">IF 14.2</span><button class="btn-ghost" style="height:20px;font-size:11px;border:0;cursor:pointer">加入积累</button></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 优化后全部定时与事件规则列表：清晰双行结构 -->
+            <div class="well" style="padding:11px 13px">
+              <div class="flex-row-between" style="margin-bottom:8px">
+                <span style="font-size:13px;font-weight:600;color:var(--l1)">定时与事件规则 <span style="font-weight:400;color:var(--l4);font-size:11.5px">3</span></span>
+                <button class="btn btn-sec" style="height:26px;font-size:11.5px">＋ 新建定时任务</button>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <!-- 行 1 -->
+                <div class="sub-well" style="padding:7px 10px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                      <button class="toggle on" onclick="this.classList.toggle('on')"></button>
+                      <span style="font-weight:500;color:var(--l1);font-size:12.5px">生信原始表入库质检</span>
+                      <span class="pill pill-inset">事件 · 盯 data/raw/*.csv</span>
+                      <span class="pill pill-warn">等你回答</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <button class="btn btn-primary" style="height:24px;font-size:11px;padding:0 8px">去收件箱回答</button>
+                      <button class="btn-icon" style="width:24px;height:24px" title="运行历史">↺</button>
+                      <button class="btn-icon" style="width:24px;height:24px">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:3px;padding-left:38px;font-size:11px;color:var(--l3)">
+                    上次 40 分钟前触发（batch-04.csv）：发现 3 列缺失单位，询问按 mmol/L 还是 μmol/L 归一 · 未占后台进程
+                  </div>
+                </div>
+
+                <!-- 行 2 -->
+                <div class="sub-well" style="padding:7px 10px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                      <button class="toggle on" onclick="this.classList.toggle('on')"></button>
+                      <span style="font-weight:500;color:var(--l1);font-size:12.5px">文献雷达</span>
+                      <span class="pill pill-inset">每天 08:00</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <span style="font-size:11px;color:var(--l4);margin-right:4px">下次 明天 08:00</span>
+                      <button class="btn-icon" style="width:24px;height:24px" title="立即运行">▶</button>
+                      <button class="btn-icon" style="width:24px;height:24px" title="运行历史">↺</button>
+                      <button class="btn-icon" style="width:24px;height:24px">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:3px;padding-left:38px;font-size:11px;color:var(--l4)">
+                    <span style="color:var(--ok-text)">✓</span> 3 小时前完成 · 新增 2 篇命中待评审 · Codex
+                  </div>
+                </div>
+
+                <!-- 行 3：异常自动暂停一眼清 -->
+                <div class="sub-well" style="padding:7px 10px">
+                  <div class="flex-row-between">
+                    <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                      <button class="toggle" onclick="this.classList.toggle('on')"></button>
+                      <span style="font-weight:500;color:var(--l2);font-size:12.5px">每周引文死链巡检</span>
+                      <span class="pill pill-err">已自动暂停</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px">
+                      <button class="btn btn-sec" style="height:24px;font-size:11px;padding:0 8px">更换连接</button>
+                      <button class="btn-icon" style="width:24px;height:24px">⋯</button>
+                    </div>
+                  </div>
+                  <div style="margin-top:3px;padding-left:38px;font-size:11px;color:var(--warn-text)">
+                    ⚠ 原绑定连接已删除，重绑或改回「跟随项目默认」后可恢复每周一 09:00 运行
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ⑤：文件的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m5">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 05</span>
+          <h2>文件的 UI（稳定主从双栏 · 层级导引线 · 预览舞台分组）</h2>
+        </div>
+        <div class="mod-file-ref mono">ProjectFilesView.tsx · FileKindFilters.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>① 未选文件时文件树占满全宽，一点文件突然缩成 <code>22rem</code> 发生剧烈横向跳动；② 新建文件/文件夹完全藏在空白处右键菜单里，缺乏显式入口；③ 深层目录展开无纵向导引线易看串行，右侧预览顶栏按钮（对照、新窗口、阅读、上下箭头、关闭）散排一列。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 宽屏保持<b>稳定双栏骨架</b>（未选文件时右栏显示「科研核心台账 / 最近编辑」速览，点击文件零跳动就地预览）；② 左栏搜索框与显式 <code>＋ 新建</code>、刷新合一，子目录加 <code>0.5px</code> 柔和导引线；③ 右栏顶栏做成<b>「目录面包屑 + 版本徽标 | 沉浸阅读 · 对照 · 问 AI | 窗口组」</b>。
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: 文件 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：点击前全宽/点击后跳窄 · 无新建按钮 · 树无导引线 · 预览头零散</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="files-split">
+              <!-- 左树 -->
+              <div style="display:flex;flex-direction:column;min-width:0">
+                <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:6px">
+                  <span class="pill pill-raised">全部</span>
+                  <span class="pill pill-inset">文献 38</span>
+                  <span class="pill pill-inset">笔记 19</span>
+                  <span class="pill pill-inset">稿件 3</span>
+                  <button class="btn-icon" style="margin-left:auto;width:22px;height:22px">↻</button>
+                </div>
+                <div class="search-shell" style="margin-bottom:8px">
+                  <input placeholder="搜索文件名或后缀（pdf / .docx）" />
+                </div>
+                <ul class="ftree-list">
+                  <li class="ftree-row">▾ 📁 papers</li>
+                  <li class="ftree-row" style="padding-left:22px">📄 included.md <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">10分钟前</span></li>
+                  <li class="ftree-row" style="padding-left:22px">📕 chen2025-ru-n4.pdf <span class="pill pill-inset" style="margin-left:auto;font-size:10px">精读</span></li>
+                  <li class="ftree-row">▾ 📁 manuscript</li>
+                  <li class="ftree-row sel" style="padding-left:22px">📝 outline.md <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">刚刚</span></li>
+                  <li class="ftree-row" style="padding-left:22px">📝 draft-v1.qmd <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">昨天</span></li>
+                  <li class="ftree-row">▸ 📁 figures <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">6 项</span></li>
+                </ul>
+              </div>
+              <!-- 右预览 -->
+              <div class="well" style="padding:10px 12px;display:flex;flex-direction:column;min-width:0">
+                <div style="display:flex;align-items:center;gap:4px;margin-bottom:8px;flex-wrap:wrap">
+                  <span style="font-size:12.5px;font-weight:500;color:var(--l1);margin-right:auto">outline.md</span>
+                  <button class="btn-ghost" style="font-size:11px;height:23px;border:0;cursor:pointer">◫ 对照</button>
+                  <button class="btn-ghost" style="font-size:11px;height:23px;border:0;cursor:pointer">💬 问 AI</button>
+                  <button class="btn-ghost" style="font-size:11px;height:23px;border:0;cursor:pointer">🪟 新窗口</button>
+                  <button class="btn-icon" style="width:22px;height:22px">↑</button>
+                  <button class="btn-icon" style="width:22px;height:22px">↓</button>
+                  <button class="btn-icon" style="width:22px;height:22px">×</button>
+                </div>
+                <div style="flex:1;background:var(--canvas);border-radius:6px;padding:10px 12px;font-size:12px;color:var(--l2);overflow:auto">
+                  <div style="font-weight:600;color:var(--l1);margin-bottom:6px"># 过渡金属单原子析氢综述大纲</div>
+                  <div style="color:var(--l3);font-size:11.5px;line-height:1.65">
+                    ## §1 引言与核心科学问题（已覆盖 9 篇）<br/>
+                    ## §2 配位微环境调控机理（已覆盖 14 篇）<br/>
+                    ## §3 碱性大电流传质与载体耦合（偏薄：仅 2 篇精读）<br/>
+                    ## §4 原位表征与理论描述符批判
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: 文件 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：搜索+新建一体头 · 缩进导引线 · 面包屑+版本徽标+分簇预览栏</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <div class="files-split">
+              <!-- 左树（可点击切换预览） -->
+              <div style="display:flex;flex-direction:column;min-width:0">
+                <div style="display:flex;align-items:center;gap:5px;margin-bottom:6px">
+                  <div class="search-shell" style="flex:1">
+                    <span style="font-size:11px">⌕</span>
+                    <input placeholder="搜文件名或路径…" />
+                  </div>
+                  <button class="btn btn-sec" style="height:29px;padding:0 8px" title="新建文件 / 新建文件夹 / 导入资料">＋</button>
+                  <button class="btn-icon" title="刷新目录">↻</button>
+                </div>
+                <div style="display:flex;gap:3px;flex-wrap:wrap;margin-bottom:7px">
+                  <span class="pill pill-raised" style="cursor:pointer">全部</span>
+                  <span class="pill pill-inset" style="cursor:pointer">文献 38</span>
+                  <span class="pill pill-inset" style="cursor:pointer">笔记 19</span>
+                  <span class="pill pill-inset" style="cursor:pointer">稿件 3</span>
+                  <span class="pill pill-inset" style="cursor:pointer">最近</span>
+                </div>
+                <ul class="ftree-list" id="afterFileTree">
+                  <li class="ftree-row" style="color:var(--l1)">▾ <span style="color:var(--folder)">📁</span> papers <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">38</span></li>
+                  <div class="indent-guide">
+                    <li class="ftree-row" onclick="pickDemoFile(this, 'papers / included.md', '纳入清单 · 共 38 篇（综述 6 · 实证 32）', 'v2 已留版', '# 纳入文献台账 (38 篇)\n\n1. **Chen et al., Nat. Catal. 2025** — Axial O-bridged Ru-N4 for alkaline HER (IF 42.8 · 1区 TOP)\n2. **Wang et al., JACS 2024** — Operando XAS tracking potential-driven reconstruction')">
+                      <span>📄</span><span class="truncate">included.md</span>
+                      <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">10m</span>
+                    </li>
+                    <li class="ftree-row" onclick="pickDemoFile(this, 'papers / chen2025-ru-n4.pdf', 'Nat. Catal. 2025 · 已配精读笔记 04-chen2025.md', '可沉浸阅读', '[PDF 连续阅读预览]\n\nTitle: Modulating d-band center via axial oxygen coordination on single-atom Ru...\n— 点右上角「沉浸阅读」直接进入左 PDF + 右笔记/翻译双栏对照。')">
+                      <span>📕</span><span class="truncate">chen2025-ru-n4</span>
+                      <span class="pill pill-inset" style="margin-left:auto;font-size:10px;border:0.5px solid var(--field)">精读</span>
+                    </li>
+                  </div>
+                  <li class="ftree-row" style="color:var(--l1);margin-top:2px">▾ <span style="color:var(--folder)">📁</span> manuscript</li>
+                  <div class="indent-guide">
+                    <li class="ftree-row sel" onclick="pickDemoFile(this, 'manuscript / outline.md', '综述大纲 · 已留存 3 个历史版本', '版本 · 3', '# 过渡金属单原子析氢综述大纲\n\n## §1 引言与核心科学问题（已覆盖 9 篇精读）\n## §2 配位微环境调控机理（已覆盖 14 篇精读）\n## §3 碱性大电流传质与载体耦合（待补文献：当前 2 篇）\n## §4 原位表征与理论描述符批判（已覆盖 8 篇）')">
+                      <span>📝</span><span class="truncate">outline.md</span>
+                      <span style="margin-left:auto;font-size:10.5px;color:var(--cta)">已留版</span>
+                    </li>
+                    <li class="ftree-row" onclick="pickDemoFile(this, 'manuscript / draft-v1.qmd', 'Quarto 主稿 · 上次渲染 PDF 成功', '版本 · 2', '---\ntitle: \"Single-Atom Electrocatalysts for Hydrogen Evolution\"\nbibliography: ../references.bib\n---\n\n## 1. Introduction\nSingle-atom catalysts (SACs) bridge homogeneous and heterogeneous catalysis [@chen2025ru]...\n')">
+                      <span>📝</span><span class="truncate">draft-v1.qmd</span>
+                      <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">昨天</span>
+                    </li>
+                  </div>
+                  <li class="ftree-row" style="margin-top:2px">▸ <span style="color:var(--folder)">📁</span> figures <span style="margin-left:auto;font-size:10.5px;color:var(--l4)">6</span></li>
+                </ul>
+              </div>
+
+              <!-- 右预览舞台 -->
+              <div class="well" style="padding:10px 12px;display:flex;flex-direction:column;min-width:0">
+                <div class="flex-row-between" style="margin-bottom:8px;flex-wrap:wrap;gap:6px">
+                  <div style="min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span id="demoFileTitle" class="mono truncate" style="font-size:12px;font-weight:600;color:var(--l1)">manuscript / outline.md</span>
+                      <span id="demoFileVer" class="pill pill-inset" style="cursor:pointer" title="查看并对比按文件留存的历史版本">版本 · 3</span>
+                    </div>
+                    <div id="demoFileSub" style="font-size:11px;color:var(--l4);margin-top:1px">综述大纲 · 已留存 3 个历史版本</div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:5px">
+                    <div class="tool-cluster" style="background:var(--sub-well)">
+                      <button title="左 PDF / 右笔记沉浸阅读">📖 沉浸阅读</button>
+                      <button title="把当前文件钉在左边，并排对照另一份">◫ 对照</button>
+                      <button title="带着这份文件开一段对话">💬 问 AI</button>
+                    </div>
+                    <div class="action-capsule">
+                      <button class="btn-icon" style="width:23px;height:23px;font-size:11px" title="上一个文件 (↑)">↑</button>
+                      <button class="btn-icon" style="width:23px;height:23px;font-size:11px" title="下一个文件 (↓)">↓</button>
+                      <button class="btn-icon" style="width:23px;height:23px;font-size:11px" title="拆成独立窗口">↗</button>
+                    </div>
+                  </div>
+                </div>
+                <pre id="demoFileBody" class="mono" style="margin:0;flex:1;background:var(--canvas);border-radius:7px;padding:11px 13px;font-size:11.5px;line-height:1.65;color:var(--l2);white-space:pre-wrap;overflow:auto"># 过渡金属单原子析氢综述大纲
+
+## §1 引言与核心科学问题（已覆盖 9 篇精读）
+## §2 配位微环境调控机理（已覆盖 14 篇精读）
+## §3 碱性大电流传质与载体耦合（待补文献：当前 2 篇）
+## §4 原位表征与理论描述符批判（已覆盖 8 篇）</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================================== -->
+  <!-- 模块 ⑥：Agent 分工的 UI -->
+  <!-- ===================================================================== -->
+  <section class="mod-section" data-section="m6">
+    <div class="mod-header">
+      <div>
+        <div class="mod-title-row">
+          <span class="mod-badge">模块 06</span>
+          <h2>Agent 分工的 UI（从「15 张重复卡片墙」收敛为「1 张默认主卡 + 特派高亮表」）</h2>
+        </div>
+        <div class="mod-file-ref mono">ProjectAgentsView.tsx</div>
+      </div>
+    </div>
+
+    <div class="diff-summary">
+      <div class="diff-box pain">
+        <b>现状痛点：</b>整页拆成 5 大区块（名册网格 + 专属绑定 4 卡 + 定时任务 N 卡 + 目标 N 卡 + 科研步骤 5 卡），共 <b>14~20 张等大卡片</b>；更糟的是，所有未单独绑定的槽位全把同一句 <code>Claude Code · Anthropic 官方 · claude-sonnet-4-6</code> 重复抄写十几遍，真正单独指定的 2 个专家槽位完全被淹没（违反 R3「同一事实只说一次」与减少同权重元素原则）。
+      </div>
+      <div class="diff-box gain">
+        <b>优化方案：</b>① 顶部浓缩为<b>一张「项目默认 Agent 主卡」</b>（一眼看清默认谁干活 + 下方一行轻胶囊点选切换其他已连接 Agent）；② 下方槽位按「日常入口 / 科研各步骤 / 独立目标与定时」收进紧凑行列表：<b>未指定的只安静标 <code>跟随默认</code></b>，只有<b>特派定制</b>（亮品牌点+模型+思考档）和<b>失效警告</b>才突出显示！整页高度立减 58%。
+      </div>
+    </div>
+
+    <div class="ab-grid">
+      <!-- BEFORE: Agent 分工 -->
+      <div class="ab-col is-before">
+        <div class="ab-label before"><span class="tag-pill">BEFORE</span> 现状：满屏等大卡片 · 默认配置重复打印十余次 · 真正定制项被淹没</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad" style="max-height:520px;overflow-y:auto">
+            <div class="flex-row-between" style="margin-bottom:8px">
+              <div>
+                <div style="font-size:13px;font-weight:500;color:var(--l1)">本项目用哪家 Agent</div>
+                <div style="font-size:11px;color:var(--l3)">下面没单独指定的对话、步骤、目标都默认用它。</div>
+              </div>
+              <button class="btn-ghost" style="font-size:11.5px;border:0;cursor:pointer">管理连接 ↗</button>
+            </div>
+
+            <div class="agent-grid-before" style="margin-bottom:14px">
+              <div style="background:var(--seg-sel);border-radius:8px;padding:9px 10px">
+                <div class="flex-row-between"><span style="font-weight:500;color:var(--l1)">● Claude Code</span><span style="font-size:11px;color:var(--l1)">★ 项目默认</span></div>
+                <div style="font-size:11.5px;color:var(--l2);margin-top:4px">Anthropic 官方 · claude-opus-4-7 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div class="flex-row-between"><span style="font-weight:500;color:var(--l1)">● Codex</span><span style="font-size:11px;color:var(--l3)">☆ 设为默认</span></div>
+                <div style="font-size:11.5px;color:var(--l2);margin-top:4px">OpenAI Plus · gpt-5.4 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div class="flex-row-between"><span style="font-weight:500;color:var(--l1)">● Antigravity CLI</span><span style="font-size:11px;color:var(--l3)">☆ 设为默认</span></div>
+                <div style="font-size:11.5px;color:var(--l2);margin-top:4px">Google 官方 · gemini-3-pro ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div class="flex-row-between"><span style="font-weight:500;color:var(--l1)">● Kimi Code</span><span style="font-size:11px;color:var(--l3)">☆ 设为默认</span></div>
+                <div style="font-size:11.5px;color:var(--l2);margin-top:4px">Moonshot · kimi-k2.5 ▾</div>
+              </div>
+            </div>
+
+            <div style="font-size:12.5px;font-weight:500;color:var(--l1);margin-bottom:6px">专属绑定</div>
+            <div class="agent-grid-before" style="margin-bottom:14px">
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">💬 项目对话</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">💡 问 AI / 聊想法</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">🤖 项目助手</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">📖 沉浸阅读对话</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+            </div>
+
+            <div style="font-size:12.5px;font-weight:500;color:var(--l1);margin-bottom:6px">科研步骤（共 5 步，已指定 2 步）</div>
+            <div class="agent-grid-before">
+              <div style="background:var(--seg-sel);border-radius:8px;padding:9px 10px">
+                <div class="flex-row-between"><span style="font-size:12px;color:var(--l1)">🔍 文献检索与筛选</span><span style="font-size:10.5px;color:var(--cta)">已指定</span></div>
+                <div style="font-size:11px;color:var(--l2);margin-top:4px">Codex · OpenAI Plus · gpt-5.4 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">📚 文献精读与笔记</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+              <div class="well" style="padding:9px 10px">
+                <div style="font-size:12px;color:var(--l1)">🧭 综述大纲</div>
+                <div style="font-size:11px;color:var(--l3);margin-top:4px">跟随项目默认 · Claude Code · opus-4-7 ▾</div>
+              </div>
+              <div style="background:var(--seg-sel);border-radius:8px;padding:9px 10px">
+                <div class="flex-row-between"><span style="font-size:12px;color:var(--l1)">✍ 综述初稿与做图</span><span style="font-size:10.5px;color:var(--cta)">已指定</span></div>
+                <div style="font-size:11px;color:var(--l2);margin-top:4px">Antigravity CLI · gemini-3-pro ▾</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AFTER: Agent 分工 -->
+      <div class="ab-col is-after">
+        <div class="ab-label after"><span class="tag-pill">AFTER</span> 优化后：单张项目默认主卡 + 继承静默/特派高亮分工表（可点击切换）</div>
+        <div class="mesa-frame">
+          <div class="mesa-pad">
+            <!-- 1. 顶部唯一项目默认主卡 -->
+            <div class="well" style="padding:11px 13px;margin-bottom:12px">
+              <div class="flex-row-between" style="flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:9px">
+                  <span class="brand-dot" style="width:9px;height:9px;background:#d97757"></span>
+                  <div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                      <span style="font-size:13.5px;font-weight:600;color:var(--l1)">Claude Code</span>
+                      <span class="pill pill-cta" style="font-size:10.5px">★ 项目默认</span>
+                      <span class="mono" style="font-size:11.5px;color:var(--l2)">Anthropic 官方 / claude-opus-4-7</span>
+                    </div>
+                    <div style="font-size:11px;color:var(--l4);margin-top:2px">下方显示「跟随默认」的入口、步骤与目标均使用此配置启动</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;gap:5px">
+                  <button class="btn btn-sec" style="height:27px">换默认模型 ▾</button>
+                  <button class="btn btn-ghost" style="height:27px">连接页 ↗</button>
+                </div>
+              </div>
+              <!-- 其余可用连接收成一行安静胶囊，点一下即可切换项目默认 -->
+              <div style="margin-top:9px;padding-top:8px;border-top:0.5px solid var(--hairline);display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px;color:var(--l4)">
+                <span>切换默认到：</span>
+                <button class="pill pill-inset" style="border:0;cursor:pointer;color:var(--l2)"><span class="brand-dot" style="background:#10a37f"></span> Codex · gpt-5.4</button>
+                <button class="pill pill-inset" style="border:0;cursor:pointer;color:var(--l2)"><span class="brand-dot" style="background:#a855f7"></span> Antigravity · gemini-3-pro</button>
+                <button class="pill pill-inset" style="border:0;cursor:pointer;color:var(--l2)"><span class="brand-dot" style="background:#00b4d8"></span> Kimi · k2.5</button>
+              </div>
+            </div>
+
+            <!-- 2. 特派分工表：未指定只写「跟随默认」，定制项与失效项瞬间跳出！ -->
+            <div class="flex-row-between" style="margin-bottom:6px;padding:0 2px">
+              <span style="font-size:12px;font-weight:600;color:var(--l2)">按环节特派专家 <span style="font-weight:400;color:var(--l4)">（仅 3 项单独指定，其余跟随默认）</span></span>
+              <button class="btn-ghost" style="font-size:11px;height:22px;border:0;cursor:pointer">全部恢复默认</button>
+            </div>
+
+            <!-- 科研步骤组 -->
+            <div class="well" style="padding:6px 7px;margin-bottom:10px">
+              <div style="font-size:10.5px;color:var(--l4);padding:2px 8px 4px">科研流程步骤</div>
+
+              <div class="slot-row-after" style="background:var(--sub-well)">
+                <span style="font-size:12px;color:var(--l1);font-weight:500;min-width:130px">① 文献检索与筛选</span>
+                <span class="pill pill-raised"><span class="brand-dot" style="background:#10a37f"></span> Codex · gpt-5.4</span>
+                <span class="pill pill-inset">思考：中 · 仅工作区写</span>
+                <span style="margin-left:auto;display:flex;gap:3px">
+                  <button class="btn-ghost" style="font-size:11px;height:22px;border:0;cursor:pointer">更改 ▾</button>
+                  <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="恢复跟随默认">×</button>
+                </span>
+              </div>
+
+              <div class="slot-row-after">
+                <span style="font-size:12px;color:var(--l2);min-width:130px">② 文献精读与笔记</span>
+                <span style="font-size:11.5px;color:var(--l4)">跟随默认</span>
+                <button class="btn-ghost" style="margin-left:auto;font-size:11px;height:22px;border:0;cursor:pointer">单独指定 ▾</button>
+              </div>
+
+              <div class="slot-row-after">
+                <span style="font-size:12px;color:var(--l2);min-width:130px">③ 综述大纲</span>
+                <span style="font-size:11.5px;color:var(--l4)">跟随默认</span>
+                <button class="btn-ghost" style="margin-left:auto;font-size:11px;height:22px;border:0;cursor:pointer">单独指定 ▾</button>
+              </div>
+
+              <div class="slot-row-after" style="background:var(--sub-well)">
+                <span style="font-size:12px;color:var(--l1);font-weight:500;min-width:130px">④ 初稿与科研做图</span>
+                <span class="pill pill-raised"><span class="brand-dot" style="background:#a855f7"></span> Antigravity · gemini-3-pro</span>
+                <span class="pill pill-inset">思考：高</span>
+                <span style="margin-left:auto;display:flex;gap:3px">
+                  <button class="btn-ghost" style="font-size:11px;height:22px;border:0;cursor:pointer">更改 ▾</button>
+                  <button class="btn-icon" style="width:22px;height:22px;font-size:11px" title="恢复跟随默认">×</button>
+                </span>
+              </div>
+
+              <div class="slot-row-after">
+                <span style="font-size:12px;color:var(--l2);min-width:130px">⑤ 润色定稿与渲染</span>
+                <span style="font-size:11.5px;color:var(--l4)">跟随默认</span>
+                <button class="btn-ghost" style="margin-left:auto;font-size:11px;height:22px;border:0;cursor:pointer">单独指定 ▾</button>
+              </div>
+            </div>
+
+            <!-- 日常对话与定时任务合一紧凑块 -->
+            <div class="well" style="padding:6px 7px">
+              <div style="font-size:10.5px;color:var(--l4);padding:2px 8px 4px">日常入口与定时巡检</div>
+              <div class="slot-row-after">
+                <span style="font-size:12px;color:var(--l2);min-width:130px">项目对话 / 聊想法 / 阅读</span>
+                <span style="font-size:11.5px;color:var(--l4)">全部跟随默认（点开可按入口拆开指定）</span>
+                <button class="btn-ghost" style="margin-left:auto;font-size:11px;height:22px;border:0;cursor:pointer">展开 3 项 ▸</button>
+              </div>
+              <div class="slot-row-after">
+                <span style="font-size:12px;color:var(--l2);min-width:130px">项目助手</span>
+                <span style="font-size:11.5px;color:var(--l4)">跟随默认（支持只读查文件）</span>
+                <button class="btn-ghost" style="margin-left:auto;font-size:11px;height:22px;border:0;cursor:pointer">单独指定 ▾</button>
+              </div>
+              <div class="slot-row-after" style="background:var(--sub-well)">
+                <span style="font-size:12px;color:var(--l1);font-weight:500;min-width:130px">定时 · 每周引文巡检</span>
+                <span class="pill pill-err">⚠ 原连接已删除</span>
+                <button class="btn btn-sec" style="margin-left:auto;height:23px;font-size:11px;padding:0 8px">重绑或恢复默认</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+  // ── 1. 科研 5 个步骤的完整仿真数据（Before vs After 同步联动） ──
+  const STEPS_META = [
+    { name: "文献检索与筛选", role: "ai" },
+    { name: "文献精读与笔记", role: "both" },
+    { name: "综述大纲", role: "both" },
+    { name: "初稿与做图", role: "ai" },
+    { name: "润色定稿与渲染", role: "you" }
+  ];
+
+  const STEP_SCENES = [
+    // Step 0: 文献检索与筛选
+    {
+      dones: [false, false, false, false, false],
+      circleKinds: ["active", "", "", "", ""],
+      subTexts: ["进行前", "", "", "", ""],
+      beforeHtml: `
+        <div class="flex-row-between" style="margin-bottom:8px">
+          <div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">文献检索与筛选</span>
+            <span style="font-size:11.5px;color:var(--l3);margin-left:6px">还没开始</span>
+          </div>
+          <span style="font-size:12px;color:var(--l4)">‹ 1 / 5 ›</span>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li">
+            <span class="flow-num cur">1</span>
+            <div style="font-size:12.5px;color:var(--l1);font-weight:500">确定文献来源</div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px">
+              <span class="pill pill-cta">AI 系统检索</span>
+              <span class="pill pill-inset">从 Zotero 导入</span>
+              <span class="pill pill-inset">放入本地 PDF 文件夹</span>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">2</span>
+            <div style="font-size:12.5px;color:var(--l2)">先定几件事 <span style="font-size:11px;color:var(--l4)">（可选）</span></div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              ▾ 直接选择（2 项待定） <button class="dotted-link">全部用推荐值</button>
+              <div style="margin-top:5px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+                <span style="color:var(--l1)">检索深度：</span>
+                <span style="background:var(--strip);padding:1px 8px;border-radius:99px">快筛 (15-25篇)</span>
+                <span class="pill pill-cta">标准检索 (30-50篇)</span>
+                <span style="background:var(--strip);padding:1px 8px;border-radius:99px">严格检索</span>
+              </div>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">3</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1)">AI 干活</span>
+              <button class="btn btn-primary">开始</button>
+            </div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              <button class="dotted-link">跟 AI 商量一下</button> · <button class="dotted-link">TASK.md</button>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">4</span>
+            <div style="font-size:12.5px;color:var(--l4)">评审并保存进项目</div>
+          </li>
+        </ol>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:6px;padding-left:26px">
+          <span style="font-size:10.5px;color:var(--l4)">可选</span>
+          <span style="flex:1;height:1px;background:var(--hairline)"></span>
+        </div>
+        <div style="padding:5px 0 0 26px;font-size:11.5px;color:var(--l3)">连接学术检索 MCP（PubMed / Crossref） <button class="dotted-link">配置</button></div>
+      `,
+      afterHtml: `
+        <div class="flex-row-between" style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:600;color:var(--l1)">1. 文献检索与筛选</span>
+            <span class="pill pill-inset">准备开工</span>
+          </div>
+          <div class="action-capsule">
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(4)">‹</button>
+            <span style="font-size:11px;color:var(--l3);padding:0 4px">1 / 5</span>
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(1)">›</button>
+          </div>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li-after">
+            <span class="flow-num done">✓</span>
+            <div class="flex-row-between" style="font-size:12px">
+              <span style="color:var(--l2)">文献来源：<b style="color:var(--l1);font-weight:500">AI 系统检索</b> · 标准深度（30–50 篇，近 5 年优先）</span>
+              <button class="btn btn-ghost" style="height:22px;font-size:11px">重选来源与范围 ▾</button>
+            </div>
+          </li>
+          <li class="flow-li-after is-cur">
+            <span class="flow-num cur">2</span>
+            <div class="flex-row-between">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--l1)">交给 AI 执行检索与快筛</div>
+                <div style="font-size:11.5px;color:var(--l3);margin-top:2px">未拍板的细节开工后 AI 会在对话里问你；开放获取全文将自动收进 papers/</div>
+              </div>
+              <button class="btn btn-primary">开始这一步</button>
+            </div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <div class="tool-cluster">
+                <button>💬 跟 AI 商量</button>
+                <button>📄 TASK.md</button>
+              </div>
+              <span style="font-size:11px;color:var(--l4);margin-left:auto">使用 Codex · gpt-5.4</span>
+            </div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num">3</span>
+            <div style="font-size:12px;color:var(--l4)">评审纳入清单（included.md）并保存进项目</div>
+          </li>
+        </ol>
+        <div style="margin-top:8px;padding-left:8px">
+          <button class="btn-ghost" style="font-size:11px;height:22px;border:0;cursor:pointer;color:var(--l4)">▸ 可选补充（1）：连接学术数据库 MCP</button>
+        </div>
+      `
+    },
+
+    // Step 1: 文献精读与笔记（付费墙人工补全文 + 速读/精读进度）
+    {
+      dones: [true, false, false, false, false],
+      circleKinds: ["done", "active", "", "", ""],
+      subTexts: ["已完成", "差 4 篇全文", "", "", ""],
+      beforeHtml: `
+        <div class="flex-row-between" style="margin-bottom:8px">
+          <div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">文献精读与笔记</span>
+            <span style="font-size:11px;color:var(--l4);margin-left:6px">● 你和 AI 一起</span>
+            <span style="font-size:11.5px;color:var(--l3);margin-left:6px">AI 已速读 34 篇，4 篇付费墙等你下</span>
+          </div>
+          <span style="font-size:12px;color:var(--l4)">‹ 2 / 5 ›</span>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li">
+            <span class="flow-num cur">1</span>
+            <div style="font-size:12.5px;color:var(--l1);font-weight:500">补齐付费墙文献全文（还差 4 / 38 篇）</div>
+            <div style="font-size:11px;color:var(--l3);margin-top:3px">点「官网」用学校账号下载，存进下载文件夹自动收进 papers/；或拖入 PDF。</div>
+            <div style="margin-top:6px;background:var(--inset);border-radius:6px;padding:7px 9px;font-size:11.5px">
+              <div class="flex-row-between" style="padding:3px 0">
+                <span class="truncate">1. Axial O-bridged Ru-N4 for alkaline HER (Nat. Catal. 2025)</span>
+                <span style="display:flex;gap:4px;flex-shrink:0"><button class="btn btn-sec" style="height:22px;font-size:11px">官网</button><button class="dotted-link">关联</button><button class="dotted-link">不下了</button></span>
+              </div>
+              <div class="flex-row-between" style="padding:3px 0">
+                <span class="truncate">2. Interfacial water reorganization on Pt single atoms (Angew. 2024)</span>
+                <span style="display:flex;gap:4px;flex-shrink:0"><button class="btn btn-sec" style="height:22px;font-size:11px">等待下载…</button><button class="dotted-link">取消</button></span>
+              </div>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">2</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1)">AI 干活 · 综述精读 6/6 · 研究论文速读 28/32</span>
+              <button class="btn btn-sec">继续</button>
+            </div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              <button class="dotted-link">继续讨论</button> · <button class="dotted-link">TASK.md</button> · <button class="dotted-link">新开一轮</button> · <button class="dotted-link">退回检索补料</button>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">3</span>
+            <div style="font-size:12.5px;color:var(--l4)">抽检核对 2 篇笔记原文一致性</div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">4</span>
+            <div style="font-size:12.5px;color:var(--l4)">评审并保存进项目</div>
+          </li>
+        </ol>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:6px;padding-left:26px">
+          <span style="font-size:10.5px;color:var(--l4)">保存后可做</span>
+          <span style="flex:1;border-top:1px dashed var(--field)"></span>
+        </div>
+        <div style="padding:5px 0 0 26px;font-size:11.5px;color:var(--l4)">同步题录到 Zotero / EndNote（保存进项目后可用）</div>
+      `,
+      afterHtml: `
+        <div class="flex-row-between" style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:600;color:var(--l1)">2. 文献精读与笔记</span>
+            <span class="pill pill-raised">你和 AI 一起</span>
+            <span style="font-size:12px;color:var(--l3)">已入库 34/38 篇全文</span>
+          </div>
+          <div class="action-capsule">
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(0)">‹</button>
+            <span style="font-size:11px;color:var(--l3);padding:0 4px">2 / 5</span>
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(2)">›</button>
+          </div>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li-after is-cur">
+            <span class="flow-num cur">1</span>
+            <div class="flex-row-between" style="margin-bottom:6px">
+              <div>
+                <span style="font-size:13px;font-weight:600;color:var(--l1)">待你下载 4 篇付费墙 PDF</span>
+                <span style="font-size:11.5px;color:var(--l3);margin-left:6px">浏览器保存或直接把 PDF 拖进下方区域即可自动归档</span>
+              </div>
+              <span class="pill pill-inset">已收齐 34 / 38</span>
+            </div>
+            <div class="well" style="padding:6px 9px;display:flex;flex-direction:column;gap:4px;font-size:12px">
+              <div class="flex-row-between">
+                <span class="truncate" style="color:var(--l1)">Axial O-bridged Ru-N4 for alkaline HER <span class="pill pill-cta" style="font-size:10px">Nat. Catal. · 1区</span></span>
+                <span style="display:flex;gap:4px;flex-shrink:0">
+                  <button class="btn btn-sec" style="height:23px;font-size:11px">官网下载 ↗</button>
+                  <button class="btn-ghost" style="height:23px;font-size:11px;border:0;cursor:pointer">关联本地</button>
+                  <button class="btn-icon" style="width:22px;height:22px" title="跳过这篇">×</button>
+                </span>
+              </div>
+              <div class="flex-row-between">
+                <span class="truncate" style="color:var(--l2)">Interfacial water reorganization on Pt SACs <span class="pill pill-ok" style="font-size:10px">等待浏览器保存…</span></span>
+                <button class="btn-ghost" style="height:22px;font-size:11px;border:0;cursor:pointer">取消等待</button>
+              </div>
+            </div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num">2</span>
+            <div class="flex-row-between">
+              <div>
+                <span style="font-size:12.5px;font-weight:500;color:var(--l1)">AI 精读与建库</span>
+                <span style="font-size:11.5px;color:var(--l3);margin-left:6px">综述精读 6/6 · 实证速读表 28/32</span>
+              </div>
+              <button class="btn btn-primary" style="height:28px">继续精读新补全文</button>
+            </div>
+            <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <div class="tool-cluster" style="background:var(--sub-well)">
+                <button>💬 继续讨论</button>
+                <button>📄 TASK.md</button>
+                <button>↺ 新开一轮</button>
+                <button>↩ 退回检索补料</button>
+              </div>
+            </div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num">3</span>
+            <div style="font-size:12px;color:var(--l4)">原句抽检（2 篇）→ 评审并保存 references.bib 与笔记索引</div>
+          </li>
+        </ol>
+      `
+    },
+
+    // Step 2: 综述大纲（你和 AI 一起定 + 按节覆盖对比 + 补文献回路 + 请几家研讨）
+    {
+      dones: [true, true, false, false, false],
+      circleKinds: ["done", "done", "active", "", ""],
+      subTexts: ["已完成", "已完成", "1 节偏薄", "", ""],
+      beforeHtml: `
+        <div class="flex-row-between" style="margin-bottom:8px">
+          <div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">综述大纲</span>
+            <span style="font-size:11px;color:var(--l4);margin-left:6px">● 你和 AI 一起</span>
+            <span style="font-size:11.5px;color:var(--l3);margin-left:6px">已定 4 章框架 · §3 覆盖偏薄</span>
+          </div>
+          <span style="font-size:12px;color:var(--l4)">‹ 3 / 5 ›</span>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li">
+            <span class="flow-num done">✓</span>
+            <div style="font-size:12px;color:var(--l3)">先定几件事 · 已定 2 件 <button class="dotted-link">更改</button></div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num cur">2</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1)">AI 干活 · 4 章框架已就绪 · 规划组图 3 幅</span>
+              <button class="btn btn-sec">继续</button>
+            </div>
+            <div style="margin-top:5px;font-size:11.5px;color:var(--l3)">
+              <button class="dotted-link">继续讨论</button> · <button class="dotted-link">TASK.md</button> · <button class="dotted-link">请几家研讨</button>
+            </div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              覆盖：§1(9篇) · §2(14篇) · <span style="color:var(--warn-text)">§3 碱性大电流传质(2篇，薄)</span> · §4(8篇)
+              &nbsp;<button class="dotted-link">补文献…</button> · <button class="dotted-link">文件版本(3)</button>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">3</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1)">评审并保存进项目</span>
+              <button class="btn btn-primary">去评审</button>
+            </div>
+          </li>
+        </ol>
+      `,
+      afterHtml: `
+        <div class="flex-row-between" style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:600;color:var(--l1)">3. 综述大纲</span>
+            <span class="pill pill-raised">你和 AI 一起</span>
+            <span class="pill pill-warn">§3 证据偏薄</span>
+          </div>
+          <div class="action-capsule">
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(1)">‹</button>
+            <span style="font-size:11px;color:var(--l3);padding:0 4px">3 / 5</span>
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(3)">›</button>
+          </div>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li-after">
+            <span class="flow-num done">✓</span>
+            <div class="flex-row-between" style="font-size:12px;color:var(--l3)">
+              <span>大纲形态：机理批判型综述 · 规划 3 幅文献拼板与机理图</span>
+              <button class="btn btn-ghost" style="height:22px;font-size:11px">更改</button>
+            </div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num">2</span>
+            <div class="flex-row-between" style="margin-bottom:6px">
+              <span style="font-size:12.5px;font-weight:500;color:var(--l1)">按节精读覆盖度（Mesa 实数核计）</span>
+              <button class="btn btn-sec" style="height:25px;font-size:11.5px">↩ 为 §3 发起补文献…</button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-bottom:7px;font-size:11px">
+              <div class="sub-well" style="padding:5px 7px"><div style="color:var(--l3)">§1 引言问题</div><b style="color:var(--ok-text)">9 篇精读 · 够</b></div>
+              <div class="sub-well" style="padding:5px 7px"><div style="color:var(--l3)">§2 配位调控</div><b style="color:var(--ok-text)">14 篇精读 · 够</b></div>
+              <div class="sub-well" style="padding:5px 7px;border-left:2px solid var(--warn-text)"><div style="color:var(--l2)">§3 大电流传质</div><b style="color:var(--warn-text)">仅 2 篇 · 偏薄</b></div>
+              <div class="sub-well" style="padding:5px 7px"><div style="color:var(--l3)">§4 原位表征</div><b style="color:var(--ok-text)">8 篇精读 · 够</b></div>
+            </div>
+            <div class="tool-cluster" style="background:var(--sub-well)">
+              <button>💬 继续一问一答调框架</button>
+              <button>👥 请 3 家模型只读研讨</button>
+              <button>📄 TASK.md</button>
+              <button>🕓 outline.md 版本 (3)</button>
+            </div>
+          </li>
+          <li class="flow-li-after is-cur">
+            <span class="flow-num cur">3</span>
+            <div class="flex-row-between">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--l1)">评审大纲并保存进项目</div>
+                <div style="font-size:11.5px;color:var(--l3)">可先定稿大纲直接写，或点上方「发起补文献」补齐 §3 后自动跟进</div>
+              </div>
+              <button class="btn btn-primary">去评审</button>
+            </div>
+          </li>
+        </ol>
+      `
+    },
+
+    // Step 3: 初稿与科研做图（待评审 + 核验三档不打总分 + PPTX/SVG）
+    {
+      dones: [true, true, true, false, false],
+      circleKinds: ["done", "done", "done", "active", ""],
+      subTexts: ["已完成", "已完成", "已完成", "可评审", ""],
+      beforeHtml: `
+        <div class="flex-row-between" style="margin-bottom:8px">
+          <div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">初稿与做图</span>
+            <span style="font-size:11.5px;color:var(--cta);margin-left:6px">可评审</span>
+          </div>
+          <span style="font-size:12px;color:var(--l4)">‹ 4 / 5 ›</span>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li">
+            <span class="flow-num done">✓</span>
+            <div style="font-size:12px;color:var(--l3)">写作与制图方式 · Quarto Markdown + 可编辑 PPTX/SVG 图纸 <button class="dotted-link">更改</button></div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num done">✓</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l2)">AI 干活 · 正文 4/4 章已写完 · 示意图 3 幅</span>
+              <button class="btn btn-ghost">继续</button>
+            </div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              核验：引文键闭环 通过 · 机理图源文件 通过 · 论断证据对齐 待你判断 · <button class="dotted-link">退回补料</button> · <button class="dotted-link">版本(2)</button>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num cur">3</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1);font-weight:500">评审并保存进项目</span>
+              <button class="btn btn-primary">去评审</button>
+            </div>
+            <div style="font-size:11px;color:var(--l3);margin-top:3px">评审工作区改动与派生产物（PPTX/SVG/PNG），勾选要带回项目的文件。</div>
+          </li>
+        </ol>
+      `,
+      afterHtml: `
+        <div class="flex-row-between" style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:600;color:var(--l1)">4. 初稿与科研做图</span>
+            <span class="pill pill-cta">待你评审</span>
+          </div>
+          <div class="action-capsule">
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(2)">‹</button>
+            <span style="font-size:11px;color:var(--l3);padding:0 4px">4 / 5</span>
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(4)">›</button>
+          </div>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li-after">
+            <span class="flow-num done">✓</span>
+            <div style="font-size:12px;color:var(--l3)">Quarto 顺序成稿（引言/结论殿后）· 示意图交付可编辑 PPTX + SVG</div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num done">✓</span>
+            <div class="flex-row-between" style="margin-bottom:5px">
+              <span style="font-size:12.5px;color:var(--l2)">初稿 8,420 词（4/4 章）· 机理与拼板图 3 套</span>
+              <div class="tool-cluster" style="background:var(--sub-well)">
+                <button>💬 让 AI 局部改</button>
+                <button>🕓 版本 (2)</button>
+                <button>↩ 退回上游</button>
+              </div>
+            </div>
+            <!-- 核验三档（通过 / 拦下 / 待你判断，永不打总分）清晰胶囊化 -->
+            <div style="display:flex;flex-wrap:wrap;gap:5px;font-size:11px">
+              <span class="pill pill-ok">✓ bib 引用键 100% 闭环</span>
+              <span class="pill pill-ok">✓ 3 套图均含可编辑 PPTX + SVG 真文字</span>
+              <span class="pill pill-warn">● 2 处定量比较待你核对原文</span>
+            </div>
+          </li>
+          <li class="flow-li-after is-cur">
+            <span class="flow-num cur">3</span>
+            <div class="flex-row-between">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--l1)">评审正文与图表产物并保存进项目</div>
+                <div style="font-size:11.5px;color:var(--l3)">共 1 个主稿文档 + 6 个派生产物冻结待检，可逐个勾选接收</div>
+              </div>
+              <button class="btn btn-primary">去评审</button>
+            </div>
+          </li>
+        </ol>
+      `
+    },
+
+    // Step 4: 润色定稿与渲染（导师 Word 批注回流 + 检索超 14 天更新提醒 + Quarto 成稿）
+    {
+      dones: [true, true, true, true, false],
+      circleKinds: ["done", "done", "done", "done", "active"],
+      subTexts: ["已完成", "已完成", "已完成", "已完成", "你主导"],
+      beforeHtml: `
+        <div class="flex-row-between" style="margin-bottom:8px">
+          <div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--l1)">润色定稿与渲染</span>
+            <span style="font-size:11px;color:var(--cta);margin-left:6px">● 你主要负责</span>
+          </div>
+          <span style="font-size:12px;color:var(--l4)">‹ 5 / 5 ›</span>
+        </div>
+        <div style="font-size:11px;color:var(--warn-text);margin-bottom:6px">
+          距离上次文献检索已超过 18 天，投稿前可补检最新发表文献 <button class="dotted-link">更新检索</button>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li">
+            <span class="flow-num cur">1</span>
+            <div style="font-size:12.5px;color:var(--l1)">选投稿期刊与引文样式 · ACS Catalysis (numbered) <button class="dotted-link">更改</button></div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">2</span>
+            <div class="flex-row-between">
+              <span style="font-size:12.5px;color:var(--l1)">AI 润色与 Quarto 渲染成稿（PDF / Word）</span>
+              <button class="btn btn-primary">开始</button>
+            </div>
+            <div style="margin-top:4px;font-size:11.5px;color:var(--l3)">
+              <button class="dotted-link">跟 AI 商量一下</button> · <button class="dotted-link">TASK.md</button> · <button class="dotted-link">导入 Word 批注 (.docx)</button>
+            </div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">3</span>
+            <div style="font-size:12.5px;color:var(--l4)">填写利益冲突/作者贡献声明与配图版权核对</div>
+          </li>
+          <li class="flow-li">
+            <span class="flow-num">4</span>
+            <div style="font-size:12.5px;color:var(--l4)">评审并登记最终成稿</div>
+          </li>
+        </ol>
+      `,
+      afterHtml: `
+        <div class="flex-row-between" style="margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+            <span style="font-size:14px;font-weight:600;color:var(--l1)">5. 润色定稿与渲染</span>
+            <span class="pill pill-cta">你主要负责</span>
+          </div>
+          <div class="action-capsule">
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(3)">‹</button>
+            <span style="font-size:11px;color:var(--l3);padding:0 4px">5 / 5</span>
+            <button class="btn-icon" style="width:22px;height:22px" onclick="switchStep(0)">›</button>
+          </div>
+        </div>
+        <!-- 定稿前检索时效温和提醒内嵌 -->
+        <div class="sub-well flex-row-between" style="padding:6px 10px;margin-bottom:8px;font-size:11.5px">
+          <span style="color:var(--l2)"><span style="color:var(--warn-text)">●</span> 距上次文献检索已 18 天，投稿前可快速增补近两周新文献</span>
+          <button class="btn btn-ghost" style="height:22px;font-size:11px">↩ 更新检索</button>
+        </div>
+        <ol class="flow-list">
+          <li class="flow-li-after">
+            <span class="flow-num done">✓</span>
+            <div class="flex-row-between" style="font-size:12px">
+              <span style="color:var(--l2)">目标期刊：<b style="color:var(--l1);font-weight:500">ACS Catalysis</b> · 引文样式 numbered · 输出 PDF + Word</span>
+              <button class="btn btn-ghost" style="height:22px;font-size:11px">更换期刊</button>
+            </div>
+          </li>
+          <li class="flow-li-after is-cur">
+            <span class="flow-num cur">2</span>
+            <div class="flex-row-between">
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--l1)">语言润色、格式适配与 Quarto 渲染</div>
+                <div style="font-size:11.5px;color:var(--l3);margin-top:2px">只改表达不改学术观点；若有合作者改过的 Word，可一键抽批注回流</div>
+              </div>
+              <button class="btn btn-primary">开始渲染定稿</button>
+            </div>
+            <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <div class="tool-cluster">
+                <button>📝 导入 Word 批注 (.docx)</button>
+                <button>💬 跟 AI 商量</button>
+                <button>📄 TASK.md</button>
+              </div>
+            </div>
+          </li>
+          <li class="flow-li-after">
+            <span class="flow-num">3</span>
+            <div style="font-size:12px;color:var(--l4)">投稿声明与配图版权核对 → 最终成稿验收归档</div>
+          </li>
+        </ol>
+      `
+    }
+  ];
+
+  let currentStepIdx = 0;
+
+  function renderStepper(hostId, stepIdx, isAfter) {
+    const scene = STEP_SCENES[stepIdx];
+    const roleLegend = isAfter
+      ? `<div class="flex-row-between" style="margin-bottom:4px;font-size:10.5px;color:var(--l4)">
+           <span>↩ 补文献回路进行中：综述大纲 → 文献检索</span>
+           <span style="display:inline-flex;gap:10px">
+             <span><i style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cta);vertical-align:middle;margin-right:3px"></i>你主导</span>
+             <span><i style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--l4);vertical-align:middle;margin-right:3px"></i>一起定</span>
+           </span>
+         </div>`
+      : `<div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:4px;font-size:10.5px;color:var(--l4)">
+           <span>角色提示</span>
+           <span><i style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--cta);vertical-align:middle;margin-right:3px"></i>你主要负责</span>
+           <span><i style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--l4);vertical-align:middle;margin-right:3px"></i>你和 AI 一起定</span>
+         </div>`;
+
+    const namesRow = STEPS_META.map((s, i) => {
+      const dot = s.role === "you"
+        ? `<span style="width:5px;height:5px;border-radius:50%;background:var(--cta);flex-shrink:0"></span>`
+        : s.role === "both"
+          ? `<span style="width:5px;height:5px;border-radius:50%;background:var(--l4);flex-shrink:0"></span>`
+          : "";
+      return `<div class="step-name-cell" style="${i === stepIdx ? 'color:var(--l1);font-weight:500' : ''}">${s.name}${dot}</div>`;
+    }).join("");
+
+    const circlesRow = STEPS_META.map((s, i) => {
+      const kind = scene.circleKinds[i] || "";
+      const sel = i === stepIdx ? "selected" : "";
+      return `<button type="button" class="step-cell-btn" onclick="switchStep(${i})" title="点击查看「${s.name}」的对比">
+        <span class="step-circle-mask"><span class="step-circle ${kind} ${sel}"></span></span>
+      </button>`;
+    }).join("");
+
+    const subsRow = scene.subTexts.map((t, i) =>
+      `<div class="step-sub-cell" style="${i === stepIdx ? 'color:var(--l2)' : ''}">${t}</div>`
+    ).join("");
+
+    document.getElementById(hostId).innerHTML = `
+      ${roleLegend}
+      <div class="stepper-grid">${namesRow}</div>
+      <div class="step-chain-row">
+        <div class="step-dash-bg"></div>
+        <div class="step-circles">${circlesRow}</div>
+        <span class="step-diamond"></span>
+      </div>
+      <div class="stepper-grid">${subsRow}</div>
+    `;
+  }
+
+  function switchStep(idx) {
+    currentStepIdx = idx;
+    document.querySelectorAll("#researchStepBar button").forEach((btn, i) => {
+      btn.classList.toggle("on", i === idx);
+    });
+    renderStepper("stepperBefore", idx, false);
+    renderStepper("stepperAfter", idx, true);
+    document.getElementById("stepCardBefore").innerHTML = STEP_SCENES[idx].beforeHtml;
+    document.getElementById("stepCardAfter").innerHTML = STEP_SCENES[idx].afterHtml;
+  }
+
+  document.getElementById("researchStepBar").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-step]");
+    if (btn) switchStep(Number(btn.dataset.step));
+  });
+
+  // ── 2. 详情展开与文件预览点击交互 ──
+  window.toggleId = function(id) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = !el.hidden;
+  };
+
+  window.pickDemoFile = function(el, title, sub, ver, body) {
+    document.querySelectorAll("#afterFileTree .ftree-row").forEach((r) => r.classList.remove("sel"));
+    el.classList.add("sel");
+    document.getElementById("demoFileTitle").textContent = title;
+    document.getElementById("demoFileSub").textContent = sub;
+    document.getElementById("demoFileVer").textContent = ver;
+    document.getElementById("demoFileBody").textContent = body;
+  };
+
+  // ── 3. 顶部模块筛选 / 对比布局 / 主题切换 ──
+  document.getElementById("modFilter").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mod]");
+    if (!btn) return;
+    const mod = btn.dataset.mod;
+    document.querySelectorAll("#modFilter button").forEach((b) => b.classList.toggle("on", b === btn));
+    document.querySelectorAll(".mod-section").forEach((sec) => {
+      sec.hidden = mod !== "all" && sec.dataset.section !== mod;
+    });
+  });
+
+  document.getElementById("layoutSwitch").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-layout]");
+    if (!btn) return;
+    document.body.dataset.layout = btn.dataset.layout;
+    document.querySelectorAll("#layoutSwitch button").forEach((b) => b.classList.toggle("on", b === btn));
+  });
+
+  document.getElementById("themeSwitch").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-theme]");
+    if (!btn) return;
+    document.documentElement.dataset.theme = btn.dataset.theme;
+    document.querySelectorAll("#themeSwitch button").forEach((b) => b.classList.toggle("on", b === btn));
+  });
+
+  // 初始渲染
+  switchStep(0);
+</script>
+</body>
+</html>
