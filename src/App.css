@@ -4537,6 +4537,10 @@ select:focus-visible {
   border-left: 0;
   border-radius: var(--ccode-radius-panel);
 }
+/* 主区与右侧停靠卡之间的缝收到 2px（行容器 gap 5px，2026-11-16 用户反馈这道缝太宽）；面板被轮下去时不收 */
+#ccode-assistant-dock:has(> .contents > .ccode-docked-panel) {
+  margin-left: -3px;
+}
 /* 拍板队列、项目分组、定时任务：统一回归全局 .ccode-well 卡片底色 + 微描边，项目组左侧只在有事时亮状态锚线（2026-11-15） */
 .ccode-workbench-list {
   position: relative;
