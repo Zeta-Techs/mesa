@@ -23,6 +23,8 @@ import {
  * 点了把这段对话的目录换到那个项目，起手提示随之换成该项目类型的那一套；不替用户发送。
  * 2026-10-23 同日（侧栏挂对话第一期，用户拍板）：10-18 起放在这里的「最近的随手聊 / 最近的对话」列表撤掉——
  * 对话挂进侧栏项目树（sidebar-chats.ts），找旧对话只在侧栏、对话页、工作台三处。
+ * 2026-11-16（用户：胶囊分成两行了）：「请几家研讨」也占一排的名额，出它时少放一条起手提示；
+ * 「接着做」项目名封顶 12rem，两个项目 + 一条提示 + 研讨在 45rem 输入框宽内放得下一排。
  */
 export default function ChatEmptyStart({
   cwd,
@@ -73,9 +75,10 @@ export default function ChatEmptyStart({
         : [],
     [context, onPickProject, projects, sessions, dir],
   );
+  const showConsult = !!onConsult && !resumeSessionId;
   const prompts = STARTER_PROMPTS[context].slice(
     0,
-    STARTER_PROMPTS[context].length - projectStarters.length,
+    STARTER_PROMPTS[context].length - projectStarters.length - (showConsult ? 1 : 0),
   );
   // 研讨记录写在项目里：目录正好是已添加的项目才预选它
   const consultRoot = projects.find((p) => samePath(p.path, dir, IS_WINDOWS))?.path ?? null;
@@ -102,7 +105,7 @@ export default function ChatEmptyStart({
               type="button"
               onClick={() => onPickProject?.(p.path)}
               title={`把这段对话放到「${p.name}」里开始（还没发出去，之后还能换）\n${p.path}`}
-              className="ccode-well flex max-w-[17rem] items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
+              className="ccode-well flex max-w-[12rem] items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
             >
               <ModeIcon size={12.5} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
               <span className="shrink-0 text-l3">接着做</span>
@@ -123,7 +126,7 @@ export default function ChatEmptyStart({
         ))}
         {/* 2026-11-11 用户：新对话页加一个简单的研讨入口。和起手提示不同，它不往输入框填字，而是打开发起弹层，
             输入框里已写的话带过去当问题；恢复占位标签上不出 */}
-        {onConsult && !resumeSessionId && (
+        {showConsult && onConsult && (
           <button
             type="button"
             onClick={() => onConsult(consultRoot)}
