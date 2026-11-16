@@ -571,6 +571,8 @@ export default function StepFlow({
   draft,
   agentContent,
   loopActions,
+  loopMore,
+  loopMoreOpen,
   onRestore,
   reviewConflict,
   nudge,
@@ -670,6 +672,10 @@ export default function StepFlow({
   /** 「AI 干活」下一行的回路动作：跟进更新、补读、补文献 / 退回上一步修改（design-review-loop.md §4/§5），
    *  「这一步做过 N 轮」（§6）也排在这一行（2026-11-11 项目页减法） */
   loopActions?: React.ReactNode;
+  /** 回头组里不常用的入口（导入 Word 批注、文件版本）：和任务书、方案研讨一起收进工具行末尾的「⋯」（2026-11-16） */
+  loopMore?: React.ReactNode;
+  /** 收在「⋯」里的入口正挂着首次提示气泡时为 true：这时「⋯」摊开，气泡才有东西可指 */
+  loopMoreOpen?: boolean;
   /** 步骤工作区已归档时 Agent 节点的主入口（替代「开始」）：恢复工作区 */
   onRestore?: () => void;
   /** 合并冲突阻塞：评审节点入口改为「去处理冲突」（直达冲突解决意图） */
@@ -2352,8 +2358,26 @@ export default function StepFlow({
   const hasDiscussNode = flow.nodes.some((n) => n.kind === "discuss");
   // 商量组（继续讨论 · ⋯ 里的任务书与方案研讨）：没开工时挂「先定几件事」，开工后跟到「AI 干活」下的工具行，
   // 与回头组用竖线隔开；四类步骤同一顺序（2026-11-13 步骤卡统一设计稿）。
-  // 2026-11-16：有方案研讨的步骤，任务书和研讨收进「⋯」；没有研讨的步骤只有任务书一项，不为一项加一层
+  // 2026-11-16：行上只留商量和回头各一个常用入口，任务书、方案研讨、导入批注、文件版本收进「⋯」，点开在同一行露出；
+  // 只有任务书一项可收时不为一项加一层。商量组挂在「AI 干活」行时「⋯」放在整行末尾，一行只有一个
   const talkOnAgent = !hasDiscussNode || runStatus !== "pending";
+  const useMore = Boolean(discussInline || loopMore);
+  const moreOpen = talkMoreOpen || Boolean(loopMoreOpen);
+  const moreToggle = (
+    <button
+      type="button"
+      aria-expanded={moreOpen}
+      aria-label="更多"
+      title="任务书、方案研讨、文件版本等"
+      onClick={() => setTalkMoreOpen((v) => !v)}
+      // 任务书改过时「⋯」也用强调色字：收起来以后仍看得出这一步的任务书动过
+      className={`shrink-0 rounded-sm px-1 text-xs hover:bg-hover ${
+        draftHasBody && !moreOpen ? "text-cta-pill-text" : "text-l3 hover:text-l1"
+      }`}
+    >
+      ⋯
+    </button>
+  );
   const taskBookBtn = (
     <button
       type="button"
@@ -2386,26 +2410,15 @@ export default function StepFlow({
       >
         {chatBusy ? "准备任务书…" : discussChatLabel(discussed)}
       </button>
-      {discussInline ? (
-        <>
-          <button
-            type="button"
-            aria-expanded={talkMoreOpen}
-            aria-label="更多：任务书、方案研讨"
-            title="任务书、方案研讨"
-            onClick={() => setTalkMoreOpen((v) => !v)}
-            // 任务书改过时「⋯」也用强调色字：收起来以后仍看得出这一步的任务书动过
-            className={`shrink-0 rounded-sm px-1 text-xs hover:bg-hover ${
-              draftHasBody && !talkMoreOpen ? "text-cta-pill-text" : "text-l3 hover:text-l1"
-            }`}
-          >
-            ⋯
-          </button>
-          {talkMoreOpen && taskBookBtn}
-          {talkMoreOpen && discussInline}
-        </>
-      ) : (
+      {!useMore ? (
         taskBookBtn
+      ) : talkOnAgent ? null : (
+        // 挂在「先定几件事」上时回头组不在这一行，「⋯」跟在商量后面
+        <>
+          {moreToggle}
+          {moreOpen && taskBookBtn}
+          {moreOpen && discussInline}
+        </>
       )}
       {showDiscussNudge && (
         <CoachTip
@@ -3421,11 +3434,24 @@ export default function StepFlow({
         {/* 统计行在上、工具行在下（2026-11-13 步骤卡统一设计稿，用户按稿核对）：统计行单独一行只读，首项是本步主进度、加粗；
             工具行 = 商量组 | 回头组，竖线隔开，只有进对话的「继续讨论」带描边，其余是文字链接。
             两行 pl-6 = 序号列 w-4 + gap-2，左缘对齐「AI 干活」的字；带框的「继续讨论」左移 7px（边框 1 + px-1.5），让框里的字而不是框对齐统计行的字（2026-11-13 用户：按钮行看着偏右）；只照稿改布局，字号保持原样（用户：字体只是参考观感） */}
-        {node.kind === "agent" && (talkOnAgent || loopActions) && (
+        {node.kind === "agent" && (talkOnAgent || loopActions || loopMore) && (
           <div data-step-tools="row" className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-6 [&:not(:has([data-step-tools=talk],[data-step-tools=loop]:not(:empty)))]:hidden [&_[data-step-tools=talk]>button:first-child]:-ml-[calc(0.375rem+1px)]">
             {talkOnAgent && talkGroup}
             {talkOnAgent && loopActions && <span aria-hidden className="h-3 w-px bg-hairline [&:has(+[data-step-tools=loop]:empty)]:hidden" />}
-            {loopActions && <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">{loopActions}</div>}
+            {(loopActions || (!talkOnAgent && loopMore)) && (
+              <div data-step-tools="loop" className="flex flex-wrap items-center gap-x-2.5 gap-y-1 empty:hidden">
+                {loopActions}
+                {!talkOnAgent && loopMore}
+              </div>
+            )}
+            {talkOnAgent && useMore && (
+              <>
+                {moreToggle}
+                {moreOpen && taskBookBtn}
+                {moreOpen && discussInline}
+                {moreOpen && loopMore}
+              </>
+            )}
           </div>
         )}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。

@@ -630,6 +630,12 @@ export default function TaskCardsSection({
 
   /** 研讨（2026-11-11）只上人要拍板的步骤：role 为 you / both；检索、清洗这类 role=ai 的不出 */
   const consultEligible = focusStepDto?.role === "you" || focusStepDto?.role === "both";
+  /** 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤保存进项目过一次才有（2026-11-13 用户：第一轮还没有能发给导师的稿子） */
+  const commentsEligible = (() => {
+    if (!focusStepDto) return false;
+    const kind = stepKind(focusStepDto, skillProvides);
+    return (kind === "writing" || kind === "final") && !!stepWorkspace(focusStepDto)?.mergedAt;
+  })();
 
   /** 「请几家研讨」：问题按这一步预填，材料 = 这一步的任务书 + 已经存在的主要产物（按弹层上限截）。
    *  步骤开着工作副本时成员读工作副本（产物还没带回项目根，同评审页 readRoot 口径），记录照样写项目根；
@@ -1814,42 +1820,11 @@ export default function TaskCardsSection({
                   更新检索（已 {refresh.days} 天）…
                 </button>
               );
-              // 导入 Word 批注（科研流程补全 §4）：写作 / 定稿类步骤保存进项目过一次才有（2026-11-13 用户：第一轮还没有能发给导师的稿子）
-              const focusKind = stepKind(focusStepDto, skillProvides);
-              const commentsButton = (focusKind === "writing" || focusKind === "final") && !!stepWorkspace(focusStepDto)?.mergedAt && (
-                <span className="relative shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      dismissCommentsTip();
-                      void importComments();
-                    }}
-                    title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
-                    className={LOOP_TOOL}
-                  >
-                    导入 Word 批注…
-                  </button>
-                  {commentsTipOpen && (
-                    <CoachTip
-                      arrow="up"
-                      arrowAt={28}
-                      title="导师批注完的 Word，从这里导回来"
-                      onClose={dismissCommentsTip}
-                      className="absolute top-full left-0 mt-2 w-80 text-xs leading-5"
-                      actions={[{ label: "知道了", onClick: dismissCommentsTip }]}
-                    >
-                      把这一步的稿子发给导师或合作者，对方在 Word 里加完批注发回来，点这里选那份 .docx。Mesa 把每条批注抽成意见清单，这一步另开一轮让 AI 逐条改；要前面步骤补的（补文献、改大纲），会标成退回交给那一步。
-                    </CoachTip>
-                  )}
-                </span>
-              );
-              if ((focusRunStatus ?? "pending") === "pending") {
-                return commentsButton ? loopRow([commentsButton]) : null;
-              }
+              if ((focusRunStatus ?? "pending") === "pending") return null;
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton && !commentsButton) return null;
+                if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton) return null;
                 return loopRow([
                   // 待评审时的「跟进更新」在「AI 干活」第一行的下一步提示里（followNudge），这里不再重复一颗
                   live?.staleUpstream && focusRunStatus === "active" && (
@@ -1862,7 +1837,6 @@ export default function TaskCardsSection({
                   ),
                   reworkButton,
                   refreshButton,
-                  commentsButton,
                 ]);
               }
               if (focusRunStatus !== "done") return null;
@@ -1877,25 +1851,58 @@ export default function TaskCardsSection({
                   补读 {catchUp.length} 篇新到的全文
                 </button>
               );
-              if (!catchUpButton && targets.length === 0 && !commentsButton) return null;
+              if (!catchUpButton && targets.length === 0) return null;
               // 已保存步骤的「跟进更新」同样在下一步提示里（followNudge）
               return loopRow([
                 reworkButton,
                 catchUpButton,
-                commentsButton,
               ]);
               })();
+              return lead;
+            })()}
+            loopMoreOpen={commentsEligible && commentsTipOpen}
+            loopMore={(() => {
+              // 不常用的两项收进工具行末尾的「⋯」（2026-11-16 用户拍板）：导入 Word 批注、文件版本
               const roundsWs = stepWorkspace(focusStepDto);
-              return roundsWs ? (
-                <FileVersionsButton
-                  root={projectPath}
-                  workspaceId={roundsWs.id}
-                  refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
-                  lead={lead}
-                  className={LOOP_TOOL}
-                />
-              ) : (
-                lead
+              if (!commentsEligible && !roundsWs) return null;
+              return (
+                <>
+                  {commentsEligible && (
+                    <span className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          dismissCommentsTip();
+                          void importComments();
+                        }}
+                        title="选一份导师 / 合作者批注过的 Word：Mesa 抽出每条批注（批注人、原文、意见）写成意见清单，这一步另开一轮逐条处理；要前面步骤做的，退回单会按清单预填"
+                        className={LOOP_TOOL}
+                      >
+                        导入 Word 批注…
+                      </button>
+                      {commentsTipOpen && (
+                        <CoachTip
+                          arrow="up"
+                          arrowAt={28}
+                          title="导师批注完的 Word，从这里导回来"
+                          onClose={dismissCommentsTip}
+                          className="absolute top-full left-0 mt-2 w-80 text-xs leading-5"
+                          actions={[{ label: "知道了", onClick: dismissCommentsTip }]}
+                        >
+                          把这一步的稿子发给导师或合作者，对方在 Word 里加完批注发回来，点这里选那份 .docx。Mesa 把每条批注抽成意见清单，这一步另开一轮让 AI 逐条改；要前面步骤补的（补文献、改大纲），会标成退回交给那一步。
+                        </CoachTip>
+                      )}
+                    </span>
+                  )}
+                  {roundsWs && (
+                    <FileVersionsButton
+                      root={projectPath}
+                      workspaceId={roundsWs.id}
+                      refreshKey={`${focusRunStatus ?? ""}|${refreshToken}`}
+                      className={LOOP_TOOL}
+                    />
+                  )}
+                </>
               );
             })()}
             onContinueFresh={
