@@ -64,6 +64,9 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 **Research (the main line)**
 
 - **Pipelines**: six templates with one-click steps; each step works in an isolated copy and merges after review; later steps can send work back to earlier ones for another pass. Research projects without a pipeline use reviewed "goals".
+- **Project assistant**: ask where the project stands, why a step failed or what to do next; it can read project files (read-only) to find the cause. Hand it a task and it asks what's missing, then drafts a work order — nothing runs until you click "dispatch".
+- **Consult**: put one question to two to four AIs from different model families. They answer read-only and independently first, then respond to each other; Mesa lines up the answers and checks their cited sources without picking a winner. Conclusions go anywhere only when you click.
+- **My tasks**: save a step (or several) that works well, with your own skills, as a reusable task with parameters, optional check scripts and triggers. Add it to another project, use it as a goal template, or export it as a zip; imports are previewed before installing. Built-in templates can be saved as your own version.
 - **Research extras**: scheduled literature radar, journal metric badges, citation checks, verification and research records, a cross-project research profile, EndNote and Zotero bridges.
 - **Onboarding**: a first-run wizard installs an agent, connects an account or API key, and creates a first project.
 
@@ -71,7 +74,8 @@ https://github.com/user-attachments/assets/a9a7d744-3622-4427-805e-273a89e9326a
 
 - **Connections**: gateway × binding model, API keys and official accounts side by side, keys stored locally with 0600 permissions and never echoed, a bundled model capability database, one-click CLI install and update.
 - **Run page**: chat layer on top of a real xterm.js terminal; file tree, change panel, Monaco preview and editing; inline preview of PDF, docx, pptx, spreadsheets, images, Jupyter notebooks, audio and video; a three-pane reader (notes | PDF | terminal).
-- **Sessions**: parses the local session files of all ten CLIs, including ones started outside Mesa; auto titles, archive, Markdown export, session bundles for moving machines.
+- **Sessions**: parses the local session files of all ten CLIs, including ones started outside Mesa; auto titles, archive, Markdown export, session bundles for moving machines. Mid-conversation you can hand off to another agent, which picks up from a written handoff brief.
+- **Scheduled follow-ups**: scheduled tasks can run on events (new files in a folder, an accepted radar batch), follow up over several rounds within limits on rounds, deadline and budget, and keep going in an optional local background service after you quit the desktop app. Results are still reviewed by you.
 - **Coding and general projects**: coding projects use separate worktrees that merge back or open a PR.
 - **Skills & MCP**: one skill library distributed to every CLI, 22 built-in skills; one MCP list, with presets for Consensus, Undermind and Blender.
 
