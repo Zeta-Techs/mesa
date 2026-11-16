@@ -48,7 +48,6 @@ import {
 } from "./ChatPermissionBadge";
 import { modelCapsLabel } from "../model-caps-label";
 import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
-import { agentBrand } from "../agent-colors";
 import {
   buildProjectAgentRoster,
   currentProfileLine,
@@ -656,11 +655,7 @@ export default function ProjectAgentsView({
           {defaultRow ? (
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                <span
-                  aria-hidden="true"
-                  className="mt-1.5 size-2.5 shrink-0 rounded-full"
-                  style={{ background: agentBrand(defaultRow.agentId) }}
-                />
+                <AgentIcon agent={defaultRow.agentId} label={defaultRow.label} size={16} className="mt-1" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-base font-semibold text-l1">
@@ -764,11 +759,7 @@ export default function ProjectAgentsView({
                       onClick={() => void saveAgent(row.agentId)}
                       className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-inset/80 px-2.5 text-xs font-medium text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
                     >
-                      <span
-                        aria-hidden="true"
-                        className="size-2 shrink-0 rounded-full"
-                        style={{ background: agentBrand(row.agentId) }}
-                      />
+                      <AgentIcon agent={row.agentId} label={row.label} size={12} />
                       <span className="truncate">{row.label}</span>
                       {!picked && (
                         <span className="font-normal text-micro text-l4">· 还没有连接</span>
@@ -792,11 +783,7 @@ export default function ProjectAgentsView({
               {rowsWithWorks.flatMap((row) =>
                 row.works.map((work) => (
                   <li key={work.id} className="flex min-w-0 items-center gap-2 text-xs">
-                    <span
-                      aria-hidden="true"
-                      className="size-1.5 shrink-0 rounded-full"
-                      style={{ background: agentBrand(row.agentId) }}
-                    />
+                    <AgentIcon agent={row.agentId} label={row.label} size={12} />
                     <span className="shrink-0 text-micro text-l4">{row.label}</span>
                     {onOpenGoals ? (
                       <button
@@ -2254,11 +2241,7 @@ function MoreAgentsMenu({
                   className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
                 >
                   <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      aria-hidden="true"
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ background: agentBrand(row.agentId) }}
-                    />
+                    <AgentIcon agent={row.agentId} label={row.label} size={12} />
                     <span className="truncate font-medium text-l1">{row.label}</span>
                   </span>
                   <span className="max-w-[8.5rem] shrink-0 truncate font-mono text-micro text-l3">
