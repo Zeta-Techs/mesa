@@ -7,6 +7,7 @@
   "kind": "program-status",
   "statuses": [
    "-",
+   "running",
    "awaiting_approval",
    "completed"
   ]
@@ -295,5 +296,5 @@
    ]
   }
  },
- "version": "2.6.1"
+ "version": "2.6.2"
 }
