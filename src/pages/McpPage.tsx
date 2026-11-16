@@ -69,7 +69,7 @@ import {
   dangerActionClass,
   NoticeBar,
 } from "../components/PageFrame";
-import { AgentMark } from "../components/RelayPicker";
+import AgentIcon from "../components/AgentIcon";
 import {
   applyBlenderMcpProbe,
   applyMcpPreset,
@@ -1431,8 +1431,8 @@ export default function McpPage({ visible }: { visible: boolean }) {
                   </span>
                 </div>
                 {open && (
-                  <div className="grid gap-3 border-t border-hairline bg-strip/35 px-4 py-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
-                    {/* 内嵌卡 ①：启动命令 / 端点与环境密钥 */}
+                  <div className="flex flex-col gap-3 border-t border-hairline bg-strip/35 px-4 py-3.5">
+                    {/* 内嵌卡 ①：启动命令 / 端点与环境密钥。上下排而非左右两栏（2026-11-16 用户：HTTP 只有一行地址时左栏显空），内容多高占多高 */}
                     <div className="flex flex-col rounded-lg border border-hairline bg-canvas/75 p-3">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-l2">
@@ -1550,7 +1550,7 @@ export default function McpPage({ visible }: { visible: boolean }) {
                       {s.kind === "remote" && needsLogin && oauthRows === "checking" && !oauthAgents && (
                         <p className="mt-1.5 text-micro text-l4">正在查询各 Agent 登录状态…</p>
                       )}
-                      <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                      <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-1.5">
                         {AGENTS.map((agent) => {
                           const on = !!s.apps[agent.id];
                           const key = `${s.id}:${agent.id}`;
@@ -1582,10 +1582,11 @@ export default function McpPage({ visible }: { visible: boolean }) {
                                   notInstalled && !on ? "text-l4" : on ? "font-medium text-l1" : "text-l3"
                                 }`}
                               >
-                                <AgentMark
-                                  agentId={agent.id}
-                                  decorative
-                                  className={`h-3 w-auto shrink-0 ${on ? "" : "opacity-60"}`}
+                                <AgentIcon
+                                  agent={agent.id}
+                                  label={agent.label}
+                                  size={14}
+                                  className={on ? "" : "opacity-60"}
                                 />
                                 <span className="shrink-0 truncate">{agent.label}</span>
                                 {on && s.enabled && (

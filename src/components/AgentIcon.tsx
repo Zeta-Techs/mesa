@@ -39,7 +39,8 @@ export default function AgentIcon({
   agent: string;
   /** 首字占位用 */
   label: string;
-  size?: number;
+  /** 数字是像素；也可给 "1em" 这类随字号缩放 */
+  size?: number | string;
   className?: string;
 }) {
   const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");

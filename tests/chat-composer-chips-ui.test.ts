@@ -46,6 +46,9 @@ const bundle = await build({
             export function ChatFileCard() { return null; }
             export function ChatCodeBlock(p) { return createElement('pre', null, p.text); }`,
         };
+        // AgentIcon 的厂商图标以 ?raw 内联，测试里桩成空 svg 字符串
+        b.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({ path: args.path, namespace: "svg-raw" }));
+        b.onLoad({ filter: /.*/, namespace: "svg-raw" }, () => ({ contents: `export default "<svg></svg>";`, loader: "js" }));
         b.onResolve({ filter: /.*/ }, (args) =>
           args.path in stubs ? { path: args.path, namespace: "chips-stub" } : undefined,
         );
@@ -318,8 +321,8 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
         onPermission: () => calls.push("permission"),
       }),
     );
-    // 芯片：品牌色 M 说明哪家 Agent（不再写名字），后面是模型（2026-10-22）
-    assert.ok(ui.el.querySelector('svg[role="img"][aria-label="Claude Code"]'), "品牌色 M 带 Agent 名供读屏");
+    // 芯片：Agent 图标说明哪家 Agent（不再写名字），后面是模型（2026-10-22；2026-11-16 品牌色 M 换官方图标）
+    assert.ok(ui.el.querySelector('[data-agent-mark][role="img"][aria-label="Claude Code"]'), "Agent 图标带 Agent 名供读屏");
     await ui.click("glm-5.3");
     await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
     // 主屏：当前档大字 + 连接 · 模型一行 + 滑块，不列模型、不列最近搭配
@@ -1216,8 +1219,8 @@ test("模型菜单开聊前：最近在这个项目用过的搭配一点四样�
     await openModels(ui);
     const text = ui.el.textContent ?? "";
     assert.match(text, /最近在 Ccode 用过/);
-    // 「最近用过」只剩 Codex 一行：和当前一样的那套不列（各行前是品牌色 M，读屏名就是 Agent 名）
-    const comboRows = Array.from(ui.el.querySelectorAll('[role="dialog"] svg[role="img"]')).map((m) => m.getAttribute("aria-label"));
+    // 「最近用过」只剩 Codex 一行：和当前一样的那套不列（各行前是 Agent 图标，读屏名就是 Agent 名）
+    const comboRows = Array.from(ui.el.querySelectorAll('[role="dialog"] [data-agent-mark][role="img"]')).map((m) => m.getAttribute("aria-label"));
     assert.deepEqual(comboRows, ["Codex", "Claude Code"], "搭配一行 + 菜单顶行的 Agent");
     assert.match(text, /看不了图/);
     await ui.click("Codex");
@@ -1938,7 +1941,7 @@ test("Antigravity 运行中切思考档：官方空模型列表仍能读到 comb
   }
 });
 
-test("模型菜单 WhoView：十家 Agent 排两列带装饰性品牌标、已装项无冗余 title 气泡、配置行显示默认模型或 CLI 登录", async () => {
+test("模型菜单 WhoView：十家 Agent 排两列带装饰性 Agent 图标、已装项无冗余 title 气泡、配置行显示默认模型或 CLI 登录", async () => {
   const ui = await mount();
   try {
     ui.useAppStore.setState({
@@ -1990,7 +1993,7 @@ test("模型菜单 WhoView：十家 Agent 排两列带装饰性品牌标、已�
     const cursorBtn = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent?.includes("Cursor"))!;
     assert.ok(cursorBtn, "WhoView 列出 Cursor");
     assert.equal(cursorBtn.getAttribute("title"), null, "已安装 Agent 不再弹冗余原生 title 遮挡下排");
-    assert.ok(cursorBtn.querySelector('svg[aria-hidden="true"]'), "带装饰性品牌色 M 标");
+    assert.ok(cursorBtn.querySelector('[data-agent-mark][aria-hidden="true"]'), "带装饰性 Agent 图标");
     const agyBtn = Array.from(dialog.querySelectorAll("button")).find((b) => b.textContent?.includes("Antigravity CLI"))!;
     assert.match(agyBtn.getAttribute("title") ?? "", /本机还没装/);
     assert.match(dialog.textContent ?? "", /CLI 登录/, "官方账号右侧给出 CLI 登录副标");

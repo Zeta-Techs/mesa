@@ -74,7 +74,6 @@ import {
 import AgentIcon from "../components/AgentIcon";
 import VendorIcon from "../components/VendorIcon";
 import { vendorForGateway, vendorForPlanProvider, type VendorId } from "../vendor-icon";
-import { AgentMark } from "../components/RelayPicker";
 import { useQuotaSwipe } from "../quota-swipe";
 import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
 import { showFloatingCoach } from "../components/CoachTip";
@@ -1209,7 +1208,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           name: title,
           nameTitle: title,
           meta: `${agentLabel(s.agent)} · ${basename(s.projectPath)}`,
-          leading: <AgentMark agentId={s.agent} decorative className="h-3 w-auto shrink-0" />,
+          leading: <AgentIcon agent={s.agent} label={agentLabel(s.agent)} size={14} />,
           dot: agentBrand(s.agent),
           share: shareOf(s.costUsd ?? 0, total),
           tokens: s.tokens,
@@ -1227,7 +1226,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         key: `${a.agent}-${a.official}`,
         name: agentLabel(a.agent),
         meta: `${a.modelCount} 个模型${a.official ? " · 订阅" : ""}`,
-        leading: <AgentMark agentId={a.agent} decorative className="h-3 w-auto shrink-0" />,
+        leading: <AgentIcon agent={a.agent} label={agentLabel(a.agent)} size={14} />,
         dot: agentBrand(a.agent),
         share: shareOf(a.tokens, totalAgentTokens),
         tokens: a.tokens,

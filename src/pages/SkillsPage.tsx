@@ -66,7 +66,7 @@ import {
   dangerActionClass,
   NoticeBar,
 } from "../components/PageFrame";
-import { AgentMark } from "../components/RelayPicker";
+import AgentIcon from "../components/AgentIcon";
 import type {
   DiscoveredSkillDto,
   ProjectConfigReadDto,
@@ -2808,10 +2808,11 @@ export default function SkillsPage({ visible }: { visible: boolean }) {
                             : "border-hairline bg-canvas/70 text-l3 hover:bg-inset/60 hover:text-l1"
                       }`}
                     >
-                      <AgentMark
-                        agentId={agent.id}
-                        decorative
-                        className={`h-3 w-auto shrink-0 ${enabled ? "" : "opacity-55"}`}
+                      <AgentIcon
+                        agent={agent.id}
+                        label={agent.label}
+                        size={14}
+                        className={enabled ? "" : "opacity-55"}
                       />
                       <span className="min-w-0 flex-1 truncate text-left">
                         {agent.label}

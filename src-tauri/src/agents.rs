@@ -6070,8 +6070,10 @@ fn open_ghostty(cmd: &str, cwd: &str, wrapper: &Path) -> Result<(), String> {
         return Err("未安装 Ghostty（设置页改选其他终端）".into());
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    // -a：macOS pgrep 默认不算自己的祖先进程。Mesa 从 Ghostty 里的命令行拉起时（开发态 tauri:dev），
+    // Ghostty 是祖先，不加 -a 会被判成没在运行、走 open -a，而 open 对已运行的实例丢掉 --args，点了没反应
     let running = Command::new("pgrep")
-        .args(["-ix", "ghostty"])
+        .args(["-aix", "ghostty"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
@@ -6133,9 +6135,9 @@ fn open_iterm(cmd: &str) -> Result<(), String> {
     if !mac_app_installed("iTerm.app") {
         return Err("未安装 iTerm2（设置页改选其他终端）".into());
     }
-    // iTerm2 的进程名是 iTerm2（应用名 iTerm）
+    // iTerm2 的进程名是 iTerm2（应用名 iTerm）；-a 同 open_ghostty
     let running = Command::new("pgrep")
-        .args(["-x", "iTerm2"])
+        .args(["-ax", "iTerm2"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);

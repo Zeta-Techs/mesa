@@ -89,7 +89,8 @@ import RunCaret from "../components/RunCaret";
 import { caretOfAttention, withUnread, type RunCaretState } from "../run-caret";
 import { unreadKeyOf } from "../chat-unread";
 import GitPanel from "../components/GitPanel";
-import RelayPicker, { AgentMark } from "../components/RelayPicker";
+import RelayPicker from "../components/RelayPicker";
+import AgentIcon from "../components/AgentIcon";
 import type { RelayOptionDto, RelayTarget } from "../chat-relay";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
 import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
@@ -2202,7 +2203,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                                   className="flex h-7 min-w-0 flex-1 items-center justify-between gap-2 pr-2 text-left"
                                 >
                                   <span className={`flex min-w-0 items-center gap-1.5 truncate ${childOn ? "text-l1" : ""}`}>
-                                    <AgentMark agentId={g.agent} decorative className="h-2.5 w-auto shrink-0" />
+                                    <AgentIcon agent={g.agent} label={agentLabel(g.agent)} size={12} />
                                     <span className="truncate">{agentLabel(g.agent)}</span>
                                   </span>
                                   <span className={countCls(on)}>{g.list.length}</span>
@@ -2438,6 +2439,32 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                         />
                       </span>
                     )}
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium leading-6 text-l1">
+                      {sessionTitle(s)}
+                    </span>
+                    {s.pinned && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void togglePin(s);
+                        }}
+                        title="已保留（点击取消）"
+                        aria-label="已保留（点击取消）"
+                        className="flex shrink-0 items-center rounded-sm px-0.5 text-cta hover:text-l1"
+                      >
+                        <Bookmark size={12} strokeWidth={1.9} aria-hidden="true" />
+                      </button>
+                    )}
+                    {!s.alive && (
+                      <span
+                        className="shrink-0 rounded-sm bg-warn px-1 text-micro text-warn-text"
+                        title="源文件已失效"
+                      >
+                        失效
+                      </span>
+                    )}
+                    {/* 运行光标放行尾、时间前（同侧栏）：标题前不留位，和研讨行同一条起点；悬停不藏，点了跳到终端 */}
                     {isLive && (
                       <button
                         type="button"
@@ -2455,42 +2482,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                               ? "正在终端中进行，点击跳转"
                               : "CLI 仍在外部终端中运行"
                         }
-                        className="-ml-1 flex h-6 w-4 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
+                        className="flex h-6 w-3 shrink-0 items-center justify-center rounded-sm disabled:cursor-default"
                       >
                         <RunCaret state={liveCaret(s)} decorative />
                       </button>
-                    )}
-                    {!agentScoped && (
-                      <AgentMark
-                        agentId={s.agent}
-                        decorative
-                        className="h-3 w-auto shrink-0"
-                      />
-                    )}
-                    {s.pinned && (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void togglePin(s);
-                        }}
-                        title="已保留（点击取消）"
-                        aria-label="已保留（点击取消）"
-                        className="flex shrink-0 items-center rounded-sm px-0.5 text-cta hover:text-l1"
-                      >
-                        <Bookmark size={12} strokeWidth={1.9} aria-hidden="true" />
-                      </button>
-                    )}
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium leading-6 text-l1">
-                      {sessionTitle(s)}
-                    </span>
-                    {!s.alive && (
-                      <span
-                        className="shrink-0 rounded-sm bg-warn px-1 text-micro text-warn-text"
-                        title="源文件已失效"
-                      >
-                        失效
-                      </span>
                     )}
                     {/* 右侧：平时相对时间，悬停换成操作（同一槽，不留空） */}
                     <span
@@ -2564,9 +2559,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     )}
                   </div>
                   {/* 第二行归属：Agent 名称 · 项目名 · 工作区/目标 · 续链/分支/接力/标签 */}
-                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 pl-[18px] text-micro text-l3">
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-micro text-l3">
                     {!agentScoped && (
-                      <span className="shrink-0 font-medium text-l3">
+                      <span className="flex shrink-0 items-center gap-1 font-medium text-l3">
+                        <AgentIcon agent={s.agent} label={agentLabel(s.agent)} size={12} />
                         {agentLabel(s.agent)}
                       </span>
                     )}
@@ -2738,11 +2734,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 >
                   ☰ 列表
                 </button>
-                <AgentMark
-                  agentId={selected.agent}
-                  decorative
-                  className="h-3.5 w-auto shrink-0"
-                />
+                <AgentIcon agent={selected.agent} label={agentLabel(selected.agent)} size={14} />
                 <span
                   className="min-w-0 truncate text-sm font-semibold text-l1"
                   title={sessionTitle(selected)}

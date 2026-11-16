@@ -202,14 +202,14 @@ npm run tauri build    # 打包
   发版打包仍走 tag push（package job 只认 tag；Linux 2026-09-22 起同样移出发版矩阵——
   不再出新安装包，已装的 Linux 用户收不到更新，恢复开发时把 ubuntu-latest 加回两个矩阵）。
 - **UI 组件测试打包口径（2026-09-22）**：tests 用 esbuild 内联打包 .tsx 组件的（research-*-ui.test.ts 模式），
-  组件图拉进 monaco css、Vite `?worker`/`?url` 导入、pdfjs 时按桩处理：`.css` 配 empty loader（css 空了
+  组件图拉进 monaco css、Vite `?worker`/`?url`/`?raw` 导入（`?raw` 如 `AgentIcon` 的厂商 svg，凡引 `AgentMark` / `AgentIcon` 的组件都会拉进来）、pdfjs 时按桩处理：`.css` 配 empty loader（css 空了
   其中字体 url 不再解析）、query 后缀路径桩成惰性 data: URL **字符串**（pdfjs 校验 workerSrc 必须是字符串）、
   JSDOM globals 补空壳 `DOMMatrix`（pdfjs 模块初始化顶层 `new DOMMatrix()`，`pdf.mjs` 的 SCALE_MATRIX
   常量）。新组件测试照抄这三个文件的口径，别让打包问题冒充组件 bug。
 - **git 分支纪律**：未经用户明确指令，禁止 checkout/switch/merge/rebase/stash/删分支等任何改动 HEAD 或分支指向的操作；
   开工先 `git branch --show-current` 确认在用户指定的分支上，不符就停下报告，不自行切换；任务收尾报告分支名 + `git status` 结果。
 - **git 推送走 SSH:443 + repo deploy key**；发版推 tag 后先用 `gh run list --workflow build.yml` 确认是否已产生该 tag 的 push run，已触发则只保留该 run；30 秒内未触发才执行 `gh api repos/Zeta-Techs/mesa/actions/workflows/build.yml/dispatches -f ref=<tag>`。禁止让 tag push 与 workflow_dispatch 两个打包 run 并行写同一 Release。workflow 已配 `permissions: contents: write`（tauri-action 建 Release 草稿必需）。**仓库在公司组织 `Zeta-Techs/mesa`**（2026-10-27 由个人仓库 `hongtongzhou-design/ccode` 转入）：仓库 owner 与 tauri.conf 升级端点绑定，再转移时本命令、updater endpoint、README 与代码里的仓库链接必须同步改（`git grep` 旧地址）。**个人账号下永远不要再建名为 `ccode` 的仓库**——旧地址靠 GitHub 自动跳转，同名新仓库会截断跳转。
-- **CI 测试**：禁墙钟时序硬断言（runner 调度延迟不可控；只留内容语义断言 + 防挂死宽松兜底）；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`（Windows `\`）；**测试禁触系统 UI/回收站**——`trash` 等走 Finder AppleScript 的调用在测试态必须经隔离缝直删（projects.rs `trash_to_recycle_bin` 先例：测试驱动 Finder 会与用户桌面互抢并偶发 -47，purge 组 51.7s→0.06s 实证）。
+- **CI 测试**：禁墙钟时序硬断言（runner 调度延迟不可控；只留内容语义断言 + 防挂死宽松兜底）；JSDOM 节点进断言由 `npm test` 预加载的 `tests/dom-safe-assert.ts` 兜住（node:assert 失败时按 1000 层展开 actual / expected、无视自定义打印，JSDOM 节点会吃光内存，2026-11-16 onboarding-ui 实证）——它只管 equal / strictEqual / notEqual / notStrictEqual，节点**禁进 `deepEqual`**（先 map 成字符串），`package.json` 的 `--import` 不得删（`dom-safe-assert.test.ts` 守着）；组件在下一帧（rAF）挪焦点 / 滚动的，断言前先等那一帧；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`（Windows `\`）；**测试禁触系统 UI/回收站**——`trash` 等走 Finder AppleScript 的调用在测试态必须经隔离缝直删（projects.rs `trash_to_recycle_bin` 先例：测试驱动 Finder 会与用户桌面互抢并偶发 -47，purge 组 51.7s→0.06s 实证）。
 
 ## 代码结构
 

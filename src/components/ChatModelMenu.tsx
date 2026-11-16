@@ -289,7 +289,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       ? rt.levels[rt.effortIdx]
       : (rt.knownEffort ?? (rt.effortSeenDefault || rt.combo?.thinking ? "默认" : null));
 
-  // ---- 芯片文字（2026-10-22）：前面是品牌色 M（哪家 Agent），后面写模型 · 思考档 ----
+  // ---- 芯片文字（2026-10-22）：前面是 Agent 图标（哪家 Agent，2026-11-16 由品牌色 M 换官方图标），后面写模型 · 思考档 ----
   let label: string;
   let title: string;
   let chipEffort: string | null;
@@ -631,8 +631,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           open ? "bg-hover text-l1" : ""
         }`}
       >
-        {/* 品牌色 M（2026-10-22 用户：圆点换成各家品牌色的 M）：Mesa 标志里那个 M，染成这家 Agent 的品牌色——
-            颜色就说明用的是哪家，不再写 Agent 名；M 的形状固定，思考档写在后面的文字里 */}
+        {/* Agent 图标（2026-10-22 圆点→品牌色 M，2026-11-16 用户拍板换官方图标）：图标就说明用的是哪家，
+            不再写 Agent 名，悬停与读屏报名字；思考档写在后面的文字里 */}
         {chipAgent && <AgentMark agentId={chipAgent} />}
         {/* 模型与档名同一段文字：间距与「Agent · 模型」一致，太长时一起截断 */}
         <span className={`truncate ${pendingMark ? "italic" : ""}`}>
@@ -966,7 +966,7 @@ function WhoView({
         {!pick.resumePick && (
           <>
             <h4 className={section}>Agent</h4>
-            {/* 十家排成两列：带品牌色 M 锚点，已装项不挂冗余 title 免原生气泡遮挡下排按钮 */}
+            {/* 十家排成两列：带官方图标锚点，已装项不挂冗余 title 免原生气泡遮挡下排按钮 */}
             <div className="grid grid-cols-2 gap-1 px-0.5">
               {AGENTS.map((a) => {
                 const installed = agents.find((x) => x.id === a.id)?.binaryPath != null;

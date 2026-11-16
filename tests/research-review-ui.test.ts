@@ -13,7 +13,7 @@ test("实际评审页接入本步骤摘要/未决项和复现；只读历史不�
     b.onResolve({filter:/^\.\/OfficePreviewModal$/},()=>({path:'preview',namespace:'stub'}));
     b.onResolve({filter:/^\.\/ConfirmDialog$/},()=>({path:'confirm',namespace:'stub'}));
     // Vite 专属的 ?worker/?url 导入（monaco/pdfjs 的 worker）：Node 测试里按空资产桩掉
-    b.onResolve({filter:/\?(worker|url)$/},()=>({path:'asset',namespace:'stub'}));
+    b.onResolve({filter:/\?(worker|url|raw)$/},()=>({path:'asset',namespace:'stub'}));
     b.onLoad({filter:/.*/,namespace:'stub'},(args)=>({loader:'js',contents:args.path==='asset'?'export default "data:text/javascript,";':args.path==='confirm'?'export const confirmDialog=async()=>true;':args.path==='store'?'export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});export const selectHiddenProfiles=()=>[];':args.path==='artifacts'?'export const loadArtifactRows=async()=>[];':'export default function Watch(){return null;}'}));
   }}]});
   const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost',pretendToBeVisual:true});
@@ -114,7 +114,7 @@ test("打开初稿评审不先闪「无待保存提交」和半截核验数，�
     b.onResolve({filter:/^\.\/OfficePreviewModal$/},()=>({path:'preview',namespace:'stub'}));
     b.onResolve({filter:/^\.\/ProjectFilePreview$/},()=>({path:'file-preview',namespace:'stub'}));
     b.onResolve({filter:/^\.\/ConfirmDialog$/},()=>({path:'confirm',namespace:'stub'}));
-    b.onResolve({filter:/\?(worker|url)$/},()=>({path:'asset',namespace:'stub'}));
+    b.onResolve({filter:/\?(worker|url|raw)$/},()=>({path:'asset',namespace:'stub'}));
     b.onLoad({filter:/.*/,namespace:'stub'},(args)=>({loader:'js',contents:args.path==='asset'?'export default "data:text/javascript,";':args.path==='confirm'?'export const confirmDialog=async()=>true;':args.path==='store'?'export const useAppStore=Object.assign(fn=>fn(globalThis.__reviewStore),{getState:()=>globalThis.__reviewStore});export const selectHiddenProfiles=()=>[];':args.path==='artifacts'?'export const loadArtifactRows=async()=>[{entry:"manuscript/draft.md",files:[{name:"draft.md",path:"/tree/manuscript/draft.md",isDir:false}]}];':'export default function Stub(){return null;}'}));
   }}]});
   const dom=new JSDOM('<div id="root"></div>',{url:'http://localhost',pretendToBeVisual:true});

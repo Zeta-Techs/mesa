@@ -8,7 +8,7 @@
     "dev": "vite --config vite.config.ts",
     "build": "tsc && vite build --config vite.config.ts",
     "preview": "vite preview --config vite.config.ts",
-    "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
+    "test": "node --experimental-strip-types --import ./tests/dom-safe-assert.ts --test \"tests/**/*.test.ts\"",
     "tauri": "tauri",
     "tauri:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "tauri:dev:17576": "tauri dev --config src-tauri/tauri.dev.17576.conf.json",

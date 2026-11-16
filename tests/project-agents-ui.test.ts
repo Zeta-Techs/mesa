@@ -24,6 +24,9 @@ const bundle = await build({
       contents: "export const useAppStore = selector => selector(window.__projectAgentsStore); export const selectHiddenProfiles = s => s.settings?.hiddenProfiles ?? [];",
       loader: "js",
     }));
+    // AgentIcon 的厂商图标以 ?raw 内联，测试里桩成空 svg 字符串
+    b.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({ path: args.path, namespace: "svg-raw" }));
+    b.onLoad({ filter: /.*/, namespace: "svg-raw" }, () => ({ contents: `export default "<svg></svg>";`, loader: "js" }));
   } }],
 });
 

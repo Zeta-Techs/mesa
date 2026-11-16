@@ -191,7 +191,7 @@ test("检索步评审先出待确认与筛选决定，不重复摊 included.md",
       b.onResolve({ filter: /^\.\/OfficePreviewModal$/ }, () => ({ path: "preview", namespace: "stub" }));
       b.onResolve({ filter: /^\.\/ConfirmDialog$/ }, () => ({ path: "confirm", namespace: "stub" }));
       // Vite 专属的 ?worker/?url 导入（monaco/pdfjs 的 worker）：Node 测试里按空资产桩掉
-      b.onResolve({ filter: /\?(worker|url)$/ }, () => ({ path: "asset", namespace: "stub" }));
+      b.onResolve({ filter: /\?(worker|url|raw)$/ }, () => ({ path: "asset", namespace: "stub" }));
       b.onLoad({ filter: /.*/, namespace: "stub" }, (args) => ({
         loader: "js",
         contents: args.path === "asset" ? "export default \"data:text/javascript,\";"
