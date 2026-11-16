@@ -2781,13 +2781,18 @@ fn codex_instructions_extract_real() {
     let text = extract_codex_base_instructions().expect("取不到");
     eprintln!("{} 字，用时 {:?}，开头：{}", text.chars().count(), t.elapsed(), &text[..80]);
     assert!(plausible_codex_instructions(&text));
-    // 临时目录（后台重试删）几秒内清干净
-    std::thread::sleep(std::time::Duration::from_secs(4));
+    // 临时目录（后台每 0.2 秒重试删、最多 30 秒）清干净：轮询到清空，别死等固定秒数（Codex 0.169 起 Windows 上约 20 秒才放句柄）
     let tmp = crate::storage::config_root().unwrap().join("tmp");
-    let left = std::fs::read_dir(&tmp)
-        .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("codex-instructions-")).count())
-        .unwrap_or(0);
-    assert_eq!(left, 0, "临时目录没删干净");
+    let count_left = || {
+        std::fs::read_dir(&tmp)
+            .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("codex-instructions-")).count())
+            .unwrap_or(0)
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+    while count_left() > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    assert_eq!(count_left(), 0, "临时目录没删干净");
 }
 
 #[test]
