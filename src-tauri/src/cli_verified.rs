@@ -49,15 +49,17 @@ const PLATFORM: &str = "win32";
 #[cfg(windows)]
 const BUNDLED: &[(&str, &str)] = bundled!("win32");
 /// 只在部分平台有基线的：OpenCode 2.x（opencode2，金丝雀 2026-11-04 起 macOS、2026-11-06 起 Windows；Linux 没有）、
-/// Antigravity CLI（agy，2026-11-14 起 macOS；Windows 待本机 --accept 建好后补进 win32）
+/// Antigravity CLI（agy，2026-11-14 起 macOS、2026-11-16 起 Windows）
 #[cfg(target_os = "macos")]
 const BUNDLED_EXTRA: &[(&str, &str)] = &[
     ("opencode2", include_str!("../../scripts/cli-canary/baseline/darwin/opencode2.json")),
     ("agy", include_str!("../../scripts/cli-canary/baseline/darwin/agy.json")),
 ];
 #[cfg(windows)]
-const BUNDLED_EXTRA: &[(&str, &str)] =
-    &[("opencode2", include_str!("../../scripts/cli-canary/baseline/win32/opencode2.json"))];
+const BUNDLED_EXTRA: &[(&str, &str)] = &[
+    ("opencode2", include_str!("../../scripts/cli-canary/baseline/win32/opencode2.json")),
+    ("agy", include_str!("../../scripts/cli-canary/baseline/win32/agy.json")),
+];
 #[cfg(not(any(target_os = "macos", windows)))]
 const BUNDLED_EXTRA: &[(&str, &str)] = &[];
 // Linux 没有金丝雀基线（本版本未开发），前端照旧取别的平台里最新的

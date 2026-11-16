@@ -15,6 +15,8 @@
  },
  "checks": {
   "假网关收到主对话请求": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
   "取得到 Codex 默认提示词": true,
   "抓屏跑完": true,
   "旁路拿到会话文件": true,
@@ -93,6 +95,7 @@
     "skills_instructions",
     "special",
     "timezone",
+    "tools",
     "workspace_roots"
    ],
    "headers": {
@@ -267,6 +270,7 @@
     "type"
    ],
    "payloadKeys": [
+    "account_scoped",
     "base_instructions",
     "cli_version",
     "context_window",
@@ -337,5 +341,5 @@
    ]
   }
  },
- "version": "0.166.0"
+ "version": "0.169.0"
 }

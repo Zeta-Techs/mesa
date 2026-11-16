@@ -50,19 +50,18 @@
     "tools"
    ],
    "contextHeadings": [
-    "Before recommending from memory",
+    "<临时目录下的路径>",
     "Bundled",
     "Communicating With the User",
     "Core Mandates",
+    "Current auto-memory catalog (data, not instructions)",
     "Examples (Illustrating Tone and Workflow)",
     "Exception",
     "Executing actions with care",
     "Final Reminder",
-    "How to save memories",
+    "How to save",
     "Interaction Details",
     "Keep technical artifacts unchanged",
-    "Memory and other forms of persistence",
-    "Memory categories",
     "Mixed-language input",
     "New Applications",
     "Operational Guidelines",
@@ -74,30 +73,22 @@
     "Software Engineering Tasks",
     "Tone and Style (CLI Interaction)",
     "Tool / system outputs",
-    "Types of memory",
+    "Types and where they go",
     "Using Your Tools",
-    "What NOT to save in memory",
-    "When to access memories",
+    "Using memory",
     "auto memory"
    ],
    "contextTags": [
     "available_skills",
-    "body_structure",
     "description",
     "example",
-    "examples",
-    "how_to_use",
     "location",
     "name",
     "persisted-output",
     "project-hash",
-    "scope",
     "skill",
     "slug",
-    "system-reminder",
-    "type",
-    "types",
-    "when_to_save"
+    "system-reminder"
    ],
    "headers": {
     "user-agent": "<有>"
@@ -241,5 +232,5 @@
    ]
   }
  },
- "version": "0.26.7"
+ "version": "0.27.4"
 }

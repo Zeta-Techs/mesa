@@ -214,7 +214,7 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 ## 16. CLI 金丝雀与假网关
 
 - `scripts/e2e-model-routing/gateway.py`：`shell_args` 识别 `agy` 的 `run_command` 参数（`CommandLine` / `WaitMsBeforeAsync` / `toolSummary`），使假网关工具往返探测覆盖 `agy`。
-- `scripts/cli-canary/canary.py`、`upstream.json`、`.github/workflows/cli-canary.yml`、`src-tauri/src/cli_verified.rs`：接入 `agy`，在本机实跑 `canary.py --accept --agents agy` 生成 `scripts/cli-canary/baseline/darwin/agy.json`；`win32/agy.json` 在编译期允许暂缺，待 Windows CI / 真机生成后补入。
+- `scripts/cli-canary/canary.py`、`upstream.json`、`.github/workflows/cli-canary.yml`、`src-tauri/src/cli_verified.rs`：接入 `agy`，在本机实跑 `canary.py --accept --agents agy` 生成 `scripts/cli-canary/baseline/darwin/agy.json`；`win32/agy.json` 2026-11-16 在 Windows 本机 `--accept` 建好并随包（`cli_verified.rs` 的 `BUNDLED_EXTRA`）。
 
 ## 17. 文档同步清单
 
@@ -245,7 +245,7 @@ magpie 早期把 `modelProvider: "gemini"` 和自定义模型直接写进 `~/.ge
 | `hooks.json` 的 `matcher: "*"` 与空输出 | **匹配全部工具**，0 字节 stdout `exit 0` 不拦截且不自动放行未授权工具 |
 | `agy --version` 是否写文件 | **不写任何文件** |
 | 官方账号凭证位置 | macOS 钥匙串 `service="gemini", account="antigravity"`（Mesa 不主动读钥匙串） |
-| Windows / Linux 路径、安装与 `win32/agy.json` 基线 | 待 Windows 实机/CI 运行 `--accept` 补齐 `win32` 指纹与 TUI 抓屏样张 |
+| Windows / Linux 路径、安装与 `win32/agy.json` 基线 | `win32/agy.json` 指纹基线 2026-11-16 已在 Windows 本机建好；Windows 路径、安装与 TUI 抓屏样张仍待补 |
 
 ## 20. 不做
 

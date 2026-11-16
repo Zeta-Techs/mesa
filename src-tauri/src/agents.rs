@@ -3726,10 +3726,10 @@ fn extract_codex_base_instructions() -> Option<String> {
         let rollout = first_jsonl(&home.join("sessions"))?;
         codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?)
     })();
-    // Windows 上 codex 退出后约 1.2–1.4 秒目录句柄才放（实测文件删得掉、空目录删不掉）：放后台重试，不拖慢启动
+    // Windows 上 codex 退出后目录句柄放得慢（0.5x 约 1.3 秒；0.169 起约 20 秒，实测文件删得掉、空目录删不掉）：放后台重试 30 秒，不拖慢启动
     if std::fs::remove_dir_all(&scratch).is_err() && scratch.exists() {
         std::thread::spawn(move || {
-            for _ in 0..50 {
+            for _ in 0..150 {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 if std::fs::remove_dir_all(&scratch).is_ok() || !scratch.exists() {
                     break;
