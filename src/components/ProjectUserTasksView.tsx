@@ -781,7 +781,8 @@ export default function ProjectUserTasksView({
             }
             action={
               // text-xs 写在外层：全站 button { font: inherit } 会吞掉按钮自己的 text-xs，不给外层字号按钮就跟页面走成 14px、比标题还抢眼
-              <div className="flex flex-col items-center gap-3.5 text-xs">
+              // 主按钮一组、两条次要入口一组，组间拉开（2026-11-16 用户：四样堆在中间太挤）
+              <div className="flex flex-col items-center text-xs">
                 <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
                     type="button"
@@ -802,25 +803,29 @@ export default function ProjectUserTasksView({
                     </button>
                   )}
                 </div>
-                {freeResearch && onPickTemplate && (
-                  <button
-                    type="button"
-                    className="rounded-full bg-inset/75 px-3 py-1 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
-                    title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
-                    onClick={onPickTemplate}
-                  >
-                    要写整篇综述、论文或学位论文？套一整套流程…
-                  </button>
-                )}
-                {onSetDefaultAgent && (
-                  <button
-                    type="button"
-                    className="text-xs text-l4 underline decoration-dotted underline-offset-2 transition-colors hover:text-l2"
-                    title="不定也行，点「开始」时再选"
-                    onClick={onSetDefaultAgent}
-                  >
-                    先定默认用哪家 AI…
-                  </button>
+                {((freeResearch && onPickTemplate) || onSetDefaultAgent) && (
+                  <div className="mt-8 flex flex-col items-center gap-3">
+                    {freeResearch && onPickTemplate && (
+                      <button
+                        type="button"
+                        className="rounded-full bg-inset/75 px-3 py-1 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                        title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
+                        onClick={onPickTemplate}
+                      >
+                        要写整篇综述、论文或学位论文？套一整套流程…
+                      </button>
+                    )}
+                    {onSetDefaultAgent && (
+                      <button
+                        type="button"
+                        className="text-xs text-l4 underline decoration-dotted underline-offset-2 transition-colors hover:text-l2"
+                        title="不定也行，点「开始」时再选"
+                        onClick={onSetDefaultAgent}
+                      >
+                        先定默认用哪家 AI…
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             }
