@@ -6,7 +6,6 @@ import {
   projectAgentLaunch,
   projectAgentPrefs,
   projectAgentsEmptyWorkHint,
-  projectAgentsHint,
   projectNeedsDefaultAgent,
   projectBoundProfileId,
   projectResumeProfileId,
@@ -192,9 +191,6 @@ test("an assigned agent still appears even if it currently has no connection", (
 });
 
 test("hints stay short and never promise routing", () => {
-  for (const mode of ["office", "coding", "research"]) {
-    assert.equal(projectAgentsHint(mode), "默认选择仅对本项目生效。");
-  }
   assert.equal(projectNeedsDefaultAgent({ defaultAgent: "" }), true);
   assert.equal(projectNeedsDefaultAgent({ defaultAgent: "claude" }), false);
   assert.equal(projectAgentsEmptyWorkHint("research"), "新建目标或开始步骤时再选由谁来做。");

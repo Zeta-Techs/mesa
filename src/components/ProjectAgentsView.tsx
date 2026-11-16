@@ -2,27 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowUpRight,
-  BookOpen,
   Check,
   ChevronDown,
-  Circle,
-  ClipboardList,
-  Clock3,
-  Database,
-  FlaskConical,
   GitBranch,
   House,
-  Lightbulb,
-  MessageSquare,
-  PenLine,
   Search,
-  Sparkles,
   Star,
-  Target,
-  TrendingUp,
   TriangleAlert,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import { selectHiddenProfiles, useAppStore } from "../store";
 import { toast } from "../toast";
 import {
@@ -37,7 +24,6 @@ import {
   type TaskDto,
 } from "../types";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
-import MesaBuddyIcon from "./MesaBuddyIcon";
 import AgentIcon from "./AgentIcon";
 import EffortMark from "./EffortMark";
 import { effortDepth } from "../effort-depth";
@@ -54,7 +40,6 @@ import {
   normalizeBindingPermissionTier,
   projectAgentsEmptyWorkHint,
   projectAgentLaunch,
-  projectAgentsHint,
   resolveProfileModel,
   selectedProjectAgentProfile,
   READER_BINDING_SLOT,
@@ -687,9 +672,6 @@ export default function ProjectAgentsView({
                       </button>
                     )}
                   </div>
-                  <p className="mt-1 text-xs text-l3">
-                    下方未单独指定的入口、步骤与目标均使用此配置 · {projectAgentsHint(project.workMode)}
-                  </p>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -819,7 +801,6 @@ export default function ProjectAgentsView({
         </div>
         <ul className="grid grid-cols-1 items-start gap-2 md:grid-cols-2">
           <SlotCard
-            Icon={MessageSquare}
             label="项目对话"
             tag={chatBinding ? "已指定" : ""}
             marked={Boolean(chatBinding)}
@@ -838,7 +819,6 @@ export default function ProjectAgentsView({
             onAdd={() => setPage("profiles")}
           />
           <SlotCard
-            Icon={Lightbulb}
             label={workMode === "research" ? "问 AI / 聊想法" : "问 AI"}
             tag={discussBinding ? "已指定" : ""}
             marked={Boolean(discussBinding)}
@@ -857,7 +837,6 @@ export default function ProjectAgentsView({
             onAdd={() => setPage("profiles")}
           />
           <SlotCard
-            Icon={MesaBuddyIcon as unknown as LucideIcon}
             label="项目助手"
             tag={assistantBinding ? "已指定" : ""}
             marked={Boolean(assistantBinding)}
@@ -878,7 +857,6 @@ export default function ProjectAgentsView({
           />
           {workMode === "research" && (
             <SlotCard
-              Icon={BookOpen}
               label="沉浸阅读对话"
               tag={readerBinding ? "已指定" : ""}
               marked={Boolean(readerBinding)}
@@ -960,7 +938,6 @@ export default function ProjectAgentsView({
               return (
               <SlotCard
                 key={item.id}
-                Icon={schedStale ? TriangleAlert : Clock3}
                 label={item.name}
                 tag={!item.enabled
                   // 与定时任务页同口径（ScheduleSection）：连续失败被系统停下才叫「已自动暂停」，人手关的叫「已停用」
@@ -1059,7 +1036,6 @@ export default function ProjectAgentsView({
                 return (
                 <SlotCard
                   key={goal.id}
-                  Icon={goalStale ? TriangleAlert : Target}
                   label={goal.name}
                   tag={goalStale ? "已失效" : goal.agent || goal.profileId ? taskStatusLabel(goal.status) : "项目默认"}
                   marked={Boolean(goal.profileId) && !goalStale}
@@ -1106,7 +1082,6 @@ export default function ProjectAgentsView({
                 return (
                   <SlotCard
                     key={row.slot}
-                    Icon={row.stale ? TriangleAlert : stepIconFor(row.stepName, row.skills)}
                     label={row.stepName}
                     tag={row.stale ? "已失效" : binding ? "已指定" : ""}
                     marked={Boolean(binding) && !row.stale}
@@ -1180,24 +1155,6 @@ export default function ProjectAgentsView({
   );
 }
 
-/** 步骤符号按名称和技能推导，同一步永远同一个。 */
-function stepIconFor(name: string, skills: string[]): LucideIcon {
-  // 先只看步骤名，认不出再带上技能名：技能名里的 endnote-bridge 含「note」，会把「润色与定稿」认成精读（2026-11-05）
-  return stepIconMatch(name.toLowerCase()) ?? stepIconMatch([name, ...skills].join(" ").toLowerCase()) ?? Circle;
-}
-
-function stepIconMatch(all: string): LucideIcon | null {
-  if (/检索|筛选|search|screen/.test(all)) return Search;
-  if (/精读|阅读|笔记|note|read|paper/.test(all)) return BookOpen;
-  if (/大纲|outline|框架/.test(all)) return ClipboardList;
-  if (/初稿|综述|写作|draft|writ|review/.test(all)) return PenLine;
-  if (/润色|定稿|polish|format|final/.test(all)) return Sparkles;
-  if (/数据|清洗|clean|dataset/.test(all)) return Database;
-  if (/图|plot|fig|chart|visual/.test(all)) return TrendingUp;
-  if (/复现|reproduc/.test(all)) return FlaskConical;
-  return null;
-}
-
 function stepGroupSummary(total: number, bound: number, stale: number): string {
   // 三段常显口径（agent-binding.md：组头一眼感知）：N 步 · M 已专属 · K 条失效，
   // 各计数 >0 才出现——既有专属又有坏行时不再二选一吞掉其一
@@ -1207,7 +1164,7 @@ function stepGroupSummary(total: number, bound: number, stale: number): string {
   return parts.join(" · ");
 }
 
-/** 与「项目 Agents / 默认选择仅对本项目生效。」同一套标题；短说明与标题同基线横排，窄时自然换行。 */
+/** 分组标题；短说明与标题同基线横排，窄时自然换行。 */
 function SectionHeading({ title, hint }: { title: string; hint: string }) {
   return (
     <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
@@ -1258,7 +1215,6 @@ function defaultEffortLevelsForAgent(agents: readonly DetectResult[], agentId: s
 
 /** 与名册卡同一套：标题在左，状态胶囊在右，下面是分层筛选面板与预设微标。 */
 function SlotCard({
-  Icon,
   label,
   tag,
   marked,
@@ -1279,7 +1235,6 @@ function SlotCard({
   onClear,
   onAdd,
 }: {
-  Icon: LucideIcon;
   label: string;
   tag: string;
   marked?: boolean;
@@ -1314,13 +1269,12 @@ function SlotCard({
         stale ? "opacity-70" : ""
       }`}
     >
-      <div className="flex items-center gap-2">
-        <Icon
-          size={14}
-          strokeWidth={1.8}
-          aria-hidden="true"
-          className={`shrink-0 ${stale ? "text-warn-text" : "text-l3"}`}
-        />
+      {/* 卡片不画槽位 / 步骤符号（2026-11-16 用户），只有绑定失效时留警示三角；
+          标题与说明左缩 px-2，对齐下面 Agent 信息那一行（选择按钮自带 px-2 的悬停底） */}
+      <div className="flex items-center gap-2 px-2">
+        {stale && (
+          <TriangleAlert size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-warn-text" />
+        )}
         <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-l1">{label}</h3>
         {tag && (
           <span
@@ -1360,7 +1314,7 @@ function SlotCard({
           />
         )}
       </div>
-      {note && <p className="mt-1.5 text-micro leading-4 text-l4">{note}</p>}
+      {note && <p className="mt-1.5 px-2 text-micro leading-4 text-l4">{note}</p>}
     </li>
   );
 }

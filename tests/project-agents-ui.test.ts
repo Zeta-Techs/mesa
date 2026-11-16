@@ -156,7 +156,8 @@ test("本项目默认聚光灯卡置顶展示当前连接与模型，其余家�
     assert.match(view.button("将 Qwen Code 设为项目默认").getAttribute("title") ?? "", /CLI \/ CLI 默认/);
     assert.equal(view.button("将 Gemini CLI 设为项目默认").textContent?.trim(), "Gemini CLI");
     assert.match(view.button("将 Gemini CLI 设为项目默认").getAttribute("title") ?? "", /Zeta \/ deepseek-v4-flash-0731/);
-    assert.match(view.host.textContent!, /默认选择仅对本项目生效。/);
+    // 默认那张卡下不再写「下方未单独指定的…· 默认选择仅对本项目生效。」（2026-11-16 用户删）
+    assert.doesNotMatch(view.host.textContent!, /默认选择仅对本项目生效|下方未单独指定/);
     assert.ok(!view.host.textContent!.includes("在工作树里选谁开工"));
     assert.equal(view.calls.length, 0, "展示名册不写配置，编程页不轮询声明目标");
     await view.click("管理连接");
@@ -421,7 +422,6 @@ test("没设默认时如实说开始时再选；跟随项目默认只说一次�
     const spotlight = gem.host.querySelector('[aria-label="项目 Agent 名册"]')!;
     assert.match(spotlight.querySelector("h3")!.textContent!, /Gemini CLI/);
     assert.ok(spotlight.classList.contains("ccode-well"));
-    assert.match(gem.host.textContent!, /默认选择仅对本项目生效。/);
   } finally {
     await gem.close();
   }
