@@ -2,7 +2,7 @@ import type { ChatChannelSnapshot } from "../chat-channel";
 import { officialModelLabel, type OfficialAliasTable } from "../official-model-names";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeftRight, Check, ChevronDown, ChevronLeft, ChevronRight, History, Info } from "lucide-react";
+import { Replace, Check, ChevronDown, ChevronLeft, ChevronRight, FlaskConical, History, Info } from "lucide-react";
 import { AGENTS } from "../types";
 import type { DetectResult, ModelCapabilityDto, Profile } from "../types";
 import { useAppStore } from "../store";
@@ -20,6 +20,7 @@ import { breakdownRequest } from "../context-breakdown";
 import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
 import RelayPicker, { AgentMark, type RelayMenuProps } from "./RelayPicker";
 import { confirmDialog } from "./ConfirmDialog";
+import { HoverTip, useHoverTip } from "./HoverTip";
 import type {
   LaunchPickState,
   NativePermissionMode,
@@ -492,7 +493,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
 
   // 底部说明压到一两行，完整原委放悬停提示（原先 Claude 的说明三行，比菜单本身还抢眼）
   // 打开旧对话还没发第一句（resumePick）不再写底部说明（2026-11-05 用户问「这个提示是干嘛的」）：
-  // 主屏那一行前面写「接回用」，「Agent 不能换」写在换配置那一层
+  // 「Agent 不能换」写在换配置那一层；主屏那一行前面原先写「接回用」，2026-11-16 用户删掉（悬停提示里仍说明）
   const footer: { short: string; full: string } | null = launch
     ? null
     : next
@@ -546,7 +547,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       }`}
       className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-lg px-2 text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
-      {launch?.pick.resumePick && <span className="shrink-0 text-l4">接回用</span>}
       {agentId && <AgentMark agentId={agentId} />}
       <span className={`min-w-0 truncate leading-[18px] ${pendingMark ? "italic" : ""}`}>{whoText}</span>
       {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
@@ -567,19 +567,12 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       <span>{footer.short}</span>
     </p>
   );
-  const betaRow = beta.badge && (
-    // 「测试版」原先单占输入框底下一格（2026-10-23 收进来）：点进二级看这一家在聊天里能做到哪一步
-    <button
-      type="button"
-      onClick={() => setView("beta")}
-      className="mt-1 flex h-7 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-micro text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover"
-    >
-      <span className="shrink-0 text-l3">{beta.badge}</span>
-      <span className="min-w-0 truncate">{beta.newer ? "CLI 比 Mesa 核对过的新" : "聊天里能做到哪一步"}</span>
-      {beta.newer && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
-      <ChevronRight size={13} strokeWidth={1.8} aria-hidden="true" className="ml-auto shrink-0" />
-    </button>
-  );
+  // 「测试版」（2026-10-23 从输入框底下收进菜单底部一行，2026-11-16 用户改成右上角一个提示符号）：
+  // 悬停就在上方显示一句话说明，不用点进去；点它仍能进二级看全文、反馈对不上
+  const betaHint = (top: string) =>
+    beta.badge && (
+      <BetaHint summary={beta.summary} warn={beta.warn} newer={beta.newer} top={top} onOpen={() => setView("beta")} />
+    );
 
   // 换一家 Agent 接着做（接力）：模型那一屏里一行，点进「relay」屏（2026-11-10 用户：放在模型这一屏，不藏在换配置里）
   const relayRow = props.relay?.state.available ? (
@@ -589,7 +582,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       title="下一句交给另一家 Agent，对话留在这里"
       className="mt-1 flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg border-t border-hairline px-2 text-left text-l2 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
     >
-      <ArrowLeftRight size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
+      <Replace size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
       <span className="min-w-0 flex-1 truncate">
         {relayPicked
           ? `接力给 ${AGENTS.find((a) => a.id === relayPicked.agentId)?.label ?? relayPicked.agentId}`
@@ -794,6 +787,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           ) : view === "main" && effortSection ? (
             <>
               {/* 主屏（2026-11-05 用户）：只有思考强度——大字当前档，下面一行「M · 连接 · 模型 ›」点进模型屏 */}
+              {betaHint("top-1.5")}
               {effortChoices ? (
                 <EffortSlider
                   choices={effortChoices}
@@ -809,10 +803,11 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                 </>
               )}
               {footerNote}
-              {betaRow}
             </>
           ) : (
             <>
+              {/* 没有思考档可调的组合直接打开这一屏：测试版提示符号单占顶上一小行（右上角是「换配置」，不叠上去） */}
+              {!effortSection && beta.badge && <div className="relative h-6 shrink-0">{betaHint("top-0")}</div>}
               {/* 模型屏：有思考档时左上返回主屏 */}
               {effortSection && (
                 <>
@@ -909,8 +904,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               </div>
               {relayRow}
               {footerNote}
-              {/* 没有思考档可调的组合直接打开这一屏，测试版那一行跟过来 */}
-              {!effortSection && betaRow}
             </>
           )}
         </div>
@@ -1240,5 +1233,38 @@ function EffortHero({
       </span>
       {subtitle}
     </div>
+  );
+}
+
+/** 模型菜单右上角的「测试版」提示符号：悬停在上方显示一句话说明，点进去看全文与反馈 */
+function BetaHint({ summary, warn, newer, top, onOpen }: {
+  summary: string;
+  warn: string | null;
+  newer: boolean;
+  /** 主屏贴菜单右上角；模型屏放在自己那一小行里 */
+  top: string;
+  onOpen: () => void;
+}) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const { tip, show, hide } = useHoverTip(ref, true);
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        data-beta-hint
+        aria-label={warn ? `${summary}${warn}` : summary}
+        onClick={onOpen}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className={`absolute right-1.5 ${top} z-10 inline-flex size-6 items-center justify-center rounded-md text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover`}
+      >
+        <FlaskConical size={13} strokeWidth={1.8} aria-hidden="true" />
+        {newer && <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full bg-caution-text" />}
+      </button>
+      <HoverTip tip={tip} text={summary} warn={warn} up />
+    </>
   );
 }

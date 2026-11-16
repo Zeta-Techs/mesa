@@ -17,7 +17,7 @@ import {
   Pin,
   PinOff,
   Scissors,
-  ArrowLeftRight,
+  Replace,
   SquareArrowOutUpRight,
   SquareStack,
   SquareTerminal,
@@ -2783,7 +2783,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     className={`${paneOutlineButtonClass} inline-flex h-7 items-center gap-1 px-2.5`}
                     title="下一句交给另一家 Agent 接着做"
                   >
-                    <ArrowLeftRight size={12} strokeWidth={1.8} aria-hidden="true" />
+                    <Replace size={12} strokeWidth={1.8} aria-hidden="true" />
                     换 Agent
                   </button>
                   <button
@@ -3333,7 +3333,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       })),
                       {
                         label: "换 Agent…",
-                        icon: ArrowLeftRight,
+                        icon: Replace,
                         title: "下一句交给另一家 Agent 接着做",
                         onSelect: () => {
                           setRelayOptions([]);

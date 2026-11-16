@@ -176,7 +176,6 @@ export default function RelayPicker({
   return (
     <>
       <h4 className={section}>换 Agent</h4>
-      <p className={note}>发下一句时交接，对话留在这里。</p>
       {relay.state.blocked && <p className={note}>{relay.state.blocked}</p>}
       {rows.length === 0 && <p className={note}>没有别的可用 Agent</p>}
       <ul>

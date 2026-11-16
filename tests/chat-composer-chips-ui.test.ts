@@ -192,7 +192,8 @@ async function slideEffort(ui: { el: HTMLElement; act: (fn: () => Promise<void>)
 
 /** 模型菜单主屏只有思考强度（2026-11-05）：大字下面那一行「M · 连接 · 模型 ›」是弹层里第一个按钮，点进模型屏 */
 async function openModels(ui: { el: HTMLElement; act: (fn: () => Promise<void>) => Promise<void> }) {
-  const line = ui.el.querySelector<HTMLButtonElement>('[role="dialog"] button');
+  // 右上角的测试版提示符号（data-beta-hint）也是按钮，跳过它
+  const line = ui.el.querySelector<HTMLButtonElement>('[role="dialog"] button:not([data-beta-hint])');
   assert.ok(line, "主屏有「连接 · 模型」那一行");
   await ui.act(async () => line.click());
   await ui.act(async () => new Promise((r) => setTimeout(r, 0)));
@@ -355,7 +356,7 @@ test("模型菜单开聊前：点开只有思考滑块，连接 · 模型那一�
   }
 });
 
-test("模型菜单接回旧对话（还没发第一句）：那一行写「接回用」，不写底部说明；换配置那层写明 Agent 不能换", async () => {
+test("模型菜单接回旧对话（还没发第一句）：那一行不写「接回用」（2026-11-16 删），不写底部说明；换配置那层写明 Agent 不能换", async () => {
   const ui = await mount();
   try {
     await ui.render(
@@ -386,7 +387,7 @@ test("模型菜单接回旧对话（还没发第一句）：那一行写「接�
       }),
     );
     await ui.click("glm-5.3");
-    assert.match(ui.el.textContent ?? "", /接回用/);
+    assert.doesNotMatch(ui.el.textContent ?? "", /接回用/);
     assert.doesNotMatch(ui.el.textContent ?? "", /发第一句时/);
     await openModels(ui);
     await ui.click("换配置");
@@ -432,7 +433,7 @@ test("输入区收字（2026-10-23）：框里只有 + 与发送，下面那一�
     await ui.render(ui.h(ui.Badge, { ...badge, flash: true }));
     assert.match(chip().className, /ccode-perm-flash/);
 
-    // 测试版：不再单占一格，在模型菜单底部一行，点进去是说明与「切到终端」
+    // 测试版：模型菜单右上角一个提示符号（2026-11-16），悬停就有一句话说明，不再有底部那一行；点它仍进说明与「切到终端」
     let toTerminal = 0;
     await ui.render(
       ui.h(ui.Menu, {
@@ -448,7 +449,11 @@ test("输入区收字（2026-10-23）：框里只有 + 与发送，下面那一�
     );
     assert.doesNotMatch(ui.el.textContent ?? "", /测试版/, "芯片上不写测试版");
     await ui.click("glm-5.3");
-    await ui.click("测试版");
+    assert.doesNotMatch(ui.el.textContent ?? "", /聊天里能做到哪一步/, "底部那一行删掉");
+    const hint = ui.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
+    assert.ok(hint, "右上角有测试版提示符号");
+    assert.match(hint.getAttribute("aria-label") ?? "", /以终端为准/, "一句话说明直接挂在符号上");
+    await ui.act(async () => hint.click());
     assert.match(ui.el.textContent ?? "", /以终端为准/);
     await ui.click("切到终端");
     assert.equal(toTerminal, 1);

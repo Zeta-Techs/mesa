@@ -2,7 +2,7 @@ import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState 
 import {
   AppWindow,
   Archive,
-  ArrowLeftRight,
+  Replace,
   Check,
   ChevronDown,
   ChevronRight,
@@ -798,7 +798,7 @@ export default function ProjectTree({
           const who = AGENTS.find((a) => a.id === seg.agent)?.label ?? seg.agent;
           return {
             label: `打开 ${who} 那段`,
-            icon: ArrowLeftRight,
+            icon: Replace,
             title: seg.title ?? undefined,
             onSelect: () =>
               openChat(

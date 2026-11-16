@@ -15,7 +15,10 @@ export function useChatBeta(agentId: string | null) {
   const newer = useCliNewer(agentId);
   const badge = fidelityBadge(fidelity, newer);
   const heading = fidelity?.beta ? "聊天是测试版" : fidelity && fidelity.tier >= 3 ? "这家的聊天是简化的" : "聊天层说明";
-  return { badge, newer, heading };
+  // 模型菜单右上角提示符号悬停时的一句话（2026-11-16 用户：说明简洁显示在上面，不用再点进去）
+  const summary = `${heading}，以终端为准${fidelity ? `；${fidelity.terminalOnly}要回终端` : ""}。`;
+  const warn = newer ? "你装的 CLI 比 Mesa 核对过的新，聊天里的确认按钮可能按不准。" : null;
+  return { badge, newer, heading, summary, warn };
 }
 
 export function ChatBetaNotes({

@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeftRight, ChevronDown, ChevronRight } from "lucide-react";
+import { Replace, ChevronDown, ChevronRight } from "lucide-react";
 import { useAppStore } from "../store";
 import { relayCardText, type RelayPrompt } from "../chat-relay";
 import type { ChatMessageDto } from "../types";
@@ -19,7 +19,8 @@ interface RelaySegmentDto {
 /**
  * 聊天里接力那一句前面的卡（docs/design-chat-relay.md §3.4）：「前面由 Codex 做」/「你离开期间 Codex 做了 2 轮」，
  * 点开摆前一段交出前的最后几轮（只读），旁边能看这次的交接简报。抬头本身不当人话显示。
- * 前一段里又有接力卡的，点开还能再往前看（一层一层按需取，不一次读全链）
+ * 前一段里又有接力卡的，点开还能再往前看（一层一层按需取，不一次读全链）。
+ * 「看完整记录」在对话页打开前一家那段原生会话（2026-11-16 用户问前一段的完整记录能不能看）
  */
 export default function ChatRelayCard({
   prompt,
@@ -31,6 +32,8 @@ export default function ChatRelayCard({
   renderMessages: (messages: ChatMessageDto[]) => ReactNode;
 }) {
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
+  const setOpenSessionReq = useAppStore((s) => s.setOpenSessionReq);
+  const setPage = useAppStore((s) => s.setPage);
   const [open, setOpen] = useState(false);
   const [seg, setSeg] = useState<RelaySegmentDto | null | "missing">(null);
   const [loading, setLoading] = useState(false);
@@ -50,7 +53,7 @@ export default function ChatRelayCard({
   return (
     <div className="my-1 ccode-chat-meta text-l4">
       <div className="flex items-center gap-1.5">
-        <ArrowLeftRight size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+        <Replace size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
         <button
           type="button"
           onClick={toggle}
@@ -80,8 +83,22 @@ export default function ChatRelayCard({
           {seg === "missing" && <p>前面那段的记录找不到了</p>}
           {seg && seg !== "missing" && (
             <>
-              <p className="mb-1">
-                {label(seg.parentAgent)} 交出前的最后 {seg.messages.length} 条
+              <p className="mb-1 flex items-center gap-1.5">
+                <span>
+                  {label(seg.parentAgent)} 交出前的最后 {seg.messages.length} 条
+                </span>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  className="shrink-0 underline decoration-dotted underline-offset-2 hover:text-l2"
+                  title={`在对话页打开 ${label(seg.parentAgent)} 那段，从头看完整过程`}
+                  onClick={() => {
+                    setOpenSessionReq({ agent: seg.parentAgent, sessionId: seg.parentSession });
+                    setPage("sessions");
+                  }}
+                >
+                  看完整记录
+                </button>
               </p>
               {seg.messages.length === 0 ? <p>没有可显示的记录</p> : renderMessages(seg.messages)}
             </>
