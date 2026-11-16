@@ -1114,6 +1114,23 @@ test("Kimi 2.5：「thinking…」和思考原文之间空一行也读得出来�
   assert.equal(extractLiveReply(empty, "kimi"), null);
 });
 
+test("Kimi 2.6.1：「● Thinking」读成思考头，收尾补画的「Worked for … · done …」不进回复预览", () => {
+  // 2026-11-16 本机假网关抓屏（2.6.1，120 列）：思考中头一行不再是「⠋ thinking…」；一轮说完在输入框上方补一行用时
+  const thinking = [
+    " ❯ TRIGGER_THINK 你好",
+    " ● Thinking",
+    "   ",
+    "   先跑一条命令看看环境，再回答。",
+    "",
+    "  ⠋ Working for 1s · Tip: @: mention files",
+    ...KIMI_BOX,
+  ];
+  assert.deepEqual(extractLiveThinking(thinking, "kimi"), ["先跑一条命令看看环境，再回答。"]);
+  assert.equal(extractLiveReply(thinking, "kimi"), null);
+  const done = [" ❯ TRIGGER_THINK 你好", " ● ok", "", "  Worked for 1s · done 6:14 PM", ...KIMI_BOX];
+  assert.deepEqual(extractLiveReply(done, "kimi")?.lines, ["ok"]);
+});
+
 test("Kimi 收起的思考是斜体：调用方标出斜体行时不当成回复的开头", () => {
   const screen = [
     " ❯ 今天天气怎么样",

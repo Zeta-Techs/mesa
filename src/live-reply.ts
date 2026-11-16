@@ -207,10 +207,12 @@ const LAYOUTS: Record<string, Layout> = {
     // 2.3 等首字时转月相「🌑 · Tip: …」（2026-10-21 抓屏；用户截图里 🌕Kimi 叠在「正在回复」上面）。
     // MCP 服务连上 / 失败 / 要登录时插进对话区的状态行「MCP server "x" needs OAuth — run /mcp-config login x」
     // （2.3.2 McpStatus finalizeMcpServerStatusRow；2026-10-26 用户 Windows 截图：接在回复后面成了正文）
-    // 收起的思考下面那行「… (12 more lines, ctrl+o to expand)」也不是回复
-    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:|^\s*MCP server ".+?" (?:connected\b|failed\b|needs OAuth\b|disabled$|removed$|connecting…)|^\s*… \(\d+ more lines?, ctrl\+o to expand\)/u,
-    // 思考中（2.3.2 ThinkingComponent live）：「⠋ thinking…」下面缩进两格、只留思考原文的最后两行；想完收成斜体的「● …」一段
-    thinkBlock: /^\s*[⠀-⣿]\s+thinking…\s*$/,
+    // 收起的思考下面那行「… (12 more lines, ctrl+o to expand)」也不是回复。
+    // 2.6.1 一轮说完在输入框上方补画「Worked for 10s · done 6:08 PM」（2026-11-16 用户截图：接在回复后面成了正文）
+    skip: /Press Ctrl\+B to run in background|^\s*Tool ".*" was not run|^\s*Rejected:|^\s*[\u{1F311}-\u{1F318}]|^\s*·\s*Tip:|^\s*MCP server ".+?" (?:connected\b|failed\b|needs OAuth\b|disabled$|removed$|connecting…)|^\s*… \(\d+ more lines?, ctrl\+o to expand\)|^\s*Worked for\b/u,
+    // 思考中（2.3.2 ThinkingComponent live）：「⠋ thinking…」下面缩进两格、只留思考原文的最后两行；想完收成斜体的「● …」一段。
+    // 2.6.1 思考中的头一行换成「● Thinking」（不是斜体），下面照旧缩进的斜体原文
+    thinkBlock: /^\s*(?:[⠀-⣿]\s+thinking…|●\s+Thinking)\s*$/,
     thinkGutter: /^(?=\s{2,}\S)/,
     thinkItalic: true,
     indent: 3,
