@@ -434,9 +434,11 @@ export default function TerminalStatusBar({
           chat ? "ccode-chat-column mx-auto w-full" : ""
         }`}
       >
-      {/* 聊天层的「权限 · 项目」挂在最左（ChatSurface metaSlots） */}
+      {/* 聊天层的「权限 · 项目」挂在最左（ChatSurface metaSlots）。两格都给 18px 行高：挂进来的按钮 font: inherit
+          拿到状态栏 text-micro 的 15px 行高，里面 truncate 会把 Windows 字体更深的下伸部（g / y / p）裁掉
+         （2026-11-16 用户 Windows 实测模型芯片「glm」） */}
       {chat && chatMetaRef && (
-        <span ref={chatMetaLeftRef} className="flex min-w-0 shrink items-center gap-0.5 empty:hidden" />
+        <span ref={chatMetaLeftRef} className="flex min-w-0 shrink items-center gap-0.5 leading-[18px] empty:hidden" />
       )}
       {/* 左区：状态圆点 + agent · 配置 · 模型 + 思考滑块。聊天变体不画（2026-10-22 状态栏去重）：
           在回复 / 已停下对话末尾已经说了，Agent 看输入框模型芯片的品牌色圆点，模型思考在输入框里，连接挪到右边 */}
@@ -1142,7 +1144,7 @@ export default function TerminalStatusBar({
               {fmtTokensZh(usageTotal(usage))} token
             </span>
           ) : null}
-          {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 empty:hidden" />}
+          {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 leading-[18px] empty:hidden" />}
         </span>
       ) : (
       <span
