@@ -177,9 +177,12 @@ function AddProjectModal({
   path: pickedPath,
   existingMode,
   onClose,
+  onPickExisting,
   onRegistered,
 }: {
   path: string | null;
+  /** 新建弹窗底部「添加已有文件夹…」选好了目录：宿主换成添加那一份（2026-11-16 两条路并进一个弹窗） */
+  onPickExisting?: (path: string) => void;
   /** 已注册项目的工作方式；有值则禁止改选（终身一张主界面） */
   existingMode: WorkMode | null;
   onClose: () => void;
@@ -482,7 +485,21 @@ function AddProjectModal({
           {modeLocked ? "（已选定，不可更改）" : ""}
         </p>
         {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
-        <div className="flex justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
+          {creating && !createdPath && onPickExisting && (
+            <button
+              type="button"
+              className="mr-auto rounded-md px-2 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
+              title="文献、数据或稿子已经在一个文件夹里：选它登记成项目，Mesa 自动认出里面的文献和数据"
+              onClick={() =>
+                void open({ directory: true, multiple: false }).then((dir) => {
+                  if (typeof dir === "string" && dir.trim()) onPickExisting(dir);
+                })
+              }
+            >
+              添加已有文件夹…
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -2850,7 +2867,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       {/* 挂到 body：从别的页就地弹出，不切到项目页（见 project-add.ts） */}
       {(addProjectPath || creatingProject) && createPortal(
         <AddProjectModal
+          // 新建弹窗里选了已有文件夹：换 key 重挂成添加那一份（名字从文件夹名预填、读它的档案卡）
+          key={addProjectPath ?? "new"}
           path={addProjectPath}
+          onPickExisting={(dir) => {
+            setCreatingProject(false);
+            setAddProjectPath(dir);
+          }}
           onClose={() => {
             setAddProjectPath(null);
             setCreatingProject(false);

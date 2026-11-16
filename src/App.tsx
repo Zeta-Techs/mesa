@@ -89,8 +89,7 @@ import { moveRailBarItem, parseRailBarOrder, RAIL_BAR_ORDER_KEY, RAIL_BAR_VISIBL
 import { clampTabDragDx, rubberbandTabDx, tabDragSettleDx, tabDragShift, tabDragTarget, type TabSlot } from "./tab-drag";
 import { isLightTheme } from "./themes";
 import ProjectTree, { TitlebarProjectChip } from "./components/ProjectTree";
-import ContextMenu from "./components/ContextMenu";
-import { openNewProject, projectAddMenuItems } from "./project-add";
+import { openNewProject } from "./project-add";
 import { RunActivityButton } from "./components/RunActivity";
 import { shellContextPlacement, shellMode } from "./shell-context";
 import RunCaret from "./components/RunCaret";
@@ -370,7 +369,6 @@ function App() {
   const toggleChromeHidden = useAppStore((s) => s.toggleChromeHidden);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // 侧栏顶部「新项目」的两项菜单（新建 / 已有文件夹，project-add.ts）
-  const [newProjectMenu, setNewProjectMenu] = useState<{ x: number; y: number } | null>(null);
   const { fullscreen: macFullscreen, animating: macFullscreenAnimating } =
     useMacFullscreenState(IS_MAC);
   // 收货反馈横幅（成功 8s 自动消失；失败/需注意常驻直到处理）
@@ -2063,17 +2061,13 @@ function App() {
                   <RailTooltip label="新项目" collapsed={collapsed}>
                     <button
                       type="button"
-                      onClick={(e) => {
-                        const r = e.currentTarget.getBoundingClientRect();
-                        setNewProjectMenu(newProjectMenu ? null : { x: r.left, y: r.bottom + 4 });
-                      }}
+                      // 直接打开「新建项目」弹窗（2026-11-16 用户：不再先弹两项菜单，添加已有文件夹在弹窗里）
+                      onClick={openNewProject}
                       aria-label="新项目"
-                      aria-haspopup="menu"
-                      aria-expanded={Boolean(newProjectMenu)}
                       title={`新项目：新建一个项目文件夹，或把已有文件夹登记成项目${keyHint("new-project")}`}
-                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm transition-colors ${
+                      className={`relative mb-[3px] flex h-9 w-full items-center rounded-md text-sm text-l1 transition-colors hover:bg-hover ${
                         collapsed ? "justify-center" : "px-3"
-                      } ${newProjectMenu ? "bg-hover text-l1" : "text-l1 hover:bg-hover"}`}
+                      }`}
                     >
                       <NAV_ICONS.newProject
                         size={16}
@@ -2551,14 +2545,6 @@ function App() {
             onCheckUpdate={() => setHelpDialog("update")}
           />
           <AskAiModal />
-          {newProjectMenu && (
-            <ContextMenu
-              x={newProjectMenu.x}
-              y={newProjectMenu.y}
-              onClose={() => setNewProjectMenu(null)}
-              items={projectAddMenuItems()}
-            />
-          )}
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
           {/* 上手引导：首次判定、全屏向导、每做完一步的提示 */}
