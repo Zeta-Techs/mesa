@@ -47,8 +47,8 @@ export function inlineDecisionLine(
   if (state === "done") return "都已决定，点旁边的按钮回到原来的对话继续。";
   if (state === "missing") {
     return kind === "verify"
-      ? "待核实清单还没写出来：AI 改完稿才写，写好会自动出现在这里。"
-      : "审查报告还没写出来，写好会自动出现在这里。";
+      ? "待核实清单还没写出来，AI 改完稿才写。"
+      : "审查报告还没写出来。";
   }
   if (kind === "verify") {
     return state === "empty"

@@ -156,7 +156,7 @@ export default forwardRef<PendingConfirmHandle, {
     const json = await readFirst(roots, "papers/included.json");
     if (!json) {
       setRecords([]);
-      setError("还没有纳入清单。Agent 筛完，待确认篇目会出现在这里。");
+      setError("还没有纳入清单，AI 筛完才有。");
       return;
     }
     setJsonRoot(json.root);

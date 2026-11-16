@@ -554,15 +554,8 @@ const LIT_SOURCES: {
   },
 ];
 
-function guidancePreview(text: string): string {
-  const full = text.trim();
-  const firstParagraph = full.split(/\n\s*\n/)[0]?.trim() ?? full;
-  if (firstParagraph.length <= 120) return firstParagraph;
-  const sentence = firstParagraph.match(/^.*?[。！？!?]/)?.[0]?.trim();
-  return sentence && sentence.length <= 120
-    ? sentence
-    : `${firstParagraph.slice(0, 117).trimEnd()}…`;
-}
+/** 人工事项说明短于这个字数才直接写在行下，再长收进「怎么做」 */
+const GUIDANCE_INLINE_MAX = 40;
 
 export default function StepFlow({
   projectPath,
@@ -879,6 +872,8 @@ export default function StepFlow({
   const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
   const pendingSettled =
     pendingMeta.count === 0 && (states ?? []).some((s) => isPendingConfirmTaskTitle(s.title) && s.done);
+  /** 清单行下那句说明：有待确认篇目才写「怎么点」；都定了只在摊开清单时写移出的后果 */
+  const pendingHintShown = pendingSettled ? pendingListOpen : pendingMeta.count > 0;
   /** 文献清单与待获取跟着这一步的运行状态重读（与 ReviewDecisionList 同口径） */
   const ledgerRefreshKey = `${runStatus}|${agentAttention ?? ""}`;
   const ledgerKeySeen = useRef(ledgerRefreshKey);
@@ -975,6 +970,8 @@ export default function StepFlow({
   const instAccess = appSettings?.institutionalAccess ?? ((appSettings?.institutionalPrefix ?? "").trim() ? "proxy" : "campus");
   const [dropNote, setDropNote] = useState<string | null>(null);
   const [optSectionOpen, setOptSectionOpen] = useState(false);
+  /** 没开工时，AI 做完才轮到人的事项收成一行（两件起才收；一件直接写名字，收了不省地方） */
+  const [laterOpen, setLaterOpen] = useState(false);
   const [afterSaveSectionOpen, setAfterSaveSectionOpen] = useState(() => runStatus === "done");
   useEffect(() => {
     if (runStatus === "done") setAfterSaveSectionOpen(true);
@@ -2397,10 +2394,10 @@ export default function StepFlow({
             { label: "跟 AI 商量一下", onClick: () => void chatDraft() },
           ]}
         >
-          AI 会一次问你一个问题，帮你把这一步想要什么说清楚，写进任务书；再点「开始」，做出来的东西更贴你的想法。
+          它会问你几个问题，把你的要求写进任务书。
           {/* 研讨是可选的一步（2026-11-11 用户）：只在这一步有「请几家研讨」时补一句，不另起气泡、不放按钮 */}
           {nudgeWithConsult && (
-            <p className="mt-1.5">商量完还有拿不准的判断，可以再点右边的「方案研讨」（可选），听几家 AI 各自的看法，认同的结论带回商量。</p>
+            <p className="mt-1.5">拿不准的判断，可以再点右边的「方案研讨」（可选）。</p>
           )}
         </CoachTip>
       )}
@@ -2418,7 +2415,6 @@ export default function StepFlow({
           ? continueNotesChecked
           : node.done;
     const guidance = node.kind === "human" ? human?.guidance?.trim() : "";
-    const guidanceShort = guidance ? guidancePreview(guidance) : "";
     return (
       <li
         key={node.key}
@@ -3472,10 +3468,11 @@ export default function StepFlow({
             <div className="mt-1 pl-6 text-micro leading-5 text-l4">
               {/* 清完会自动勾上，但已纳入的仍能移出——勾上后清单不收走；做完了只留「文献清单」一行，
                   移出的后果点开清单才说（2026-11-13 用户：勾上了下面还铺着长说明） */}
-              {(!pendingSettled || pendingListOpen) && (
+              {/* 没有待确认篇目时不铺说明：清单还没写出来、或一篇待确认都没有，这句没有可指的对象（做法在「文献清单」的悬停里） */}
+              {pendingHintShown && (
                 <p>{pendingSettled ? PENDING_DONE_HINT : PENDING_HINT}</p>
               )}
-              <div className={!pendingSettled || pendingListOpen ? "mt-1.5" : undefined}>
+              <div className={pendingHintShown ? "mt-1.5" : undefined}>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
@@ -3607,19 +3604,19 @@ export default function StepFlow({
               ) : isPendingConfirmTaskTitle(human.title) ? (
                 <p>{PENDING_HINT}</p>
               ) : isSpotCheckTaskTitle(human.title) && !node.done ? null : (
-                <>
-                  <p className="whitespace-pre-wrap">{guidanceShort}</p>
-                  {guidanceShort !== guidance && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer select-none text-micro text-l4 hover:text-l2">
-                        怎么做
-                      </summary>
-                      <p className="mt-0.5 whitespace-pre-wrap text-l3">
-                        {guidance}
-                      </p>
-                    </details>
-                  )}
-                </>
+                // 行上只留一句短的；长说明（核对要点、连着几问）收进「怎么做」，点开才看
+                guidance.length <= GUIDANCE_INLINE_MAX ? (
+                  <p className="whitespace-pre-wrap">{guidance}</p>
+                ) : (
+                  <details>
+                    <summary className="cursor-pointer select-none text-micro text-l4 hover:text-l2">
+                      怎么做
+                    </summary>
+                    <p className="mt-0.5 whitespace-pre-wrap text-l3">
+                      {guidance}
+                    </p>
+                  </details>
+                )
               )}
               {isSpotCheckTaskTitle(human.title) && !node.done && (
                 <SpotCheckPicks
@@ -3983,6 +3980,14 @@ export default function StepFlow({
     );
   }
 
+  const mainNodes = flow.nodes.filter((n) => n.section === "main");
+  // 没开工时还轮不到的收尾事项：一屏只回答「现在该做什么」，这些只留件数，点开照原样列出
+  const laterCandidates =
+    runStatus === "pending"
+      ? mainNodes.filter((n) => n.kind === "human" && n.human?.timing === "after" && !n.done)
+      : [];
+  const laterNodes = laterCandidates.length >= 2 ? laterCandidates : [];
+
   return (
     <div
       ref={containerRef}
@@ -3991,9 +3996,27 @@ export default function StepFlow({
       {/* 主干节点用左侧竖线串起来（连接线落在序号列中线上，由前一个节点连到下一个节点圆心并被井底色盖住，1px 极淡）：
           不画在 ol 整高上，否则末尾节点 ③ 下方有说明文字时竖线会穿过 ③ 向下悬空伸出 */}
       <ol className="space-y-3 [&>li:not(:last-child)]:relative [&>li:not(:last-child)]:before:pointer-events-none [&>li:not(:last-child)]:before:absolute [&>li:not(:last-child)]:before:-bottom-7 [&>li:not(:last-child)]:before:left-[calc(0.875rem-0.5px)] [&>li:not(:last-child)]:before:top-4 [&>li:not(:last-child)]:before:w-px [&>li:not(:last-child)]:before:bg-hairline [&>li:not(:last-child)]:before:content-['']">
-        {flow.nodes
-          .filter((n) => n.section === "main")
-          .map((node) => renderNode(node, false))}
+        {mainNodes.flatMap((node) => {
+          if (!laterNodes.includes(node)) return [renderNode(node, false)];
+          if (node !== laterNodes[0]) return laterOpen ? [renderNode(node, false)] : [];
+          return [
+            <li key="later-fold" data-step-later="fold" className="py-1.5 pl-1.5 pr-1.5">
+              <button
+                type="button"
+                aria-expanded={laterOpen}
+                onClick={() => setLaterOpen((v) => !v)}
+                className="flex items-center gap-2 text-sm text-l3 transition-colors hover:text-l1"
+              >
+                {/* 折叠箭头占序号那一列，底色挡住竖向连接线，与人工事项的方框同位 */}
+                <span className="ccode-well relative z-10 flex h-5 w-4 shrink-0 items-center justify-center">
+                  <FoldMark open={laterOpen} />
+                </span>
+                <span>AI 做完后有 {laterNodes.length} 件轮到你</span>
+              </button>
+            </li>,
+            ...(laterOpen ? [renderNode(node, false)] : []),
+          ];
+        })}
       </ol>
       {/* 可选补充：沉到下方独立分区，与主干拉开层级——它们不做也能跑完这一步，
           和「定方向 / agent 执行 / 评审」平铺在一起会让人以为样样都得做。
