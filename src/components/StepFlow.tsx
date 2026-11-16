@@ -774,7 +774,7 @@ export default function StepFlow({
       仅含已定方向 / 评审沉淀 / 标题的不算——那不是编辑过的 TASK.md */
   const draftHasBody =
     !!draft?.text?.trim() && !isTaskMdStub(draft.text ?? "");
-  const taskMdBtnClass = `shrink-0 font-mono text-micro underline-offset-2 hover:underline disabled:opacity-50 ${
+  const taskMdBtnClass = `shrink-0 text-xs underline-offset-2 hover:underline disabled:opacity-50 ${
     draftHasBody ? "text-cta-pill-text" : "text-l3 hover:text-l1"
   }`;
   const pendingDecisions = unansweredDecisions(decisions, answered);
@@ -972,6 +972,8 @@ export default function StepFlow({
   const [optSectionOpen, setOptSectionOpen] = useState(false);
   /** 没开工时，AI 做完才轮到人的事项收成一行（两件起才收；一件直接写名字，收了不省地方） */
   const [laterOpen, setLaterOpen] = useState(false);
+  /** 工具行「⋯」：任务书和方案研讨收在里面，点开才在同一行露出（2026-11-16 用户拍板，行上只留商量一个入口） */
+  const [talkMoreOpen, setTalkMoreOpen] = useState(false);
   const [afterSaveSectionOpen, setAfterSaveSectionOpen] = useState(() => runStatus === "done");
   useEffect(() => {
     if (runStatus === "done") setAfterSaveSectionOpen(true);
@@ -2348,9 +2350,27 @@ export default function StepFlow({
 
   /** 单个节点行（主干与可选区共用）：dense = 可选区的紧凑版（更小字号、不显示 hint） */
   const hasDiscussNode = flow.nodes.some((n) => n.kind === "discuss");
-  // 商量组（继续讨论 · TASK.md · 方案研讨）：没开工时挂「先定几件事」，开工后跟到「AI 干活」下的工具行，
-  // 与回头组用竖线隔开；四类步骤同一顺序（2026-11-13 步骤卡统一设计稿）
+  // 商量组（继续讨论 · ⋯ 里的任务书与方案研讨）：没开工时挂「先定几件事」，开工后跟到「AI 干活」下的工具行，
+  // 与回头组用竖线隔开；四类步骤同一顺序（2026-11-13 步骤卡统一设计稿）。
+  // 2026-11-16：有方案研讨的步骤，任务书和研讨收进「⋯」；没有研讨的步骤只有任务书一项，不为一项加一层
   const talkOnAgent = !hasDiscussNode || runStatus !== "pending";
+  const taskBookBtn = (
+    <button
+      type="button"
+      disabled={!draft}
+      onClick={() => void openDraftInline()}
+      title={
+        runStatus !== "pending"
+          ? "查看这一步的任务书草稿（当前轮已开工：这里改的只对重开生效；要让正在跑的这一轮改做法，点「回到对话」或评审「退回修改」）"
+          : draftHasBody
+            ? "这一步的任务书（TASK.md）已改过，点此查看或再改"
+            : "查看/编辑这一步的任务书（TASK.md；没改过时是模板默认拼装，可直接改）"
+      }
+      className={taskMdBtnClass}
+    >
+      任务书
+    </button>
+  );
   const talkGroup = (
     <div className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1" data-step-tools="talk">
       <button
@@ -2364,24 +2384,29 @@ export default function StepFlow({
         }
         className="rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
       >
-        {chatBusy ? "准备 TASK.md…" : discussChatLabel(discussed)}
+        {chatBusy ? "准备任务书…" : discussChatLabel(discussed)}
       </button>
-      <button
-        type="button"
-        disabled={!draft}
-        onClick={() => void openDraftInline()}
-        title={
-          runStatus !== "pending"
-            ? "查看这一步的任务书草稿（当前轮已开工：这里改的只对重开生效；要让正在跑的这一轮改做法，点「回到对话」或评审「退回修改」）"
-            : draftHasBody
-              ? "这一步的 TASK.md 已改过，点此查看或再改"
-              : "查看/编辑这一步的 TASK.md（没改过时是模板默认拼装，可直接改）"
-        }
-        className={taskMdBtnClass}
-      >
-        TASK.md
-      </button>
-      {discussInline}
+      {discussInline ? (
+        <>
+          <button
+            type="button"
+            aria-expanded={talkMoreOpen}
+            aria-label="更多：任务书、方案研讨"
+            title="任务书、方案研讨"
+            onClick={() => setTalkMoreOpen((v) => !v)}
+            // 任务书改过时「⋯」也用强调色字：收起来以后仍看得出这一步的任务书动过
+            className={`shrink-0 rounded-sm px-1 text-xs hover:bg-hover ${
+              draftHasBody && !talkMoreOpen ? "text-cta-pill-text" : "text-l3 hover:text-l1"
+            }`}
+          >
+            ⋯
+          </button>
+          {talkMoreOpen && taskBookBtn}
+          {talkMoreOpen && discussInline}
+        </>
+      ) : (
+        taskBookBtn
+      )}
       {showDiscussNudge && (
         <CoachTip
           arrow="up"
@@ -2397,7 +2422,7 @@ export default function StepFlow({
           它会问你几个问题，把你的要求写进任务书。
           {/* 研讨是可选的一步（2026-11-11 用户）：只在这一步有「请几家研讨」时补一句，不另起气泡、不放按钮 */}
           {nudgeWithConsult && (
-            <p className="mt-1.5">拿不准的判断，可以再点右边的「方案研讨」（可选）。</p>
+            <p className="mt-1.5">拿不准的判断，可以再点「⋯」里的「方案研讨」（可选）。</p>
           )}
         </CoachTip>
       )}
