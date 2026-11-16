@@ -75,8 +75,7 @@
     "feedback — how the user wants things done",
     "project — the story behind current work",
     "reference — where outside information lives",
-    "user — who the user is",
-    "当前工具模式"
+    "user — who the user is"
    ],
    "contextTags": [
     "codebuddy_background_info",
@@ -230,5 +229,5 @@
    ]
   }
  },
- "version": "2.182.0"
+ "version": "2.184.0"
 }

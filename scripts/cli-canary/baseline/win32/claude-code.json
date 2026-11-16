@@ -187,6 +187,7 @@
     "entrypoint",
     "gitBranch",
     "isSidechain",
+    "madeBy",
     "message",
     "parentUuid",
     "perTurnEffort",
@@ -196,6 +197,7 @@
     "sessionId",
     "session_id",
     "timestamp",
+    "toolInputStreamMs",
     "type",
     "userType",
     "uuid",
@@ -342,5 +344,5 @@
    ]
   }
  },
- "version": "2.1.318"
+ "version": "2.1.325"
 }

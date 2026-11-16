@@ -1,0 +1,48 @@
+{
+ "agent": "agy",
+ "channel": null,
+ "checks": {
+  "假网关收到主对话请求": true,
+  "抓屏跑完": true
+ },
+ "platform": "win32",
+ "request": {
+  "main": {
+   "bodyKeys": [
+    "contents",
+    "generationConfig",
+    "systemInstruction",
+    "tools"
+   ],
+   "contextHeadings": [],
+   "contextTags": [],
+   "headers": {
+    "user-agent": "<有>"
+   },
+   "model": null,
+   "path": "/agy/v1beta/models/e2e-picked:streamGenerateContent",
+   "systemHeadings": [],
+   "tools": [
+    ""
+   ]
+  },
+  "other": [
+   "/agy/v1beta/models/e2e-picked:streamGenerateContent tools=True",
+   "/agy/v1beta/models/gemini-3.1-flash-lite-preview:streamGenerateContent tools=False"
+  ]
+ },
+ "screen": {
+  "liveReplySupported": true,
+  "menu": {
+   "options": [
+    "Yes, run command",
+    "Yes, and always allow in this conversation for commands that start with 'echo mesa > mesa_probe.txt'",
+    "Yes, and always allow for commands that start with 'echo mesa > mesa_probe.txt' (Persist to settings.json)",
+    "No, cancel"
+   ],
+   "question": "Run this command?"
+  },
+  "previewReadable": true
+ },
+ "version": "1.5.9"
+}
