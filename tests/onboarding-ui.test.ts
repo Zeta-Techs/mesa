@@ -61,6 +61,14 @@ const blank: OnboardingFacts = {
   projectCount: 0,
 };
 
+// 焦点断言比名字不比元素：断言失败时 node 要把 actual / expected 整个 inspect，
+// JSDOM 节点的对象图大到格式化不完，CI 上会一路吃到内存耗尽（2026-11-16 实证）
+function focusName(): string {
+  const el = document.activeElement;
+  if (!el) return "(无焦点)";
+  return el.id || el.getAttribute("aria-label") || el.textContent?.trim() || el.tagName;
+}
+
 async function mount(facts: OnboardingFacts = blank, formOnly = false) {
   const dom = new JSDOM('<button id="opener">上手引导</button><div id="root"></div>', {
     url: "http://localhost/",
@@ -213,9 +221,11 @@ test("向导切步：带前后方向标记、回到顶部并聚焦标题；Alt+�
     main.scrollTop = 500;
     await ui.click("建第一个项目，未完成");
     assert.equal(ui.host.querySelector(".ccode-wizard-step")?.getAttribute("data-dir"), "forward");
-    await ui.act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    // 切步后下一帧才回顶、把焦点移到标题；不等这一帧，机器忙时它会插在后面的 Tab 与断言之间抢走焦点
+    const nextFrame = () => ui.act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    await nextFrame();
     assert.equal(main.scrollTop, 0);
-    assert.equal(document.activeElement?.id, "onboarding-title");
+    assert.equal(focusName(), "onboarding-title");
 
     // Alt+ArrowLeft 回退一步，方向标记变为 backward
     await ui.act(async () =>
@@ -223,26 +233,32 @@ test("向导切步：带前后方向标记、回到顶部并聚焦标题；Alt+�
     );
     assert.equal(ui.host.querySelector('[aria-current="step"]')?.getAttribute("aria-label"), "聊第一句，当前步骤");
     assert.equal(ui.host.querySelector(".ccode-wizard-step")?.getAttribute("data-dir"), "backward");
+    await nextFrame();
+    assert.equal(focusName(), "onboarding-title");
 
     // Alt+ArrowRight 再前进到末屏
     await ui.act(async () =>
       document.dispatchEvent(new ui.dom.window.KeyboardEvent("keydown", { key: "ArrowRight", altKey: true, bubbles: true })),
     );
     assert.equal(ui.host.querySelector('[aria-current="step"]')?.getAttribute("aria-label"), "建第一个项目，当前步骤");
+    await nextFrame();
+    assert.equal(focusName(), "onboarding-title");
 
     await ui.act(async () =>
       document.dispatchEvent(new ui.dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true })),
     );
-    assert.equal(document.activeElement, ui.button("先去体验"));
+    assert.ok(ui.button("先去体验"));
+    assert.equal(focusName(), "先去体验");
     await ui.act(async () =>
       document.dispatchEvent(new ui.dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true })),
     );
-    assert.equal(document.activeElement, ui.button("接上 AI，未完成"));
+    assert.ok(ui.button("接上 AI，未完成"));
+    assert.equal(focusName(), "接上 AI，未完成");
     await ui.act(async () =>
       document.dispatchEvent(new ui.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
     );
     assert.equal(ui.host.querySelector('[role="dialog"]'), null);
-    assert.equal(document.activeElement, ui.opener);
+    assert.equal(focusName(), "opener");
   } finally {
     await ui.close();
   }
