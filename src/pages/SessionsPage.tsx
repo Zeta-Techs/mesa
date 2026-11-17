@@ -83,6 +83,7 @@ import ConversationView from "../components/ConversationView";
 import { firstCompleteTurnIndex } from "../conversation-tools";
 import { useAutoLoadOlder } from "../auto-load-older";
 import { progressiveLimit, useProgressiveRows } from "../progressive-rows";
+import { dragSelection, edgeScrollStep } from "../drag-select";
 import { useReadingAnchor } from "../reading-anchor";
 import { mergeConversationPages, slidOutOfWindow } from "../chat-handoff";
 import RunCaret from "../components/RunCaret";
@@ -1614,9 +1615,87 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
   }
 
   function exitSelectMode() {
+    dragSelectRef.current?.stop();
     setSelecting(false);
     setChecked(new Set());
     setConfirmBatch(false);
+  }
+
+  // 批量管理里按住一行（含勾选框）往上下拖，划过的行一起勾上或去掉（drag-select.ts）；
+  // 只点不拖仍走原来的单行切换，拖过之后松手那一下的 click 吞掉，免得按下那行又翻回去
+  const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const displayKeysRef = useRef<string[]>([]);
+  displayKeysRef.current = displayList.map(({ s }) => skey(s));
+  const dragSelectRef = useRef<{ stop: () => void } | null>(null);
+  useEffect(() => () => dragSelectRef.current?.stop(), []);
+
+  function startDragSelect(event: React.PointerEvent, s: SessionMetaDto) {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+    // 行里的保留旗子等按钮照常点；勾选框是 label 不算按钮
+    if ((event.target as HTMLElement).closest("button")) return;
+    dragSelectRef.current?.stop();
+    const anchorKey = skey(s);
+    const base = new Set(checked);
+    const value = !base.has(anchorKey);
+    let x = event.clientX;
+    let y = event.clientY;
+    let lastKey = anchorKey;
+    let moved = false;
+    let frame = 0;
+
+    const hitTest = () => {
+      const row = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("[data-select-key]");
+      const key = row?.dataset.selectKey;
+      if (!key || key === lastKey) return;
+      lastKey = key;
+      const keys = displayKeysRef.current;
+      const anchor = keys.indexOf(anchorKey);
+      const current = keys.indexOf(key);
+      if (anchor < 0 || current < 0) return;
+      moved = true;
+      setConfirmBatch(false);
+      setChecked(dragSelection(base, keys, anchor, current, value));
+    };
+    const tick = () => {
+      frame = 0;
+      const box = listScrollRef.current?.getBoundingClientRect();
+      const step = box ? edgeScrollStep(y, box.top, box.bottom) : 0;
+      if (step !== 0 && listScrollRef.current) {
+        listScrollRef.current.scrollTop += step;
+        hitTest();
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    const onMove = (e: PointerEvent) => {
+      x = e.clientX;
+      y = e.clientY;
+      hitTest();
+      if (!frame) frame = requestAnimationFrame(tick);
+    };
+    const swallowClick = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", stop);
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      if (dragSelectRef.current?.stop === stop) dragSelectRef.current = null;
+    };
+    const onUp = () => {
+      stop();
+      if (!moved) return;
+      window.addEventListener("click", swallowClick, true);
+      window.setTimeout(() => window.removeEventListener("click", swallowClick, true), 0);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", stop);
+    dragSelectRef.current = { stop };
   }
 
   /** 批量删除：逐个走 delete_session，语义与单个删除一致（pin 快照/整理数据由后端一并清理）；
@@ -2317,6 +2396,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
         )}
         {/* 滚下去后上沿出一根细线：被切掉半截的行压在筛选区下面，不再像排版出错 */}
         <div
+          ref={listScrollRef}
           className={`min-h-0 flex-1 overflow-auto border-t transition-colors ${
             listScrolled ? "border-hairline" : "border-transparent"
           }`}
@@ -2414,6 +2494,10 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                   )}
                 <div
                   data-session-key={`${s.agent}:${s.sessionId}`}
+                  data-select-key={selecting ? skey(s) : undefined}
+                  onPointerDown={
+                    selecting ? (event) => startDragSelect(event, s) : undefined
+                  }
                   onClick={() => {
                     if (selecting) toggleChecked(s);
                     else if (clickable) void openSession(s, focusFor(s));
@@ -2429,6 +2513,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                     });
                   }}
                   className={`group relative mx-1.5 my-0.5 rounded-lg px-2.5 py-2 text-sm transition-colors ${
+                    selecting ? "select-none " : ""
+                  }${
                     selecting || clickable
                       ? "cursor-pointer hover:bg-hover"
                       : "opacity-60"

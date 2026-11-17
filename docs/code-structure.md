@@ -924,6 +924,7 @@ tab-keys.ts                # 标签栏/分段控件键盘导航三件（tabNavDe
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
 session-refresh.ts         # 会话列表刷新协调器 createSessionRefreshCoordinator（store.ts 唯一挂载）：普通刷新复用在途请求不叠轮；强制刷新开新代次，旧请求晚回不覆盖新列表（成功与失败两路同口径，旧请求的失败也不暴露给新调用者，等最新请求返回当前列表）（tests/session-refresh.test.ts）
   progressive-rows.ts        # 长列表分段渲染（useProgressiveRows：先画 150 行，离底三屏接下一段，换筛选回第一段；选中项在后面画到它）；对话页列表在用
+  drag-select.ts             # 按住拖选（dragSelection：按下那行定勾上 / 去掉，锚点到当前行整段改、拖回头的行回到按下前；edgeScrollStep 贴边自动滚）；对话页批量管理在用
   run-caret.ts               # 运行状态光标三态（working 灰色呼吸 / idle 淡灰 / confirm 琥珀）：注意力 → 光标、几个合成取最要紧；Mesa 停下的会话熄掉列表里的旧 live（quietStoppedSessions，store setLiveSession 记停下时刻，2026-10-31）；
                              # 凡说「这段对话的 Agent 现在怎样」都用它，不再画绿点 / 黄点（组件 components/RunCaret.tsx）
   reading-anchor.ts          # 阅读位置自己锚（useReadingAnchor：对话页 / 聊天层；滚动时记眼睛看着的那块，内容变尺寸就挪回；
