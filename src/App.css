@@ -4541,6 +4541,10 @@ select:focus-visible {
 #ccode-assistant-dock:has(> .contents > .ccode-docked-panel) {
   margin-left: -3px;
 }
+/* 停靠位空着（面板没开或只是浮层）时不进行容器：宽 0 也会吃一道 5px gap，右边玻璃边比左、下宽一倍（2026-11-17 用户反馈） */
+#ccode-assistant-dock:not(:has(> .contents > .ccode-docked-panel)) {
+  display: none;
+}
 /* 拍板队列、项目分组、定时任务：统一回归全局 .ccode-well 卡片底色 + 微描边，项目组左侧只在有事时亮状态锚线（2026-11-15） */
 .ccode-workbench-list {
   position: relative;
