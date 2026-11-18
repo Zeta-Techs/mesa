@@ -567,7 +567,7 @@ fn patch_qwen_settings(
                 // anthropic 协议只读条目的 generationConfig.reasoning.effort（0.26.5 假网关实测，同 agents::qwen_system_settings_body）
                 let mut gc = serde_json::Map::new();
                 if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
-                    let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
+                    let val = crate::agent_specs::launch_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
                     if is_anthropic {
                         gc.insert("reasoning".into(), json!({ "effort": val }));
                     } else {
@@ -648,6 +648,58 @@ fn set_codex_provider_static_auth(blk: &mut toml_edit::Item, key: &str) {
 // pub(crate) 而非私有：capability_golden 的黄金样本要在 crate 内直接渲染这两个写入点，
 // 按「最终文本」断言跨层结论。不加 test-only 包装层——包装层会与真函数漂移，
 // 而漂移的样本比没有样本更坏（它锁的是包装层的行为，不是写盘的行为）。
+fn is_gemini_builtin_model(id: &str) -> bool {
+    let tail = id
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or(id)
+        .to_ascii_lowercase();
+    tail.starts_with("gemini-")
+        || matches!(tail.as_str(), "auto" | "pro" | "flash" | "flash-lite")
+}
+
+/// 撤掉以前 Mesa 给 Gemini 内置模型（含 `google/gemini-*`、大写与内置别名）写的 custom 定义（`tier == "custom" && family == "custom"`），
+/// 用户手写的定义不动；撤完后没有自定义定义剩余时，把空壳 `modelDefinitions` / `modelConfigs` 及 `experimental.dynamicModelConfiguration` 一并收干净
+fn clean_mesa_gemini_model_defs(v: &mut Value, has_custom_models: bool) {
+    if let Some(defs) = v
+        .pointer_mut("/modelConfigs/modelDefinitions")
+        .and_then(Value::as_object_mut)
+    {
+        defs.retain(|id, def| {
+            !(is_gemini_builtin_model(id)
+                && def["tier"] == "custom"
+                && def["family"] == "custom")
+        });
+    }
+    let defs_empty = v
+        .pointer("/modelConfigs/modelDefinitions")
+        .and_then(Value::as_object)
+        .is_none_or(|d| d.is_empty());
+    if defs_empty {
+        if let Some(mc) = v.get_mut("modelConfigs").and_then(Value::as_object_mut) {
+            mc.remove("modelDefinitions");
+            if mc.is_empty() {
+                if let Some(root) = v.as_object_mut() {
+                    root.remove("modelConfigs");
+                }
+            }
+        }
+        if !has_custom_models
+            && v.pointer("/experimental/dynamicModelConfiguration") == Some(&json!(true))
+        {
+            if let Some(exp) = v.get_mut("experimental").and_then(Value::as_object_mut) {
+                exp.remove("dynamicModelConfiguration");
+                if exp.is_empty() {
+                    if let Some(root) = v.as_object_mut() {
+                        root.remove("experimental");
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn patch_gemini_settings(
     existing: Option<&str>,
     profile_name: &str,
@@ -657,22 +709,12 @@ pub(crate) fn patch_gemini_settings(
     let mut v = parse_jsonc_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?
         .insert("selectedType".into(), json!("gemini-api-key"));
-    // `gemini-` 开头的交给 Gemini 自己：它按自带定义表、没有就按名字判断是不是 Gemini 3 / Pro 等（0.68 bundle
-    // ModelConfigService.getModelDefinition / isGemini3Model）。用户定义按模型名整条盖过自带定义，原先一律写
-    // family / tier = custom，gemini-3-pro 这类官方模型就不再按 Gemini 3 处理（2026-11-18「只换渠道与模型」）。
-    // 以前写过的这类条目（family 与 tier 都是 custom，官方定义从不这样写）一并撤掉
-    let custom: Vec<&String> = models.iter().filter(|m| !m.starts_with("gemini-")).collect();
-    if let Some(defs) = v
-        .pointer_mut("/modelConfigs/modelDefinitions")
-        .and_then(Value::as_object_mut)
-    {
-        defs.retain(|id, def| {
-            !(models.contains(id)
-                && id.starts_with("gemini-")
-                && def["tier"] == "custom"
-                && def["family"] == "custom")
-        });
-    }
+    // Gemini 内置模型与别名（含 `google/gemini-*`、不分大小写）交给 Gemini 自己：它按自带定义表、没有就按名字判断
+    // 是不是 Gemini 3 / Pro 等（0.68 bundle ModelConfigService.getModelDefinition / isGemini3Model）。用户定义按名整条
+    // 盖过自带定义，原先一律写 family / tier = custom，gemini-3-pro 这类官方模型就不再按 Gemini 3 处理（2026-11-18）。
+    // 以前写过的这类条目（不管还在不在本次名单里）一并撤掉；没有自定义条目剩余时同步撤掉实验开关
+    let custom: Vec<&String> = models.iter().filter(|m| !is_gemini_builtin_model(m)).collect();
+    clean_mesa_gemini_model_defs(&mut v, !custom.is_empty());
     if !custom.is_empty() {
         ensure_obj(&mut v, &["experimental"])?
             .insert("dynamicModelConfiguration".into(), json!(true));
@@ -1024,7 +1066,10 @@ fn overlay_opencode_per_model(provider: &mut Value, profile: &Profile) {
             tmp.request_policy.temperature = gm.temperature;
             tmp.request_policy.top_p = gm.top_p;
             tmp.request_policy.max_output_tokens = gm.max_output_tokens;
-            tmp.request_policy.reasoning_effort = gm.reasoning_effort.clone();
+            tmp.request_policy.reasoning_effort = gm
+                .reasoning_effort
+                .as_deref()
+                .and_then(crate::agent_specs::launch_reasoning_effort);
         }
         crate::combo::apply_to_profile(&mut tmp, Some(m));
         let policy = &tmp.request_policy;
@@ -1038,8 +1083,14 @@ fn overlay_opencode_per_model(provider: &mut Value, profile: &Profile) {
         if let Some(v) = policy.max_output_tokens {
             opts.insert("maxOutputTokens".into(), json!(v));
         }
-        if let Some(v) = policy.reasoning_effort.as_deref() {
-            opts.insert("reasoningEffort".into(), json!(v));
+        if let Some(v) = policy
+            .reasoning_effort
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            let eff = crate::agent_specs::launch_reasoning_effort(v)
+                .unwrap_or_else(|| v.trim().to_string());
+            opts.insert("reasoningEffort".into(), json!(eff));
         }
         if opts.is_empty() {
             continue;
@@ -1129,7 +1180,10 @@ fn patch_codex_config(
     } else {
         doc.remove("model_catalog_json");
     }
-    if let Some(e) = effort.filter(|s| !s.is_empty()) {
+    if let Some(e) = effort
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| crate::agent_specs::launch_reasoning_effort(s).unwrap_or_else(|| s.trim().to_string()))
+    {
         doc["model_reasoning_effort"] = value(e);
     } else {
         doc.remove("model_reasoning_effort");
@@ -1439,12 +1493,10 @@ fn patch_kimi_env_alias(content: &str, profile: &Profile, provider_id: &str) -> 
 /// **只写 default_effort 不起作用**（2026-10-30 2.4.0 临时 KIMI_CODE_HOME + 假网关：请求 `thinking` 里没有 effort；
 /// 补上 support_efforts 才带 `"effort": "high"`）——段里没声明档位表时，按网关这一行的档位（没有就 low/medium/high）补一份
 fn patch_kimi_effort(content: &str, profile: &Profile, provider_type: &str) -> Result<String, String> {
-    let effort = profile
-        .request_policy
-        .reasoning_effort
+    let gw = profile
+        .gateway_id
         .as_deref()
-        .and_then(crate::agent_specs::canonical_reasoning_effort)
-        .filter(|_| provider_type == "kimi");
+        .and_then(crate::gateway_store::find_gateway);
     let mut doc = parse_toml_doc(Some(content))?;
     let pid = profile.provider_name();
     if let Some(models) = doc.get_mut("models").and_then(|m| m.as_table_like_mut()) {
@@ -1453,11 +1505,33 @@ fn patch_kimi_effort(content: &str, profile: &Profile, provider_type: &str) -> R
             if t.get("provider").and_then(|p| p.as_str()) != Some(pid.as_str()) {
                 continue;
             }
+            let model = t.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
+            let effort = if provider_type == "kimi" {
+                let mut tmp = profile.clone();
+                if let Some(ref g) = gw {
+                    tmp.request_policy.reasoning_effort = g
+                        .models
+                        .iter()
+                        .find(|x| x.id == model)
+                        .and_then(|x| x.reasoning_effort.as_deref())
+                        .and_then(crate::agent_specs::launch_reasoning_effort);
+                } else {
+                    tmp.request_policy.reasoning_effort = profile
+                        .request_policy
+                        .reasoning_effort
+                        .as_deref()
+                        .and_then(crate::agent_specs::launch_reasoning_effort);
+                }
+                crate::combo::apply_to_profile(&mut tmp, Some(&model));
+                tmp.request_policy.reasoning_effort
+            } else {
+                None
+            };
             match effort.as_deref() {
                 Some(e) => {
                     if t.get("support_efforts").is_none() {
-                        let model = t.get("model").and_then(|m| m.as_str()).unwrap_or("").to_string();
-                        let mut levels = gateway_effort_levels(profile, &model)
+                        let mut levels = gateway_effort_spec(profile, &model)
+                            .map(|(lvs, _)| lvs)
                             .unwrap_or_else(|| ["low", "medium", "high"].map(String::from).to_vec());
                         if !levels.iter().any(|l| l == e) {
                             levels.push(e.to_string());
@@ -1546,7 +1620,7 @@ fn patch_grok_config(
     if let Some(v) = policy
         .reasoning_effort
         .as_deref()
-        .and_then(crate::agent_specs::canonical_reasoning_effort)
+        .and_then(crate::agent_specs::launch_reasoning_effort)
         .filter(|s| crate::agent_specs::GROK_REASONING_EFFORTS.contains(&s.as_str()))
     {
         models_tbl["default_reasoning_effort"] = value(v);
@@ -1583,7 +1657,12 @@ fn patch_grok_config(
         let Some(table) = entry.as_table_mut() else {
             return Err(format!("模型 {m} 的配置段不是表，已停止写入"));
         };
-        write_grok_reasoning_menu(table, gateway_effort_levels(profile, m).as_deref());
+        let spec = gateway_effort_spec(profile, m);
+        write_grok_reasoning_menu(
+            table,
+            spec.as_ref()
+                .map(|(lvs, def)| (lvs.as_slice(), def.as_deref())),
+        );
     }
     Ok(doc.to_string())
 }
@@ -1777,7 +1856,7 @@ fn extend_grok_plans(
     Ok(())
 }
 
-fn gateway_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> {
+fn gateway_effort_spec(profile: &Profile, model: &str) -> Option<(Vec<String>, Option<String>)> {
     let raw = profile
         .gateway_id
         .as_deref()
@@ -1785,18 +1864,91 @@ fn gateway_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> 
         .and_then(|g| g.models.into_iter().find(|row| row.id == model))
         .and_then(|row| row.reasoning_effort)?;
     let levels = crate::agent_specs::reasoning_effort_levels(&raw);
-    (!levels.is_empty()).then_some(levels)
+    if levels.is_empty() {
+        return None;
+    }
+    let default = crate::agent_specs::launch_reasoning_effort(&raw);
+    Some((levels, default))
+}
+
+const GROK_EFFORT_LABELS: &[(&str, &str, &str)] = &[
+    ("none", "None", "No extra reasoning"),
+    ("minimal", "Minimal Effort", "Smallest reasoning budget"),
+    ("low", "Low Effort", "Quick, fast implementations"),
+    (
+        "medium",
+        "Medium Effort",
+        "Balanced effort with standard implementation and testing",
+    ),
+    (
+        "high",
+        "High Effort",
+        "Higher implementation quality with extensive reasoning",
+    ),
+    (
+        "xhigh",
+        "Extra High Effort",
+        "Highest effort and reasoning level",
+    ),
+    ("max", "Max Effort", "Maximum reasoning budget"),
+];
+
+fn grok_effort_label_desc(effort: &str) -> (&str, &'static str) {
+    GROK_EFFORT_LABELS
+        .iter()
+        .find(|(v, _, _)| *v == effort)
+        .map(|(_, label, desc)| (*label, *desc))
+        .unwrap_or((effort, "Reasoning effort"))
+}
+
+/// 识别 Mesa 以前按固定模板写下的 `reasoning_efforts` 菜单：每行只含 `value`/`label`/`description`（加可选布尔 `default`），
+/// 且 `label` 与 `description` 逐字等于 Mesa 模板。用户手写的菜单（自定义 label、缺 description 或多别的字段）绝不误删误改
+fn is_mesa_grok_reasoning_menu(entry: &toml_edit::Table) -> bool {
+    let Some(rows) = entry.get("reasoning_efforts").and_then(|v| v.as_array_of_tables()) else {
+        return false;
+    };
+    if rows.is_empty() {
+        return false;
+    }
+    rows.iter().all(|row| {
+        let Some(val) = row.get("value").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let (want_label, want_desc) = grok_effort_label_desc(val);
+        let keys_ok = row.iter().all(|(k, v)| match k {
+            "value" | "label" | "description" => v.is_str(),
+            "default" => v.is_bool(),
+            _ => false,
+        });
+        keys_ok
+            && row.get("label").and_then(|v| v.as_str()) == Some(want_label)
+            && row.get("description").and_then(|v| v.as_str()) == Some(want_desc)
+    })
 }
 
 /// Grok 1.0.40 推理强度菜单：与内置 grok-4.6 同形（`value`/`label`/`description`）。
-/// 自定义端点的模型目录通常不带 `reasoning_efforts`，不写这段则 `/effort` 不出。
-/// 用户已写过菜单则保留，避免每次设为全局覆盖手改档位。
-/// 只在网关库给这个模型设了思考档时写（2026-11-18「只换渠道与模型」）：原先每个模型都补菜单、默认 high，
-/// 中转目录标了 `supports_reasoning_effort = false` 的也改回 true，等于替不知道支不支持的模型每次都发 high；
-/// 没有依据就整段不碰，照 Grok 自己按端点目录的判断
-fn write_grok_reasoning_menu(entry: &mut toml_edit::Table, levels: Option<&[String]>) {
+/// 只在网关库给这个模型设了思考档时写（2026-11-18）：
+/// - 网关库没设思考档：若段里是以前 Mesa 写的模板菜单，连同 `reasoning_effort` 与 `supports_reasoning_effort = true` 撤干净；
+///   用户手写菜单和中转目录的 `supports_reasoning_effort = false` 原样保留。
+/// - 网关库设了思考档：按网关库的档位与 `@默认档` 写菜单（以前 Mesa 写的模板菜单随网关库同步更新，用户手写菜单不覆盖）
+fn write_grok_reasoning_menu(
+    entry: &mut toml_edit::Table,
+    spec: Option<(&[String], Option<&str>)>,
+) {
     use toml_edit::{value, ArrayOfTables, Item, Table};
-    let Some(levels) = levels.filter(|rows| !rows.is_empty()) else {
+    let mesa_menu = is_mesa_grok_reasoning_menu(entry);
+    let Some((levels, preferred_default)) = spec.filter(|(rows, _)| !rows.is_empty()) else {
+        if mesa_menu {
+            entry.remove("reasoning_efforts");
+            entry.remove("reasoning_effort");
+            if entry
+                .get("supports_reasoning_effort")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+            {
+                entry.remove("supports_reasoning_effort");
+            }
+        }
         return;
     };
     if entry
@@ -1806,53 +1958,26 @@ fn write_grok_reasoning_menu(entry: &mut toml_edit::Table, levels: Option<&[Stri
     {
         entry["supports_reasoning_effort"] = value(true);
     }
-    if entry.get("reasoning_efforts").is_some() {
+    if entry.get("reasoning_efforts").is_some() && !mesa_menu {
         return;
     }
     let chosen: Vec<String> = levels.to_vec();
-    let labels = [
-        ("none", "None", "No extra reasoning"),
-        ("minimal", "Minimal Effort", "Smallest reasoning budget"),
-        ("low", "Low Effort", "Quick, fast implementations"),
-        (
-            "medium",
-            "Medium Effort",
-            "Balanced effort with standard implementation and testing",
-        ),
-        (
-            "high",
-            "High Effort",
-            "Higher implementation quality with extensive reasoning",
-        ),
-        (
-            "xhigh",
-            "Extra High Effort",
-            "Highest effort and reasoning level",
-        ),
-        ("max", "Max Effort", "Maximum reasoning budget"),
-    ];
-    if entry.get("reasoning_effort").is_none() {
-        let fallback = chosen
-            .iter()
-            .find(|s| s.as_str() == "high")
-            .or_else(|| chosen.first())
-            .map(String::as_str)
-            .unwrap_or("high");
-        entry["reasoning_effort"] = value(fallback);
-    }
-    let default_level = entry
-        .get("reasoning_effort")
-        .and_then(|v| v.as_str())
+    let default_level = preferred_default
         .filter(|s| chosen.iter().any(|row| row == s))
-        .unwrap_or(chosen.first().map(String::as_str).unwrap_or("high"))
+        .or_else(|| {
+            (!mesa_menu)
+                .then(|| entry.get("reasoning_effort").and_then(|v| v.as_str()))
+                .flatten()
+                .filter(|s| chosen.iter().any(|row| row == s))
+        })
+        .or_else(|| chosen.iter().find(|s| s.as_str() == "high").map(String::as_str))
+        .or_else(|| chosen.first().map(String::as_str))
+        .unwrap_or("high")
         .to_string();
+    entry["reasoning_effort"] = value(default_level.as_str());
     let mut tables = ArrayOfTables::new();
     for effort in &chosen {
-        let (label, description) = labels
-            .iter()
-            .find(|(value, _, _)| *value == effort.as_str())
-            .map(|(_, label, description)| (*label, *description))
-            .unwrap_or((effort.as_str(), "Reasoning effort"));
+        let (label, description) = grok_effort_label_desc(effort);
         let is_default = effort == &default_level;
         let mut row = Table::new();
         row.insert("value", value(effort.as_str()));
@@ -2228,6 +2353,7 @@ fn patch_qwen_settings_official(existing: &str) -> Result<String, String> {
 /// 本身也常用不了（agents gemini 认证提示）。撤掉后 Gemini 进门让用户自己选认证方式。
 fn patch_gemini_settings_official(existing: &str) -> Result<String, String> {
     let mut v = parse_jsonc_doc(Some(existing))?;
+    clean_mesa_gemini_model_defs(&mut v, false);
     let mesa_auth = v.pointer("/security/auth/selectedType").and_then(|t| t.as_str()) == Some("gemini-api-key");
     if mesa_auth {
         if let Some(auth) = v.pointer_mut("/security/auth").and_then(|a| a.as_object_mut()) {

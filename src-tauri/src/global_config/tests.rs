@@ -358,13 +358,17 @@ fn claude_global_write_drops_other_providers_connection_keys() {
 fn qwen_uses_mesa_key_env_and_writes_effort() {
     let mut p = profile("qwen");
     p.models = vec!["glm-5".into()];
-    p.request_policy.reasoning_effort = Some("high".into());
+    p.request_policy.reasoning_effort = Some("low,medium,high@medium".into());
     let out = patch_qwen_settings(None, Some("sk-q"), &p).unwrap();
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["env"][QWEN_MESA_KEY_ENV], "sk-q");
     let entry = &v["modelProviders"]["openai"][0];
     assert_eq!(entry["envKey"], QWEN_MESA_KEY_ENV, "项目 .env 的 OPENAI_API_KEY 顶不掉");
-    assert_eq!(entry["generationConfig"]["samplingParams"]["reasoning_effort"], "high");
+    assert_eq!(
+        entry["generationConfig"]["samplingParams"]["reasoning_effort"],
+        "medium",
+        "多档思考档串落盘只写默认档"
+    );
 }
 
 #[test]
@@ -846,6 +850,24 @@ fn gemini_settings_patch_registers_custom_models_for_picker() {
     assert!(v["modelConfigs"]["modelDefinitions"].get("gemini-3-pro").is_none());
     assert_eq!(v["modelConfigs"]["modelDefinitions"]["gemini-x"]["family"], "gemini-3", "不是 Mesa 写的样子不动");
     assert!(v.get("experimental").is_none());
+
+    // 带服务商前缀 / 大写 / 内置别名（auto/pro/flash/flash-lite）同样算内置模型；
+    // 旧名单里不在本次连接里的 Mesa custom gemini-* 定义连同孤立的实验开关、空壳对象一并撤干净（官方切回同理）
+    let stale_only = r#"{"experimental":{"dynamicModelConfiguration":true},"modelConfigs":{"modelDefinitions":{"gemini-3-pro":{"tier":"custom","family":"custom"},"google/Gemini-2.5-Flash":{"tier":"custom","family":"custom"}}}}"#;
+    let out2 = patch_gemini_settings(
+        Some(stale_only),
+        "n",
+        &["google/Gemini-3-Pro".into(), "flash".into()],
+        None,
+    )
+    .unwrap();
+    let v2: Value = serde_json::from_str(&out2).unwrap();
+    assert!(v2.get("modelConfigs").is_none(), "{v2}");
+    assert!(v2.get("experimental").is_none(), "{v2}");
+
+    let off2: Value = serde_json::from_str(&patch_gemini_settings_official(stale_only).unwrap()).unwrap();
+    assert!(off2.get("modelConfigs").is_none(), "{off2}");
+    assert!(off2.get("experimental").is_none(), "{off2}");
 }
 
 #[test]
@@ -1355,6 +1377,42 @@ fn kimi_writes_effort_for_kimi_protocol_and_clears_key_on_official() {
     let legacy = "[providers.ccode]\ntype = \"openai\"\n[models.old]\nprovider = \"ccode\"\nmodel = \"x\"\n";
     let kept = patch_kimi_config(Some(legacy), "kimi", &p.name, Some("https://k/v1"), Some("sk"), &p.models, true, &pid, None).unwrap();
     assert!(kept.contains("[providers.ccode]"));
+
+    // 网关库里逐模型设思考档：只给设了的那行写（取 @默认档），不串到同渠道别的模型；非思考模型也不写
+    let home = tmpdir("kimi-per-model");
+    let _root = crate::storage::TestConfigRoot::redirect_to(&home);
+    let gw_json = json!([{
+        "id": "gw-kimi",
+        "name": "K",
+        "noAuth": false,
+        "slots": {"openai": "https://k/v1"},
+        "models": [
+            {"id": "kimi-k3", "source": "user", "status": "available", "reasoningEffort": "low,medium,high@medium"},
+            {"id": "kimi-k2.5", "source": "user", "status": "available"}
+        ],
+        "headerEnv": {}
+    }]);
+    fs::write(home.join("gateways.json"), gw_json.to_string()).unwrap();
+    let mut p_gw = profile("kimi");
+    p_gw.gateway_id = Some("gw-kimi".into());
+    p_gw.protocol = Some("kimi".into());
+    p_gw.models = vec!["kimi-k3".into(), "kimi-k2.5".into()];
+    p_gw.request_policy.reasoning_effort = Some("medium".into());
+    let pid_gw = p_gw.provider_name();
+    let base_gw = patch_kimi_config(None, "kimi", &p_gw.name, Some("https://k/v1"), Some("sk"), &p_gw.models, true, &pid_gw, Some("gw-kimi")).unwrap();
+    let out_gw = patch_kimi_effort(&base_gw, &p_gw, "kimi").unwrap();
+    let doc_gw: toml::Value = toml::from_str(&out_gw).unwrap();
+    assert_eq!(doc_gw["models"]["kimi-k3"]["default_effort"].as_str(), Some("medium"));
+    let alias_25 = kimi_model_alias("kimi-k2.5");
+    assert!(doc_gw["models"][&alias_25].get("default_effort").is_none(), "没设思考档的第二模型不跟着写");
+    // OpenCode 逐模型覆盖同样把多档串压成开场默认档
+    let mut oc_p = profile("opencode");
+    oc_p.gateway_id = Some("gw-kimi".into());
+    oc_p.models = vec!["kimi-k3".into()];
+    let mut oc_prov = agents::opencode_provider_json(&oc_p, Some("sk"), None);
+    overlay_opencode_per_model(&mut oc_prov, &oc_p);
+    assert_eq!(oc_prov["models"]["kimi-k3"]["options"]["reasoningEffort"], "medium");
+    fs::remove_dir_all(&home).ok();
 }
 
 /// CLI 金丝雀「全局配置」层（scripts/cli-canary）：按 Mesa 真实的设为全局写计划，把某家的配置写进
@@ -1805,13 +1863,25 @@ fn grok_reasoning_menu_only_with_gateway_levels() {
     write_grok_reasoning_menu(&mut entry, None);
     assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(false), "没依据不改");
     assert!(entry.get("reasoning_efforts").is_none());
-    // 网关库给了档位：照写菜单，用户设的那档是默认
+    // 网关库给了档位与 @默认档：默认档按用户设的（medium），不再写死 high
     let levels = vec!["low".to_string(), "medium".into(), "high".into()];
-    write_grok_reasoning_menu(&mut entry, Some(&levels));
+    write_grok_reasoning_menu(&mut entry, Some((&levels, Some("medium"))));
     assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(true));
+    assert_eq!(entry["reasoning_effort"].as_str(), Some("medium"));
     let rows = entry["reasoning_efforts"].as_array_of_tables().unwrap();
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows.get(2).unwrap()["default"].as_bool(), Some(true));
+    assert_eq!(rows.get(1).unwrap()["default"].as_bool(), Some(true));
+    assert!(rows.get(2).unwrap().get("default").is_none());
+    // 网关库改了档位与默认档：以前 Mesa 写的模板菜单同步更新
+    let narrower = vec!["low".to_string(), "high".into()];
+    write_grok_reasoning_menu(&mut entry, Some((&narrower, Some("low"))));
+    assert_eq!(entry["reasoning_effort"].as_str(), Some("low"));
+    assert_eq!(entry["reasoning_efforts"].as_array_of_tables().unwrap().len(), 2);
+    // 网关库清空思考档：以前 Mesa 写的模板菜单、默认档与 supports_reasoning_effort=true 一并撤回
+    write_grok_reasoning_menu(&mut entry, None);
+    assert!(entry.get("reasoning_efforts").is_none());
+    assert!(entry.get("reasoning_effort").is_none());
+    assert!(entry.get("supports_reasoning_effort").is_none());
 }
 
 #[test]

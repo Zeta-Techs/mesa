@@ -815,7 +815,7 @@ fn grok_config_overlay(profile: &Profile, model: Option<&str>) -> Option<serde_j
     if let Some(v) = policy
         .reasoning_effort
         .as_deref()
-        .and_then(crate::agent_specs::canonical_reasoning_effort)
+        .and_then(crate::agent_specs::launch_reasoning_effort)
     {
         models.insert("default_reasoning_effort".into(), serde_json::json!(v));
     }
@@ -1657,7 +1657,7 @@ fn qwen_system_settings_body(
                     sp.insert("max_tokens".into(), json!(t));
                 }
                 if let Some(raw) = policy.reasoning_effort.as_deref().filter(|s| !s.trim().is_empty()) {
-                    let val = crate::agent_specs::canonical_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
+                    let val = crate::agent_specs::launch_reasoning_effort(raw).unwrap_or_else(|| raw.trim().to_string());
                     // anthropic 协议的生成器不看 samplingParams 里的思考档，只读条目的 generationConfig.reasoning.effort
                     //（0.26.5 假网关实测：写前者请求里没有 output_config.effort，写后者才有）；openai 协议照旧扁平 reasoning_effort
                     if protocol == "anthropic" {
@@ -2066,7 +2066,15 @@ pub fn launch_plan(
                     if let Some(v) = policy.max_output_tokens {
                         model_opts.insert("maxOutputTokens".into(), serde_json::json!(v));
                     }
-                    if let Some(v) = policy.reasoning_effort.as_deref() {
+                    let launch_effort = policy
+                        .reasoning_effort
+                        .as_deref()
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| {
+                            crate::agent_specs::launch_reasoning_effort(s)
+                                .unwrap_or_else(|| s.trim().to_string())
+                        });
+                    if let Some(ref v) = launch_effort {
                         model_opts.insert("reasoningEffort".into(), serde_json::json!(v));
                     }
                     if !model_opts.is_empty() {
@@ -2093,7 +2101,7 @@ pub fn launch_plan(
                     // 2.x：provider 换成原生写法（思考能力才保得住）；加 --standalone 用自己的私有服务——
                     // 默认连共享后台服务时内联配置被忽略，带着密钥的配置还会留在服务里被别的客户端看到（2026-11-04 实测）
                     if opencode_v2() {
-                        opencode_inline_config_v2(&mut config, policy.reasoning_effort.as_deref());
+                        opencode_inline_config_v2(&mut config, launch_effort.as_deref());
                         plan.args.push("--standalone".into());
                     }
                     plan.env.push(((*config_env).into(), config.to_string()));
@@ -2172,12 +2180,18 @@ pub fn launch_plan(
                             }
                             plan.env
                                 .push(("KIMI_MODEL_CAPABILITIES".into(), caps.join(",")));
-                        } else if let Some(effort) = &profile.request_policy.reasoning_effort {
+                        } else if let Some(effort) = profile
+                            .request_policy
+                            .reasoning_effort
+                            .as_deref()
+                            .filter(|s| !s.trim().is_empty())
+                        {
                             // KIMI_MODEL_THINKING_EFFORT（2026-08-28 二进制实证：原样透传 +
                             // 小写归一，env 路径无闭集校验；仅 kimi 协议通道读取，
                             // 兼容协议通道会被静默忽略所以干脆不注）
-                            plan.env
-                                .push(("KIMI_MODEL_THINKING_EFFORT".into(), effort.to_lowercase()));
+                            let eff = crate::agent_specs::launch_reasoning_effort(effort)
+                                .unwrap_or_else(|| effort.trim().to_lowercase());
+                            plan.env.push(("KIMI_MODEL_THINKING_EFFORT".into(), eff));
                         }
                         plan.args.extend(kimi_env_model_args(
                             crate::agent_specs::variant_of(spec),
@@ -2233,7 +2247,7 @@ pub fn launch_plan(
             .request_policy
             .reasoning_effort
             .as_deref()
-            .and_then(crate::agent_specs::canonical_reasoning_effort)
+            .and_then(crate::agent_specs::launch_reasoning_effort)
             .filter(|e| crate::agent_specs::GROK_REASONING_EFFORTS.contains(&e.as_str()))
         {
             plan.args.push("--reasoning-effort".into());
@@ -3574,9 +3588,10 @@ pub(crate) fn opencode_provider_json(
                 .unwrap_or(OPENCODE_DEFAULT_OUTPUT);
             entry["limit"] = serde_json::json!({ "context": context, "output": output });
         }
-        // 思考模型补 reasoning: true（models.dev 覆盖语义）；否则 models.dev
-        // 查不到条目时 opencode 按无思考能力处理
-        if crate::model_registry::model_thinking_for(m, profile.gateway_id.as_deref()) {
+        // 思考模型补 reasoning: true（models.dev 覆盖语义）：同 Gemini 走声明层，不用关键词猜
+        if crate::model_registry::model_thinking_declared_for(m, profile.gateway_id.as_deref())
+            == Some(true)
+        {
             entry["reasoning"] = serde_json::json!(true);
         }
         // 视觉模型补 modalities（input 加 image）；缺省 = 纯文本，中继视觉模型

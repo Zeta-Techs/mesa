@@ -242,9 +242,9 @@ pub(crate) const WRITES: &[CapabilityWrite] = &[
         target: "JSON limit.context",
         site: "agents.rs opencode_provider_json",
         capability: "context",
-        // limit 键可省，一旦出现则 context 与 output 都必填
-        //（1.18 实测缺 output 直接 "Configuration is invalid" 退出 1）。
-        requiredness: Requiredness::Required,
+        // limit 整块可省（2026-11-18 1.19.5 实测：确知窗口才写，未知交给 OpenCode 自己的默认）；
+        // 一旦出现 limit，context 与 output 必须同在（缺 output 报 "Configuration is invalid"）。
+        requiredness: Requiredness::Optional,
         completeness: Completeness::PerItem,
         harm: Harm::Overstating,
         evidence: Evidence::Binary,
@@ -255,7 +255,7 @@ pub(crate) const WRITES: &[CapabilityWrite] = &[
         target: "JSON limit.output",
         site: "agents.rs opencode_provider_json",
         capability: "output",
-        requiredness: Requiredness::Required,
+        requiredness: Requiredness::Optional,
         completeness: Completeness::PerItem,
         harm: Harm::Overstating,
         evidence: Evidence::Binary,

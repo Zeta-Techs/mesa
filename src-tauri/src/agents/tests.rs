@@ -2708,19 +2708,27 @@ fn opencode_inject_json_registers_every_profile_model() {
 
 #[test]
 fn opencode_inject_marks_thinking_model_reasoning() {
-    // 注册表命中思考模型 → models 条目带 reasoning: true
+    // 注册表声明层命中思考模型 → models 条目带 reasoning: true；仅名字含 thinking 关键词的未知模型不猜；
+    // 多档思考档串（low,medium,high@medium）写入内联 options 只取默认档 medium
     let mut p = profile("opencode", Some("https://openrouter.ai/api/v1"));
-    p.models = vec!["deepseek-reasoner".into()];
-    let plan = launch_plan(&p, None, None).unwrap();
+    p.models = vec!["deepseek-reasoner".into(), "custom-thinking-lite".into()];
+    p.request_policy.reasoning_effort = Some("low,medium,high@medium".into());
+    let plan = launch_plan(&p, None, Some("deepseek-reasoner")).unwrap();
     let (_, v) = plan
         .env
         .iter()
         .find(|(k, _)| k == "OPENCODE_CONFIG_CONTENT")
         .unwrap();
     let config: serde_json::Value = serde_json::from_str(v).unwrap();
+    let models = &config["provider"]["ccode"]["models"];
+    assert_eq!(models["deepseek-reasoner"]["reasoning"], true);
     assert_eq!(
-        config["provider"]["ccode"]["models"]["deepseek-reasoner"]["reasoning"],
-        true
+        models["deepseek-reasoner"]["options"]["reasoningEffort"],
+        "medium"
+    );
+    assert!(
+        models["custom-thinking-lite"].get("reasoning").is_none(),
+        "仅含关键词的未知模型不声明 reasoning: true"
     );
 }
 
