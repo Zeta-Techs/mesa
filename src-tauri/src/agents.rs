@@ -3770,6 +3770,161 @@ fn plausible_codex_instructions(text: &str) -> bool {
     text.len() > 2000 && text.contains("apply_patch")
 }
 
+/// 本机 Codex 这一版自带的官方模型条目里有没有这个模型名：有就以官方条目为底。官方新模型（如 gpt-6.2-sol）
+/// 按自己那句短提示词训练、不收 verbosity，套通用模板（上一代的两万字提示词 + verbosity=low）同一个模型在 Mesa 里
+/// 明显变笨（2026-11-18 用户：同一中转画「鹈鹕骑自行车」，Codex 客户端正常、Mesa 里粗糙；会话首行核对两边只差提示词）
+#[cfg(not(test))]
+fn codex_bundled_entry(model: &str) -> Option<serde_json::Value> {
+    // 一份目录几十个条目都要查一遍：本进程按版本记住，不每条都读缓存文件
+    static MEMO: std::sync::Mutex<Option<((u32, u32, u32), Option<Vec<serde_json::Value>>)>> =
+        std::sync::Mutex::new(None);
+    let version = codex_cli_version()?;
+    let mut memo = MEMO.lock().ok()?;
+    if memo.as_ref().map(|(v, _)| *v) != Some(version) {
+        *memo = Some((version, local_codex_bundled_models(version)));
+    }
+    let models = memo.as_ref()?.1.as_ref()?;
+    models.iter().find(|m| m["slug"] == model).cloned()
+}
+
+/// 测试态不经进程级记忆（并行的测试线程各自钉版本与条目，记忆会串）
+#[cfg(test)]
+fn codex_bundled_entry(model: &str) -> Option<serde_json::Value> {
+    let models = local_codex_bundled_models(codex_cli_version()?)?;
+    models.into_iter().find(|m| m["slug"] == model)
+}
+
+/// 官方条目缓存在 `<配置根>/catalogs/codex-bundled-models-<版本>.json`，每个版本只取一次；旧版本的缓存顺手删掉
+#[cfg(not(test))]
+fn local_codex_bundled_models(version: (u32, u32, u32)) -> Option<Vec<serde_json::Value>> {
+    let dir = crate::storage::config_root()?.join("catalogs");
+    let name = format!("codex-bundled-models-{}.{}.{}.json", version.0, version.1, version.2);
+    let cache = dir.join(&name);
+    if let Some(models) = std::fs::read_to_string(&cache).ok().and_then(|t| codex_bundled_models_from(&t)) {
+        return Some(models);
+    }
+    let text = extract_codex_bundled_models()?;
+    let models = codex_bundled_models_from(&text)?;
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("codex-bundled-models-") && n != name {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let _ = crate::profiles::atomic_write(&cache, &text);
+    Some(models)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// 单测钉住「本机 Codex 自带的官方条目」：默认没有（结果与开发机装没装、装哪版无关）
+    static CODEX_BUNDLED_FOR_TEST: std::cell::RefCell<Option<Vec<serde_json::Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn local_codex_bundled_models(_version: (u32, u32, u32)) -> Option<Vec<serde_json::Value>> {
+    CODEX_BUNDLED_FOR_TEST.with(|c| c.borrow().clone())
+}
+
+/// `codex debug models --bundled`：只渲染随二进制打包的目录、不联网；在一次性的空 CODEX_HOME 里跑，
+/// 不受用户 config.toml 里 model_catalog_json 的影响。输出几百 KB，写进文件再读（管道缓冲装不下会卡住子进程）
+#[cfg_attr(test, allow(dead_code))]
+fn extract_codex_bundled_models() -> Option<String> {
+    let bin = resolve_binary("codex")?;
+    let scratch = crate::storage::config_root()?
+        .join("tmp")
+        .join(format!("codex-models-{}", uuid::Uuid::new_v4()));
+    let home = scratch.join("home");
+    let result = (|| {
+        std::fs::create_dir_all(&home).ok()?;
+        let out_path = scratch.join("models.json");
+        let out = std::fs::File::create(&out_path).ok()?;
+        let mut child = crate::process::background_command(&bin)
+            .args(["debug", "models", "--bundled"])
+            .current_dir(&scratch)
+            .env("CODEX_HOME", &home)
+            .stdin(std::process::Stdio::null())
+            .stdout(out)
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break,
+                Ok(Some(_)) | Err(_) => return None,
+                Ok(None) if std::time::Instant::now() >= deadline => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(30)),
+            }
+        }
+        std::fs::read_to_string(&out_path).ok()
+    })();
+    let _ = std::fs::remove_dir_all(&scratch);
+    if result.is_none() {
+        eprintln!("[codex] 没取到本机 Codex 自带的模型条目，模型清单一律用通用模板");
+    }
+    result
+}
+
+/// `{"models":[…]}` → 条目列表；每条都得有 slug 和非空 base_instructions（Codex 拒收缺它的目录），否则整份不收
+fn codex_bundled_models_from(text: &str) -> Option<Vec<serde_json::Value>> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let models = v["models"].as_array()?.clone();
+    let ok = !models.is_empty()
+        && models.iter().all(|m| {
+            m["slug"].as_str().is_some_and(|s| !s.is_empty())
+                && m["base_instructions"].as_str().is_some_and(|s| !s.trim().is_empty())
+        });
+    ok.then_some(models)
+}
+
+/// 以官方条目为底的目录条目：提示词、思考档、verbosity、截断口径都照官方；只改显示名，
+/// 中转接不住的官方专属能力照通用模板同样关掉（hosted 搜索、ChatGPT 的服务档、freeform apply_patch）
+fn codex_entry_from_bundled(
+    mut entry: serde_json::Value,
+    profile_name: &str,
+    model: &str,
+    gateway_id: Option<&str>,
+) -> serde_json::Value {
+    entry["display_name"] = serde_json::json!(format!("{profile_name} · {model}"));
+    entry["visibility"] = serde_json::json!("list");
+    entry["supports_search_tool"] = serde_json::json!(false);
+    entry["service_tiers"] = serde_json::json!([]);
+    if entry.get("additional_speed_tiers").is_some() {
+        entry["additional_speed_tiers"] = serde_json::json!([]);
+    }
+    if let Some(obj) = entry.as_object_mut() {
+        obj.remove("apply_patch_tool_type");
+    }
+    // 网关声明了别的窗口就以网关为准；官方按官方窗口算好的压缩点一并去掉，让 Codex 按新窗口重算
+    if let Some(ctx) = crate::model_registry::model_context_size_declared_for(model, gateway_id) {
+        entry["context_window"] = serde_json::json!(ctx);
+        entry["max_context_window"] = serde_json::json!(ctx);
+        if let Some(obj) = entry.as_object_mut() {
+            obj.remove("auto_compact_token_limit");
+        }
+    }
+    if cfg!(windows) {
+        let note = CODEX_WINDOWS_PATCH_NOTE.replace("\r\n", "\n");
+        for at in ["/base_instructions", "/model_messages/instructions_template"] {
+            if let Some(text) = entry.pointer_mut(at) {
+                if let Some(s) = text.as_str() {
+                    *text = serde_json::json!(format!("{}\n\n{}", s.trim_end(), note));
+                }
+            }
+        }
+    }
+    entry
+}
+
 /// 单个 catalog 条目：字段拼写与标量值照抄 codex-rs/models-manager/models.json 的打包条目
 /// （reasoning levels 使用 Codex 当前完整档位集——cc-switch 的 catalog 同样全量模板
 /// （自家资源 codex_native_responses_template.json），模型不支持时端点忽略 effort，口径稳妥；
@@ -3779,6 +3934,9 @@ pub(crate) fn codex_catalog_entry_for(
     model: &str,
     gateway_id: Option<&str>,
 ) -> serde_json::Value {
+    if let Some(official) = codex_bundled_entry(model) {
+        return codex_entry_from_bundled(official, profile_name, model, gateway_id);
+    }
     let mut entry = serde_json::json!({
         "slug": model,
         "display_name": format!("{profile_name} · {model}"),

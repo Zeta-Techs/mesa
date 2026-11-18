@@ -2759,6 +2759,69 @@ fn codex_catalog_contains_every_model_with_template_shape() {
 }
 
 #[test]
+fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
+    let official = serde_json::json!({
+        "slug": "gpt-6.2-sol",
+        "display_name": "gpt-6.2-sol",
+        "default_reasoning_level": "high",
+        "shell_type": "unified_exec",
+        "visibility": "list",
+        "service_tiers": [{"id": "priority"}],
+        "additional_speed_tiers": ["fast"],
+        "model_messages": {"instructions_template": "You are Codex, a coding agent."},
+        "support_verbosity": false,
+        "default_verbosity": null,
+        "apply_patch_tool_type": "freeform",
+        "truncation_policy": {"mode": "bytes", "limit": 10000},
+        "context_window": 272000,
+        "auto_compact_token_limit": 244800,
+        "supports_search_tool": true,
+        "base_instructions": "You are Codex, a coding agent.",
+    });
+    let shipped = codex_bundled_models_from(&serde_json::json!({ "models": [official] }).to_string());
+    assert!(shipped.is_some());
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(Some((0, 169, 1))));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = shipped);
+    let v = codex_catalog_json("中转", &["gpt-6.2-sol".into(), "kimi-k3".into()]);
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(None));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = None);
+    let e = &v["models"][0];
+    assert_eq!(e["display_name"], "中转 · gpt-6.2-sol");
+    // 提示词、思考档、verbosity、截断照官方，不套上一代的长提示词与 verbosity=low
+    assert_eq!(e["default_reasoning_level"], "high");
+    assert_eq!(e["support_verbosity"], false);
+    assert!(e["default_verbosity"].is_null());
+    assert_eq!(e["truncation_policy"]["mode"], "bytes");
+    assert_eq!(e["shell_type"], "unified_exec");
+    let bi = e["base_instructions"].as_str().unwrap();
+    assert!(bi.starts_with("You are Codex, a coding agent."));
+    assert_eq!(bi.contains("shell: \"bash\""), cfg!(windows), "Windows 补充只在 Windows 上带");
+    assert_eq!(e["context_window"], 272000);
+    assert_eq!(e["auto_compact_token_limit"], 244800);
+    // 中转接不住的官方专属能力照通用模板关掉
+    assert_eq!(e["supports_search_tool"], false);
+    assert_eq!(e["service_tiers"], serde_json::json!([]));
+    assert_eq!(e["additional_speed_tiers"], serde_json::json!([]));
+    assert!(e.get("apply_patch_tool_type").is_none());
+    // 官方没有的模型照旧走通用模板
+    let other = &v["models"][1];
+    assert_eq!(other["default_verbosity"], "low");
+    assert!(other["base_instructions"].as_str().unwrap().starts_with("You are a coding agent running in the Codex CLI"));
+    // 缺 base_instructions 的输出整份不收（Codex 会拒收这样的目录）
+    assert!(codex_bundled_models_from(r#"{"models":[{"slug":"x"}]}"#).is_none());
+    assert!(codex_bundled_models_from("not json").is_none());
+}
+
+/// 手动跑：真起本机 codex 取自带的模型条目（不联网、临时目录用完即删）。`cargo test --lib codex_bundled_models_extract_real -- --ignored --nocapture`
+#[test]
+#[ignore = "需要本机装着 codex"]
+fn codex_bundled_models_extract_real() {
+    let text = extract_codex_bundled_models().expect("取不到");
+    let models = codex_bundled_models_from(&text).expect("格式不对");
+    eprintln!("{:?}", models.iter().map(|m| m["slug"].as_str().unwrap_or("")).collect::<Vec<_>>());
+}
+
+#[test]
 fn codex_instructions_read_from_rollout_first_line() {
     let body = format!("You are a coding agent.\r\nUse `apply_patch`.\r\n{}", "x".repeat(3000));
     let meta = serde_json::json!({"type":"session_meta","payload":{"base_instructions":{"text": body}}});

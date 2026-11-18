@@ -218,6 +218,13 @@ surface(agent, modelId, gatewayId, slot, launchSelected: bool) → ControlSurfac
 
 catalog 条目不写 `apply_patch_tool_type`（freeform＝type=custom 工具会被原生 /responses 与 Anthropic 协议网关拒/丢，cc-switch 非代理档实证剥除）；编辑走既有 `shell_type: "shell_command"` 的 shell 版 apply_patch，能力不受影响。
 
+### 6.4 Codex 认得的官方模型名用官方条目（2026-11-18）
+
+中转上的模型名与本机 Codex 自带的官方模型一致（如 gpt-6.2-sol）时，catalog 条目以官方条目为底（`agents::codex_entry_from_bundled`）：提示词、`model_messages`、思考档、verbosity、截断口径、shell 类型、窗口都照官方，只改显示名，并照 §6.3 与通用模板同样关掉中转接不住的（hosted 搜索、`service_tiers` / `additional_speed_tiers` 清空、去 `apply_patch_tool_type`）；网关声明了别的窗口才改窗口并去掉官方算好的 `auto_compact_token_limit`。认不出的模型名照旧用通用模板（Codex 给未登记模型的默认提示词）。
+来源是 `codex debug models --bundled`（不联网，空 `CODEX_HOME` 里跑，不受用户 `model_catalog_json` 影响），按 Codex 版本缓存在 `<配置根>/catalogs/codex-bundled-models-<版本>.json`；取不到就全走通用模板。
+起因：新官方模型按自己的短提示词训练，套上一代的两万字提示词加 verbosity=low，同一中转同一模型在 Mesa 里明显写得少（2026-11-18 用户：画「鹈鹕骑自行车」，cc-switch 写官方条目的 Codex 客户端正常、Mesa 里粗糙）。
+未做：cc-switch 另从 `chatgpt.com/backend-api/codex/models` 拉最新官方条目（要 ChatGPT 登录，比随二进制打包的新，如 gpt-6.2-sol 服务端已是一句话提示词、不收 verbosity，0.169.1 打包的仍是长提示词 + low）；要做时照 `.reference/cc-switch` `codex_official_models.rs`：只读登录、绝不刷新令牌。
+
 ## 7. 逐模型策略是新维度，不是搬字段
 
 今日 `RequestPolicy` 是连接级单份（`profiles.rs`）。OpenCode 注入把同一份 `model_opts` 套到 `provider.ccode.models` 的每一个条目（`agents.rs` 约 436–442 行）。Codex 的 `model_reasoning_effort` 也是启动级一条。
