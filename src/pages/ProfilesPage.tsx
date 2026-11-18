@@ -170,6 +170,114 @@ import type {
   LaunchPlanPreviewDto,
 } from "../types";
 
+/** 按住拖排序（连接页的组 / 组内连接行、添加连接里的绑定模型共用）：返回拖动中的状态、起拖函数与每项的位移样式；
+ *  suppressClickRef 在松手那一刻为真，项上的点击处理据此不响应 */
+function useDragSort() {
+  /** 拖动中的那一项：scope = "groups"（拖组）或某个 Agent id（拖该组里的连接行） */
+  const [dragSort, setDragSort] = useState<{
+    scope: string;
+    id: string;
+    from: number;
+    target: number;
+    dy: number;
+    slots: { left: number; width: number }[];
+    settling: boolean;
+  } | null>(null);
+  const suppressClickRef = useRef(false);
+  /** 按住拖排序：动 6px 才进拖拽态（点按照常生效），跟手、其余项让位，松手吸附后落位（同侧栏项目树）。
+   *  组和组内连接行共用：listSelector 找容器、itemAttr 标出参与排序的项 */
+  function startDragSort(
+    e: React.PointerEvent,
+    scope: string,
+    id: string,
+    listSelector: string,
+    itemAttr: string,
+    onCommit: (from: number, to: number) => void,
+  ) {
+    if (e.button !== 0) return;
+    const startY = e.clientY;
+    const list = (e.currentTarget as HTMLElement).closest(listSelector);
+    let active = false;
+    let slots: { left: number; width: number }[] = [];
+    let from = 0;
+    let lastTarget = 0;
+    const cleanup = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    const finish = () => {
+      cleanup();
+      if (!active) return;
+      // 项上的按钮（官方登录 / ⋯ / 新版 / 编辑）跟着一起移动，松手常还在原按钮上：吞掉紧随的这一次 click
+      suppressClickRef.current = true;
+      const swallow = (ev: MouseEvent) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+      };
+      window.addEventListener("click", swallow, { capture: true, once: true });
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+        window.removeEventListener("click", swallow, { capture: true });
+      }, 0);
+      const target = lastTarget;
+      if (target === from) {
+        setDragSort(null);
+        return;
+      }
+      setDragSort((cur) =>
+        cur ? { ...cur, dy: tabDragSettleDx(cur.slots, from, target), settling: true } : null,
+      );
+      window.setTimeout(() => {
+        onCommit(from, target);
+        setDragSort(null);
+      }, 170);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(ev.clientY - startY) <= 6 || !list) return;
+        const els = Array.from(list.querySelectorAll<HTMLElement>(`[${itemAttr}]`));
+        if (els.length < 2) return;
+        active = true;
+        slots = els.map((el) => {
+          const r = el.getBoundingClientRect();
+          return { left: r.top, width: r.height };
+        });
+        from = Math.max(0, els.findIndex((el) => el.getAttribute(itemAttr) === id));
+        lastTarget = from;
+        window.getSelection()?.removeAllRanges();
+        document.body.style.userSelect = "none";
+        document.body.style.cursor = "grabbing";
+      }
+      const raw = ev.clientY - startY;
+      const target = tabDragTarget(slots, from, clampTabDragDx(slots, from, raw));
+      lastTarget = target;
+      setDragSort({ scope, id, from, target, dy: rubberbandTabDx(slots, from, raw), slots, settling: false });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+  /** 拖动中某一项的位移与动效类：源项跟手，夹在中间的让位（高矮不一，见 tabDragShift） */
+  function dragSortStyle(scope: string, id: string, index: number) {
+    if (!dragSort || dragSort.scope !== scope) return { style: undefined, cls: "", dragging: false };
+    const dragging = dragSort.id === id;
+    const shift = dragging
+      ? dragSort.dy
+      : tabDragShift(dragSort.slots, dragSort.from, dragSort.target, index);
+    return {
+      style: { transform: `translateY(${shift}px)` },
+      cls: dragging
+        ? `relative z-10 ${dragSort.settling ? "transition-transform duration-150 ease-out" : ""}`
+        : "transition-transform duration-150 ease-out",
+      dragging,
+    };
+  }
+  return { dragSort, startDragSort, dragSortStyle, suppressClickRef };
+}
+
 /** 添加 / 编辑连接整页面板（PagePanel，2026-11-01 由弹层改来；导出供 UI 测试挂载） */
 export function ProfileModal({
   initial,
@@ -241,6 +349,8 @@ export function ProfileModal({
     () => !initial && !useAppStore.getState().settings?.defaultProfiles?.[opening?.agent ?? "claude-code"],
   );
   const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
+  // 已绑模型名单按住拖排序（2026-11-18 用户：添加完的模型顺序应能手动拖动）
+  const modelDrag = useDragSort();
   const [form, setForm] = useState({
     agent: initial?.agent ?? opening?.agent ?? "claude-code",
     name: initial?.name ?? opening?.gateway?.name ?? "",
@@ -541,6 +651,23 @@ export function ProfileModal({
       return;
     }
     addModelToList(v);
+  }
+
+  /** 名单行按住拖：from / to 是在已填模型里的位置（空行不参与、留在原处）；Claude 同「设为默认」先把别名映射转成显式 */
+  function moveFilledModel(from: number, to: number) {
+    const filledAt = form.models.flatMap((m, i) => (m.trim() ? [i] : []));
+    const filled = filledAt.map((i) => form.models[i]);
+    const [moved] = filled.splice(from, 1);
+    filled.splice(to, 0, moved);
+    const models = [...form.models];
+    filledAt.forEach((at, k) => {
+      models[at] = filled[k];
+    });
+    const roleModels =
+      form.agent === "claude-code" && form.accountType === "api"
+        ? explicitClaudeRoles(form.models, form.roleModels)
+        : form.roleModels;
+    setForm({ ...form, roleModels, models });
   }
 
   /** 名单行「设为默认」：挪到第一个（Claude 先把别名映射转成显式，挪顺序不改别名指向） */
@@ -1543,8 +1670,10 @@ export function ProfileModal({
                 const firstFilled = slots.findIndex((m) => m.trim());
                 const claudeMapped = form.agent === "claude-code" && form.accountType === "api";
                 if (slots.length === 0) return null;
+                const draggable = filled > 1;
+                let filledRank = -1;
                 return (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5" data-model-list>
                     {max != null && filled > max && (
                       <div className="mb-1 flex items-center gap-2 px-1 text-xs text-warn-text">
                         <span>选择器只显示前 {max} 个，另有 {filled - max} 个不会进 CLI</span>
@@ -1568,9 +1697,20 @@ export function ProfileModal({
                     {slots.map((m, i) => {
                       const isTrailingEmpty = !m.trim() && i === slots.length - 1;
                       const isPrimary = i === firstFilled && !claudeMapped && Boolean(m.trim());
+                      // 只有填了模型的行参与拖动；位置按已填行数，空行不算
+                      const rank = m.trim() ? ++filledRank : -1;
+                      const rowDrag = rank >= 0 ? modelDrag.dragSortStyle("models", String(rank), rank) : null;
                       return (
                         <div
                           key={i}
+                          data-model-row={rank >= 0 ? String(rank) : undefined}
+                          style={rowDrag?.style}
+                          // 输入框占了大半行：从行首序号 / 握把或其余空白处按住上下拖，输入框和按钮照常用
+                          onPointerDown={(e) => {
+                            if (!draggable || rank < 0) return;
+                            if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+                            modelDrag.startDragSort(e, "models", String(rank), "[data-model-list]", "data-model-row", moveFilledModel);
+                          }}
                           title={(() => {
                             const c = capabilities.find(
                               (item) => item.model === m.trim(),
@@ -1592,7 +1732,9 @@ export function ProfileModal({
                             const ctx = contextLabel(c.context);
                             return ctx ? `${flags.join(" · ")} · 上下文 ${ctx}` : flags.join(" · ");
                           })()}
-                          className={`group flex items-center gap-2 rounded-md border px-2.5 py-1.5 transition-colors ${
+                          className={`group relative flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
+                            rowDrag?.dragging ? "shadow-md" : "transition-colors"
+                          } ${rowDrag?.cls ?? ""} ${
                             isTrailingEmpty
                               ? "border-dashed border-hairline bg-canvas/40 hover:border-field focus-within:border-solid focus-within:border-field focus-within:bg-canvas"
                               : isPrimary
@@ -1600,7 +1742,20 @@ export function ProfileModal({
                                 : "border-hairline bg-canvas hover:border-field focus-within:border-field"
                           }`}
                         >
-                          <span className="w-5 shrink-0 text-right font-mono text-micro tabular-nums text-l4">
+                          {draggable && rank >= 0 && (
+                            <span
+                              aria-hidden
+                              className="pointer-events-none absolute inset-y-0 left-0 flex w-2.5 items-center justify-center text-l4 opacity-0 transition-opacity group-hover:opacity-100"
+                            >
+                              <GripVertical size={12} strokeWidth={1.8} />
+                            </span>
+                          )}
+                          <span
+                            title={draggable && rank >= 0 ? "按住上下拖，调整模型顺序（#1 为启动默认）" : undefined}
+                            className={`w-5 shrink-0 text-right font-mono text-micro tabular-nums text-l4 ${
+                              draggable && rank >= 0 ? (modelDrag.dragSort ? "cursor-grabbing" : "cursor-grab") : ""
+                            }`}
+                          >
                             {isTrailingEmpty ? <Plus aria-hidden="true" className="ml-auto size-3" /> : `#${i + 1}`}
                           </span>
                           <input
@@ -3284,17 +3439,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [groupOrder, setGroupOrder] = useState<string[] | null>(() => loadAgentGroupOrder());
   // 组内连接顺序（同日用户：每个连接也可自定义排序）：按 Agent 分存，行按住拖或 ⋯ 上移 / 下移
   const [profileOrder, setProfileOrder] = useState<Record<string, string[]>>(() => loadProfileOrder());
-  /** 拖动中的那一项：scope = "groups"（拖组）或某个 Agent id（拖该组里的连接行） */
-  const [dragSort, setDragSort] = useState<{
-    scope: string;
-    id: string;
-    from: number;
-    target: number;
-    dy: number;
-    slots: { left: number; width: number }[];
-    settling: boolean;
-  } | null>(null);
-  const suppressHeaderClickRef = useRef(false);
+  const { dragSort, startDragSort, dragSortStyle, suppressClickRef: suppressHeaderClickRef } = useDragSort();
   function commitGroupMove(visibleIds: string[], from: number, to: number) {
     const full = orderAgentIds(
       AGENTS.map((a) => a.id),
@@ -3324,98 +3469,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     );
     return order.map((id) => own.find((p) => p.id === id)!);
   }
-  /** 按住拖排序：动 6px 才进拖拽态（点按照常生效），跟手、其余项让位，松手吸附后落位（同侧栏项目树）。
-   *  组和组内连接行共用：listSelector 找容器、itemAttr 标出参与排序的项 */
-  function startDragSort(
-    e: React.PointerEvent,
-    scope: string,
-    id: string,
-    listSelector: string,
-    itemAttr: string,
-    onCommit: (from: number, to: number) => void,
-  ) {
-    if (e.button !== 0) return;
-    const startY = e.clientY;
-    const list = (e.currentTarget as HTMLElement).closest(listSelector);
-    let active = false;
-    let slots: { left: number; width: number }[] = [];
-    let from = 0;
-    let lastTarget = 0;
-    const cleanup = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-    const finish = () => {
-      cleanup();
-      if (!active) return;
-      // 项上的按钮（官方登录 / ⋯ / 新版 / 编辑）跟着一起移动，松手常还在原按钮上：吞掉紧随的这一次 click
-      suppressHeaderClickRef.current = true;
-      const swallow = (ev: MouseEvent) => {
-        ev.stopPropagation();
-        ev.preventDefault();
-      };
-      window.addEventListener("click", swallow, { capture: true, once: true });
-      window.setTimeout(() => {
-        suppressHeaderClickRef.current = false;
-        window.removeEventListener("click", swallow, { capture: true });
-      }, 0);
-      const target = lastTarget;
-      if (target === from) {
-        setDragSort(null);
-        return;
-      }
-      setDragSort((cur) =>
-        cur ? { ...cur, dy: tabDragSettleDx(cur.slots, from, target), settling: true } : null,
-      );
-      window.setTimeout(() => {
-        onCommit(from, target);
-        setDragSort(null);
-      }, 170);
-    };
-    const onMove = (ev: PointerEvent) => {
-      if (!active) {
-        if (Math.abs(ev.clientY - startY) <= 6 || !list) return;
-        const els = Array.from(list.querySelectorAll<HTMLElement>(`[${itemAttr}]`));
-        if (els.length < 2) return;
-        active = true;
-        slots = els.map((el) => {
-          const r = el.getBoundingClientRect();
-          return { left: r.top, width: r.height };
-        });
-        from = Math.max(0, els.findIndex((el) => el.getAttribute(itemAttr) === id));
-        lastTarget = from;
-        window.getSelection()?.removeAllRanges();
-        document.body.style.userSelect = "none";
-        document.body.style.cursor = "grabbing";
-      }
-      const raw = ev.clientY - startY;
-      const target = tabDragTarget(slots, from, clampTabDragDx(slots, from, raw));
-      lastTarget = target;
-      setDragSort({ scope, id, from, target, dy: rubberbandTabDx(slots, from, raw), slots, settling: false });
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", finish);
-  }
-  /** 拖动中某一项的位移与动效类：源项跟手，夹在中间的让位（高矮不一，见 tabDragShift） */
-  function dragSortStyle(scope: string, id: string, index: number) {
-    if (!dragSort || dragSort.scope !== scope) return { style: undefined, cls: "", dragging: false };
-    const dragging = dragSort.id === id;
-    const shift = dragging
-      ? dragSort.dy
-      : tabDragShift(dragSort.slots, dragSort.from, dragSort.target, index);
-    return {
-      style: { transform: `translateY(${shift}px)` },
-      cls: dragging
-        ? `relative z-10 ${dragSort.settling ? "transition-transform duration-150 ease-out" : ""}`
-        : "transition-transform duration-150 ease-out",
-      dragging,
-    };
-  }
-
   const [collapsedGroups, setCollapsedGroups] =
     useState<Set<string>>(loadCollapsedGroups);
   useEffect(() => {
@@ -4556,7 +4609,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               </button>
               <button
                 type="button"
-                onClick={() => setModal({ initial: null })}
+                // 左栏正看着某家 Agent：默认就加这家的连接（2026-11-18 用户：原先一律落到 Claude Code）
+                onClick={() =>
+                  setModal({
+                    initial: null,
+                    presetAgent: activePane !== "all" && activePane !== "image" ? activePane : undefined,
+                  })
+                }
                 className={primaryActionClass}
               >
                 ＋ 添加连接
