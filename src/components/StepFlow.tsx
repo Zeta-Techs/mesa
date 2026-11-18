@@ -4078,15 +4078,17 @@ export default function StepFlow({
         ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave), afterSaveSectionOpen, setAfterSaveSectionOpen],
       ] as const).map(([title, line, nodes, isOpen, setOpen]) => nodes.length > 0 && (
         <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"} className="mt-3">
-          <div className="flex items-center gap-2 pl-[1.875rem]">
-            {/* pl-[1.875rem] = 节点 pl-1.5 + 序号列 w-4 + 间距 gap-2，分区签与步骤名同一左缘 */}
+          <div className="flex items-center pl-1.5">
+            {/* 折叠箭头占序号那一列（-ml-1 + pl-1 抵消，箭头框与进度圆圈同列），文字与步骤名同一左缘，同「AI 做完后…」折叠行 */}
             <button
               type="button"
               aria-expanded={isOpen}
               onClick={() => setOpen((v) => !v)}
-              className="inline-flex min-w-0 items-center gap-1.5 rounded-md bg-inset/65 px-2 py-0.5 text-micro font-medium text-l3 transition-colors hover:bg-hover hover:text-l1"
+              className="-ml-1 inline-flex min-w-0 items-center gap-2 rounded-md bg-inset/65 py-0.5 pl-1 pr-2 text-micro font-medium text-l3 transition-colors hover:bg-hover hover:text-l1"
             >
-              <FoldMark open={isOpen} />
+              <span className="flex w-4 shrink-0 items-center justify-center">
+                <FoldMark open={isOpen} />
+              </span>
               <span>{title}（{nodes.length}）</span>
               {!isOpen && (
                 <span className="truncate font-normal text-l4">
