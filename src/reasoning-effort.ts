@@ -9,8 +9,8 @@ const KNOWN = new Set([
   "xhigh",
   "max",
   "ultra",
-  "on",
   "off",
+  "on",
 ]);
 
 export function parseReasoningEffort(raw: string | null | undefined): {

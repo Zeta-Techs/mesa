@@ -849,7 +849,7 @@ static AGENT_SPECS: &[AgentSpec] = &[
         // /effort <level> 带参直切（0.36.1 实证；档位随模型，K3 等布尔模型只有 on/off，
         // 不支持的档会回报 Available 列表——kimi 没有 acceptsInput 的 /thinking 选择器是它的
         // TUI 内交互形态，/effort 才是命令行式入口）
-        effort_levels: Some((&["on", "off"], "/effort {level}")),
+        effort_levels: Some((&["off", "on"], "/effort {level}")),
         // kitty 键盘协议：kimi TUI 启动即 push flags（\x1b[>7u），之后只认 CSI-u 形式的
         // Enter（\x1b[13u），普通 \r 不提交（2026-08-17 pty 探针实证）——xterm.js 不支持
         // kitty 协议，Mesa 侧须把 Enter 改写成 CSI-u
@@ -1256,7 +1256,7 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
 }
 
 const KNOWN_REASONING_EFFORTS: [&str; 10] = [
-    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "on", "off",
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "off", "on",
 ];
 
 /// 网关逐模型思考档：逗号分隔的多档（会话里可切）+ 可选 `@默认档`。
