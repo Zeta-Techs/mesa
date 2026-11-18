@@ -150,6 +150,24 @@ function writePaywallListOpen(root: string, open: boolean): void {
     /* 隐私模式写不进就只靠本次 */
   }
 }
+/** 「保存后可做」分区的手动开合（2026-11-18 用户实测：收起后切页回来又展开了——
+ *  卸载重挂时按「已保存就展开」重新取初值）：人点过就按项目 + 步骤记住，没点过才按状态默认 */
+const afterSaveOpenKey = (root: string, stepName: string) => `ccode.afterSaveOpen:${root}\n${stepName}`;
+function readAfterSaveOpen(root: string, stepName: string): boolean | null {
+  try {
+    const v = localStorage.getItem(afterSaveOpenKey(root, stepName));
+    return v === "1" ? true : v === "0" ? false : null;
+  } catch {
+    return null;
+  }
+}
+function writeAfterSaveOpen(root: string, stepName: string, open: boolean): void {
+  try {
+    localStorage.setItem(afterSaveOpenKey(root, stepName), open ? "1" : "0");
+  } catch {
+    /* 隐私模式写不进就只靠本次 */
+  }
+}
 
 /** 切去文件页会卸掉任务页：记住刚才那一行和清单滚动，回来对上。 */
 const toFetchFocusKey = (root: string) => `ccode.toFetchFocus:${root}`;
@@ -980,10 +998,21 @@ export default function StepFlow({
   const [laterOpen, setLaterOpen] = useState(false);
   /** 工具行「⋯」：任务书和方案研讨收在里面，点开才在同一行露出（2026-11-16 用户拍板，行上只留商量一个入口） */
   const [talkMoreOpen, setTalkMoreOpen] = useState(false);
-  const [afterSaveSectionOpen, setAfterSaveSectionOpen] = useState(() => runStatus === "done");
+  const [afterSaveSectionOpen, setAfterSaveSectionOpen] = useState(
+    () => readAfterSaveOpen(projectPath, step.name) ?? runStatus === "done",
+  );
+  // 只在这一轮刚保存（状态变成 done 的那一下）自动展开；挂载时不重判，免得盖掉人收起的选择
+  const prevRunStatusRef = useRef(runStatus);
   useEffect(() => {
-    if (runStatus === "done") setAfterSaveSectionOpen(true);
+    if (runStatus === "done" && prevRunStatusRef.current !== "done") setAfterSaveSectionOpen(true);
+    prevRunStatusRef.current = runStatus;
   }, [runStatus]);
+  const toggleAfterSaveSection = (fn: (v: boolean) => boolean) =>
+    setAfterSaveSectionOpen((v) => {
+      const next = fn(v);
+      writeAfterSaveOpen(projectPath, step.name, next);
+      return next;
+    });
   const paywallDropRef = useRef<HTMLDivElement>(null);
   // 点「浏览器」或已存标题后离开，回来要立刻找到刚才那行：主题强调色框，
   // 点下一篇才换/消失（不按时间收）。行号进 sessionStorage——切文件页会卸任务页。
@@ -4075,7 +4104,7 @@ export default function StepFlow({
           不画横贯全卡的实线/虚线（去线条化），改用轻量小节签区分 */}
       {([
         ["可选", "solid", flow.nodes.filter((n) => n.section === "optional" && !n.afterSave), optSectionOpen, setOptSectionOpen],
-        ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave), afterSaveSectionOpen, setAfterSaveSectionOpen],
+        ["保存后可做", "dashed", flow.nodes.filter((n) => n.section === "optional" && n.afterSave), afterSaveSectionOpen, toggleAfterSaveSection],
       ] as const).map(([title, line, nodes, isOpen, setOpen]) => nodes.length > 0 && (
         <div key={title} data-step-section={line === "dashed" ? "after-save" : "optional"} className="mt-3">
           <div className="flex items-center pl-1.5">
