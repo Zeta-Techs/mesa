@@ -80,10 +80,11 @@ function fetchImage(path: string, cwdHint: string | null | undefined): Promise<s
   // 二进制通道直接拿字节（不经 base64 + JSON 在主线程解析），上屏前先在后台解码好：
   // 原先首次切到带图的会话，解析几 MB 字符串 + 首帧同步解码大图会顿一下（2026-10-31 用户）
   const p = Promise.all([
-    invoke<ArrayBuffer>("read_image_raw", { path, cwdHint: cwdHint ?? null }),
+    invoke<unknown>("read_image_raw", { path, cwdHint: cwdHint ?? null }),
     fileStamp(path, cwdHint),
   ])
-    .then(async ([buf, stamp]) => {
+    .then(async ([raw, stamp]) => {
+      const buf = rawIpcBytes(raw);
       const url = URL.createObjectURL(new Blob([buf], { type: imageMime(path) }));
       await predecode(url);
       lru.set(path, url, buf.byteLength);
@@ -93,6 +94,18 @@ function fetchImage(path: string, cwdHint: string | null | undefined): Promise<s
     .finally(() => inflight.delete(key));
   inflight.set(key, p);
   return p;
+}
+
+/**
+ * 后端 tauri::ipc::Response 的原始字节：自定义协议通道到前端是 ArrayBuffer；Mac 上这条通道失败过一次，
+ * Tauri 就退回 postMessage，同样的字节变成数字数组（tauri ipc/protocol.rs format_result）。
+ * 数组直接塞进 Blob 存的是「137,80,78,…」这串字，图片卡成了「?」（2026-11-18 打包版用户实例）
+ */
+export function rawIpcBytes(raw: unknown): ArrayBuffer | Uint8Array {
+  if (raw instanceof ArrayBuffer) return raw;
+  if (ArrayBuffer.isView(raw)) return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+  if (Array.isArray(raw)) return Uint8Array.from(raw as number[]);
+  throw new Error("读取图片失败：后端返回的不是字节");
 }
 
 /** 按扩展名给 mime（与后端 image_mime_for 同表；svg 必须带对类型才画得出） */
