@@ -414,6 +414,15 @@ test("斜杠命令的结果行（2026-11-11 实测屏）：认得出就收尾，
     ["Model changed to e2e-picked low for this session only"],
   );
   assert.deepEqual(
+    slashResultLines(
+      "codex",
+      "/model --reasoning ultra",
+      ["• Selected gpt-6.2-sol ultra for the next new turn in this conversation"],
+      null,
+    ),
+    ["Selected gpt-6.2-sol ultra for the next new turn in this conversation"],
+  );
+  assert.deepEqual(
     slashResultLines("agy", "/model mesa/gemini-2.5-pro", ["  ⎿  Model set to mesa/gemini-2.5-pro"], null),
     ["Model set to mesa/gemini-2.5-pro"],
   );

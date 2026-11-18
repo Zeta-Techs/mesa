@@ -434,33 +434,42 @@ export default function KickoffConfirmDialog({
     }
   }, [stepBinding?.effort, stepBinding?.profileId, profileId]);
   const [effortInjectable, setEffortInjectable] = useState(false);
+  const [comboLevels, setComboLevels] = useState<string[]>([]);
   useEffect(() => {
-    if (!profileId || !model.trim()) {
+    if (!profileId) {
       setEffortInjectable(false);
+      setComboLevels([]);
       return;
     }
     let stale = false;
-    invoke<{ injectEffortAllowed?: boolean }>("combo_surface", {
+    invoke<{ injectEffortAllowed?: boolean; effortLevels?: string[] }>("combo_surface", {
       profileId,
-      model: model.trim(),
+      model: model.trim() || null,
     })
       .then((c) => {
-        if (!stale) setEffortInjectable(c.injectEffortAllowed === true);
+        if (!stale) {
+          setEffortInjectable(c.injectEffortAllowed === true);
+          setComboLevels(Array.isArray(c.effortLevels) ? c.effortLevels : []);
+        }
       })
       .catch(() => {
-        if (!stale) setEffortInjectable(false);
+        if (!stale) {
+          setEffortInjectable(false);
+          setComboLevels([]);
+        }
       });
     return () => {
       stale = true;
     };
   }, [profileId, model]);
-  // 档位来源：agent 规格的 effort 档表（claude/qwen/kimi 实证闭集）；
-  // 只有注入通道、没有原生档表的 agent（codex 配置注入）给通用三档
+  // 档位来源：优先 combo_surface 按模型求交出的档位表（如 Codex gpt-6.2-sol 的 low..ultra、Antigravity 按家族定档），
+  // 退回 agent 规格的原生档表（claude/qwen/kimi 实证闭集）或通用三档
   const effortLevels = useMemo(() => {
+    if (comboLevels.length > 0) return comboLevels;
     const spec = agents.find((a) => a.id === agentId)?.effort;
     return spec?.levels?.length ? spec.levels : ["low", "medium", "high"];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentId, agents]);
+  }, [comboLevels.join(","), agentId, agents]);
 
   // 这一步用哪一档权限（2026-11-06 用户拍板，推翻 2026-09-15「不做成选项」）：AI 跑一步要很久、人常走开，
   // 停在审批上就白等；默认帮我批准，完全访问要再确认、不记成项目默认。这家没有原生权限参数的不给选（按本机设置）

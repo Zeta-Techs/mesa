@@ -2765,7 +2765,7 @@ fn codex_catalog_contains_every_model_with_template_shape() {
         .iter()
         .filter_map(|l| l["effort"].as_str())
         .collect();
-    assert_eq!(efforts, ["low", "medium", "high", "xhigh", "ultra", "max"]);
+    assert_eq!(efforts, ["low", "medium", "high", "xhigh", "max", "ultra"]);
     // 能力字段：有效上下文 95%（自动压缩阈值）、如实声明无 search tool
     assert_eq!(e["effective_context_window_percent"], 95);
     assert_eq!(e["supports_search_tool"], false);
@@ -2879,6 +2879,9 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     for (name, want) in [
         ("gpt-6.2-sol-20261101", Some("sol")),
         ("openai/GPT-6.2-sol", Some("sol")),
+        ("gpt-6.2sol", Some("sol")),
+        ("gpt6.2sol", Some("sol")),
+        ("openai/gpt-6.2sol-20261101", Some("sol")),
         ("gpt-6-luna", Some("six")),
         ("gpt-5.5", None),
     ] {
@@ -2890,6 +2893,98 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     // 一条有效条目都没剩时返回 None
     assert!(codex_bundled_models_from(r#"{"models":[{"slug":"x"}]}"#).is_none());
     assert!(codex_bundled_models_from("not json").is_none());
+}
+
+#[test]
+fn codex_combo_surface_exposes_per_model_official_effort_levels() {
+    let shipped = codex_bundled_models_from(
+        &serde_json::json!({
+            "models": [
+                {
+                    "slug": "gpt-6.2-sol",
+                    "visibility": "list",
+                    "priority": 1,
+                    "base_instructions": "You are Codex.",
+                    "supported_reasoning_levels": [
+                        {"effort": "low"},
+                        {"effort": "medium"},
+                        {"effort": "high"},
+                        {"effort": "xhigh"},
+                        {"effort": "max"},
+                        {"effort": "ultra"}
+                    ]
+                },
+                {
+                    "slug": "gpt-5.5",
+                    "visibility": "list",
+                    "priority": 10,
+                    "base_instructions": "You are Codex.",
+                    "supported_reasoning_levels": [
+                        {"effort": "low"},
+                        {"effort": "medium"},
+                        {"effort": "high"},
+                        {"effort": "xhigh"}
+                    ]
+                },
+                {
+                    "slug": "gpt-daybreak-blue-latest",
+                    "visibility": "list",
+                    "priority": 5,
+                    "base_instructions": "You are Codex.",
+                    "supported_reasoning_levels": [
+                        {"effort": "low"},
+                        {"effort": "medium"},
+                        {"effort": "high"},
+                        {"effort": "xhigh"},
+                        {"effort": "max"},
+                        {"effort": "ultra"}
+                    ]
+                }
+            ]
+        })
+        .to_string(),
+    );
+    let mut p = profile("codex", Some("https://relay.example.com/v1"));
+    p.models = vec![
+        "gpt-6.2sol".into(),
+        "gpt-5.5".into(),
+        "gpt-daybreak-blue-latest".into(),
+        "glm-5.3".into(),
+        "deepseek-chat".into(),
+    ];
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(Some((0, 170, 0))));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = shipped);
+    let s_sol = crate::combo::surface_for_profile(&p, Some("gpt-6.2sol"));
+    let s_55 = crate::combo::surface_for_profile(&p, Some("gpt-5.5"));
+    let s_daybreak = crate::combo::surface_for_profile(&p, Some("gpt-daybreak-blue-latest"));
+    let s_glm = crate::combo::surface_for_profile(&p, Some("glm-5.3"));
+    let s_non_think = crate::combo::surface_for_profile(&p, Some("deepseek-chat"));
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(None));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = None);
+
+    assert!(s_sol.inject_effort_allowed);
+    assert_eq!(
+        s_sol.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+    );
+    assert!(s_55.inject_effort_allowed);
+    assert_eq!(s_55.effort_levels, vec!["low", "medium", "high", "xhigh"]);
+    // 内置前缀表未收录但随包目录明列思考档的新模型，同样识别为可思考并给全量档位
+    assert!(s_daybreak.thinking);
+    assert!(s_daybreak.inject_effort_allowed);
+    assert_eq!(
+        s_daybreak.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+    );
+    // 非官方自建目录模型与通用模板对齐（low..ultra）
+    assert!(s_glm.inject_effort_allowed);
+    assert_eq!(
+        s_glm.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+    );
+    // 确知不思考的模型清空档表
+    assert!(!s_non_think.inject_effort_allowed);
+    assert!(s_non_think.effort_levels.is_empty());
 }
 
 #[test]

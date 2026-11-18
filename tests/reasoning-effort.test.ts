@@ -177,7 +177,20 @@ test("Qwen Code 0.25.1 底栏写着当前思考档（/effort 之后屏上只剩�
 
 test("Codex 切档：回显句与可视区底栏都能认出新档位（差量重绘时流里档位不挨着路径）", () => {
   assert.equal(detectEffortInOutput("• Model changed to e2e-picked low for this session only", "codex"), "low");
+  assert.equal(detectEffortInOutput("• Model changed to gpt-6.2-sol max for this conversation", "codex"), "max");
+  assert.equal(
+    detectEffortInOutput("• Selected gpt-6.2-sol ultra for the next new turn in this conversation", "codex"),
+    "ultra",
+  );
+  assert.equal(
+    detectModelInOutput("• Selected gpt-6.2-sol ultra for the next new turn in this conversation", "codex"),
+    "gpt-6.2-sol",
+  );
   assert.equal(detectEffortOnScreen(["", "  e2e-picked low · /private/var/x/work", "  ? for shortcuts"], "codex"), "low");
+  assert.equal(detectEffortOnScreen(["  Codex · gpt-6.2-sol ultra · ~/Documents/Ccode"], "codex"), "ultra");
+  assert.equal(detectModelOnScreen(["  Codex · gpt-6.2-sol ultra · ~/Documents/Ccode"], "codex"), "gpt-6.2-sol");
+  assert.equal(detectEffortOnScreen(["  GPT-6.1 Terra max · ~/Documents/Ccode"], "codex"), "max");
+  assert.equal(detectModelOnScreen(["  GPT-6.1 Terra max · ~/Documents/Ccode"], "codex"), null);
   assert.equal(detectEffortOnScreen(["  e2e-picked default · /work"], "codex"), EFFORT_SEEN_DEFAULT);
   assert.equal(detectEffortOnScreen(["随便一行"], "codex"), null);
   assert.equal(detectEffortOnScreen(["  m high · /work"], "claude-code"), null);

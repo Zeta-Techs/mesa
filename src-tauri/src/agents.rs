@@ -2018,7 +2018,9 @@ pub fn launch_plan(
                     // 请求策略（实证通道）：effort = config 键 model_reasoning_effort；
                     // Header = provider env_http_headers（值是环境变量名引用，不落密文）。
                     // 后者依赖内联 provider 定义存在，无 base_url 时没有 ccode provider 可挂
-                    if let Some(effort) = profile.request_policy.reasoning_effort.as_deref() {
+                    if let Some(raw_effort) = profile.request_policy.reasoning_effort.as_deref() {
+                        let effort = crate::agent_specs::launch_reasoning_effort(raw_effort)
+                            .unwrap_or_else(|| raw_effort.to_string());
                         plan.args.push("-c".into());
                         plan.args
                             .push(format!(r#"model_reasoning_effort="{effort}""#));
@@ -3951,17 +3953,113 @@ fn codex_bundled_entry(model: &str) -> Option<serde_json::Value> {
     codex_official_match(&models, model).cloned()
 }
 
+fn hyphenate_alnum_boundaries(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    let mut prev: Option<char> = None;
+    for ch in s.chars() {
+        if let Some(p) = prev {
+            if (p.is_ascii_alphabetic() && ch.is_ascii_digit())
+                || (p.is_ascii_digit() && ch.is_ascii_alphabetic())
+            {
+                out.push('-');
+            }
+        }
+        out.push(ch);
+        prev = Some(ch);
+    }
+    out
+}
+
 /// 中转上的模型名对哪条官方条目：同 Codex 自己认模型的办法（codex-rs `find_model_by_longest_prefix`），
 /// 取模型名开头能对上的最长那个，带日期 / 后缀的（gpt-6.2-sol-20261101）也认；`openai/gpt-6.2-sol` 这类
-/// 带服务商前缀的先去掉前缀、不分大小写（照 magpie `codexcat.officialFor`）
+/// 带服务商前缀的先去掉前缀、不分大小写（照 magpie `codexcat.officialFor`）。
+/// 若中转漏写连字符（如 `gpt-6.2sol`、`gpt6.2sol`），退一步在字母数字交界补 `-` 后按词边界匹配。
 fn codex_official_match<'a>(models: &'a [serde_json::Value], model: &str) -> Option<&'a serde_json::Value> {
-    let name = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    let name = model.rsplit('/').next().unwrap_or(model).trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+    let norm_name = hyphenate_alnum_boundaries(&name);
     models
         .iter()
-        .filter_map(|m| m["slug"].as_str().map(|s| (s.to_ascii_lowercase(), m)))
-        .filter(|(slug, _)| !slug.is_empty() && name.starts_with(slug.as_str()))
-        .max_by_key(|(slug, _)| slug.len())
+        .filter_map(|m| {
+            let slug = m["slug"].as_str()?.trim().to_ascii_lowercase();
+            if slug.is_empty() {
+                return None;
+            }
+            let norm_slug = hyphenate_alnum_boundaries(&slug);
+            let exact = name.starts_with(slug.as_str());
+            let norm_ok = norm_name.starts_with(norm_slug.as_str())
+                && norm_name[norm_slug.len()..]
+                    .chars()
+                    .next()
+                    .map_or(true, |c| matches!(c, '-' | '_' | ':' | '['));
+            (exact || norm_ok).then_some(((norm_slug.len(), u8::from(exact)), m))
+        })
+        .max_by_key(|(score, _)| *score)
         .map(|(_, m)| m)
+}
+
+fn extract_codex_effort_levels(entry: &serde_json::Value) -> Vec<String> {
+    entry["supported_reasoning_levels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["effort"].as_str().map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn codex_first_listed_entry(models: &[serde_json::Value]) -> Option<&serde_json::Value> {
+    models
+        .iter()
+        .filter(|m| m.get("visibility").and_then(|x| x.as_str()) == Some("list"))
+        .min_by_key(|m| m.get("priority").and_then(|p| p.as_i64()).unwrap_or(i64::MAX))
+        .or_else(|| models.first())
+}
+
+/// Codex 官方目录（ChatGPT 登录下的 `models_cache.json` 或二进制随包条目）给这个模型声明的思考档列表。
+/// 命中且非空才返回 `Some`，供求交器判断该模型是否原生支持思考档及具体有哪些档位（如 `gpt-6.2-sol` 含 `max`/`ultra`，`gpt-5.5` 到 `xhigh`）。
+pub(crate) fn codex_official_effort_levels(model: &str, official_account: bool) -> Option<Vec<String>> {
+    let trimmed = model.trim();
+    if official_account {
+        #[cfg(not(test))]
+        if let Some(home) = crate::dirs::home_dir() {
+            let base = std::env::var_os("CODEX_HOME")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".codex"));
+            if let Ok(text) = std::fs::read_to_string(base.join("models_cache.json")) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(arr) = v.get("models").and_then(|m| m.as_array()) {
+                        let entry = if trimmed.is_empty() {
+                            codex_first_listed_entry(arr)
+                        } else {
+                            codex_official_match(arr, trimmed)
+                        };
+                        if let Some(e) = entry {
+                            let levels = extract_codex_effort_levels(e);
+                            if !levels.is_empty() {
+                                return Some(levels);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if trimmed.is_empty() {
+            let bundled = local_codex_bundled_models(codex_cli_version()?)?;
+            let levels = extract_codex_effort_levels(codex_first_listed_entry(&bundled)?);
+            return (!levels.is_empty()).then_some(levels);
+        }
+    }
+    if trimmed.is_empty() {
+        return None;
+    }
+    let entry = codex_bundled_entry(trimmed)?;
+    let levels = extract_codex_effort_levels(&entry);
+    (!levels.is_empty()).then_some(levels)
 }
 
 /// 官方条目缓存在 `<配置根>/catalogs/codex-bundled-models-<版本>.json`，每个版本只取一次；旧版本的缓存顺手删掉
@@ -4156,8 +4254,8 @@ pub(crate) fn codex_catalog_entry_for(
             { "effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks" },
             { "effort": "high", "description": "Greater reasoning depth for complex problems" },
             { "effort": "xhigh", "description": "Very deep reasoning for difficult problems" },
-            { "effort": "ultra", "description": "Maximum reasoning depth for supported models" },
-            { "effort": "max", "description": "Maximum reasoning depth" },
+            { "effort": "max", "description": "Maximum reasoning depth for the hardest problems" },
+            { "effort": "ultra", "description": "Maximum reasoning with automatic task delegation" },
         ],
         "shell_type": "shell_command",
         "visibility": "list",

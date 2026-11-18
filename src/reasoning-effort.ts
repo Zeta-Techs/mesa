@@ -7,8 +7,8 @@ const KNOWN = new Set([
   "medium",
   "high",
   "xhigh",
-  "ultra",
   "max",
+  "ultra",
   "on",
   "off",
 ]);
@@ -68,7 +68,8 @@ const ANSI_RE =
 // 先换成空格再剥其余转义，免得词粘在一起
 // eslint-disable-next-line no-control-regex
 const CURSOR_GAP_RE = /\x1b\[\d*C|\x1b\[\d*;\d*[Hf]/g;
-const LEVEL = "(none|minimal|low|medium|high|xhigh|ultra|max)";
+const LEVEL = "(none|minimal|low|medium|high|xhigh|max|ultra)";
+const CODEX_FOOTER_LEVEL = "(none|minimal|low|medium|high|xhigh|max|ultra|default)";
 /** 目录开头：Codex/Kimi 底栏档位后面紧跟工作目录 */
 const PATH_HEAD = String.raw`(?:~|/|[A-Za-z]:[\\/])`;
 
@@ -97,9 +98,11 @@ const EFFORT_PATTERNS: Record<string, RegExp[]> = {
     new RegExp(String.raw`\beffort\s+level\s+to\s+${LEVEL}\b`, "gi"),
   ],
   codex: [
-    new RegExp(String.raw`\b(none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`, "gi"),
-    // 切档回显「• Model changed to e2e-picked low for this session only」：底栏差量重绘时流里档位不挨着路径，回显这句是整句出的
-    /\bModel changed to\s+\S+\s+(none|minimal|low|medium|high|xhigh)\b/gi,
+    new RegExp(String.raw`\b${CODEX_FOOTER_LEVEL}\s*·\s*${PATH_HEAD}`, "gi"),
+    // 切档回显「• Model changed to e2e-picked low for this session only」与 0.170 新句式
+    // 「• Selected gpt-6.2-sol ultra for the next new turn in this conversation」：底栏差量重绘时流里档位不挨着路径，回显这句是整句出的
+    new RegExp(String.raw`\bModel changed to\s+\S+\s+${LEVEL}\b`, "gi"),
+    new RegExp(String.raw`\bSelected\s+\S+\s+${LEVEL}\s+for the next new turn in this conversation\b`, "gi"),
   ],
   grok: [new RegExp(String.raw`\(${LEVEL}\)\s*·`, "gi")],
   qwen: [
@@ -121,7 +124,7 @@ EFFORT_PATTERNS.codebuddy = EFFORT_PATTERNS["claude-code"]!;
 const QUICK_KEYS: Record<string, string[]> = {
   "claude-code": ["effort"],
   codebuddy: ["effort"],
-  codex: ["·", "Model changed"],
+  codex: ["·", "Model changed", "for the next new turn"],
   grok: [")"],
   qwen: ["effort", "➜"],
   kimi: ["thinking"],
@@ -168,15 +171,18 @@ const MODEL_PATTERNS: Record<string, RegExp[]> = {
   ],
   gemini: [/\bModel set to\s+`?([^\s`]+)/g],
   agy: [/\bModel set to\s+`?([^\s`]+)/g],
-  // 选择器选完的回显「• Model changed to gpt-6.1-sol low」（底栏写的是显示名 GPT-6.1-Sol，回显才是 id）
-  codex: [/\bModel changed to\s+([^\s]+)/g],
+  // 选择器 / 命令回显「• Model changed to gpt-6.1-sol low」与 0.170「• Selected gpt-6.2-sol ultra for the next new turn in this conversation」
+  codex: [
+    /\bModel changed to\s+([^\s]+)/g,
+    /\bSelected\s+([^\s]+)(?:\s+\S+)?\s+for the next new turn in this conversation\b/g,
+  ],
 };
 /** 每家要先看见的关键词（每帧都调，保持便宜） */
 const MODEL_QUICK: Record<string, string[]> = {
   "claude-code": ["Set model"],
   gemini: ["Model set"],
   agy: ["Model set"],
-  codex: ["Model changed"],
+  codex: ["Model changed", "for the next new turn"],
 };
 
 /** 像个模型名：可见 ASCII、不以转义残段「[」开头。挡住切帧切出来的「[14;5H好」、输入框里的字 */
@@ -203,36 +209,45 @@ export function detectModelInOutput(text: string, agentId = "claude-code"): stri
 }
 
 /** 底栏整行写着当前模型的家：从可视区（xterm 已画好的行）读，不从输出流读 */
-const MODEL_SCREEN_PATTERNS: Record<string, RegExp> = {
-  // Codex 0.163 底栏「  e2e-picked high · /目录」，没设档写「default」
-  codex: new RegExp(
-    String.raw`^\s*([^\s·]+)\s+(none|minimal|low|medium|high|xhigh|default)\s*·\s*${PATH_HEAD}`,
-  ),
+const MODEL_SCREEN_PATTERNS: Record<string, RegExp[]> = {
+  // Codex 底栏：Mesa 自建目录显示名「  连接名 · gpt-6.2-sol ultra · ~/目录」，或单词显示名/id「  e2e-picked high · /目录」
+  codex: [
+    new RegExp(String.raw`^\s*.+?\s+·\s+([^\s·]+)\s+${CODEX_FOOTER_LEVEL}\s*·\s*${PATH_HEAD}`, "i"),
+    new RegExp(String.raw`^\s*([^\s·]+)\s+${CODEX_FOOTER_LEVEL}\s*·\s*${PATH_HEAD}`, "i"),
+  ],
 };
 
-/** 底栏整行写着当前思考档但显示名带空格的家（如 Antigravity「accept-edits · Gemini 4 Carbon · medium」）：只读档位不覆盖模型 id */
+/** 底栏整行写着当前思考档但显示名带空格的家（如 Codex 官方「GPT-6.1 Terra low · ~/目录」、Antigravity「accept-edits · Gemini 4 Carbon · medium」）：只读档位不覆盖模型 id */
 const EFFORT_SCREEN_PATTERNS: Record<string, RegExp> = {
+  codex: new RegExp(
+    String.raw`^\s*(?:.+?\s+·\s+)?[A-Za-z0-9][^\r\n·]*?\s+${CODEX_FOOTER_LEVEL}\s*·\s*${PATH_HEAD}`,
+    "i",
+  ),
   agy: AGY_FOOTER_EFFORT_LINE_RE,
 };
 
 /** 从可视区读底栏上的思考档（Codex 底栏「模型 档位 · 目录」、Antigravity 底栏「权限 · 模型名 · 档位」）：输出流认不出差量重绘的底栏时靠它 */
 export function detectEffortOnScreen(lines: string[], agentId: string): string | null {
-  const re = MODEL_SCREEN_PATTERNS[agentId];
-  if (re) {
+  const res = MODEL_SCREEN_PATTERNS[agentId];
+  if (res) {
     for (let i = lines.length - 1; i >= 0; i--) {
-      const m = re.exec(lines[i]!);
-      if (m && plausibleModel(m[1]!)) {
-        const level = m[2]!.toLowerCase();
-        return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+      for (const re of res) {
+        const m = re.exec(lines[i]!);
+        if (m && plausibleModel(m[1]!)) {
+          const level = m[2]!.toLowerCase();
+          return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+        }
       }
     }
-    return null;
   }
   const effortRe = EFFORT_SCREEN_PATTERNS[agentId];
   if (effortRe) {
     for (let i = lines.length - 1; i >= 0; i--) {
       const m = effortRe.exec(lines[i]!);
-      if (m) return m[1]!.toLowerCase();
+      if (m) {
+        const level = m[1]!.toLowerCase();
+        return level === "default" ? EFFORT_SEEN_DEFAULT : level;
+      }
     }
   }
   return null;
@@ -244,11 +259,13 @@ export function modelOnScreenSupported(agentId: string): boolean {
 
 /** 从可视区读底栏上的模型：自下往上找第一行（底栏在对话记录下面） */
 export function detectModelOnScreen(lines: string[], agentId: string): string | null {
-  const re = MODEL_SCREEN_PATTERNS[agentId];
-  if (!re) return null;
+  const res = MODEL_SCREEN_PATTERNS[agentId];
+  if (!res) return null;
   for (let i = lines.length - 1; i >= 0; i--) {
-    const m = re.exec(lines[i]!);
-    if (m && plausibleModel(m[1]!)) return m[1]!;
+    for (const re of res) {
+      const m = re.exec(lines[i]!);
+      if (m && plausibleModel(m[1]!)) return m[1]!;
+    }
   }
   return null;
 }

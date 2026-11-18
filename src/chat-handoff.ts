@@ -242,7 +242,10 @@ const SLASH_RESULT_LINES: Record<string, { cmd: RegExp; line: RegExp }[]> = {
     },
   ],
   codex: [
-    { cmd: /^\/model\b/, line: /^Model changed to / },
+    {
+      cmd: /^\/model\b/,
+      line: /^(?:Model changed to |Selected .+ for the next new turn in this conversation)/,
+    },
     { cmd: /^\/permissions\b/, line: /^Permissions updated to / },
   ],
   qwen: [{ cmd: /^\/approval-mode\b/, line: /^Approval mode set to / }],

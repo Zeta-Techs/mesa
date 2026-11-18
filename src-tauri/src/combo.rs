@@ -182,7 +182,12 @@ pub fn surface_for_agents(
     effort_levels: &[String],
 ) -> ComboSurfaceDto {
     let gid = gateway.map(|g| g.id.as_str());
-    let thinking = model_registry::model_thinking_for(model, gid);
+    let has_codex = agents.iter().any(|(a, _)| *a == "codex");
+    let codex_official_thinking = has_codex
+        && !model.is_empty()
+        && model_registry::model_thinking_declared_for(model, gid) != Some(false)
+        && crate::agents::codex_official_effort_levels(model, false).is_some();
+    let thinking = model_registry::model_thinking_for(model, gid) || codex_official_thinking;
     let vision = model_registry::model_supports_vision_for(model, gid);
     let context = model_registry::model_context_size_known_for(model, gid);
     let output = model_registry::model_output_limit_for(model, gid);
@@ -346,9 +351,12 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         .as_deref()
         .and_then(gateway_store::find_gateway);
     let slot = gateway_store::slot_for_agent(&profile.agent, profile.protocol.as_deref());
-    let gm = gw
-        .as_ref()
-        .and_then(|g| g.models.iter().find(|m| m.id == model));
+    let gm = gw.as_ref().and_then(|g| {
+        g.models
+            .iter()
+            .find(|m| m.id == model)
+            .or_else(|| g.models.iter().find(|m| m.id.eq_ignore_ascii_case(model)))
+    });
     let stored_effort = profile.request_policy.reasoning_effort.is_some()
         || gm.and_then(|m| m.reasoning_effort.as_ref()).is_some();
     let stored_temp =
@@ -371,8 +379,9 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         .and_then(|m| m.reasoning_effort.as_deref())
         .map(crate::agent_specs::reasoning_effort_levels)
         .unwrap_or_default();
+    let is_official = profile.account_type == crate::profiles::AccountType::Official;
     let agy_model_cap: Option<&'static [&'static str]> = if profile.agent == "agy" {
-        if profile.account_type == crate::profiles::AccountType::Official {
+        if is_official {
             if model.is_empty() {
                 Some(&["low", "medium", "high"])
             } else {
@@ -386,8 +395,13 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
     } else {
         None
     };
-    let effective_levels: Vec<String> = match agy_model_cap {
-        Some(cap) if !raw_gw_levels.is_empty() => {
+    let codex_official_levels = if profile.agent == "codex" {
+        crate::agents::codex_official_effort_levels(model, is_official)
+    } else {
+        None
+    };
+    let effective_levels: Vec<String> = if let Some(cap) = agy_model_cap {
+        if !raw_gw_levels.is_empty() {
             let filtered: Vec<String> = raw_gw_levels
                 .into_iter()
                 .filter(|lv| cap.contains(&lv.as_str()))
@@ -397,9 +411,32 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
             } else {
                 filtered
             }
+        } else {
+            cap.iter().map(|s| (*s).to_string()).collect()
         }
-        Some(cap) => cap.iter().map(|s| (*s).to_string()).collect(),
-        None => raw_gw_levels,
+    } else if profile.agent == "codex" {
+        let cap = codex_official_levels.clone().unwrap_or_else(|| {
+            crate::agent_specs::effort_options("codex")
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        });
+        if !raw_gw_levels.is_empty() {
+            let filtered: Vec<String> = raw_gw_levels
+                .into_iter()
+                .filter(|lv| cap.iter().any(|c| c == lv))
+                .collect();
+            if filtered.is_empty() { cap } else { filtered }
+        } else {
+            cap
+        }
+    } else if raw_gw_levels.is_empty() && profile.agent == "opencode" {
+        crate::agent_specs::effort_options("opencode")
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    } else {
+        raw_gw_levels
     };
     let mut surface = surface_for_agents(
         &[(profile.agent.as_str(), profile.protocol.as_deref())],
@@ -416,7 +453,7 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
     );
     // 官方账号未显式指定模型（走 CLI 自带默认模型）时，一等/主流家的官方默认模型均支持思考档；
     // 反过来 agy 官方账号选了非 Gemini 族模型（如 claude-sonnet-4-6）时 CLI 拒收 `--effort`，必须关掉注入开关。
-    if profile.account_type == crate::profiles::AccountType::Official && model.is_empty() {
+    if is_official && model.is_empty() {
         if matches!(
             profile.agent.as_str(),
             "claude-code" | "codex" | "agy" | "kimi" | "qwen" | "grok"
@@ -431,11 +468,21 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
                 .is_some_and(|(levels, _)| levels.len() > 1);
             surface.show_native_effort = has_native && probe_ok && !grok_blocks;
         }
+    } else if profile.agent == "codex"
+        && is_official
+        && codex_official_levels.is_some()
+        && model_registry::model_thinking_declared_for(model, profile.gateway_id.as_deref())
+            != Some(false)
+    {
+        surface.thinking = true;
+        surface.inject_effort_allowed =
+            channel_ok(surface.channel_effort) && surface.probe_effort != "failed";
     } else if profile.agent == "agy" && agy_model_cap.is_none() {
         surface.inject_effort_allowed = false;
         surface.show_native_effort = false;
         surface.effort_levels.clear();
-    } else if profile.agent == "agy" && !surface.thinking {
+    }
+    if !surface.inject_effort_allowed && !surface.show_native_effort {
         surface.effort_levels.clear();
     }
     // 通道不通（不会思考 / 体检失败 / 该家无注入通道）时启动不会注入，开场档就是「不知道」

@@ -1243,9 +1243,9 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
     match agent {
         "claude-code" => vec!["low", "medium", "high", "xhigh", "max"],
         "codebuddy" => vec!["minimal", "low", "medium", "high", "xhigh", "max"],
-        // Codex 新版模型（包括第三方兼容端点上的 gpt-6 系列）可声明更高推理档。
+        // Codex 新版模型（包括第三方兼容端点上的 gpt-6 系列）可声明更高推理档；顺序与 Codex 0.170 官方目录一致（max 在 ultra 前）。
         // 端点不支持时仍由其自身协议返回错误或忽略。
-        "codex" => vec!["low", "medium", "high", "xhigh", "ultra", "max"],
+        "codex" => vec!["low", "medium", "high", "xhigh", "max", "ultra"],
         "opencode" => vec!["none", "minimal", "low", "medium", "high"],
         "grok" => GROK_REASONING_EFFORTS.to_vec(),
         "agy" => vec!["low", "medium", "high", "xhigh"],
@@ -1256,7 +1256,7 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
 }
 
 const KNOWN_REASONING_EFFORTS: [&str; 10] = [
-    "none", "minimal", "low", "medium", "high", "xhigh", "ultra", "max", "on", "off",
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "on", "off",
 ];
 
 /// 网关逐模型思考档：逗号分隔的多档（会话里可切）+ 可选 `@默认档`。

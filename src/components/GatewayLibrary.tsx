@@ -244,7 +244,7 @@ function VendorModelSections({
   );
 }
 
-const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 function ReasoningEffortPicker({
   value,

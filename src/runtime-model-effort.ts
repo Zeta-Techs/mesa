@@ -84,7 +84,11 @@ export function useRuntimeModelEffort(opts: {
   const superseded = pending !== null && seenModel !== null && seenModel !== pending.baseline;
   const pendingModel =
     pending && !superseded && !expired && pending.model !== seenModel ? pending.model : null;
-  const shownModel = pendingModel ?? seenModel ?? status?.model ?? "";
+  const rawShownModel = pendingModel ?? seenModel ?? status?.model ?? "";
+  const shownModel =
+    status?.model && rawShownModel.toLowerCase() === status.model.toLowerCase()
+      ? status.model
+      : rawShownModel;
   /** confirmed = 屏上读到或没切过；pending = 已发送、等回显；unverifiable = 这家 CLI 读不回，以终端为准 */
   const modelState: "confirmed" | "pending" | "unverifiable" = !pendingModel
     ? "confirmed"
@@ -126,6 +130,7 @@ export function useRuntimeModelEffort(opts: {
 
   const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
   const [comboReady, setComboReady] = useState(false);
+  const activeModel = shownModel || launchModel || null;
   useEffect(() => {
     if (!profileId) {
       setCombo(null);
@@ -134,7 +139,7 @@ export function useRuntimeModelEffort(opts: {
     }
     let cancelled = false;
     setComboReady(false);
-    invoke<ComboSurfaceDto>("combo_surface", { profileId, model: launchModel || null })
+    invoke<ComboSurfaceDto>("combo_surface", { profileId, model: activeModel })
       .then((c) => {
         if (!cancelled) {
           setCombo(c);
@@ -150,7 +155,7 @@ export function useRuntimeModelEffort(opts: {
     return () => {
       cancelled = true;
     };
-  }, [profileId, launchModel]);
+  }, [profileId, activeModel]);
   // 未确认不显示：combo 未加载或求交明确不允许时藏 /effort。
   // 新版 Codex 没有单独的 /effort，思考档跟着 /model --reasoning 在会话里切；档表与启动注入同口径（这个组合能带思考档才给）
   const sessionEffort =

@@ -230,11 +230,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     currentModel = next.model.trim() || models[0] || "";
   } else {
     const base = runtime?.profileModels ?? [];
+    const canonicalShown = rt.shownModel
+      ? (base.find((m) => m.toLowerCase() === rt.shownModel.toLowerCase()) ?? rt.shownModel)
+      : "";
     models = connectionModels(
-      rt.shownModel && !base.includes(rt.shownModel) ? [rt.shownModel, ...base] : base,
+      canonicalShown && !base.includes(canonicalShown) ? [canonicalShown, ...base] : base,
       readModelHistory(agentId, status?.profileId),
     );
-    currentModel = rt.shownModel;
+    currentModel = canonicalShown;
   }
   // 能力灰字菜单打开才查；输入框里有图时也查（要知道当前模型能不能看图）
   const caps = useModelCaps(open || props.imageKind ? models : [], profile?.gatewayId ?? null);

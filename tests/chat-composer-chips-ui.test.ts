@@ -2008,3 +2008,60 @@ test("模型菜单 WhoView：十家 Agent 排两列带装饰性 Agent 图标、�
     await ui.close();
   }
 });
+
+test("Codex 运行中按当前生效模型动态刷新思考档表，并支持切到 ultra", async () => {
+  const ui = await mount();
+  try {
+    ui.useAppStore.setState({
+      agents: [
+        {
+          id: "codex",
+          binaryPath: "/usr/local/bin/codex",
+          version: "0.170.0",
+          modelSwitch: { kind: "picker", command: "/model" },
+          effort: null,
+          permissionModes: [],
+          readonlySupported: true,
+        },
+      ],
+    });
+    const prevInvoke = (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke;
+    (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke = async (command: string, args?: unknown) => {
+      if (command === "combo_surface") {
+        const model = (args as { model?: string | null } | undefined)?.model ?? "";
+        const effortLevels = model.includes("6.2-sol")
+          ? ["low", "medium", "high", "xhigh", "max", "ultra"]
+          : ["low", "medium", "high", "xhigh"];
+        return {
+          showNativeEffort: false,
+          effortLevels,
+          launchEffort: null,
+          thinking: true,
+          mixedModelsNote: null,
+          injectEffortAllowed: true,
+        };
+      }
+      return prevInvoke(command, args);
+    };
+    const sent: string[] = [];
+    await ui.render(
+      ui.h(ui.Menu, {
+        kind: "runtime",
+        status: {
+          ...status({ agentId: "codex", model: "gpt-5.5", modelSeen: "gpt-6.2-sol", effortSeen: "low" }),
+          profileId: "p-codex",
+        },
+        profileModels: ["gpt-5.5", "gpt-6.2-sol"],
+        modelSwitch: { kind: "picker", command: "/model" },
+        effort: null,
+        submitCsiU: false,
+        onTuiCommand: (cmd: string) => sent.push(cmd),
+      }),
+    );
+    await ui.click("gpt-6.2-sol · low");
+    await slideEffort(ui, 5);
+    assert.deepEqual(sent, ["/model --reasoning ultra"]);
+  } finally {
+    await ui.close();
+  }
+});
