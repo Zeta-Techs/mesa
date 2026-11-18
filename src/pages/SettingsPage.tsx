@@ -111,7 +111,12 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
-import { UPDATE_ACTION_BUSY_CLASS, UpdateActionContent, UpdateInstallProgress } from "../components/UpdateProgressBar";
+import {
+  UPDATE_ACTION_BUSY_CLASS,
+  UpdateActionContent,
+  UpdateInstallProgress,
+  useUpdateProgressPreview,
+} from "../components/UpdateProgressBar";
 import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
   appUpdateCheckedAtLabel,
@@ -1662,6 +1667,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
     error: installError,
     install: installUpdate,
   } = useAppUpdateInstall();
+  // 开发版「预览更新进度」：模拟数据，不下载不安装
+  const updatePreview = useUpdateProgressPreview();
   const autoOpenedUpdate = useRef(false);
   const [notice, setNotice] = useState<
     string | { text: string; openPath: string } | null
@@ -4319,6 +4326,31 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   : "重新检查"}
               </button>
             )}
+          </Row>
+        )}
+        {appUpdateStatus === "dev" && (
+          <Row
+            label="预览更新进度"
+            hint="只在开发版：用模拟数据走一遍下载、安装、重启的样子，不会真的下载或重启"
+            extra={
+              updatePreview.preview && (
+                <UpdateInstallProgress
+                  phase={updatePreview.preview.phase}
+                  downloaded={updatePreview.preview.downloaded}
+                  total={updatePreview.preview.total}
+                />
+              )
+            }
+          >
+            <button
+              type="button"
+              onClick={updatePreview.start}
+              disabled={updatePreview.preview !== null}
+              aria-busy={updatePreview.preview !== null}
+              className={`${primaryActionClass} shrink-0 ${updatePreview.preview ? UPDATE_ACTION_BUSY_CLASS : ""}`}
+            >
+              <UpdateActionContent phase={updatePreview.preview?.phase ?? null} />
+            </button>
           </Row>
         )}
       </Section>

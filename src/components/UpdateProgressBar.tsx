@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import {
   appUpdateActionLabel,
@@ -91,3 +92,35 @@ export function UpdateActionContent({ phase }: { phase: AppUpdateInstallPhase | 
 
 /** 安装进行中时主按钮的附加类：保持实色、不显示禁用光标（disabled 照旧防重复点击） */
 export const UPDATE_ACTION_BUSY_CLASS = "disabled:opacity-100 disabled:cursor-default";
+
+/**
+ * 只在开发版用：设置页「预览更新进度」按模拟数据走一遍「不知道总大小 → 下载 → 安装 → 重启」，
+ * 看进度条和按钮的样子与动画。不下载、不安装、不重启；打包后的正式版不出这个入口（SettingsPage 只在 appUpdateStatus === "dev" 时显示，store 只在开发版给这个状态）。
+ */
+export function useUpdateProgressPreview() {
+  const [state, setState] = useState<{ phase: AppUpdateInstallPhase; downloaded: number; total: number | null } | null>(null);
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (timer.current !== null) window.clearInterval(timer.current);
+  }, []);
+  function start() {
+    if (timer.current !== null) window.clearInterval(timer.current);
+    const total = 48 * 1024 * 1024;
+    const t0 = performance.now();
+    const tick = () => {
+      const t = performance.now() - t0;
+      if (t < 1600) setState({ phase: "downloading", downloaded: 0, total: null });
+      else if (t < 7600) setState({ phase: "downloading", downloaded: Math.round(total * ((t - 1600) / 6000)), total });
+      else if (t < 9800) setState({ phase: "installing", downloaded: total, total });
+      else if (t < 11600) setState({ phase: "restarting", downloaded: total, total });
+      else {
+        if (timer.current !== null) window.clearInterval(timer.current);
+        timer.current = null;
+        setState(null);
+      }
+    };
+    tick();
+    timer.current = window.setInterval(tick, 120);
+  }
+  return { preview: state, start };
+}
