@@ -108,6 +108,11 @@ pub(super) enum Mess {
     WtMergeHalf,
     ProjectMoved,
     OldProjectNoIdOldIgnore,
+    StepBranchDeleted,
+    WtDetached,
+    WtSideBranchWithCommit,
+    MainResetBack,
+    MainProjectCardDeleted,
 }
 
 pub(super) const ALL_MESS: &[Mess] = &[
@@ -131,6 +136,11 @@ pub(super) const ALL_MESS: &[Mess] = &[
     Mess::WtMergeHalf,
     Mess::ProjectMoved,
     Mess::OldProjectNoIdOldIgnore,
+    Mess::StepBranchDeleted,
+    Mess::WtDetached,
+    Mess::WtSideBranchWithCommit,
+    Mess::MainResetBack,
+    Mess::MainProjectCardDeleted,
 ];
 
 fn age(path: &Path) {
@@ -208,6 +218,21 @@ impl Mess {
                 fs::rename(&repo, &to).unwrap();
                 p.repo = to;
             }
+            Mess::StepBranchDeleted => ok(&repo, &["update-ref", "-d", &format!("refs/heads/{}", w.branch)]),
+            Mess::WtDetached => ok(&wt, &["checkout", "-q", "--detach"]),
+            Mess::WtSideBranchWithCommit => {
+                ok(&wt, &["checkout", "-q", "-b", "ai-side"]);
+                fs::write(wt.join("notes/c.md"), "AI 在别的分支上又写了一份\n").unwrap();
+                ok(&wt, &["add", "-A"]);
+                ok(&wt, &["commit", "-qm", "AI 在别的分支上提交"]);
+            }
+            Mess::MainResetBack => {
+                fs::write(repo.join("notes/d.md"), "x\n").unwrap();
+                ok(&repo, &["add", "-A"]);
+                ok(&repo, &["commit", "-qm", "人提交了又后悔"]);
+                ok(&repo, &["reset", "-q", "--hard", "HEAD~1"]);
+            }
+            Mess::MainProjectCardDeleted => fs::remove_file(repo.join(".ccode/project.toml")).unwrap(),
             Mess::OldProjectNoIdOldIgnore => {
                 fs::write(repo.join(".ccode/project.toml"), "work_mode = \"research\"\n").unwrap();
                 fs::write(repo.join(".gitignore"), "/artifacts/\n.DS_Store\n*.pdf\n").unwrap();
@@ -263,4 +288,151 @@ fn mess_census() {
             short(&restore),
         );
     }
+}
+
+/// 人照体检给的出口一个个处理：click 的点按钮；goto 的照那个界面上人会做的做
+/// （main-commit：把自己的文件提交掉；review：冲突选这一步的版本）。最多三轮，返回处理过程，便于失败时看
+pub(super) fn follow_exits(p: &Proj, w: &WorkspaceDto, intent: doctor::Intent) -> Vec<String> {
+    let mut log = Vec::new();
+    for _ in 0..3 {
+        let report = doctor::diagnose_impl(&p.conn, &w.id, intent).unwrap_or_else(|e| panic!("体检本身失败：{e}"));
+        log.extend(report.fixed.iter().map(|f| format!("自动：{f}")));
+        let blocking: Vec<_> = report.findings.into_iter().filter(|f| f.blocks).collect();
+        if blocking.is_empty() {
+            return log;
+        }
+        for f in blocking {
+            let fix = f.fix.clone().unwrap_or_else(|| panic!("拦人的项没有出口：{} {}", f.code, f.text));
+            log.push(format!("{}：{}", f.code, fix.label));
+            match (fix.kind.as_str(), fix.target.as_deref()) {
+                ("click", _) => {
+                    doctor::fix_impl(&p.conn, &w.id, &f.code).unwrap_or_else(|e| panic!("{} 一键处理失败：{e}", f.code));
+                }
+                ("goto", Some("main-commit")) => {
+                    let repo = PathBuf::from(&get_workspace(&p.conn, &w.id).unwrap().repo_path);
+                    ok(&repo, &["add", "-A"]);
+                    ok(&repo, &["commit", "-qm", "人在提交面板提交"]);
+                }
+                ("goto", Some("review")) => {
+                    let wt = PathBuf::from(&w.worktree_path);
+                    let _ = git(&wt, &["checkout", "--ours", "--", "."]);
+                    ok(&wt, &["add", "-A"]);
+                    ok(&wt, &["commit", "-qm", "人选了这一步的版本"]);
+                }
+                other => panic!("{} 的出口人走不到：{other:?}", f.code),
+            }
+        }
+    }
+    panic!("照出口处理三轮仍被拦：{log:?}");
+}
+
+fn try_intent(p: &Proj, w: &WorkspaceDto, intent: doctor::Intent) -> Result<(), String> {
+    let w = get_workspace(&p.conn, &w.id)?;
+    match intent {
+        doctor::Intent::Save => p.save(&w).map(|_| ()),
+        doctor::Intent::Round => {
+            // 开一轮前工作副本有没提交的，前端问人后一起提交（commitLeftovers），这里照做
+            let wt = Path::new(&w.worktree_path);
+            if !git(wt, &["status", "--porcelain"]).unwrap_or_default().trim().is_empty() {
+                ok(wt, &["add", "-A"]);
+                ok(wt, &["commit", "-qm", "开一轮前提交上一轮留下的改动"]);
+            }
+            p.bring_latest(&w).map(|_| ())
+        }
+        doctor::Intent::Archive => {
+            let wt = Path::new(&w.worktree_path);
+            if wt.exists() && !git(wt, &["status", "--porcelain"]).unwrap_or_default().trim().is_empty() {
+                ok(wt, &["add", "-A"]);
+                ok(wt, &["commit", "-qm", "提交并归档"]);
+            }
+            archive_impl(&p.conn, &w.id)
+        }
+        doctor::Intent::Restore => {
+            // 先照归档的出口收起这一步，再恢复
+            follow_exits(p, &w, doctor::Intent::Archive);
+            try_intent(p, &w, doctor::Intent::Archive)?;
+            follow_exits(p, &w, doctor::Intent::Restore);
+            restore_impl(&p.conn, &w.id)
+        }
+        doctor::Intent::Review => Ok(()),
+    }
+}
+
+/// 不变式：每种乱操作之后，每个入口照体检的出口处理完都能做成（docs/design-project-doctor.md）
+#[test]
+fn every_mess_has_an_exit_at_every_entry() {
+    use doctor::Intent::*;
+    // 每种乱操作一个线程（各自的临时仓库与数据库互不相干）：串行要近一分钟，Windows 上起 git 更慢
+    let failures: Vec<String> = std::thread::scope(|s| {
+        let handles: Vec<_> = ALL_MESS.iter().map(|&mess| s.spawn(move || mess_failures(mess))).collect();
+        handles.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    });
+    assert!(failures.is_empty(), "没有出口的组合：\n{}", failures.join("\n"));
+}
+
+fn mess_failures(mess: Mess) -> Vec<String> {
+    use doctor::Intent::*;
+    let mut failures = Vec::new();
+    {
+        for intent in [Save, Round, Archive, Restore] {
+            let Some(mut p) = research_project() else { return failures };
+            p.conn
+                .execute_batch("CREATE TABLE IF NOT EXISTS projects(path TEXT PRIMARY KEY, name TEXT NOT NULL, id TEXT);")
+                .unwrap();
+            let w = p.start_step("lit-notes");
+            let pid = w.project_id.clone().unwrap_or_default();
+            p.ai_writes(&w, "notes/a.md", "一\n二\n三\n四\n五\n六（AI 改）\n");
+            mess.apply(&mut p, &w);
+            // 项目挪走后 Mesa 的项目表跟着更新（项目页重新认出它时做），这里照样登记
+            p.conn
+                .execute("INSERT OR REPLACE INTO projects(path, name, id) VALUES (?1, '课题', ?2)", params![p.repo.to_string_lossy().as_ref(), pid])
+                .unwrap();
+            let log = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| follow_exits(&p, &w, intent)));
+            let outcome = match log {
+                Err(e) => Err(e.downcast_ref::<String>().cloned().unwrap_or_else(|| "panic".into())),
+                // 「收起这一步」是取代原入口的出口（分支真找不回时）：照它做完即算有出口
+                Ok(log) if log.iter().any(|l| l.starts_with("branch_missing")) => Ok(log),
+                Ok(log) => try_intent(&p, &w, intent).map(|_| log).and_then(|log| {
+                    // 走完出口后项目身份还在
+                    let repo = PathBuf::from(&get_workspace(&p.conn, &w.id).unwrap().repo_path);
+                    if repo.join(".ccode/project.toml").exists() { Ok(log) } else { Err("档案卡没了".into()) }
+                }),
+            };
+            if let Err(e) = outcome {
+                failures.push(format!("{mess:?} × {intent:?}: {}", e.lines().next().unwrap_or("")));
+            }
+        }
+    }
+    failures
+}
+
+/// 人把整个项目文件夹复制了一份接着用：两份档案卡同一个 id、都登记在项目表里。
+/// 在副本上开的一步，保存必须进副本，原项目一个字不动（2026-11-18 干跑实证：原先按 id 查项目表会指到原项目）
+#[test]
+fn copied_project_saves_into_the_copy_not_the_original() {
+    let Some(p) = research_project() else { return };
+    p.conn
+        .execute_batch("CREATE TABLE IF NOT EXISTS projects(path TEXT PRIMARY KEY, name TEXT NOT NULL, id TEXT);")
+        .unwrap();
+    let copy = p.dir.join("课题-副本");
+    let status = Command::new("cp").arg("-R").arg(&p.repo).arg(&copy).status();
+    if !status.map(|s| s.success()).unwrap_or(false) {
+        return; // 没有 cp（Windows）就跳过：复制语义与平台无关
+    }
+    let pid = crate::projects::project_id_at(&p.repo).unwrap();
+    for path in [&p.repo, &copy] {
+        p.conn
+            .execute("INSERT INTO projects(path, name, id) VALUES (?1, '课题', ?2)", params![path.to_string_lossy().as_ref(), pid])
+            .unwrap();
+    }
+    let original_head = git(&p.repo, &["rev-parse", "HEAD"]).unwrap();
+    let w = create_impl(&p.conn, &p.ws_root, copy.to_str().unwrap(), "lit-notes").unwrap();
+    p.ai_writes(&w, "notes/a.md", "副本里的这一步\n");
+    let report = doctor::diagnose_impl(&p.conn, &w.id, doctor::Intent::Save).unwrap();
+    assert!(!report.blocked(), "{:?}", report.findings);
+    p.save(&w).unwrap();
+    assert_eq!(fs::read_to_string(copy.join("notes/a.md")).unwrap(), "副本里的这一步\n");
+    assert_eq!(git(&p.repo, &["rev-parse", "HEAD"]).unwrap(), original_head, "原项目不许动");
+    let recorded = get_workspace(&p.conn, &w.id).unwrap().repo_path;
+    assert!(same_path(Path::new(&recorded), &copy), "{recorded}");
 }

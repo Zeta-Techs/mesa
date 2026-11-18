@@ -911,6 +911,8 @@ pub fn run() {
             workspaces::workspace_drift,
             workspaces::workspace_repair_remount,
             workspaces::workspace_repair_main,
+            workspaces::doctor::workspace_doctor,
+            workspaces::doctor::workspace_doctor_fix,
             workspaces::workspace_relocate_repo,
             workspaces::workspace_mark_archived,
             workspaces::workspace_clean_record,

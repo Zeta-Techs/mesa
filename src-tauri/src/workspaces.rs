@@ -1034,7 +1034,9 @@ fn archive_impl_with_guard(
 fn restore_impl(conn: &Connection, id: &str) -> Result<(), String> {
     let w = get_workspace(conn, id)?;
     if !Path::new(&w.worktree_path).exists() {
-        // 归档只移除 worktree 不删分支，恢复 = 从分支重新 worktree add
+        // 归档只移除 worktree 不删分支，恢复 = 从分支重新 worktree add。先清掉目录已不在的登记：
+        // 人在 Mesa 外删了工作副本文件夹时登记还在，add 会报「已登记」失败（2026-11-18 场景普查）
+        let _ = run_git(Path::new(&w.repo_path), &["worktree", "prune"], Duration::from_secs(30));
         run_git(
             Path::new(&w.repo_path),
             &["worktree", "add", &w.worktree_path, &w.branch],
@@ -1530,16 +1532,31 @@ fn merge_impl(
 }
 
 fn live_repo_for(w: &WorkspaceDto) -> PathBuf {
-    if let Some(pid) = w.project_id.as_deref() {
-        if let Ok(conn) = db() {
-            if let Ok(path) = conn.query_row("SELECT path FROM projects WHERE id=?1", [pid], |r| {
-                r.get::<_, String>(0)
-            }) {
+    live_repo_in(db().ok().as_ref(), w)
+}
+
+/// 这一步的主文件夹在哪：工作区记下的文件夹还在、而且就是这个项目（档案卡 id 相同或没记 id）就用它；
+/// 不在了（项目被挪走）才按项目 id 去项目表找新位置。反过来先查项目表，会把「整个复制了一份接着用」的
+/// 副本指到原项目上（2026-11-18 干跑实证：副本的保存差点合进原项目）
+fn live_repo_in(conn: Option<&Connection>, w: &WorkspaceDto) -> PathBuf {
+    let recorded = PathBuf::from(&w.repo_path);
+    let same_project = match (w.project_id.as_deref(), crate::projects::project_id_at(&recorded)) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    };
+    if recorded.join(".git").exists() && same_project {
+        return recorded;
+    }
+    if let (Some(pid), Some(conn)) = (w.project_id.as_deref(), conn) {
+        if let Ok(path) = conn.query_row("SELECT path FROM projects WHERE id=?1", [pid], |r| {
+            r.get::<_, String>(0)
+        }) {
+            if Path::new(&path).join(".git").exists() {
                 return PathBuf::from(path);
             }
         }
     }
-    PathBuf::from(&w.repo_path)
+    recorded
 }
 
 fn gitdir_matches_repo(worktree: &Path, repo: &Path) -> Result<(), String> {
@@ -5860,6 +5877,7 @@ pub async fn read_artifacts_manifest(repo_path: String) -> Result<Vec<ArtifactEn
     Ok(read_artifacts_manifest_impl(Path::new(&repo_path)))
 }
 
+pub mod doctor;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
