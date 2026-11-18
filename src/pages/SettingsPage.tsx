@@ -111,10 +111,9 @@ import {
 } from "../diagnostics";
 import { useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
-import { UpdateInstallProgress } from "../components/UpdateProgressBar";
+import { UPDATE_ACTION_BUSY_CLASS, UpdateActionContent, UpdateInstallProgress } from "../components/UpdateProgressBar";
 import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
-  appUpdateActionLabel,
   appUpdateCheckedAtLabel,
   appUpdateStatusHint,
 } from "../app-update";
@@ -4269,9 +4268,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               <button
                 onClick={() => void installUpdate()}
                 disabled={installing}
-                className={`${primaryActionClass} shrink-0`}
+                aria-busy={installing}
+                className={`${primaryActionClass} shrink-0 ${installing ? UPDATE_ACTION_BUSY_CLASS : ""}`}
               >
-                {appUpdateActionLabel(installing ? installPhase : null)}
+                <UpdateActionContent phase={installing ? installPhase : null} />
               </button>
             }
           >

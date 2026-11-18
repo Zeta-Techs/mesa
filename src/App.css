@@ -4709,24 +4709,53 @@ select:focus-visible {
   .ccode-workbench-schedule-action { text-align: left; }
 }
 
-/* 不定进度条（UpdateProgressBar：还不知道总大小时）：三分之一宽的条从左滑到右循环；减弱动态效果时停在左侧不动 */
-@keyframes ccode-progress-indeterminate {
+/* 更新进度条（UpdateProgressBar，2026-11-18 用户「更新的 UI 和动画再美观一点」）：
+ * 不定进度 = 一段两头渐隐的光从左扫到右（不再是实心三分之一块来回跳）；
+ * 已知进度 = 填充部分上一道淡淡的高光慢慢掠过，表示还在下；下完后安装 / 重启时整条轻轻呼吸，不像卡住。
+ * 颜色跟主按钮同一个 --color-cta；减弱动态效果时全部停下：不定进度改整条淡色（停成左边一段看着像「已下 33%」）。 */
+@keyframes ccode-progress-sweep {
   from {
     transform: translateX(-100%);
   }
   to {
-    transform: translateX(300%);
+    transform: translateX(250%);
   }
 }
 .ccode-progress-indeterminate {
-  animation: ccode-progress-indeterminate 1.4s ease-in-out infinite;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--color-cta) 45%, var(--color-cta) 55%, transparent);
+  animation: ccode-progress-sweep 1.6s var(--ccode-motion-ease) infinite;
 }
-/* 不动的时候别停成左边三分之一：看着像「已下 33%」，改成整条淡色表示「进行中、进度未知」 */
+.ccode-progress-sheen {
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent);
+  animation: ccode-progress-sweep 1.8s ease-in-out infinite;
+}
+@keyframes ccode-progress-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+.ccode-progress-breathe {
+  animation: ccode-progress-breathe 1.6s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .ccode-progress-indeterminate {
     animation: none;
     width: 100%;
     opacity: 0.35;
+  }
+  .ccode-progress-sheen {
+    display: none;
+  }
+  .ccode-progress-breathe {
+    animation: none;
   }
 }
 

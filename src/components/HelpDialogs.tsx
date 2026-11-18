@@ -37,7 +37,7 @@ import {
   type AppLogEntry,
 } from "../diagnostics";
 import { feedbackEnvLine } from "../feedback";
-import { appUpdateActionLabel, appUpdateCheckedAtLabel } from "../app-update";
+import { appUpdateCheckedAtLabel } from "../app-update";
 import { useAppUpdateInstall } from "../app-update-install";
 import { REPO_URL } from "../help-links";
 import { revealFolderLabel } from "../path-utils";
@@ -47,7 +47,7 @@ import { toast } from "../toast";
 import appIconDark from "../assets/app-icon/dark.png";
 import appIconLight from "../assets/app-icon/light.png";
 import UpdateNotes from "./UpdateNotes";
-import { UpdateInstallProgress } from "./UpdateProgressBar";
+import { UPDATE_ACTION_BUSY_CLASS, UpdateActionContent, UpdateInstallProgress } from "./UpdateProgressBar";
 
 /** 帮助菜单弹窗族：诊断与日志 / 检查更新 / 关于。帮助菜单不跳设置页——
  *  内容能装进弹窗的都就地弹窗，弹窗里留「去完整页」的出口。 */
@@ -412,11 +412,12 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
         )}
         <button
           type="button"
-          className={primaryActionClass}
+          className={`${primaryActionClass} ${installing ? UPDATE_ACTION_BUSY_CLASS : ""}`}
           disabled={installing}
+          aria-busy={installing}
           onClick={() => void install()}
         >
-          {appUpdateActionLabel(installing ? phase : null)}
+          <UpdateActionContent phase={installing ? phase : null} />
         </button>
       </>
     );
