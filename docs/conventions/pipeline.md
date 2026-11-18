@@ -203,7 +203,14 @@
   待补账状态由持久凭证派生，重新打开项目/评审仍有入口，不只放在组件 state 中。
   补账不受主仓新改动阻挡，但凭证版本必须仍属于基准历史；损坏/缺失凭证拒绝猜测。账本未完成不归档。
   已合并工作区仍允许之后归档，归档继续检查工作区脏状态、未合入提交和活任务。
-  **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数三处共用；迁移前置调用方随迁移命令移除）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/assets/`（沉浸阅读截图，2026-10-17 补入：未提交截图曾拦住所有工作区合并；开工接驳同口径把它随笔记带进基准）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`、`.ccode/watch/`（雷达订阅目录）；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦，git merge 自身的脏文件保护仍会拒绝任何真覆盖。
+  **合并闸门台账豁免（2026-10-13 双台账重写，`review_contract::is_untracked_ledger_file`，merge 闸门/开工脏文件点名/编程改动计数三处共用；迁移前置调用方随迁移命令移除）**：日常积累面**任何 git 状态**都不算主仓脏、不阻塞合并、不计入「改动未存入历史」——`notes/*.md`（用户笔记；`notes/index.json` 是流程正典，不豁免）、`notes/assets/`（沉浸阅读截图，2026-10-17 补入：未提交截图曾拦住所有工作区合并；开工接驳同口径把它随笔记带进基准）、`notes/inbox.md`、`papers/watch-seen.md`、`papers/watch-followup.md`、`.ccode/acceptance-log.jsonl/.lock`、`.ccode/watch/`（雷达订阅目录）；**只豁免未跟踪（??）态**：`papers/reading-list.md`、`.ccode/watch-explains.json`、`.ccode/pending-registrations.json`——reading-list 只豁免 ?? 是防呆设计，agent 违规把积累账提交进工作区分支后它变 tracked，后续写入的 M 态仍会拦合并并点名。旧口径「已跟踪的账本改动仍算」对上述积累面作废；闸门只负责提前拦。
+  **补充（2026-11-18 用户拍板「旧项目兼容 + 用户乱操作也能走下去」）**：
+  - 豁免清单只有一份：后端 `is_untracked_ledger_file` 与前端 `userDirtyFiles` 共读 `tests/fixtures/ledger-exemptions.json` 逐条比对，改一边两边同改——两边不一致就是「顶上说主文件夹有改动、提交面板说没有」的死结（当日用户实测）。`.ccode/review-notes.md` 任何状态都豁免（它只留在工作区、从不进提交）；只豁免 ?? 的另含文献库导入文件（`papers/zotero-library.*`、`papers/endnote-library.*`、`papers/endnote-journals.txt`）。
+  - 解析 `git status --porcelain` 一律走 `workspaces::run_git_porcelain`（只去行尾），禁用会整体 trim 的 `run_git`：首行 ` M path` 被 trim 成 `M path` 后按第 3 列切路径错一位，豁免全认不出。
+  - 合并前**重叠即先存**：主文件夹里被豁免的改动与这一步要并入的文件重叠时，`settle_main_overlaps` 只把重叠的几份提交进主文件夹（`Mesa: 合并前先保存主文件夹里改过的文件`，关签名、跳钩子），再走 git 三向合并；不重叠的不动。真撞同一处照旧自动回退，走冲突处理。
+  - 主文件夹 git 卡住的三种状态由健康度报出、评审页给一键处理（`workspace_repair_main`，人点了才做，动手前按当下复查）：残留 `index.lock`（主文件夹或工作区，存在超过 30 秒才算残留，年轻的锁不碰）→ 删锁；没做完的 merge / rebase / cherry-pick / revert → 对应 `--abort`（先确认）；不在基准分支 → `git switch <基准>`（先确认，git 拒绝时转白话、不强切）。合并闸门同样先拦这三种，报错指向评审页按钮，不写「stash / PR 流程」。
+  - 提交链上的 git（`git_commit` 的 add / commit）限时两分钟，超时杀掉并按「开了提交签名 → 有真钩子（不认 `.sample`）→ 别的 git 占着」说清多半卡在哪；Mesa 自己做的合并与先存提交照旧关签名。
+  - 老科研项目的 `.gitignore`：档案卡自动提交（开工、评审时）前缺哪行 Mesa 自有忽略行补哪行（`.ccode/` 下、`/papers/` 下文献库文件、`/notes/inbox.md`），追加在末尾「# Mesa 本机记录与台账（Mesa 补上的忽略规则，不进 git）」一段，随档案卡一起提交；不新建 .gitignore、不改不删已有行、不补 `*.pdf`、`/output/` 这类改变用户文件去留的规则；已被跟踪的文件不取消跟踪。
   开工时，本步要读的未存文件由「记下并开始」先提交再开工，不再二次确认。与本步输入无关的改动不开工弹层里提醒。
   任务书工具合同只在所选工具变了时挡住开始。产物名单增减不挡。技能预期读入若已是本步预期产物，不报上游缺失。
   精读收尾写 `notes/handoff.md`：写作约束给大纲遵守，补全文和登录留在 help-wanted，不进下一步任务书。大纲输入含这份文件。`handoff.md` 是 Agent 交的产物。

@@ -2443,6 +2443,30 @@ function LiveWorkspaceReviewView({
     });
   }
 
+  // 主文件夹的 git 卡住时的一键处理（后端动手前按当下状态复查）：锁文件、没做完的 git 操作、不在主分支上
+  const [mainRepairBusy, setMainRepairBusy] = useState(false);
+  async function repairMain(action: "clear_lock" | "abort_unfinished" | "switch_base") {
+    if (!diff) return;
+    const ask =
+      action === "abort_unfinished"
+        ? "放弃主文件夹里那次没做完的 git 操作，回到它开始之前？\n\n那次操作里已经做的选择会丢掉；平常的文件改动不受影响。"
+        : action === "switch_base"
+          ? `把主文件夹切回 ${diff.baseBranch}？\n\n现在所在分支上的提交仍保留在那个分支上。`
+          : null;
+    if (ask && !(await confirmDialog(ask, { danger: action === "abort_unfinished" }))) return;
+    setMainRepairBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      setResult(await invoke<string>("workspace_repair_main", { id: diff.workspaceId, action }));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setMainRepairBusy(false);
+      void refresh();
+    }
+  }
+
   async function startConflictResolution(restart = false) {
     if (!diff) return;
     if (
@@ -3538,6 +3562,25 @@ function LiveWorkspaceReviewView({
             <div className="flex items-center gap-2">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-text" />
               <span className="min-w-0 flex-1">{blockerPrimaryText(blockers)}</span>
+              {(
+                [
+                  ["stale-lock", "clear_lock", "清掉锁文件"],
+                  ["main-unfinished", "abort_unfinished", "放弃那次操作"],
+                  ["main-off-base", "switch_base", `切回 ${diff.baseBranch}`],
+                ] as const
+              )
+                .filter(([key]) => blockers.some((b) => b.key === key))
+                .map(([key, action, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    disabled={mainRepairBusy}
+                    onClick={() => void repairMain(action)}
+                    className="rounded-sm px-2 py-0.5 text-warn-text hover:bg-hover disabled:opacity-50"
+                  >
+                    {label}
+                  </button>
+                ))}
               {blockers.some((b) => b.key === "main-dirty") && repoPath && (
                 <button
                   type="button"

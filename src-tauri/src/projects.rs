@@ -3431,10 +3431,63 @@ pub(crate) fn ensure_research_git(root: &Path) -> Result<bool, String> {
 /// 开步自动提交只处理的两个 Mesa 自有路径（literal pathspec，无 glob 展开）
 const BOOTSTRAP_PATHS: [&str; 2] = [".ccode", ".gitignore"];
 
-fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
+/// 老项目补忽略行时追加段的标题（测试按它找段）
+const IGNORE_UPGRADE_MARKER: &str = "# Mesa 本机记录与台账（Mesa 补上的忽略规则，不进 git）";
+
+/// 老科研项目的 .gitignore 是早先模板写的，缺后来进模板的 Mesa 本机记录 / 台账忽略行（2026-11-18 拍板补）：
+/// 缺哪行补哪行，追加在末尾一段，不改不删已有行。只补 Mesa 自己的文件（`.ccode/` 下、文献库导入文件、雷达台账），
+/// 不补 `*.pdf`、`/output/` 这类会改变用户文件去留的规则。已被跟踪的文件不受忽略规则影响，照旧留在历史里。
+/// 返回是否改了 .gitignore。
+fn upgrade_mesa_ignores_at(repo: &Path) -> Result<bool, String> {
+    let path = repo.join(".gitignore");
+    let current = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        // 没有 .gitignore 的不替人新建（建仓时 ensure_git_at 才写整份模板）
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("读取 .gitignore 失败: {e}")),
+    };
+    let have: std::collections::HashSet<&str> = current
+        .lines()
+        .map(|l| l.trim().trim_start_matches('/'))
+        .collect();
+    let template = gitignore_text("research", DEFAULT_ARTIFACT_DIR);
+    let missing: Vec<&str> = template
+        .lines()
+        .map(str::trim)
+        .filter(|l| {
+            !l.starts_with('#')
+                && (l.contains(".ccode/") || l.starts_with("/papers/") || *l == "/notes/inbox.md")
+        })
+        .filter(|l| !have.contains(l.trim_start_matches('/')))
+        .collect();
+    if missing.is_empty() {
+        return Ok(false);
+    }
+    let mut text = current;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push('\n');
+    text.push_str(IGNORE_UPGRADE_MARKER);
+    text.push('\n');
+    for line in missing {
+        text.push_str(line);
+        text.push('\n');
+    }
+    crate::profiles::atomic_write(&path, &text).map_err(|e| format!("写入 .gitignore 失败: {e}"))?;
+    Ok(true)
+}
+
+pub(crate) fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, String> {
     const T: Duration = Duration::from_secs(30);
     if !repo.is_dir() {
         return Err(format!("项目目录不存在或不是目录: {}", repo.display()));
+    }
+    // 老科研项目先补齐 Mesa 的忽略行，随下面这次档案卡提交一起进历史；补不上不挡提交
+    if normalize_work_mode(&read_config_at(repo).config.work_mode) == "research" {
+        if let Err(e) = upgrade_mesa_ignores_at(repo) {
+            eprintln!("[projects] 补 .gitignore 忽略行失败: {e}");
+        }
     }
     if crate::agents::resolve_binary("git").is_none() {
         return Err("找不到 git 可执行文件，请先安装 git".to_string());

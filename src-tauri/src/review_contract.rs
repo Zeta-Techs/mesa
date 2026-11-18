@@ -67,6 +67,9 @@ fn is_accumulation_ledger(path: &str) -> bool {
             | ".ccode/record.lock"
             | ".ccode/ai-usage.md"
             | ".ccode/step-rounds.jsonl"
+            // 评审退回意见只留在工作区、从不进提交；落在主文件夹时也不该拦合并（前端提交面板一直不列它，
+            // 后端若算它脏就是「顶上说有改动、面板说没有」的死结）
+            | ".ccode/review-notes.md"
     ) || (path.starts_with("notes/") && path.ends_with(".md"))
         || path.starts_with(".ccode/rework/")
         || path.starts_with(".ccode/consults/")
@@ -376,6 +379,19 @@ mod tests {
         assert!(read_pending(&key).unwrap_err().contains("损坏"));
         clear_pending(&key).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// 与前端 userDirtyFiles 共读一份样例：两边判「挡不挡保存」必须逐条一致，
+    /// 否则就是「顶上说主文件夹有改动、提交面板说没有」（2026-11-18 用户实测）
+    #[test]
+    fn ledger_exemptions_match_shared_fixture() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../../tests/fixtures/ledger-exemptions.json")).unwrap();
+        for case in cases {
+            let line = case["line"].as_str().unwrap();
+            let blocks = case["blocks"].as_bool().unwrap();
+            assert_eq!(!is_untracked_ledger_file(line), blocks, "{line}");
+        }
     }
 
     #[test]

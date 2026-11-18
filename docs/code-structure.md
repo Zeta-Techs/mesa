@@ -724,6 +724,7 @@ __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore
   git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；userDirtyFiles（剔台账，评审提交面板用）/
 path-utils.ts              # 前端路径方言层（AGENTS「路径比较」条的前端口径，与后端 paths.rs path_key/path_within 同规则）：normSep/stripVerbatim（存量库里仍有 \\?\ verbatim 记录，显示与比较前都要过一道）/pathKey（Windows 折叠大小写，只用于比较不回写）/samePath/pathWithin（段边界含根自身）、normalizeStatusKeys＋hasChangedInside（git 装饰表键归一与文件夹变更点）、parentDir（Windows 盘符根保留）、abbrevHome（~ 折叠显示）、relativeUnder（写进 agent 指令的正斜杠相对路径）、revealFolderLabel 平台叫法；isWindows/isMac 显式传参禁模块内读平台（跨页广泛消费；tests/path-utils.test.ts）
                              #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
+                             #   userDirtyFiles 与后端 is_untracked_ledger_file 共读 tests/fixtures/ledger-exemptions.json（两边不一致 = 评审顶上与提交面板说法打架）
   file-icons.ts              # 文件类型图标纯逻辑：扩展名 → 图形种类（FileGlyph）+ 固定识别色（另按整名认点开头配置文件、按 .bak 段认备份副本）；
 agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（固定 hex 不随主题变，同 file-icons「固定识别色」先例）：对话页列表行胶囊（agentBrandBadgeStyle＝色字+同色 10% 淡底、无描边）与统计页进度条/圆点、项目任务/Agents 视图、模型菜单、会话导入弹层共用；未知 agent 按 id 哈希取 HSL 兜底（确定性、不撞令牌池）。v3.92 调色口径：低饱和中明度雾面、十家 hue 拉开；v3.94 起旧令牌色表 AGENT_COLORS 已随「进度条改绑品牌色」拍板删除——新增 agent 在这里加一行，别撞色
                              # 未收录返回 null，画通用文件图标，不留空槽；图形到 Lucide 的映射与渲染在 components/FileTypeMark.tsx；
@@ -2037,6 +2038,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏，file_version_compare 同时支持历史与磁盘现稿（有界/读后核验、图片双侧私有冻结缓存）、另存目标由Rust系统保存窗口选出（可在项目外），拒覆盖/内部目录/保护路径，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
+                             #   2026-11-18：解析 status --porcelain 一律 run_git_porcelain（run_git 会 trim 掉首行前导空格）；健康度报残留 index.lock / 主文件夹没做完的 git 操作 / 当前分支，
+                             #   workspace_repair_main 一键清锁 / abort / 切回基准；合并前 settle_main_overlaps 先存与本步重叠的豁免改动
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
                              #   2026-11-06：stale_upstream_for 按最后一次并入判（本步保存不算）；workspace_incoming 列基准侧多出的文件（HEAD...base）ed 判定工作区有文件只看工作区
                              # setup/archive 钩子、评审合并（health/merge/PR）、artifacts.yaml、

@@ -1,0 +1,22 @@
+[
+  { "line": " M .ccode/record.jsonl", "blocks": false },
+  { "line": " M .ccode/ai-usage.md", "blocks": false },
+  { "line": "?? .ccode/acceptance-log.jsonl", "blocks": false },
+  { "line": " M .ccode/step-rounds.jsonl", "blocks": false },
+  { "line": "?? .ccode/rework/20261105-lit-search.json", "blocks": false },
+  { "line": "?? .ccode/review-notes.md", "blocks": false },
+  { "line": " M .ccode/review-notes.md", "blocks": false },
+  { "line": " M notes/classification.md", "blocks": false },
+  { "line": "?? notes/assets/capture-1.png", "blocks": false },
+  { "line": " M notes/inbox.md", "blocks": false },
+  { "line": "?? papers/reading-list.md", "blocks": false },
+  { "line": " M papers/reading-list.md", "blocks": true },
+  { "line": "?? papers/endnote-library.xml", "blocks": false },
+  { "line": " M papers/endnote-library.xml", "blocks": true },
+  { "line": "?? .ccode/watch-explains.json", "blocks": false },
+  { "line": " M .ccode/watch-explains.json", "blocks": true },
+  { "line": " M notes/index.json", "blocks": true },
+  { "line": " M papers/included.md", "blocks": true },
+  { "line": "?? .ccode/project.toml", "blocks": true },
+  { "line": "?? draft.docx", "blocks": true }
+]

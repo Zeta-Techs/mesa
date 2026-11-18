@@ -1749,7 +1749,7 @@ fn merge_workspace_refuses_dirty_or_wrong_branch_main_repo() {
     commit_all_in_worktree(&wt, "x");
     // 主仓库有未跟踪文件（fixture 的 .env*）→ 脏，拒绝
     let err = merge_impl(&fx.conn, &w.id, false).unwrap_err();
-    assert!(err.contains("未提交改动"), "{err}");
+    assert!(err.contains("没保存的改动"), "{err}");
     assert_eq!(
         get_workspace(&fx.conn, &w.id).unwrap().status,
         "active",
@@ -1764,7 +1764,7 @@ fn merge_workspace_refuses_dirty_or_wrong_branch_main_repo() {
     );
     sh(&fx.repo, &["checkout", "-b", "other"]);
     let err = merge_impl(&fx.conn, &w.id, false).unwrap_err();
-    assert!(err.contains("不在基准分支"), "{err}");
+    assert!(err.contains("不在 main"), "{err}");
     // 主仓库 main 上不应有 x.txt（merge 没发生）
     sh(&fx.repo, &["checkout", "main"]);
     assert!(!fx.repo.join("x.txt").exists());
@@ -3139,4 +3139,150 @@ fn review_notes_alone_is_not_an_unsaved_change() {
     assert!(!porcelain_has_changes("?? .ccode/review-notes.md\n"));
     assert!(porcelain_has_changes("?? .ccode/review-notes.md\n M papers/to-fetch.md\n"));
     assert!(porcelain_has_changes(" M .ccode/review-notes.md.bak\n"));
+}
+
+/// 主文件夹改了一份已跟踪笔记、这一步也改了同一份（不同段落）：合并前 Mesa 先把主文件夹那份存进历史，
+/// git 走三向合并，两边的改动都留下；不再以「本地改动会被覆盖」整个拒绝（2026-11-18 用户实测场景）
+#[test]
+fn merge_settles_main_note_edits_that_overlap_the_step() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::create_dir_all(fx.repo.join("notes")).unwrap();
+    fs::write(fx.repo.join("notes/classification.md"), "a\nb\nc\nd\ne\nf\n").unwrap();
+    sh(&fx.repo, &["add", ".env", ".envrc", "notes/classification.md"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "base"]);
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "notes").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    fs::write(wt.join("notes/classification.md"), "a\nb\nc\nd\ne\nf-步骤\n").unwrap();
+    commit_all_in_worktree(&wt, "步骤改笔记");
+    fs::write(fx.repo.join("notes/classification.md"), "a-主文件夹\nb\nc\nd\ne\nf\n").unwrap();
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(!h.main_dirty, "笔记改动不拦合并");
+    let out = merge_impl(&fx.conn, &w.id, false).unwrap();
+    assert!(out.merged, "{}", out.message);
+    let merged = fs::read_to_string(fx.repo.join("notes/classification.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    assert_eq!(merged, "a-主文件夹\nb\nc\nd\ne\nf-步骤\n");
+}
+
+fn age_file(path: &Path) {
+    let old = std::time::SystemTime::now() - Duration::from_secs(120);
+    fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+}
+
+#[test]
+fn stale_index_lock_is_reported_and_cleared_on_request() {
+    let Some(fx) = Fixture::new() else { return };
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lock").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    fs::write(wt.join("x.txt"), "x\n").unwrap();
+    commit_all_in_worktree(&wt, "x");
+    let lock = fx.repo.join(".git/index.lock");
+    fs::write(&lock, "").unwrap();
+    // 刚出现的锁：git 可能正在用，不算残留、也不删
+    assert!(!health_impl(&fx.conn, &w.id).unwrap().stale_lock);
+    repair_main_impl(&fx.conn, &w.id, "clear_lock").unwrap();
+    assert!(lock.exists());
+    age_file(&lock);
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(h.stale_lock && !h.ready_to_merge);
+    let err = merge_impl(&fx.conn, &w.id, false).unwrap_err();
+    assert!(err.contains("锁文件"), "{err}");
+    repair_main_impl(&fx.conn, &w.id, "clear_lock").unwrap();
+    assert!(!lock.exists());
+    assert!(!health_impl(&fx.conn, &w.id).unwrap().stale_lock);
+}
+
+#[test]
+fn unfinished_main_merge_is_reported_and_aborted_on_request() {
+    let Some(fx) = Fixture::new() else { return };
+    sh(&fx.repo, &["add", ".env", ".envrc"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "env"]);
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "half").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    fs::write(wt.join("x.txt"), "x\n").unwrap();
+    commit_all_in_worktree(&wt, "x");
+    // 人在主文件夹自己开了个分支、合并到一半撞了冲突
+    fs::write(fx.repo.join("same.txt"), "base\n").unwrap();
+    sh(&fx.repo, &["add", "same.txt"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "same"]);
+    sh(&fx.repo, &["checkout", "-b", "side"]);
+    fs::write(fx.repo.join("same.txt"), "side\n").unwrap();
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-am", "side"]);
+    sh(&fx.repo, &["checkout", "main"]);
+    fs::write(fx.repo.join("same.txt"), "main\n").unwrap();
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-am", "main"]);
+    let _ = run_git(&fx.repo, &["merge", "side"], Duration::from_secs(30));
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert_eq!(h.main_unfinished.as_deref(), Some("merge"));
+    let err = merge_impl(&fx.conn, &w.id, false).unwrap_err();
+    assert!(err.contains("没做完"), "{err}");
+    repair_main_impl(&fx.conn, &w.id, "abort_unfinished").unwrap();
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(h.main_unfinished.is_none());
+    assert_eq!(fs::read_to_string(fx.repo.join("same.txt")).unwrap().replace("\r\n", "\n"), "main\n");
+}
+
+#[test]
+fn main_off_base_switches_back_on_request() {
+    let Some(fx) = Fixture::new() else { return };
+    sh(&fx.repo, &["add", ".env", ".envrc"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "env"]);
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "away").unwrap();
+    sh(&fx.repo, &["checkout", "-b", "elsewhere"]);
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(h.main_off_base);
+    assert_eq!(h.main_branch, "elsewhere");
+    repair_main_impl(&fx.conn, &w.id, "switch_base").unwrap();
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(!h.main_off_base);
+    assert_eq!(h.main_branch, "main");
+}
+
+/// 真实项目干跑（AGENTS.md「动真实数据先干跑」）：`MESA_DRYRUN_REPO` 指向一份真实老项目的**拷贝**，
+/// 走档案卡提交（补忽略行）→ 开一步 → 主文件夹与这一步改同一份已跟踪笔记 → 健康检查 → 保存进项目。
+/// 手动跑：`MESA_DRYRUN_REPO=<拷贝> cargo test dryrun_real_project_copy -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn dryrun_real_project_copy() {
+    let repo = PathBuf::from(std::env::var("MESA_DRYRUN_REPO").expect("MESA_DRYRUN_REPO"));
+    let dir = std::env::temp_dir().join(format!("ccode-dryrun-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let conn = db_at(&dir.join("app.db")).unwrap();
+    let boot = crate::projects::commit_bootstrap_at(&repo).unwrap();
+    println!("档案卡提交: {boot:?}");
+    let ignore = fs::read_to_string(repo.join(".gitignore")).unwrap();
+    println!("补齐后的 .gitignore 末段:\n{}", ignore.rsplit("\n\n").next().unwrap_or(""));
+    let w = create_impl(&conn, &dir.join("ws"), repo.to_str().unwrap(), "dryrun").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    let note = run_git(&repo, &["ls-files", "notes"], Duration::from_secs(10))
+        .unwrap()
+        .lines()
+        .find(|l| l.ends_with(".md") && !l.contains('"'))
+        .unwrap()
+        .to_string();
+    println!("两边同改的笔记: {note}");
+    let original = fs::read_to_string(repo.join(&note)).unwrap();
+    fs::write(wt.join(&note), format!("{original}\n这一步追加的一行\n")).unwrap();
+    commit_all_in_worktree(&wt, "干跑：这一步改笔记");
+    fs::write(repo.join(&note), format!("主文件夹加在开头的一行\n{original}")).unwrap();
+    // 主文件夹里已跟踪的退回意见被改（HER 项目里它被跟踪着）
+    if repo.join(".ccode/review-notes.md").exists() {
+        fs::write(repo.join(".ccode/review-notes.md"), "干跑：主文件夹里改了退回意见\n").unwrap();
+    }
+    let status = run_git_porcelain(&repo, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30)).unwrap();
+    println!("合并前主文件夹 status:\n{status}");
+    let h = health_impl(&conn, &w.id).unwrap();
+    println!("健康检查: dirty={} lock={} unfinished={:?} ready={}", h.main_dirty, h.stale_lock, h.main_unfinished, h.ready_to_merge);
+    assert!(!h.main_dirty && h.ready_to_merge);
+    let out = merge_impl(&conn, &w.id, true).unwrap();
+    println!("保存进项目: merged={} archived={} {}\n{}", out.merged, out.archived, out.message, out.output);
+    let merged = fs::read_to_string(repo.join(&note)).unwrap();
+    assert!(merged.starts_with("主文件夹加在开头的一行") && merged.contains("这一步追加的一行"));
+    let _ = fs::remove_dir_all(&dir);
 }

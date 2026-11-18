@@ -910,6 +910,7 @@ pub fn run() {
             workspaces::write_review_notes,
             workspaces::workspace_drift,
             workspaces::workspace_repair_remount,
+            workspaces::workspace_repair_main,
             workspaces::workspace_relocate_repo,
             workspaces::workspace_mark_archived,
             workspaces::workspace_clean_record,

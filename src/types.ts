@@ -1144,6 +1144,12 @@ export interface WorkspaceHealthDto {
   gitdirDetached?: boolean;
   /** 持久恢复记录需要补记；重新打开项目仍可找回。 */
   ledgerPending?: boolean;
+  /** 上次 git 操作留下的锁文件（主文件夹或工作区），够旧才算 */
+  staleLock?: boolean;
+  /** 主文件夹里没做完的 git 操作：merge / rebase / cherry-pick / revert */
+  mainUnfinished?: string | null;
+  /** 主文件夹当前分支（detached 时为 "HEAD"） */
+  mainBranch?: string;
 }
 
 /** 产物待核验（收件箱）：活跃工作区绑定步骤的预期产物已全部产出且够新 */

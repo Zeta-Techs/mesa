@@ -348,6 +348,27 @@ test("拦截项：顺序是「先拦住你、再提醒你」，主仓脏带 key 
   assert.ok(dirty.text.includes("没保存"), "主仓脏要说人话，不是 git 术语");
 });
 
+test("拦截项：残留锁最先，没做完的 git 操作排在没保存的改动前，都说人话", () => {
+  const all = health({
+    staleLock: true,
+    conflict: true,
+    mainUnfinished: "rebase",
+    mainDirty: true,
+    mainOffBase: true,
+    mainBranch: "side",
+  });
+  const list = blockerList(all);
+  assert.deepEqual(
+    list.map((b) => b.key),
+    ["stale-lock", "conflict", "main-unfinished", "main-dirty", "main-off-base"],
+  );
+  assert.ok(list[0].text.includes("锁文件"));
+  assert.ok(list[2].text.includes("变基"), list[2].text);
+  assert.ok(list[4].text.includes("side"), "说清现在在哪个分支上");
+  const detached = blockerList(health({ mainOffBase: true, mainBranch: "HEAD" }));
+  assert.equal(detached[0].text, "主文件夹当前不在主分支上");
+});
+
 test("拦截项：无法预检冲突与真冲突可以同时出现时不重复", () => {
   // conflict 是 true | false | null，三态互斥，不会同时进两条
   const keys = blockerList(health({ conflict: null })).map((b) => b.key);

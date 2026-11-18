@@ -41,7 +41,14 @@ export interface ChangeTreeNode {
 
 /** 健康检查拦截项：key 用于给「主仓脏」挂快速提交入口，text 为面向用户的白话文案 */
 export interface HealthBlocker {
-  key: "conflict" | "conflict-unknown" | "main-dirty" | "main-off-base" | "gitdir";
+  key:
+    | "stale-lock"
+    | "conflict"
+    | "conflict-unknown"
+    | "main-unfinished"
+    | "main-dirty"
+    | "main-off-base"
+    | "gitdir";
   text: string;
 }
 
@@ -238,6 +245,13 @@ export function foldContextRows(
   return output;
 }
 
+const UNFINISHED_WORD: Record<string, string> = {
+  merge: "合并",
+  rebase: "变基",
+  "cherry-pick": "挑拣提交",
+  revert: "撤销提交",
+};
+
 /**
  * 健康检查拦截项。顺序即界面顺序，按「先拦住你、再提醒你」排：
  * 冲突类（含无法预检）在最前，因为它们直接决定能不能合并；主仓脱节/不在主分支
@@ -247,6 +261,12 @@ export function foldContextRows(
 export function blockerList(health: WorkspaceHealthDto | null): HealthBlocker[] {
   if (!health) return [];
   const blockers: HealthBlocker[] = [];
+  // 残留锁在最前：它不清掉，下面每一项的处理（含提交）都会失败
+  if (health.staleLock)
+    blockers.push({
+      key: "stale-lock",
+      text: "上次 git 操作没结束就被关掉了，留下的锁文件挡着保存",
+    });
   if (health.conflict === true)
     blockers.push({
       key: "conflict",
@@ -254,6 +274,12 @@ export function blockerList(health: WorkspaceHealthDto | null): HealthBlocker[] 
     });
   if (health.conflict === null)
     blockers.push({ key: "conflict-unknown", text: "当前 Git 版本无法预检冲突" });
+  // 做到一半的 git 操作排在「没保存的改动」前：它在时主文件夹必然也脏，先放弃它才谈得上提交
+  if (health.mainUnfinished)
+    blockers.push({
+      key: "main-unfinished",
+      text: `主文件夹停在一次没做完的 git ${UNFINISHED_WORD[health.mainUnfinished] ?? "操作"}里`,
+    });
   if (health.mainDirty)
     blockers.push({ key: "main-dirty", text: "主文件夹里还有没保存的改动" });
   if (health.gitdirDetached)
@@ -262,7 +288,13 @@ export function blockerList(health: WorkspaceHealthDto | null): HealthBlocker[] 
       text: "工作树与主仓脱节，请重新挂载",
     });
   if (health.mainOffBase)
-    blockers.push({ key: "main-off-base", text: "主文件夹当前不在主分支上" });
+    blockers.push({
+      key: "main-off-base",
+      text:
+        health.mainBranch && health.mainBranch !== "HEAD"
+          ? `主文件夹当前在 ${health.mainBranch} 上，不在主分支上`
+          : "主文件夹当前不在主分支上",
+    });
   return blockers;
 }
 

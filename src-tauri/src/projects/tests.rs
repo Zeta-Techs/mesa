@@ -3193,3 +3193,31 @@ fn project_agent_binding_presets_round_trip_and_validate_by_slot() {
     assert_eq!(accept_binding_effort("assistant", Some("high")).unwrap(), None);
     assert!(accept_binding_permission_tier("chat", Some("bogus")).is_err());
 }
+
+/// 老科研项目的 .gitignore 缺后来进模板的 Mesa 记录行：开工 / 评审时的档案卡提交顺手补齐、一起提交；
+/// 已有行（带不带开头的 /）不重复补，用户行原样保留，*.pdf、/output/ 这类不替人加（2026-11-18 拍板）
+#[test]
+fn bootstrap_commit_tops_up_mesa_ignore_lines_for_old_projects() {
+    if crate::agents::resolve_binary("git").is_none() {
+        return;
+    }
+    let dir = temp_dir("bootstrap-upgrade");
+    let project = dir.join("proj");
+    fs::create_dir_all(&project).unwrap();
+    ensure_git_at(&project).unwrap();
+    write_config_at(&project, &sample_config()).unwrap();
+    write(&project.join(".gitignore"), "# 我的\n/output/\n.ccode/acceptance-log.jsonl\n");
+    let r = commit_bootstrap_at(&project).unwrap();
+    assert!(r.committed && r.paths.contains(&".gitignore".to_string()), "{r:?}");
+    let text = fs::read_to_string(project.join(".gitignore")).unwrap();
+    assert!(text.starts_with("# 我的\n/output/\n.ccode/acceptance-log.jsonl\n"), "{text}");
+    assert!(text.contains(IGNORE_UPGRADE_MARKER));
+    for line in ["/.ccode/record.jsonl", "/.ccode/ai-usage.md", "/.ccode/step-rounds.jsonl", "/papers/endnote-library.xml", "/notes/inbox.md"] {
+        assert!(text.lines().any(|l| l == line), "缺 {line}: {text}");
+    }
+    assert!(!text.lines().any(|l| l == "/.ccode/acceptance-log.jsonl"), "已有的不重复补: {text}");
+    assert!(!text.lines().any(|l| l == "*.pdf"), "不替人加改变用户文件去留的规则: {text}");
+    // 再来一次不再改
+    assert!(!commit_bootstrap_at(&project).unwrap().committed);
+    std::fs::remove_dir_all(&dir).ok();
+}

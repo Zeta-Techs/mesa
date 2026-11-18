@@ -135,3 +135,17 @@ test("commitWorthyFiles 只剩退回意见时为空，台账类照旧算", async
     ["notes/inbox.md"],
   );
 });
+
+test("挡不挡保存与后端合并闸门逐条一致（共读 ledger-exemptions.json）", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { userDirtyFiles } = await import("../src/git-status-groups.ts");
+  const cases: { line: string; blocks: boolean }[] = JSON.parse(
+    readFileSync("tests/fixtures/ledger-exemptions.json", "utf8"),
+  );
+  for (const { line, blocks } of cases) {
+    const xy = line.slice(0, 2);
+    const status = xy === "??" ? "??" : xy.trim()[0];
+    const row = { path: line.slice(3), status };
+    assert.equal(userDirtyFiles([row]).length > 0, blocks, line);
+  }
+});

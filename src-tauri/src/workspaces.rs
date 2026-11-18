@@ -1285,6 +1285,53 @@ pub struct WsHealthDto {
     pub worktree_head: Option<String>,
     pub gitdir_detached: bool,
     pub ledger_pending: bool,
+    /// 上次 git 操作留下的锁文件（主文件夹或工作区；Mesa 被强关、git 崩溃后残留），不清掉什么 git 都做不了
+    pub stale_lock: bool,
+    /// 主文件夹停在一次没做完的 git 操作里：merge / rebase / cherry-pick / revert
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub main_unfinished: Option<String>,
+    /// 主文件夹当前分支（detached 时为 "HEAD"），给「不在主分支上」说清在哪
+    pub main_branch: String,
+}
+
+/// 锁文件多旧才算残留：git 正常持锁只有几百毫秒，超过这个时长基本是上次被打断留下的
+const STALE_LOCK_AGE: Duration = Duration::from_secs(30);
+
+fn absolute_git_dir(dir: &Path) -> Option<PathBuf> {
+    run_git(dir, &["rev-parse", "--absolute-git-dir"], Duration::from_secs(10))
+        .ok()
+        .map(PathBuf::from)
+}
+
+/// 主文件夹与工作区各自的 index.lock 中够旧的那些（只认 index.lock：其余锁 git 自己会报清楚）
+fn stale_index_locks(dirs: &[&Path]) -> Vec<PathBuf> {
+    dirs.iter()
+        .filter_map(|dir| absolute_git_dir(dir))
+        .map(|gitdir| gitdir.join("index.lock"))
+        .filter(|lock| {
+            fs::metadata(lock)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age >= STALE_LOCK_AGE)
+        })
+        .collect()
+}
+
+/// 主文件夹里没做完的 git 操作（人在命令行或别的 git 工具里做到一半）
+fn unfinished_operation(repo: &Path) -> Option<&'static str> {
+    let gitdir = absolute_git_dir(repo)?;
+    if gitdir.join("rebase-merge").exists() || gitdir.join("rebase-apply").exists() {
+        Some("rebase")
+    } else if gitdir.join("MERGE_HEAD").exists() {
+        Some("merge")
+    } else if gitdir.join("CHERRY_PICK_HEAD").exists() {
+        Some("cherry-pick")
+    } else if gitdir.join("REVERT_HEAD").exists() {
+        Some("revert")
+    } else {
+        None
+    }
 }
 
 /// 基准引用固定用本地分支：与 create_impl 的起点一致（工作区从本地基准拉出，
@@ -1357,7 +1404,7 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     fn joined<T>(r: std::thread::Result<T>) -> Result<T, String> {
         r.map_err(|_| "检查工作区状态时线程异常".to_string())
     }
-    let (uncommitted, counts, probe, main_off_base, main_dirty, stale_base, worktree_head, gitdir_detached) =
+    let (uncommitted, counts, probe, main_branch, main_dirty, stale_base, worktree_head, gitdir_detached, main_state) =
         std::thread::scope(|s| {
             let uncommitted = s.spawn(|| run_git_porcelain(&wt, &["status", "--porcelain"], Duration::from_secs(30)));
             // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
@@ -1371,8 +1418,7 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
             let probe = s.spawn(|| conflict_probe(&wt, &base, "HEAD"));
             let main_off_base = s.spawn(|| {
                 run_git(&repo, &["rev-parse", "--abbrev-ref", "HEAD"], Duration::from_secs(10))
-                    .map(|cur| cur != w.base_branch)
-                    .unwrap_or(false)
+                    .ok()
             });
             let main_dirty = s.spawn(|| {
                 run_git_porcelain(
@@ -1401,6 +1447,12 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
             let worktree_head =
                 s.spawn(|| run_git(&wt, &["rev-parse", "HEAD"], Duration::from_secs(10)).ok());
             let gitdir_detached = s.spawn(|| gitdir_matches_repo(&wt, &repo).is_err());
+            let main_state = s.spawn(|| {
+                (
+                    !stale_index_locks(&[&repo, &wt]).is_empty(),
+                    unfinished_operation(&repo),
+                )
+            });
             (
                 joined(uncommitted.join()),
                 joined(counts.join()),
@@ -1410,6 +1462,7 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
                 joined(stale_base.join()),
                 joined(worktree_head.join()),
                 joined(gitdir_detached.join()),
+                joined(main_state.join()),
             )
         });
     // 退回意见 .ccode/review-notes.md 按设计只留在工作区、不进提交（git_info 提交时撤掉），不算「没保存的改动」：
@@ -1420,8 +1473,11 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     let behind = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     let ahead = parts.next().and_then(|x| x.parse().ok()).unwrap_or(0);
     let (conflict, conflict_files) = probe?;
-    let (main_off_base, main_dirty, stale_base) = (main_off_base?, main_dirty?, stale_base?);
+    let (main_branch, main_dirty, stale_base) = (main_branch?, main_dirty?, stale_base?);
     let (worktree_head, gitdir_detached) = (worktree_head?, gitdir_detached?);
+    let (stale_lock, main_unfinished) = main_state?;
+    let main_off_base = main_branch.as_deref().is_some_and(|cur| cur != w.base_branch);
+    let main_branch = main_branch.unwrap_or_default();
     Ok(WsHealthDto {
         uncommitted,
         ahead,
@@ -1436,11 +1492,16 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
             && conflict == Some(false)
             && !main_off_base
             && !main_dirty
-            && !gitdir_detached,
+            && !gitdir_detached
+            && !stale_lock
+            && main_unfinished.is_none(),
         worktree_head,
         gitdir_detached,
         ledger_pending: crate::review_contract::pending_needs_attention(id)
             || !matches!(read_delivery_pending(id), Ok(None)),
+        stale_lock,
+        main_unfinished: main_unfinished.map(str::to_string),
+        main_branch,
     })
 }
 
@@ -1713,7 +1774,15 @@ fn merge_impl_with_guard(
         return Ok(result);
     }
     gitdir_matches_repo(Path::new(&w.worktree_path), &repo)?;
-    // 前置条件：主仓库必须停在基准分支且工作区干净，否则合并会搅乱用户手头的工作
+    // 前置条件：主仓库没有残留锁、没有做到一半的 git 操作、停在基准分支且干净，否则合并会搅乱用户手头的工作
+    if !stale_index_locks(&[&repo, Path::new(&w.worktree_path)]).is_empty() {
+        return Err("上次 git 操作留下了锁文件（Mesa 或 git 被中途关掉），请先在评审页点「清掉锁文件」".into());
+    }
+    if let Some(op) = unfinished_operation(&repo) {
+        return Err(format!(
+            "主文件夹停在一次没做完的 git 操作（{op}）里，请先在评审页点「放弃那次操作」"
+        ));
+    }
     let cur = run_git(
         &repo,
         &["rev-parse", "--abbrev-ref", "HEAD"],
@@ -1721,8 +1790,8 @@ fn merge_impl_with_guard(
     )?;
     if cur != w.base_branch {
         return Err(format!(
-            "主仓库当前分支是 {cur}，不在基准分支 {} 上；请先在主仓库切换分支，或改用 PR 流程",
-            w.base_branch
+            "主文件夹当前在 {cur} 上，不在 {}；请先在评审页点「切回 {}」",
+            w.base_branch, w.base_branch
         ));
     }
     let dirty = run_git_porcelain(
@@ -1750,7 +1819,7 @@ fn merge_impl_with_guard(
             String::new()
         };
         return Err(format!(
-            "主仓库有未提交改动（{names}{suffix}），请先提交或 stash 再合并（或改用 PR 流程）"
+            "主文件夹里还有没保存的改动（{names}{suffix}），请先在评审页「提交主文件夹的改动…」再保存进项目"
         ));
     }
     let uncommitted = run_git(
@@ -1802,6 +1871,9 @@ fn merge_impl_with_guard(
             ));
         }
     }
+    // 主文件夹里改过、但不拦合并的积累面文件（笔记、台账），这一步的成果也改了同一份时，git merge 会以
+    // 「本地改动会被覆盖」整个拒绝。先把主文件夹的那几份提交掉，让 git 走正常三向合并；真撞车照旧回退、走冲突处理
+    let settled = settle_main_overlaps(&repo, &touched)?;
     let mut paths = touched;
     paths.extend(
         review
@@ -1905,6 +1977,12 @@ fn merge_impl_with_guard(
             ));
         }
     };
+    if !settled.is_empty() {
+        log.push_str(&format!(
+            "\n合并前已把主文件夹里改过的 {} 先存进历史",
+            settled.join("、")
+        ));
+    }
     let version_id = run_git(&repo, &["rev-parse", "HEAD"], Duration::from_secs(10))?;
     pending.fact.version_id = version_id.clone();
     save_delivery_pending(&w.id, &pending)?;
@@ -2229,6 +2307,110 @@ pub async fn workspace_env_for(worktree_path: String) -> Vec<(String, String)> {
     })
     .await
     .unwrap_or_default()
+}
+
+/// 主文件夹里不拦合并的积累面改动（`is_untracked_ledger_file` 放行的那些）与这一步要并入的文件重叠时，
+/// 只把重叠的几份提交进主文件夹历史，返回提交了哪些。不重叠的照旧留在工作区不动。
+fn settle_main_overlaps(repo: &Path, touched: &[String]) -> Result<Vec<String>, String> {
+    let porcelain = run_git_porcelain(
+        repo,
+        &["status", "--porcelain", "--untracked-files=all"],
+        Duration::from_secs(30),
+    )?;
+    let mut overlap: Vec<String> = Vec::new();
+    for line in porcelain.lines() {
+        if !crate::review_contract::is_untracked_ledger_file(line) {
+            continue;
+        }
+        let sides: Vec<String> = line
+            .get(3..)
+            .unwrap_or("")
+            .split(" -> ")
+            .map(|p| p.trim().trim_matches('"').to_string())
+            .collect();
+        if sides.iter().any(|p| touched.iter().any(|t| t == p)) {
+            overlap.extend(sides);
+        }
+    }
+    overlap.sort();
+    overlap.dedup();
+    if overlap.is_empty() {
+        return Ok(overlap);
+    }
+    let mut add: Vec<&str> = vec!["--literal-pathspecs", "add", "-A", "--"];
+    add.extend(overlap.iter().map(String::as_str));
+    run_git(repo, &add, Duration::from_secs(60))
+        .map_err(|e| format!("合并前保存主文件夹里改过的文件失败：{e}"))?;
+    let ident = crate::git_info::commit_identity_args(repo);
+    let mut commit: Vec<&str> = ident.iter().map(String::as_str).collect();
+    commit.extend([
+        "-c",
+        "commit.gpgsign=false",
+        "--literal-pathspecs",
+        "commit",
+        "--no-verify",
+        "-m",
+        "Mesa: 合并前先保存主文件夹里改过的文件",
+        "--",
+    ]);
+    commit.extend(overlap.iter().map(String::as_str));
+    run_git(repo, &commit, Duration::from_secs(60))
+        .map_err(|e| format!("合并前保存主文件夹里改过的文件失败：{e}"))?;
+    Ok(overlap)
+}
+
+/// 评审页「主文件夹的 git 卡住了」的一键处理（人点了才做，做之前按当下状态复查一遍）：
+/// - `clear_lock`：删掉够旧的 index.lock（年轻的锁说明 git 正在用，不碰）
+/// - `abort_unfinished`：放弃主文件夹里没做完的 merge / rebase / cherry-pick / revert，回到开始前的样子
+/// - `switch_base`：主文件夹切回基准分支（git 拒绝时原样转成白话，不强切）
+fn repair_main_impl(conn: &Connection, id: &str, action: &str) -> Result<String, String> {
+    let w = get_workspace(conn, id)?;
+    let repo = live_repo_for(&w);
+    let wt = PathBuf::from(&w.worktree_path);
+    match action {
+        "clear_lock" => {
+            let locks = stale_index_locks(&[&repo, &wt]);
+            if locks.is_empty() {
+                return Ok("没有要清的锁文件；如果刚才有 git 操作在跑，等它结束再刷新".into());
+            }
+            for lock in &locks {
+                fs::remove_file(lock).map_err(|e| format!("删除锁文件 {} 失败：{e}", lock.display()))?;
+            }
+            Ok("已清掉上次 git 操作留下的锁文件".into())
+        }
+        "abort_unfinished" => {
+            let Some(op) = unfinished_operation(&repo) else {
+                return Ok("主文件夹里已经没有没做完的 git 操作".into());
+            };
+            run_git(&repo, &[op, "--abort"], Duration::from_secs(60))
+                .map_err(|e| format!("放弃没做完的 git 操作失败：{e}"))?;
+            Ok("已放弃主文件夹里那次没做完的 git 操作，回到了它开始之前".into())
+        }
+        "switch_base" => {
+            if unfinished_operation(&repo).is_some() {
+                return Err("主文件夹里还有没做完的 git 操作，先放弃它再切回".into());
+            }
+            run_git(&repo, &["switch", &w.base_branch], Duration::from_secs(60)).map_err(|e| {
+                if e.contains("would be overwritten") || e.contains("Please commit your changes") {
+                    format!(
+                        "主文件夹里有改动和 {} 上的内容冲突，git 不让切换；先提交主文件夹的改动再切回",
+                        w.base_branch
+                    )
+                } else {
+                    format!("切回 {} 失败：{e}", w.base_branch)
+                }
+            })?;
+            Ok(format!("主文件夹已切回 {}", w.base_branch))
+        }
+        other => Err(format!("不认识的处理方式：{other}")),
+    }
+}
+
+#[tauri::command]
+pub async fn workspace_repair_main(id: String, action: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || repair_main_impl(&db()?, &id, &action))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

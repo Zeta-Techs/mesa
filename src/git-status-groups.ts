@@ -58,13 +58,22 @@ export function isAccumulationLedgerPath(path: string, status: string): boolean 
     p.startsWith("notes/assets/") ||
     p.startsWith(".ccode/watch/");
   if (anyState) return true;
-  return (
-    status === "??" &&
-    (p === "papers/reading-list.md" ||
-      p === ".ccode/watch-explains.json" ||
-      p === ".ccode/pending-registrations.json")
-  );
+  return status === "??" && UNTRACKED_ONLY_LEDGER.has(p);
 }
+
+/** 只豁免未跟踪态的台账（与后端 review_contract.rs is_untracked_only_ledger 逐条一致：
+ *  两边不一致就会「顶上说主文件夹有改动、提交面板说没有」，2026-11-18 用户实测）。 */
+const UNTRACKED_ONLY_LEDGER = new Set([
+  ".ccode/watch-explains.json",
+  ".ccode/pending-registrations.json",
+  "papers/reading-list.md",
+  "papers/endnote-library.path",
+  "papers/zotero-library.ris",
+  "papers/zotero-library.xml",
+  "papers/endnote-library.ris",
+  "papers/endnote-library.xml",
+  "papers/endnote-journals.txt",
+]);
 
 function isReviewNotesPath(path: string): boolean {
   const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
