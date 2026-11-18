@@ -5470,7 +5470,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   <StatusPill tone="muted" tip="已停用：不会被恢复会话和 AI 功能自动挑中；启动栏下拉里沉到「已停用」分组，仍可手选">已停用</StatusPill>
                                 ) : null}
                               </span>
-                              {/* 第二行（宽屏中间列）：统一格式「端点或认证说明 · 启动默认模型徽章 + 备选」，不夹带冗余网关名；端点栏宽窄屏都定宽，模型列左对齐 */}
+                              {/* 第二行（宽屏中间列）：统一格式「端点或认证说明 ｜ 启动默认模型徽章 + 备选」，不夹带冗余网关名；端点栏宽窄屏都定宽，模型列左对齐、中间不加点 */}
                               <span className="col-start-2 row-start-2 mt-0.5 flex min-w-0 items-center gap-2 text-xs @min-[60rem]/rows:col-start-3 @min-[60rem]/rows:row-span-2 @min-[60rem]/rows:row-start-1 @min-[60rem]/rows:mt-0 @min-[60rem]/rows:self-center">
                                   <span
                                     className={`w-40 min-w-0 max-w-[44%] shrink-0 truncate @min-[60rem]/rows:max-w-none ${
@@ -5492,7 +5492,6 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                         ? displayHost(profile.baseUrl)
                                         : "默认端点"}
                                   </span>
-                                  <span className="shrink-0 text-l4" aria-hidden="true">·</span>
                                   <span
                                     className="flex min-w-0 items-center gap-1.5 overflow-hidden"
                                     title={
