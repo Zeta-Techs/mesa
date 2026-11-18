@@ -463,6 +463,28 @@ function withPath(a: ToolActivity, path: string, cwd: string | null, isWindows: 
   return { ...a, target: name, dir, path };
 }
 
+function isAbsLike(p: string): boolean {
+  return p.startsWith("/") || p.startsWith("~") || /^[A-Za-z]:[\\/]/.test(p) || p.startsWith("\\\\");
+}
+
+/** 相对路径接到 dir 下；dir 为空或已是绝对路径原样返回 */
+function underDir(path: string, dir: string | null, isWindows: boolean): string {
+  if (!dir || isAbsLike(path)) return path;
+  return `${dir.replace(/[\\/]+$/, "")}${isWindows ? "\\" : "/"}${path.replace(/^\.[\\/]/, "")}`;
+}
+
+/**
+ * 命令自带的工作目录（Codex exec_command 的 workdir）：补丁、读文件里的相对路径按它补全，不按会话目录
+ *（2026-11-18 用户：随手聊目录在 scratch，Codex 在桌面 workdir 里改 Mesa.html，点「编辑 Mesa.html」预览报 No such file）。
+ * 脚本模式里每条 exec_command 都写了同一个 workdir 才认，混着写的不猜
+ */
+function callWorkdir(n: string, input: string, args: Args | null): string | null {
+  if (n !== "exec" || args) return str(args, "workdir");
+  const calls = input.match(/\btools\.exec_command\s*\(/g)?.length ?? 0;
+  const dirs = [...input.matchAll(/\bworkdir["']?\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => unescapeJs(m[1]));
+  return calls > 0 && dirs.length === calls && dirs.every((d) => d === dirs[0]) ? dirs[0] : null;
+}
+
 function firstLine(text: string): string {
   return text.trim().split("\n")[0].trim();
 }
@@ -482,6 +504,9 @@ export function toolActivities(
   const mcp = /^mcp__(.+?)__(.+)$/.exec(name);
   if (mcp) return [{ ...base("mcp", name, input), target: mcp[2], note: mcp[1] }];
 
+  const wd = callWorkdir(n, input, args);
+  const workdir = wd ? underDir(wd, cwd, isWindows) : null;
+
   // 补丁：Codex apply_patch（原文）/ OpenCode patch{patchText} / 脚本里调 apply_patch / shell 命令里调 apply_patch
   const patchText =
     n === "applypatch" || n === "patch" ? (str(args, "input", "patch", "patchText", "patch_text") ?? input) : null;
@@ -494,7 +519,7 @@ export function toolActivities(
         const kind: ActivityKind = f.op === "add" ? "write" : f.op === "delete" ? "delete" : "edit";
         const counts = countDiff(f.lines);
         return {
-          ...withPath(base(kind, name, input), f.path, cwd, isWindows),
+          ...withPath(base(kind, name, input), underDir(f.path, workdir, isWindows), cwd, isWindows),
           verb: f.op === "add" ? "新建" : VERB[kind],
           added: f.op === "delete" ? null : counts.added,
           removed: f.op === "delete" ? null : counts.removed,
@@ -509,7 +534,7 @@ export function toolActivities(
     const cmds = [...input.matchAll(/\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => unescapeJs(m[1]));
     const a = base("run", name, input);
     if (!cmds.length) return [{ ...a, target: "运行脚本", command: input }];
-    const look = cmds.length === 1 ? lookActivity(a, cmds[0], cwd, null, isWindows) : null;
+    const look = cmds.length === 1 ? lookActivity(a, cmds[0], cwd, null, isWindows, workdir) : null;
     if (look) return [look];
     return [
       {
@@ -587,7 +612,7 @@ export function toolActivities(
     case "run": {
       const command = commandOf(args) ?? "";
       const desc = str(args, "description", "toolSummary");
-      const look = command ? lookActivity(a, command, cwd, desc, isWindows) : null;
+      const look = command ? lookActivity(a, command, cwd, desc, isWindows, workdir) : null;
       if (look) return [look];
       // 命令外面套的 `zsh -lc '…'` / PowerShell 外壳只是 CLI 的跑法（Codex 旁路报来的就是这样），显示时剥掉
       const fallback = str(args, "Action", "TaskId");
@@ -632,7 +657,7 @@ export function toolActivities(
       const command = commandOf(args);
       if (filePath) return [{ ...withPath(a, filePath, cwd, isWindows), verb: `调用 ${name}` }];
       if (command) {
-        const look = lookActivity({ ...a, kind: "run" }, command, cwd, null, isWindows);
+        const look = lookActivity({ ...a, kind: "run" }, command, cwd, null, isWindows, workdir);
         return [look ?? { ...a, kind: "run", verb: "运行", target: firstLine(command), command }];
       }
       return [{ ...a, target: name }];
@@ -647,6 +672,7 @@ function lookActivity(
   cwd: string | null,
   desc: string | null = null,
   isWindows = false,
+  workdir: string | null = null,
 ): ToolActivity | null {
   const cat = commandCategory(command);
   if (cat !== "read" && cat !== "search" && cat !== "list") return null;
@@ -660,7 +686,7 @@ function lookActivity(
     command,
     note: desc ? line : null,
   };
-  return file ? { ...withPath(out, file, cwd, isWindows), note: desc ?? line } : out;
+  return file ? { ...withPath(out, underDir(file, workdir, isWindows), cwd, isWindows), note: desc ?? line } : out;
 }
 
 /**
@@ -676,9 +702,8 @@ export function activityFile(
   if (a.kind !== "read" && a.kind !== "write" && a.kind !== "edit") return null;
   if (!a.path || a.dir === null) return null;
   const raw = stripVerbatim(a.path);
-  const absolute = raw.startsWith("/") || raw.startsWith("~") || /^[A-Za-z]:[\\/]/.test(raw) || raw.startsWith("\\\\");
-  if (!absolute && !cwd) return null;
-  const path = absolute ? raw : `${cwd!.replace(/[\\/]+$/, "")}${isWindows ? "\\" : "/"}${raw.replace(/^\.[\\/]/, "")}`;
+  if (!isAbsLike(raw) && !cwd) return null;
+  const path = underDir(raw, cwd, isWindows);
   const root = cwd && pathWithin(path, cwd, isWindows) ? cwd : (parentDir(path) ?? "/");
   return { path, root, line: a.line };
 }

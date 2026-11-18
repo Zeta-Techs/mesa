@@ -186,6 +186,23 @@ test("shell 里调 apply_patch：bash heredoc 当改文件画差异，PowerShell
   assert.deepEqual(argv.map((a) => [a.verb, a.target, a.added]), [["新建", "a.md", 1]]);
 });
 
+test("命令自带 workdir：补丁里的相对路径按它补全，点开预览不落到会话目录", () => {
+  // 2026-11-18 实测：随手聊目录在 scratch，Codex 在桌面 workdir 里 apply_patch，补丁只写了文件名
+  const patch = "apply_patch <<'PATCH'\n*** Begin Patch\n*** Update File: Mesa.html\n@@\n-a\n+b\n*** End Patch\nPATCH";
+  const script = `text(await tools.exec_command({cmd:\`${patch}\`,workdir:"/Users/me/Desktop",max_output_tokens:500}))`;
+  const [s] = toolActivities("exec", script, CWD);
+  assert.deepEqual([s.kind, s.target, s.path], ["edit", "Mesa.html", "/Users/me/Desktop/Mesa.html"]);
+  assert.deepEqual(activityFile(s, CWD), { path: "/Users/me/Desktop/Mesa.html", root: "/Users/me/Desktop", line: null });
+  const [e] = toolActivities("exec_command", JSON.stringify({ cmd: patch, workdir: "/Users/me/Desktop" }), CWD);
+  assert.equal(e.path, "/Users/me/Desktop/Mesa.html");
+  // 相对的 workdir 接在会话目录下
+  const [r] = toolActivities("exec_command", JSON.stringify({ cmd: patch, workdir: "site" }), CWD);
+  assert.equal(r.path, `${CWD}/site/Mesa.html`);
+  // 两条命令 workdir 不一样（或有一条没写）：不猜，照旧按会话目录
+  const mixed = `${script}\nawait tools.exec_command({cmd:"ls"})`;
+  assert.equal(toolActivities("exec", mixed, CWD)[0].path, "Mesa.html");
+});
+
 test("搜索 / 读取 / 网页 / MCP / 认不出的工具", () => {
   const g = one("Grep", { pattern: "connIssue", path: "/Users/me/proj/src" });
   assert.deepEqual([g.kind, g.target, g.note], ["search", "connIssue", "src"]);
