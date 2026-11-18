@@ -238,6 +238,8 @@ components/AskAiModal.tsx  # 「问 AI」弹层（App 全局挂一份，store.as
                              #   没设过 MonacoEnvironment / 主题时自己补（单独打开时文件预览可能还没加载）；保存后只刷新这一页
   components/ConfirmDialog.tsx # 全局确认/提示框（confirmDialog/alertDialog，126 处共用）：语气图标 + 结构化正文（标题/对照表/注意条，
                              #   解析在 confirm-dialog.ts）+ 危险钮 dangerActionClass、按钮动词推断、危险默认焦点给取消
+  components/DoctorDialog.tsx # 项目体检闸门（design-project-doctor.md）：doctorGate(id, intent, 步骤名) 先调 workspace_doctor，不拦就放行，
+                             #   还拦着的弹框逐条列出、一键处理（click，点前 confirmDialog）或去哪处理（goto），「处理好了，继续」重查放行；z-60
   components/ContextMenu.tsx # 全站右键 / ⋯ 菜单（25 处共用）：fixed 全屏遮罩 + 视口钳制浮层、图标列按需、danger 沉底、
                              #   键盘导航；条目形状与分组整理在 context-menu.ts（口径见 design-system「右键 / ⋯ 菜单统一口径」）
   shell-context.ts           # 顶栏左侧/灵动岛分工（shellContextPlacement：按侧栏形态定项目芯片与活动落点；侧栏无项目树时芯片常驻）+ 运行摘要
@@ -451,6 +453,8 @@ human-task-completion.ts   # 人工事项完成判定闭集与落点兼容（Pip
   discuss-prompt.ts          # 「跟 AI 商量一下」的开场指令（苏格拉底式：一次一问、答清楚直接记下接着问、不问模板已定的流程）与按步骤工作区名的提问方向 DISCUSS_FOCUS（只进开场指令，不上步骤卡）；商量对话的标签复用键 discussReuseKey / parseDiscussReuseKey（单一出处）
   discuss-step-start.ts      # 商量对话回复里的「开始」点了 → 按复用键认项目与任务书、反查步骤，经 stepStartReq 让 StepFlow 打开开工确认（不替人开工）
   setting-choices.ts         # 模板全局设定的填写形态：短选项判定为点选（parseSettingLine）、选项白话说明与小字注、选某项时的追问并进同一行答案
+  project-doctor.ts          # 项目体检前端纯逻辑：DoctorReport 类型、拦人的排前、goto 出口白话（gotoHint）、评审页已有入口的状态码（REVIEW_HANDLED_CODES）、
+                             #   同一入口 5 秒内过过闸门不重跑（开一轮编排连过几道闸门）；tests/project-doctor.test.ts
   project-context.ts         # 项目环境包：名称/规则/顶层文件地图（启动注入）；包与第一句的拼接 composeLaunchPrompt / 拆开 splitLaunchPrompt
                              #   （气泡折「已附项目说明」、↑ 取回、工作台「上次停在」只认人话；Rust 镜像 sessions.rs strip_mesa_launch_pack）；
                              #   会话包 = 身份+目录+规则+跟用户走；目标包才带当前目标/技能/尚未完成/验收写回；
@@ -1424,6 +1428,8 @@ src-tauri/src/
                              # 2026-10-13 双台账：科研 .gitignore 模板直带积累台账面（reading-list/inbox/watch-seen/
                              # watch-followup/watch-explains/pending-registrations/acceptance-log×2/.ccode/watch/）；
                              # 迁移命令曾实现后按「未发布无用即删」移除（存量已手工迁完，重建序列见 pipeline.md）
+  project_upgrade.rs         # 项目结构版本与逐级升级（design-project-doctor.md 第二件）：档案卡 layout = N，UPGRADES 有序表（第 1 级补 .gitignore 的 Mesa 忽略行），
+                             #   commit_bootstrap_at 前调 upgrade_at；新建档案卡 stamp_current。改项目结构必加一级 + tests/fixtures/projects/ 样本
   project_memory.rs          # 项目知识 .ccode/memory.md：结构化块只记人工确认（revision 比对 + active/superseded/revoked 状态机；
                              # 作废/替代条目不注入，Agent 结论不自动采纳；原文历史保留并留备份）；
                              # knowledge_for_ai = 交给 AI 的唯一一份（已定 / 不做优先、6000 字封顶、omittedIds、待重新确认只汇一句），
@@ -2038,6 +2044,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏，file_version_compare 同时支持历史与磁盘现稿（有界/读后核验、图片双侧私有冻结缓存）、另存目标由Rust系统保存窗口选出（可在项目外），拒覆盖/内部目录/保护路径，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
+                             #   子模块 doctor.rs（项目体检：diagnose_impl 列异常、自动处理 / 一键 fix_impl / goto，命令 workspace_doctor / workspace_doctor_fix）、
+                             #   scenarios.rs（仅测试：乱操作 Mess × 入口的不变式测试、现状普查、真实项目整条流程干跑）；live_repo_in 主文件夹定位优先工作区记下的文件夹
                              #   2026-11-18：解析 status --porcelain 一律 run_git_porcelain（run_git 会 trim 掉首行前导空格）；健康度报残留 index.lock / 主文件夹没做完的 git 操作 / 当前分支，
                              #   workspace_repair_main 一键清锁 / abort / 切回基准；合并前 settle_main_overlaps 先存与本步重叠的豁免改动
                              #   2026-11-05：restore 不清 merged_at；stale_upstream_for 多收 followed（跟进过的时间）；clear_human_task_checks 开新一轮清手动勾；decisions_clear
