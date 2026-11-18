@@ -388,9 +388,10 @@ fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<
         env.insert(k, json!(val));
     }
     // claude 对不认识的第三方模型按 200K 假设；注册表确知不是 200K 的（kimi-k3 1M、128K 的模型）必须显式声明，
-    // 否则长会话提前 compact 或先撞上网关上限（与启动同一份 agents::claude_window_env）。用 declared 视图：估值不当声明
+    // 否则长会话提前 compact 或先撞上网关上限（与启动同一份 agents::claude_window_env）。
+    // Claude 自家模型只认权威层（用户覆盖 / 网关显式报值），不让公共能力库的 1M 估值盖掉官方压缩点
     if let Some(ctx) = main
-        .and_then(|m| crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref()))
+        .and_then(|m| agents::claude_declared_context_for(m, profile.gateway_id.as_deref()))
         .filter(|c| *c != agents::CLAUDE_ASSUMED_WINDOW)
     {
         for (k, val) in agents::claude_window_env(ctx) {
@@ -401,7 +402,7 @@ fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<
         .request_policy
         .reasoning_effort
         .as_deref()
-        .and_then(crate::agent_specs::canonical_reasoning_effort);
+        .and_then(crate::agent_specs::launch_reasoning_effort);
     // settings 的 effortLevel 只收四档；max 只能走 env（随写随清，与旧口径一致）
     if effort.as_deref() == Some("max") {
         env.insert("CLAUDE_CODE_EFFORT_LEVEL".into(), json!("max"));

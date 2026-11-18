@@ -992,8 +992,35 @@ pub(crate) fn claude_window_env(ctx: i64) -> Vec<(String, String)> {
 /// ANTHROPIC_DEFAULT_HAIKU_MODEL / CLAUDE_CODE_SUBAGENT_MODEL 照样生效——会话标题生成、子 agent 的请求带着
 /// 全局的 glm-5.3 打到 Mesa 选的网关，换成别家网关就直接失败。所以：
 /// - 四个槽位全填：绑定名单不够四个时，空槽用这次选的模型（没选用名单第一个）补上；ANTHROPIC_SMALL_FAST_MODEL 跟 HAIKU 槽。
+/// 是否是 Claude 自家模型名或内置别名（含 `anthropic/claude-*` 服务商前缀）：去前缀后不分大小写判定
+pub(crate) fn is_claude_model_name(model: &str) -> bool {
+    let tail = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    tail.starts_with("claude-")
+        || matches!(
+            tail.as_str(),
+            "opus" | "sonnet" | "haiku" | "fable" | "default" | "best" | "opusplan"
+        )
+}
+
+/// Claude Code 上下文窗口覆盖值：Claude 自家模型（含 `anthropic/claude-*`）有 CLI 自己的精确窗口与压缩点
+///（如 2.1.311 `claude-sonnet-5` 1M 窗口配 500K 自动压缩点，写 env 会锁死 `/config` 或把 200K 档抬成 1M），
+/// 只在权威层（用户手动覆盖或网关自己报了窗口）有值时才改，不吃随包公共能力库估值；非 Claude 模型照旧查声明层
+pub(crate) fn claude_declared_context_for(model: &str, gateway_id: Option<&str>) -> Option<i64> {
+    if is_claude_model_name(model) {
+        crate::model_registry::model_context_size_authoritative_for(model, gateway_id)
+    } else {
+        crate::model_registry::model_context_size_declared_for(model, gateway_id)
+    }
+}
+
 /// - 子 agent 模型只在用户全局设了时才盖（设成这次的模型）：没设时保持 Claude 原生「继承主模型 / 按 frontmatter 选」。
-/// - 上下文窗口：确知且不是 200K 时声明（claude_window_env）；用户全局设过而这次不确知时写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
+/// - 上下文窗口：确知且不是 200K 时声明（claude_window_env）；用户全局设过而这次不确知时，Claude 模型写空串交回 CLI 原生，
+///   其余未知模型写回 Claude 对未知模型的默认 200000，免得沿用全局的 1M。
 pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys: &[String]) -> Vec<(String, String)> {
     let mut env = Vec::new();
     let selected = model.map(str::trim).filter(|m| !m.is_empty());
@@ -1053,32 +1080,33 @@ pub(crate) fn claude_model_env(profile: &Profile, model: Option<&str>, user_keys
     }) {
         env.push(("MAX_THINKING_TOKENS".into(), "0".into()));
     }
-    // 用 declared 视图：门限是 >200K，估值不当声明（见进程 env 旧注释，口径不变）
+    // 用 claude_declared_context_for：Claude 自家模型只认权威层，非 Claude 模型用声明层（估值不当声明）
     let declared = selected.and_then(|m| {
-        crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref())
+        claude_declared_context_for(m, profile.gateway_id.as_deref())
     });
-    let ctx = match declared {
-        Some(c) if c != CLAUDE_ASSUMED_WINDOW => Some(c),
-        _ if user_has("CLAUDE_CODE_MAX_CONTEXT_TOKENS") || user_has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") => {
-            Some(declared.unwrap_or(CLAUDE_ASSUMED_WINDOW))
+    match declared {
+        Some(c) if c != CLAUDE_ASSUMED_WINDOW => {
+            env.extend(claude_window_env(c));
         }
-        _ => None,
-    };
-    if let Some(c) = ctx {
-        env.extend(claude_window_env(c));
+        _ if user_has("CLAUDE_CODE_MAX_CONTEXT_TOKENS") || user_has("CLAUDE_CODE_AUTO_COMPACT_WINDOW") => {
+            if selected.is_some_and(is_claude_model_name) {
+                for k in ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] {
+                    if user_has(k) {
+                        env.push((k.into(), String::new()));
+                    }
+                }
+            } else {
+                env.extend(claude_window_env(declared.unwrap_or(CLAUDE_ASSUMED_WINDOW)));
+            }
+        }
+        _ => {}
     }
     // 非 Claude 模型关掉工具搜索（ToolSearch）：Claude Code 对第三方网关也开着，内置工具 Bash / Read / Write 照常发，
     // 另把十来个少用的工具藏到 ToolSearch 后面。glm-5.3-flash 会拿 ToolSearch 去「搜」Write / Bash，
     // 搜不到（它们本来就在、不在延迟列表里）就断定没有工具、整轮不干活（2026-10-21 用户会话实证；假网关核对：
-    // 关掉后 ToolSearch 与占位工具消失，24 个工具一次发全）。用户自己设过就不动
-    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("ENABLE_TOOL_SEARCH") {
+    // 关掉后 ToolSearch 与占位工具消失，24 个工具一次发全；2026-11-18 用户拍板作为兼容例外保留）。用户自己设过就不动
+    if fill.is_some_and(|m| !is_claude_model_name(m)) && !user_has("ENABLE_TOOL_SEARCH") {
         env.push(("ENABLE_TOOL_SEARCH".into(), "false".into()));
-    }
-    // 非 Claude 模型打开任务清单工具（TaskCreate / TaskUpdate…）：Claude Code 2.1.306 只给自家老模型（≤ opus-4-7 / sonnet-4-6）
-    // 默认发，别的模型名一律不发，模型就说「没有待办 / 计划工具」、只能用 Markdown 列计划，聊天层画不出计划卡
-    // （2026-10-21 用户会话实证 glm-5.3；假网关核对：加上后多出 4 个 Task 工具）。Claude 新模型是官方有意不发，不动
-    if fill.is_some_and(|m| !m.to_ascii_lowercase().starts_with("claude-")) && !user_has("CLAUDE_CODE_ENABLE_TODO_TOOLS") {
-        env.push(("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()));
     }
     env
 }
@@ -1899,14 +1927,16 @@ pub fn launch_plan(
                         .as_deref()
                         .filter(|e| !e.trim().is_empty())
                     {
+                        let eff = crate::agent_specs::launch_reasoning_effort(effort)
+                            .unwrap_or_else(|| effort.trim().to_string());
                         plan.args.push("--effort".into());
-                        plan.args.push(effort.into());
+                        plan.args.push(eff);
                     }
                     // 槽位注册（/model 选择器列出绑定的模型）、空槽补齐、子 agent / 上下文窗口防全局泄漏：
                     // 与 --settings 覆盖层同一份（claude_model_env）。进程 env 也写一份，给不读 settings 的子进程用
                     let user_keys = claude_user_settings_env_keys(profile);
                     for (k, v) in claude_model_env(profile, model, &user_keys) {
-                        if k != "ANTHROPIC_MODEL" {
+                        if k != "ANTHROPIC_MODEL" && !v.is_empty() {
                             plan.env.push((k, v));
                         }
                     }

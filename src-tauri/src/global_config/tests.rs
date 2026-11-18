@@ -242,21 +242,38 @@ fn claude_patch_writes_max_context_only_when_beyond_default_assumption() {
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "1048576");
     assert_eq!(v["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "1048576");
-    // ≤200K 的模型：不写；已有旧值时两键都清掉（防上一个 profile 的 1M 残留误导）
+    // ≤200K 的模型与 Claude 自家模型：不写窗口；旧版留下的 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 也一并撤掉；
+    // 多档思考档串（low,medium,high@medium）取默认档写进顶层 effortLevel
     let out = pc(
         Some(
-            r#"{"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576"}}"#,
+            r#"{"env": {"CLAUDE_CODE_MAX_CONTEXT_TOKENS": "1048576", "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1048576", "CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}"#,
         ),
         None,
         None,
         &["claude-sonnet-4".to_string()],
         None,
-        None,
+        Some("low,medium,high@medium"),
     )
     .unwrap();
     let v: Value = serde_json::from_str(&out).unwrap();
     assert!(v["env"].get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").is_none());
     assert!(v["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").is_none());
+    assert!(v["env"].get("CLAUDE_CODE_ENABLE_TODO_TOOLS").is_none());
+    assert_eq!(v["effortLevel"], "medium");
+
+    // 就算换成非 Claude 模型设为全局，也不再新写 CLAUDE_CODE_ENABLE_TODO_TOOLS，但保留 ENABLE_TOOL_SEARCH=false
+    let out_glm = pc(
+        Some(r#"{"env": {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}}"#),
+        Some("https://gw"),
+        Some("sk"),
+        &["glm-5.3-flash".to_string()],
+        None,
+        None,
+    )
+    .unwrap();
+    let v_glm: Value = serde_json::from_str(&out_glm).unwrap();
+    assert_eq!(v_glm["env"]["ENABLE_TOOL_SEARCH"], "false");
+    assert!(v_glm["env"].get("CLAUDE_CODE_ENABLE_TODO_TOOLS").is_none());
 }
 
 #[test]

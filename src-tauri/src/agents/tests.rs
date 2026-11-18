@@ -112,6 +112,16 @@ fn claude_fills_empty_slots_and_blocks_global_leaks() {
     assert_eq!(settings["env"]["CLAUDE_CODE_SUBAGENT_MODEL"], "m2");
     assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
     assert_eq!(settings["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"], "200000");
+    // 选的是 Claude 自家模型（含 anthropic/ 前缀）且没有权威覆盖时：全局留下的 1M 用空串抹掉，不压成 200K，进程 env 也不塞空串
+    TEST_CLAUDE_USER_KEYS.with(|k| {
+        *k.borrow_mut() = vec!["CLAUDE_CODE_MAX_CONTEXT_TOKENS".into()]
+    });
+    let plan = launch_plan(&p, Some("sk".into()), Some("anthropic/claude-sonnet-5")).unwrap();
+    TEST_CLAUDE_USER_KEYS.with(|k| k.borrow_mut().clear());
+    let settings = read_settings_override(&plan);
+    assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "");
+    assert!(settings["env"].get("CLAUDE_CODE_AUTO_COMPACT_WINDOW").is_none());
+    assert!(!plan.env.iter().any(|(k, _)| k == "CLAUDE_CODE_MAX_CONTEXT_TOKENS"));
 }
 
 #[test]
@@ -412,12 +422,15 @@ fn claude_non_claude_model_turns_off_tool_search() {
     p.models = vec!["glm-5.3-flash".into()];
     let env = claude_model_env(&p, Some("glm-5.3-flash"), &[]);
     assert!(env.contains(&("ENABLE_TOOL_SEARCH".into(), "false".into())));
-    assert!(env.contains(&("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into())));
-    // Claude 自家模型照 Claude Code 默认；用户自己设过不动
-    let env = claude_model_env(&p, Some("claude-sonnet-4-5"), &[]);
-    assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
-    let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into(), "CLAUDE_CODE_ENABLE_TODO_TOOLS".into()]);
-    assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH" || k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
+    // 不再替非 Claude 模型额外注入 CLAUDE_CODE_ENABLE_TODO_TOOLS（照 CLI 官方默认）
+    assert!(!env.iter().any(|(k, _)| k == "CLAUDE_CODE_ENABLE_TODO_TOOLS"));
+    // Claude 自家模型（含服务商前缀 anthropic/claude-* 与内置别名）照 Claude Code 默认；用户自己设过不动
+    for m in ["claude-sonnet-4-5", "anthropic/claude-opus-5", "opus"] {
+        let env = claude_model_env(&p, Some(m), &[]);
+        assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"), "{m}");
+    }
+    let env = claude_model_env(&p, Some("glm-5.3"), &["ENABLE_TOOL_SEARCH".into()]);
+    assert!(!env.iter().any(|(k, _)| k == "ENABLE_TOOL_SEARCH"));
 }
 
 #[test]
