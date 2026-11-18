@@ -1953,11 +1953,9 @@ pub fn launch_plan(
                         // The catalog and auto-compact threshold must follow the selected
                         // model, not whichever model was last used globally.
                         //
-                        // 只在我们**确知**窗口时覆盖：注册链未知时宁可不写——codex 自己认得
-                        // 的模型（原生 -c 内联 provider 下仍会查自家 registry）会得到正确窗口，
-                        // 而写一个 128K 猜测等于把 272K/1M 的真实窗口压低，比不覆盖更坏；
-                        // 「覆盖过期值」的诉求只在确知时才有意义，猜测覆盖不解决过期问题。
-                        if let Some(context) = crate::model_registry::model_context_size_declared_for(
+                        // 只在我们**确知**窗口时覆盖：官方认得的模型只在用户覆盖/网关显式声明（权威层）时才改，
+                        // 免得随包公共能力库的输入+输出总和盖掉 Codex 官方窗口与压缩点；认不出的模型用声明层。
+                        if let Some(context) = codex_context_override_for(
                             model,
                             profile.gateway_id.as_deref(),
                         ) {
@@ -3635,11 +3633,17 @@ fn local_codex_base_instructions(version: (u32, u32, u32)) -> Option<String> {
     if *failed == Some(version) {
         return None;
     }
-    let Some(text) = extract_codex_base_instructions() else {
+    let Some((text, from_sent_request)) = probe_codex_base_instructions() else {
         eprintln!("[codex] 没取到 Codex {version:?} 的默认提示词，模型清单用随包的 0.163 原文");
         *failed = Some(version);
         return None;
     };
+    if !from_sent_request {
+        // 探针端口没收到请求、退回会话首行未删减模板（含 update_plan）：仅供本次兜底，绝不写进缓存（写进去整个版本周期都带病），
+        // 本进程内也不再反复起子进程重试
+        *failed = Some(version);
+        return Some(text);
+    }
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
@@ -3665,8 +3669,10 @@ fn local_codex_base_instructions(_version: (u32, u32, u32)) -> Option<String> {
 /// 要取请求而不是会话文件首行：会话文件记的是没删减的模板，Codex 没开计划工具时发出去会删掉 `update_plan` 两段，
 /// 照抄模板等于替模型多加了官方没给的说明（2026-11-18 假网关比对：模板 20751 字、实发 16979 字）。
 /// 端口没收到请求（旧版 Codex 发请求前就退出等）才退回会话文件
+/// 返回 `(提示词原文, 是否来自实发请求)`：`true` 可写进缓存，`false` 是端口没收到请求时从会话文件首行
+/// 兜底取出的未删减模板（含 `update_plan`），仅供当次用、绝不落盘
 #[cfg_attr(test, allow(dead_code))]
-fn extract_codex_base_instructions() -> Option<String> {
+fn probe_codex_base_instructions() -> Option<(String, bool)> {
     const KEY_VAR: &str = "MESA_CODEX_INSTRUCTIONS_PROBE_KEY";
     let bin = resolve_binary("codex")?;
     let tmp = crate::storage::config_root()?.join("tmp");
@@ -3738,11 +3744,11 @@ fn extract_codex_base_instructions() -> Option<String> {
                 Err(_) => return None,
             }
         }
-        if sent.is_some() {
-            return sent;
+        if let Some(s) = sent {
+            return Some((s, true));
         }
         let rollout = first_jsonl(&home.join("sessions"))?;
-        codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?)
+        codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?).map(|s| (s, false))
     })();
     // Windows 上 codex 退出后目录句柄放得慢（0.5x 约 1.3 秒；0.169 起约 20 秒，实测文件删得掉、空目录删不掉）：放后台重试 30 秒，不拖慢启动
     if std::fs::remove_dir_all(&scratch).is_err() && scratch.exists() {
@@ -3756,6 +3762,13 @@ fn extract_codex_base_instructions() -> Option<String> {
         });
     }
     result
+}
+
+#[cfg(test)]
+fn extract_codex_base_instructions() -> Option<String> {
+    probe_codex_base_instructions()
+        .filter(|(_, from_req)| *from_req)
+        .map(|(s, _)| s)
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -3986,20 +3999,48 @@ fn extract_codex_bundled_models() -> Option<String> {
     result
 }
 
-/// `{"models":[…]}` → 条目列表；每条都得有 slug 和非空 base_instructions（Codex 拒收缺它的目录），否则整份不收
+/// `{"models":[…]}` → 条目列表：只留有 slug 和提示词的条目（只给了 `model_messages.instructions_template`
+/// 的先补进 `base_instructions`），个别条目缺字段只跳过它自己、不作废整份清单；一条都没剩才返回 None
 fn codex_bundled_models_from(text: &str) -> Option<Vec<serde_json::Value>> {
     let v: serde_json::Value = serde_json::from_str(text).ok()?;
-    let models = v["models"].as_array()?.clone();
-    let ok = !models.is_empty()
-        && models.iter().all(|m| {
-            m["slug"].as_str().is_some_and(|s| !s.is_empty())
-                && m["base_instructions"].as_str().is_some_and(|s| !s.trim().is_empty())
-        });
-    ok.then_some(models)
+    let models = v["models"].as_array()?;
+    let kept: Vec<serde_json::Value> = models
+        .iter()
+        .filter_map(|m| {
+            let slug = m["slug"].as_str()?.trim();
+            if slug.is_empty() {
+                return None;
+            }
+            let mut m = m.clone();
+            let has_bi = m["base_instructions"]
+                .as_str()
+                .is_some_and(|s| !s.trim().is_empty());
+            if !has_bi {
+                let tpl = m
+                    .pointer("/model_messages/instructions_template")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())?
+                    .to_string();
+                m["base_instructions"] = serde_json::json!(tpl);
+            }
+            Some(m)
+        })
+        .collect();
+    (!kept.is_empty()).then_some(kept)
+}
+
+/// Codex 上下文窗口覆盖值：官方自带模型已有精确窗口和压缩点，只在用户覆盖 / 网关显式声明（权威层）时才改，
+/// 不让随包公共能力库的估值（如输入+输出总和）盖掉官方值；Codex 不认识的模型照旧查声明层
+pub(crate) fn codex_context_override_for(model: &str, gateway_id: Option<&str>) -> Option<i64> {
+    if codex_bundled_entry(model).is_some() {
+        crate::model_registry::model_context_size_authoritative_for(model, gateway_id)
+    } else {
+        crate::model_registry::model_context_size_declared_for(model, gateway_id)
+    }
 }
 
 /// 以官方条目为底的目录条目：提示词、思考档、verbosity、截断口径都照官方；只改显示名，
-/// 中转接不住的官方专属能力照通用模板同样关掉（hosted 搜索、ChatGPT 的服务档、freeform apply_patch）
+/// 中转接不住的官方专属能力一并关掉（Responses Lite、hosted 搜索、ChatGPT 服务/速度档、升级提示、freeform apply_patch）
 fn codex_entry_from_bundled(
     mut entry: serde_json::Value,
     profile_name: &str,
@@ -4011,15 +4052,17 @@ fn codex_entry_from_bundled(
     entry["display_name"] = serde_json::json!(format!("{profile_name} · {model}"));
     entry["visibility"] = serde_json::json!("list");
     entry["supports_search_tool"] = serde_json::json!(false);
+    // 随包条目绝大部分 `use_responses_lite: true`（0.169.1 14 条里 13 条），第三方 `/v1/responses` 中转不支持 Lite 协议（cc-switch 同关）
+    entry["use_responses_lite"] = serde_json::json!(false);
+    entry["availability_nux"] = serde_json::Value::Null;
+    entry["upgrade"] = serde_json::Value::Null;
     entry["service_tiers"] = serde_json::json!([]);
-    if entry.get("additional_speed_tiers").is_some() {
-        entry["additional_speed_tiers"] = serde_json::json!([]);
-    }
+    entry["additional_speed_tiers"] = serde_json::json!([]);
     if let Some(obj) = entry.as_object_mut() {
         obj.remove("apply_patch_tool_type");
     }
-    // 网关声明了别的窗口就以网关为准；官方按官方窗口算好的压缩点一并去掉，让 Codex 按新窗口重算
-    if let Some(ctx) = crate::model_registry::model_context_size_declared_for(model, gateway_id) {
+    // 只在用户手动覆盖或网关自己报了窗口时才改；官方按官方窗口算好的压缩点一并去掉，让 Codex 按新窗口重算
+    if let Some(ctx) = crate::model_registry::model_context_size_authoritative_for(model, gateway_id) {
         entry["context_window"] = serde_json::json!(ctx);
         entry["max_context_window"] = serde_json::json!(ctx);
         if let Some(obj) = entry.as_object_mut() {
@@ -4141,29 +4184,40 @@ fn write_codex_catalog_to(
     profile_name: &str,
     models: &[String],
     gateway_id: Option<&str>,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建 catalog 目录失败: {e}"))?;
     }
-    let text =
-        serde_json::to_string_pretty(&codex_catalog_json_for(profile_name, models, gateway_id))
-            .map_err(|e| e.to_string())?;
-    crate::profiles::atomic_write(path, &text)
+    let catalog = codex_catalog_json_for(profile_name, models, gateway_id);
+    let text = serde_json::to_string_pretty(&catalog).map_err(|e| e.to_string())?;
+    crate::profiles::atomic_write(path, &text)?;
+    Ok(catalog)
 }
 
-/// 把 profile 的模型列表写成 codex catalog 文件（原子写）；无模型时返回 None
-pub fn write_codex_catalog(profile: &Profile) -> Result<Option<std::path::PathBuf>, String> {
-    if profile.models.is_empty() {
+fn write_codex_catalog_with_value(
+    profile: &Profile,
+    selected_model: Option<&str>,
+) -> Result<Option<(std::path::PathBuf, serde_json::Value)>, String> {
+    if profile.account_type == crate::profiles::AccountType::Official {
+        return Ok(None);
+    }
+    let mut models = profile.models.clone();
+    if let Some(sel) = selected_model.map(str::trim).filter(|m| !m.is_empty()) {
+        if !models.iter().any(|m| m == sel) {
+            models.push(sel.to_string());
+        }
+    }
+    if models.is_empty() {
         return Ok(None);
     }
     let path = codex_catalog_path(&profile.id).ok_or("无法确定平台配置目录")?;
-    write_codex_catalog_to(
+    let catalog = write_codex_catalog_to(
         &path,
         &profile.name,
-        &profile.models,
+        &models,
         profile.gateway_id.as_deref(),
     )?;
-    Ok(Some(path))
+    Ok(Some((path, catalog)))
 }
 
 /// -c 注入的 catalog 路径参数：-c 的值是 TOML，路径必须带引号成 TOML 字符串。
@@ -4174,25 +4228,68 @@ fn catalog_args(path: &std::path::Path) -> Vec<String> {
     vec!["-c".into(), format!(r#"model_catalog_json="{p}""#)]
 }
 
-/// 启动前的每-agent 文件准备，返回需追加到 CLI 的参数。
-/// codex：写模型 catalog 并用 -c 指过去，让 TUI /model 选择器列出 profile 的全部模型
-pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
-    let is_codex = matches!(
+fn is_codex_inline_provider(profile: &Profile) -> bool {
+    matches!(
         agent_spec(&profile.agent).map(|s| &s.launch),
         Some(LaunchSpec::Special(
             SpecialLaunch::CodexInlineProvider { .. }
         ))
-    );
+    )
+}
+
+fn codex_catalog_args_for(
+    profile: &Profile,
+    selected_model: Option<&str>,
+) -> Result<Vec<String>, String> {
     let mut args = Vec::new();
-    if is_codex {
-        if let Some(path) = write_codex_catalog(profile)? {
-            args.extend(catalog_args(&path));
-            args.extend(codex_plan_tool_args(
-                &codex_base_instructions(),
-                codex_modern(),
-                crate::agent_specs::codex_user_config().as_ref(),
-            ));
-        }
+    if let Some((path, catalog)) = write_codex_catalog_with_value(profile, selected_model)? {
+        args.extend(catalog_args(&path));
+        // 按本次实际选中条目的 base_instructions 判断是否补开 update_plan，不无脑调 codex_base_instructions()：
+        // 避免全官方模型的连接白跑一次本机探针，也防止兜底提示词给官方模型误开 tools.update_plan.enabled=true
+        let sel = selected_model.map(str::trim).filter(|m| !m.is_empty());
+        let instructions = catalog["models"]
+            .as_array()
+            .and_then(|arr| {
+                sel.and_then(|s| arr.iter().find(|e| e["slug"].as_str() == Some(s)))
+                    .or_else(|| arr.first())
+            })
+            .and_then(|e| e["base_instructions"].as_str())
+            .unwrap_or("");
+        args.extend(codex_plan_tool_args(
+            instructions,
+            codex_modern(),
+            crate::agent_specs::codex_user_config().as_ref(),
+        ));
+    }
+    Ok(args)
+}
+
+/// 无头运行（项目助手、研讨、定时任务等 `codex exec`）的模型目录参数：不带交互专属的 `--no-daemon` / 更新提示开关，
+/// 但必须带上本次连接的 `model_catalog_json`，否则 Codex 会退回读用户 `config.toml` 里指向的那份旧清单
+pub(crate) fn codex_headless_catalog_args(
+    profile: &Profile,
+    selected_model: Option<&str>,
+) -> Result<Vec<String>, String> {
+    if !is_codex_inline_provider(profile) {
+        return Ok(Vec::new());
+    }
+    codex_catalog_args_for(profile, selected_model)
+}
+
+#[cfg(test)]
+pub fn prepare_launch(profile: &Profile) -> Result<Vec<String>, String> {
+    prepare_launch_for(profile, None)
+}
+
+/// 启动前的每-agent 文件准备，返回需追加到 CLI 的参数。
+/// codex：写模型 catalog 并用 -c 指过去，让 TUI /model 选择器列出 profile 的全部模型
+pub fn prepare_launch_for(
+    profile: &Profile,
+    selected_model: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    if is_codex_inline_provider(profile) {
+        args.extend(codex_catalog_args_for(profile, selected_model)?);
         // 只给交互式启动（内嵌终端 / 外部终端，都经这里）：exec 不认这个参数，无头调用不走这里。
         // Mesa 一律用 -c 注入，codex 0.163 只能不走共享后台服务，不明说就每次报一条
         // 「Running without the shared background server」（2026-10-19 用户：终端里 3 条 warning）
@@ -4549,7 +4646,15 @@ pub(crate) fn codex_resume_on_thread_provider(
     .collect();
     drop_c.extend(CODEX_SIDE_MODEL_KEYS.iter().map(|path| format!("{}=", path.join("."))));
     if official {
-        drop_c.extend(["web_search=", "service_tier=", "plugins.codex-app-tools"].map(String::from));
+        drop_c.extend(
+            [
+                "web_search=",
+                "service_tier=",
+                "plugins.codex-app-tools",
+                "tools.update_plan.enabled=",
+            ]
+            .map(String::from),
+        );
     }
     let strip = |args: &mut Vec<String>| {
         let mut out = Vec::with_capacity(args.len());
@@ -5072,7 +5177,7 @@ fn external_launch_args(
             "{agent_id} 不支持启动注入参数，简报指令需启动后手动发送"
         ));
     }
-    let mut extra = prepare_launch(profile)?;
+    let mut extra = prepare_launch_for(profile, model)?;
     // 与内嵌终端同口径：对话不是 Mesa 的 ccode-… 时按它自己的渠道和模型续（不然 codex 报 modelProviderMismatch）
     if let (true, Some(sid), Some(_)) = (agent_id == "codex", resume_session_id, codex_foreign_thread_provider(resume_provider)) {
         let thread_model = crate::sessions::codex_thread_model(sid);

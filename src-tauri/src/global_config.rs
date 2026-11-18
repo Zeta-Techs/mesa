@@ -1183,7 +1183,7 @@ fn patch_codex_relay_extras(
         }
         blk["env_http_headers"] = value(headers);
     }
-    let ctx = model.and_then(|m| crate::model_registry::model_context_size_declared_for(m, gateway_id));
+    let ctx = model.and_then(|m| agents::codex_context_override_for(m, gateway_id));
     match ctx {
         Some(c) => {
             doc["model_context_window"] = value(c);

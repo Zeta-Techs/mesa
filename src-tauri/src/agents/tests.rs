@@ -279,7 +279,7 @@ fn e2e_dump_resume_plans() {
                 return Err(format!("Mesa 拦下并给出设置卡：{msg}"));
             }
             let mut plan = launch_plan_with_prompt(&profile, key, model.as_deref(), None)?;
-            let mut extra = prepare_launch(&profile)?;
+            let mut extra = prepare_launch_for(&profile, model.as_deref())?;
             if s.agent == "codex" {
                 let thread_model = codex_foreign_thread_provider(s.provider.as_deref())
                     .and_then(|_| crate::sessions::codex_thread_model(&s.session_id));
@@ -2773,7 +2773,10 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
         "display_name": "gpt-6.2-sol",
         "default_reasoning_level": "high",
         "shell_type": "unified_exec",
-        "visibility": "list",
+        "visibility": "hide",
+        "use_responses_lite": true,
+        "availability_nux": {"message": "try sol"},
+        "upgrade": {"model": "gpt-6.3"},
         "service_tiers": [{"id": "priority"}],
         "additional_speed_tiers": ["fast"],
         "model_messages": {"instructions_template": "You are Codex, a coding agent."},
@@ -2786,15 +2789,28 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
         "supports_search_tool": true,
         "base_instructions": "You are Codex, a coding agent.",
     });
-    let shipped = codex_bundled_models_from(&serde_json::json!({ "models": [official] }).to_string());
+    // 借内置表里有 1M 估值（非权威层）的模型名模拟随包公共能力库命中：当它是 Codex 官方自带模型时，
+    // 估值层不得盖掉官方窗口（272000）或删掉官方压缩点（244800），launch_plan 也不得塞 -c model_context_window
+    let official_with_public_est = serde_json::json!({
+        "slug": "kimi-k3",
+        "context_window": 272000,
+        "auto_compact_token_limit": 244800,
+        "base_instructions": "You are Codex, a coding agent.",
+    });
+    let shipped = codex_bundled_models_from(
+        &serde_json::json!({ "models": [official, official_with_public_est] }).to_string(),
+    );
     assert!(shipped.is_some());
     CODEX_VERSION_FOR_TEST.with(|c| c.set(Some((0, 169, 1))));
     CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = shipped);
-    let v = codex_catalog_json("中转", &["gpt-6.2-sol".into(), "kimi-k3".into()]);
+    let v = codex_catalog_json("中转", &["gpt-6.2-sol".into(), "kimi-k3".into(), "glm-5.3".into()]);
+    let p = profile("codex", Some("https://relay.example.com/v1"));
+    let plan_official = launch_plan(&p, Some("sk".into()), Some("kimi-k3")).unwrap();
     CODEX_VERSION_FOR_TEST.with(|c| c.set(None));
     CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = None);
     let e = &v["models"][0];
     assert_eq!(e["display_name"], "中转 · gpt-6.2-sol");
+    assert_eq!(e["visibility"], "list");
     // 提示词、思考档、verbosity、截断照官方，不套上一代的长提示词与 verbosity=low
     assert_eq!(e["default_reasoning_level"], "high");
     assert_eq!(e["support_verbosity"], false);
@@ -2806,24 +2822,39 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     assert_eq!(bi.contains("shell: \"bash\""), cfg!(windows), "Windows 补充只在 Windows 上带");
     assert_eq!(e["context_window"], 272000);
     assert_eq!(e["auto_compact_token_limit"], 244800);
-    // 中转接不住的官方专属能力照通用模板关掉
+    // 中转接不住的官方专属能力一并关掉（含 Lite 协议与升级提示）
+    assert_eq!(e["use_responses_lite"], false);
+    assert!(e["availability_nux"].is_null());
+    assert!(e["upgrade"].is_null());
     assert_eq!(e["supports_search_tool"], false);
     assert_eq!(e["service_tiers"], serde_json::json!([]));
     assert_eq!(e["additional_speed_tiers"], serde_json::json!([]));
     assert!(e.get("apply_patch_tool_type").is_none());
+    // 估值层不得盖掉官方窗口与压缩点，launch_plan 也不得塞 -c model_context_window
+    let e_est = &v["models"][1];
+    assert_eq!(e_est["context_window"], 272000);
+    assert_eq!(e_est["auto_compact_token_limit"], 244800);
+    assert!(
+        !plan_official.args.iter().any(|a| a.starts_with("model_context_window=")),
+        "{:?}",
+        plan_official.args
+    );
     // 官方没有的模型照旧走通用模板
-    let other = &v["models"][1];
+    let other = &v["models"][2];
     assert_eq!(other["support_verbosity"], false);
     assert!(other["base_instructions"].as_str().unwrap().starts_with("You are a coding agent running in the Codex CLI"));
-    // 按最长前缀认：带日期后缀、带服务商前缀、大小写不同都认到官方条目，slug 用中转上的真名
+    // 按最长前缀认：带日期后缀、带服务商前缀、大小写不同都认到官方条目，slug 用中转上的真名；
+    // 只给了 instructions_template 的自动补回 base_instructions，个别缺提示词的条目只跳过自身不作废整份清单
     let shipped = codex_bundled_models_from(
         &serde_json::json!({ "models": [
+            {"slug": "broken-row"},
             {"slug": "gpt-6", "base_instructions": "six"},
-            {"slug": "gpt-6.2-sol", "base_instructions": "sol"},
+            {"slug": "gpt-6.2-sol", "model_messages": {"instructions_template": "sol"}},
         ] })
         .to_string(),
     )
     .unwrap();
+    assert_eq!(shipped.len(), 2);
     for (name, want) in [
         ("gpt-6.2-sol-20261101", Some("sol")),
         ("openai/GPT-6.2-sol", Some("sol")),
@@ -2835,9 +2866,49 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     }
     let e = codex_entry_from_bundled(shipped[1].clone(), "中转", "gpt-6.2-sol-20261101", None);
     assert_eq!(e["slug"], "gpt-6.2-sol-20261101");
-    // 缺 base_instructions 的输出整份不收（Codex 会拒收这样的目录）
+    // 一条有效条目都没剩时返回 None
     assert!(codex_bundled_models_from(r#"{"models":[{"slug":"x"}]}"#).is_none());
     assert!(codex_bundled_models_from("not json").is_none());
+}
+
+#[test]
+fn codex_launch_and_headless_use_selected_entry_instructions_and_attach_catalog() {
+    let official = serde_json::json!({
+        "slug": "gpt-6.2-sol",
+        "base_instructions": "You are Codex, a coding agent.",
+    });
+    let shipped = codex_bundled_models_from(&serde_json::json!({ "models": [official] }).to_string());
+    let mut p = profile("codex", Some("https://relay.example.com/v1"));
+    p.id = format!("test-codex-{}", uuid::Uuid::new_v4());
+    p.models = vec!["gpt-6.2-sol".into(), "glm-5.3".into()];
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(Some((0, 169, 1))));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = shipped);
+    let interactive_official = prepare_launch_for(&p, Some("gpt-6.2-sol")).unwrap();
+    let interactive_other = prepare_launch_for(&p, Some("glm-5.3")).unwrap();
+    let headless_official = codex_headless_catalog_args(&p, Some("gpt-6.2-sol")).unwrap();
+    let cat_path = codex_catalog_path(&p.id);
+    CODEX_VERSION_FOR_TEST.with(|c| c.set(None));
+    CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = None);
+    if let Some(cp) = cat_path {
+        let _ = std::fs::remove_file(cp);
+    }
+    // 官方模型条目不提 update_plan → 不得误开 tools.update_plan.enabled=true
+    assert!(
+        !interactive_official.iter().any(|a| a.contains("update_plan")),
+        "{interactive_official:?}"
+    );
+    // 测试态通用模板走随包 0.163（含 update_plan）→ 选中非官方模型时照补
+    assert!(
+        interactive_other.contains(&"tools.update_plan.enabled=true".to_string()),
+        "{interactive_other:?}"
+    );
+    // 无头运行带上 model_catalog_json，但不带交互专属的 --no-daemon 与更新提示开关
+    assert!(
+        headless_official.iter().any(|a| a.starts_with(r#"model_catalog_json=""#)),
+        "{headless_official:?}"
+    );
+    assert!(!headless_official.contains(&"--no-daemon".to_string()));
+    assert!(!headless_official.iter().any(|a| a.contains("check_for_update_on_startup")));
 }
 
 /// 手动跑：真起本机 codex 取自带的模型条目（不联网、临时目录用完即删）。`cargo test --lib codex_bundled_models_extract_real -- --ignored --nocapture`

@@ -1109,7 +1109,7 @@ fn pty_spawn_sync(
         })?;
     }
     // 每-agent 启动前文件准备（codex：写模型 catalog，让 /model 选择器列出全部模型）
-    let mut extra_args = agents::prepare_launch(&profile)?;
+    let mut extra_args = agents::prepare_launch_for(&profile, model.as_deref())?;
     // Codex 0.166 起续聊只认对话记下的渠道：对话不是 Mesa 的 ccode-… 时按它自己的渠道续（agents 同名函数）
     if let (true, Some(sid)) = (agent_id == "codex", resume_session_id.as_deref()) {
         let thread_model = agents::codex_foreign_thread_provider(resume_provider.as_deref())

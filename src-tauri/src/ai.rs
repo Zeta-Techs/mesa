@@ -1149,6 +1149,8 @@ pub(crate) fn ai_prompt_impl_full(
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
     let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    plan.args
+        .extend(agents::codex_headless_catalog_args(&profile, selected.as_deref())?);
     if let Some(level) = effort {
         lower_effort(&profile.agent, &mut plan, level);
     }
@@ -1627,6 +1629,8 @@ pub(crate) fn ai_inspect_readonly(
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
     let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    plan.args
+        .extend(agents::codex_headless_catalog_args(&profile, selected.as_deref())?);
     if let Some(level) = effort {
         lower_effort(&profile.agent, &mut plan, level);
     }
@@ -1841,7 +1845,9 @@ pub(crate) fn build_headless_command_granted(
     let selected = pick_listed_model(&profile.models, model);
     crate::combo::apply_to_profile(&mut profile, selected.as_deref());
     agents::validate_launch_compatibility(&profile, selected.as_deref())?;
-    let plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    plan.args
+        .extend(agents::codex_headless_catalog_args(&profile, selected.as_deref())?);
     let mut cmd = crate::process::background_command(&binary_path);
     // 先于 plan.env 设：Agent 在无头运行里起的 Python 不再按系统代码页（GBK）出字，profile 里写了的照 profile
     if let Some((key, value)) = crate::process::agent_python_io_env() {
