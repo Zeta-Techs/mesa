@@ -3260,7 +3260,7 @@ fn discover_at(project: &Path) -> Result<Vec<DiscoveredResourceDto>, String> {
 
 // ===== git 引导（幂等：已是仓库直接返回） =====
 
-fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
+pub(crate) fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
     if work_mode == "coding" {
         return "# Mesa 生成：系统垃圾与过程文件不进 git\n\
              .DS_Store\n\

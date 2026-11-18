@@ -5862,3 +5862,5 @@ pub async fn read_artifacts_manifest(repo_path: String) -> Result<Vec<ArtifactEn
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod scenarios;
