@@ -1,0 +1,47 @@
+# Mesa 生成：产物与系统垃圾不进 git
+/artifacts/
+.DS_Store
+
+# Mesa 接力简报与人工请求：过程文件，不进版本库（人工请求一步一份、只放没答的问题）
+.ccode/handoff-*.md
+.ccode/help-wanted.md
+.ccode/outbox.jsonl
+
+# 同步到文献库时 Mesa 按引文库生成的导入文件：每次重写，不进 git
+/papers/zotero-library.ris
+/papers/endnote-library.ris
+/papers/endnote-journals.txt
+
+# 文献 PDF 等大文件登记为资源引用，不进 git
+*.pdf
+
+# Mesa 雷达与积累台账（日常积累，不进 git；2026-10-13 双台账口径）
+/papers/reading-list.md
+/notes/inbox.md
+/papers/watch-seen.md
+/papers/watch-followup.md
+/.ccode/watch-explains.json
+/.ccode/pending-registrations.json
+/.ccode/acceptance-log.jsonl
+/.ccode/acceptance-log.lock
+/.ccode/watch/
+
+# Mesa 研究记录与核验记录（只追加的本机账本，不进 git；2026-11-02）
+/.ccode/record.jsonl
+/.ccode/record.lock
+/.ccode/ai-usage.md
+/.ccode/checks/
+/.ccode/record/
+
+# 常见数据/产物目录（按需取消注释）
+# /data/
+/output/
+# /results/
+# /figures/
+
+# 综述回路：补料单与开轮起因（本机记录，不进 git；2026-11-05）
+/.ccode/rework/
+/.ccode/step-rounds.jsonl
+
+# 研讨记录：几家 AI 只读研讨同一个问题（本机记录，不进 git；2026-11-11）
+/.ccode/consults/

@@ -1320,11 +1320,17 @@ pub(crate) fn ensure_project_id_at(project: &Path) -> Result<String, String> {
     }
     let id = uuid::Uuid::new_v4().to_string();
     let path = config_path(project);
-    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let existing = fs::read_to_string(&path).ok();
     let mut doc = existing
+        .as_deref()
+        .unwrap_or_default()
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("project.toml 解析失败，无法写入项目 id: {e}"))?;
     doc["id"] = toml_edit::value(id.clone());
+    // 档案卡从无到有 = 新项目，直接记成最新一代结构；老档案卡补 id 不动 layout（升级还要跑）
+    if existing.is_none() {
+        crate::project_upgrade::stamp_current(&mut doc);
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("创建 .ccode 目录失败: {e}"))?;
     }
@@ -3438,7 +3444,12 @@ const IGNORE_UPGRADE_MARKER: &str = "# Mesa 本机记录与台账（Mesa 补上�
 /// 缺哪行补哪行，追加在末尾一段，不改不删已有行。只补 Mesa 自己的文件（`.ccode/` 下、文献库导入文件、雷达台账），
 /// 不补 `*.pdf`、`/output/` 这类会改变用户文件去留的规则。已被跟踪的文件不受忽略规则影响，照旧留在历史里。
 /// 返回是否改了 .gitignore。
-fn upgrade_mesa_ignores_at(repo: &Path) -> Result<bool, String> {
+/// 项目的工作方式（research / coding / office；缺省 research）
+pub(crate) fn project_work_mode_at(root: &Path) -> String {
+    normalize_work_mode(&read_config_at(root).config.work_mode).to_string()
+}
+
+pub(crate) fn upgrade_mesa_ignores_at(repo: &Path) -> Result<bool, String> {
     let path = repo.join(".gitignore");
     let current = match fs::read_to_string(&path) {
         Ok(text) => text,
@@ -3483,11 +3494,9 @@ pub(crate) fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, Str
     if !repo.is_dir() {
         return Err(format!("项目目录不存在或不是目录: {}", repo.display()));
     }
-    // 老科研项目先补齐 Mesa 的忽略行，随下面这次档案卡提交一起进历史；补不上不挡提交
-    if normalize_work_mode(&read_config_at(repo).config.work_mode) == "research" {
-        if let Err(e) = upgrade_mesa_ignores_at(repo) {
-            eprintln!("[projects] 补 .gitignore 忽略行失败: {e}");
-        }
+    // 老项目逐级升到最新结构（project_upgrade），改动随下面这次档案卡提交一起进历史；升不上不挡提交
+    if let Err(e) = crate::project_upgrade::upgrade_at(repo) {
+        eprintln!("[projects] {e}");
     }
     if crate::agents::resolve_binary("git").is_none() {
         return Err("找不到 git 可执行文件，请先安装 git".to_string());

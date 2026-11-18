@@ -113,6 +113,7 @@ mod profile_validation;
 mod profiles;
 mod project_memory;
 mod projects;
+mod project_upgrade;
 mod prompts;
 mod provider_id;
 mod pty;
