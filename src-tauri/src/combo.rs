@@ -187,7 +187,19 @@ pub fn surface_for_agents(
         && !model.is_empty()
         && model_registry::model_thinking_declared_for(model, gid) != Some(false)
         && crate::agents::codex_official_effort_levels(model, false).is_some();
-    let thinking = model_registry::model_thinking_for(model, gid) || codex_official_thinking;
+    let claude_alias_thinking = agents.iter().any(|(a, _)| *a == "claude-code")
+        && matches!(
+            model.trim().to_ascii_lowercase().as_str(),
+            "default" | "opus" | "sonnet" | "haiku" | "opusplan"
+        );
+    let thinking = model_registry::model_thinking_for(model, gid)
+        || codex_official_thinking
+        || claude_alias_thinking;
+    // 新添加但尚未进内置表 / 公共能力库的模型（声明层为 None）：与 apply_to_profile 同口径，
+    // 「不知道」不等于「不会思考」——只要没有显式声明 false，就不拦思考档展示与切换
+    let effort_capable = thinking
+        || (!model.trim().is_empty()
+            && model_registry::model_thinking_declared_for(model, gid) != Some(false));
     let vision = model_registry::model_supports_vision_for(model, gid);
     let context = model_registry::model_context_size_known_for(model, gid);
     let output = model_registry::model_output_limit_for(model, gid);
@@ -211,11 +223,11 @@ pub fn surface_for_agents(
     let grok_only = !agents.is_empty() && agents.iter().all(|(a, _)| *a == "grok");
     let grok_blocks = grok_only && !crate::agents::grok_model_declares_effort(model);
     let inject_effort_allowed =
-        thinking && channel_ok(channel_effort) && !probe_blocks(probe_effort) && !grok_blocks;
+        effort_capable && channel_ok(channel_effort) && !probe_blocks(probe_effort) && !grok_blocks;
     let show_native_effort =
-        thinking && has_native_effort && !probe_blocks(probe_effort) && !grok_blocks;
+        effort_capable && has_native_effort && !probe_blocks(probe_effort) && !grok_blocks;
     // 不会思考 → 隐藏思考档；persist/tui 的已存值仍可改/可见，不算「通道不通」
-    let effort_readonly = stored_effort && thinking && !channel_carries(channel_effort);
+    let effort_readonly = stored_effort && effort_capable && !channel_carries(channel_effort);
 
     let mixed = if binding_models.len() > 1 {
         let flags: Vec<bool> = binding_models
@@ -400,6 +412,21 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
     } else {
         None
     };
+    let cli_model_cap: Option<Vec<String>> = match profile.agent.as_str() {
+        "claude-code" => Some(
+            crate::agents::claude_model_effort_levels(model)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        ),
+        "qwen" => Some(
+            crate::agents::qwen_model_effort_levels(model)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => None,
+    };
     let effective_levels: Vec<String> = if let Some(cap) = agy_model_cap {
         if !raw_gw_levels.is_empty() {
             let filtered: Vec<String> = raw_gw_levels
@@ -430,6 +457,20 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         } else {
             cap
         }
+    } else if let Some(ref cap) = cli_model_cap {
+        if cap.is_empty() {
+            Vec::new()
+        } else if !raw_gw_levels.is_empty() {
+            let filtered: Vec<String> = raw_gw_levels
+                .into_iter()
+                .filter(|lv| cap.iter().any(|c| c == lv))
+                .collect();
+            if filtered.is_empty() { cap.clone() } else { filtered }
+        } else {
+            cap.clone()
+        }
+    } else if raw_gw_levels.is_empty() && profile.agent == "kimi" {
+        crate::agents::kimi_model_effort_levels(profile, model).unwrap_or_default()
     } else if raw_gw_levels.is_empty() && profile.agent == "opencode" {
         crate::agent_specs::effort_options("opencode")
             .into_iter()
@@ -452,21 +493,19 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         &effective_levels,
     );
     // 官方账号未显式指定模型（走 CLI 自带默认模型）时，一等/主流家的官方默认模型均支持思考档；
-    // 反过来 agy 官方账号选了非 Gemini 族模型（如 claude-sonnet-4-6）时 CLI 拒收 `--effort`，必须关掉注入开关。
+    // 反过来 agy 官方账号选了非支持族模型（如 claude-sonnet-4-6）或 Claude/Qwen 选了无分档模型时必须关掉开关。
     if is_official && model.is_empty() {
         if matches!(
             profile.agent.as_str(),
             "claude-code" | "codex" | "agy" | "kimi" | "qwen" | "grok"
         ) {
             surface.thinking = true;
-            let grok_blocks = profile.agent == "grok" && !crate::agents::grok_model_declares_effort(model);
             let probe_ok = surface.probe_effort != "failed";
-            surface.inject_effort_allowed =
-                channel_ok(surface.channel_effort) && probe_ok && !grok_blocks;
+            surface.inject_effort_allowed = channel_ok(surface.channel_effort) && probe_ok;
             let has_native = agent_specs::agent_spec(&profile.agent)
                 .and_then(|s| s.effort_levels)
                 .is_some_and(|(levels, _)| levels.len() > 1);
-            surface.show_native_effort = has_native && probe_ok && !grok_blocks;
+            surface.show_native_effort = has_native && probe_ok;
         }
     } else if profile.agent == "codex"
         && is_official
@@ -477,7 +516,28 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         surface.thinking = true;
         surface.inject_effort_allowed =
             channel_ok(surface.channel_effort) && surface.probe_effort != "failed";
-    } else if profile.agent == "agy" && agy_model_cap.is_none() {
+    } else if profile.agent == "grok"
+        && is_official
+        && {
+            let low = model.trim().to_ascii_lowercase();
+            low.starts_with("grok-3") || low.starts_with("grok-4")
+        }
+        && model_registry::model_thinking_declared_for(model, profile.gateway_id.as_deref())
+            != Some(false)
+    {
+        surface.thinking = true;
+        let probe_ok = surface.probe_effort != "failed";
+        surface.inject_effort_allowed = channel_ok(surface.channel_effort) && probe_ok;
+        surface.show_native_effort = probe_ok;
+        if surface.effort_levels.is_empty() {
+            surface.effort_levels = crate::agent_specs::effort_options("grok")
+                .into_iter()
+                .map(str::to_string)
+                .collect();
+        }
+    } else if (profile.agent == "agy" && agy_model_cap.is_none())
+        || cli_model_cap.as_ref().is_some_and(Vec::is_empty)
+    {
         surface.inject_effort_allowed = false;
         surface.show_native_effort = false;
         surface.effort_levels.clear();

@@ -111,7 +111,11 @@ const EFFORT_PATTERNS: Record<string, RegExp[]> = {
     new RegExp(String.raw`\bReasoning effort set to\s+${LEVEL}\b`, "gi"),
     new RegExp(String.raw`\bCurrent reasoning effort:\s+${LEVEL}\b`, "gi"),
   ],
-  kimi: [new RegExp(String.raw`\b(thinking)\s+${PATH_HEAD}`, "gi")],
+  kimi: [
+    new RegExp(String.raw`\b(thinking)\s+${PATH_HEAD}`, "gi"),
+    /\bThinking set to\s+(off|on|none|minimal|low|medium|high|xhigh|max)\b/gi,
+    /\bwith thinking\s+(off|on|none|minimal|low|medium|high|xhigh|max)\b/gi,
+  ],
   agy: [
     AGY_FOOTER_EFFORT_RE,
     new RegExp(String.raw`\beffort(?:\s+level)?\s+(?:set\s+to|changed\s+to|:)\s*${LEVEL}\b`, "gi"),
@@ -127,7 +131,7 @@ const QUICK_KEYS: Record<string, string[]> = {
   codex: ["·", "Model changed", "for the next new turn"],
   grok: [")"],
   qwen: ["effort", "➜"],
-  kimi: ["thinking"],
+  kimi: ["thinking", "Thinking"],
   agy: ["·", "effort", "Effort"],
 };
 

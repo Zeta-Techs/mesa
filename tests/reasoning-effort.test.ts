@@ -90,10 +90,18 @@ test("detectEffortInOutput：Qwen /effort 回显三种句式", () => {
   assert.equal(detectEffortInOutput("Current reasoning effort: max\nAvailable: low", "qwen"), "max");
 });
 
-test("detectEffortInOutput：Kimi 底栏 thinking = 开；没有规则的 CLI 不认", () => {
+test("detectEffortInOutput：Kimi 底栏 thinking = 开，切档回显认具体档位；没有规则的 CLI 不认", () => {
   assert.equal(
     detectEffortInOutput("\r\r\n Kimi K3 thinking  ~/ccode/scratch     ! to run", "kimi"),
     "on",
+  );
+  assert.equal(
+    detectEffortInOutput("   Thinking set to off for this session only. Takes effect from the next turn.", "kimi"),
+    "off",
+  );
+  assert.equal(
+    detectEffortInOutput("   Switched to Kimi K3 with thinking high.", "kimi"),
+    "high",
   );
   assert.equal(detectEffortInOutput("with high effort", "gemini"), null);
 });

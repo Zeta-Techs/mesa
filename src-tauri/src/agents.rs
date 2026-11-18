@@ -1413,6 +1413,7 @@ const AGY_BUILTIN_GEMINI_FAMILIES: &[(&str, &str, &[&str])] = &[
     ("gemini-3.8-flash", "Gemini 3.8 Flash", &["low", "medium", "high"]),
     ("gemini-3.7-flash", "Gemini 3.7 Flash", &["low", "medium", "high"]),
     ("gemini-3.6-flash", "Gemini 3.6 Flash", &["low", "medium", "high"]),
+    ("gemini-3.5-flash", "Gemini 3.5 Flash", &["low", "medium", "high"]),
 ];
 
 fn match_agy_family_slug<'a>(
@@ -1457,7 +1458,16 @@ pub(crate) fn agy_official_effort_family(
     if let Some((base, _, levels, suf)) = agy_builtin_gemini_family(model) {
         return Some((base, levels, suf));
     }
-    match_agy_family_slug(model, "gemini-3.1-pro", &["low", "high"])
+    if let Some(m) = match_agy_family_slug(model, "gemini-3.1-pro", &["low", "high"]) {
+        return Some(m);
+    }
+    // agy 1.5.11 起官方账号内置 Claude Opus 5.5 / Sonnet 5.5 支持 low/medium/high/max 四档；4.6 仍无档位
+    for base in ["claude-opus-5-5", "claude-sonnet-5-5"] {
+        if let Some(m) = match_agy_family_slug(model, base, &["low", "medium", "high", "max"]) {
+            return Some(m);
+        }
+    }
+    None
 }
 
 fn agy_effort_display_cap(eff: &str) -> &'static str {
@@ -1465,6 +1475,7 @@ fn agy_effort_display_cap(eff: &str) -> &'static str {
         "low" => "Low",
         "high" => "High",
         "xhigh" => "XHigh",
+        "max" => "Max",
         _ => "Medium",
     }
 }
@@ -1482,7 +1493,8 @@ pub(crate) fn agy_effort_for_levels(raw: Option<&str>, levels: &[&'static str]) 
         "none" | "minimal" | "low" => &["low"],
         "medium" => &["medium", "high", "low"],
         "high" => &["high", "medium", "low"],
-        "xhigh" | "ultra" | "max" => &["xhigh", "high", "medium", "low"],
+        "xhigh" => &["xhigh", "high", "medium", "low"],
+        "max" | "ultra" => &["max", "xhigh", "high", "medium", "low"],
         _ => return None,
     };
     wanted
@@ -2019,8 +2031,13 @@ pub fn launch_plan(
                     // Header = provider env_http_headers（值是环境变量名引用，不落密文）。
                     // 后者依赖内联 provider 定义存在，无 base_url 时没有 ccode provider 可挂
                     if let Some(raw_effort) = profile.request_policy.reasoning_effort.as_deref() {
-                        let effort = crate::agent_specs::launch_reasoning_effort(raw_effort)
+                        let mut effort = crate::agent_specs::launch_reasoning_effort(raw_effort)
                             .unwrap_or_else(|| raw_effort.to_string());
+                        if effort == "ultra"
+                            && profile.account_type != crate::profiles::AccountType::Official
+                        {
+                            effort = "max".into();
+                        }
                         plan.args.push("-c".into());
                         plan.args
                             .push(format!(r#"model_reasoning_effort="{effort}""#));
@@ -4000,13 +4017,19 @@ fn codex_official_match<'a>(models: &'a [serde_json::Value], model: &str) -> Opt
         .map(|(_, m)| m)
 }
 
-fn extract_codex_effort_levels(entry: &serde_json::Value) -> Vec<String> {
+fn extract_codex_effort_levels(entry: &serde_json::Value, official_account: bool) -> Vec<String> {
     entry["supported_reasoning_levels"]
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|item| item["effort"].as_str().map(str::trim))
-        .filter(|s| !s.is_empty())
+        .filter(|s| {
+            !s.is_empty()
+                && *s != "persistent"
+                // Codex 0.170 随包目录里的 ultra 是客户端多子 Agent 委派模式（ChatGPT 专属），
+                // OpenAI `/v1/responses` API 最高档位就是 max（发 ultra 会被 API 拒收）
+                && (official_account || *s != "ultra")
+        })
         .map(str::to_string)
         .collect()
 }
@@ -4020,7 +4043,7 @@ fn codex_first_listed_entry(models: &[serde_json::Value]) -> Option<&serde_json:
 }
 
 /// Codex 官方目录（ChatGPT 登录下的 `models_cache.json` 或二进制随包条目）给这个模型声明的思考档列表。
-/// 命中且非空才返回 `Some`，供求交器判断该模型是否原生支持思考档及具体有哪些档位（如 `gpt-6.2-sol` 含 `max`/`ultra`，`gpt-5.5` 到 `xhigh`）。
+/// API 连接自动剥除仅限客户端/ChatGPT 的 `ultra`（如 `gpt-6.2-sol` API 最高为 `max`，`gpt-5.5` 为 `xhigh`）。
 pub(crate) fn codex_official_effort_levels(model: &str, official_account: bool) -> Option<Vec<String>> {
     let trimmed = model.trim();
     if official_account {
@@ -4039,7 +4062,7 @@ pub(crate) fn codex_official_effort_levels(model: &str, official_account: bool) 
                             codex_official_match(arr, trimmed)
                         };
                         if let Some(e) = entry {
-                            let levels = extract_codex_effort_levels(e);
+                            let levels = extract_codex_effort_levels(e, true);
                             if !levels.is_empty() {
                                 return Some(levels);
                             }
@@ -4050,7 +4073,7 @@ pub(crate) fn codex_official_effort_levels(model: &str, official_account: bool) 
         }
         if trimmed.is_empty() {
             let bundled = local_codex_bundled_models(codex_cli_version()?)?;
-            let levels = extract_codex_effort_levels(codex_first_listed_entry(&bundled)?);
+            let levels = extract_codex_effort_levels(codex_first_listed_entry(&bundled)?, true);
             return (!levels.is_empty()).then_some(levels);
         }
     }
@@ -4058,8 +4081,162 @@ pub(crate) fn codex_official_effort_levels(model: &str, official_account: bool) 
         return None;
     }
     let entry = codex_bundled_entry(trimmed)?;
-    let levels = extract_codex_effort_levels(&entry);
+    let levels = extract_codex_effort_levels(&entry, official_account);
     (!levels.is_empty()).then_some(levels)
+}
+
+fn strip_claude_model_decorations(model: &str) -> String {
+    let mut s = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    if let Some((head, _)) = s.split_once(':') {
+        s = head.to_string();
+    }
+    if let Some((head, _)) = s.split_once('[') {
+        s = head.to_string();
+    }
+    if let Some((head, _)) = s.split_once('@') {
+        s = head.to_string();
+    }
+    s = s.replace('.', "-");
+    // 剥尾部 8 位日期（如 -20250514）
+    if s.len() > 9 {
+        let (head, tail) = s.split_at(s.len() - 9);
+        if tail.starts_with('-') && tail[1..].bytes().all(|b| b.is_ascii_digit()) {
+            s = head.to_string();
+        }
+    }
+    if let Some(head) = s.strip_suffix("-latest") {
+        s = head.to_string();
+    }
+    s
+}
+
+/// Claude Code 2.1.311 源码级逐模型思考档（对齐二进制 `Zb` / `gse` / `Rvt`）：
+/// - 3.x、opus-4-0/4-1、sonnet-4-0/4-5、haiku-4-5：CLI 不开放 `/effort` 档位（空）
+/// - opus-4-5：`low / medium / high`
+/// - opus-4-6、sonnet-4-6：`low / medium / high / max`（无 `xhigh`）
+/// - opus-4-7+、5 代全系（含 haiku-5-5 / fable-5 / mythos-5）、官方别名（default/opus/sonnet/haiku/opusplan）及第三方模型：全五档
+pub(crate) fn claude_model_effort_levels(model: &str) -> Vec<&'static str> {
+    let s = strip_claude_model_decorations(model);
+    if s.is_empty() || matches!(s.as_str(), "default" | "opus" | "sonnet" | "haiku" | "opusplan") {
+        return vec!["low", "medium", "high", "xhigh", "max"];
+    }
+    if s.starts_with("claude-3-")
+        || matches!(
+            s.as_str(),
+            "claude-opus-4-0"
+                | "claude-opus-4-1"
+                | "claude-sonnet-4-0"
+                | "claude-sonnet-4-5"
+                | "claude-haiku-4-5"
+        )
+    {
+        return vec![];
+    }
+    if s == "claude-opus-4-5" {
+        return vec!["low", "medium", "high"];
+    }
+    if matches!(s.as_str(), "claude-opus-4-6" | "claude-sonnet-4-6") {
+        return vec!["low", "medium", "high", "max"];
+    }
+    vec!["low", "medium", "high", "xhigh", "max"]
+}
+
+/// Qwen Code 0.28.0 源码级逐模型思考档（对齐 `MODEL_CONFIGURATIONS` 与 `getGptReasoningCapabilities`）：
+/// - `qwen3.5-plus` / `qwen3.6-*` / `qwen3.7-*` / `coder-model`：`toggleOnly: true`，无强度分档（空）
+/// - `qwen3.8-max` / `qwen3.8-flash`：`low / medium / xhigh`
+/// - `qwen4-max`：`low / high / xhigh`
+/// - 其余推理模型：`low / medium / high / xhigh / max`
+pub(crate) fn qwen_model_effort_levels(model: &str) -> Vec<&'static str> {
+    let mut s = model
+        .trim()
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    if let Some((head, _)) = s.split_once(':') {
+        s = head.to_string();
+    }
+    if s.is_empty() {
+        return vec!["low", "medium", "high", "xhigh", "max"];
+    }
+    if s == "coder-model"
+        || s.starts_with("qwen3.5-plus")
+        || s.starts_with("qwen3.6-plus")
+        || s.starts_with("qwen3.6-flash")
+        || s.starts_with("qwen3.7-plus")
+        || s.starts_with("qwen3.7-max")
+    {
+        return vec![];
+    }
+    if s.starts_with("qwen3.8-max") || s.starts_with("qwen3.8-flash") {
+        return vec!["low", "medium", "xhigh"];
+    }
+    if s.starts_with("qwen4-max") {
+        return vec!["low", "high", "xhigh"];
+    }
+    if matches!(
+        s.as_str(),
+        "gpt-5" | "gpt-5-mini" | "gpt-5-nano" | "gpt-5.1" | "gpt-5.1-codex"
+    ) {
+        return vec!["low", "medium", "high"];
+    }
+    if s.starts_with("gpt-5.1-codex-max")
+        || s.starts_with("gpt-5.2")
+        || s.starts_with("gpt-5.3-codex")
+        || s.starts_with("gpt-5.4")
+        || s.starts_with("gpt-5.5")
+    {
+        return vec!["low", "medium", "high", "xhigh"];
+    }
+    vec!["low", "medium", "high", "xhigh", "max"]
+}
+
+/// Kimi Code 2.6 `config.toml` 里模型若带 `support_efforts` / `supportEfforts`（如官方登录从 `/models` 同步的多档模型），
+/// 读取其实际可选档位（未含 `off` 时前置 `off`）；未声明时返回 `None`，由规格表回退 `on / off`。
+pub(crate) fn kimi_model_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> {
+    let text = kimi_config_text(Some(profile))?;
+    let doc: toml::Value = toml::from_str(&text).ok()?;
+    let models = doc.get("models")?.as_table()?;
+    let wanted = if model.trim().is_empty() {
+        doc.get("default_model").and_then(|v| v.as_str()).unwrap_or("")
+    } else {
+        model.trim()
+    };
+    if wanted.is_empty() {
+        return None;
+    }
+    let entry = models.get(wanted).or_else(|| {
+        models.values().find(|m| {
+            m.get("model")
+                .and_then(|v| v.as_str())
+                .is_some_and(|id| id.eq_ignore_ascii_case(wanted))
+        })
+    })?;
+    let arr = entry
+        .get("support_efforts")
+        .or_else(|| entry.get("supportEfforts"))
+        .and_then(|v| v.as_array())?;
+    let mut out: Vec<String> = Vec::new();
+    for item in arr {
+        if let Some(s) = item.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+            let low = s.to_ascii_lowercase();
+            if !out.contains(&low) {
+                out.push(low);
+            }
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    if !out.iter().any(|x| x == "off") {
+        out.insert(0, "off".into());
+    }
+    Some(out)
 }
 
 /// 官方条目缓存在 `<配置根>/catalogs/codex-bundled-models-<版本>.json`，每个版本只取一次；旧版本的缓存顺手删掉
@@ -4201,6 +4378,22 @@ fn codex_entry_from_bundled(
     entry["upgrade"] = serde_json::Value::Null;
     entry["service_tiers"] = serde_json::json!([]);
     entry["additional_speed_tiers"] = serde_json::json!([]);
+    // 随包条目里的 `ultra` 是 Codex CLI 客户端自动多子 Agent 委派模式（ChatGPT 专属），
+    // OpenAI `/v1/responses` API 与第三方中转最高只认 `max`
+    if let Some(arr) = entry["supported_reasoning_levels"].as_array_mut() {
+        arr.retain(|item| {
+            !matches!(
+                item["effort"].as_str(),
+                Some("ultra") | Some("persistent")
+            )
+        });
+    }
+    if matches!(
+        entry["default_reasoning_level"].as_str(),
+        Some("ultra") | Some("persistent")
+    ) {
+        entry["default_reasoning_level"] = serde_json::json!("max");
+    }
     if let Some(obj) = entry.as_object_mut() {
         obj.remove("apply_patch_tool_type");
     }
@@ -4255,7 +4448,6 @@ pub(crate) fn codex_catalog_entry_for(
             { "effort": "high", "description": "Greater reasoning depth for complex problems" },
             { "effort": "xhigh", "description": "Very deep reasoning for difficult problems" },
             { "effort": "max", "description": "Maximum reasoning depth for the hardest problems" },
-            { "effort": "ultra", "description": "Maximum reasoning with automatic task delegation" },
         ],
         "shell_type": "shell_command",
         "visibility": "list",
@@ -5953,7 +6145,7 @@ fn bare_resume_effort_args(agent_id: &str, effort: Option<&str>) -> Vec<String> 
     };
     match agent_id {
         "claude-code" | "codebuddy" => vec!["--effort".into(), eff],
-        "agy" => agy_effort_for_levels(Some(&eff), &["low", "medium", "high", "xhigh"])
+        "agy" => agy_effort_for_levels(Some(&eff), &["low", "medium", "high", "xhigh", "max"])
             .map(|e| vec!["--effort".into(), e.into()])
             .unwrap_or_default(),
         "codex" => vec!["-c".into(), format!("model_reasoning_effort=\"{eff}\"")],

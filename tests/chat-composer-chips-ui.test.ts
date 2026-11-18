@@ -2009,7 +2009,7 @@ test("模型菜单 WhoView：十家 Agent 排两列带装饰性 Agent 图标、�
   }
 });
 
-test("Codex 运行中按当前生效模型动态刷新思考档表，并支持切到 ultra", async () => {
+test("Codex 运行中按当前生效模型动态刷新思考档表，并支持切到 max", async () => {
   const ui = await mount();
   try {
     ui.useAppStore.setState({
@@ -2030,7 +2030,7 @@ test("Codex 运行中按当前生效模型动态刷新思考档表，并支持�
       if (command === "combo_surface") {
         const model = (args as { model?: string | null } | undefined)?.model ?? "";
         const effortLevels = model.includes("6.2-sol")
-          ? ["low", "medium", "high", "xhigh", "max", "ultra"]
+          ? ["low", "medium", "high", "xhigh", "max"]
           : ["low", "medium", "high", "xhigh"];
         return {
           showNativeEffort: false,
@@ -2059,8 +2059,8 @@ test("Codex 运行中按当前生效模型动态刷新思考档表，并支持�
       }),
     );
     await ui.click("gpt-6.2-sol · low");
-    await slideEffort(ui, 5);
-    assert.deepEqual(sent, ["/model --reasoning ultra"]);
+    await slideEffort(ui, 4);
+    assert.deepEqual(sent, ["/model --reasoning max"]);
   } finally {
     await ui.close();
   }

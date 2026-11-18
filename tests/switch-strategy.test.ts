@@ -13,6 +13,8 @@ test("会写回全局配置的切换改走重开接回；写不回去的照旧�
   assert.equal(switchByRelaunch("claude-code", "model", true), true);
   assert.equal(switchByRelaunch("claude-code", "effort", true), true);
   assert.equal(switchByRelaunch("codex", "model", true), true);
+  assert.equal(switchByRelaunch("opencode", "model", true), true);
+  assert.equal(switchByRelaunch("opencode", "effort", true), true);
   assert.equal(switchByRelaunch("agy", "model", true), true);
   assert.equal(switchByRelaunch("agy", "effort", true), true);
   assert.equal(switchByRelaunch("grok", "model", true), true);

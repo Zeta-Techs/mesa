@@ -2765,7 +2765,7 @@ fn codex_catalog_contains_every_model_with_template_shape() {
         .iter()
         .filter_map(|l| l["effort"].as_str())
         .collect();
-    assert_eq!(efforts, ["low", "medium", "high", "xhigh", "max", "ultra"]);
+    assert_eq!(efforts, ["low", "medium", "high", "xhigh", "max"]);
     // 能力字段：有效上下文 95%（自动压缩阈值）、如实声明无 search tool
     assert_eq!(e["effective_context_window_percent"], 95);
     assert_eq!(e["supports_search_tool"], false);
@@ -2954,37 +2954,121 @@ fn codex_combo_surface_exposes_per_model_official_effort_levels() {
     ];
     CODEX_VERSION_FOR_TEST.with(|c| c.set(Some((0, 170, 0))));
     CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = shipped);
+    let cat_sol = codex_catalog_json("中转", &["gpt-6.2sol".into()]);
     let s_sol = crate::combo::surface_for_profile(&p, Some("gpt-6.2sol"));
     let s_55 = crate::combo::surface_for_profile(&p, Some("gpt-5.5"));
     let s_daybreak = crate::combo::surface_for_profile(&p, Some("gpt-daybreak-blue-latest"));
     let s_glm = crate::combo::surface_for_profile(&p, Some("glm-5.3"));
     let s_non_think = crate::combo::surface_for_profile(&p, Some("deepseek-chat"));
+    let mut official_codex = profile("codex", None);
+    official_codex.account_type = crate::profiles::AccountType::Official;
+    let s_official_sol = crate::combo::surface_for_profile(&official_codex, Some("gpt-6.2-sol"));
     CODEX_VERSION_FOR_TEST.with(|c| c.set(None));
     CODEX_BUNDLED_FOR_TEST.with(|c| *c.borrow_mut() = None);
 
+    // API 连接剥掉随包目录里仅限 ChatGPT 客户端的 ultra，最高只到 OpenAI API 支持的 max
+    let cat_efforts: Vec<&str> = cat_sol["models"][0]["supported_reasoning_levels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|l| l["effort"].as_str())
+        .collect();
+    assert_eq!(cat_efforts, ["low", "medium", "high", "xhigh", "max"]);
     assert!(s_sol.inject_effort_allowed);
     assert_eq!(
         s_sol.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max"]
+    );
+    // 官方 ChatGPT 登录保留随包 / models_cache 里的 ultra
+    assert_eq!(
+        s_official_sol.effort_levels,
         vec!["low", "medium", "high", "xhigh", "max", "ultra"]
     );
     assert!(s_55.inject_effort_allowed);
     assert_eq!(s_55.effort_levels, vec!["low", "medium", "high", "xhigh"]);
-    // 内置前缀表未收录但随包目录明列思考档的新模型，同样识别为可思考并给全量档位
+    // 内置前缀表未收录但随包目录明列思考档的新模型，同样识别为可思考并给 API 全量档位（low..max）
     assert!(s_daybreak.thinking);
     assert!(s_daybreak.inject_effort_allowed);
     assert_eq!(
         s_daybreak.effort_levels,
-        vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        vec!["low", "medium", "high", "xhigh", "max"]
     );
-    // 非官方自建目录模型与通用模板对齐（low..ultra）
+    // 非官方自建目录模型与通用模板对齐（low..max）
     assert!(s_glm.inject_effort_allowed);
     assert_eq!(
         s_glm.effort_levels,
-        vec!["low", "medium", "high", "xhigh", "max", "ultra"]
+        vec!["low", "medium", "high", "xhigh", "max"]
     );
     // 确知不思考的模型清空档表
     assert!(!s_non_think.inject_effort_allowed);
     assert!(s_non_think.effort_levels.is_empty());
+}
+
+#[test]
+fn multi_agent_combo_surface_exposes_model_effort_levels_and_allows_unlisted_models() {
+    // 1) Claude Code：sonnet-4-6 无 xhigh，opus-5-5 与官方别名全五档，sonnet-4-5 无档位，未知新模型默认放行五档
+    let claude = profile("claude-code", Some("https://relay.example.com"));
+    let s_s46 = crate::combo::surface_for_profile(&claude, Some("anthropic/claude-sonnet-4-6"));
+    assert_eq!(s_s46.effort_levels, vec!["low", "medium", "high", "max"]);
+    let s_o55 = crate::combo::surface_for_profile(&claude, Some("claude-opus-5-5[1m]"));
+    assert_eq!(
+        s_o55.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max"]
+    );
+    let s_alias = crate::combo::surface_for_profile(&claude, Some("opus"));
+    assert!(s_alias.thinking && s_alias.inject_effort_allowed);
+    assert_eq!(
+        s_alias.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max"]
+    );
+    let s_s45 = crate::combo::surface_for_profile(&claude, Some("claude-sonnet-4-5-20250929"));
+    assert!(!s_s45.inject_effort_allowed && !s_s45.show_native_effort);
+    assert!(s_s45.effort_levels.is_empty());
+    let s_brand_new = crate::combo::surface_for_profile(&claude, Some("future-model-2027"));
+    assert!(s_brand_new.inject_effort_allowed && s_brand_new.show_native_effort);
+    assert_eq!(
+        s_brand_new.effort_levels,
+        vec!["low", "medium", "high", "xhigh", "max"]
+    );
+
+    // 2) Qwen Code：qwen3.7-max 为 toggleOnly（无分档），qwen3.8-max 与 qwen4-max 按各自档表
+    let qwen = profile("qwen", Some("https://relay.example.com/v1"));
+    let q37 = crate::combo::surface_for_profile(&qwen, Some("qwen3.7-max"));
+    assert!(!q37.inject_effort_allowed && q37.effort_levels.is_empty());
+    let q38 = crate::combo::surface_for_profile(&qwen, Some("qwen3.8-max"));
+    assert_eq!(q38.effort_levels, vec!["low", "medium", "xhigh"]);
+    let q4 = crate::combo::surface_for_profile(&qwen, Some("qwen4-max"));
+    assert!(q4.inject_effort_allowed);
+    assert_eq!(q4.effort_levels, vec!["low", "high", "xhigh"]);
+
+    // 3) Antigravity CLI 1.5.11：官方账号 claude-opus-5-5 支持 low..max，API gemini-3.5-flash 支持 low/medium/high
+    let mut agy_off = profile("agy", None);
+    agy_off.account_type = crate::profiles::AccountType::Official;
+    let agy_opus = crate::combo::surface_for_profile(&agy_off, Some("claude-opus-5-5"));
+    assert!(agy_opus.inject_effort_allowed);
+    assert_eq!(agy_opus.effort_levels, vec!["low", "medium", "high", "max"]);
+    let agy_api = profile("agy", Some("https://relay.example.com"));
+    let agy_35 = crate::combo::surface_for_profile(&agy_api, Some("gemini-3.5-flash"));
+    assert_eq!(agy_35.effort_levels, vec!["low", "medium", "high"]);
+
+    // 4) Kimi Code：config.toml 带 support_efforts 时前置 off 返回多档
+    let mut kimi = profile("kimi", Some("https://api.kimi.com/coding/v1"));
+    kimi.protocol = Some("kimi".into());
+    TEST_KIMI_CONFIG.with(|k| {
+        *k.borrow_mut() = Some(
+            r#"default_model = "kimi-code/k3"
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+model = "kimi-k3"
+support_efforts = ["low", "high", "max"]
+"#
+            .into(),
+        );
+    });
+    let s_kimi = crate::combo::surface_for_profile(&kimi, Some("kimi-k3"));
+    TEST_KIMI_CONFIG.with(|k| *k.borrow_mut() = None);
+    assert!(s_kimi.inject_effort_allowed);
+    assert_eq!(s_kimi.effort_levels, vec!["off", "low", "high", "max"]);
 }
 
 #[test]

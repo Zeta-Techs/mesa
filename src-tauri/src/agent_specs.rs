@@ -1243,12 +1243,12 @@ pub(crate) fn effort_options(agent: &str) -> Vec<&'static str> {
     match agent {
         "claude-code" => vec!["low", "medium", "high", "xhigh", "max"],
         "codebuddy" => vec!["minimal", "low", "medium", "high", "xhigh", "max"],
-        // Codex 新版模型（包括第三方兼容端点上的 gpt-6 系列）可声明更高推理档；顺序与 Codex 0.170 官方目录一致（max 在 ultra 前）。
-        // 端点不支持时仍由其自身协议返回错误或忽略。
-        "codex" => vec!["low", "medium", "high", "xhigh", "max", "ultra"],
+        // Codex API `/v1/responses` 最高推理档为 max（OpenAI 官方文档：gpt-6.2-sol 等均为 low..max）；
+        // 随包目录里的 ultra 是 Codex CLI 客户端的自动多子 Agent 委派模式，并非标准 API 档位。
+        "codex" => vec!["low", "medium", "high", "xhigh", "max"],
         "opencode" => vec!["none", "minimal", "low", "medium", "high"],
         "grok" => GROK_REASONING_EFFORTS.to_vec(),
-        "agy" => vec!["low", "medium", "high", "xhigh"],
+        "agy" => vec!["low", "medium", "high", "xhigh", "max"],
         // kimi 合法值随模型 catalog 漂移（low/medium/high/xhigh/max/on/off），env 通道无闭集
         // 校验且官方明确原样透传——自由输入反而更准，不给下拉
         _ => vec![],

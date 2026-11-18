@@ -68,6 +68,7 @@ export function inSessionSwitchMidTurn(agentId: string, version: string | null |
 export const SWITCH_PERSISTS: Record<string, { model?: boolean; effort?: boolean }> = {
   "claude-code": { model: true, effort: true },
   codex: { model: true, effort: true },
+  opencode: { model: true, effort: true },
   grok: { model: true },
   qwen: { effort: true },
   kimi: { effort: true },

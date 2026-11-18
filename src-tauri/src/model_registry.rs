@@ -87,10 +87,11 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("gpt-oss", caps(true, None)),
     ("o1", caps(true, None)),
     ("o3", caps(true, None)),
-    ("o4-mini", caps(true, None)),
+    ("o4", caps(true, None)),
     ("gpt-4o", capsv(false, None, true)),
     ("gpt-4.1", caps(false, None)),
-    // Anthropic（3.7 起全系 extended thinking；3.5 及更早不支持；5 代与 Fable 全系思考 + 看图，2026-10-28 补）
+    // Anthropic（3.7 起全系 extended thinking；3.5 及更早不支持；5 代与 Fable / Mythos 全系思考 + 看图）
+    ("claude-mythos-5", capsv(true, None, true)),
     ("claude-fable", capsv(true, None, true)),
     ("claude-opus-5", capsv(true, None, true)),
     ("claude-sonnet-5", capsv(true, None, true)),
@@ -110,9 +111,13 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("glm-4.7", caps(true, None)),
     ("glm-4.6", caps(true, None)),
     ("glm-4.5", caps(true, None)),
-    // 阿里（qwen3 全系 hybrid thinking，qwen3-coder 除外；qwq = 推理专版）
+    // MiniMax（M2 / M3 系推理）
+    ("minimax-m3", caps(true, None)),
+    ("minimax-m2", caps(true, None)),
+    // 阿里（qwen3 / qwen4 全系 hybrid thinking，qwen3-coder 除外；qwq = 推理专版）
     ("qwq", caps(true, None)),
     ("qwen3-coder", caps(false, None)),
+    ("qwen4", caps(true, None)),
     ("qwen3", caps(true, None)),
     // xAI（grok-3 起支持 reasoning）
     ("grok-4", caps(true, None)),
