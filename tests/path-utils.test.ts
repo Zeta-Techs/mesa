@@ -7,6 +7,7 @@ import {
   parentDir,
   pathKey,
   pathWithin,
+  previewRoot,
   samePath,
   stripVerbatim,
   abbrevHome,
@@ -126,4 +127,11 @@ test("relativeUnder：Windows 反斜杠 / 大小写 / verbatim 前缀都能截�
   // macOS / Linux 大小写敏感
   assert.equal(relativeUnder("/Users/me/proj/a.md", "/Users/me/proj", false), "a.md");
   assert.equal(relativeUnder("/users/me/proj/a.md", "/Users/me/proj", false), "/users/me/proj/a.md");
+});
+
+test("previewRoot：cwd 内取 cwd，外面取文件所在目录", () => {
+  assert.equal(previewRoot("/u/scratch/a.html", "/u/scratch"), "/u/scratch");
+  assert.equal(previewRoot("/u/Desktop/Mesa.html", "/u/scratch"), "/u/Desktop");
+  assert.equal(previewRoot("C:/Users/me/Desktop/a.html", "C:\\Users\\me\\scratch", true), "C:/Users/me/Desktop");
+  assert.equal(previewRoot("~/Desktop/a.pdf", "/u/scratch"), "~/Desktop");
 });

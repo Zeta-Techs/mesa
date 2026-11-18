@@ -20,6 +20,8 @@ import { FileTypeGlyph } from "./FileTypeMark";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { formatBytes } from "../image-view";
 import { useFileVersion } from "../file-watch";
+import { previewRoot } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
 
 /**
  * 聊天层里点对话中的图 =「接着改这张图」（2026-10-25 用户对照 ChatGPT）：ChatSurface 提供，把图放进输入框并展开看图标注台。
@@ -467,7 +469,7 @@ function MarkdownBody({
     const fileLink = target.closest<HTMLElement>(".md-file-link");
     if (fileLink?.dataset.fileAbs && cwd) {
       const abs = fileLink.dataset.fileAbs;
-      setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root: cwd });
+      setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root: previewRoot(abs, cwd, IS_WINDOWS) });
       return;
     }
     const img = target.closest("img");
@@ -480,7 +482,7 @@ function MarkdownBody({
       setPreviewReq({
         path: abs,
         name: abs.split(/[\\/]/).pop() ?? abs,
-        root: cwd,
+        root: previewRoot(abs, cwd, IS_WINDOWS),
       });
       return;
     }
@@ -500,7 +502,7 @@ function MarkdownBody({
     setPreviewReq({
       path: abs,
       name: abs.split(/[\\/]/).pop() ?? abs,
-      root: cwd,
+      root: previewRoot(abs, cwd, IS_WINDOWS),
     });
   }
 
@@ -593,7 +595,7 @@ export function ChatImageCard({
         title={editImage ? `${name}（点击查看、标注，接着改）` : `${name}（点击放大预览）`}
         onClick={() => {
           if (editImage) editImage(abs);
-          else if (cwd) setPreviewReq({ path: abs, name, root: cwd });
+          else if (cwd) setPreviewReq({ path: abs, name, root: previewRoot(abs, cwd, IS_WINDOWS) });
           else setViewing(true);
         }}
       >
@@ -640,7 +642,7 @@ export function ChatFileCard({ path, cwd }: { path: string; cwd?: string | null 
       type="button"
       title={`${abs}（点开查看）`}
       onClick={() => {
-        if (cwd) setPreviewReq({ path: abs, name, root: cwd });
+        if (cwd) setPreviewReq({ path: abs, name, root: previewRoot(abs, cwd, IS_WINDOWS) });
         else void openPath(abs).catch(() => {});
       }}
       className="my-1 flex h-14 w-64 max-w-full items-center gap-2.5 overflow-hidden rounded-lg border border-hairline bg-canvas pr-3 text-left transition-colors hover:border-field"

@@ -77,6 +77,12 @@ export function parentDir(p: string): string | null {
   return trimmed.slice(0, idx);
 }
 
+/** 点开预览用的根：文件在 cwd 内取 cwd，在外面（桌面、/tmp 里的中间图）取文件所在目录——
+ *  人亲手点一下才打开，越界与类型限制仍由后端预览守着（2026-11-18 用户：随手聊里点桌面上的文件报「路径超出项目根目录」） */
+export function previewRoot(path: string, cwd: string, isWindows = false): string {
+  return pathWithin(path, cwd, isWindows) ? cwd : (parentDir(path) ?? cwd);
+}
+
 /** 家目录前缀折成 ~（显示用）。两侧先剥 verbatim；Windows 比较折叠大小写。 */
 export function abbrevHome(
   path: string,

@@ -7,7 +7,7 @@
  * Kimi StrReplaceFile{path,edit} …），按名字归类、按常见参数键取对象；认不出的照「调用 工具名」，原参数展开可看。
  */
 
-import { normSep, parentDir, pathWithin, stripVerbatim } from "./path-utils.ts";
+import { normSep, parentDir, pathWithin, previewRoot, stripVerbatim } from "./path-utils.ts";
 
 export type ActivityKind =
   | "edit"
@@ -704,7 +704,7 @@ export function activityFile(
   const raw = stripVerbatim(a.path);
   if (!isAbsLike(raw) && !cwd) return null;
   const path = underDir(raw, cwd, isWindows);
-  const root = cwd && pathWithin(path, cwd, isWindows) ? cwd : (parentDir(path) ?? "/");
+  const root = cwd ? previewRoot(path, cwd, isWindows) : (parentDir(path) ?? "/");
   return { path, root, line: a.line };
 }
 
