@@ -572,43 +572,6 @@ fn unwritten_session_is_replaced_so_the_run_reopens_fresh() {
     assert_eq!(reopened.session_id.as_deref(), Some("s3"));
 }
 
-/// 更新重启后恢复出的标签点「跟进更新」：不接回会话的新一轮遇到标签上已结束的 Run 不再沿用，
-/// 另登记一条（2026-11-18 用户实测报「此 Run 不支持恢复」）；接回会话的照旧沿用、照旧核身份
-#[test]
-fn fresh_round_on_closed_run_opens_a_new_run() {
-    let conn = Connection::open_in_memory().unwrap();
-    ensure_schema(&conn).unwrap();
-    conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status,closed_at) VALUES('old','scratch','/tmp/ccode-x','local_cli','codex','write_tree','now','completed','later')", []).unwrap();
-    conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status) VALUES('live','scratch','/tmp/ccode-x','local_cli','codex','write_tree','now','running')", []).unwrap();
-    assert_eq!(reusable_run_id(&conn, Some("old"), false), None, "已结束、不接回：另开");
-    assert_eq!(reusable_run_id(&conn, Some("old"), true).as_deref(), Some("old"), "接回会话：沿用，交给 open_at 核身份");
-    assert_eq!(reusable_run_id(&conn, Some("live"), false).as_deref(), Some("live"), "还没结束的照旧沿用");
-    assert_eq!(reusable_run_id(&conn, None, false), None);
-    let fresh = open_at(
-        &conn,
-        OpenRunInput {
-            id: reusable_run_id(&conn, Some("old"), false),
-            task_id: None,
-            project_root: None,
-            task_kind: None,
-            task_ref: None,
-            isolation_path: "/tmp/ccode-x".into(),
-            runtime: Some("local_cli".into()),
-            agent: "codex".into(),
-            profile_id: None,
-            permission: Some("write_tree".into()),
-            reuse_key: None,
-            session_id: None,
-            custom_runtime_id: None,
-            internal: Some(false),
-            sentinel: Some(false),
-        },
-    )
-    .unwrap();
-    assert_ne!(fresh.id, "old");
-    assert!(fresh.closed_at.is_none());
-}
-
 #[test]
 fn resume_adopts_session_when_run_never_attached() {
     let conn = Connection::open_in_memory().unwrap();
@@ -1488,4 +1451,79 @@ fn apply_step_runs_marks_sessions_and_lane_done_from_marks() {
     assert_eq!(wire["laneDone"], true);
     assert!(wire.get("stepMeta").is_none(), "拍平出线，不嵌一层");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// 标签上挂着各种状态的旧 Run 时开对话（重启后恢复出的标签、同一步标签就地开新一轮、接回原会话）：
+/// 只有「还在进行的 Run 被换 Agent / 权限」算真冲突可以拦，其余组合都必须开得起来；
+/// 能接上原记录的接回要沿用原 Run，不另起重复记录（2026-11-18 用户实测「此 Run 不支持恢复」后补）
+#[test]
+fn interactive_launch_never_blocked_by_stale_run_on_tab() {
+    let dir = std::env::temp_dir().join(format!("ccode-run-matrix-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // 库里存的是规范化后的路径（open_run_with 先过 validate_existing_dir），macOS 的 /var 实为 /private/var
+    let cwd = validate_existing_dir(&dir.to_string_lossy(), "隔离路径").unwrap();
+    let states: [(&str, bool, Option<&str>); 5] = [
+        ("missing", false, None),
+        ("live", false, None),
+        ("live-s1", false, Some("s1")),
+        ("closed", true, None),
+        ("closed-s1", true, Some("s1")),
+    ];
+    let launches: [(&str, Option<&str>, bool); 4] = [
+        ("fresh", None, false),
+        ("fresh-hint", Some("new-hint"), false),
+        ("resume-s1", Some("s1"), true),
+        ("resume-s2", Some("s2"), true),
+    ];
+    let targets: [(&str, &str, bool); 3] = [("same", "codex", false), ("agent", "claude-code", false), ("perm", "codex", true)];
+    let mut failures = Vec::new();
+    for (state, closed, run_session) in states {
+        for (launch, session, resuming) in launches {
+            for (target, agent, readonly) in targets {
+                for ghost_task in [false, true] {
+                    let mut conn = Connection::open_in_memory().unwrap();
+                    ensure_schema(&conn).unwrap();
+                    if state != "missing" {
+                        conn.execute(
+                            "INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status,closed_at,session_id) VALUES('old','scratch',?1,'local_cli','codex','write_tree','now',?2,?3,?4)",
+                            params![cwd, if closed { "completed" } else { "running" }, if closed { Some("later") } else { None }, run_session],
+                        )
+                        .unwrap();
+                    }
+                    let out = open_interactive_with(
+                        &mut conn,
+                        InteractiveLaunch {
+                            agent,
+                            profile: "p",
+                            cwd: &cwd,
+                            reuse: None,
+                            session,
+                            readonly,
+                            existing_id: Some("old"),
+                            task_id: ghost_task.then_some("ghost-task"),
+                            resuming,
+                        },
+                    );
+                    let case = format!("{state} × {launch} × {target} × ghost_task={ghost_task}");
+                    let real_conflict = state.starts_with("live") && target != "same";
+                    match out {
+                        Err(e) if !real_conflict => failures.push(format!("{case}: {e}")),
+                        Ok(run) => {
+                            let compatible = closed && resuming && target == "same"
+                                && run_session.map_or(true, |s| Some(s) == session);
+                            if (state.starts_with("live") || compatible) && run.id != "old" {
+                                failures.push(format!("{case}: 该沿用原 Run 却另起了一条"));
+                            }
+                            if run.closed_at.is_some() {
+                                failures.push(format!("{case}: 开出来的 Run 仍是已结束"));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(failures.is_empty(), "挡路的组合：\n{}", failures.join("\n"));
 }

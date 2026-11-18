@@ -456,6 +456,44 @@ fn record_outside_merge(conn: &Connection, w: &WorkspaceDto, repo: &Path) -> Res
     Ok("已补记：这一步算保存过".into())
 }
 
+/// 开对话前：对话所在的文件夹没了（这一步保存归档后工作副本被收起、人删了，Mesa 重启后恢复出的标签还指着它）。
+/// 是某一步的工作副本就重新放出来（收起的先恢复），同体检的自动处理；不是就说清楚去哪重开，不报「隔离路径必须是已存在的目录」
+pub(crate) fn heal_missing_worktree(cwd: &str) -> Result<(), String> {
+    let path = crate::sessions::expand_tilde(cwd);
+    if Path::new(&path).is_dir() {
+        return Ok(());
+    }
+    heal_missing_worktree_with(&db()?, &path)
+}
+
+pub(crate) fn heal_missing_worktree_with(conn: &Connection, path: &str) -> Result<(), String> {
+    let Some(w) = query_workspaces(conn)?
+        .into_iter()
+        .find(|w| crate::paths::same_path(&w.worktree_path, path))
+    else {
+        return Err(format!(
+            "这段对话原来所在的文件夹已经不在了（{path}），没法在那里接着做：到项目里重新开一段对话"
+        ));
+    };
+    let blocked = |report: &DoctorReport| {
+        report.findings.iter().find(|f| f.blocks).map(|f| format!("这一步的工作副本没法放出来：{}", f.text))
+    };
+    if w.status != "active" {
+        if let Some(e) = blocked(&diagnose_impl(conn, &w.id, Intent::Restore)?) {
+            return Err(e);
+        }
+        restore_impl(conn, &w.id)?;
+    }
+    if let Some(e) = blocked(&diagnose_impl(conn, &w.id, Intent::Round)?) {
+        return Err(e);
+    }
+    if Path::new(path).is_dir() {
+        Ok(())
+    } else {
+        Err(format!("这一步的工作副本没能放出来（{path}），到这一步的步骤卡上重新开工"))
+    }
+}
+
 #[tauri::command]
 pub async fn workspace_doctor(id: String, intent: String) -> Result<DoctorReport, String> {
     tauri::async_runtime::spawn_blocking(move || diagnose_impl(&db()?, &id, Intent::parse(&intent)?))

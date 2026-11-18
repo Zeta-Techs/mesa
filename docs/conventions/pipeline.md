@@ -179,6 +179,12 @@
   在 `project_upgrade.rs` 的 `UPGRADES` 末尾加一级（只动 Mesa 自己的东西、能重复跑），`CURRENT_LAYOUT` 加一，
   并把上一代项目样本放进 `tests/fixtures/projects/`（点文件去掉点）。升级由档案卡自动提交触发（开工、打开评审、保存前体检），
   随档案卡一起提交。新建档案卡直接记最新一代；老档案卡补 id 不动 `layout`。模板内容仍走「Mesa 提出、人勾了才换」，不进自动升级。
+- **对话启动这一层**（2026-11-18 发版后用户撞「此 Run 不支持恢复」补）：所有开对话的入口最后都经 `pty_spawn → runs::open_for_interactive_spawn`，
+  标签上挂的旧 Run 能不能沿用只在 `carried_run_id` 判：还在进行的照旧沿用（被换 Agent / 权限是真冲突，照旧拦）；只是旧记录时——
+  记录已被清掉、已结束而这次不接回会话、已结束接回但换了 Agent / 目录 / 权限或接的是另一条会话、标签挂的目标已删——一律不沿用，按新开标签另登记（带这次的会话）。
+  `runs/tests.rs` 的 `interactive_launch_never_blocked_by_stale_run_on_tab`（Run 状态 × 启动方式 × 换不换目标 × 目标在不在，120 种）守着。
+  对话所在文件夹没了时 `pty_spawn` 先 `doctor::heal_missing_worktree`：是某一步的工作副本就放回来（收起的先恢复），不是就说清楚去哪重开。
+  **重启 / 更新后恢复出的标签**是必测场景：加固这一层或发版前，在 Mesa Dev 里重启后点步骤卡「跟进更新」「退回修改」、恢复出的对话点恢复各走一遍。
 - **真实项目干跑**：改体检或升级后，在一份真实老项目的拷贝（档案卡 id 换掉）上跑
   `MESA_DRYRUN_REPO=<拷贝> cargo test dryrun_real_project_lifecycle -- --ignored --nocapture`。
 

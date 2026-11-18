@@ -3445,7 +3445,11 @@ fn validate_policy(input: &OpenRunInput) -> Result<(), String> {
     }
     Ok(())
 }
-pub fn open_run_impl(mut input: OpenRunInput) -> Result<RunDto, String> {
+pub fn open_run_impl(input: OpenRunInput) -> Result<RunDto, String> {
+    open_run_with(&mut db()?, input)
+}
+
+fn open_run_with(conn: &mut Connection, mut input: OpenRunInput) -> Result<RunDto, String> {
     input.isolation_path = validate_existing_dir(&input.isolation_path, "隔离路径")?;
     if let Some(key) = input.reuse_key.take() {
         let key = canonicalize_reuse_key(&key);
@@ -3478,7 +3482,6 @@ pub fn open_run_impl(mut input: OpenRunInput) -> Result<RunDto, String> {
         });
     }
     validate_policy(&input)?;
-    let mut conn = db()?;
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
@@ -4544,13 +4547,35 @@ pub fn open_for_interactive_spawn(
     if reuse.unwrap_or("").starts_with("login:") {
         return Ok(None);
     }
-    // 不接回会话的新一轮（跟进更新、新开一轮在这一步原来的标签里就地开）不沿用标签上已经结束的旧 Run，
-    // 当作新开标签另登记一条；否则旧 Run 已关、又没有可接回的会话，报「此 Run 不支持恢复」
-    // （2026-11-18 用户实测：更新重启后恢复出的标签点「跟进更新」）
-    let existing_id = db().ok().and_then(|conn| reusable_run_id(&conn, existing_id, resuming));
-    let task_context = task_id.and_then(|id| db().ok().and_then(|conn| task_by_id(&conn, id).ok()));
-    let dto = open_run_impl(OpenRunInput {
-        id: existing_id.map(Into::into),
+    open_interactive_with(
+        &mut db()?,
+        InteractiveLaunch { agent, profile, cwd, reuse, session, readonly, existing_id, task_id, resuming },
+    )
+    .map(Some)
+}
+
+pub(crate) struct InteractiveLaunch<'a> {
+    pub agent: &'a str,
+    pub profile: &'a str,
+    pub cwd: &'a str,
+    pub reuse: Option<&'a str>,
+    pub session: Option<&'a str>,
+    pub readonly: bool,
+    pub existing_id: Option<&'a str>,
+    pub task_id: Option<&'a str>,
+    /// 这次是接回原会话（不是另开一轮）
+    pub resuming: bool,
+}
+
+fn open_interactive_with(conn: &mut Connection, l: InteractiveLaunch) -> Result<RunDto, String> {
+    let InteractiveLaunch { agent, profile, cwd, reuse, session, readonly, existing_id, task_id, resuming } = l;
+    let permission = if readonly { "discuss" } else { "write_tree" };
+    // 标签上挂的目标被删了（目标清理、手动删除）：不带这条失效的目标去登记，按新开标签走
+    let task_context = task_id.and_then(|id| task_by_id(conn, id).ok());
+    let task_id = task_context.as_ref().map(|t| t.id.as_str());
+    let existing_id = carried_run_id(conn, existing_id, agent, cwd, permission, session, resuming);
+    let dto = open_run_with(conn, OpenRunInput {
+        id: existing_id,
         task_id: task_id.map(Into::into),
         project_root: task_context
             .as_ref()
@@ -4561,7 +4586,7 @@ pub fn open_for_interactive_spawn(
         runtime: Some("local_cli".into()),
         agent: agent.into(),
         profile_id: Some(profile.into()),
-        permission: Some(if readonly { "discuss" } else { "write_tree" }.into()),
+        permission: Some(permission.into()),
         reuse_key: reuse.map(Into::into),
         session_id: session.map(Into::into),
         custom_runtime_id: None,
@@ -4571,16 +4596,35 @@ pub fn open_for_interactive_spawn(
     if dto.task_kind == "coding_lane" {
         crate::coding::touch_lane_current_run(cwd, &dto.id);
     }
-    Ok(Some(dto))
+    Ok(dto)
 }
-/// 标签上的 Run 这次还能不能沿用：接回会话的照旧沿用（由 open_at 核身份）；不接回的新一轮遇到已结束的 Run 不沿用
-fn reusable_run_id(conn: &Connection, existing_id: Option<&str>, resuming: bool) -> Option<String> {
-    let id = existing_id?;
-    if resuming {
-        return Some(id.to_string());
+/// 标签上挂的 Run 这次还能不能沿用。还在进行的照旧沿用（身份对不上是真冲突，open_at 照旧拦）；
+/// 只是标签上留下的旧记录时，凡是接不上的一律不沿用、按新开标签另登记一条（带这次的会话），不让旧记录挡路
+/// （2026-11-18 用户实测：更新重启后恢复出的标签点「跟进更新」报「此 Run 不支持恢复」）：
+/// 记录已被清掉；已结束而这次不是接回会话；已结束、接回但换了 Agent / 目录 / 权限，或接的是另一条会话
+fn carried_run_id(
+    conn: &Connection,
+    existing_id: Option<&str>,
+    agent: &str,
+    cwd: &str,
+    permission: &str,
+    session: Option<&str>,
+    resuming: bool,
+) -> Option<String> {
+    let run = get_run_at(conn, existing_id?).ok().flatten()?;
+    if run.closed_at.is_none() {
+        return Some(run.id);
     }
-    let closed = get_run_at(conn, id).ok().flatten().is_some_and(|run| run.closed_at.is_some());
-    (!closed).then(|| id.to_string())
+    let same_target = run.agent == agent
+        && run.runtime == "local_cli"
+        && run.permission == permission
+        && crate::paths::same_path(&run.isolation_path, cwd);
+    let same_session = match (run.session_id.as_deref(), session) {
+        (None, _) => true,
+        (Some(a), Some(b)) => a == b,
+        (Some(_), None) => false,
+    };
+    (resuming && same_target && same_session).then_some(run.id)
 }
 
 pub fn open_headless(

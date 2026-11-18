@@ -510,3 +510,24 @@ fn dryrun_real_project_lifecycle() {
     println!("主文件夹最后状态：\n{}", git(&repo, &["status", "--short"]).unwrap());
     p.repo = dir.join("不存在"); // Drop 只清临时目录，不碰拷贝
 }
+
+/// Mesa 重启后恢复出的标签指着已经没了的工作副本：这一步保存归档后收起的、人在访达里删掉的都放回来再开对话；
+/// 不是任何一步的工作副本就说人话（2026-11-18「此 Run 不支持恢复」后按重启路径补）
+#[test]
+fn restored_tab_on_missing_worktree_is_healed_before_launch() {
+    let Some(p) = research_project() else { return };
+    let w = p.start_step("lit-notes");
+    p.ai_writes(&w, "notes/a.md", "AI 改\n");
+    p.save(&w).unwrap();
+    archive_impl(&p.conn, &w.id).unwrap();
+    assert!(!Path::new(&w.worktree_path).exists());
+    doctor::heal_missing_worktree_with(&p.conn, &w.worktree_path).unwrap();
+    assert!(Path::new(&w.worktree_path).is_dir(), "收起的放回来");
+    assert_eq!(get_workspace(&p.conn, &w.id).unwrap().status, "active");
+    fs::remove_dir_all(&w.worktree_path).unwrap();
+    doctor::heal_missing_worktree_with(&p.conn, &w.worktree_path).unwrap();
+    assert!(Path::new(&w.worktree_path).is_dir(), "人删掉的放回来");
+    let gone = p.dir.join("早就删了的目录");
+    let err = doctor::heal_missing_worktree_with(&p.conn, &gone.to_string_lossy()).unwrap_err();
+    assert!(err.contains("已经不在了") && !err.contains("隔离路径"), "{err}");
+}

@@ -1972,7 +1972,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   二期：出口记忆 route-history.json（usual_region 纯函数）、route_accept_region、route_proxy_apps / route_open_proxy_app（只开白名单路径）；
                              #   三期：route_exit_type（完整出口 IP 只在内存 LAST_ADDR，查 ipinfo.io，classify_exit 纯函数）；
                              #   ask_service 不带密钥问服务方（read_anthropic_keyless / read_openai_compliance 纯函数），明确答复优先于地区名单
-  runs.rs                    # （2026-11-10 step_role_of / apply_step_runs：discuss: = 商量、#lane-k = 第 k 路、ws: 同工作区更早开过分路 = 收尾否则干活，
+  runs.rs                    # 2026-11-18：开对话经 open_for_interactive_spawn → open_interactive_with，标签上的旧 Run 能否沿用只在 carried_run_id 判（旧记录不挡路，另登记）；
+                             # （2026-11-10 step_role_of / apply_step_runs：discuss: = 商量、#lane-k = 第 k 路、ws: 同工作区更早开过分路 = 收尾否则干活，
                              #   分路做完看 .ccode/fanout/lane-k.done；只供侧栏显示）一次干活身份（app.db runs 表）：交互 pty_spawn 必有 id，无头 internal；
                              # 精读对话标记 apply_reader_runs（task_kind=reader 且登记了会话 → 会话列表 reader / readerPdf，2026-11-06）；
                              # 关标签不删行；收件箱 action.run 可恢复；登录标签不建行；
@@ -2044,7 +2045,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   step_followup_scope 只读算基准分支在本工作区之后改过的文件（HEAD...base）。恢复 / 并入 / 开对话复用已有命令，本文件不做 git 写
   file_versions.rs           # 文件版本：项目 .ccode/versions 索引与内容寻址副本，进程锁+OS锁读改写；已提交内容引用 Git blob，未提交文本/非Git文件独立留存，采纳按原提交/冻结内容记录且失败不改流程；历史按需读验收账本+Git无需跟踪或写索引，临时标识预览/比较/另存前复核归属；只读预览复制到配置 tmp、文本对照脱敏，file_version_compare 同时支持历史与磁盘现稿（有界/读后核验、图片双侧私有冻结缓存）、另存目标由Rust系统保存窗口选出（可在项目外），拒覆盖/内部目录/保护路径，删除按引用计数回收
   workspaces.rs              # 任务工作区（§6.10）：worktree + ccode/<name> 分支 CRUD、files-to-copy、CCODE_PORT、
-                             #   子模块 doctor.rs（项目体检：diagnose_impl 列异常、自动处理 / 一键 fix_impl / goto，命令 workspace_doctor / workspace_doctor_fix）、
+                             #   子模块 doctor.rs（项目体检：diagnose_impl 列异常、自动处理 / 一键 fix_impl / goto，命令 workspace_doctor / workspace_doctor_fix；
+                             #   heal_missing_worktree：pty_spawn 前把恢复出的标签指着的、已没了的工作副本放回来）、
                              #   scenarios.rs（仅测试：乱操作 Mess × 入口的不变式测试、现状普查、真实项目整条流程干跑）；live_repo_in 主文件夹定位优先工作区记下的文件夹
                              #   2026-11-18：解析 status --porcelain 一律 run_git_porcelain（run_git 会 trim 掉首行前导空格）；健康度报残留 index.lock / 主文件夹没做完的 git 操作 / 当前分支，
                              #   workspace_repair_main 一键清锁 / abort / 切回基准；合并前 settle_main_overlaps 先存与本步重叠的豁免改动

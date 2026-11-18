@@ -1007,6 +1007,8 @@ fn pty_spawn_sync(
     // 新会话的认领同全新会话（能定 ID 的当场锁定，其余按标签认领），不注入初始 prompt
     fork_session_id: Option<String>,
 ) -> Result<SpawnResult, String> {
+    // 恢复出的标签指着已经没了的工作副本（保存归档后收起、人删了）：先放回来再起（workspaces::doctor）
+    crate::workspaces::doctor::heal_missing_worktree(&cwd)?;
     let selected = model.filter(|m| !m.trim().is_empty());
     let fork_session_id = fork_session_id.filter(|s| !s.trim().is_empty());
     if fork_session_id.is_some() && resume_session_id.is_some() {
