@@ -76,3 +76,15 @@ test("HTML 预览消毒保留报告要用的内联 style、内嵌 SVG 与 MathML
   assert.match(out, /<math>/);
   assert.doesNotMatch(out, /script|onload|javascript:|<form|<input/i);
 });
+
+test("HTML 预览消毒剥按钮连里面的图标一起剥，不留孤零零的 SVG", () => {
+  const dom = new JSDOM("");
+  const sanitize = createHtmlPreviewSanitizer(dom.window);
+  const out = sanitize(
+    `<!DOCTYPE html><html><body><main><svg id="scene" width="100"></svg>` +
+      `<button hidden><svg width="19"><path d="M6 3.5v13L16 10Z"/></svg></button>` +
+      `<select><option>甲</option></select></main></body></html>`,
+  );
+  assert.match(out, /id="scene"/);
+  assert.doesNotMatch(out, /<button|width="19"|M6 3\.5|<select|甲/);
+});

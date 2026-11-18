@@ -84,6 +84,9 @@ export function createHtmlPreviewSanitizer(window: WindowLike): (html: string) =
       "button", "textarea", "select", "base", "portal",
     ],
     FORBID_ATTR: ["srcset", "ping", "formaction", "action"],
+    // 剥掉的控件连里面的图标、选项一起去：只剥外壳会把按钮里的 SVG 图标留在原处，被页面的 svg 规则撑成整宽
+    //（2026-11-18 用户：桌面 Mesa.html 的播放按钮在预览里成了占满一屏的黑三角）
+    ADD_FORBID_CONTENTS: ["button", "select", "textarea"],
   });
 }
 
