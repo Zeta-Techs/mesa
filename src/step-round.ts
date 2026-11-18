@@ -11,6 +11,7 @@ import { buildWorkspaceTerminalRequest } from "./pipeline-start";
 import { stepSlotKey, taskBindingLaunch } from "./project-agents";
 import { stepFillsAnySlot, type SkillProvides } from "./skill-slots";
 import { bringLatest, stepBusy, type ConfirmFn } from "./step-latest";
+import { doctorGate } from "./components/DoctorDialog";
 import { reworkPrompt, withLatestNote, type ReworkDto } from "./step-loop";
 import { ROUND_CLAUSE, stepKind } from "./step-kind";
 import type { ProjectStepDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
@@ -34,6 +35,7 @@ export async function findStepWorkspace(projectPath: string, step: Pick<ProjectS
 /** 归档了的先恢复（不清保存时间，恢复后仍算已完成），返回恢复后的工作区 */
 export async function ensureActive(ws: WorkspaceDto, stepName: string): Promise<WorkspaceDto> {
   if (ws.status === "active") return ws;
+  if (!(await doctorGate(ws.id, "restore", stepName))) throw new Error(`已取消：「${stepName}」没有恢复。`);
   await invoke("restore_workspace", { id: ws.id });
   const list = await invoke<WorkspaceDto[]>("list_workspaces");
   const back = list.find((w) => w.id === ws.id && w.status === "active");
@@ -45,6 +47,8 @@ export async function ensureActive(ws: WorkspaceDto, stepName: string): Promise<
  *  只是开着、停在提示符上的标签不拦：新一轮按工作区复用键就地换掉它。
  *  allowUnsaved：人已在确认框里选了「接着做，和上一轮一起评审」（跟进，2026-11-10 用户拍板），只拦正在干活的 */
 export async function assertRoundable(ws: WorkspaceDto, stepName: string, opts: { allowUnsaved?: boolean } = {}): Promise<void> {
+  // 先体检：工作副本目录没了、断开、被切到别的分支等，下面的健康度会直接撞 git 原始报错
+  if (!(await doctorGate(ws.id, "round", stepName))) throw new Error(`已取消：「${stepName}」这一轮没有开。`);
   if (stepBusy(ws)) {
     throw new Error(`「${stepName}」的 AI 正在干活或等你确认：等它这一轮做完（或在侧栏那段对话的 ⋯ 里停下这一步），再开这一轮。`);
   }

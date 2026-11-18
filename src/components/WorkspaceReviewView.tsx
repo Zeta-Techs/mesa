@@ -60,6 +60,8 @@ import {
 } from "lucide-react";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { doctorGate } from "./DoctorDialog";
+import { gotoHint, REVIEW_HANDLED_CODES, type DoctorFinding, type DoctorReport } from "../project-doctor";
 import { bringLatest } from "../step-latest";
 import { withLatestNote } from "../step-loop";
 import ImagePairView, { isImagePath } from "./ImagePairView";
@@ -2443,6 +2445,41 @@ function LiveWorkspaceReviewView({
     });
   }
 
+  // 打开评审时体检一次（只报不拦）：替人处理掉的写进结果行，评审页自己没有入口的状态在顶上列出、带一键处理
+  const [doctorFindings, setDoctorFindings] = useState<DoctorFinding[]>([]);
+  const doctorRanRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!diff || diff.reviewOnly || doctorRanRef.current === diff.workspaceId) return;
+    doctorRanRef.current = diff.workspaceId;
+    void invoke<DoctorReport>("workspace_doctor", { id: diff.workspaceId, intent: "review" })
+      .then((report) => {
+        setDoctorFindings(report.findings.filter((f) => !REVIEW_HANDLED_CODES.has(f.code)));
+        if (report.fixed.length > 0) {
+          setResult(`已替你处理：${report.fixed.join("；")}`);
+          void refresh(true);
+        }
+      })
+      .catch(() => {
+        /* 体检读不到不挡评审，下面的健康度照旧报 */
+      });
+  }, [diff, refresh]);
+  async function runDoctorFix(f: DoctorFinding) {
+    if (!diff || !f.fix || f.fix.kind !== "click") return;
+    if (f.fix.confirm && !(await confirmDialog(f.fix.confirm, { confirmText: f.fix.label }))) return;
+    setMainRepairBusy(true);
+    setError(null);
+    try {
+      setResult(await invoke<string>("workspace_doctor_fix", { id: diff.workspaceId, code: f.code }));
+      const next = await invoke<DoctorReport>("workspace_doctor", { id: diff.workspaceId, intent: "review" });
+      setDoctorFindings(next.findings.filter((x) => !REVIEW_HANDLED_CODES.has(x.code)));
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setMainRepairBusy(false);
+      void refresh();
+    }
+  }
+
   // 主文件夹的 git 卡住时的一键处理（后端动手前按当下状态复查）：锁文件、没做完的 git 操作、不在主分支上
   const [mainRepairBusy, setMainRepairBusy] = useState(false);
   async function repairMain(action: "clear_lock" | "abort_unfinished" | "switch_base") {
@@ -2806,6 +2843,9 @@ function LiveWorkspaceReviewView({
       return;
     }
     if (!diff || !status || !health) return;
+    // 先体检：工作副本坏了、项目挪了、在 Mesa 外合并过……这里处理掉或点出口，不撞 git 原始报错
+    const gateIntent = mode === "archive" ? "archive" : mode === "merge" || mode === "merge-archive" ? "save" : null;
+    if (gateIntent && !(await doctorGate(diff.workspaceId, gateIntent, researchContext?.step.name ?? diff.branch))) return;
     // 点按钮这一刻重读工作区状态：打开评审后在清单里移出 / 恢复写的改动不在旧快照里，按旧快照会漏提交，
     // 提交完照样报「任务里还有没保存的改动」（2026-11-10 HER 实测）
     let current = status;
@@ -3557,6 +3597,27 @@ function LiveWorkspaceReviewView({
               )}
             </div>
           )}
+        {diff && doctorFindings.length > 0 && (
+          <div className="space-y-1 border-t border-hairline bg-inset px-3 py-1.5 text-xs text-warn-text">
+            {doctorFindings.map((f) => (
+              <div key={f.code} className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-text" />
+                <span className="min-w-0 flex-1">{f.text}</span>
+                {f.fix?.kind === "click" && (
+                  <button
+                    type="button"
+                    disabled={mainRepairBusy}
+                    onClick={() => void runDoctorFix(f)}
+                    className="rounded-sm px-2 py-0.5 text-warn-text hover:bg-hover disabled:opacity-50"
+                  >
+                    {f.fix.label}
+                  </button>
+                )}
+                {f.fix?.kind === "goto" && <span className="text-l3">{gotoHint(f.fix, researchContext?.step.name ?? diff.branch)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
         {diff && !conflictMode && blockers.length > 0 && (
           <div className="border-t border-hairline bg-inset px-3 py-1.5 text-xs text-warn-text">
             <div className="flex items-center gap-2">
