@@ -3206,6 +3206,10 @@ fn bootstrap_commit_tops_up_mesa_ignore_lines_for_old_projects() {
     fs::create_dir_all(&project).unwrap();
     ensure_git_at(&project).unwrap();
     write_config_at(&project, &sample_config()).unwrap();
+    // 老档案卡没有 layout 行（新建的卡直接是最新一代，不会升级）
+    let card = fs::read_to_string(project.join(".ccode/project.toml")).unwrap();
+    let old_card: String = card.lines().filter(|l| !l.starts_with("layout")).map(|l| format!("{l}\n")).collect();
+    fs::write(project.join(".ccode/project.toml"), old_card).unwrap();
     write(&project.join(".gitignore"), "# 我的\n/output/\n.ccode/acceptance-log.jsonl\n");
     let r = commit_bootstrap_at(&project).unwrap();
     assert!(r.committed && r.paths.contains(&".gitignore".to_string()), "{r:?}");

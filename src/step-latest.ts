@@ -11,6 +11,7 @@ import { stepAttention } from "./run-overview";
 import { followupFiles } from "./step-loop";
 import { commitWorthyFiles } from "./git-status-groups";
 import type { GitFileDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
+import { doctorGate } from "./components/DoctorDialog";
 
 export type ConfirmFn = (message: string, opts: { confirmText: string }) => Promise<boolean>;
 
@@ -76,6 +77,7 @@ export async function bringLatest(
   confirm: ConfirmFn,
   next = "开新一轮",
 ): Promise<string[] | null> {
+  if (!(await doctorGate(ws.id, "round", stepName))) return null;
   const incoming = await incomingFor(ws);
   if (incoming === null) return [];
   if (stepBusy(ws)) {

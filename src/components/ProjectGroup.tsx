@@ -1,3 +1,4 @@
+import { doctorGate } from "./DoctorDialog";
 import {
   Copy,
   Files,
@@ -747,6 +748,7 @@ export default function ProjectGroup({
 
   async function restoreWs(ws: WorkspaceDto) {
     try {
+      if (!(await doctorGate(ws.id, "restore", ws.name))) return;
       await invoke("restore_workspace", { id: ws.id });
       await onRefresh();
     } catch (reason) {

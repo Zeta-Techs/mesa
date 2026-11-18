@@ -44,6 +44,7 @@ import {
 } from "./components/HelpDialogs";
 import TopNavCapsule from "./components/TopNavCapsule";
 import { ConfirmDialogHost, confirmDialog, confirmDialogOpen } from "./components/ConfirmDialog";
+import { DoctorDialogHost } from "./components/DoctorDialog";
 import { markCoachTipSeen } from "./coach-tips";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
@@ -2547,6 +2548,8 @@ function App() {
           <AskAiModal />
           {/* 全局确认框宿主（confirmDialog）：z-70，压过一切覆盖层 */}
           <ConfirmDialogHost />
+          {/* 项目体检框（doctorGate）：z-60，在评审覆盖层之上、确认框之下 */}
+          <DoctorDialogHost />
           {/* 上手引导：首次判定、全屏向导、每做完一步的提示 */}
           <OnboardingHost ready={bootDataReady} />
           <ToastHost />

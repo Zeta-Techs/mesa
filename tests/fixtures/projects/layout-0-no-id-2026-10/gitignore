@@ -1,0 +1,5 @@
+# Mesa 生成：产物与系统垃圾不进 git
+/artifacts/
+.DS_Store
+*.pdf
+/output/
