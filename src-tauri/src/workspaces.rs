@@ -344,6 +344,29 @@ pub(crate) fn run_git(repo: &Path, args: &[&str], timeout: Duration) -> Result<S
     run_cmd(cmd, timeout)
 }
 
+/// `status --porcelain` 专用：只去行尾不去行首。run_git 整体 trim 会吃掉首行状态码前的空格
+/// （" M path" → "M path"），按第 3 列切路径就错一位，台账 / 退回意见豁免全认不出
+/// （2026-11-18 用户实测：主文件夹只剩台账改动，评审报「主文件夹里还有没保存的改动」、提交面板却说没有）。
+pub(crate) fn run_git_porcelain(repo: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
+    let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
+    let mut cmd = crate::process::background_command(git);
+    cmd.arg("-C")
+        .arg(repo)
+        .args(["-c", "core.quotepath=false"])
+        .args(crate::git_info::PLATFORM_GIT_CONFIG)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = run_cmd_full(cmd, timeout)?;
+    if out.timed_out {
+        return Err("操作超时".into());
+    }
+    if out.success {
+        return Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string());
+    }
+    Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+}
+
 /// `git merge-base --is-ancestor {branch} HEAD`：0=已合入，1=尚未。其它退出码当错误。
 pub(crate) fn git_is_ancestor(repo: &Path, branch: &str, head: &str) -> Result<bool, String> {
     let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
@@ -908,7 +931,7 @@ fn archive_impl_with_guard(
         if merge_state.merging || !merge_state.files.is_empty() {
             return Err("工作区存在未完成的合并或冲突，请先完成或中止冲突处理后再归档".into());
         }
-        let dirty = run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30))?;
+        let dirty = run_git_porcelain(&wt, &["status", "--porcelain"], Duration::from_secs(30))?;
         let mut removable_copies = Vec::new();
         let unsafe_lines: Vec<&str> = dirty
             .lines()
@@ -1336,7 +1359,7 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     }
     let (uncommitted, counts, probe, main_off_base, main_dirty, stale_base, worktree_head, gitdir_detached) =
         std::thread::scope(|s| {
-            let uncommitted = s.spawn(|| run_git(&wt, &["status", "--porcelain"], Duration::from_secs(30)));
+            let uncommitted = s.spawn(|| run_git_porcelain(&wt, &["status", "--porcelain"], Duration::from_secs(30)));
             // A...B 的左侧 = 只在 base（behind），右侧 = 只在 HEAD（ahead）
             let counts = s.spawn(|| {
                 run_git(
@@ -1352,7 +1375,7 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
                     .unwrap_or(false)
             });
             let main_dirty = s.spawn(|| {
-                run_git(
+                run_git_porcelain(
                     &repo,
                     &["status", "--porcelain", "--untracked-files=all"],
                     Duration::from_secs(30),
@@ -1702,7 +1725,7 @@ fn merge_impl_with_guard(
             w.base_branch
         ));
     }
-    let dirty = run_git(
+    let dirty = run_git_porcelain(
         &repo,
         &["status", "--porcelain", "--untracked-files=all"],
         Duration::from_secs(30),
@@ -4828,7 +4851,7 @@ fn sync_base_impl(wt: &Path, base_branch: &str, restart: bool) -> Result<String,
     // 工作树有未提交改动时 git 会拒绝合并，先说清楚。restart 已先 abort，避免把冲突状态误判为普通脏文件。
     // 评审退回意见只留在工作树、从不进提交，并入也碰不到它，不算未提交改动（2026-11-10 HER：补充文献时卡在这里）
     // 逐个列未跟踪文件：.ccode/ 整个没被跟踪时 git 只报 `?? .ccode/`，认不出里面只有退回意见
-    let porcelain = run_git(wt, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30))?;
+    let porcelain = run_git_porcelain(wt, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30))?;
     if porcelain_has_changes(&porcelain) {
         return Err("工作区有未提交改动，请先在「改动」面板提交，再并入主分支".into());
     }

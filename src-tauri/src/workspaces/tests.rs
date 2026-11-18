@@ -968,6 +968,21 @@ fn commit_all_in_worktree(wt: &Path, msg: &str) {
     sh(wt, &["-c", "commit.gpgsign=false", "commit", "-m", msg]);
 }
 
+/// 主仓只剩已跟踪台账被改（porcelain 首行 " M .ccode/…"）不算脏：首行前导空格曾被 trim 吃掉，
+/// 路径错一位认不出台账，评审一直报「主文件夹里还有没保存的改动」（2026-11-18 用户实测）
+#[test]
+fn health_ignores_tracked_ledger_on_first_porcelain_line() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::create_dir_all(fx.repo.join(".ccode")).unwrap();
+    fs::write(fx.repo.join(".ccode/step-rounds.jsonl"), "{}\n").unwrap();
+    sh(&fx.repo, &["add", "-f", ".env", ".envrc", ".ccode/step-rounds.jsonl"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "ledger"]);
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "ledger").unwrap();
+    fs::write(fx.repo.join(".ccode/step-rounds.jsonl"), "{}\n{}\n").unwrap();
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(!h.main_dirty, "只剩已跟踪台账改动不该拦合并");
+}
+
 #[test]
 fn health_ready_then_dirty_then_conflicting() {
     let Some(fx) = Fixture::new() else { return };

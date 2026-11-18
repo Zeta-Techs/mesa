@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 修复：步骤评审里，主文件夹只剩 Mesa 自己的台账（如步骤轮次、验收记录）有改动时，顶上一直报「主文件夹里还有没保存的改动」、点开提交面板却说没有改动，导致保存不进项目：现在这类台账不再拦住保存；提交面板里那句写错的「保存到任务分支」说明也去掉了。
 - 修复：新添加连接时（未手动勾选思考档），各家 CLI 的思考档位统一按本机 CLI 模型目录对齐并支持会话内切换：Codex API 连接去掉仅限 ChatGPT 客户端自动多子 Agent 委派的 `ultra`，按 OpenAI API 真实档位显示（如 `gpt-6.2-sol` / `gpt-6.2sol` 为 `low` 至 `max`，`gpt-5.5` 至 `xhigh`），并补齐 Codex 0.170 新回显识别；Claude Code（如 `sonnet-4-6` 无 `xhigh`、5 代全五档、官方别名可用）、Qwen Code（如 `qwen3.8-max` / `qwen4-max` 专属档表）、Antigravity CLI 1.5.11（官方 `claude-opus-5-5` / `claude-sonnet-5-5` 支持到 `max`、补 `gemini-3.5-flash`）、Kimi Code（读配置多档与 `Thinking set to` 回显）、OpenCode（运行中支持重开接回换档）及尚未进内置能力库的新发布模型一并补齐。
 - 修复：Mac 上用久了，对话里自己发出去的截图（以及回复里的图片）可能变成一个带问号的空框：现在照常显示。
 - 修复：OpenCode、Qwen、Grok、Kimi「设为全局」时，网关库配了多个可选思考档（如 `low,medium,high@medium`）不再把整串原样写进配置文件，改按你设的默认档写入；Kimi 多个模型按各自设的思考档分别写入；Grok 清空思考档后旧模板菜单同步撤掉；Gemini 带服务商前缀或大写的内置模型同样交给官方默认，旧残留定义与实验开关一并清干净。

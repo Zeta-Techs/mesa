@@ -1000,9 +1000,6 @@ function MainRepoCommitPanel({
 
   return (
     <div className="mt-1.5 rounded-md ccode-well p-2 text-l2">
-      <p className="mb-2 text-micro text-l4">
-        提交 = 把改动保存到任务分支。保存进项目后才会进入项目主线历史；文件本身不会丢。
-      </p>
       {loadError ? (
         <p className="text-xs text-err-text">{loadError}</p>
       ) : !status ? (

@@ -485,7 +485,7 @@ fn ahead_behind(repo: &Path, left: &str, right: &str) -> (u32, u32) {
 }
 
 fn dirty_facts(path: &Path) -> (bool, u32) {
-    let Ok(s) = git(path, &["status", "--porcelain=v1", "--untracked-files=all"]) else {
+    let Ok(s) = crate::workspaces::run_git_porcelain(path, &["status", "--porcelain=v1", "--untracked-files=all"], T) else {
         return (false, 0);
     };
     let n = s
