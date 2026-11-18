@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -458,14 +458,61 @@ pub(crate) fn validate_selected_paths(cwd: &str, paths: &[String]) -> Result<Vec
 
 fn run_git_owned(cwd: &str, args: &[String]) -> Result<Output, String> {
     let git = crate::agents::resolve_binary("git").ok_or("找不到 git 可执行文件，请先安装 git")?;
-    crate::process::background_command(git)
-        .arg("-C")
+    let mut cmd = crate::process::background_command(git);
+    cmd.arg("-C")
         .arg(cwd)
         .args(["-c", "core.quotepath=false"])
         .args(PLATFORM_GIT_CONFIG)
-        .args(args)
-        .output()
-        .map_err(|e| format!("执行 git 失败: {e}"))
+        .args(args);
+    run_commit_step(cmd, cwd)
+}
+
+/// 提交链上的 git 一律限时：git 在等签名口令（窗口常被挡在 Mesa 后面）或钩子不退出时，
+/// 无限等待会让「提交中…」永远转下去（2026-11-18 用户实测）。超时杀掉并说清多半卡在哪。
+const COMMIT_STEP_TIMEOUT: Duration = Duration::from_secs(120);
+
+fn run_commit_step(mut cmd: crate::process::BackgroundCommand, cwd: &str) -> Result<Output, String> {
+    let out = crate::process::capture_command(&mut cmd, COMMIT_STEP_TIMEOUT, 32 * 1024 * 1024)?;
+    match out.status {
+        Some(status) if !out.timed_out => Ok(Output {
+            status,
+            stdout: out.stdout,
+            stderr: out.stderr,
+        }),
+        _ => Err(commit_stall_message(cwd)),
+    }
+}
+
+fn commit_stall_message(cwd: &str) -> String {
+    let gpgsign = run_git(cwd, &["config", "--bool", "--get", "commit.gpgsign"])
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "true");
+    let hooks = active_commit_hooks(cwd);
+    let cause = if gpgsign {
+        "这台电脑的 git 开了提交签名（commit.gpgsign），多半在等签名口令——看看任务栏有没有被挡住的口令窗口".to_string()
+    } else if !hooks.is_empty() {
+        format!("项目里的 git 钩子（{}）一直没跑完", hooks.join("、"))
+    } else {
+        "可能有另一个 git 操作占着这个文件夹".to_string()
+    };
+    format!("提交两分钟还没完成，已停止：{cause}。文件没有丢，处理后再点一次提交")
+}
+
+/// 提交时会跑的钩子（只认真钩子，不认 git init 自带的 .sample）
+fn active_commit_hooks(cwd: &str) -> Vec<String> {
+    let Ok(out) = run_git(cwd, &["rev-parse", "--git-path", "hooks"]) else {
+        return Vec::new();
+    };
+    let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let dir = if Path::new(&dir).is_absolute() {
+        PathBuf::from(dir)
+    } else {
+        Path::new(cwd).join(dir)
+    };
+    ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"]
+        .into_iter()
+        .filter(|name| dir.join(name).is_file())
+        .map(str::to_string)
+        .collect()
 }
 
 const NOTHING_TO_COMMIT: &str =
@@ -533,7 +580,7 @@ fn git_commit_sync(
             run_git_owned(&cwd, &args)?
         }
     } else {
-        let add = run_git(&cwd, &["add", "-A"])?;
+        let add = run_git_owned(&cwd, &["add".into(), "-A".into()])?;
         if add.status.success() {
             // 退回意见只留在工作区，不进这次提交。
             let _ = run_git(
@@ -647,13 +694,9 @@ fn commit_selected_with_index(
     let index_file = tmp.to_string_lossy().into_owned();
     let result = (|| {
         let run = |args: &[&str]| -> Result<Output, String> {
-            crate::process::background_command(&git)
-                .arg("-C")
-                .arg(cwd)
-                .env("GIT_INDEX_FILE", &index_file)
-                .args(args)
-                .output()
-                .map_err(|e| format!("执行 git 失败: {e}"))
+            let mut cmd = crate::process::background_command(&git);
+            cmd.arg("-C").arg(cwd).env("GIT_INDEX_FILE", &index_file).args(args);
+            run_commit_step(cmd, cwd)
         };
         // 初始提交（无 HEAD）从空索引开始
         let head = run_git(cwd, &["rev-parse", "--verify", "HEAD"])?;
@@ -678,13 +721,9 @@ fn commit_selected_with_index(
                 "--".into(),
             ];
             args.extend(fresh.iter().map(|p| (*p).clone()));
-            let add = crate::process::background_command(&git)
-                .arg("-C")
-                .arg(cwd)
-                .env("GIT_INDEX_FILE", &index_file)
-                .args(&args)
-                .output()
-                .map_err(|e| format!("执行 git 失败: {e}"))?;
+            let mut cmd = crate::process::background_command(&git);
+            cmd.arg("-C").arg(cwd).env("GIT_INDEX_FILE", &index_file).args(&args);
+            let add = run_commit_step(cmd, cwd)?;
             if !add.status.success() {
                 return Err(output_tail(&add));
             }
@@ -1881,6 +1920,26 @@ mod tests {
     fn head_author(dir: &Path) -> String {
         let out = run_git(&dir.to_string_lossy(), &["log", "-1", "--format=%an <%ae>"]).unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// 提交超时后的话要点出多半卡在哪：签名口令 > 真钩子 > 别的 git 占着；git init 自带的 .sample 不算钩子
+    #[test]
+    fn commit_stall_message_names_the_likely_cause() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo("stall");
+        let cwd = dir.to_string_lossy().to_string();
+        assert!(commit_stall_message(&cwd).contains("另一个 git"));
+        let hooks = dir.join(".git/hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        fs::write(hooks.join("pre-commit.sample"), "#!/bin/sh\n").unwrap();
+        assert!(active_commit_hooks(&cwd).is_empty(), ".sample 不是钩子");
+        fs::write(hooks.join("pre-commit"), "#!/bin/sh\n").unwrap();
+        assert!(commit_stall_message(&cwd).contains("pre-commit"));
+        git(&dir, &["config", "commit.gpgsign", "true"]);
+        assert!(commit_stall_message(&cwd).contains("签名"));
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
