@@ -436,3 +436,77 @@ fn copied_project_saves_into_the_copy_not_the_original() {
     let recorded = get_workspace(&p.conn, &w.id).unwrap().repo_path;
     assert!(same_path(Path::new(&recorded), &copy), "{recorded}");
 }
+
+/// 真实老项目整条流程干跑（AGENTS.md「动真实数据先干跑」）：`MESA_DRYRUN_REPO` 指向一份真实项目的**拷贝**
+/// （档案卡 id 已换掉，免得指回原项目）。五步依次开工 → AI 写 → 乱操作 → 照体检出口处理 → 保存 →
+/// 回头给上一步开一轮修改 → 再保存；每个入口都先体检。
+/// `MESA_DRYRUN_REPO=<拷贝> cargo test dryrun_real_project_lifecycle -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn dryrun_real_project_lifecycle() {
+    use doctor::Intent::*;
+    let repo = PathBuf::from(std::env::var("MESA_DRYRUN_REPO").expect("MESA_DRYRUN_REPO"));
+    let dir = std::env::temp_dir().join(format!("ccode-dryrun-life-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let conn = db_at(&dir.join("app.db")).unwrap();
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS projects(path TEXT PRIMARY KEY, name TEXT NOT NULL, id TEXT);").unwrap();
+    let mut p = Proj { dir: dir.clone(), conn, ws_root: dir.join("ws"), repo: repo.clone() };
+    println!("升级前 layout = {:?}", crate::project_upgrade::layout_at(&repo));
+    let note = git(&repo, &["ls-files", "notes"]).unwrap().lines().find(|l| l.ends_with(".md") && !l.contains('"')).unwrap().to_string();
+    let mut prev: Option<WorkspaceDto> = None;
+    for (i, step) in ["lit-search", "lit-notes", "outline", "draft", "polish"].iter().enumerate() {
+        let w = p.start_step(&format!("dry-{step}"));
+        let wt = PathBuf::from(&w.worktree_path);
+        let base = fs::read_to_string(wt.join(&note)).unwrap();
+        fs::write(wt.join(&note), format!("{base}\n{step} 这一步追加\n")).unwrap();
+        fs::write(wt.join(format!("notes/dry-{step}.md")), format!("{step} 的产出\n")).unwrap();
+        ok(&wt, &["add", "-A"]);
+        ok(&wt, &["commit", "-qm", &format!("AI 交付 {step}")]);
+        let mess = match i {
+            0 => {
+                let main = fs::read_to_string(repo.join(&note)).unwrap();
+                fs::write(repo.join(&note), format!("主文件夹开头加的一行\n{main}")).unwrap();
+                "主文件夹改了同一份笔记"
+            }
+            1 => {
+                fs::remove_dir_all(&wt).unwrap();
+                "工作副本文件夹被删"
+            }
+            2 => {
+                let lock = repo.join(".git/index.lock");
+                fs::write(&lock, "").unwrap();
+                age(&lock);
+                "主文件夹残留锁"
+            }
+            3 => {
+                ok(&repo, &["merge", "-q", "--no-ff", "-m", "人手动合并", &w.branch]);
+                "人在 Mesa 外手动合并了这一步"
+            }
+            _ => {
+                ok(&wt, &["checkout", "-q", "-b", "ai-side"]);
+                fs::write(wt.join(format!("notes/dry-{step}-side.md")), "x\n").unwrap();
+                ok(&wt, &["add", "-A"]);
+                ok(&wt, &["commit", "-qm", "AI 在别的分支上提交"]);
+                "AI 在别的分支上提交"
+            }
+        };
+        let log = follow_exits(&p, &w, Save);
+        try_intent(&p, &w, Save).unwrap_or_else(|e| panic!("{step} 保存失败（{mess}）：{e}"));
+        println!("{step}：{mess} → {log:?} → 已保存");
+        if let Some(pw) = prev.take() {
+            let log = follow_exits(&p, &pw, Round);
+            try_intent(&p, &pw, Round).unwrap_or_else(|e| panic!("回头修改 {} 失败：{e}", pw.name));
+            let pwt = PathBuf::from(&get_workspace(&p.conn, &pw.id).unwrap().worktree_path);
+            fs::write(pwt.join(format!("notes/{}-修改.md", pw.name)), "按后面步骤的意见修改\n").unwrap();
+            ok(&pwt, &["add", "-A"]);
+            ok(&pwt, &["commit", "-qm", "修改一轮"]);
+            let log2 = follow_exits(&p, &pw, Save);
+            try_intent(&p, &pw, Save).unwrap_or_else(|e| panic!("修改后再保存 {} 失败：{e}", pw.name));
+            println!("  回头修改 {}：{log:?} {log2:?} → 已保存", pw.name);
+        }
+        prev = Some(get_workspace(&p.conn, &w.id).unwrap());
+    }
+    println!("升级后 layout = {:?}", crate::project_upgrade::layout_at(&repo));
+    println!("主文件夹最后状态：\n{}", git(&repo, &["status", "--short"]).unwrap());
+    p.repo = dir.join("不存在"); // Drop 只清临时目录，不碰拷贝
+}
