@@ -3883,14 +3883,27 @@ fn codex_bundled_entry(model: &str) -> Option<serde_json::Value> {
         *memo = Some((version, local_codex_bundled_models(version)));
     }
     let models = memo.as_ref()?.1.as_ref()?;
-    models.iter().find(|m| m["slug"] == model).cloned()
+    codex_official_match(models, model).cloned()
 }
 
 /// 测试态不经进程级记忆（并行的测试线程各自钉版本与条目，记忆会串）
 #[cfg(test)]
 fn codex_bundled_entry(model: &str) -> Option<serde_json::Value> {
     let models = local_codex_bundled_models(codex_cli_version()?)?;
-    models.into_iter().find(|m| m["slug"] == model)
+    codex_official_match(&models, model).cloned()
+}
+
+/// 中转上的模型名对哪条官方条目：同 Codex 自己认模型的办法（codex-rs `find_model_by_longest_prefix`），
+/// 取模型名开头能对上的最长那个，带日期 / 后缀的（gpt-6.2-sol-20261101）也认；`openai/gpt-6.2-sol` 这类
+/// 带服务商前缀的先去掉前缀、不分大小写（照 magpie `codexcat.officialFor`）
+fn codex_official_match<'a>(models: &'a [serde_json::Value], model: &str) -> Option<&'a serde_json::Value> {
+    let name = model.rsplit('/').next().unwrap_or(model).to_ascii_lowercase();
+    models
+        .iter()
+        .filter_map(|m| m["slug"].as_str().map(|s| (s.to_ascii_lowercase(), m)))
+        .filter(|(slug, _)| !slug.is_empty() && name.starts_with(slug.as_str()))
+        .max_by_key(|(slug, _)| slug.len())
+        .map(|(_, m)| m)
 }
 
 /// 官方条目缓存在 `<配置根>/catalogs/codex-bundled-models-<版本>.json`，每个版本只取一次；旧版本的缓存顺手删掉
@@ -3993,6 +4006,8 @@ fn codex_entry_from_bundled(
     model: &str,
     gateway_id: Option<&str>,
 ) -> serde_json::Value {
+    // 按前缀认上的官方条目：slug 换成中转上的真名（Codex 按 slug 发请求、选择器按它匹配）
+    entry["slug"] = serde_json::json!(model);
     entry["display_name"] = serde_json::json!(format!("{profile_name} · {model}"));
     entry["visibility"] = serde_json::json!("list");
     entry["supports_search_tool"] = serde_json::json!(false);

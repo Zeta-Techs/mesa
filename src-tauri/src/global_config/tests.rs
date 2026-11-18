@@ -813,17 +813,22 @@ fn gemini_settings_patch_registers_custom_models_for_picker() {
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["experimental"]["dynamicModelConfiguration"], true);
     let defs = &v["modelConfigs"]["modelDefinitions"];
-    assert_eq!(defs["gemini-3-pro"]["tier"], "custom");
-    assert_eq!(defs["gemini-3-pro"]["isVisible"], true);
-    assert_eq!(
-        defs["gemini-3-pro"]["displayName"],
-        "我的网关 · gemini-3-pro"
-    );
+    // gemini- 开头的交给 Gemini 自己的定义表 / 按名字判断，不写 custom 定义盖掉官方的
+    assert!(defs.get("gemini-3-pro").is_none());
+    assert_eq!(defs["kimi-k3"]["tier"], "custom");
+    assert_eq!(defs["kimi-k3"]["isVisible"], true);
+    assert_eq!(defs["kimi-k3"]["displayName"], "我的网关 · kimi-k3");
     // 用户手维护的条目不动
     assert_eq!(defs["user-one"]["isVisible"], true);
-    // kimi-k3 注册链确知思考+视觉 → features 声明；gemini-3-pro 视觉确知
+    // kimi-k3 注册链确知思考+视觉 → features 声明
     assert_eq!(defs["kimi-k3"]["features"]["thinking"], true);
-    assert_eq!(defs["gemini-3-pro"]["features"]["multimodalToolUse"], true);
+    // 以前写过的 gemini- custom 条目撤掉；全是 gemini- 模型时不开实验开关
+    let old = r#"{"modelConfigs": {"modelDefinitions": {"gemini-3-pro": {"tier": "custom", "family": "custom"}, "gemini-x": {"tier": "pro", "family": "gemini-3"}}}}"#;
+    let out = patch_gemini_settings(Some(old), "n", &["gemini-3-pro".into(), "gemini-x".into()], None).unwrap();
+    let v: Value = serde_json::from_str(&out).unwrap();
+    assert!(v["modelConfigs"]["modelDefinitions"].get("gemini-3-pro").is_none());
+    assert_eq!(v["modelConfigs"]["modelDefinitions"]["gemini-x"]["family"], "gemini-3", "不是 Mesa 写的样子不动");
+    assert!(v.get("experimental").is_none());
 }
 
 #[test]
@@ -1662,16 +1667,11 @@ fn grok_config_patch_writes_and_preserves() {
     // allowed_models 属用户选择器过滤，不接管；只并进默认模型（不在名单里 Grok 拒绝启动）
     let allowed: Vec<_> = models["allowed_models"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
     assert_eq!(allowed, ["grok-4.5", "grok-code-fast-1"]);
-    // 每个绑定模型都建段并写推理菜单（中转目录不带档位时 /effort 才出得来）
+    // 网关库没给这个模型设思考档：不补菜单、不设默认档，照 Grok 自己的判断（只换渠道与模型）
     let entry = &doc["model"]["grok-code-fast-1"];
-    assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(true));
-    assert_eq!(entry["reasoning_effort"].as_str(), Some("high"));
-    let efforts = entry["reasoning_efforts"].as_array_of_tables().unwrap();
-    assert_eq!(efforts.len(), 4);
-    assert_eq!(efforts.get(0).unwrap()["value"].as_str(), Some("xhigh"));
-    assert_eq!(efforts.get(1).unwrap()["value"].as_str(), Some("high"));
-    assert_eq!(efforts.get(1).unwrap()["default"].as_bool(), Some(true));
-    assert_eq!(efforts.get(3).unwrap()["value"].as_str(), Some("low"));
+    assert!(entry.get("supports_reasoning_effort").is_none());
+    assert!(entry.get("reasoning_effort").is_none());
+    assert!(entry.get("reasoning_efforts").is_none());
     // 斜杠串不是一个档位，不能写进 default_reasoning_effort（Grok 会拒启动）
     p.request_policy.reasoning_effort = Some("hign/xhign".into());
     let out = patch_grok_config(Some(existing), Some("xai-secret"), &p).unwrap();
@@ -1741,14 +1741,7 @@ fn grok_config_patch_writes_per_model_sections_with_api_backend() {
     );
     // 权威层（用户覆盖/网关实测）在测试环境为空 → 不写 context_window
     assert!(gpt.get("context_window").is_none());
-    assert_eq!(gpt["supports_reasoning_effort"].as_bool(), Some(true));
-    assert_eq!(
-        gpt["reasoning_efforts"]
-            .as_array_of_tables()
-            .unwrap()
-            .len(),
-        4
-    );
+    assert!(gpt.get("reasoning_efforts").is_none(), "没有思考档依据不补菜单");
 }
 
 #[test]
@@ -1779,25 +1772,29 @@ supports_reasoning_effort = false
         doc["model"]["grok-4.7"]["reasoning_effort"].as_str(),
         Some("low")
     );
-    // 中转目录的显式 false 会压掉菜单，设为全局时改回 true 并补档位
+    // 没有思考档依据：中转目录的显式 false 原样保留，新模型也不补菜单
     assert_eq!(
         doc["model"]["no-think"]["supports_reasoning_effort"].as_bool(),
-        Some(true)
+        Some(false)
     );
-    assert_eq!(
-        doc["model"]["no-think"]["reasoning_efforts"]
-            .as_array_of_tables()
-            .unwrap()
-            .len(),
-        4
-    );
-    assert_eq!(
-        doc["model"]["fresh"]["reasoning_efforts"]
-            .as_array_of_tables()
-            .unwrap()
-            .len(),
-        4
-    );
+    assert!(doc["model"]["no-think"].get("reasoning_efforts").is_none());
+    assert!(doc["model"]["fresh"].get("reasoning_efforts").is_none());
+}
+
+#[test]
+fn grok_reasoning_menu_only_with_gateway_levels() {
+    let mut entry = toml_edit::Table::new();
+    entry["supports_reasoning_effort"] = toml_edit::value(false);
+    write_grok_reasoning_menu(&mut entry, None);
+    assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(false), "没依据不改");
+    assert!(entry.get("reasoning_efforts").is_none());
+    // 网关库给了档位：照写菜单，用户设的那档是默认
+    let levels = vec!["low".to_string(), "medium".into(), "high".into()];
+    write_grok_reasoning_menu(&mut entry, Some(&levels));
+    assert_eq!(entry["supports_reasoning_effort"].as_bool(), Some(true));
+    let rows = entry["reasoning_efforts"].as_array_of_tables().unwrap();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.get(2).unwrap()["default"].as_bool(), Some(true));
 }
 
 #[test]
@@ -2307,3 +2304,4 @@ fn agy_set_global_supports_official_patch_and_rejects_api() {
     fs::remove_dir_all(&fresh_home).ok();
     fs::remove_dir_all(&home).ok();
 }
+

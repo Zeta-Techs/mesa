@@ -656,11 +656,27 @@ pub(crate) fn patch_gemini_settings(
     let mut v = parse_jsonc_doc(existing)?;
     ensure_obj(&mut v, &["security", "auth"])?
         .insert("selectedType".into(), json!("gemini-api-key"));
-    if !models.is_empty() {
+    // `gemini-` 开头的交给 Gemini 自己：它按自带定义表、没有就按名字判断是不是 Gemini 3 / Pro 等（0.68 bundle
+    // ModelConfigService.getModelDefinition / isGemini3Model）。用户定义按模型名整条盖过自带定义，原先一律写
+    // family / tier = custom，gemini-3-pro 这类官方模型就不再按 Gemini 3 处理（2026-11-18「只换渠道与模型」）。
+    // 以前写过的这类条目（family 与 tier 都是 custom，官方定义从不这样写）一并撤掉
+    let custom: Vec<&String> = models.iter().filter(|m| !m.starts_with("gemini-")).collect();
+    if let Some(defs) = v
+        .pointer_mut("/modelConfigs/modelDefinitions")
+        .and_then(Value::as_object_mut)
+    {
+        defs.retain(|id, def| {
+            !(models.contains(id)
+                && id.starts_with("gemini-")
+                && def["tier"] == "custom"
+                && def["family"] == "custom")
+        });
+    }
+    if !custom.is_empty() {
         ensure_obj(&mut v, &["experimental"])?
             .insert("dynamicModelConfiguration".into(), json!(true));
         let defs = ensure_obj(&mut v, &["modelConfigs", "modelDefinitions"])?;
-        for m in models {
+        for m in custom {
             let mut def = json!({
                 // 选择器显示名与 claude/kimi/codex 同口径：配置名 · 模型
                 "displayName": format!("{profile_name} · {m}"),
@@ -1774,10 +1790,14 @@ fn gateway_effort_levels(profile: &Profile, model: &str) -> Option<Vec<String>> 
 /// Grok 1.0.40 推理强度菜单：与内置 grok-4.6 同形（`value`/`label`/`description`）。
 /// 自定义端点的模型目录通常不带 `reasoning_efforts`，不写这段则 `/effort` 不出。
 /// 用户已写过菜单则保留，避免每次设为全局覆盖手改档位。
-/// 中转目录常把第三方模型标成 `supports_reasoning_effort = false`，
-/// 这个 false 会让 Grok 丢掉后面补上的菜单，所以设为全局时改回 true。
+/// 只在网关库给这个模型设了思考档时写（2026-11-18「只换渠道与模型」）：原先每个模型都补菜单、默认 high，
+/// 中转目录标了 `supports_reasoning_effort = false` 的也改回 true，等于替不知道支不支持的模型每次都发 high；
+/// 没有依据就整段不碰，照 Grok 自己按端点目录的判断
 fn write_grok_reasoning_menu(entry: &mut toml_edit::Table, levels: Option<&[String]>) {
     use toml_edit::{value, ArrayOfTables, Item, Table};
+    let Some(levels) = levels.filter(|rows| !rows.is_empty()) else {
+        return;
+    };
     if entry
         .get("supports_reasoning_effort")
         .and_then(|v| v.as_bool())
@@ -1788,15 +1808,7 @@ fn write_grok_reasoning_menu(entry: &mut toml_edit::Table, levels: Option<&[Stri
     if entry.get("reasoning_efforts").is_some() {
         return;
     }
-    let chosen: Vec<String> = levels
-        .filter(|rows| !rows.is_empty())
-        .map(|rows| rows.to_vec())
-        .unwrap_or_else(|| {
-            ["xhigh", "high", "medium", "low"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        });
+    let chosen: Vec<String> = levels.to_vec();
     let labels = [
         ("none", "None", "No extra reasoning"),
         ("minimal", "Minimal Effort", "Smallest reasoning budget"),

@@ -2815,6 +2815,26 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     let other = &v["models"][1];
     assert_eq!(other["support_verbosity"], false);
     assert!(other["base_instructions"].as_str().unwrap().starts_with("You are a coding agent running in the Codex CLI"));
+    // 按最长前缀认：带日期后缀、带服务商前缀、大小写不同都认到官方条目，slug 用中转上的真名
+    let shipped = codex_bundled_models_from(
+        &serde_json::json!({ "models": [
+            {"slug": "gpt-6", "base_instructions": "six"},
+            {"slug": "gpt-6.2-sol", "base_instructions": "sol"},
+        ] })
+        .to_string(),
+    )
+    .unwrap();
+    for (name, want) in [
+        ("gpt-6.2-sol-20261101", Some("sol")),
+        ("openai/GPT-6.2-sol", Some("sol")),
+        ("gpt-6-luna", Some("six")),
+        ("gpt-5.5", None),
+    ] {
+        let got = codex_official_match(&shipped, name).and_then(|m| m["base_instructions"].as_str());
+        assert_eq!(got, want, "{name}");
+    }
+    let e = codex_entry_from_bundled(shipped[1].clone(), "中转", "gpt-6.2-sol-20261101", None);
+    assert_eq!(e["slug"], "gpt-6.2-sol-20261101");
     // 缺 base_instructions 的输出整份不收（Codex 会拒收这样的目录）
     assert!(codex_bundled_models_from(r#"{"models":[{"slug":"x"}]}"#).is_none());
     assert!(codex_bundled_models_from("not json").is_none());
