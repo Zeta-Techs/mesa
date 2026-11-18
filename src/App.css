@@ -4537,9 +4537,9 @@ select:focus-visible {
   border-left: 0;
   border-radius: var(--ccode-radius-panel);
 }
-/* 主区与右侧停靠卡之间的缝收到 2px（行容器 gap 5px，2026-11-16 用户反馈这道缝太宽）；面板被轮下去时不收 */
+/* 主区与右侧停靠卡之间的缝收到 3px（行容器 gap 5px；2026-11-16 用户反馈太宽收到 2px，11-18 放回 3px）；面板被轮下去时不收 */
 #ccode-assistant-dock:has(> .contents > .ccode-docked-panel) {
-  margin-left: -3px;
+  margin-left: -2px;
 }
 /* 停靠位空着（面板没开或只是浮层）时不进行容器：宽 0 也会吃一道 5px gap，右边玻璃边比左、下宽一倍（2026-11-17 用户反馈） */
 #ccode-assistant-dock:not(:has(> .contents > .ccode-docked-panel)) {
