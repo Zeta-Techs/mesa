@@ -1444,8 +1444,8 @@ pub(crate) fn model_context_size_declared_for(
 }
 
 /// 输出上限的**声明层**视图：查询链里有显式值才 Some（内置表 output 全为 None，
-/// 所以现状等于「只有用户覆盖/网关实测/公共库声明才算」）。opencode 的 limit.output
-/// 是 schema 必填，调用方拿 None 时只能写保守值，但至少知道那是保守值而非声明。
+/// 所以现状等于「只有用户覆盖/网关实测/公共库声明才算」）。写进 opencode limit.output 用它，
+/// 拿 None 时写 OpenCode 自己的默认（agents::OPENCODE_DEFAULT_OUTPUT），不写下面的保守值。
 pub(crate) fn model_output_limit_declared_for(
     model: &str,
     gateway_id: Option<&str>,
@@ -1453,8 +1453,8 @@ pub(crate) fn model_output_limit_declared_for(
     lookup_field_for(model, gateway_id, |c| c.output)
 }
 
-/// 输出上限兜底：models.dev 上多数 chat 模型的常见值，保守不越界
-/// （opencode 拿 limit.output 当 max output tokens 用，宁小勿大）
+/// 输出上限兜底：只给界面估算用，不得写进 CLI 配置（2026-11-18 起 opencode 不再用它，
+/// 写 8192 会把查不到的模型一次输出压到 8192）
 const DEFAULT_OUTPUT_LIMIT: i64 = 8192;
 
 /// 模型输出上限：逐字段查询链 → 保守默认

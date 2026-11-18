@@ -3534,18 +3534,18 @@ pub(crate) fn opencode_provider_json(
         }
     }
     for m in all {
-        // limit 是 opencode 用户配置 schema 里**条件必填**：`limit` 键本身可省，
-        // 但一旦出现，`context` 与 `output` 都是必填（只有 input 可选）。
-        // 1.18 实测缺 output 直接 "Configuration is invalid" 退出 1。
-        // 所以这里不能像 codex catalog 那样「未知就省略」——未知只能写保守下限，
-        // 且要清楚那是下限不是声明（注册链确知时就是真值）。
-        let mut entry = serde_json::json!({
-            "name": format!("{} · {m}", profile.name),
-            "limit": {
-                "context": crate::model_registry::model_context_size_for(m, profile.gateway_id.as_deref()),
-                "output": crate::model_registry::model_output_limit_for(m, profile.gateway_id.as_deref()),
-            },
-        });
+        let mut entry = serde_json::json!({ "name": format!("{} · {m}", profile.name) });
+        // limit 整块可省，但一出现 context 与 output 都必填（1.18 / 1.19 实测缺 output 报 Configuration is invalid）。
+        // 不写时 OpenCode 自己发 32000 输出上限、不按窗口提前压缩；写了也只认到 32000 封顶（1.19.5 假网关实测）。
+        // 所以只在确知窗口时写，输出不知道就写 32000（等于 OpenCode 自己的默认）——原先未知写 128K / 8192，
+        // 把查不到的模型一次最多只能写 8192 token，大文件一次写不完（2026-11-18）
+        if let Some(context) =
+            crate::model_registry::model_context_size_declared_for(m, profile.gateway_id.as_deref())
+        {
+            let output = crate::model_registry::model_output_limit_declared_for(m, profile.gateway_id.as_deref())
+                .unwrap_or(OPENCODE_DEFAULT_OUTPUT);
+            entry["limit"] = serde_json::json!({ "context": context, "output": output });
+        }
         // 思考模型补 reasoning: true（models.dev 覆盖语义）；否则 models.dev
         // 查不到条目时 opencode 按无思考能力处理
         if crate::model_registry::model_thinking_for(m, profile.gateway_id.as_deref()) {
@@ -3566,6 +3566,9 @@ pub(crate) fn opencode_provider_json(
         "models": models_map,
     })
 }
+
+/// OpenCode 不知道模型输出上限时自己用的值，也是它发请求的封顶（1.19.5 假网关实测 max_tokens）
+const OPENCODE_DEFAULT_OUTPUT: i64 = 32_000;
 
 // ===== codex 模型 catalog：TUI /model 选择器的数据源（仅启动时读取一次） =====
 
@@ -3621,7 +3624,8 @@ fn local_codex_base_instructions(version: (u32, u32, u32)) -> Option<String> {
     static LOCK: std::sync::Mutex<Option<(u32, u32, u32)>> = std::sync::Mutex::new(None);
     let mut failed = LOCK.lock().ok()?;
     let dir = crate::storage::config_root()?.join("catalogs");
-    let name = format!("codex-base-instructions-{}.{}.{}.md", version.0, version.1, version.2);
+    // v2：改从实际请求取（2026-11-18），旧缓存是会话文件里没删减的模板，换名让它被下面清掉
+    let name = format!("codex-base-instructions-v2-{}.{}.{}.md", version.0, version.1, version.2);
     let cache = dir.join(&name);
     if let Ok(text) = std::fs::read_to_string(&cache) {
         if plausible_codex_instructions(&text) {
@@ -3656,12 +3660,14 @@ fn local_codex_base_instructions(_version: (u32, u32, u32)) -> Option<String> {
 }
 
 /// Codex 没有直接导出这段原文的命令（`debug models` 只有 GPT 专用的打包条目，`debug prompt-input` 不含它），
-/// 做法是在一次性的 CODEX_HOME 里跑一次 `codex exec`、渠道的密钥变量故意不给：Codex 先写会话文件
-/// （首行 session_meta.base_instructions 就是原文），发请求前报「Missing environment variable」退出——
-/// 不联网、不碰用户的 ~/.codex，实测约 0.5 秒。临时目录用完即删
+/// 做法是在一次性的 CODEX_HOME 里跑一次 `codex exec`，渠道指向 Mesa 在本机临时开的端口：收下 Codex 发出的第一条
+/// 请求、回 400 让它退出，取请求里的系统提示词——不出本机、不碰用户的 ~/.codex，实测约 0.5 秒。临时目录用完即删。
+/// 要取请求而不是会话文件首行：会话文件记的是没删减的模板，Codex 没开计划工具时发出去会删掉 `update_plan` 两段，
+/// 照抄模板等于替模型多加了官方没给的说明（2026-11-18 假网关比对：模板 20751 字、实发 16979 字）。
+/// 端口没收到请求（旧版 Codex 发请求前就退出等）才退回会话文件
 #[cfg_attr(test, allow(dead_code))]
 fn extract_codex_base_instructions() -> Option<String> {
-    const KEY_VAR: &str = "MESA_CODEX_INSTRUCTIONS_PROBE_UNSET";
+    const KEY_VAR: &str = "MESA_CODEX_INSTRUCTIONS_PROBE_KEY";
     let bin = resolve_binary("codex")?;
     let tmp = crate::storage::config_root()?.join("tmp");
     // 上次没删干净的（见下）先扫掉
@@ -3678,6 +3684,9 @@ fn extract_codex_base_instructions() -> Option<String> {
     let result = (|| {
         std::fs::create_dir_all(&home).ok()?;
         std::fs::create_dir_all(&work).ok()?;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+        listener.set_nonblocking(true).ok()?;
+        let port = listener.local_addr().ok()?.port();
         let p = "mesa-probe";
         let mut child = crate::process::background_command(&bin)
             .args([
@@ -3688,8 +3697,7 @@ fn extract_codex_base_instructions() -> Option<String> {
                 "-c".into(),
                 format!(r#"model_providers.{p}.name="{p}""#),
                 "-c".into(),
-                // 万一真发出去也只到本机一个不通的端口
-                format!(r#"model_providers.{p}.base_url="http://127.0.0.1:9/v1""#),
+                format!(r#"model_providers.{p}.base_url="http://127.0.0.1:{port}/v1""#),
                 "-c".into(),
                 format!(r#"model_providers.{p}.env_key="{KEY_VAR}""#),
                 "-c".into(),
@@ -3704,14 +3712,21 @@ fn extract_codex_base_instructions() -> Option<String> {
             ])
             .current_dir(&work)
             .env("CODEX_HOME", &home)
-            .env_remove(KEY_VAR)
+            .env(KEY_VAR, "mesa-probe")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .ok()?;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut sent: Option<String> = None;
         loop {
+            if sent.is_none() {
+                if let Ok((stream, _)) = listener.accept() {
+                    sent = probe_answer_request(stream)
+                        .and_then(|body| codex_instructions_from_request(&body));
+                }
+            }
             match child.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) if std::time::Instant::now() >= deadline => {
@@ -3722,6 +3737,9 @@ fn extract_codex_base_instructions() -> Option<String> {
                 Ok(None) => std::thread::sleep(std::time::Duration::from_millis(30)),
                 Err(_) => return None,
             }
+        }
+        if sent.is_some() {
+            return sent;
         }
         let rollout = first_jsonl(&home.join("sessions"))?;
         codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?)
@@ -3753,6 +3771,87 @@ fn first_jsonl(dir: &std::path::Path) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+/// 读完探针端口收到的一条 HTTP 请求（Content-Length 或 chunked），回一个 400 让 Codex 不再重试；返回请求体
+#[cfg_attr(test, allow(dead_code))]
+fn probe_answer_request(mut stream: std::net::TcpStream) -> Option<String> {
+    use std::io::{Read, Write};
+    stream.set_nonblocking(false).ok()?;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(3))).ok()?;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 16384];
+    let parsed = loop {
+        let n = stream.read(&mut chunk).ok()?;
+        if n == 0 {
+            break http_request_body(&buf);
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(body) = http_request_body(&buf) {
+            break Some(body);
+        }
+    };
+    let reply = b"{\"error\":{\"message\":\"mesa probe\",\"type\":\"invalid_request_error\"}}";
+    let _ = stream.write_all(
+        format!(
+            "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            reply.len()
+        )
+        .as_bytes(),
+    );
+    let _ = stream.write_all(reply);
+    parsed
+}
+
+/// 一条完整 HTTP 请求的请求体；还没收全返回 None
+fn http_request_body(raw: &[u8]) -> Option<String> {
+    let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+    let head = String::from_utf8_lossy(&raw[..head_end]).to_ascii_lowercase();
+    let body = &raw[head_end..];
+    let header = |name: &str| {
+        head.lines()
+            .find_map(|l| l.strip_prefix(name).map(|v| v.trim().to_string()))
+    };
+    if header("transfer-encoding:").is_some_and(|v| v.contains("chunked")) {
+        let mut out = Vec::new();
+        let mut rest = body;
+        loop {
+            let line_end = rest.windows(2).position(|w| w == b"\r\n")?;
+            let size = usize::from_str_radix(String::from_utf8_lossy(&rest[..line_end]).trim(), 16).ok()?;
+            rest = &rest[line_end + 2..];
+            if size == 0 {
+                return Some(String::from_utf8_lossy(&out).into_owned());
+            }
+            if rest.len() < size + 2 {
+                return None;
+            }
+            out.extend_from_slice(&rest[..size]);
+            rest = &rest[size + 2..];
+        }
+    }
+    let len: usize = header("content-length:").and_then(|v| v.parse().ok()).unwrap_or(0);
+    (body.len() >= len).then(|| String::from_utf8_lossy(&body[..len]).into_owned())
+}
+
+/// Codex 实发请求里的系统提示词：老版本放 `instructions`，新版本是 `input` 里第一条 developer 消息
+fn codex_instructions_from_request(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let text = v["instructions"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let msg = v["input"].as_array()?.iter().find(|m| m["role"] == "developer")?;
+            Some(
+                msg["content"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|c| c["text"].as_str())
+                    .collect::<String>(),
+            )
+        })?
+        .replace("\r\n", "\n");
+    plausible_codex_instructions(&text).then_some(text)
 }
 
 /// 会话文件首行 session_meta 里的 base_instructions.text（换行统一成 LF）
@@ -3964,8 +4063,9 @@ pub(crate) fn codex_catalog_entry_for(
         "availability_nux": null,
         "upgrade": null,
         "base_instructions": codex_base_instructions(),
-        "support_verbosity": true,
-        "default_verbosity": "low",
+        // 不声明 verbosity：Codex 对不认识的模型不发 `text.verbosity`（2026-11-18 假网关比对），
+        // 原先照抄 GPT 打包条目写 low，等于替所有中转模型加了「回答尽量简短」
+        "support_verbosity": false,
         // 不声明 apply_patch_tool_type：freeform（type=custom）工具会被原生 /responses 与
         // Anthropic 协议网关拒/丢（cc-switch 实证，非代理档一律剥除；0.163 也只认 freeform 一种）；
         // 缺省时模型在 shell 里调 apply_patch，Codex 接住后照样出改文件事件与差异

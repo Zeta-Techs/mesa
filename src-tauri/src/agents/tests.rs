@@ -989,6 +989,7 @@ fn opencode_v2_inline_config_uses_native_providers() {
     let mut cfg: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let pid = p.provider_name();
     let reasoning = cfg["provider"][&pid]["models"]["deepseek-v4"]["reasoning"] == true;
+    let limit = cfg["provider"][&pid]["models"]["deepseek-v4"].get("limit").cloned();
     opencode_inline_config_v2(&mut cfg, Some("xhigh"));
     assert!(cfg.get("provider").is_none(), "1.x 的 provider 整体换掉");
     let prov = &cfg["providers"][&pid];
@@ -998,7 +999,7 @@ fn opencode_v2_inline_config_uses_native_providers() {
     let m = &prov["models"]["deepseek-v4"];
     assert_eq!(m["settings"]["reasoningEffort"], "xhigh", "思考档留在请求外的 settings");
     assert_eq!(m["body"]["temperature"], 0.3, "其余参数进请求体（2.x 对 1.x 写法同样处理）");
-    assert!(m["limit"]["context"].as_i64().unwrap() > 0);
+    assert_eq!(m.get("limit").cloned(), limit, "limit 有就原样带过去，没有也不补");
     if reasoning {
         assert_eq!(m["capabilities"]["reasoning"]["supported"], true);
         let efforts: Vec<&str> =
@@ -2656,15 +2657,20 @@ fn opencode_inject_json_registers_every_profile_model() {
     let models = config["provider"]["ccode"]["models"].as_object().unwrap();
     for m in ["m1", "m2", "m3"] {
         assert!(models.contains_key(m), "provider.ccode.models 缺 {m}");
-        // 每个条目带显示名（配置名 · 模型）与 limit.context（注册表保守默认 128K）
-        // + limit.output（opencode 1.18 起 schema 必填，缺省 8192）
+        // 每个条目带显示名（配置名 · 模型）；窗口查不到就不写 limit，交给 OpenCode 自己的默认
+        // （原先写 128K / 8192，把一次输出压到 8192）
         assert_eq!(
             models[m]["name"].as_str(),
             Some(format!("测试 · {m}").as_str())
         );
-        assert_eq!(models[m]["limit"]["context"].as_i64(), Some(131_072));
-        assert_eq!(models[m]["limit"]["output"].as_i64(), Some(8192));
+        assert!(models[m].get("limit").is_none(), "{m} 不该写 limit");
     }
+    // 确知窗口才写 limit；输出上限查不到写 OpenCode 自己的默认 32000，不写 8192
+    let mut known = profile("opencode", Some("https://openrouter.ai/api/v1"));
+    known.models = vec!["kimi-k3".into()];
+    let k = opencode_provider_json(&known, None, None);
+    assert_eq!(k["models"]["kimi-k3"]["limit"]["context"].as_i64(), Some(1_048_576));
+    assert_eq!(k["models"]["kimi-k3"]["limit"]["output"].as_i64(), Some(OPENCODE_DEFAULT_OUTPUT));
     // provider 级 name = profile 名（选择器不再显示内部 id "ccode"）
     assert_eq!(config["provider"]["ccode"]["name"].as_str(), Some("测试"));
     // 表外未知模型不声明 reasoning
@@ -2728,7 +2734,9 @@ fn codex_catalog_contains_every_model_with_template_shape() {
     assert!(bi.contains("apply_patch") && !bi.contains('\r'));
     assert_eq!(bi.contains("shell: \"bash\""), cfg!(windows), "Windows 补充只在 Windows 上带");
     assert_eq!(e["truncation_policy"]["mode"], "tokens");
-    assert_eq!(e["default_verbosity"], "low");
+    // Codex 对不认识的模型不发 verbosity，模板也不声明
+    assert_eq!(e["support_verbosity"], false);
+    assert!(e.get("default_verbosity").is_none());
     assert_eq!(e["supported_in_api"], true);
     let efforts: Vec<&str> = e["supported_reasoning_levels"]
         .as_array()
@@ -2805,7 +2813,7 @@ fn codex_catalog_uses_official_entry_when_codex_ships_the_model() {
     assert!(e.get("apply_patch_tool_type").is_none());
     // 官方没有的模型照旧走通用模板
     let other = &v["models"][1];
-    assert_eq!(other["default_verbosity"], "low");
+    assert_eq!(other["support_verbosity"], false);
     assert!(other["base_instructions"].as_str().unwrap().starts_with("You are a coding agent running in the Codex CLI"));
     // 缺 base_instructions 的输出整份不收（Codex 会拒收这样的目录）
     assert!(codex_bundled_models_from(r#"{"models":[{"slug":"x"}]}"#).is_none());
@@ -2836,6 +2844,32 @@ fn codex_instructions_read_from_rollout_first_line() {
     assert!(plausible_codex_instructions(CODEX_BASE_INSTRUCTIONS));
 }
 
+#[test]
+fn codex_instructions_read_from_sent_request() {
+    let body = format!("You are a coding agent.\r\nUse `apply_patch`.\r\n{}", "x".repeat(3000));
+    // 新版：input 里第一条 developer 消息
+    let req = serde_json::json!({
+        "instructions": "",
+        "input": [
+            {"role": "developer", "content": [{"type": "input_text", "text": body}]},
+            {"role": "developer", "content": [{"type": "input_text", "text": "<skills_instructions>"}]},
+            {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+        ],
+    });
+    let got = codex_instructions_from_request(&req.to_string()).unwrap();
+    assert!(got.starts_with("You are a coding agent.\nUse `apply_patch`.\n"), "换行统一成 LF");
+    // 老版：instructions 字段
+    let old = serde_json::json!({ "instructions": body, "input": [] });
+    assert!(codex_instructions_from_request(&old.to_string()).is_some());
+    assert!(codex_instructions_from_request(r#"{"input":[]}"#).is_none());
+    // HTTP 请求体：Content-Length 与 chunked，没收全返回 None
+    let raw = b"POST /v1/responses HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
+    assert_eq!(http_request_body(raw).as_deref(), Some("hello"));
+    assert!(http_request_body(&raw[..raw.len() - 1]).is_none());
+    let chunked = b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhel\r\n2\r\nlo\r\n0\r\n\r\n";
+    assert_eq!(http_request_body(chunked).as_deref(), Some("hello"));
+}
+
 /// 手动跑：真起本机 codex 取默认提示词（不联网、临时目录用完即删）。`cargo test --lib codex_instructions_extract_real -- --ignored --nocapture`
 #[test]
 #[ignore = "需要本机装着 codex"]
@@ -2844,6 +2878,8 @@ fn codex_instructions_extract_real() {
     let text = extract_codex_base_instructions().expect("取不到");
     eprintln!("{} 字，用时 {:?}，开头：{}", text.chars().count(), t.elapsed(), &text[..80]);
     assert!(plausible_codex_instructions(&text));
+    // 取的是实发版本：Codex 默认没开计划工具，实发的提示词里没有 update_plan 两段
+    assert!(!text.contains("update_plan"), "取到了会话文件里没删减的模板");
     // 临时目录（后台每 0.2 秒重试删、最多 30 秒）清干净：轮询到清空，别死等固定秒数（Codex 0.169 起 Windows 上约 20 秒才放句柄）
     let tmp = crate::storage::config_root().unwrap().join("tmp");
     let count_left = || {
