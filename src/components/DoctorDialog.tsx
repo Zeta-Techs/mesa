@@ -111,7 +111,7 @@ export function DoctorDialogHost() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="ccode-doctor-title"
-        className="flex max-h-full w-full max-w-[32rem] flex-col rounded-lg border border-hairline ccode-float-surface p-5"
+        className="flex max-h-full w-full max-w-lg flex-col rounded-lg border border-hairline ccode-float-surface p-5"
       >
         <h2 id="ccode-doctor-title" className="text-sm font-semibold leading-6 text-l1">
           「{req.stepName}」继续之前，先处理这几件事
