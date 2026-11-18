@@ -1208,6 +1208,7 @@ fn pty_spawn_sync(
         discuss,
         run_id.as_deref(),
         task_id.as_deref(),
+        resume_session_id.is_some(),
     )?;
     if opened.is_none() {
         let reuse = reuse_key.as_deref().unwrap_or("");

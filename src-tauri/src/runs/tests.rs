@@ -572,6 +572,43 @@ fn unwritten_session_is_replaced_so_the_run_reopens_fresh() {
     assert_eq!(reopened.session_id.as_deref(), Some("s3"));
 }
 
+/// 更新重启后恢复出的标签点「跟进更新」：不接回会话的新一轮遇到标签上已结束的 Run 不再沿用，
+/// 另登记一条（2026-11-18 用户实测报「此 Run 不支持恢复」）；接回会话的照旧沿用、照旧核身份
+#[test]
+fn fresh_round_on_closed_run_opens_a_new_run() {
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&conn).unwrap();
+    conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status,closed_at) VALUES('old','scratch','/tmp/ccode-x','local_cli','codex','write_tree','now','completed','later')", []).unwrap();
+    conn.execute("INSERT INTO runs(id,task_kind,isolation_path,runtime,agent,permission,created_at,status) VALUES('live','scratch','/tmp/ccode-x','local_cli','codex','write_tree','now','running')", []).unwrap();
+    assert_eq!(reusable_run_id(&conn, Some("old"), false), None, "已结束、不接回：另开");
+    assert_eq!(reusable_run_id(&conn, Some("old"), true).as_deref(), Some("old"), "接回会话：沿用，交给 open_at 核身份");
+    assert_eq!(reusable_run_id(&conn, Some("live"), false).as_deref(), Some("live"), "还没结束的照旧沿用");
+    assert_eq!(reusable_run_id(&conn, None, false), None);
+    let fresh = open_at(
+        &conn,
+        OpenRunInput {
+            id: reusable_run_id(&conn, Some("old"), false),
+            task_id: None,
+            project_root: None,
+            task_kind: None,
+            task_ref: None,
+            isolation_path: "/tmp/ccode-x".into(),
+            runtime: Some("local_cli".into()),
+            agent: "codex".into(),
+            profile_id: None,
+            permission: Some("write_tree".into()),
+            reuse_key: None,
+            session_id: None,
+            custom_runtime_id: None,
+            internal: Some(false),
+            sentinel: Some(false),
+        },
+    )
+    .unwrap();
+    assert_ne!(fresh.id, "old");
+    assert!(fresh.closed_at.is_none());
+}
+
 #[test]
 fn resume_adopts_session_when_run_never_attached() {
     let conn = Connection::open_in_memory().unwrap();

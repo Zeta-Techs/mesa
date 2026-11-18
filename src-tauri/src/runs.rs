@@ -4539,10 +4539,15 @@ pub fn open_for_interactive_spawn(
     readonly: bool,
     existing_id: Option<&str>,
     task_id: Option<&str>,
+    resuming: bool,
 ) -> Result<Option<RunDto>, String> {
     if reuse.unwrap_or("").starts_with("login:") {
         return Ok(None);
     }
+    // 不接回会话的新一轮（跟进更新、新开一轮在这一步原来的标签里就地开）不沿用标签上已经结束的旧 Run，
+    // 当作新开标签另登记一条；否则旧 Run 已关、又没有可接回的会话，报「此 Run 不支持恢复」
+    // （2026-11-18 用户实测：更新重启后恢复出的标签点「跟进更新」）
+    let existing_id = db().ok().and_then(|conn| reusable_run_id(&conn, existing_id, resuming));
     let task_context = task_id.and_then(|id| db().ok().and_then(|conn| task_by_id(&conn, id).ok()));
     let dto = open_run_impl(OpenRunInput {
         id: existing_id.map(Into::into),
@@ -4568,6 +4573,16 @@ pub fn open_for_interactive_spawn(
     }
     Ok(Some(dto))
 }
+/// 标签上的 Run 这次还能不能沿用：接回会话的照旧沿用（由 open_at 核身份）；不接回的新一轮遇到已结束的 Run 不沿用
+fn reusable_run_id(conn: &Connection, existing_id: Option<&str>, resuming: bool) -> Option<String> {
+    let id = existing_id?;
+    if resuming {
+        return Some(id.to_string());
+    }
+    let closed = get_run_at(conn, id).ok().flatten().is_some_and(|run| run.closed_at.is_some());
+    (!closed).then(|| id.to_string())
+}
+
 pub fn open_headless(
     agent: &str,
     profile: &str,
