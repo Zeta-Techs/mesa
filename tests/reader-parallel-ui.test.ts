@@ -10,7 +10,8 @@ test("对照栏：切段后自动按批翻译、碎片不翻、失败可重试�
     stdin: {
       contents: `export {createElement, act, createRef} from 'react';
         export {createRoot} from 'react-dom/client';
-        export {default as Pane} from './src/components/ReaderParallelPane';`,
+        export {default as Pane} from './src/components/ReaderParallelPane';
+        export {paragraphKey} from './src/pdf-paragraphs';`,
       resolveDir: process.cwd(), loader: "tsx",
     },
     bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
@@ -35,7 +36,7 @@ test("对照栏：切段后自动按批翻译、碎片不翻、失败可重试�
   } as typeof dom.window.HTMLElement.prototype.scrollTo;
   const compiled = { exports: {} as Record<string, any> };
   new Function("require", "module", "exports", bundle.outputFiles[0].text)(createRequire(import.meta.url), compiled, compiled.exports);
-  const { createElement: h, act, createRef, createRoot, Pane } = compiled.exports;
+  const { createElement: h, act, createRef, createRoot, Pane, paragraphKey } = compiled.exports;
 
   // 假文档：两页，PDF 坐标原点在页底（视口 y = 800 - y）
   const item = (str: string, x: number, y: number) => ({ str, transform: [10, 0, 0, 10, x, 800 - y], width: 400, hasEOL: true });
@@ -112,8 +113,41 @@ test("对照栏：切段后自动按批翻译、碎片不翻、失败可重试�
     const para = dom.window.document.querySelector<HTMLElement>('[data-para-id="2:0"]')!;
     await act(async () => para.click());
     assert.deepEqual(scrolls.at(-1)?.[0], 2);
-  } finally {
+
+    // 存在项目里的译文：先读完再翻，存过的段落不再送；新翻好的存回去
     await act(async () => root.unmount());
+    const root2 = createRoot(dom.window.document.getElementById("root")!);
+    prompts.length = 0;
+    const saved: Array<{ hash: string; zh: string }> = [];
+    let release: (v: Record<string, string>) => void = () => {};
+    const loading = new Promise<Record<string, string>>((r) => (release = r));
+    await act(async () =>
+      root2.render(
+        h(Pane, {
+          apiRef, doc, pdfPath: "/p/other.pdf", title: null, glossary: [], translate, unavailable: null,
+          loadCache: () => loading, saveCache: (e: typeof saved) => saved.push(...e),
+          onMarks() {}, onScrollPdf() {}, onClose() {}, roomy: false, onToggleRoom() {},
+        }),
+      ),
+    );
+    await settle();
+    assert.equal(prompts.length, 0, "已存的译文没读完不开翻");
+    assert.match(text(), /正在读取已存的译文/);
+    await act(async () => release({ [paragraphKey("Third paragraph on the next page here.")]: "存过的第三段" }));
+    await settle();
+    assert.equal(prompts.length, 1, "只翻没存过的第 1 页");
+    assert.match(text(), /存过的第三段/);
+    assert.deepEqual(saved.map((e) => e.zh), ["第一段译文 $T_i$", "第二段译文"]);
+    await act(async () => root2.unmount());
+
+  } finally {
+    await act(async () => {
+      try {
+        root.unmount();
+      } catch {
+        /* 中途已卸载 */
+      }
+    });
     for (const [key, desc] of restore) {
       if (desc) Object.defineProperty(globalThis, key, desc);
       else delete (globalThis as Record<string, unknown>)[key];

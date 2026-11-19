@@ -28,7 +28,8 @@ export type ParallelMark = { page: number; boxes: readonly PdfFracBox[]; tone: "
 const CONCURRENCY = 2;
 /** 切段最多读多少页（再长的书按需另说） */
 const MAX_PAGES = 500;
-/** 本次打开 Mesa 内的译文（按 PDF 路径，再按段落哈希）；换篇、关对照、重进都不丢 */
+/** 本次打开 Mesa 内的译文（按 PDF 路径，再按段落哈希）；换篇、关双语、重进都不丢。持久的那份在项目
+ *  `.ccode/reader-translations/`（loadCache / saveCache，Rust reader_tl_cache_*），打开时并进来 */
 const sessionCache = new Map<string, Map<string, string>>();
 const SHOW_ORIGINAL_KEY = "ccode.readerParallelOriginal";
 
@@ -70,6 +71,8 @@ export default function ReaderParallelPane({
   title,
   glossary,
   translate,
+  loadCache,
+  saveCache,
   unavailable,
   onMarks,
   onScrollPdf,
@@ -86,6 +89,10 @@ export default function ReaderParallelPane({
   glossary: readonly GlossaryEntry[];
   /** 送一次翻译（ai_prompt fnKey="translate"），返回模型原文 */
   translate: (prompt: string) => Promise<string>;
+  /** 读这篇存在项目里的译文（{ 段落哈希: 译文 }）；读完才开始翻，免得把存过的又翻一遍 */
+  loadCache?: () => Promise<Record<string, string>>;
+  /** 翻好一批就存进项目 */
+  saveCache?: (entries: { hash: string; zh: string }[]) => void;
   /** 没有能用的翻译配置时的说法（null = 能用） */
   unavailable: string | null;
   onMarks: (marks: ParallelMark[]) => void;
@@ -108,6 +115,28 @@ export default function ReaderParallelPane({
     return m;
   }, [pdfPath]);
   const statesRef = useRef(new Map<string, ParaState>());
+  const [cacheReady, setCacheReady] = useState(!loadCache);
+  useEffect(() => {
+    if (!loadCache) return;
+    let live = true;
+    setCacheReady(false);
+    loadCache()
+      .then((stored) => {
+        if (!live) return;
+        for (const [h, zh] of Object.entries(stored)) if (!cache.has(h)) cache.set(h, zh);
+      })
+      .catch(() => {
+        /* 读不到就当没存过 */
+      })
+      .finally(() => {
+        if (live) setCacheReady(true);
+      });
+    return () => {
+      live = false;
+    };
+    // loadCache 跟 PDF 走（ReaderOverlay 按 pdfPath 稳住）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cache]);
   const [, setTick] = useState(0);
   const bump = useCallback(() => setTick((t) => t + 1), []);
   const [showOriginal, setShowOriginal] = useState(loadShowOriginal);
@@ -162,7 +191,7 @@ export default function ReaderParallelPane({
 
   // ----- 翻译调度：当前页往后三页（或全文），两批并行，同一段原文只翻一次 -----
   const pump = useCallback(() => {
-    if (unavailable) return;
+    if (unavailable || !cacheReady) return;
     const gen = genRef.current;
     const all = pagesRef.current;
     const pageCount = Math.max(0, ...all.keys());
@@ -184,15 +213,18 @@ export default function ReaderParallelPane({
         .then((raw) => {
           if (gen !== genRef.current) return;
           const got = parseParallelBatch(raw, items.map((i) => i.id));
+          const saved: { hash: string; zh: string }[] = [];
           batch.paras.forEach((p, i) => {
             const zh = got.get(`P${i + 1}`);
             if (zh) {
               cache.set(p.hash, zh);
+              saved.push({ hash: p.hash, zh });
               statesRef.current.set(p.hash, { status: "done", zh });
             } else {
               statesRef.current.set(p.hash, { status: "failed", error: "这段没有译文返回" });
             }
           });
+          if (saved.length > 0) saveCache?.(saved);
         })
         .catch((e: unknown) => {
           if (gen !== genRef.current) return;
@@ -205,7 +237,7 @@ export default function ReaderParallelPane({
           pump();
         });
     }
-  }, [unavailable, stateOf, title, glossary, translate, cache, bump]);
+  }, [unavailable, cacheReady, stateOf, title, glossary, translate, cache, bump, saveCache]);
   useEffect(() => {
     runningRef.current = 0;
   }, [doc]);
@@ -324,6 +356,8 @@ export default function ReaderParallelPane({
             ? unavailable
             : reading
               ? `正在读取第 ${reading.done} / ${reading.total} 页…`
+              : !cacheReady
+                ? "正在读取已存的译文…"
               : `已译 ${progress.done} / ${progress.total} 段${progress.busy > 0 ? ` · 正在翻 ${progress.busy} 段` : ""}${
                   progress.failed > 0 ? ` · ${progress.failed} 段没翻成` : ""
                 }`}

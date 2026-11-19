@@ -1133,7 +1133,7 @@ components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
 components/ReaderParallelPane.tsx   # 沉浸阅读区「双语对照」译文栏（2026-11-19）：PDF 文档到手逐页切段（pdf-paragraphs）、按 reader-parallel 调度
                                     # 当前页往后三页 / 翻译全文、两批并行、编号行批量协议；两边按段落锚点同步（程序滚动 250ms 静默），PDF 上画段落框经 onMarks 交回；
-                                    # 存进笔记 / 问这段 / 重译 / 重试；译文按 PDF 路径 + 段落哈希缓存在内存（tests/reader-parallel-ui.test.ts）
+                                    # 存进笔记 / 问这段 / 重译 / 重试；译文按段落哈希缓存（内存 + 项目 .ccode/reader-translations/，已存的读完才开翻）（tests/reader-parallel-ui.test.ts）
   acceptance-log.ts          # 验收账本文案：kind → 人话（进主仓 ≠ 科学验收）；acceptanceEntryRow = 设置抽屉验收记录一行
                              #   （lit-watch→文献雷达、版本短号进悬浮、系统备注「定时巡检采纳」不重复；AcceptanceLogList 渲染）
   project-context-load.ts    # 启动环境说明拼装：读档案卡和顶层目录，失败仍返回能用的短包；
@@ -1957,6 +1957,8 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # PDF 项目根配对优先、再看 included.json pdf 字段；题名/摘要取 included.json，「待补」「待核」不算）+
                              # read_image_bytes 图片通道（png/jpg/jpeg/gif/webp/svg、20MB，白名单判定复用 pdf.rs 内核；read_image_raw 同校验、二进制 IPC 回原始字节）+
                              # read_audio_bytes 聊天层音频通道（mp3/wav/m4a/aac/aiff/flac/ogg、20MB、文件头校验，同一套白名单）+
+                             # reader_tl_cache_load/put 双语对照译文缓存（2026-11-19：.ccode/reader-translations/<PDF 键>.json，{段落哈希:译文}，
+                             #   键名白名单、单段 2 万字 / 单篇 8MB 上限、进程锁 + 原子写、info/exclude 不进 git）+
                              # save_reader_capture 圈选截图落 notes/assets/（PNG 魔数 + 同秒重名 -2/-3；写入内核 write_notes_asset
                              #   与 phone_drop 共用）/ append_note_image
                              # （追加进「我的想法」小节）+ 生词本 notes/glossary.md（list/append 术语小写去重/remove）+

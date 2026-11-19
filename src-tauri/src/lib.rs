@@ -1219,6 +1219,8 @@ pub fn run() {
             reader::append_glossary,
             reader::remove_glossary_entry,
             reader::append_note_translation,
+            reader::reader_tl_cache_load,
+            reader::reader_tl_cache_put,
             reader::append_note_annotation,
             reader::remove_note_annotation,
             reader::reader_paper_title,

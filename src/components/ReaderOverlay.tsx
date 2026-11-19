@@ -631,6 +631,17 @@ export default function ReaderOverlay({
     (prompt: string) => invoke<string>("ai_prompt", { profileId: null, fnKey: "translate", prompt }),
     [],
   );
+  /** 双语译文存在项目 .ccode/reader-translations/（按 PDF、段落哈希）；存不进去不打扰，下次再翻 */
+  const loadTlCache = useCallback(
+    () => invoke<Record<string, string>>("reader_tl_cache_load", { projectRoot, pdfPath }),
+    [projectRoot, pdfPath],
+  );
+  const saveTlCache = useCallback(
+    (entries: { hash: string; zh: string }[]) => {
+      void invoke("reader_tl_cache_put", { projectRoot, pdfPath, entries }).catch(() => {});
+    },
+    [projectRoot, pdfPath],
+  );
   /** 拖对照栏左边的分隔条：按 PDF 栏这一排的宽度换算百分比（25%–70%），松手记住 */
   const startParallelDrag = useCallback((e: React.PointerEvent) => {
     const row = parallelRowRef.current;
@@ -1613,6 +1624,8 @@ export default function ReaderOverlay({
                 title={translateTitle}
                 glossary={glossary}
                 translate={translateRaw}
+                loadCache={loadTlCache}
+                saveCache={saveTlCache}
                 unavailable={needsProfile ? "还没有可用的翻译配置（设置 → AI 与 Agent）" : null}
                 onMarks={setParallelMarks}
                 onScrollPdf={scrollPdfTo}

@@ -1332,6 +1332,122 @@ fn append_note_translation_sync(
 }
 
 /// 保存译段到笔记「## 译段」小节末尾（无则补小节；读-改-原子写，笔记栏 watcher 自动刷新）
+// ===== 双语对照译文缓存（2026-11-19）：项目 `.ccode/reader-translations/<PDF 键>.json` =====
+// 内容是 { 段落哈希: 译文 }（段落哈希由前端 pdf-paragraphs.ts paragraphKey 算），同一段原文永远只翻一次；
+// 不进 git（info/exclude，同研讨记录口径）。PDF 键 = 项目内相对路径（或只读资源的绝对路径）按 path_key 归一后的 SHA-256 前 16 位。
+
+const TL_CACHE_DIR: &str = ".ccode/reader-translations";
+/// 一篇的缓存文件上限：再大就不往里加（一本几百页的书也远到不了）
+const TL_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// 一段译文上限（字符）：超长的不存
+const TL_CACHE_ENTRY_MAX_CHARS: usize = 20_000;
+static TL_CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TlCacheEntry {
+    pub hash: String,
+    pub zh: String,
+}
+
+/// 段落哈希只认前端 cyrb53 的 36 进制写法（小写字母数字、不超过 16 位），挡住拿键名做文章
+fn tl_hash_ok(h: &str) -> bool {
+    !h.is_empty() && h.len() <= 16 && h.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
+fn tl_cache_file(project_root: &str, pdf_path: &str) -> Result<(PathBuf, PathBuf), String> {
+    use sha2::{Digest, Sha256};
+    let root = gated_root(project_root)?;
+    let pdf = crate::paths::canonicalize_plain(Path::new(&crate::sessions::expand_tilde(pdf_path)))
+        .map_err(|e| format!("PDF 不存在或不可读: {e}"))?;
+    if !readable_project_pdf(&root, &pdf) {
+        return Err("PDF 不在项目目录内或未登记为只读资源".into());
+    }
+    let key_src = pdf
+        .strip_prefix(&root)
+        .map(|rel| rel.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| pdf.to_string_lossy().into_owned());
+    let digest = Sha256::digest(crate::paths::path_key(&key_src).as_bytes());
+    let key: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    Ok((root.join(TL_CACHE_DIR).join(format!("{key}.json")), root))
+}
+
+fn read_tl_cache(path: &Path) -> std::collections::BTreeMap<String, String> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<std::collections::BTreeMap<String, String>>(&t).ok())
+        .map(|m| m.into_iter().filter(|(k, _)| tl_hash_ok(k)).collect())
+        .unwrap_or_default()
+}
+
+fn reader_tl_cache_load_sync(
+    project_root: &str,
+    pdf_path: &str,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let (file, _) = tl_cache_file(project_root, pdf_path)?;
+    Ok(read_tl_cache(&file))
+}
+
+fn reader_tl_cache_put_sync(project_root: &str, pdf_path: &str, entries: &[TlCacheEntry]) -> Result<(), String> {
+    let (file, root) = tl_cache_file(project_root, pdf_path)?;
+    let _guard = TL_CACHE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map = read_tl_cache(&file);
+    let mut size: usize = map.iter().map(|(k, v)| k.len() + v.len() + 8).sum();
+    let mut changed = false;
+    for e in entries {
+        let zh = e.zh.trim();
+        if !tl_hash_ok(&e.hash) || zh.is_empty() || zh.chars().count() > TL_CACHE_ENTRY_MAX_CHARS {
+            continue;
+        }
+        if map.get(&e.hash).map(String::as_str) == Some(zh) {
+            continue;
+        }
+        let add = e.hash.len() + zh.len() + 8;
+        if !map.contains_key(&e.hash) && size + add > TL_CACHE_MAX_BYTES {
+            continue;
+        }
+        size += add;
+        map.insert(e.hash.clone(), zh.to_string());
+        changed = true;
+    }
+    if !changed {
+        return Ok(());
+    }
+    let dir = file.parent().ok_or("缓存目录无效")?;
+    fs::create_dir_all(dir).map_err(|e| format!("建立译文缓存目录失败: {e}"))?;
+    // .ccode 若是指向根外的软链，拒写
+    let dir_c = crate::paths::canonicalize_plain(dir).map_err(|e| format!("译文缓存目录无效: {e}"))?;
+    if !crate::paths::path_within_path(&dir_c, &root) {
+        return Err("译文缓存目录超出项目根目录，拒绝写入".into());
+    }
+    crate::projects::exclude_in_git(&root, "/.ccode/reader-translations/");
+    let text = serde_json::to_string(&map).map_err(|e| e.to_string())?;
+    crate::profiles::atomic_write(&file, &text)
+}
+
+/// 读这篇 PDF 已存的译文（{ 段落哈希: 译文 }；没有就是空表）
+#[tauri::command]
+pub async fn reader_tl_cache_load(
+    project_root: String,
+    pdf_path: String,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    tauri::async_runtime::spawn_blocking(move || reader_tl_cache_load_sync(&project_root, &pdf_path))
+        .await
+        .map_err(|e| format!("读取译文缓存失败: {e}"))?
+}
+
+/// 把新翻好的段落并进这篇的缓存（同一哈希以新译文为准，重译后覆盖）
+#[tauri::command]
+pub async fn reader_tl_cache_put(
+    project_root: String,
+    pdf_path: String,
+    entries: Vec<TlCacheEntry>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || reader_tl_cache_put_sync(&project_root, &pdf_path, &entries))
+        .await
+        .map_err(|e| format!("保存译文缓存失败: {e}"))?
+}
+
 #[tauri::command]
 pub async fn append_note_translation(
     project_root: String,
@@ -1777,6 +1893,33 @@ mod tests {
         let pdf = papers.join(pdf_name);
         fs::write(&pdf, b"%PDF-fake").unwrap();
         (root, pdf)
+    }
+
+    // ===== 双语对照译文缓存 =====
+
+    #[test]
+    fn tl_cache_roundtrip_merges_and_rejects_bad_keys() {
+        let (root, pdf) = project_with_pdf("tlcache", "A.pdf");
+        let (r, p) = (root.to_string_lossy().into_owned(), pdf.to_string_lossy().into_owned());
+        assert!(reader_tl_cache_load_sync(&r, &p).unwrap().is_empty(), "没存过是空表");
+        let e = |h: &str, zh: &str| TlCacheEntry { hash: h.into(), zh: zh.into() };
+        reader_tl_cache_put_sync(&r, &p, &[e("abc123", "第一段"), e("../evil", "x"), e("ZZ", "大写不认"), e("def", "  ")]).unwrap();
+        reader_tl_cache_put_sync(&r, &p, &[e("xyz9", "第二段"), e("abc123", "第一段重译")]).unwrap();
+        let m = reader_tl_cache_load_sync(&r, &p).unwrap();
+        assert_eq!(m.len(), 2);
+        assert_eq!(m["abc123"], "第一段重译", "同一哈希以新译文为准");
+        assert_eq!(m["xyz9"], "第二段");
+        // 文件落在 .ccode/reader-translations/ 下、一篇一个
+        let files: Vec<_> = fs::read_dir(root.join(TL_CACHE_DIR)).unwrap().flatten().collect();
+        assert_eq!(files.len(), 1);
+        // 坏文件当空表读，不报错
+        fs::write(files[0].path(), "not json").unwrap();
+        assert!(reader_tl_cache_load_sync(&r, &p).unwrap().is_empty());
+        // 项目外的 PDF 拒绝
+        let outside = tmpdir("tlcache-out").join("B.pdf");
+        fs::write(&outside, b"%PDF").unwrap();
+        assert!(reader_tl_cache_put_sync(&r, &outside.to_string_lossy(), &[e("a1", "x")]).is_err());
+        let _ = fs::remove_dir_all(&root);
     }
 
     // ===== 建档配对（来源行锚点） =====
