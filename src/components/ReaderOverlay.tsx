@@ -57,6 +57,8 @@ import ReaderTranslatePanel, {
   type TlPending,
   type TlPlace,
 } from "./ReaderTranslatePanel";
+import { linkifyPdfRefs, pdfRefFromTarget } from "../md-pdf-refs";
+import type { QuoteCheck } from "../pdf-search";
 import {
   annotationSavedToast,
   buildNoteDraftPrompt,
@@ -819,7 +821,7 @@ export default function ReaderOverlay({
     briefedRef.current = target;
     void Promise.resolve(
       onInject(
-        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${target}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件，但来源行、「标注」「译段」「我的想法」三节是我自己的，不改也不往里加。`,
+        `【阅读上下文】我在沉浸阅读区读 PDF：${pdfPath}；配套笔记：${target}。之后我说「这篇」「笔记」都指它们；要改笔记就直接编辑这个文件，但来源行、「标注」「译段」「我的想法」三节是我自己的，不改也不往里加。引用 PDF 原文时写成 p.页码「原句」，原句照 PDF 原文一字不改地抄（不翻译、不改写），我这边会核对这句是不是真在那一页。`,
         true,
       ),
     ).then((err) => {
@@ -942,6 +944,110 @@ export default function ReaderOverlay({
     setJumpReq(null);
     setNoteFocus(null);
   }, [pdfPath, notePath]);
+
+  // ===== 对话回答里的 p.N「原句」：可点（跳 PDF 并闪原句），并核对这句是不是真在那一页 =====
+  // 聊天层宿主由 TerminalPage 渲染后 DOM 搬进右栏槽位，React 事件不经这里冒泡：点击与变化都挂原生监听
+  const [slotEl, setSlotEl] = useState<HTMLDivElement | null>(null);
+  const termSlotRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      termSlot(el);
+      setSlotEl(el);
+    },
+    [termSlot],
+  );
+  const quoteCheckRef = useRef<((page: number, quote: string) => Promise<QuoteCheck>) | null>(null);
+  const quoteCacheRef = useRef(new Map<string, QuoteCheck>());
+  const [quoteCheckerTick, setQuoteCheckerTick] = useState(0);
+  const onQuoteChecker = useCallback(
+    (fn: ((page: number, quote: string) => Promise<QuoteCheck>) | null) => {
+      quoteCheckRef.current = fn;
+      quoteCacheRef.current = new Map();
+      setQuoteCheckerTick((t) => t + 1);
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!slotEl) return;
+    // 换了核对函数（换文档、PDF 刚打开）：之前标过的全部重核
+    slotEl.querySelectorAll<HTMLElement>(".md-pdf-ref[data-pdf-check]").forEach((el) => {
+      delete el.dataset.pdfCheck;
+      delete el.dataset.pdfFoundPage;
+    });
+    const apply = (el: HTMLElement, r: QuoteCheck) => {
+      const page = el.dataset.pdfPage;
+      el.dataset.pdfCheck = r.status;
+      if (r.status === "elsewhere") el.dataset.pdfFoundPage = String(r.page);
+      el.title =
+        r.status === "found"
+          ? `第 ${page} 页找到这句原文，点了跳过去`
+          : r.status === "elsewhere"
+            ? `这句原文在第 ${r.page} 页，不在第 ${page} 页；点了跳到第 ${r.page} 页`
+            : r.status === "missing"
+              ? `PDF 里没找到这句原文（可能被改写或翻译过），自己核一下；点了跳到第 ${page} 页`
+              : `点了跳到第 ${page} 页`;
+    };
+    const scan = (roots: Iterable<Element>) => {
+      for (const root of roots) {
+        linkifyPdfRefs(root as HTMLElement, { quotesNearRef: true });
+        root.querySelectorAll<HTMLElement>(".md-pdf-ref[data-pdf-page]:not([data-pdf-check])").forEach((el) => {
+          const page = Number(el.dataset.pdfPage);
+          const quote = el.dataset.pdfQuote ?? "";
+          const check = quoteCheckRef.current;
+          if (!quote || !check) {
+            el.title = `点了跳到第 ${page} 页`;
+            return;
+          }
+          const key = `${page}\n${quote}`;
+          const hit = quoteCacheRef.current.get(key);
+          if (hit) {
+            apply(el, hit);
+            return;
+          }
+          el.dataset.pdfCheck = "pending";
+          void check(page, quote)
+            .catch((): QuoteCheck => ({ status: "unknown" }))
+            .then((r) => {
+              if (r.status !== "unknown") quoteCacheRef.current.set(key, r);
+              if (el.isConnected) apply(el, r);
+            });
+        });
+      }
+    };
+    scan(slotEl.querySelectorAll(".md-chat"));
+    // 流式输出时回答整段重写：同一帧里的变化合并成一次扫描，只扫变化所在的回答
+    let pending = new Set<Element>();
+    let raf = 0;
+    const mo = new MutationObserver((records) => {
+      for (const rec of records) {
+        const t = rec.target instanceof Element ? rec.target : rec.target.parentElement;
+        const chat = t?.closest(".md-chat");
+        if (chat) pending.add(chat);
+        else if (t) t.querySelectorAll(".md-chat").forEach((c) => pending.add(c));
+      }
+      if (pending.size === 0 || raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const batch = pending;
+        pending = new Set();
+        scan(batch);
+      });
+    });
+    mo.observe(slotEl, { childList: true, subtree: true, characterData: true });
+    const onClick = (e: MouseEvent) => {
+      const ref = pdfRefFromTarget(e.target);
+      if (!ref) return;
+      const el = (e.target as Element).closest<HTMLElement>(".md-pdf-ref");
+      const found = Number(el?.dataset.pdfFoundPage);
+      e.preventDefault();
+      jumpToPdf(Number.isInteger(found) && found > 0 ? { ...ref, page: found } : ref);
+    };
+    slotEl.addEventListener("click", onClick);
+    return () => {
+      mo.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+      slotEl.removeEventListener("click", onClick);
+    };
+  }, [slotEl, quoteCheckerTick, jumpToPdf]);
 
   /** 抽查：笔记里划一段「记下」/ 原文里划一段「记下」，都进右栏问题单 */
   const addNoteIssue = useCallback(
@@ -1398,6 +1504,7 @@ export default function ReaderOverlay({
               onRemoveAnnotation={noteReadOnly ? undefined : removeAnnotation}
               onRevealAnnotation={revealAnnotation}
               jumpReq={jumpReq}
+              onQuoteChecker={onQuoteChecker}
               sourceMark={tlSource}
               findHotkey
             />
@@ -1517,7 +1624,7 @@ export default function ReaderOverlay({
                       </div>
                     </div>
                     <div
-                      ref={termSlot}
+                      ref={termSlotRef}
                       // 聊天层露出终端时由 App.css 按此属性把终端画面排到下方（聊天层宿主自带摆位类）
                       data-reader-surface={
                         agentSurface === "chat" ? (agentPeek ? "peek" : "chat") : "terminal"

@@ -527,7 +527,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   md-image-hydrate.ts        # md 阅读/聊天图片占位水合：每次 layout 扫 data-md-src，本地图走 image-cache
   md-pdf-refs.ts             # md 阅读视图里把 p.3/第 3 页/Fig. 2/Table 1 包成可点引用（每次布局幂等重扫，跳过 a/code/公式；
                              # 标注行/译段引用块带上原文）+ 点中取跳转请求 + focusMdText（滚到含某段文字的块并闪）；
-                             # 只在阅读区笔记栏接线（FilePreviewEditor onPdfRef/focusText）（tests/reader-note.test.ts）
+                             # 阅读区笔记栏（FilePreviewEditor onPdfRef/focusText）与右栏对话回答（quotesNearRef：原句取页码旁引号）接线（tests/reader-note.test.ts）
   doc-thumb.ts               # 聊天附件文件卡：哪些能出预览（docThumbKind）、类型字（docTypeLabel）、HTML 排进一张纸出 SVG foreignObject 图片地址（htmlPageThumb）、表格前几行（read_sheet_preview）；
                              #   docThumb 按类型分派，pdf.js / mammoth 各自动态 import
   docx-thumb.ts              # Word（docx）附件首页预览：read_docx_bytes → mammoth → sanitizeDocumentHtml → htmlPageThumb
@@ -540,7 +540,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
                              # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）
   reader-note.ts             # 笔记 ↔ PDF 纯逻辑（2026-10-18）：「## 标注」行格式与解析（与 reader.rs 双端镜像，改动需同步）、
-                             # 八小节是否全空（让 AI 起草入口）与起草指令、页码/图表引用识别、标注 toast 口径（tests/reader-note.test.ts）
+                             # 八小节是否全空（让 AI 起草入口）与起草指令、页码/图表引用识别、对话回答里页码旁的原句 quoteNearRef、标注 toast 口径（tests/reader-note.test.ts）
   agent-binding 体系（2026-10-15 定稿，全文 docs/conventions/agent-binding.md）：
   project-agents.ts          # 绑定纯逻辑单一出处：slotPrefs（discuss 槽>项目默认）/ taskBindingLaunch /
                              #   resolveStepLaunch（步骤槽>discuss）/ resolveTaskModel（目标三档回落）/

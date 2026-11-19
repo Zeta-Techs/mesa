@@ -59,7 +59,9 @@ import {
   pdfLinkPreviewRegion,
   linkJumpNeedsReturn,
   backAtReadingPos,
+  checkQuoteInPages,
   type PdfOutlineEntry,
+  type QuoteCheck,
 } from "../pdf-search";
 import type { PdfAnnotation, PdfJumpReq } from "../reader-note";
 
@@ -142,6 +144,7 @@ function PdfContinuousView({
   onRemoveAnnotation,
   onRevealAnnotation,
   jumpReq,
+  onQuoteChecker,
   findHotkey,
   sourceMark,
 }: {
@@ -220,6 +223,8 @@ function PdfContinuousView({
   onRevealAnnotation?: (a: PdfAnnotation) => void;
   /** 笔记里点 p.3 / Fig. 2 交来的跳转（nonce 递增即执行一次） */
   jumpReq?: PdfJumpReq | null;
+  /** 交出「这句原文在不在第 N 页」的核对函数（对话回答里的 p.N「原句」用；换文档重交、卸载交 null） */
+  onQuoteChecker?: (check: ((page: number, quote: string) => Promise<QuoteCheck>) | null) => void;
   /** 译文卡正在显示的那段原文：常驻淡高亮（卡收起即撤），宿主据此让卡避开它 */
   sourceMark?: { page: number; quote: string } | null;
   /** ⌘/Ctrl+F 呼出查找（阅读区接线；其他宿主只有工具条按钮） */
@@ -878,6 +883,22 @@ function PdfContinuousView({
     textIndexRef.current = { doc: d, job };
     return job;
   }
+
+  // 对话回答里的 p.N「原句」：按查找同一份文字索引核对（首次用到才逐页取）
+  useEffect(() => {
+    if (!onQuoteChecker) return;
+    if (!doc) {
+      onQuoteChecker(null);
+      return;
+    }
+    onQuoteChecker(async (page, quote) => {
+      const pages = await ensureTextIndex();
+      return checkQuoteInPages(pages ? pages.map((p) => p.text) : null, page, quote);
+    });
+    return () => onQuoteChecker(null);
+    // ensureTextIndex 按 doc 缓存，doc 变了才需要重交
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, onQuoteChecker]);
 
   // ----- 查找（⌘/Ctrl+F 或工具条放大镜）：大小写不敏感，弯引号/各式短横线/行尾断词都认 -----
   const [findOpen, setFindOpen] = useState(false);

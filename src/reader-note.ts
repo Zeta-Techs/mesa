@@ -126,6 +126,31 @@ export function findPdfRefs(text: string): PdfRefMatch[] {
   return out.filter((r) => r.page === undefined || r.page > 0);
 }
 
+/** 对话回答里页码旁边引的原句：「…」“…”"…" 里至少 8 个字、和页码紧挨着的那句——中间只许空白、冒号、括号、破折号
+ *  （如 p.3「…」、“…”(p.5)、「…」（第 3 页）），隔着别的字（「，另见」）不算。两边都有取近的。
+ *  阅读会话被要求写成 p.N「原句」，这里只认引号，不拿上下文猜 */
+export const REF_QUOTE_MIN = 8;
+const REF_QUOTE_GAP = /^[\s:：()（）\[\]【】\-—–]{0,6}$/u;
+const REF_QUOTE = /「([^」]+)」|“([^”]+)”|"([^"\n]+)"/g;
+export function quoteNearRef(text: string, start: number, end: number): string {
+  let best = "";
+  let bestGap = Infinity;
+  REF_QUOTE.lastIndex = 0;
+  for (let m = REF_QUOTE.exec(text); m !== null; m = REF_QUOTE.exec(text)) {
+    const q = (m[1] ?? m[2] ?? m[3] ?? "").trim();
+    if (q.length < REF_QUOTE_MIN) continue;
+    const qStart = m.index;
+    const qEnd = m.index + m[0].length;
+    const between = qEnd <= start ? text.slice(qEnd, start) : qStart >= end ? text.slice(end, qStart) : null;
+    if (between === null || !REF_QUOTE_GAP.test(between)) continue;
+    if (between.length < bestGap) {
+      best = q;
+      bestGap = between.length;
+    }
+  }
+  return best;
+}
+
 /** 标注落笔记成功的 toast 口径（同 translationSavedToast：笔记栏编辑态有未保存改动时不回显，明说） */
 export function annotationSavedToast(noteDirty: boolean, withComment: boolean): string {
   const base = withComment ? "批注已记进笔记「标注」" : "已高亮，记在笔记「标注」里";

@@ -6,6 +6,7 @@ import {
   annotationSavedToast,
   buildNoteDraftPrompt,
   findPdfRefs,
+  quoteNearRef,
   formatNoteAnnotation,
   normalizeAnnotationQuote,
   noteDraftEmpty,
@@ -139,10 +140,41 @@ test("md 阅读视图链接化：幂等、跳过代码与链接、带上标注/�
       label: "第 2 页",
     });
     assert.equal(pdfRefFromTarget(host.querySelector("code")), null);
+    // 对话回答模式：原句取页码旁边引号里的那句
+    const chat = dom.window.document.createElement("div");
+    chat.innerHTML = "<p>作者认为 p.4「The Volmer step limits the rate」，另见 p.7。</p>";
+    linkifyPdfRefs(chat, { quotesNearRef: true });
+    const chatRefs = Array.from(chat.querySelectorAll<HTMLElement>(".md-pdf-ref"));
+    assert.deepEqual(pdfRefFromTarget(chatRefs[0]), {
+      page: 4,
+      quote: "The Volmer step limits the rate",
+      label: "p.4",
+    });
+    assert.deepEqual(pdfRefFromTarget(chatRefs[1]), { page: 7, label: "p.7" });
   } finally {
     g.document = saved.document;
     g.NodeFilter = saved.NodeFilter;
     g.Element = saved.Element;
     dom.window.close();
   }
+});
+
+test("quoteNearRef 取页码旁引号里的原句，太短、太远不认", () => {
+  const t = "作者说 p.3「The Volmer step is rate-limiting」，另见 p.9。";
+  const r = findPdfRefs(t);
+  assert.equal(quoteNearRef(t, r[0].start, r[0].end), "The Volmer step is rate-limiting");
+  // 引号在页码前面也认；两边都有取近的
+  const t2 = "“Tafel slope drops to 40 mV/dec” (p.5) 以及 “another long quoted sentence here”";
+  const r2 = findPdfRefs(t2);
+  assert.equal(quoteNearRef(t2, r2[0].start, r2[0].end), "Tafel slope drops to 40 mV/dec");
+  // 太短（< 8 字）
+  const t3 = "p.2「短句」";
+  assert.equal(quoteNearRef(t3, 0, 3), "");
+  // 中间隔着别的字不算
+  const far = "p.4 见上文「The quoted sentence is far away」";
+  assert.equal(quoteNearRef(far, 0, 3), "");
+  // 括号、冒号、破折号可以隔着
+  const paren = "「The quoted sentence sits here」（第 6 页）";
+  const pr = findPdfRefs(paren);
+  assert.equal(quoteNearRef(paren, pr[0].start, pr[0].end), "The quoted sentence sits here");
 });

@@ -413,6 +413,25 @@ export function backAtReadingPos(scrollTop: number, fromTop: number): boolean {
   return Math.abs(scrollTop - fromTop) < 48;
 }
 
+/** 对话回答里「p.N「原句」」的核对结果：found 这页找到；elsewhere 在别的页（page 为第一处）；
+ *  missing 全文都没有（多半是 AI 改写或译过）；unknown 抽不出文字（扫描件）或还没取到 */
+export type QuoteCheck =
+  | { status: "found" }
+  | { status: "elsewhere"; page: number }
+  | { status: "missing" }
+  | { status: "unknown" };
+
+/** pages = 各页归一后的页文本（ensureTextIndex 同口径，下标 0 = 第 1 页）；候选写法同标注重定位 */
+export function checkQuoteInPages(pages: readonly string[] | null, page: number, quote: string): QuoteCheck {
+  if (!pages || pages.every((t) => !t.trim())) return { status: "unknown" };
+  const cands = quoteSearchCandidates(quote);
+  if (cands.length === 0) return { status: "unknown" };
+  const has = (t: string | undefined) => !!t && cands.some((c) => t.includes(c));
+  if (has(pages[page - 1])) return { status: "found" };
+  const at = pages.findIndex((t) => has(t));
+  return at >= 0 ? { status: "elsewhere", page: at + 1 } : { status: "missing" };
+}
+
 /** 摘句在页内重定位的候选写法，依次试：原样 → 去掉词内连字符（摘句保留了行尾断开处的连字符，
  *  页文本按断词复原成一个词）→ 两者各取前 60 字（跨页摘句只找得到本页这一截）。
  *  查找（exact）只用原样：第 k 处要与页级计数对齐 */

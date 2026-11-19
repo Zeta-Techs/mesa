@@ -4408,6 +4408,19 @@ select:focus-visible {
   color: var(--color-l1);
   text-decoration-color: var(--color-cta);
 }
+/* 阅读区对话回答里 p.N「原句」的核对：这页找到（强调色虚线）/ 在别的页（警示色）/ 全文没找到（错误色波浪线）。
+   只是提醒自己核一下，不判 AI 对错 */
+.md-chat .md-pdf-ref[data-pdf-check="found"] {
+  text-decoration-color: var(--color-cta);
+}
+.md-chat .md-pdf-ref[data-pdf-check="elsewhere"] {
+  text-decoration-style: dashed;
+  text-decoration-color: var(--color-warn-text, var(--color-l2));
+}
+.md-chat .md-pdf-ref[data-pdf-check="missing"] {
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-err-text);
+}
 /* 从 PDF 高亮「在笔记里看」或审查意见行号定位到的那一段 / 表格行：常驻左线底色 + 脉冲淡出 */
 .md-body .md-target {
   background-color: color-mix(in srgb, var(--color-cta) 10%, transparent);

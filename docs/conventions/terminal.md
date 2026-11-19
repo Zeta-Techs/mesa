@@ -1177,6 +1177,12 @@
   图 2 / Table 1 / 表 1` 包成 `.md-pdf-ref`（`md-pdf-refs.ts`，每次布局幂等重扫，跳过 a/code/pre/公式）；页码在
   标注行或译段引用块里时带上那段原文，跳过去闪一下。图表编号走 `locateFigure`：行首图注优先，其次第一次提及。
   反向：PDF 高亮「在笔记里看」→ `focusText`（阅读态滚到含该行的块并闪，编辑态 Monaco 选中居中）。
+- **对话回答里的页码（2026-11-19）**：聊天层宿主是 TerminalPage 渲染、DOM 搬进右栏槽位的，React 事件不经 ReaderOverlay——
+  槽位上挂原生 MutationObserver（按帧合并、只扫变化所在的 `.md-chat`）跑 `linkifyPdfRefs(el, { quotesNearRef: true })`
+  与原生 click。原句只认页码紧挨着的引号（`quoteNearRef`：中间只许空白 / 冒号 / 括号 / 破折号，≥8 字），不拿上下文猜；
+  核对走 PdfContinuousView 交出的 `onQuoteChecker`（查找同一份文字索引，`checkQuoteInPages`：found / elsewhere / missing /
+  unknown），结果按页码 + 原句缓存，写在 `data-pdf-check` 上（下划线三色 + title），**只提醒核、不判对错**；elsewhere 点了跳真实页。
+  开场简报请会话把引用写成 `p.页码「原句」`、原句不译不改。
 - **让 AI 起草**：`noteDraftEmpty`（八小节标题出现过且都没有正文）时笔记栏顶一行入口，直发 `buildNoteDraftPrompt`
   给阅读会话（lit-notes 写法、原地编辑、来源行与三节机管小节不动）；会话没开好（running 且遮面已撤）给 toast 不发。
 - **阅读会话权限（2026-10-18）**：dispatchReaderSession 带 `permissionMode: "ask"`（这家 CLI 的 permissionModes 有 ask

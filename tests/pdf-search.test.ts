@@ -18,6 +18,7 @@ import {
   PDF_LINK_PREVIEW_H,
   linkJumpNeedsReturn,
   backAtReadingPos,
+  checkQuoteInPages,
   quoteSearchCandidates,
 } from "../src/pdf-search.ts";
 
@@ -222,4 +223,15 @@ test("返回阅读位置：同屏内的跳转不给，滚回 48px 内收掉", ()
   assert.equal(linkJumpNeedsReturn(9000, 1000, 800), true);
   assert.equal(backAtReadingPos(1030, 1000), true);
   assert.equal(backAtReadingPos(1100, 1000), false);
+});
+
+test("checkQuoteInPages：本页找到 / 在别的页 / 全文没有 / 扫描件", () => {
+  const pages = ["intro text here", "the volmer step is rate-limiting in acid", "nothing"];
+  assert.deepEqual(checkQuoteInPages(pages, 2, "The Volmer step is rate-limiting"), { status: "found" });
+  assert.deepEqual(checkQuoteInPages(pages, 3, "The Volmer step is rate-limiting"), { status: "elsewhere", page: 2 });
+  assert.deepEqual(checkQuoteInPages(pages, 2, "Heyrovsky step dominates"), { status: "missing" });
+  // 行尾断词：原句里带连字符也认（同标注重定位的候选写法）
+  assert.deepEqual(checkQuoteInPages(["electrochemical surface area"], 1, "electro-chemical surface area"), { status: "found" });
+  assert.deepEqual(checkQuoteInPages(["", " "], 1, "anything at all"), { status: "unknown" });
+  assert.deepEqual(checkQuoteInPages(null, 1, "anything at all"), { status: "unknown" });
 });

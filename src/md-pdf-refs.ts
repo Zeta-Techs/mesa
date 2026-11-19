@@ -2,6 +2,7 @@ import {
   findPdfRefs,
   quoteFromAnnotationText,
   quoteFromTranslationBlock,
+  quoteNearRef,
   type PdfJumpRef,
 } from "./reader-note.ts";
 
@@ -12,8 +13,9 @@ const SKIP = "a, code, pre, .md-pdf-ref, .md-cite, .katex, .md-math, .md-code, .
  * md 阅读视图里把「p.3」「第 3 页」「Fig. 2」「Table 1」包成可点的引用（阅读区笔记栏，点了跳 PDF）。
  * 幂等：已包过的跳过，每次布局后重扫一遍也安全（预览重绘会把正文盖回 marked 原样）。
  * 页码在标注行（「摘句」）或译段引用块里时，顺带记下那段原文，跳过去能闪一下原处。
+ * quotesNearRef：阅读区对话回答用——原句取页码旁边引号里的那句（quoteNearRef）。
  */
-export function linkifyPdfRefs(host: HTMLElement): void {
+export function linkifyPdfRefs(host: HTMLElement, opts: { quotesNearRef?: boolean } = {}): void {
   const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
     acceptNode: (n) =>
       n.parentElement?.closest(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
@@ -39,7 +41,9 @@ export function linkifyPdfRefs(host: HTMLElement): void {
       span.textContent = node.data.slice(r.start, r.end);
       if (r.page !== undefined) {
         span.dataset.pdfPage = String(r.page);
-        if (quote) span.dataset.pdfQuote = quote;
+        // 对话回答：取页码旁边引号里的原句（阅读区据此核对这句是否真在这一页）
+        const near = opts.quotesNearRef ? quoteNearRef(node.data, r.start, r.end) : "";
+        if (near || quote) span.dataset.pdfQuote = near || quote;
       }
       if (r.figure) span.dataset.pdfFigure = r.figure;
       if (r.table) span.dataset.pdfTable = r.table;
