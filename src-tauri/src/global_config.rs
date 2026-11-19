@@ -357,7 +357,14 @@ fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<
     for k in stale_values {
         env.remove(&k);
     }
-    for k in ["ANTHROPIC_MODEL", "CLAUDE_CODE_EFFORT_LEVEL", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_AUTO_COMPACT_WINDOW"] {
+    for k in [
+        "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_EFFORT_LEVEL",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "CLAUDE_CODE_EXTRA_BODY",
+    ] {
         env.remove(k);
     }
     let user_keys: Vec<String> = env.keys().cloned().collect();
@@ -397,6 +404,24 @@ fn patch_claude_settings(existing: Option<&str>, profile: &Profile, key: Option<
         for (k, val) in agents::claude_window_env(ctx) {
             env.insert(k, json!(val));
         }
+    }
+    // 与启动注入（agents.rs）同源：采样参数经 CLAUDE_CODE_EXTRA_BODY，输出上限经 CLAUDE_CODE_MAX_OUTPUT_TOKENS
+    // （2026-11-19 真 CLI 2.1.311 + 假网关实测 settings.json env 均生效）
+    let mut extra_body = serde_json::Map::new();
+    if let Some(t) = profile.request_policy.temperature {
+        extra_body.insert("temperature".into(), json!(t));
+    }
+    if let Some(p) = profile.request_policy.top_p {
+        extra_body.insert("top_p".into(), json!(p));
+    }
+    if !extra_body.is_empty() {
+        env.insert(
+            "CLAUDE_CODE_EXTRA_BODY".into(),
+            json!(Value::Object(extra_body).to_string()),
+        );
+    }
+    if let Some(max) = profile.request_policy.max_output_tokens {
+        env.insert("CLAUDE_CODE_MAX_OUTPUT_TOKENS".into(), json!(max.to_string()));
     }
     let effort = profile
         .request_policy
@@ -2199,6 +2224,8 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
         "ANTHROPIC_CUSTOM_MODEL_OPTION_NAME",
         "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+        "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+        "CLAUDE_CODE_EXTRA_BODY",
         "CLAUDE_CODE_SUBAGENT_MODEL",
     ]
     .iter()
@@ -2251,19 +2278,33 @@ fn patch_claude_settings_official(existing: &str) -> Result<String, String> {
     to_pretty(&v)
 }
 
-/// CodeBuddy：settings.json 的 env 撤 CODEBUDDY_* 端点 / 密钥，非官方模型名一并撤（env 与顶层 `model` 都看）。
+/// CodeBuddy：settings.json 的 env 撤 CODEBUDDY_* 端点 / 密钥 / 自定义头与输出上限；
+/// 原先带 CODEBUDDY_BASE_URL（中转配置）时连同 env 与顶层 `model` 一并撤掉，免得中转模型名留在官方账号里；
+/// 否则只撤非官方模型名。
 fn patch_codebuddy_settings_official(existing: &str) -> Result<String, String> {
     let mut v = parse_json_doc(Some(existing))?;
-    json_env_remove(
-        &mut v,
-        &["CODEBUDDY_BASE_URL", "CODEBUDDY_API_KEY", "CODEBUDDY_AUTH_TOKEN", "CODEBUDDY_CUSTOM_HEADERS"],
-        &["CODEBUDDY_MODEL"],
-        "codebuddy",
-    );
+    let had_relay_url = v
+        .pointer("/env/CODEBUDDY_BASE_URL")
+        .and_then(|x| x.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let mut drop_keys = vec![
+        "CODEBUDDY_BASE_URL",
+        "CODEBUDDY_API_KEY",
+        "CODEBUDDY_AUTH_TOKEN",
+        "CODEBUDDY_CUSTOM_HEADERS",
+        "CODEBUDDY_CODE_MAX_OUTPUT_TOKENS",
+    ];
+    let model_keys: &[&str] = if had_relay_url {
+        drop_keys.push("CODEBUDDY_MODEL");
+        &[]
+    } else {
+        &["CODEBUDDY_MODEL"]
+    };
+    json_env_remove(&mut v, &drop_keys, model_keys, "codebuddy");
     let foreign_top = v
         .get("model")
         .and_then(|m| m.as_str())
-        .is_some_and(|m| !official_model_kept("codebuddy", m));
+        .is_some_and(|m| had_relay_url || !official_model_kept("codebuddy", m));
     if foreign_top {
         if let Some(o) = v.as_object_mut() {
             o.remove("model");

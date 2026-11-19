@@ -368,10 +368,45 @@ GLOBAL_DROP_PREFIXES = ("ANTHROPIC_", "OPENAI_", "AZURE_OPENAI_", "GEMINI_", "GO
                         "OPENCODE_", "XDG_CONFIG_HOME")
 
 
+def _req_temp(r):
+    b = r.get("body") or {}
+    if "temperature" in b and b["temperature"] is not None:
+        return b["temperature"]
+    return (b.get("generationConfig") or {}).get("temperature")
+
+
+def _req_max_tokens(r):
+    b = r.get("body") or {}
+    gc = b.get("generationConfig") or {}
+    return b.get("max_tokens") or b.get("max_completion_tokens") or b.get("max_output_tokens") or gc.get("maxOutputTokens")
+
+
+def _req_effort(r):
+    b = r.get("body") or {}
+    if isinstance(b.get("output_config"), dict) and b["output_config"].get("effort"):
+        return b["output_config"]["effort"]
+    if isinstance(b.get("reasoning"), dict) and b["reasoning"].get("effort"):
+        return b["reasoning"]["effort"]
+    return b.get("reasoning_effort") or (b.get("reasoning") if isinstance(b.get("reasoning"), str) else None)
+
+
+# 各家在全局配置里已实证可落盘且外部 CLI 会随请求带出的策略项（2026-11-19 本机真 CLI + 假网关逐家实测）
+GLOBAL_POLICY_EXPECT = {
+    "claude-code": ("temp", "max", "effort"),
+    "gemini": ("temp", "max"),
+    "qwen": ("temp", "max", "effort"),
+    "grok": ("temp", "max", "header"),
+    "codex": ("effort", "header"),
+    "codebuddy": ("max",),
+    "opencode": ("temp", "header"),
+    "opencode2": ("temp", "header"),
+}
+
+
 def global_phase(agent, gw, adir):
     """Mesa 的真实设为全局写计划写进临时 HOME（e2e_write_global_config），再像用户在外面那样直接起 CLI 问一句：
-    假网关收到的请求要带这条连接的模型 e2e-global 和密钥 sk-e2e-global。这一层抓「写了但 CLI 不读」（2026-10-30
-    审计：Grok 顶层 api_key 不读、OpenCode .jsonc 盖过 .json 一类）"""
+    假网关收到的请求要带这条连接的模型 e2e-global、密钥 sk-e2e-global 与已落盘的策略参数。这一层抓「写了但 CLI 不读」
+    （2026-10-30 审计：Grok 顶层 api_key 不读、OpenCode .jsonc 盖过 .json 一类；2026-11-19 补齐策略落盘验证）"""
     # 临时 HOME 放在用户目录下、不放系统临时目录：CodeBuddy 的家目录在系统临时目录里时不展开 models.json 的 ${VAR}
     # （2026-10-30 本机 2.178 实测，真实家目录与 /tmp 都正常），测的应是用户真实环境的行为
     parent = os.path.join(os.path.expanduser("~"), ".mesa-canary-global")
@@ -381,7 +416,15 @@ def global_phase(agent, gw, adir):
     os.makedirs(work)
     # 写计划按搬迁变量找目录（CODEX_HOME 等）：本机设了就会写进真实配置目录，这里一并去掉
     env = {k: v for k, v in os.environ.items() if not k.upper().startswith(GLOBAL_DROP_PREFIXES)}
-    env.update(E2E_BASE=gw.base, E2E_GLOBAL_HOME=home, E2E_AGENT=mesa(agent))
+    env.update(
+        E2E_BASE=gw.base,
+        E2E_GLOBAL_HOME=home,
+        E2E_AGENT=mesa(agent),
+        E2E_GLOBAL_TEMP="0.35",
+        E2E_GLOBAL_MAX_TOKENS="1234",
+        E2E_GLOBAL_EFFORT="high",
+        E2E_GLOBAL_HEADER="X-Mesa-Probe=E2E_PROBE_HDR",
+    )
     # 写法按本机装的大版本分（OpenCode 2.x 写原生 providers）：测试态默认当查不到版本，这里按真 CLI 走
     if agent in MESA_ID:
         env["MESA_E2E_REAL_CLI"] = "1"
@@ -395,7 +438,8 @@ def global_phase(agent, gw, adir):
         json.dump({work: "TRUST_FOLDER"}, open(os.path.join(home, ".gemini", "trustedFolders.json"), "w", encoding="utf-8"))
     cenv = {k: v for k, v in os.environ.items() if not k.upper().startswith(GLOBAL_DROP_PREFIXES)}
     # 本机假网关不走代理（Grok 的断网代理也不能挡住它；同 e2e-model-routing 各脚本）
-    cenv.update(HOME=home, USERPROFILE=home, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+    cenv.update(HOME=home, USERPROFILE=home, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost",
+                E2E_PROBE_HDR="mesa-global-ok")
     # Windows 上 Codex 的家目录不看 USERPROFILE（取系统的用户目录）：不钉 CODEX_HOME 会读用户真实的 ~/.codex，
     # 拿本机渠道真发请求（2026-10-31 Windows 实测）。临时 HOME 下的位置与 Mesa 写计划一致
     if agent == "codex":
@@ -425,10 +469,24 @@ def global_phase(agent, gw, adir):
         os.rmdir(parent)
     except OSError:
         pass
-    return {
+    out = {
         "全局配置：外部 CLI 用的是 Mesa 写的模型": bool(model_hit),
         "全局配置：外部 CLI 带的是 Mesa 写的密钥": any(r.get("authTail") == "sk-e2e-global"[-8:] for r in model_hit),
     }
+    expect = GLOBAL_POLICY_EXPECT.get(agent, ())
+    if "temp" in expect:
+        out["全局配置：外部 CLI 带的是 Mesa 写的温度"] = any(
+            isinstance(_req_temp(r), (int, float)) and abs(_req_temp(r) - 0.35) < 1e-6 for r in model_hit
+        )
+    if "max" in expect:
+        out["全局配置：外部 CLI 带的是 Mesa 写的输出上限"] = any(_req_max_tokens(r) == 1234 for r in model_hit)
+    if "effort" in expect:
+        out["全局配置：外部 CLI 带的是 Mesa 写的思考档"] = any(_req_effort(r) == "high" for r in model_hit)
+    if "header" in expect:
+        out["全局配置：外部 CLI 带的是 Mesa 写的自定义请求头"] = any(
+            (r.get("headers") or {}).get("x-mesa-probe") == "mesa-global-ok" for r in model_hit
+        )
+    return out
 
 
 def codex_instructions_phase(adir):
@@ -465,6 +523,14 @@ def gemini_alias_phase(adir):
     return {"Mesa 收的模型别名都换得出型号": code == 0}
 
 
+def agy_models_phase(adir):
+    """Antigravity CLI 官方账号切全局与模型列表依赖 `agy models`（未登录时无法拉线上列表，至少核对子命令入口仍在）"""
+    code, text = run([bin_path("agy"), "--help"], timeout=60)
+    open(os.path.join(adir, "agy-models-help.log"), "w", encoding="utf-8").write(f"exit {code}\n{text}")
+    has_sub = bool(re.search(r"^\s*models\b", text or "", re.M))
+    return {"帮助里仍有 models 子命令": code == 0 and has_sub}
+
+
 def probe_agent(agent, gw, out, skip_screen, deps):
     adir = os.path.join(out, agent)
     os.makedirs(adir, exist_ok=True)
@@ -496,6 +562,9 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     if agent == "gemini":
         log(f"[{agent}] 核对模型别名…")
         checks.update(gemini_alias_phase(adir))
+    if agent == "agy":
+        log(f"[{agent}] 核对模型子命令…")
+        checks.update(agy_models_phase(adir))
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
@@ -593,11 +662,20 @@ def changelog(agent, old, new):
             m = re.search(r"(\d+\.\d+\.\d+)$", rel.get("tag_name") or "")
             if m and not rel.get("prerelease"):
                 sections.append((m.group(1), [l.strip() for l in (rel.get("body") or "").splitlines() if l.strip().startswith(("-", "*"))]))
-    out = []
+    out, seen_pr = [], set()
+    pr_re = re.compile(r"(?:#|/pull/)(\d+)\b")
     for ver, lines in sections:
         if vtuple(old) < vtuple(ver) <= vtuple(new):
-            hits = [l for l in lines if CHANGELOG_KEYWORDS.search(l)]
-            out.extend(f"{ver} {l}" for l in hits)
+            for l in lines:
+                if not CHANGELOG_KEYWORDS.search(l):
+                    continue
+                # Qwen Release 同时含分类列表（- … (#123)）和底部 Full Changelog（* … /pull/123）：按 (版本, PR号) 去重
+                prs = tuple(sorted(set(pr_re.findall(l))))
+                if prs and (ver, prs) in seen_pr:
+                    continue
+                if prs:
+                    seen_pr.add((ver, prs))
+                out.append(f"{ver} {l}")
     return out[:80]
 
 

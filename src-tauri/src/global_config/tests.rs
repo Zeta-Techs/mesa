@@ -1436,14 +1436,32 @@ fn e2e_write_global_config() {
     p.base_url = Some(format!("{base}/{agent}{suffix}"));
     p.protocol = proto.map(Into::into);
     p.models = vec!["e2e-global".into()];
-    // 手动核对思考档时用：E2E_GLOBAL_MODEL 换成能力库认得的思考模型，E2E_GLOBAL_EFFORT 给这条连接设思考档
+    // 核对策略参数落盘（金丝雀或手动）：模型、思考档、采样参数、自定义请求头、以及切回官方清理
     if let Ok(m) = std::env::var("E2E_GLOBAL_MODEL") {
         p.models = vec![m];
     }
     if let Ok(e) = std::env::var("E2E_GLOBAL_EFFORT") {
         p.request_policy.reasoning_effort = Some(e);
     }
-    let mut plans = plan_writes(&home, &p, Some("sk-e2e-global"), &p.models).expect("写计划");
+    if let Ok(t) = std::env::var("E2E_GLOBAL_TEMP").and_then(|s| s.parse::<f64>().map_err(|_| std::env::VarError::NotPresent)) {
+        p.request_policy.temperature = Some(t);
+    }
+    if let Ok(t) = std::env::var("E2E_GLOBAL_MAX_TOKENS").and_then(|s| s.parse::<u64>().map_err(|_| std::env::VarError::NotPresent)) {
+        p.request_policy.max_output_tokens = Some(t);
+    }
+    if let Ok(h) = std::env::var("E2E_GLOBAL_HEADER") {
+        if let Some((k, v)) = h.split_once('=') {
+            p.request_policy.header_env.insert(k.trim().into(), v.trim().into());
+        }
+    }
+    let mut plans = if std::env::var("E2E_GLOBAL_OFFICIAL").ok().as_deref() == Some("1") {
+        p.account_type = profiles::AccountType::Official;
+        p.base_url = None;
+        p.models.clear();
+        plan_official_writes(&home, &p).expect("官方切回写计划")
+    } else {
+        plan_writes(&home, &p, Some("sk-e2e-global"), &p.models).expect("写计划")
+    };
     let moved: Vec<(String, PathBuf)> = plans
         .iter()
         .filter(|w| !w.path.starts_with(&home))
@@ -2390,5 +2408,82 @@ fn agy_set_global_supports_official_patch_and_rejects_api() {
     assert_eq!(fresh_written["model"], "Claude Sonnet 4.6 (Thinking)");
     fs::remove_dir_all(&fresh_home).ok();
     fs::remove_dir_all(&home).ok();
+}
+
+/// 逐家往返校验：先按中转「设为全局」（带采样参数/思考档/自定义请求头）落盘，再按官方账号切回，
+/// 默认模型与默认渠道指针均不再指向中转地址或中转模型（老对话渠道块按既有规则留存；opencode 无官方账号）
+#[test]
+fn official_switchback_clears_relay_default_across_agents() {
+    for agent in ["claude-code", "codex", "gemini", "qwen", "kimi", "codebuddy", "grok"] {
+        let home = tmpdir(&format!("switchback-{agent}"));
+        let bk = home.join("bk");
+        let mut relay = profile(agent);
+        relay.id = format!("relay-{agent}");
+        relay.base_url = Some(format!("http://127.0.0.1:18080/{agent}/v1"));
+        relay.models = vec!["e2e-global".into()];
+        relay.request_policy.temperature = Some(0.35);
+        relay.request_policy.max_output_tokens = Some(1234);
+        relay.request_policy.reasoning_effort = Some("high".into());
+        relay.request_policy.header_env.insert("X-Mesa-Probe".into(), "E2E_PROBE_HDR".into());
+        if matches!(agent, "qwen" | "kimi") {
+            relay.protocol = Some("openai".into());
+        }
+        let plans = plan_writes(&home, &relay, Some("sk-e2e-global"), &relay.models)
+            .unwrap_or_else(|e| panic!("{agent} 写中转失败: {e}"));
+        apply_plans(agent, &bk, &home, &plans).unwrap();
+
+        let mut off = profile(agent);
+        off.account_type = profiles::AccountType::Official;
+        off.base_url = None;
+        off.models.clear();
+        let back = plan_official_writes(&home, &off)
+            .unwrap_or_else(|e| panic!("{agent} 切官方失败: {e}"));
+        apply_plans(agent, &bk, &home, &back).unwrap();
+
+        match agent {
+            "claude-code" => {
+                let s = fs::read_to_string(home.join(".claude/settings.json")).unwrap();
+                assert!(
+                    !s.contains("127.0.0.1:18080")
+                        && !s.contains("sk-e2e-global")
+                        && !s.contains("e2e-global")
+                        && !s.contains("CLAUDE_CODE_MAX_OUTPUT_TOKENS")
+                        && !s.contains("CLAUDE_CODE_EXTRA_BODY"),
+                    "{s}"
+                );
+            }
+            "codex" => {
+                let s = fs::read_to_string(home.join(".codex/config.toml")).unwrap();
+                assert!(!s.contains("model_provider = \"custom\"") && !s.contains("model = \"e2e-global\""), "{s}");
+            }
+            "gemini" => {
+                let s = fs::read_to_string(home.join(".gemini/settings.json")).unwrap();
+                assert!(!s.contains("\"name\": \"e2e-global\"") && !s.contains("gemini-api-key"), "{s}");
+                let env = fs::read_to_string(home.join(".gemini/.env")).unwrap();
+                assert!(!env.contains("127.0.0.1:18080") && !env.contains("sk-e2e-global"), "{env}");
+            }
+            "qwen" => {
+                let s = fs::read_to_string(home.join(".qwen/settings.json")).unwrap();
+                assert!(!s.contains("127.0.0.1:18080") && !s.contains("sk-e2e-global") && !s.contains("e2e-global"), "{s}");
+            }
+            "kimi" => {
+                let s = fs::read_to_string(cli_dir(&home, "kimi").join("config.toml")).unwrap();
+                assert!(!s.contains("default_model = \""), "未登录时应撤掉 default_model: {s}");
+            }
+            "codebuddy" => {
+                let s = fs::read_to_string(home.join(".codebuddy/settings.json")).unwrap();
+                assert!(!s.contains("127.0.0.1:18080") && !s.contains("sk-e2e-global") && !s.contains("e2e-global"), "{s}");
+            }
+            "grok" => {
+                let s = fs::read_to_string(home.join(".grok/config.toml")).unwrap();
+                // 2026-10-31：老对话 [model.*] 节按约定保留，但 [models] 顶层默认模型与默认端点必须撤掉
+                assert!(!s.contains("default_model = \"e2e-global\""), "{s}");
+                let models_part = s.split("[model]").next().unwrap_or(&s);
+                assert!(!models_part.contains("127.0.0.1:18080") && !models_part.contains("sk-e2e-global"), "{s}");
+            }
+            _ => unreachable!(),
+        }
+        fs::remove_dir_all(&home).ok();
+    }
 }
 

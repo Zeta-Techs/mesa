@@ -57,7 +57,8 @@
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
 | Claude 模型别名 | `claude --help` 举的别名 Mesa 都收了（名单 `tests/fixtures/claude-model-aliases.json`）；每个别名都换得出型号 | `model_aliases_probe_real` |
 | Gemini 模型别名 | `tests/fixtures/gemini-model-aliases.json` 里每个别名都换得出型号（Gemini 帮助不列别名，新增别名靠更新日志） | `model_aliases_probe_real_gemini` |
-| 全局配置 | 「设为全局」写进去的配置，外部直接用 CLI 时还认不认：模型是 `e2e-global`、密钥是 `sk-e2e-global`（假网关只记密钥末 8 位）。Cursor 不支持设为全局，不跑。临时 HOME 靠 `HOME` / `USERPROFILE`，Codex 另设 `CODEX_HOME`（Windows 上它不认这两个，会读本机 `~/.codex`）；写计划那一步去掉本机的搬迁变量，免得写进真实配置目录 | `e2e_write_global_config`（Mesa 真写计划写进临时 HOME）+ 各家无头命令（`global_phase`） |
+| Antigravity 模型入口 | `agy --help` 仍保留 `models` 子命令（官方切全局与模型列表依赖它） | `agy_models_phase` |
+| 全局配置 | 「设为全局」写进去的配置，外部直接用 CLI 时还认不认：模型是 `e2e-global`、密钥是 `sk-e2e-global`（假网关只记密钥末 8 位），并按各家实证支持核对已落盘的采样参数 / 输出上限 / 思考档 / 自定义请求头引用。Cursor 不支持设为全局，不跑。临时 HOME 靠 `HOME` / `USERPROFILE`，Codex 另设 `CODEX_HOME`（Windows 上它不认这两个，会读本机 `~/.codex`）；写计划那一步去掉本机的搬迁变量，免得写进真实配置目录 | `e2e_write_global_config`（Mesa 真写计划写进临时 HOME）+ 各家无头命令（`global_phase`） |
 
 跑法（仓库根目录，三平台同一个写法；`run.mjs` 会自己找能跑的 Python 3）：
 

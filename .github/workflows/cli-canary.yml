@@ -39,7 +39,7 @@ jobs:
           @qwen-code/qwen-code@latest opencode-ai@latest @moonshot-ai/kimi-code@latest
           @tencent-ai/codebuddy-code@latest @xai-official/grok@latest
       # Cursor CLI、Antigravity CLI 只有官方安装脚本；装不上不挡别的家（金丝雀会把没装的列为跳过）。
-      # Antigravity CLI 目前只在 macOS 建了基线（baseline/darwin/agy.json），Windows 待本机 --accept 建好后再补安装步骤
+      # 两平台均已建基线（darwin / win32）
       - name: 装 Cursor CLI（macOS）
         if: runner.os == 'macOS'
         continue-on-error: true
@@ -59,6 +59,14 @@ jobs:
         run: |
           irm 'https://cursor.com/install?win32=true' | iex
           "$env:LOCALAPPDATA\cursor-agent" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: 装 Antigravity CLI（Windows）
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          irm 'https://antigravity.google/cli/install.ps1' | iex
+          "$env:LOCALAPPDATA\agy\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "$env:USERPROFILE\.antigravity\antigravity\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: 跑金丝雀
         shell: bash
         # --accept-unchanged：只是版本往前走、指纹没变的家，顺手把核对版本前移（随包进 Mesa，装好的 Mesa 也会从 main 取，决定聊天层降不降级）；
