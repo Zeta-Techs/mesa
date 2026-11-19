@@ -5,23 +5,26 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AppWindow,
   BookOpen,
+  Check,
   Copy,
   CopyPlus,
-  File,
   FilePlus,
   FolderClosed,
   FolderInput,
   FolderOpen,
   FolderPlus,
   Pencil,
+  Search,
   SquareTerminal,
   Trash2,
+  X,
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { FileTypeGlyph } from "./FileTypeMark";
 import { openFileInWindow } from "../file-window-open";
-import { FoldMark, LoadingRows } from "./PageFrame";
+import { FoldMark, iconActionClass, LoadingRows } from "./PageFrame";
 import { isScratchCwd } from "../quick-chat";
 import {
   hasChangedInside,
@@ -30,6 +33,7 @@ import {
   parentDir,
   pathWithin,
   revealFolderLabel,
+  samePath,
 } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { directoryErrorMessage } from "../terminal-cwd";
@@ -94,6 +98,13 @@ function relNeedsHidden(rel: string): boolean {
   return rel.split(/[\\/]/).some((seg) => seg.startsWith(".") && seg !== "." && seg !== ".." && seg !== ".ccode");
 }
 
+export type PathMutationEvent = {
+  kind: "rename" | "move" | "delete";
+  oldPath: string;
+  newPath?: string;
+  isDir: boolean;
+};
+
 /** FileTreeNode 的下传上下文：父组件需保证这些回调/引用稳定，memo 才有效 */
 interface TreeNodeCtx {
   root: string;
@@ -102,12 +113,14 @@ interface TreeNodeCtx {
   /** 键已 normalizeStatusKeys 归一（/ 分隔） */
   gitMap: Record<string, string>;
   highlight: string | null;
+  /** 当前右侧正在预览的文件绝对路径（常驻选中态） */
+  activePath?: string | null;
   load: (path: string) => Promise<void>;
   toggle: (path: string) => void;
   visibleFiles: DirEntryDto[];
   onOpenFile: (path: string, name: string, root: string, files: DirEntryDto[]) => void;
   onOpenTerminal: (path: string) => void;
-  onMenu: (menu: { x: number; y: number; path: string; isDir: boolean }) => void;
+  onMenu: (menu: { x: number; y: number; path: string; isDir: boolean; isRoot?: boolean }) => void;
   selectionOnly?: boolean;
 }
 
@@ -124,7 +137,7 @@ const FileTreeNode = memo(function FileTreeNode({
   depth: number;
   ctx: TreeNodeCtx;
 }) {
-  const { expanded, cache, gitMap, highlight, root, load, toggle } = ctx;
+  const { expanded, cache, gitMap, highlight, activePath, root, load, toggle } = ctx;
   const rowRef = useRef<HTMLDivElement>(null);
   // 搜索定位到这一项：滚进可视区（树已逐级展开）
   useEffect(() => {
@@ -134,6 +147,10 @@ const FileTreeNode = memo(function FileTreeNode({
   const children = cache[entry.path];
   const gitStatus = entry.isDir ? undefined : gitMap[normSep(entry.path)];
   const dirtyDir = entry.isDir && hasChangedInside(gitMap, entry.path);
+  const isActive =
+    !entry.isDir &&
+    Boolean(activePath) &&
+    samePath(entry.path, activePath!, IS_WINDOWS);
   // 展开才读取子目录（懒加载）
   useEffect(() => {
     if (entry.isDir && isOpen && !children) void load(entry.path);
@@ -142,27 +159,48 @@ const FileTreeNode = memo(function FileTreeNode({
     <>
       <div
         ref={rowRef}
-        role={ctx.selectionOnly ? "treeitem" : undefined}
-        tabIndex={ctx.selectionOnly ? 0 : undefined}
+        role="treeitem"
+        tabIndex={0}
         aria-label={ctx.selectionOnly ? entry.name : undefined}
-        aria-level={ctx.selectionOnly ? depth + 1 : undefined}
-        aria-expanded={ctx.selectionOnly && entry.isDir ? isOpen : undefined}
-        aria-selected={ctx.selectionOnly && !entry.isDir ? highlight === entry.path : undefined}
-        onKeyDown={ctx.selectionOnly ? (event) => {
+        aria-level={depth + 1}
+        aria-expanded={entry.isDir ? isOpen : undefined}
+        aria-selected={!entry.isDir ? (ctx.selectionOnly ? highlight === entry.path : isActive) : undefined}
+        onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
-          if (event.key === "ArrowRight" && entry.isDir && !isOpen) { event.preventDefault(); toggle(entry.path); return; }
-          if (event.key === "ArrowLeft" && entry.isDir && isOpen) { event.preventDefault(); toggle(entry.path); return; }
+          if (event.key === "ArrowRight" && entry.isDir && !isOpen) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggle(entry.path);
+            return;
+          }
+          if (event.key === "ArrowLeft" && entry.isDir && isOpen) {
+            event.preventDefault();
+            event.stopPropagation();
+            toggle(entry.path);
+            return;
+          }
           if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
-            const items = Array.from(event.currentTarget.closest('[role="tree"]')?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? []);
+            const items = Array.from(
+              event.currentTarget.closest('[role="tree"]')?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [],
+            );
             const index = items.indexOf(event.currentTarget);
-            const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : index + (event.key === "ArrowDown" ? 1 : -1);
-            event.preventDefault(); items[next]?.focus(); return;
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? items.length - 1
+                  : index + (event.key === "ArrowDown" ? 1 : -1);
+            event.preventDefault();
+            event.stopPropagation();
+            items[next]?.focus();
+            return;
           }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault();
+          event.stopPropagation();
           if (entry.isDir) toggle(entry.path);
           else ctx.onOpenFile(entry.path, entry.name, root, ctx.visibleFiles);
-        } : undefined}
+        }}
         onClick={() =>
           entry.isDir
             ? toggle(entry.path)
@@ -170,24 +208,30 @@ const FileTreeNode = memo(function FileTreeNode({
         }
         onContextMenu={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           ctx.onMenu({ x: e.clientX, y: e.clientY, path: entry.path, isDir: entry.isDir });
         }}
         title={ctx.selectionOnly ? entry.path : `${entry.isDir ? `${entry.path}\n单击展开或收起；右键可在这里打开终端、新建文件夹` : `${entry.path}\n单击在右边预览；右键看更多操作`}${entry.isSystem ? "\n系统目录" : ""}`}
-        className={`group flex cursor-pointer items-center gap-1 py-0.5 pr-2 text-xs hover:bg-hover ${
-          highlight === entry.path ? "bg-white/10" : ""
+        className={`group mx-1.5 flex h-7 cursor-pointer items-center gap-1.5 rounded-md pr-2 text-xs outline-none transition-colors focus-visible:bg-hover ${
+          highlight === entry.path
+            ? "bg-white/10 text-l1"
+            : isActive
+              ? "bg-seg-sel text-l1"
+              : "hover:bg-hover"
         } ${entry.isSystem ? "opacity-50" : ""}`}
-        style={{ paddingLeft: 6 + depth * 12 }}
+        style={{ paddingLeft: 4 + depth * 14 }}
       >
-        <span className="inline-flex w-7 shrink-0 justify-center">
+        <span className="inline-flex size-5 shrink-0 items-center justify-center">
           {entry.isDir ? (
             <button
               type="button"
+              tabIndex={-1}
               aria-label={isOpen ? `收起 ${entry.name}` : `展开 ${entry.name}`}
               onClick={(e) => {
                 e.stopPropagation();
                 toggle(entry.path);
               }}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+              className="inline-flex size-5 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
             >
               <FoldMark open={isOpen} />
             </button>
@@ -200,31 +244,35 @@ const FileTreeNode = memo(function FileTreeNode({
             <FolderClosed aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-folder" />
           )
         ) : (
-          <File aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-l4" />
+          <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+            <FileTypeGlyph path={entry.path} size={13} />
+          </span>
         )}
-        <span className="truncate text-l3">{entry.name}</span>
+        <span className={`truncate ${isActive ? "font-medium text-l1" : "text-l2"}`}>{entry.name}</span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
           {gitStatus && (
             <span
-              className={`font-mono text-micro opacity-75 ${STATUS_COLOR[gitStatus] ?? "text-l3"}`}
+              className={`font-mono text-micro font-medium opacity-80 ${STATUS_COLOR[gitStatus] ?? "text-l3"}`}
               title={STATUS_WORD[gitStatus] ?? gitStatus}
             >
               {gitStatus === "??" ? "?" : gitStatus}
             </span>
           )}
           {dirtyDir && (
-            <span className="text-l4" title="里面有未保存的改动">
-              ●
-            </span>
+            <span
+              className="size-1.5 rounded-full bg-warn-text/80"
+              title="里面有未保存的改动"
+              aria-label="里面有未保存的改动"
+            />
           )}
         </span>
       </div>
       {entry.isDir && isOpen && !children && (
         <div
-          className="py-1"
-          style={{ paddingLeft: 6 + (depth + 1) * 12 }}
+          className="mx-1.5 flex h-7 items-center"
+          style={{ paddingLeft: 26 + (depth + 1) * 14 }}
         >
-          <span className="block h-1.5 w-16 animate-pulse rounded-sm bg-inset" />
+          <span className="block h-1.5 w-16 animate-pulse rounded-full bg-inset" />
         </div>
       )}
       {entry.isDir &&
@@ -338,6 +386,8 @@ function FileTree({
   cwd,
   showHidden,
   refreshKey,
+  activePath,
+  watchActive = true,
   onOpenFile,
   onOpenTerminal,
   onOpenReader,
@@ -346,6 +396,7 @@ function FileTree({
   onRootNavigated,
   onRecoverDirectory,
   onShowHidden,
+  onPathMutated,
   actions,
 }: {
   cwd: string;
@@ -353,6 +404,10 @@ function FileTree({
   /** 定位到隐藏路径时自动打开「显示隐藏文件」 */
   onShowHidden?: (show: boolean) => void;
   refreshKey: number;
+  /** 当前右侧正在预览的文件路径（在树中常驻高亮） */
+  activePath?: string | null;
+  /** 页面可见时监听目录变化；隐藏时暂停 watcher（缺省 true） */
+  watchActive?: boolean;
   onOpenFile: (path: string, name: string, root: string, files: DirEntryDto[]) => void;
   onOpenTerminal: (path: string) => void;
   /** PDF/md 右键「⛶ 沉浸阅读」（批次 B1 阅读区入口；v3.98 起 md 笔记走 reader_for_note 配对 PDF，
@@ -367,6 +422,8 @@ function FileTree({
   onRootNavigated?: (path: string) => void;
   /** 当前根不可用时，打开终端的目录选择器 */
   onRecoverDirectory?: () => void;
+  /** 文件或目录重命名 / 移动 / 删除成功通知（供宿主同步更新或关闭预览） */
+  onPathMutated?: (event: PathMutationEvent) => void;
   /** 栏头行尾的按钮（显示隐藏文件 / 刷新 / 收起，由运行页给） */
   actions?: ReactNode;
 }) {
@@ -388,7 +445,13 @@ function FileTree({
   const [errorPath, setErrorPath] = useState<string | null>(null);
   const errorPathRef = useRef<string | null>(null);
   errorPathRef.current = errorPath;
-  const [menu, setMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    path: string;
+    isDir: boolean;
+    isRoot?: boolean;
+  } | null>(null);
   // 右键「沉浸阅读」：PDF 永远有；md 笔记配得上本篇 PDF 才有（note-pdf-pair.ts，菜单打开时去问，问到了这一项再出现）
   const menuNotePaired = useNotePaired(menu && !menu.isDir ? menu.path : null, Boolean(onOpenReader));
   const [gitMap, setGitMap] = useState<Record<string, string>>({});
@@ -408,21 +471,32 @@ function FileTree({
     };
   }, [root]);
 
-  // 切换对话（cwd 变化）时换根
+  // 切换对话（cwd 变化）时换根；用户取消则同步保留旧根，避免改动面板与文件树脱节
   useEffect(() => {
     if (cwd === rootRef.current) return;
+    let cancelled = false;
     void (async () => {
-      if ((await onRootChangeRef.current?.(cwd)) === false) return;
+      if ((await onRootChangeRef.current?.(cwd)) === false) {
+        if (!cancelled) onRootNavigatedRef.current?.(rootRef.current);
+        return;
+      }
+      if (cancelled) return;
       setRoot(cwd);
       onRootNavigatedRef.current?.(cwd);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [cwd]);
 
   const load = useCallback(
-    async (path: string) => {
+    async (path: string, showHiddenOverride?: boolean) => {
       const treeRootAtStart = rootRef.current;
       try {
-        const entries = await invoke<DirEntryDto[]>("list_dir", { path, showHidden });
+        const entries = await invoke<DirEntryDto[]>("list_dir", {
+          path,
+          showHidden: showHiddenOverride ?? showHidden,
+        });
         setCache((prev) => ({ ...prev, [path]: entries }));
         if (entries.length >= 2000 && treeRootAtStart === rootRef.current) {
           setError("此目录达到 2000 项展示上限，部分文件未列出。请用搜索查找。");
@@ -464,8 +538,9 @@ function FileTree({
     void loadGitMap();
   }, [loadGitMap, refreshKey]);
 
-  // 文件监听（P4）：根目录变化时重挂 watcher；fs-changed → 缓存失效 + git 装饰刷新
+  // 文件监听（P4）：根目录变化时重挂 watcher；不可见时暂停，切回时静默刷新一次
   useEffect(() => {
+    if (!watchActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let watchId: string | null = null;
@@ -491,7 +566,17 @@ function FileTree({
       unlisten?.();
       if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
     };
-  }, [root, load, loadGitMap, onFsEvent]);
+  }, [root, watchActive, load, loadGitMap, onFsEvent]);
+
+  const prevWatchActiveRef = useRef(watchActive);
+  useEffect(() => {
+    const was = prevWatchActiveRef.current;
+    prevWatchActiveRef.current = watchActive;
+    if (watchActive && !was) {
+      for (const p of [root, ...expandedRef.current]) void load(p);
+      void loadGitMap();
+    }
+  }, [watchActive, root, load, loadGitMap]);
 
   // 换根：清空缓存与展开状态
   useEffect(() => {
@@ -537,7 +622,7 @@ function FileTree({
     [],
   );
   /** 栏头下的名字输入行：新建文件 / 新建文件夹 / 重命名（file-ops.ts） */
-  const [nameDraft, setNameDraft] = useState<NameDraft | null>(null);
+  const [nameDraft, setNameDraft] = useState<(NameDraft & { isDir?: boolean }) | null>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const reloadAll = () => {
     for (const p of [root, ...expandedRef.current]) void load(p);
@@ -549,7 +634,14 @@ function FileTree({
     if (!d || !d.value.trim()) return;
     try {
       const made = await submitNameDraftCmd(d, root);
-      if (d.kind !== "rename") {
+      if (d.kind === "rename") {
+        onPathMutated?.({
+          kind: "rename",
+          oldPath: d.path,
+          newPath: made,
+          isDir: Boolean(d.isDir),
+        });
+      } else {
         setExpanded((prev) => new Set(prev).add(d.dir));
         if (!cacheRef.current[d.dir]) void load(d.dir);
       }
@@ -562,7 +654,7 @@ function FileTree({
   }
 
   function startNameDraft(d: NameDraft, isDir = false) {
-    setNameDraft(d);
+    setNameDraft({ ...d, isDir });
     requestAnimationFrame(() => {
       const input = nameInputRef.current;
       if (!input) return;
@@ -571,24 +663,32 @@ function FileTree({
     });
   }
 
-  /** 搜索结果定位：在树里从根逐级展开到那一项所在的文件夹，亮一下（不打开预览、不换根） */
+  /** 搜索结果定位：在树里从根逐级展开到那一项所在的文件夹并高亮；若是文件则同时在右侧打开预览 */
   async function locate(r: SearchResultDto) {
-    if (relNeedsHidden(r.rel) && !showHidden) onShowHidden?.(true);
+    const revealHidden = relNeedsHidden(r.rel) && !showHidden;
     const target = r.isDir ? r.path : parentDir(r.path);
     const chain: string[] = [];
     for (let p = target, i = 0; p && i < 64; p = parentDir(p), i++) {
       if (!pathWithin(p, root, IS_WINDOWS) || normSep(p) === normSep(root)) break;
       chain.unshift(p);
     }
-    for (const dir of chain) if (!cacheRef.current[dir]) await load(dir);
     setExpanded((prev) => {
       const next = new Set(prev);
       for (const dir of chain) next.add(dir);
       return next;
     });
+    if (revealHidden) {
+      // showHidden 切 true 后会统一清缓存并由已展开节点按新口径自动重载，不在此处抢加载避免竞态
+      onShowHidden?.(true);
+    } else {
+      for (const dir of chain) if (!cacheRef.current[dir]) await load(dir);
+    }
     setResults(null);
     setQuery("");
     setHighlight(r.path);
+    if (!r.isDir) {
+      onOpenFile(r.path, r.name, root, []);
+    }
     // 连续定位先清旧定时器，避免旧计时提前熄灭新高亮
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     highlightTimerRef.current = setTimeout(() => setHighlight(null), 2000);
@@ -629,6 +729,7 @@ function FileTree({
       cache,
       gitMap,
       highlight,
+      activePath,
       load,
       toggle,
       visibleFiles,
@@ -636,62 +737,134 @@ function FileTree({
       onOpenTerminal,
       onMenu: setMenu,
     }),
-    [root, expanded, cache, gitMap, highlight, load, toggle, visibleFiles, onOpenFile, onOpenTerminal],
+    [root, expanded, cache, gitMap, highlight, activePath, load, toggle, visibleFiles, onOpenFile, onOpenTerminal],
   );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 栏头：这段对话的目录（在工作区分支里时标「分支」；主仓库是常态，不标——没事不画点）+ 行尾动作 */}
-      <div className="flex h-9 shrink-0 items-center gap-1.5 pl-2.5 pr-1" title={root}>
-        <span className="min-w-0 truncate text-xs font-medium text-l2">{rootLabel(root)}</span>
+      {/* 栏头：这段对话的目录（在工作区分支里时标「分支」；主仓库是常态，不标——没事不画点）+ 根目录新建 + 行尾动作 */}
+      <div className="flex h-9 shrink-0 items-center gap-1.5 pl-3 pr-1.5" title={root}>
+        <span className="min-w-0 truncate text-xs font-medium text-l1">{rootLabel(root)}</span>
         {ctx?.kind === "worktree" && (
           <span
-            className="flex shrink-0 items-center gap-1 text-micro text-l3"
+            className="flex shrink-0 items-center gap-1 rounded-md bg-inset px-1.5 py-0.5 text-micro text-l3"
             title={`工作区「${ctx.workspaceName}」的工作树，改动属于分支 ${ctx.branch}`}
           >
             <span className="h-1.5 w-1.5 rounded-full bg-ok-text" />
             分支
           </span>
         )}
-        <span className="ml-auto flex shrink-0 items-center">{actions}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => startNameDraft({ kind: "file", dir: root, value: "" })}
+            title="在当前目录新建文件"
+            aria-label="新建文件"
+            className={iconActionClass}
+          >
+            <FilePlus size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => startNameDraft({ kind: "folder", dir: root, value: "" })}
+            title="在当前目录新建文件夹"
+            aria-label="新建文件夹"
+            className={iconActionClass}
+          >
+            <FolderPlus size={14} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+          {actions}
+        </span>
       </div>
-      {/* 文件名搜索（无描边，底色分层） */}
-      <div className="shrink-0 px-2 pb-1.5">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-          placeholder="搜文件名或后缀（pdf / .docx）"
-          aria-label="搜这个目录里的文件"
-          className="w-full rounded-md bg-inset px-2 py-1 text-xs text-l2 outline-none transition-colors placeholder:text-l4 focus:bg-raised"
-        />
+      {/* 文件名搜索（对齐全站 searchFieldClass：左侧图标 + 一键清空） */}
+      <div className="shrink-0 px-2 pb-2">
+        <div className="relative flex items-center">
+          <Search
+            size={13}
+            strokeWidth={1.8}
+            aria-hidden="true"
+            className="pointer-events-none absolute left-2.5 text-l4"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setQuery("");
+              }
+            }}
+            placeholder="搜文件名或后缀（pdf / .docx）"
+            aria-label="搜这个目录里的文件"
+            className="h-8 w-full rounded-md bg-inset pl-7 pr-7 text-xs text-l2 outline-none transition-colors placeholder:text-l3 focus:bg-raised"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              aria-label="清空搜索"
+              title="清空搜索（Esc）"
+              className="absolute right-1.5 flex size-5 items-center justify-center rounded-md text-l4 transition-colors hover:bg-hover hover:text-l1"
+            >
+              <X size={12} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
       {nameDraft && (
-        <div className="flex shrink-0 items-center gap-1 px-2 py-1">
-          <span className="max-w-[45%] shrink-0 truncate text-xs text-l4">{nameDraftPrompt(nameDraft).label}</span>
+        <div className="mx-2 mb-1.5 flex shrink-0 items-center gap-1 rounded-md border border-field bg-canvas px-2 py-1">
+          <span className="max-w-[38%] shrink-0 truncate text-micro text-l4">
+            {nameDraftPrompt(nameDraft).label}
+          </span>
           <input
             ref={nameInputRef}
             value={nameDraft.value}
             onChange={(e) => setNameDraft((d) => (d ? { ...d, value: e.target.value } : d))}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return;
-              if (e.key === "Enter") void submitNameDraft();
-              if (e.key === "Escape") setNameDraft(null);
+              if (e.key === "Enter") {
+                e.preventDefault();
+                e.stopPropagation();
+                void submitNameDraft();
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setNameDraft(null);
+              }
             }}
-            onBlur={() => void submitNameDraft()}
             placeholder={nameDraftPrompt(nameDraft).placeholder}
-            className="min-w-0 flex-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-xs text-l2 outline-none"
+            className="min-w-0 flex-1 bg-transparent px-1 py-0.5 text-xs text-l1 outline-none placeholder:text-l4"
           />
+          <button
+            type="button"
+            onClick={() => void submitNameDraft()}
+            title="确认（Enter）"
+            aria-label="确认"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-cta transition-colors hover:bg-hover"
+          >
+            <Check size={13} strokeWidth={2} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setNameDraft(null)}
+            title="取消（Esc）"
+            aria-label="取消"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-l4 transition-colors hover:bg-hover hover:text-l1"
+          >
+            <X size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
         </div>
       )}
       {error && (
-        <div className="mx-2 my-1 shrink-0 rounded-md border border-field ccode-well px-2 py-1.5 text-xs">
+        <div className="mx-2 my-1 shrink-0 rounded-lg border border-field ccode-well px-2.5 py-2 text-xs">
           <p className="text-warn-text">{error}</p>
           {errorPath === root && onRecoverDirectory && (
             <button
               type="button"
               onClick={onRecoverDirectory}
-              className="mt-1 rounded-sm border border-field bg-inset px-1.5 py-0.5 text-micro text-l2 hover:bg-hover"
+              className="mt-1.5 rounded-md border border-field bg-inset px-2 py-0.5 text-micro text-l2 transition-colors hover:bg-hover"
             >
               选择新目录
             </button>
@@ -699,39 +872,51 @@ function FileTree({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto pb-1">
+      <div
+        role="tree"
+        aria-label="项目文件树"
+        onContextMenu={(e) => {
+          if (e.target !== e.currentTarget) return;
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY, path: root, isDir: true, isRoot: true });
+        }}
+        className="min-h-0 flex-1 overflow-auto pb-2"
+      >
         {results !== null ? (
           results.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-l4">无匹配文件</p>
+            <p className="px-3 py-6 text-center text-xs text-l4">无匹配文件</p>
           ) : (
             results.map((r) => (
               <div
                 key={r.path}
                 onClick={() => void locate(r)}
-                title={`${r.path}\n点一下在树里找到它`}
-                className="cursor-pointer truncate px-2 py-0.5 text-xs text-l2 hover:bg-hover"
+                title={
+                  r.isDir
+                    ? `${r.path}\n点一下在树里找到它`
+                    : `${r.path}\n点一下在树里找到它并打开预览`
+                }
+                className="mx-1.5 flex h-7 cursor-pointer items-center gap-1.5 truncate rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover"
               >
                 {r.isDir ? (
                   <FolderClosed
                     aria-hidden="true"
-                    className="mr-1 inline-block h-3.5 w-3.5 text-folder"
+                    className="h-3.5 w-3.5 shrink-0 text-folder"
                   />
                 ) : (
-                  <File
-                    aria-hidden="true"
-                    className="mr-1 inline-block h-3.5 w-3.5 text-l4"
-                  />
+                  <span aria-hidden="true" className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                    <FileTypeGlyph path={r.path} size={13} />
+                  </span>
                 )}
-                {r.rel}
+                <span className="truncate">{r.rel}</span>
               </div>
             ))
           )
         ) : !children ? (
-          <div className="px-2">
+          <div className="px-3 py-1">
             <LoadingRows compact />
           </div>
         ) : children.length === 0 ? (
-          <p className="px-2 py-1 text-xs text-l4">空目录</p>
+          <p className="px-3 py-6 text-center text-xs text-l4">空目录</p>
         ) : (
           children.map((c) => <FileTreeNode key={c.path} entry={c} depth={0} ctx={nodeCtx} />)
         )}
@@ -783,29 +968,42 @@ function FileTree({
                   },
                   { separator: true },
                 ]),
-            {
-              label: "重命名",
-              icon: Pencil,
-              onSelect: () =>
-                startNameDraft({ kind: "rename", path: menu.path, value: basenameOf(menu.path) }, menu.isDir),
-            },
-            {
-              label: "复制一份",
-              icon: CopyPlus,
-              onSelect: () => {
-                void duplicatePath(menu.path, root).then(reloadAll, (e) => setError(String(e)));
-              },
-            },
-            {
-              label: "移动到…",
-              icon: FolderInput,
-              onSelect: () => {
-                void pickAndMove(menu.path, root, IS_WINDOWS).then(
-                  (to) => to && reloadAll(),
-                  (e) => setError(String(e)),
-                );
-              },
-            },
+            ...(!menu.isRoot
+              ? [
+                  {
+                    label: "重命名",
+                    icon: Pencil,
+                    onSelect: () =>
+                      startNameDraft({ kind: "rename", path: menu.path, value: basenameOf(menu.path) }, menu.isDir),
+                  },
+                  {
+                    label: "复制一份",
+                    icon: CopyPlus,
+                    onSelect: () => {
+                      void duplicatePath(menu.path, root).then(reloadAll, (e) => setError(String(e)));
+                    },
+                  },
+                  {
+                    label: "移动到…",
+                    icon: FolderInput,
+                    onSelect: () => {
+                      void pickAndMove(menu.path, root, IS_WINDOWS).then(
+                        (to) => {
+                          if (!to) return;
+                          onPathMutated?.({
+                            kind: "move",
+                            oldPath: menu.path,
+                            newPath: to,
+                            isDir: menu.isDir,
+                          });
+                          reloadAll();
+                        },
+                        (e) => setError(String(e)),
+                      );
+                    },
+                  },
+                ]
+              : []),
             ...(!menu.isDir && (/\.pdf$/i.test(menu.path) || menuNotePaired) && onOpenReader
               ? [
                   {
@@ -816,7 +1014,7 @@ function FileTree({
                   },
                 ]
               : []),
-            { separator: true },
+            ...(!menu.isRoot ? [{ separator: true }] : []),
             {
               label: revealFolderLabel(IS_MAC, IS_WINDOWS),
               icon: FolderOpen,
@@ -835,26 +1033,35 @@ function FileTree({
                   .catch(() => setError("复制路径失败"));
               },
             },
-            {
-              icon: Trash2,
-              danger: true,
-              label: menu.isDir ? "删除目录" : "删除文件",
-              onSelect: async () => {
-                if (
-                  !(await confirmDialog(
-                    `删除「${menu.path}」${menu.isDir ? "（含全部内容）" : ""}？将移入系统回收站。`,
-                    { danger: true },
-                  ))
-                )
-                  return;
-                try {
-                  await invoke("fs_delete_path", { path: menu.path, root });
-                  for (const p of [root, ...expandedRef.current]) void load(p);
-                } catch (e) {
-                  setError(String(e));
-                }
-              },
-            },
+            ...(!menu.isRoot
+              ? [
+                  {
+                    icon: Trash2,
+                    danger: true,
+                    label: menu.isDir ? "删除目录" : "删除文件",
+                    onSelect: async () => {
+                      if (
+                        !(await confirmDialog(
+                          `删除「${menu.path}」${menu.isDir ? "（含全部内容）" : ""}？将移入系统回收站。`,
+                          { danger: true },
+                        ))
+                      )
+                        return;
+                      try {
+                        await invoke("fs_delete_path", { path: menu.path, root });
+                        onPathMutated?.({
+                          kind: "delete",
+                          oldPath: menu.path,
+                          isDir: menu.isDir,
+                        });
+                        for (const p of [root, ...expandedRef.current]) void load(p);
+                      } catch (e) {
+                        setError(String(e));
+                      }
+                    },
+                  },
+                ]
+              : []),
           ]}
         />
       )}

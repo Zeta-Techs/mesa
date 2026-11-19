@@ -168,6 +168,7 @@ export default function ChatSurface({
   mesaCommands = [],
   externalInsert = null,
   onExternalInsertConsumed,
+  onOpenFile,
   connIssue = null,
   onSwitchConnection,
   onDismissConnIssue,
@@ -310,6 +311,8 @@ export default function ChatSurface({
   /** 外部送进来的一段话（终端选中文字「引用到输入框 / 问 AI」）：send=true 直接发，否则填进输入框 */
   externalInsert?: { text: string; send: boolean; token: number } | null;
   onExternalInsertConsumed?: () => void;
+  /** 点击消息或工具记录里的文件：由宿主决定同步到独立窗口还是在右侧文件栏打开 */
+  onOpenFile?: (file: { path: string; root: string; line: number | null }) => void;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型，conn-issue.ts 扫终端认出）+ 同家可换的连接 */
   connIssue?: ConnIssueState | null;
   /** 换到这条连接接着这段对话（标签动作 switchConnection：停下、换连接、按原会话接回） */
@@ -1706,14 +1709,18 @@ export default function ChatSurface({
               onForkHere={onForkFrom}
               onReportMismatch={running && onReportMismatch ? () => onReportMismatch("turn") : undefined}
               onQuote={(quote) => setSeedInsert({ text: "", paths: [], quote })}
-              onOpenFile={(file) =>
+              onOpenFile={(file) => {
+                if (onOpenFile) {
+                  onOpenFile(file);
+                  return;
+                }
                 useAppStore.getState().setPreviewReq({
                   path: file.path,
                   name: file.path.split(/[\\/]/).pop() ?? file.path,
                   root: file.root,
                   line: file.line,
-                })
-              }
+                });
+              }}
               queuedNote={{
                 ...note,
                 text: sentNowAt ? "已叫它马上处理" : note.text,

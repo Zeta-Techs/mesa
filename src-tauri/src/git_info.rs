@@ -565,9 +565,6 @@ fn git_commit_sync(
                     return Err(output_tail(&add));
                 }
             }
-            if !add.status.success() {
-                return Err(output_tail(&add));
-            }
             let mut args = commit_identity_args(Path::new(&cwd));
             args.extend([
                 "--literal-pathspecs".into(),
@@ -1149,20 +1146,23 @@ fn patch_targets_single_file(patch: &str, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// 未跟踪新文件构造合法的新文件补丁（/dev/null 形式），可直接 git apply / -R / --cached
+/// 未跟踪新文件构造合法的新文件补丁（/dev/null 形式），可直接 git apply / -R / --cached。
+/// 用 split_inclusive('\n') 保留原始行尾（含 Windows CRLF），避免 git apply -R 因行尾失配报错。
 fn untracked_file_patch(path: &str, content: &str) -> String {
     let a = quote_diff_path(&format!("a/{path}"));
     let b = quote_diff_path(&format!("b/{path}"));
     let mut text = format!("diff --git {a} {b}\nnew file mode 100644\n--- /dev/null\n+++ {b}\n");
-    let lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
     if !lines.is_empty() {
         text.push_str(&format!("@@ -0,0 +1,{} @@\n", lines.len()));
         for (i, line) in lines.iter().enumerate() {
             text.push('+');
             text.push_str(line);
-            text.push('\n');
-            if i == lines.len() - 1 && !content.ends_with('\n') {
-                text.push_str("\\ No newline at end of file\n");
+            if !line.ends_with('\n') {
+                text.push('\n');
+                if i == lines.len() - 1 {
+                    text.push_str("\\ No newline at end of file\n");
+                }
             }
         }
     }
@@ -1304,6 +1304,84 @@ pub async fn apply_hunk(
     tauri::async_runtime::spawn_blocking(move || apply_hunk_sync(&cwd, &path, &patch, &mode))
         .await
         .map_err(|e| format!("应用改动块失败: {e}"))?
+}
+
+fn git_unstage_file_sync(cwd: &str, path: &str) -> Result<GitStatusDto, String> {
+    let cwd = expand_tilde(cwd);
+    let validated = validate_selected_paths(&cwd, &[path.to_string()])?;
+    let path = validated.first().ok_or("文件已不在当前改动清单中")?;
+    let has_head = run_git(&cwd, &["rev-parse", "--verify", "HEAD"])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let out = if has_head {
+        run_git(&cwd, &["--literal-pathspecs", "reset", "-q", "HEAD", "--", path])?
+    } else {
+        run_git(&cwd, &["--literal-pathspecs", "rm", "--cached", "-q", "--", path])?
+    };
+    if !out.status.success() {
+        return Err(output_tail(&out));
+    }
+    git_status_sync(&cwd)
+}
+
+/// 取消指定文件的暂存状态（保留工作树改动），返回最新 status。
+#[tauri::command]
+pub async fn git_unstage_file(cwd: String, path: String) -> Result<GitStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || git_unstage_file_sync(&cwd, &path))
+        .await
+        .map_err(|e| format!("取消暂存失败: {e}"))?
+}
+
+fn git_discard_file_sync(cwd: &str, path: &str) -> Result<GitStatusDto, String> {
+    let cwd = expand_tilde(cwd);
+    let validated = validate_selected_paths(&cwd, &[path.to_string()])?;
+    let path = validated.first().ok_or("文件已不在当前改动清单中")?;
+    let status = git_status_sync(&cwd)?
+        .files
+        .into_iter()
+        .find(|file| file.path == *path)
+        .ok_or_else(|| format!("文件已不在当前改动清单中，请刷新后重试: {path}"))?;
+    let full = Path::new(&cwd).join(path);
+    if status.status == "??" {
+        if full.symlink_metadata().is_ok() {
+            trash::delete(&full).map_err(|e| format!("将新文件移入回收站失败: {e}"))?;
+        }
+        return git_status_sync(&cwd);
+    }
+    let in_head = run_git(&cwd, &["cat-file", "-e", &format!("HEAD:{path}")])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if in_head {
+        let reset = run_git(&cwd, &["--literal-pathspecs", "reset", "-q", "HEAD", "--", path])?;
+        if !reset.status.success() {
+            return Err(output_tail(&reset));
+        }
+        let checkout = run_git(&cwd, &["--literal-pathspecs", "checkout", "--", path])?;
+        if !checkout.status.success() {
+            return Err(output_tail(&checkout));
+        }
+    } else {
+        // 仅暂存的新文件（HEAD 中不存在）：先撤出暂存，再将工作树文件移入回收站
+        let rm = run_git(
+            &cwd,
+            &["--literal-pathspecs", "rm", "--cached", "-f", "-q", "--", path],
+        )?;
+        if !rm.status.success() {
+            return Err(output_tail(&rm));
+        }
+        if full.symlink_metadata().is_ok() {
+            trash::delete(&full).map_err(|e| format!("将新文件移入回收站失败: {e}"))?;
+        }
+    }
+    git_status_sync(&cwd)
+}
+
+/// 丢弃指定文件的全部未提交改动（已跟踪文件还原到 HEAD，新文件移入系统回收站）。
+#[tauri::command]
+pub async fn git_discard_file(cwd: String, path: String) -> Result<GitStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || git_discard_file_sync(&cwd, &path))
+        .await
+        .map_err(|e| format!("丢弃改动失败: {e}"))?
 }
 
 // ===== 工作区任务 diff（§6.10 阶段 C：基准从 HEAD 改为 merge-base） =====
@@ -3099,5 +3177,54 @@ mod tests {
         let (root, sibling) = ("/ws/task", "/ws/task2");
         let rows = vec![wt_row(root)];
         assert!(find_worktree_row(sibling, &rows).is_none());
+    }
+
+    #[test]
+    fn untracked_file_patch_preserves_crlf_and_discards_cleanly() {
+        let dir = init_repo("crlf-untracked");
+        let cwd = dir.to_str().unwrap();
+        let file = dir.join("win.txt");
+        fs::write(&file, "line1\r\nline2\r\n").unwrap();
+        let hunks = git_file_hunks_sync(cwd, "win.txt").unwrap();
+        assert_eq!(hunks.hunks.len(), 1);
+        assert!(
+            hunks.hunks[0].patch.contains("+line1\r\n+line2\r\n"),
+            "CRLF 行尾必须原样保留在补丁里"
+        );
+        // 丢弃 CRLF 未跟踪新文件必须成功（原先 lines() 剥掉 \r 会让 git apply -R 失败）
+        let st = apply_hunk_sync(cwd, "win.txt", &hunks.hunks[0].patch, "discard").unwrap();
+        assert!(!file.exists(), "丢弃后未跟踪文件应被移除");
+        assert!(st.files.is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn unstage_and_discard_tracked_file_work() {
+        let dir = init_repo("unstage-discard");
+        let cwd = dir.to_str().unwrap();
+        let file = dir.join("a.txt");
+        fs::write(&file, "v1\n").unwrap();
+        git_commit_sync(cwd, "init", false, None).unwrap();
+
+        fs::write(&file, "v2\n").unwrap();
+        let hunks = git_file_hunks_sync(cwd, "a.txt").unwrap();
+        assert_eq!(hunks.hunks.len(), 1);
+        apply_hunk_sync(cwd, "a.txt", &hunks.hunks[0].patch, "stage").unwrap();
+        let staged_view = git_file_hunks_sync(cwd, "a.txt").unwrap();
+        assert!(staged_view.staged);
+        assert!(staged_view.hunks.is_empty());
+
+        // 取消暂存后：工作树改动仍在，未暂存 hunk 恢复
+        git_unstage_file_sync(cwd, "a.txt").unwrap();
+        let unstaged_view = git_file_hunks_sync(cwd, "a.txt").unwrap();
+        assert!(!unstaged_view.staged);
+        assert_eq!(unstaged_view.hunks.len(), 1);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "v2\n");
+
+        // 丢弃整文件后：恢复到 HEAD
+        let after = git_discard_file_sync(cwd, "a.txt").unwrap();
+        assert!(after.files.is_empty());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "v1\n");
+        fs::remove_dir_all(&dir).ok();
     }
 }

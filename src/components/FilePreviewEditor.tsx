@@ -18,11 +18,27 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Search } from "lucide-react";
+import {
+  Bold,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  Code,
+  Italic,
+  Link2,
+  List,
+  ListTodo,
+  Maximize2,
+  Quote,
+  Search,
+  Strikethrough,
+  X,
+} from "lucide-react";
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import SelectionFloatBar, { FloatBarOverflow, useDistillSkill, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
 import { confirmDialog } from "./ConfirmDialog";
+import { compactPrimaryActionClass } from "./PageFrame";
 import { useAppStore } from "../store";
 import { useNotePaired } from "../note-pdf-pair";
 import {
@@ -183,6 +199,7 @@ const REVIEW_ANNOTATE_COPY: AnnotateCopy = {
 function MarkdownView({
   text,
   large,
+  serif = false,
   fileName,
   filePath,
   root,
@@ -202,6 +219,8 @@ function MarkdownView({
   findTick,
 }: {
   text: string;
+  /** 学术/出版物衬线阅读排版（全屏/笔记阅读一键切换） */
+  serif?: boolean;
   /** 阅读 ⇄ 编辑切换保位置：宿主经它问「阅读态顶上是第几行」 */
   syncRef?: React.MutableRefObject<MdViewSync | null>;
   /** 上屏后滚到这一行所在的块（编辑 → 阅读时保持位置）；只在挂载时用一次 */
@@ -807,7 +826,7 @@ function MarkdownView({
             }}
             placeholder="在这份文件里查找"
             aria-label="在这份文件里查找"
-            className="min-w-0 flex-1 rounded-sm bg-inset px-2 py-0.5 text-xs text-l2 outline-none placeholder:text-l4"
+            className="min-w-0 flex-1 rounded-md bg-inset px-2 py-0.5 text-xs text-l2 outline-none placeholder:text-l4"
           />
           <span className="shrink-0 tabular-nums text-l4">
             {findQuery.trim() ? (findCount ? `${findIndex + 1} / ${findCount}` : "无结果") : ""}
@@ -817,27 +836,29 @@ function MarkdownView({
             onClick={() => stepFind(-1)}
             disabled={!findCount}
             title="上一处（Shift+Enter）"
-            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
+            aria-label="上一处"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40"
           >
-            ↑
+            <ChevronUp size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <button
             type="button"
             onClick={() => stepFind(1)}
             disabled={!findCount}
             title="下一处（Enter）"
-            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-40"
+            aria-label="下一处"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40"
           >
-            ↓
+            <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <button
             type="button"
             onClick={closeFind}
             title="关闭查找（Esc）"
             aria-label="关闭查找"
-            className="shrink-0 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            ×
+            <X size={12} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -870,7 +891,7 @@ function MarkdownView({
           onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
           onMouseOver={onBodyOver}
           onMouseLeave={() => setCiteTip(null)}
-          className={`md-body${onAnnotate ? " md-body-annotatable" : ""}${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""} ${
+          className={`md-body${onAnnotate ? " md-body-annotatable" : ""}${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""}${serif ? " md-body-serif" : ""} ${
             large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
           }`}
           dangerouslySetInnerHTML={bodyHtml}
@@ -1005,6 +1026,7 @@ function TextFilePreviewEditor({
   leading,
   trailing,
   hideFileName,
+  folderTick,
   mainRepoIsHome,
   compact,
   onPdfRef,
@@ -1012,6 +1034,8 @@ function TextFilePreviewEditor({
 }: {
   path: string;
   root: string;
+  /** 外层文件树/文件夹变动信号（交由 md 阅读态核内嵌图版本，免去重复递归监听） */
+  folderTick?: number;
   /** 窄栏排版（阅读区笔记栏）：md 阅读态标题字号收一档 */
   compact?: boolean;
   /** md 阅读态正文里的页码/图表引用可点（阅读区笔记栏：点了跳 PDF） */
@@ -1073,6 +1097,8 @@ function TextFilePreviewEditor({
   const [reloadKey, setReloadKey] = useState(0);
   /** 所在文件夹的变动次数（交给 md 阅读态核内嵌图版本） */
   const [fsTick, setFsTick] = useState(0);
+  /** 打开后磁盘上的文件被外部删除或移走 */
+  const [diskMissing, setDiskMissing] = useState(false);
   const [truncated, setTruncated] = useState(false);
   const [fileReadOnly, setReadOnlyReason] = useState<string | null>(null);
   const readOnlyReason = readOnly ?? fileReadOnly;
@@ -1103,6 +1129,24 @@ function TextFilePreviewEditor({
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const [immersive, setImmersive] = useState(false);
+  const [readingSerif, setReadingSerif] = useState(() => {
+    try {
+      return localStorage.getItem("ccode.mdReadingSerif") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleReadingSerif = () => {
+    setReadingSerif((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("ccode.mdReadingSerif", next ? "1" : "0");
+      } catch {
+        /* 隐私模式静默忽略 */
+      }
+      return next;
+    });
+  };
   // 这份 md 能不能进三栏沉浸阅读（note-pdf-pair.ts）：配得上本篇 PDF 才给「沉浸阅读」；CHANGELOG、README 这类
   // 配不上的只给「全屏阅读」（2026-10-25 用户：没有 PDF 的文件预览也挂「沉浸阅读」有歧义）
   const notePaired = useNotePaired(path, isMd && Boolean(onOpenReader));
@@ -1261,14 +1305,17 @@ function TextFilePreviewEditor({
     setImmersive(false);
   }, [path]);
 
-  // 沉浸覆盖层（阅读/编辑共用）：Esc 退出（终端/PTY 保持挂载，仅视觉覆盖，同评审覆盖层形态）
+  // 沉浸覆盖层（阅读/编辑共用）：Esc 优先退出全屏并阻止冒泡，不连带退出外层右栏铺满
   useEffect(() => {
     if (!immersive) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setImmersive(false);
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setImmersive(false);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [immersive]);
 
   // 路径归属查询（失败/未命中不显示徽标）
@@ -1297,6 +1344,7 @@ function TextFilePreviewEditor({
     let cancelled = false;
     setText(null);
     setError(null);
+    setDiskMissing(false);
     setDirty(false);
     dirtyRef.current = false;
     savingRef.current = false;
@@ -1341,19 +1389,18 @@ function TextFilePreviewEditor({
   // text 只有在属于当前 path 时才有效；切换路径的瞬间旧内容立即失效（空白等待新加载）
   const ready = text !== null && textPathRef.current === path;
 
-  // 外部变化自动刷新（合并/agent 写盘等）：监听文件所在目录，内容真的变了才重载。
+  // 外部变化自动刷新（合并/agent 写盘等）：用非递归单文件监听 watch_file，只响应当前文件变动，
+  // 避免打开项目根目录文件时整个子目录树的任何无关写入都触发重读。
   // 有未保存修改时不覆盖，只记下磁盘上的新版本、顶上提示一条（diskChange），由人选对比合并或用磁盘版本
-  //（2026-10-26：原先编辑中干脆不订阅，要到点保存才知道撞车）
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     let watchId: string | null = null;
     let refreshGeneration = 0;
-    const parent = path.replace(/[\\/][^\\/]*$/, "");
     void (async () => {
       try {
-        watchId = await invoke<string>("watch_dir", { path: parent });
+        watchId = await invoke<string>("watch_file", { path });
         if (cancelled) {
           invoke("unwatch_dir", { id: watchId }).catch(() => {});
           return;
@@ -1364,6 +1411,7 @@ function TextFilePreviewEditor({
             const generation = ++refreshGeneration;
             const p = await invoke<FilePreviewSnapshot>("read_file_preview", { path, root });
             if (cancelled || generation !== refreshGeneration || savingRef.current) return;
+            setDiskMissing(false);
             if (dirtyRef.current) {
               // 磁盘内容与打开时（或上次保存时）不同才算有新版本；自己保存引起的事件对得上，不提示
               if (p.text !== lastSavedRef.current?.text) setDiskChange(p);
@@ -1387,11 +1435,12 @@ function TextFilePreviewEditor({
               setText(p.text);
             }
           } catch {
-            /* 文件被删/不可读：保持现状 */
+            // 文件被外部删除或移走：保留当前缓冲但顶上明示，不让用户盲编到保存才报错
+            if (!cancelled) setDiskMissing(true);
           }
         });
       } catch {
-        /* 目录不可监听：退回手动重开 */
+        /* 路径不可监听：退回手动重开 */
       }
     })();
     return () => {
@@ -1943,7 +1992,7 @@ function TextFilePreviewEditor({
           </span>
         )}
         {readOnlyReason && (
-          <span className="shrink-0 rounded-sm bg-warn px-1 text-warn-text" title={readOnlyReason}>
+          <span className="shrink-0 rounded-md bg-warn/25 px-1.5 py-0.5 text-micro text-warn-text" title={readOnlyReason}>
             {truncated ? "已截断（只读）" : "只读"}
           </span>
         )}
@@ -1963,14 +2012,20 @@ function TextFilePreviewEditor({
                 ? `保存时改成 UTF-8（原来是 ${encodingLabel(fileEncoding)}）。再点一下改回原编码`
                 : `这份文件是 ${encodingLabel(fileEncoding)} 编码，保存时照原编码写回。点一下改用 UTF-8 保存`
             }
-            className="shrink-0 rounded-sm bg-inset px-1 font-mono text-micro text-l3 hover:text-l1"
+            className="shrink-0 rounded-md bg-inset px-1.5 py-0.5 font-mono text-micro text-l3 transition-colors hover:text-l1"
           >
             {saveAsUtf8 ? `${encodingLabel(fileEncoding)} → UTF-8` : encodingLabel(fileEncoding)}
           </button>
         )}
-        {dirty && <span className="shrink-0 text-l3" title="有未保存的修改">●</span>}
+        {dirty && (
+          <span
+            className="size-1.5 shrink-0 rounded-full bg-warn-text"
+            title="有未保存的修改"
+            aria-label="有未保存的修改"
+          />
+        )}
         {hasReadMode && (
-          <div className="flex shrink-0 items-center rounded-sm bg-inset p-0.5 text-micro">
+          <div className="flex shrink-0 items-center rounded-md border border-hairline bg-inset p-0.5 text-micro">
             {(["read", "edit"] as const).map((m) => (
               <button
                 key={m}
@@ -1981,8 +2036,8 @@ function TextFilePreviewEditor({
                     ? `${m === "read" ? "阅读" : "编辑"}（${comboLabel(READER_MODE_HOTKEY)} 切换）`
                     : undefined
                 }
-                className={`rounded-sm px-2 py-0.5 ${
-                  mode === m ? "bg-seg-sel text-l1" : "text-l3 hover:text-l2"
+                className={`rounded-sm px-2 py-0.5 transition-colors ${
+                  mode === m ? "bg-seg-sel font-medium text-l1" : "text-l3 hover:text-l2"
                 }`}
               >
                 {m === "read" ? "阅读" : "编辑"}
@@ -2011,7 +2066,7 @@ function TextFilePreviewEditor({
                 ? `当前定位第 ${revealLine} 行；点一下切到源码精确查看该行`
                 : `回到第 ${revealLine} 行`
             }
-            className="shrink-0 rounded-sm bg-accent-tint px-1.5 py-0.5 font-mono text-micro text-accent hover:opacity-90"
+            className="shrink-0 rounded-md bg-accent-tint px-1.5 py-0.5 font-mono text-micro text-accent transition-opacity hover:opacity-90"
           >
             第 {revealLine} 行
           </button>
@@ -2021,7 +2076,7 @@ function TextFilePreviewEditor({
             <button
               onClick={() => void openPath(path).catch((e) => setError(String(e)))}
               title="这份文件在这里只能看（太大、编码不支持或在项目外），用系统里的应用打开它来改"
-              className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+              className="shrink-0 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
             >
               用系统应用打开
             </button>
@@ -2030,34 +2085,54 @@ function TextFilePreviewEditor({
             <button
               onClick={() => void openPath(path).catch((e) => setError(String(e)))}
               title="预览里不跑脚本，交互图表（plotly 等）只显示静态部分；在浏览器里打开看完整效果"
-              className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+              className="shrink-0 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
             >
               在浏览器打开
             </button>
           )}
           {ready && isMd && mode === "read" && (
-            <button
-              onClick={() => setFindTick((n) => n + 1)}
-              title={`在这份文件里查找（${IS_MAC ? "⌘" : "Ctrl+"}F）`}
-              aria-label="查找"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
-            >
-              <Search size={13} strokeWidth={1.8} />
-            </button>
+            <>
+              <button
+                type="button"
+                aria-pressed={readingSerif}
+                onClick={toggleReadingSerif}
+                title={readingSerif ? "当前为学术衬线排版，点一下切回无衬线" : "切换为学术衬线阅读排版"}
+                className={`shrink-0 rounded-md px-2 py-0.5 text-micro transition-colors ${
+                  readingSerif
+                    ? "bg-seg-sel font-medium text-l1"
+                    : "text-l3 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                衬线
+              </button>
+              <button
+                onClick={() => setFindTick((n) => n + 1)}
+                title={`在这份文件里查找（${IS_MAC ? "⌘" : "Ctrl+"}F）`}
+                aria-label="查找"
+                className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+              >
+                <Search size={13} strokeWidth={1.8} />
+              </button>
+            </>
           )}
           {ready && mode === "edit" && (
-            <span className="flex shrink-0 items-center" title={`编辑器字号 ${fontSize}（编辑器里 ${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}>
+            <span
+              className="flex shrink-0 items-center rounded-md bg-inset p-0.5"
+              title={`编辑器字号 ${fontSize}（编辑器里 ${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}
+            >
               <button
+                type="button"
                 onClick={() => setFontSize((v) => writeEditorFont(stepEditorFont(v, -1)))}
                 aria-label="缩小字号"
-                className="rounded-sm px-1 text-micro text-l3 hover:bg-hover hover:text-l1"
+                className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
               >
                 A−
               </button>
               <button
+                type="button"
                 onClick={() => setFontSize((v) => writeEditorFont(stepEditorFont(v, 1)))}
                 aria-label="放大字号"
-                className="rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+                className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
               >
                 A+
               </button>
@@ -2065,28 +2140,33 @@ function TextFilePreviewEditor({
           )}
           {ready && isMd && mode === "read" && onOpenReader && notePaired ? (
             <button
+              type="button"
               onClick={onOpenReader}
               title="进沉浸阅读区（笔记｜PDF｜Agent 三栏，自动配对本篇 PDF）"
-              className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
             >
-              ⛶ 沉浸阅读
+              <BookOpen size={13} strokeWidth={1.8} aria-hidden="true" />
+              <span>沉浸阅读</span>
             </button>
           ) : (
             ready &&
             !hideImmersive &&
             (mode === "edit" || hasReadMode) && (
               <button
+                type="button"
                 onClick={() => setImmersive(true)}
                 // 「沉浸阅读」专指笔记｜PDF｜Agent 三栏阅读区；这里只是把这份文件铺满窗口，叫「全屏」免得混
                 title={`铺满整个窗口${mode === "read" ? "阅读" : "编辑"}这份文件（Esc 退出）`}
-                className="shrink-0 rounded-sm px-2 py-0.5 text-l2 hover:bg-hover"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
               >
-                ⛶ {mode === "read" ? "全屏阅读" : "全屏编辑"}
+                <Maximize2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                <span>{mode === "read" ? "全屏阅读" : "全屏编辑"}</span>
               </button>
             )
           )}
-          {!readOnlyReason && mode === "edit" && (
+          {!readOnlyReason && (mode === "edit" || dirty) && (
             <button
+              type="button"
               onClick={onSave}
               disabled={!dirty || saving}
               title={
@@ -2094,9 +2174,15 @@ function TextFilePreviewEditor({
                   ? `直接修改主项目（不属于任何分支），保存前会再确认（${IS_MAC ? "⌘" : "Ctrl+"}S）`
                   : `保存（${IS_MAC ? "⌘" : "Ctrl+"}S）`
               }
-              className={`shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover disabled:opacity-50 ${
-                ctx?.kind === "main" && !mainRepoIsHome ? "text-warn-text" : "text-l2"
-              }`}
+              className={
+                dirty && !(ctx?.kind === "main" && !mainRepoIsHome)
+                  ? `${compactPrimaryActionClass} h-6 shrink-0 px-2`
+                  : `shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-hover disabled:opacity-45 ${
+                      ctx?.kind === "main" && !mainRepoIsHome
+                        ? "bg-warn/20 font-medium text-warn-text"
+                        : "text-l2"
+                    }`
+              }
             >
               {saving ? "保存中…" : ctx?.kind === "main" && !mainRepoIsHome ? "保存到主仓库" : "保存"}
             </button>
@@ -2104,19 +2190,33 @@ function TextFilePreviewEditor({
           {trailing}
         </div>
       </div>}
+      {diskMissing && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-warn/25 px-3 py-1.5 text-xs text-warn-text">
+          <span className="min-w-0 flex-1">
+            磁盘上的这份文件已被删除或移走，当前内容仅留在预览缓冲中。
+          </span>
+          <button
+            type="button"
+            onClick={() => setReloadKey((n) => n + 1)}
+            className="shrink-0 rounded-md border border-current/40 px-2 py-0.5 transition-colors hover:bg-hover"
+          >
+            重新检查
+          </button>
+        </div>
+      )}
       {diskChange && dirty && !mergeOpen && (
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-warn px-3 py-1.5 text-xs text-warn-text">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-warn/25 px-3 py-1.5 text-xs text-warn-text">
           <span className="min-w-0 flex-1">磁盘上的这份文件刚被改过（Agent 或别的程序），你这边还有没保存的修改。</span>
           <button
             onClick={() => setMergeOpen(true)}
-            className="shrink-0 rounded-sm border border-current px-2 py-0.5 hover:bg-hover"
+            className="shrink-0 rounded-md border border-current/40 px-2 py-0.5 transition-colors hover:bg-hover"
           >
             对比合并
           </button>
-          <button onClick={() => void takeDiskVersion()} className="shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover">
+          <button onClick={() => void takeDiskVersion()} className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-hover">
             用磁盘上的版本
           </button>
-          <button onClick={() => setDiskChange(null)} className="shrink-0 rounded-sm px-2 py-0.5 hover:bg-hover">
+          <button onClick={() => setDiskChange(null)} className="shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-hover">
             先不管
           </button>
         </div>
@@ -2134,75 +2234,81 @@ function TextFilePreviewEditor({
           onClose={() => setMergeOpen(false)}
         />
       )}
-      {/* md 编辑格式行（2026-10-14 补齐）：按钮与快捷键同一套纯逻辑（md-edit）；
-          行级按钮对选区覆盖的行整组切换；只读/截断态收起（executeEdits 会被拒，
-          按了只抢焦点没反应） */}
+      {/* md 编辑格式行（2026-10-14 补齐）：按钮与快捷键同一套纯逻辑（md-edit），统一 Lucide 线条图标 */}
       {isMd && mode === "edit" && ready && !truncated && !readOnlyReason && (
         <div className="flex h-7 shrink-0 items-center gap-0.5 border-b border-hairline bg-strip px-2 text-xs">
           <button
             type="button"
+            aria-label="加粗"
             title="加粗（⌘B / Ctrl+B）"
             onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "**"))}
-            className="rounded-sm px-1.5 py-0.5 font-bold text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            B
+            <Bold size={13} strokeWidth={2} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="斜体"
             title="斜体（⌘I / Ctrl+I）"
             onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "*"))}
-            className="rounded-sm px-1.5 py-0.5 italic text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            I
+            <Italic size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="删除线"
             title="删除线（⌘⇧X / Ctrl+Shift+X）"
             onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "~~"))}
-            className="rounded-sm px-1.5 py-0.5 text-l3 line-through hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            S
+            <Strikethrough size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="行内代码"
             title="行内代码（⌘⇧C / Ctrl+Shift+C）"
             onClick={() => applyMdEdit((t, s, e) => toggleInlineMark(t, s, e, "`"))}
-            className="rounded-sm px-1.5 py-0.5 font-mono text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            {"`"}
+            <Code size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
-          <span className="mx-1 h-4 w-px shrink-0 bg-hairline" />
+          <span className="mx-1 h-3.5 w-px shrink-0 bg-hairline" />
           <button
             type="button"
+            aria-label="无序列表"
             title="无序列表（回车自动续项）"
             onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "- "))}
-            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            •
+            <List size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="任务清单"
             title="任务清单（回车自动续项，新项未勾选）"
             onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "- [ ] "))}
-            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            ☑
+            <ListTodo size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="引用"
             title="引用"
             onClick={() => applyMdEdit((t, s, e) => toggleLinePrefix(t, s, e, "> "))}
-            className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            ❝
+            <Quote size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
           <button
             type="button"
+            aria-label="链接"
             title="链接（选中文字后点，可接着输入地址）"
             onClick={() => applyMdEdit(wrapAsLink)}
-            className="rounded-sm px-1.5 py-0.5 font-mono text-l3 hover:bg-hover hover:text-l1"
+            className="flex size-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            {"<a>"}
+            <Link2 size={13} strokeWidth={1.9} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -2230,6 +2336,7 @@ function TextFilePreviewEditor({
         ) : (
           <MarkdownView
             text={text!}
+            serif={readingSerif}
             fileName={path.split(/[\\/]/).pop() ?? path}
             filePath={path}
             root={root}
@@ -2241,7 +2348,7 @@ function TextFilePreviewEditor({
             compact={compact}
             onPdfRef={isMd ? onPdfRef : undefined}
             focusText={focusText}
-            fsTick={fsTick}
+            fsTick={fsTick + (folderTick ?? 0)}
             syncRef={mdSyncRef}
             initialLine={readInitialLine}
             revealLine={revealLine}
@@ -2263,7 +2370,7 @@ function TextFilePreviewEditor({
             <span className="text-l4">
               全屏{mode === "read" ? "阅读" : "编辑"} · Esc 退出
             </span>
-            {mode === "edit" && !readOnlyReason && (
+            {(mode === "edit" || dirty) && !readOnlyReason && (
               <button
                 onClick={onSave}
                 disabled={!dirty || saving}
@@ -2279,12 +2386,28 @@ function TextFilePreviewEditor({
                 {saving ? "保存中…" : ctx?.kind === "main" && !mainRepoIsHome ? "保存到主仓库" : "保存"}
               </button>
             )}
+            {mode === "read" && isMd && (
+              <button
+                type="button"
+                aria-pressed={readingSerif}
+                onClick={toggleReadingSerif}
+                title={readingSerif ? "当前为学术衬线排版，点一下切回无衬线" : "切换为学术衬线阅读排版"}
+                className={`${!readOnlyReason && dirty ? "" : "ml-auto "}shrink-0 rounded-sm px-2 py-1 transition-colors ${
+                  readingSerif
+                    ? "bg-seg-sel font-medium text-l1"
+                    : "text-l3 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                衬线
+              </button>
+            )}
             <button
               onClick={() => setImmersive(false)}
               title={`退出全屏${mode === "read" ? "阅读" : "编辑"}（Esc）`}
-              className={`${mode === "edit" && !readOnlyReason ? "" : "ml-auto "}shrink-0 rounded-sm px-2 py-1 text-l3 hover:bg-hover hover:text-l1`}
+              className={`${((mode === "edit" || dirty) && !readOnlyReason) || (mode === "read" && isMd) ? "" : "ml-auto "}inline-flex shrink-0 items-center gap-1 rounded-sm px-2 py-1 text-l3 hover:bg-hover hover:text-l1`}
             >
-              ✕ 退出
+              <X size={14} strokeWidth={1.8} aria-hidden="true" />
+              <span>退出</span>
             </button>
           </div>
           {mode === "read" ? (
@@ -2296,6 +2419,7 @@ function TextFilePreviewEditor({
               <MarkdownView
                 text={text ?? ""}
                 large
+                serif={readingSerif}
                 fileName={path.split(/[\\/]/).pop() ?? path}
                 filePath={path}
                 root={root}

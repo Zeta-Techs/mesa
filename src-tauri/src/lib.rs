@@ -867,6 +867,8 @@ pub fn run() {
             git_info::git_file_diff,
             git_info::git_file_hunks,
             git_info::apply_hunk,
+            git_info::git_unstage_file,
+            git_info::git_discard_file,
             git_info::git_image_pair,
             git_info::git_commit,
             git_info::git_push,

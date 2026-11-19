@@ -45,6 +45,7 @@ async function renderTree(cwd: string) {
   // JSDOM 没有 scrollIntoView
   (dom.window.HTMLElement.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
   const listed: string[] = [];
+  const openedFiles: string[] = [];
   const openedWindows: Record<string, unknown>[] = [];
   let cb = 1;
   Object.assign(dom.window, {
@@ -87,7 +88,10 @@ async function renderTree(cwd: string) {
         cwd,
         showHidden: false,
         refreshKey: 0,
-        onOpenFile: () => {},
+        activePath: `${ROOT}/plan.txt`,
+        onOpenFile: (path: string) => {
+          openedFiles.push(path);
+        },
         onOpenTerminal: () => {},
         actions: h("button", { type: "button", "aria-label": "收起文件树" }),
       }),
@@ -100,6 +104,7 @@ async function renderTree(cwd: string) {
     host,
     act,
     listed,
+    openedFiles,
     openedWindows,
     settle,
     close: async () => {
@@ -175,6 +180,41 @@ test("右键文件项支持「在新窗口打开」，调起独立文件窗口�
     assert.equal(view.openedWindows.length, 1);
     assert.equal(view.openedWindows[0]?.path, `${ROOT}/plan.txt`);
     assert.equal(view.openedWindows[0]?.root, ROOT);
+  } finally {
+    await view.close();
+  }
+});
+
+test("栏头支持根目录新建文件/文件夹、当前预览文件常驻高亮、搜索框 Esc 不冒泡、搜索文件可直开预览", async () => {
+  const view = await renderTree(ROOT);
+  try {
+    assert.ok(view.host.querySelector('button[aria-label="新建文件"]'), "根目录新建文件按钮存在");
+    assert.ok(view.host.querySelector('button[aria-label="新建文件夹"]'), "根目录新建文件夹按钮存在");
+    const activeRow = view.host.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]');
+    assert.ok(activeRow?.textContent?.includes("plan.txt"), "当前预览文件在树中常驻选中");
+
+    let windowSawEsc = false;
+    view.dom.window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") windowSawEsc = true;
+    });
+    const input = view.host.querySelector<HTMLInputElement>('input[aria-label="搜这个目录里的文件"]')!;
+    await view.act(async () => {
+      Object.getOwnPropertyDescriptor(view.dom.window.HTMLInputElement.prototype, "value")!.set!.call(input, "smith");
+      input.dispatchEvent(new view.dom.window.Event("input", { bubbles: true }));
+    });
+    await view.act(async () => new Promise((r) => setTimeout(r, 350)));
+    const hit = Array.from(view.host.querySelectorAll("div[title]")).find((d) =>
+      d.getAttribute("title")?.includes("点一下在树里找到它"),
+    ) as HTMLElement | undefined;
+    assert.ok(hit);
+    await view.act(async () => hit!.click());
+    await view.settle();
+    assert.ok(view.openedFiles.includes(`${ROOT}/papers/2026/smith.pdf`), "点搜索到的文件直接打开预览");
+
+    await view.act(async () => {
+      input.dispatchEvent(new view.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    assert.equal(windowSawEsc, false, "搜索框按 Escape 不冒泡到外层铺满监听");
   } finally {
     await view.close();
   }
