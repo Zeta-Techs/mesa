@@ -1885,7 +1885,7 @@ function PdfContinuousView({
                 <button
                   type="button"
                   aria-pressed={parallel.on}
-                  title={parallel.on ? "关掉双语对照，只看原文" : "双语对照：右边一条译文栏，按段对齐（自动翻当前页往后三页）"}
+                  title={parallel.on ? "关掉双语对照，只看原文" : "双语对照：右边一条译文栏，按段对齐（打开文献就在后台翻全文）"}
                   className={`${zoomBtn} px-1.5 text-micro ${parallel.on ? "bg-seg-sel text-l1" : ""}`}
                   onClick={parallel.onToggle}
                 >

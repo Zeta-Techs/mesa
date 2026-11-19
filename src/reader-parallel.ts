@@ -1,5 +1,5 @@
 /**
- * 阅读区「对照」模式的纯逻辑（2026-11-19）：翻哪几页、怎么分批、两边滚动怎么对上、鼠标指的是哪一段。
+ * 阅读区「双语」对照的纯逻辑（2026-11-19）：按什么顺序翻、怎么分批、两边滚动怎么对上、鼠标指的是哪一段。
  * 段落来自 pdf-paragraphs.ts（按内容流顺序）；译文按段落哈希记，同一段原文只翻一次。
  */
 import type { PdfParagraph } from "./pdf-paragraphs.ts";
@@ -12,8 +12,6 @@ export interface ParaState {
   error?: string;
 }
 
-/** 自动翻：当前页往后几页（含当前页共 1 + 这么多页） */
-export const PARALLEL_AHEAD_PAGES = 3;
 /** 一批最多多少字原文（一段比这长就单独一批，不切段） */
 export const PARALLEL_BATCH_CHARS = 2500;
 
@@ -22,11 +20,13 @@ export function translatable(p: PdfParagraph): boolean {
   return p.kind !== "fragment";
 }
 
-/** 当前页往后 ahead 页（夹在 1…pageCount） */
-export function wantedPages(current: number, pageCount: number, ahead = PARALLEL_AHEAD_PAGES): number[] {
+/** 打开文献就在后台翻全文：从当前页往后翻到底，再回头翻前面的页 */
+export function translationOrder(current: number, pageCount: number): number[] {
+  if (pageCount < 1) return [];
+  const start = Math.min(Math.max(1, current), pageCount);
   const out: number[] = [];
-  const start = Math.min(Math.max(1, current), Math.max(1, pageCount));
-  for (let n = start; n <= Math.min(pageCount, start + ahead); n++) out.push(n);
+  for (let n = start; n <= pageCount; n++) out.push(n);
+  for (let n = 1; n < start; n++) out.push(n);
   return out;
 }
 

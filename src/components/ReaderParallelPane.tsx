@@ -8,7 +8,7 @@ import {
   parallelProgress,
   planBatches,
   translatable,
-  wantedPages,
+  translationOrder,
   type ParaState,
   type ParaStatus,
 } from "../reader-parallel";
@@ -25,7 +25,7 @@ export interface ParallelPaneApi {
 export type ParallelMark = { page: number; boxes: readonly PdfFracBox[]; tone: "hover" | "focus" };
 
 /** 同时在翻几批 */
-const CONCURRENCY = 2;
+const CONCURRENCY = 3;
 /** 切段最多读多少页（再长的书按需另说） */
 const MAX_PAGES = 500;
 /** 本次打开 Mesa 内的译文（按 PDF 路径，再按段落哈希）；换篇、关双语、重进都不丢。持久的那份在项目
@@ -81,6 +81,7 @@ export default function ReaderParallelPane({
   onClose,
   roomy,
   onToggleRoom,
+  hidden = false,
 }: {
   apiRef: Ref<ParallelPaneApi | null>;
   doc: pdfjs.PDFDocumentProxy | null;
@@ -103,6 +104,8 @@ export default function ReaderParallelPane({
   /** 笔记栏与对话栏都收起了（给对照让出宽度） */
   roomy: boolean;
   onToggleRoom: () => void;
+  /** 双语没开：不画界面，只在后台切段、翻译、存进项目（打开文献就翻全文，点开双语时已经翻好） */
+  hidden?: boolean;
 }) {
   const [pages, setPages] = useState<Map<number, PdfParagraph[]>>(new Map());
   const [reading, setReading] = useState<{ done: number; total: number } | null>(null);
@@ -140,7 +143,6 @@ export default function ReaderParallelPane({
   const [, setTick] = useState(0);
   const bump = useCallback(() => setTick((t) => t + 1), []);
   const [showOriginal, setShowOriginal] = useState(loadShowOriginal);
-  const [full, setFull] = useState(false);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -150,8 +152,8 @@ export default function ReaderParallelPane({
   const runningRef = useRef(0);
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
-  const fullRef = useRef(full);
-  fullRef.current = full;
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
 
   const stateOf = useCallback(
     (hash: string): ParaStatus => statesRef.current.get(hash)?.status ?? (cache.has(hash) ? "done" : "idle"),
@@ -189,7 +191,7 @@ export default function ReaderParallelPane({
     })();
   }, [doc]);
 
-  // ----- 翻译调度：当前页往后三页（或全文），两批并行，同一段原文只翻一次 -----
+  // ----- 翻译调度：全文，从当前页往后再回头，几批并行，同一段原文只翻一次 -----
   const pump = useCallback(() => {
     if (unavailable || !cacheReady) return;
     const gen = genRef.current;
@@ -198,9 +200,7 @@ export default function ReaderParallelPane({
     if (pageCount === 0) return;
     // 页还没读完时视口可能在已读范围之后：夹进已读的页
     const cur = Math.min(Math.max(1, viewRef.current.page), pageCount);
-    const order = fullRef.current
-      ? [...Array.from({ length: pageCount - cur + 1 }, (_, i) => cur + i), ...Array.from({ length: cur - 1 }, (_, i) => i + 1)]
-      : wantedPages(cur, pageCount);
+    const order = translationOrder(cur, pageCount);
     while (runningRef.current < CONCURRENCY) {
       const [batch] = planBatches(all, order, stateOf);
       if (!batch) return;
@@ -243,7 +243,7 @@ export default function ReaderParallelPane({
   }, [doc]);
   useEffect(() => {
     pump();
-  }, [pages, full, pump]);
+  }, [pages, pump]);
 
   const retry = useCallback(
     (hashes: readonly string[]) => {
@@ -261,7 +261,7 @@ export default function ReaderParallelPane({
   const scrollPaneTo = useCallback((id: string, block: "top" | "center") => {
     const body = bodyRef.current;
     const el = body?.querySelector<HTMLElement>(`[data-para-id="${CSS.escape(id)}"]`);
-    if (!body || !el) return;
+    if (!body || !el || hiddenRef.current) return;
     silentUntilRef.current = Date.now() + 250;
     const top =
       block === "top"
@@ -344,6 +344,7 @@ export default function ReaderParallelPane({
     return [...new Set(out)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pages, progress.failed]);
+  if (hidden) return null;
   const sortedPages = [...pages.keys()].sort((a, b) => a - b);
   const btn = "rounded-sm px-1.5 py-0.5 text-micro text-l3 hover:bg-hover hover:text-l1";
 
@@ -365,16 +366,6 @@ export default function ReaderParallelPane({
         {progress.failed > 0 && (
           <button type="button" className={btn} onClick={() => retry(failedHashes)}>
             重试
-          </button>
-        )}
-        {!full && !unavailable && progress.done < progress.total && (
-          <button
-            type="button"
-            className={btn}
-            title="从当前页往后把整篇翻完（默认只翻当前页往后三页）"
-            onClick={() => setFull(true)}
-          >
-            翻译全文
           </button>
         )}
         <button
@@ -450,7 +441,7 @@ export default function ReaderParallelPane({
                       <p className="mt-1 animate-pulse text-micro text-l3">正在翻译…</p>
                     )}
                     {st === "idle" && !unavailable && (
-                      <p className="mt-1 text-micro text-l4">滚到这一页附近时自动翻</p>
+                      <p className="mt-1 text-micro text-l4">排队等着翻</p>
                     )}
                     {st === "failed" && (
                       <p className="mt-1 flex items-center gap-2 text-micro text-err-text">

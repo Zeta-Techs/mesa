@@ -579,7 +579,8 @@ export default function ReaderOverlay({
   const pdfColRef = useRef<HTMLDivElement>(null);
 
   // ===== 对照模式（2026-11-19 用户：不管之前的排版，要最好用的翻译方式）：PDF 栏右边一条译文栏，
-  // 按段对齐、两边同步滚动；开着时自动翻当前页往后三页。开关记住，抽查核对档不出 =====
+  // 按段对齐、两边同步滚动。打开文献就在后台翻全文（2026-11-19 用户：点开双语时全文应该已经翻好），
+  // 双语关着时译文栏只是不画。开关记住，抽查核对档不出 =====
   const [parallelOn, setParallelOn] = useState(() => {
     try {
       return localStorage.getItem("ccode.readerParallel") === "1";
@@ -1607,17 +1608,24 @@ export default function ReaderOverlay({
           </Suspense>
           )}
         </div>
-        {parallelActive && (
+        {!spotMode && (
           <>
+            {parallelActive && (
+              <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="拖动调整译文栏宽度"
+                onPointerDown={startParallelDrag}
+                className="w-1 shrink-0 cursor-col-resize bg-hairline hover:bg-cta/40"
+              />
+            )}
+            {/* 双语关着也挂着：后台照常翻，打开时不重挂、不丢正在翻的批 */}
             <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="拖动调整译文栏宽度"
-              onPointerDown={startParallelDrag}
-              className="w-1 shrink-0 cursor-col-resize bg-hairline hover:bg-cta/40"
-            />
-            <div style={{ width: `${parallelPct}%` }} className="flex min-w-0 shrink-0 flex-col">
+              style={parallelActive ? { width: `${parallelPct}%` } : undefined}
+              className={parallelActive ? "flex min-w-0 shrink-0 flex-col" : "hidden"}
+            >
               <ReaderParallelPane
+                hidden={!parallelActive}
                 apiRef={paneApiRef}
                 doc={parallelDoc}
                 pdfPath={pdfPath}

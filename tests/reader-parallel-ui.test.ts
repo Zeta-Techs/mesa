@@ -4,7 +4,7 @@ import test from "node:test";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
-/** 对照栏（2026-11-19）：读文字切段 → 自动翻当前页往后 → 按段显示；没翻成的能重试；PDF 上点一段对照栏接住并画框 */
+/** 对照栏（2026-11-19）：读文字切段 → 后台翻全文 → 按段显示；没翻成的能重试；PDF 上点一段对照栏接住并画框 */
 test("对照栏：切段后自动按批翻译、碎片不翻、失败可重试、PDF 点段落对照栏接住", async () => {
   const bundle = await build({
     stdin: {
@@ -139,6 +139,25 @@ test("对照栏：切段后自动按批翻译、碎片不翻、失败可重试�
     assert.match(text(), /存过的第三段/);
     assert.deepEqual(saved.map((e) => e.zh), ["第一段译文 $T_i$", "第二段译文"]);
     await act(async () => root2.unmount());
+
+    // 双语没开：不画界面，但打开文献就在后台把全文翻完、存进项目
+    const root3 = createRoot(dom.window.document.getElementById("root")!);
+    prompts.length = 0;
+    saved.length = 0;
+    await act(async () =>
+      root3.render(
+        h(Pane, {
+          apiRef, doc, pdfPath: "/p/hidden.pdf", title: null, glossary: [], translate, unavailable: null, hidden: true,
+          loadCache: async () => ({}), saveCache: (e: typeof saved) => saved.push(...e),
+          onMarks() {}, onScrollPdf() {}, onClose() {}, roomy: false, onToggleRoom() {},
+        }),
+      ),
+    );
+    await settle();
+    assert.equal(text(), "", "双语关着不画译文栏");
+    assert.equal(prompts.length, 2, "两页都在后台翻了");
+    assert.deepEqual(saved.map((e) => e.zh), ["第一段译文 $T_i$", "第二段译文", "第三段译文"]);
+    await act(async () => root3.unmount());
 
   } finally {
     await act(async () => {

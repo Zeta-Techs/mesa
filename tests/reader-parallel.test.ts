@@ -7,7 +7,7 @@ import {
   paragraphAt,
   parallelProgress,
   planBatches,
-  wantedPages,
+  translationOrder,
   type ParaStatus,
 } from "../src/reader-parallel.ts";
 
@@ -28,10 +28,11 @@ const pages = new Map<number, PdfParagraph[]>([
   [3, [para(3, 0, "d".repeat(100), 0.2, { x: 0.55 })]],
 ]);
 
-test("wantedPages：当前页往后三页，夹在页数内", () => {
-  assert.deepEqual(wantedPages(2, 10), [2, 3, 4, 5]);
-  assert.deepEqual(wantedPages(9, 10), [9, 10]);
-  assert.deepEqual(wantedPages(0, 3), [1, 2, 3]);
+test("translationOrder：全文，从当前页往后到底再回头，夹在页数内", () => {
+  assert.deepEqual(translationOrder(3, 5), [3, 4, 5, 1, 2]);
+  assert.deepEqual(translationOrder(0, 3), [1, 2, 3]);
+  assert.deepEqual(translationOrder(9, 4), [4, 1, 2, 3]);
+  assert.deepEqual(translationOrder(1, 0), []);
 });
 
 test("planBatches：一批不跨页不超字数，碎片不翻，同一原文只排一次，已在翻的跳过", () => {

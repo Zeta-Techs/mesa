@@ -1132,7 +1132,7 @@ components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfCo
 components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球）：挂覆盖层根、只在 PDF 栏里（bounds）；摆位请求 TlPlace（划词选区或原文段外框）换 key 就按 readerTlWinPlace 摆到原文段下方 / 上方；拖表头换位、拖右下角改大小（readerTlCard 记住，双击复位）；Mesa 图标样「译」悬浮球 ReaderTlBall 贴窗左侧与窗一体（拖球或表头一起走，点球收起 / 展开）；表头 原文 / 存进笔记 / 复制 / ⋯（问这段、历史——在窗里列）/ ×（彻底关、连球收掉，PDF 顶栏「译文 N」再开）；onDisplay 报正文摆着哪条供 PDF 标原文段（tests/reader-translate-ui.test.ts）
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
 components/ReaderParallelPane.tsx   # 沉浸阅读区「双语对照」译文栏（2026-11-19）：PDF 文档到手逐页切段（pdf-paragraphs）、按 reader-parallel 调度
-                                    # 当前页往后三页 / 翻译全文、两批并行、编号行批量协议；两边按段落锚点同步（程序滚动 250ms 静默），PDF 上画段落框经 onMarks 交回；
+                                    # 打开文献就翻全文（双语关着时 hidden 只不画）、三批并行、编号行批量协议；两边按段落锚点同步（程序滚动 250ms 静默），PDF 上画段落框经 onMarks 交回；
                                     # 存进笔记 / 问这段 / 重译 / 重试；译文按段落哈希缓存（内存 + 项目 .ccode/reader-translations/，已存的读完才开翻）（tests/reader-parallel-ui.test.ts）
   acceptance-log.ts          # 验收账本文案：kind → 人话（进主仓 ≠ 科学验收）；acceptanceEntryRow = 设置抽屉验收记录一行
                              #   （lit-watch→文献雷达、版本短号进悬浮、系统备注「定时巡检采纳」不重复；AcceptanceLogList 渲染）
