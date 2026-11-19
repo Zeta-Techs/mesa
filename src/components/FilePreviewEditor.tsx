@@ -28,7 +28,7 @@ import {
   Link2,
   List,
   ListTodo,
-  Maximize2,
+  Maximize,
   Quote,
   Search,
   Strikethrough,
@@ -1975,20 +1975,20 @@ function TextFilePreviewEditor({
         {!hideFileName && <span className="truncate text-l3">{path.split(/[\\/]/).pop()}</span>}
         {ctx?.kind === "worktree" && (
           <span
-            className="flex shrink-0 items-center gap-1 text-l3"
+            className="flex min-w-0 items-center gap-1 text-l3"
             title={`该文件在工作区「${ctx.workspaceName}」的工作树里，改动属于分支 ${ctx.branch}`}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-ok-text" />
-            分支 {ctx.branch}
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok-text" />
+            <span className="truncate">分支 {ctx.branch}</span>
           </span>
         )}
         {ctx?.kind === "main" && !mainRepoIsHome && (
           <span
-            className="flex shrink-0 items-center gap-1 text-warn-text"
+            className="flex min-w-0 items-center gap-1 text-warn-text"
             title={`该文件在主仓库（${ctx.branch}）里，改动不属于任何工作区分支——要改分支请从工作区进入`}
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-warn-text" />
-            主仓库（非分支）
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn-text" />
+            <span className="truncate">主仓库（非分支）</span>
           </span>
         )}
         {readOnlyReason && (
@@ -2097,7 +2097,7 @@ function TextFilePreviewEditor({
                 aria-pressed={readingSerif}
                 onClick={toggleReadingSerif}
                 title={readingSerif ? "当前为学术衬线排版，点一下切回无衬线" : "切换为学术衬线阅读排版"}
-                className={`shrink-0 rounded-md px-2 py-0.5 text-micro transition-colors ${
+                className={`inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs transition-colors ${
                   readingSerif
                     ? "bg-seg-sel font-medium text-l1"
                     : "text-l3 hover:bg-hover hover:text-l1"
@@ -2117,7 +2117,7 @@ function TextFilePreviewEditor({
           )}
           {ready && mode === "edit" && (
             <span
-              className="flex shrink-0 items-center rounded-md bg-inset p-0.5"
+              className="flex h-6 shrink-0 items-center rounded-md bg-inset p-0.5"
               title={`编辑器字号 ${fontSize}（编辑器里 ${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}
             >
               <button
@@ -2138,12 +2138,22 @@ function TextFilePreviewEditor({
               </button>
             </span>
           )}
+          {ready &&
+            ((isMd && mode === "read") || mode === "edit") &&
+            Boolean(
+              (isMd && mode === "read" && onOpenReader && notePaired) ||
+                (!hideImmersive && (mode === "edit" || hasReadMode)) ||
+                (!readOnlyReason && (mode === "edit" || dirty)) ||
+                trailing,
+            ) && (
+              <span className="mx-0.5 h-3.5 w-px shrink-0 bg-hairline" aria-hidden="true" />
+            )}
           {ready && isMd && mode === "read" && onOpenReader && notePaired ? (
             <button
               type="button"
               onClick={onOpenReader}
               title="进沉浸阅读区（笔记｜PDF｜Agent 三栏，自动配对本篇 PDF）"
-              className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1"
             >
               <BookOpen size={13} strokeWidth={1.8} aria-hidden="true" />
               <span>沉浸阅读</span>
@@ -2155,11 +2165,12 @@ function TextFilePreviewEditor({
               <button
                 type="button"
                 onClick={() => setImmersive(true)}
-                // 「沉浸阅读」专指笔记｜PDF｜Agent 三栏阅读区；这里只是把这份文件铺满窗口，叫「全屏」免得混
+                // 「沉浸阅读」专指笔记｜PDF｜Agent 三栏阅读区；这里只是把这份文件铺满窗口，叫「全屏」免得混；
+                // 图标用 Maximize 四角方框，与右栏铺满（Maximize2 对角箭头）区分
                 title={`铺满整个窗口${mode === "read" ? "阅读" : "编辑"}这份文件（Esc 退出）`}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-l2 transition-colors hover:bg-hover hover:text-l1"
+                className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1"
               >
-                <Maximize2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                <Maximize size={12} strokeWidth={1.8} aria-hidden="true" />
                 <span>{mode === "read" ? "全屏阅读" : "全屏编辑"}</span>
               </button>
             )
@@ -2177,7 +2188,7 @@ function TextFilePreviewEditor({
               className={
                 dirty && !(ctx?.kind === "main" && !mainRepoIsHome)
                   ? `${compactPrimaryActionClass} h-6 shrink-0 px-2`
-                  : `shrink-0 rounded-md px-2 py-0.5 transition-colors hover:bg-hover disabled:opacity-45 ${
+                  : `inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs transition-colors hover:bg-hover disabled:opacity-45 ${
                       ctx?.kind === "main" && !mainRepoIsHome
                         ? "bg-warn/20 font-medium text-warn-text"
                         : "text-l2"

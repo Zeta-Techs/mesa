@@ -265,3 +265,23 @@ test("切换保留或修改备注刷新索引时保留正在查看与对照的�
     assert.equal(compare().value, "old", "改备注后仍维持对照状态");
   } finally { await mounted.cleanup(); }
 });
+
+test("单文件版本面板传入 onClose 时在顶部次工具条原地展示返回文件按钮", async () => {
+  const mounted = await mount();
+  const closed: Array<string | undefined> = [];
+  try {
+    await mounted.act(async () =>
+      mounted.root.render(
+        mounted.createElement(mounted.FileVersionsPanel, {
+          root: "/project",
+          path: "/project/outline.md",
+          onClose: (p?: string) => closed.push(p),
+        }),
+      ),
+    );
+    const backBtn = mounted.button("返回文件");
+    assert.ok(backBtn, "单文件版本视图原地提供返回文件按钮");
+    await mounted.act(async () => backBtn.click());
+    assert.deepEqual(closed, ["/project/outline.md"]);
+  } finally { await mounted.cleanup(); }
+});

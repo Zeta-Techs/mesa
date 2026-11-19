@@ -39,6 +39,7 @@ interface HarnessOpts {
   hunks?: { index: number; header: string; patch: string }[];
   staged?: boolean;
   onOpenFile?: (absPath: string) => void;
+  onOpenReview?: (cwd: string) => void;
 }
 
 async function mountGitPanel(opts: HarnessOpts = {}) {
@@ -147,6 +148,7 @@ async function mountGitPanel(opts: HarnessOpts = {}) {
           visible: props.visible ?? true,
           onTotals,
           onOpenFile: opts.onOpenFile,
+          onOpenReview: opts.onOpenReview,
         }),
       );
     });
@@ -282,8 +284,19 @@ test("部分暂存文件提供取消暂存入口，工作区模式隐藏暂存�
     await view.close();
   }
 
-  const wsView = await mountGitPanel({ inWorkspace: true });
+  const reviewCalls: string[] = [];
+  const wsView = await mountGitPanel({
+    inWorkspace: true,
+    onOpenReview: (cwd) => reviewCalls.push(cwd),
+  });
   try {
+    const reviewBtn = Array.from(wsView.host.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "去评审",
+    );
+    assert.ok(reviewBtn, "工作区模式顶栏提供语义明确的「去评审」按钮");
+    await wsView.act(async () => reviewBtn!.click());
+    assert.deepEqual(reviewCalls, [REPO]);
+
     const fileBtn = Array.from(wsView.host.querySelectorAll("button")).find((b) =>
       b.getAttribute("title")?.includes("src/a.ts 的 diff"),
     )!;

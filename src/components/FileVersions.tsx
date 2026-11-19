@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { ArrowLeft, FolderTree, History } from "lucide-react";
 import { confirmDialog } from "./ConfirmDialog";
 import { fieldClass, InlineNotice, secondaryActionClass } from "./PageFrame";
 import { projectFilePreviewKind } from "../project-files";
@@ -14,17 +15,31 @@ const ProjectFilePreview = lazy(() => import("./ProjectFilePreview"));
 const TextVersionCompare = lazy(() => import("./TextVersionCompare"));
 const ImageVersionCompare = lazy(() => import("./ImageVersionCompare"));
 const LINK = "shrink-0 rounded-sm text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-40";
+const TOOLBAR_BTN =
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40";
+const TOOLBAR_CHIP =
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-canvas px-2 text-xs font-medium text-l1 transition-colors hover:bg-hover disabled:opacity-40";
 const absolute = (root: string, path: string) => `${root.replace(/[/\\]+$/, "")}/${path}`;
 
-export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", lead, onOpen, className = LINK }: {
+export function FileVersionsButton({
+  root,
+  path,
+  workspaceId,
+  refreshKey = "",
+  lead,
+  onOpen,
+  className,
+  variant = "link",
+}: {
   root: string;
   path?: string;
   workspaceId?: string;
   refreshKey?: string;
   lead?: ReactNode;
   onOpen?: () => void | Promise<void>;
-  /** 步骤卡回头组传描边按钮样式；预览栏等处默认文字链接 */
+  /** 步骤卡回头组传描边按钮样式；预览工具条用 variant="toolbar"，其余默认文字链接 */
   className?: string;
+  variant?: "link" | "toolbar";
 }) {
   const [data, setData] = useState<FileVersionsDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,9 +61,13 @@ export function FileVersionsButton({ root, path, workspaceId, refreshKey = "", l
       await showProjectFile({ projectRoot: data.root, root: data.root, path: absolute(data.root, first.path), versions: { root, workspaceId }, from: "文件版本" });
     } catch (reason) { setError(String(reason)); }
   }
+  const btnClass = className ?? (variant === "toolbar" ? TOOLBAR_BTN : LINK);
   return <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
     {lead}
-    <button type="button" className={className} onClick={() => void open()} title={error ?? "在右侧文件栏查看现稿和历史；留存只决定以后保存哪些版本"}>文件版本</button>
+    <button type="button" className={btnClass} onClick={() => void open()} title={error ?? "查看当前文件的历史版本与留存设置"}>
+      {variant === "toolbar" && <History size={13} strokeWidth={1.8} aria-hidden="true" />}
+      文件版本
+    </button>
   </span>;
 }
 
@@ -187,29 +206,62 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenCh
       { label: "删除留存…", danger: true, disabled: busy, onSelect: () => void remove() },
     ] : []),
   ] : [];
-  return <section aria-label="文件版本" className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 overflow-hidden">
-    {/* 文件固定、外面也不要「返回文件」时（对话页文件页签：标签上的「文件版本」原位变「返回文件」），这一行整个不画 */}
-    {(!path || onClose) && <div className="flex shrink-0 items-center gap-2 px-2 pt-1">
-      {!path && <button type="button" className={LINK} aria-expanded={treeOpen} onClick={() => setTreeOpen((current) => !current)}>文件树</button>}
-      <span className="min-w-0 truncate text-xs text-l3" title={chosen}>{chosen.split(/[\\/]/).pop()}</span>
-      {onClose && <button type="button" className={`${LINK} ml-auto`} onClick={() => onClose(path ?? absolute(root, chosen))}>返回文件</button>}
+  return <section aria-label="文件版本" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+    {/* 次工具条（h-8 border-b bg-strip px-3）：与 FilePreviewEditor 工具条完全同高同位，
+        右侧「返回文件」与预览态的「文件版本」原位互换，点完无需移动光标到顶栏找返回 */}
+    {(!path || onClose) && <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
+      {!path ? (
+        <>
+          <button
+            type="button"
+            className={`${TOOLBAR_BTN} ${treeOpen ? "bg-seg-sel text-l1" : ""}`}
+            aria-expanded={treeOpen}
+            onClick={() => setTreeOpen((current) => !current)}
+          >
+            <FolderTree size={13} strokeWidth={1.8} aria-hidden="true" />
+            文件树
+          </button>
+          <span className="min-w-0 truncate text-xs text-l2" title={chosen}>{chosen.split(/[\\/]/).pop()}</span>
+        </>
+      ) : (
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-l2">
+          <History size={13} strokeWidth={1.8} className="shrink-0 text-l3" aria-hidden="true" />
+          <span className="font-medium text-l1">文件版本</span>
+          {file && file.versions.length > 0 && (
+            <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l3">
+              {file.versions.length}
+            </span>
+          )}
+        </span>
+      )}
+      {onClose && (
+        <button
+          type="button"
+          className={`${TOOLBAR_CHIP} ml-auto`}
+          title="回到当前文件的预览 / 编辑"
+          onClick={() => onClose(path ?? absolute(root, chosen))}
+        >
+          <ArrowLeft size={13} strokeWidth={1.8} aria-hidden="true" />
+          返回文件
+        </button>
+      )}
     </div>}
     <div className="flex min-h-0 flex-1 gap-2">
       {!path && treeOpen && <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline">
         <FileSelectionTree paths={paths} selected={chosen} onSelect={(next) => { setChosen(next); setForm(null); setNotice(null); }} />
       </aside>}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
-    <div className="shrink-0 space-y-2 px-2">
+    <div className="shrink-0 space-y-2 px-3 pt-2.5">
       {file && <>
-        <div className="flex flex-wrap items-center gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
           <select aria-label="查看的版本" className={`${fieldClass} h-7 min-w-0 flex-1`} value={versionId} onChange={(event) => { const next = event.target.value; setVersionId(next); setCompareId((current) => !next || current === next ? "" : current); setForm(null); }}>
             {file.exists && <option value="">当前文件</option>}
             {file.versions.map((item) => <option key={item.id} value={item.id}>{item.note || roundTime(item.savedAt)} · {item.source}</option>)}
           </select>
-          {version && <button type="button" className={`${LINK} h-7 px-1 text-l2`} disabled={busy} onClick={() => void exportVersion()}>另存为副本…</button>}
-          <button ref={menuButton} type="button" className={`${LINK} h-7 px-1`} aria-haspopup="menu" aria-expanded={!!menu} disabled={busy} onClick={(event) => {
+          {version && <button type="button" className={`${TOOLBAR_CHIP} h-7`} disabled={busy} onClick={() => void exportVersion()}>另存为副本…</button>}
+          <button ref={menuButton} type="button" className={`${TOOLBAR_BTN} h-7 border border-hairline`} aria-haspopup="menu" aria-expanded={!!menu} disabled={busy} onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
-            setMenu((current) => current ? null : { x: rect.right, y: rect.bottom });
+            setMenu((current) => current ? null : { x: rect.right, y: rect.bottom + 4 });
           }}>更多</button>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-micro text-l3">
@@ -217,28 +269,28 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenCh
             {version ? `${version.source}${version.round ? ` · 第 ${version.round} 轮` : ""}${version.cause ? ` · ${roundCauseLabel(version.cause)}` : ""} · 只读` : "仅预览"}
           </span>
           {version && (kind === "text" || kind === "image") && <>
-            {file.exists && !compareId && <button type="button" className={`${LINK} text-l2`} onClick={() => setCompareId("current")}>和现稿比较</button>}
-            {(compareId || file.versions.length > 1) && <select aria-label="比较的版本" className={`${fieldClass} min-w-0 max-w-full`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+            {file.exists && !compareId && <button type="button" className="rounded-md px-1.5 py-0.5 text-micro font-medium text-l2 transition-colors hover:bg-hover hover:text-l1" onClick={() => setCompareId("current")}>和现稿比较</button>}
+            {(compareId || file.versions.length > 1) && <select aria-label="比较的版本" className={`${fieldClass} h-6 min-w-0 max-w-full text-micro`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>
             <option value="">选择其他版本比较…</option>
             {file.exists && <option value="current">当前文件（磁盘已保存）</option>}
             {file.versions.filter((item) => item.id !== versionId).map((item) => <option key={item.id} value={item.id}>对比：{item.note || roundTime(item.savedAt)}</option>)}
             </select>}
-            {compareId && <button type="button" className={LINK} onClick={() => setCompareId("")}>结束比较</button>}
-            {compareId === "current" && <button type="button" className={LINK} onClick={() => setCompareRefresh((current) => current + 1)}>刷新对照</button>}
+            {compareId && <button type="button" className="rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1" onClick={() => setCompareId("")}>结束比较</button>}
+            {compareId === "current" && <button type="button" className="rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1" onClick={() => setCompareRefresh((current) => current + 1)}>刷新对照</button>}
           </>}
         </div>
         {!file.exists && !file.versions.length && <p className="py-2 text-xs text-l4">当前路径没有文件，也没有可读取的历史；留存不能找回已清理的内容。</p>}
         {form && <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <input autoFocus aria-label="版本备注" className={`${fieldClass} min-w-0 flex-1`} maxLength={200} value={value} onChange={(event) => setValue(event.target.value)} placeholder="备注（可选）" />
           <button type="submit" className={secondaryActionClass} disabled={busy}>保存</button>
-          <button type="button" className={LINK} disabled={busy} onClick={() => setForm(null)}>取消</button>
+          <button type="button" className={TOOLBAR_BTN} disabled={busy} onClick={() => setForm(null)}>取消</button>
         </form>}
       </>}
       {error && <InlineNotice>{error}<button type="button" className={`${LINK} ml-2`} onClick={() => setRevision((current) => current + 1)}>重试</button></InlineNotice>}
       {notice && <p role="status" className="break-all text-xs text-l3">{notice}</p>}
       {!file && !error && <p className="text-xs text-l4">读取中…</p>}
     </div>
-    {compareId && version && <div className="grid shrink-0 grid-cols-2 gap-2 px-2 text-xs text-l3"><span>左：{version.note || roundTime(version.savedAt)}</span><span>右：{compareLabel}</span></div>}
+    {compareId && version && <div className="grid shrink-0 grid-cols-2 gap-2 px-3 text-xs text-l3"><span>左：{version.note || roundTime(version.savedAt)}</span><span>右：{compareLabel}</span></div>}
     {comparison && <Suspense fallback={<p className="px-2 text-xs text-l3">读取对照…</p>}>
       {comparison.beforePath && comparison.afterPath ? <ImageVersionCompare before={comparison.beforePath} after={comparison.afterPath} /> : comparison.before !== null && comparison.after !== null ? <TextVersionCompare before={comparison.before} after={comparison.after} /> : null}
     </Suspense>}

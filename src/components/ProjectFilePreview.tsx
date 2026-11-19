@@ -163,13 +163,13 @@ export default function ProjectFilePreview(props: ComponentProps<typeof PreviewC
   const kind = projectFilePreviewKind(props.path);
   const isBinary = BINARY_PREVIEW_KINDS.has(kind);
   const versionsBtn = !props.readOnly && !props.hideVersions
-    ? <FileVersionsButton root={props.root} path={props.path} onOpen={openVersions} />
+    ? <FileVersionsButton root={props.root} path={props.path} variant="toolbar" onOpen={openVersions} />
     : null;
   const combinedTrailing = versionsBtn || props.trailing ? <>{versionsBtn}{props.trailing}</> : undefined;
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col">
     {versionsPath === props.path && !props.readOnly ? <FileVersionsPanel root={props.root} path={props.path} onClose={() => setVersionsPath(null)} /> : <>
       {isBinary && combinedTrailing && (
-        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-hairline bg-strip px-3 py-1 text-xs empty:hidden">
+        <div className="flex h-8 shrink-0 items-center justify-end gap-2 border-b border-hairline bg-strip px-3 text-xs empty:hidden">
           {combinedTrailing}
         </div>
       )}

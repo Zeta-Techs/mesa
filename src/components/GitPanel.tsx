@@ -6,10 +6,10 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  ClipboardCheck,
   FileText,
   FolderOpen,
   GitBranch,
-  Maximize2,
   PanelRightClose,
   PanelRightOpen,
   RefreshCw,
@@ -31,7 +31,6 @@ import {
   fieldClass,
   FoldMark,
   hoverRevealClass,
-  iconActionClass,
   LoadingRows,
   InlineNotice,
   primaryActionClass,
@@ -1194,8 +1193,8 @@ function GitPanel({
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
-      {/* 头部：分支 / 上游差距（工作区模式：任务基准）/ 总增删 / 刷新 */}
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-hairline px-3 text-xs">
+      {/* 头部（次工具条 h-8 bg-strip，与预览/版本工具条同规格）：分支 / 任务基准 / 总增删 / 去评审 / 刷新 */}
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
         {status?.isRepo ? (
           inWs ? (
             <>
@@ -1224,11 +1223,11 @@ function GitPanel({
                 <button
                   type="button"
                   onClick={() => onOpenReview(cwd)}
-                  title="展开任务审阅"
-                  className={`${wsDiff!.totalAdd > 0 || wsDiff!.totalDel > 0 ? "" : "ml-auto"} inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1`}
+                  title="打开工作区评审（查看完整改动、核验并合并回主项目）"
+                  className={`${wsDiff!.totalAdd > 0 || wsDiff!.totalDel > 0 ? "" : "ml-auto"} inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-canvas px-2 text-xs font-medium text-l1 transition-colors hover:bg-hover`}
                 >
-                  <Maximize2 aria-hidden="true" size={13} strokeWidth={1.8} />
-                  审阅
+                  <ClipboardCheck aria-hidden="true" size={13} strokeWidth={1.8} />
+                  去评审
                 </button>
               )}
             </>
@@ -1280,7 +1279,7 @@ function GitPanel({
               (!inWs && (status.totalAdd > 0 || status.totalDel > 0)))
               ? ""
               : "ml-auto"
-          } ${iconActionClass}`}
+          } flex size-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-40`}
         >
           <RefreshCw
             size={13}

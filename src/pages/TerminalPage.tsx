@@ -883,15 +883,25 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       setRightWidth(clampRightWidth(normalRightWidthRef.current));
       return;
     }
-    expandRight();
+    const maxW = maxRightWidth();
+    if (rightWidth >= maxW - 12) {
+      // 用户已手动拖到最宽：再点一次直接还原到默认宽度，而不是点击无反应
+      const fallback = clampRightWidth(RIGHT_PANEL_DEFAULT_WIDTH);
+      normalRightWidthRef.current = fallback;
+      setRightExpanded(false);
+      setRightWidth(fallback);
+      return;
+    }
+    normalRightWidthRef.current = rightWidth;
+    setRightExpanded(true);
+    setRightWidth(maxW);
   }
 
-  /** 进入专注内容（右栏拉到窗口宽的约六成）；已在里面就不动 */
+  /** 自动拉宽右栏（打开 PDF / 开启并排时）：已比目标宽就不把人调好的宽度缩回去 */
   function expandRight(ratio = 0.58) {
     if (rightExpanded) return;
     const total = terminalRootRef.current?.clientWidth ?? window.innerWidth;
     const target = clampRightWidth(Math.round(total * ratio));
-    // 已经比目标宽（人自己拖宽过）就不动，不把人调好的宽度缩回去
     if (target <= rightWidth) return;
     normalRightWidthRef.current = rightWidth;
     setRightExpanded(true);
@@ -1046,7 +1056,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       window.removeEventListener("pointercancel", onUp);
       const finalWidth = clampRightWidth(startWidth + startX - upEvent.clientX);
       setRightWidth(finalWidth);
-      if (!expanded) {
+      if (expanded && finalWidth < maxRightWidth() - 24) {
+        // 铺满状态下用户手动拖窄：退出铺满态并记住新宽度，避免图标停在「退出铺满」
+        setRightExpanded(false);
+        normalRightWidthRef.current = finalWidth;
+        localStorage.setItem(
+          RIGHT_PANEL_WIDTH_KEY,
+          String(Math.round(finalWidth)),
+        );
+      } else if (!expanded) {
         normalRightWidthRef.current = finalWidth;
         localStorage.setItem(
           RIGHT_PANEL_WIDTH_KEY,
@@ -1278,11 +1296,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         setRightOpen(true);
         setRightTab("preview");
         setFilesViewPref("preview");
+        setPreviewVersionsPath(null);
         if (path.toLowerCase().endsWith(".pdf")) expandRight(0.45);
         if (!isSame) {
           setPreview({ path, name, root: root ?? null });
           setPreviewDirty(false);
-          setPreviewVersionsPath(null);
         }
         if (files !== undefined) setPreviewFiles(files);
         else if (!isSame) setPreviewFiles([]);
@@ -3603,7 +3621,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           {/* 右上角三个（2026-10-24 照 Claude 客户端「一个图标管一块，亮着就是开着」重做，原 聊天/终端 · 成果面板 · 分屏 · 查找 四个）：
               >_ 终端（亮着 = 正看着这段对话的终端）、± 改动（右栏改动窗格，有改动带数字）、⋯ 更多（分屏、查找、启动配置行、文件预览）。
               「成果面板」一词取消：文件预览由左边点文件打开，改动由 ± 打开，右栏自己带收起 */}
-          <span className="ml-auto flex shrink-0 items-center gap-1">
+          <span className="ml-auto flex shrink-0 items-center gap-0.5">
             <button
               type="button"
               onClick={(e) => {
@@ -3616,7 +3634,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
               }`}
               aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
-              className={`flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
+              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
                 focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
               }`}
             >
@@ -3645,7 +3663,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         : "改动"
                   }
                   aria-label={changesOpen ? "收起改动" : "看改动"}
-                  className={`relative flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
+                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
                     changesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
@@ -3666,7 +3684,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   aria-pressed={filesOpen}
                   title={filesOpen ? "收起文件" : "文件：这段对话文件夹里的文件，点开就在右边看"}
                   aria-label={filesOpen ? "收起文件" : "看文件"}
-                  className={`flex h-8 min-w-8 items-center justify-center gap-1.5 rounded-md px-1.5 transition-colors ${
+                  className={`flex size-7 items-center justify-center rounded-md transition-colors ${
                     filesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
@@ -4339,26 +4357,40 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             : "hidden"
         }
       >
-            {/* 窗格头：拉齐左侧对话头高度 h-9 + 底部 hairline，图标与圆角统一对齐全站 7px 规范 */}
+            {/* 窗格头（Row 1，h-9）：只放窗格级导航与布局；内容级操作（含文件版本 / 返回文件）留在下方 Row 2 工具条 */}
             <div className="flex h-9 shrink-0 items-center gap-1 border-b border-hairline px-2">
               {rightTab === "preview" ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setFilesViewPref("tree")}
-                    aria-pressed={filesView === "tree" || filesSideBySide}
-                    title="文件树"
-                    aria-label="文件树"
-                    className={`flex h-7 shrink-0 items-center justify-center rounded-md px-2 transition-colors ${
-                      filesView === "tree" || filesSideBySide ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
-                    }`}
-                  >
-                    <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
-                  {preview && (
+                preview ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (filesSideBySide) {
+                          setFilesSplit(false);
+                          try {
+                            localStorage.setItem(FILES_SPLIT_KEY, "0");
+                          } catch {
+                            /* ignore */
+                          }
+                        }
+                        setFilesViewPref("tree");
+                      }}
+                      aria-pressed={!filesSideBySide && filesView === "tree"}
+                      title={filesSideBySide ? "退出并排，全宽查看文件树" : "返回文件树"}
+                      aria-label={filesSideBySide ? "退出并排，查看文件树" : "返回文件树"}
+                      className={`flex size-7 shrink-0 items-center justify-center rounded-md transition-colors ${
+                        !filesSideBySide && filesView === "tree"
+                          ? "bg-seg-sel text-l1"
+                          : "text-l3 hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
                     <span
                       className={`flex h-7 min-w-0 max-w-[60%] items-center gap-1.5 rounded-md pl-2 pr-1 text-xs transition-colors ${
-                        filesView === "preview" || filesSideBySide ? "bg-seg-sel text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+                        filesView === "preview" || filesSideBySide
+                          ? "bg-seg-sel text-l1"
+                          : "text-l3 hover:bg-hover hover:text-l1"
                       }`}
                     >
                       <span aria-hidden="true" className="flex size-3.5 shrink-0 items-center justify-center">
@@ -4366,26 +4398,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       </span>
                       <button
                         type="button"
-                        onClick={() => setFilesViewPref("preview")}
-                        title={preview.path}
+                        onClick={() => {
+                          if (previewVersionsPath === preview.path) {
+                            setPreviewVersionsPath(null);
+                          }
+                          setFilesViewPref("preview");
+                        }}
+                        title={
+                          previewVersionsPath === preview.path
+                            ? `${preview.path}（点击返回文件预览）`
+                            : preview.path
+                        }
                         className="min-w-0 truncate font-medium"
                       >
                         {preview.name}
                       </button>
-                      {/* 看版本时标签上显示「返回文件」；平时文件版本收进工具条与 ⋯ 更多菜单，给文件名留足宽度 */}
-                      {previewVersionsPath === preview.path && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPreviewVersionsPath(null);
-                            setFilesViewPref("preview");
-                          }}
-                          title="回到这个文件的预览 / 编辑"
-                          className="shrink-0 rounded-md px-1 text-micro text-l3 underline-offset-2 hover:text-l1 hover:underline"
-                        >
-                          返回文件
-                        </button>
-                      )}
                       {previewDirty && (
                         <span
                           className="size-1.5 shrink-0 rounded-full bg-warn-text"
@@ -4403,61 +4430,61 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         <X size={12} strokeWidth={1.8} aria-hidden="true" />
                       </button>
                     </span>
-                  )}
-                  {(filesView === "preview" || filesSideBySide) && preview && previewFiles.length > 1 && (() => {
-                    const idx = previewFiles.findIndex((f) => samePath(f.path, preview.path, IS_WINDOWS));
-                    return (
-                      <span className="ml-0.5 flex shrink-0 items-center gap-0.5 text-micro text-l4">
-                        <button
-                          type="button"
-                          onClick={() => switchPreview(-1)}
-                          disabled={idx <= 0}
-                          aria-label="上一个文件"
-                          className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
-                          title="上一个文件（Alt+↑）"
-                        >
-                          <ChevronUp size={13} strokeWidth={1.8} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => switchPreview(1)}
-                          disabled={idx < 0 || idx >= previewFiles.length - 1}
-                          aria-label="下一个文件"
-                          className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
-                          title="下一个文件（Alt+↓）"
-                        >
-                          <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
-                        </button>
-                        {idx >= 0 && (
-                          <span className="px-0.5 tabular-nums">
-                            {idx + 1}/{previewFiles.length}
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })()}
-                </>
+                    {(filesView === "preview" || filesSideBySide) && previewFiles.length > 1 && (() => {
+                      const idx = previewFiles.findIndex((f) => samePath(f.path, preview.path, IS_WINDOWS));
+                      return (
+                        <span className="ml-0.5 flex shrink-0 items-center gap-0.5 text-micro text-l4">
+                          <button
+                            type="button"
+                            onClick={() => switchPreview(-1)}
+                            disabled={idx <= 0}
+                            aria-label="上一个文件"
+                            className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                            title="上一个文件（Alt+↑）"
+                          >
+                            <ChevronUp size={13} strokeWidth={1.8} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => switchPreview(1)}
+                            disabled={idx < 0 || idx >= previewFiles.length - 1}
+                            aria-label="下一个文件"
+                            className="flex size-6 items-center justify-center rounded-md transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                            title="下一个文件（Alt+↓）"
+                          >
+                            <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+                          </button>
+                          {idx >= 0 && (
+                            <span className="px-0.5 tabular-nums">
+                              {idx + 1}/{previewFiles.length}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <span
+                    onDoubleClick={toggleRightExpanded}
+                    title={`文件；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
+                    className="flex h-7 shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium text-l1"
+                  >
+                    <FolderTree size={14} strokeWidth={1.8} className="text-l3" aria-hidden="true" />
+                    <span>文件</span>
+                  </span>
+                )
               ) : (
                 <span
                   onDoubleClick={toggleRightExpanded}
-                  title={`改动；双击${rightExpanded ? "退出专注内容" : "进入专注内容"}`}
+                  title={`改动；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
                   className="flex h-7 shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium text-l1"
                 >
                   <FileDiff size={14} strokeWidth={1.8} className="text-l3" aria-hidden="true" />
                   <span>改动</span>
                   {gitTotals?.isRepo && gitTotals.files.length > 0 && (
-                    <>
-                      <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
-                        {gitTotals.files.length}
-                      </span>
-                      {(gitTotals.add > 0 || gitTotals.del > 0) && (
-                        <span className="font-mono text-micro font-normal tabular-nums">
-                          {gitTotals.add > 0 && <span className="text-add">+{gitTotals.add}</span>}
-                          {gitTotals.add > 0 && gitTotals.del > 0 ? " " : ""}
-                          {gitTotals.del > 0 && <span className="text-del">-{gitTotals.del}</span>}
-                        </span>
-                      )}
-                    </>
+                    <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
+                      {gitTotals.files.length}
+                    </span>
                   )}
                 </span>
               )}
@@ -4697,15 +4724,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   }
                 >
                   {previewVersionsPath === preview.path ? (
-                    <FileVersionsPanel root={preview.root ?? activeCwd} path={preview.path} />
+                    <FileVersionsPanel
+                      root={preview.root ?? activeCwd}
+                      path={preview.path}
+                      onClose={() => {
+                        setPreviewVersionsPath(null);
+                        setFilesViewPref("preview");
+                      }}
+                    />
                   ) : (
                     <>
                       {isBinaryPreview && (
-                        <div className="flex shrink-0 items-center justify-end gap-2 border-b border-hairline bg-strip px-3 py-1 text-xs empty:hidden">
+                        <div className="flex h-8 shrink-0 items-center justify-end gap-2 border-b border-hairline bg-strip px-3 text-xs empty:hidden">
                           <FileVersionsButton
                             root={preview.root ?? activeCwd}
                             path={preview.path}
                             refreshKey={String(refreshKey)}
+                            variant="toolbar"
                             onOpen={togglePreviewVersions}
                           />
                         </div>
@@ -4753,6 +4788,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                               root={preview.root ?? activeCwd}
                               path={preview.path}
                               refreshKey={String(refreshKey)}
+                              variant="toolbar"
                               onOpen={togglePreviewVersions}
                             />
                           }

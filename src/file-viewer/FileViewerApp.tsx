@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { Copy, ExternalLink, FolderOpen, FolderTree, History, MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, ExternalLink, FolderOpen, FolderTree, History, MoreHorizontal } from "lucide-react";
 import { ConfirmDialogHost, confirmDialog } from "../components/ConfirmDialog";
 import ContextMenu, { type ContextMenuItem } from "../components/ContextMenu";
 import { ghostActionClass, LoadingRows } from "../components/PageFrame";
@@ -296,7 +296,7 @@ export default function FileViewerApp() {
                 title="上一个文件"
                 aria-label="上一个文件"
               >
-                ↑
+                <ChevronUp size={13} strokeWidth={1.8} aria-hidden="true" />
               </button>
               <button
                 type="button"
@@ -306,21 +306,12 @@ export default function FileViewerApp() {
                 title="下一个文件"
                 aria-label="下一个文件"
               >
-                ↓
+                <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
               </button>
               <span className="px-0.5 text-micro tabular-nums text-l4">
                 {index + 1}/{total}
               </span>
             </>
-          )}
-          {versionsOpen && (
-            <button
-              type="button"
-              className={ghostActionClass}
-              onClick={() => setVersionsOpen(false)}
-            >
-              返回文件
-            </button>
           )}
           <button
             ref={moreBtnRef}
