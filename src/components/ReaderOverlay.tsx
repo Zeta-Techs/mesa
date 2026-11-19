@@ -85,6 +85,9 @@ import type { AnnotateCopy } from "./FilePreviewEditor";
 // Monaco 与 pdf.js 都不进主包：首次进入阅读区才加载（同终端页预览的懒加载姿势）
 const FilePreviewEditor = lazy(() => import("./FilePreviewEditor"));
 const PdfContinuousView = lazy(() => import("./PdfContinuousView"));
+import type { PdfParallelBridge } from "./PdfContinuousView";
+import type * as pdfjs from "pdfjs-dist";
+import ReaderParallelPane, { type ParallelMark, type ParallelPaneApi } from "./ReaderParallelPane";
 
 /** ensure_paper_note 的返回（notes/<slug>.md 建档：已存在原样返回，永不覆盖） */
 interface PaperNoteDto {
@@ -574,6 +577,85 @@ export default function ReaderOverlay({
    *  栏宽随收起滑动、分隔条拖拽变化，RO 逐帧报、按帧合并 */
   const rootRef = useRef<HTMLDivElement>(null);
   const pdfColRef = useRef<HTMLDivElement>(null);
+
+  // ===== 对照模式（2026-11-19 用户：不管之前的排版，要最好用的翻译方式）：PDF 栏右边一条译文栏，
+  // 按段对齐、两边同步滚动；开着时自动翻当前页往后三页。开关记住，抽查核对档不出 =====
+  const [parallelOn, setParallelOn] = useState(() => {
+    try {
+      return localStorage.getItem("ccode.readerParallel") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const parallelActive = parallelOn && !spotMode;
+  const [parallelPct, setParallelPct] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem("ccode.readerParallelPct"));
+      return Number.isFinite(v) && v >= 25 && v <= 70 ? v : 50;
+    } catch {
+      return 50;
+    }
+  });
+  const parallelRowRef = useRef<HTMLDivElement>(null);
+  const paneApiRef = useRef<ParallelPaneApi | null>(null);
+  const [parallelDoc, setParallelDoc] = useState<pdfjs.PDFDocumentProxy | null>(null);
+  const [parallelMarks, setParallelMarks] = useState<ParallelMark[]>([]);
+  const [parallelScrollReq, setParallelScrollReq] = useState<{ page: number; frac: number; nonce: number } | null>(null);
+  const parallelNonceRef = useRef(0);
+  const toggleParallel = useCallback(() => {
+    setParallelOn((v) => {
+      try {
+        localStorage.setItem("ccode.readerParallel", v ? "0" : "1");
+      } catch {
+        /* 记不住就算了 */
+      }
+      return !v;
+    });
+  }, []);
+  const parallelBridge = useMemo<PdfParallelBridge>(
+    () => ({
+      on: parallelActive,
+      onToggle: toggleParallel,
+      onDoc: setParallelDoc,
+      onViewport: (page, frac) => paneApiRef.current?.onViewport(page, frac),
+      scrollReq: parallelScrollReq,
+      marks: parallelActive ? parallelMarks : [],
+      onPointer: (page, fx, fy, click) => paneApiRef.current?.onPointer(page, fx, fy, click) ?? false,
+    }),
+    [parallelActive, toggleParallel, parallelScrollReq, parallelMarks],
+  );
+  const scrollPdfTo = useCallback((page: number, frac: number) => {
+    setParallelScrollReq({ page, frac, nonce: ++parallelNonceRef.current });
+  }, []);
+  const translateRaw = useCallback(
+    (prompt: string) => invoke<string>("ai_prompt", { profileId: null, fnKey: "translate", prompt }),
+    [],
+  );
+  /** 拖对照栏左边的分隔条：按 PDF 栏这一排的宽度换算百分比（25%–70%），松手记住 */
+  const startParallelDrag = useCallback((e: React.PointerEvent) => {
+    const row = parallelRowRef.current;
+    if (!row) return;
+    e.preventDefault();
+    const rect = row.getBoundingClientRect();
+    const move = (ev: PointerEvent) => {
+      const pct = Math.min(70, Math.max(25, ((rect.right - ev.clientX) / rect.width) * 100));
+      setParallelPct(pct);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setParallelPct((v) => {
+        try {
+          localStorage.setItem("ccode.readerParallelPct", String(Math.round(v)));
+        } catch {
+          /* 记不住就算了 */
+        }
+        return v;
+      });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, []);
   const [pdfBounds, setPdfBounds] = useState<ReaderPdfBounds | undefined>(undefined);
   useEffect(() => {
     const col = pdfColRef.current;
@@ -1172,6 +1254,22 @@ export default function ReaderOverlay({
     };
   }, [tlSource]);
 
+  /** 「问这段」（浮窗与对照栏共用）：译文放进右边对话的输入框，不发送 */
+  function askAboutTranslation(text: string, page: number) {
+    // 右栏收着时注入进看不见的终端＝动作看似失灵：顺手带滑入过渡展开右栏
+    // （回栏同款口径），让文字落在看得见的输入行里
+    if (!mountRight || !rightOpen) {
+      setRightOpen(true);
+      setRightSlide(true);
+    }
+    // 注入失败（CLI 已退出等）要把提示亮出来，不能无声无息
+    void Promise.resolve(
+      onInject(`这段译文在第 ${page} 页：\n${text}\n请对照原文指出译得不准或漏掉的地方。`, false),
+    ).then((hint) => {
+      if (hint) showToast(hint);
+    });
+  }
+
   const tlPanelProps = {
     mode: tlMode,
     onMode: setTlMode,
@@ -1195,25 +1293,10 @@ export default function ReaderOverlay({
     // 抽查核对档没有对话栏：「问这段」不出，免得挂一颗永远点不了的灰钮
     onAsk: spotMode ? undefined : (entry: TlHistoryEntry) => {
       const pairs = parseBilingual(entry.translated);
-      const text = reflowBlockText(
-        pairs ? plainFromBilingual(pairs) : entry.translated,
-        { cjk: true },
+      askAboutTranslation(
+        reflowBlockText(pairs ? plainFromBilingual(pairs) : entry.translated, { cjk: true }),
+        entry.page,
       );
-      // 右栏收着时注入进看不见的终端＝动作看似失灵：顺手带滑入过渡展开右栏
-      // （回栏同款口径），让文字落在看得见的输入行里
-      if (!mountRight || !rightOpen) {
-        setRightOpen(true);
-        setRightSlide(true);
-      }
-      // 注入失败（CLI 已退出等）要把提示亮出来，不能无声无息
-      void Promise.resolve(
-        onInject(
-          `这段译文在第 ${entry.page} 页：\n${text}\n请对照原文指出译得不准或漏掉的地方。`,
-          false,
-        ),
-      ).then((hint) => {
-        if (hint) showToast(hint);
-      });
     },
   };
 
@@ -1459,6 +1542,7 @@ export default function ReaderOverlay({
           </div>
         )}
 
+        <div ref={parallelRowRef} className="flex min-w-0 flex-1">
         <div ref={pdfColRef} className="flex min-w-0 flex-1 flex-col">
           {spotMode && !pdfPath ? (
             // 抽查：还在解析这一篇 / 没有全文——拿题录摘要当原文对照
@@ -1505,11 +1589,52 @@ export default function ReaderOverlay({
               onRevealAnnotation={revealAnnotation}
               jumpReq={jumpReq}
               onQuoteChecker={onQuoteChecker}
+              parallel={spotMode ? undefined : parallelBridge}
               sourceMark={tlSource}
               findHotkey
             />
           </Suspense>
           )}
+        </div>
+        {parallelActive && (
+          <>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="拖动调整译文栏宽度"
+              onPointerDown={startParallelDrag}
+              className="w-1 shrink-0 cursor-col-resize bg-hairline hover:bg-cta/40"
+            />
+            <div style={{ width: `${parallelPct}%` }} className="flex min-w-0 shrink-0 flex-col">
+              <ReaderParallelPane
+                apiRef={paneApiRef}
+                doc={parallelDoc}
+                pdfPath={pdfPath}
+                title={translateTitle}
+                glossary={glossary}
+                translate={translateRaw}
+                unavailable={needsProfile ? "还没有可用的翻译配置（设置 → AI 与 Agent）" : null}
+                onMarks={setParallelMarks}
+                onScrollPdf={scrollPdfTo}
+                onSaveToNote={
+                  noteReadOnly
+                    ? undefined
+                    : (original, translated, page) => void saveTranslation({ original, translated, page })
+                }
+                onAsk={hasAgentTab ? askAboutTranslation : undefined}
+                onClose={toggleParallel}
+                roomy={!leftOpen && !rightOpen}
+                onToggleRoom={() => {
+                  const open = !leftOpen && !rightOpen;
+                  setLeftOpen(open);
+                  setRightOpen(open);
+                  setLeftSlide(true);
+                  setRightSlide(true);
+                }}
+              />
+            </div>
+          </>
+        )}
         </div>
 
         {mountRight && (

@@ -64,6 +64,7 @@ import {
   type QuoteCheck,
 } from "../pdf-search";
 import type { PdfAnnotation, PdfJumpReq } from "../reader-note";
+import type { PdfFracBox } from "../pdf-paragraphs";
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -121,6 +122,17 @@ const FIT_SETTLE_MS = 150;
  * 离窗页按已测页比例给骨架占位；加载链路与 PdfPreview 同一条 read_pdf_bytes 白名单。
  * 缩放：顶栏 −/＋ 之外，⌘/Ctrl+滚轮与触控板双指捏合对准指针位置改倍率。
  */
+/** PDF 栏与对照栏之间的接线（ReaderOverlay 用 useMemo 稳住引用） */
+export interface PdfParallelBridge {
+  on: boolean;
+  onToggle: () => void;
+  onDoc: (doc: pdfjs.PDFDocumentProxy | null) => void;
+  onViewport: (page: number, frac: number) => void;
+  scrollReq: { page: number; frac: number; nonce: number } | null;
+  marks: readonly { page: number; boxes: readonly PdfFracBox[]; tone: "hover" | "focus" }[];
+  onPointer: (page: number, fx: number, fy: number, click: boolean) => boolean;
+}
+
 function PdfContinuousView({
   path,
   cwdHint,
@@ -145,6 +157,7 @@ function PdfContinuousView({
   onRevealAnnotation,
   jumpReq,
   onQuoteChecker,
+  parallel,
   findHotkey,
   sourceMark,
 }: {
@@ -223,6 +236,9 @@ function PdfContinuousView({
   onRevealAnnotation?: (a: PdfAnnotation) => void;
   /** 笔记里点 p.3 / Fig. 2 交来的跳转（nonce 递增即执行一次） */
   jumpReq?: PdfJumpReq | null;
+  /** 对照模式（阅读区）：工具条开关、交出文档、报视口顶在哪页哪处、按请求滚到某页某处、在页上画段落框、
+   *  报鼠标指在哪页哪处（click 时返回 true = 对照栏接住了这次点击） */
+  parallel?: PdfParallelBridge;
   /** 交出「这句原文在不在第 N 页」的核对函数（对话回答里的 p.N「原句」用；换文档重交、卸载交 null） */
   onQuoteChecker?: (check: ((page: number, quote: string) => Promise<QuoteCheck>) | null) => void;
   /** 译文卡正在显示的那段原文：常驻淡高亮（卡收起即撤），宿主据此让卡避开它 */
@@ -464,12 +480,16 @@ function PdfContinuousView({
       return;
     }
     if (!e.metaKey && !e.ctrlKey) {
-      // 普通单击：落在高亮上（且不是拖选收尾）就出那条标注的小卡
-      if (!annotations?.length || !window.getSelection()?.isCollapsed) return;
-      const index = noteMarkAt(e.clientX, e.clientY);
+      // 普通单击：落在高亮上（且不是拖选收尾）就出那条标注的小卡；不在高亮上、开着对照就交对照栏定位那一段
+      if (!window.getSelection()?.isCollapsed) return;
+      const index = annotations?.length ? noteMarkAt(e.clientX, e.clientY) : null;
       const scroll = scrollRef.current;
       if (index === null || !scroll) {
         setMarkPop(null);
+        if (parallelRef.current?.on) {
+          const pt = pagePointAt(e.clientX, e.clientY);
+          if (pt) parallelRef.current.onPointer(pt.page, pt.fx, pt.fy, true);
+        }
         return;
       }
       const sr = scroll.getBoundingClientRect();
@@ -883,6 +903,74 @@ function PdfContinuousView({
     textIndexRef.current = { doc: d, job };
     return job;
   }
+
+  // ----- 对照模式接线 -----
+  const parallelRef = useRef(parallel);
+  parallelRef.current = parallel;
+  useEffect(() => {
+    parallelRef.current?.onDoc(doc);
+  }, [doc]);
+  useEffect(() => () => parallelRef.current?.onDoc(null), []);
+  /** 程序滚动（按对照栏请求）后这一小会儿不回报视口，免得两边来回拽 */
+  const parallelSilentUntilRef = useRef(0);
+  const parallelRafRef = useRef(0);
+  /** 视口顶在哪页、页内哪处（0–1） */
+  function viewportTopAt(): { page: number; frac: number } | null {
+    const scroll = scrollRef.current;
+    if (!scroll) return null;
+    const sr = scroll.getBoundingClientRect();
+    const y = sr.top + 24;
+    for (const box of scroll.querySelectorAll<HTMLElement>("[data-page-box]")) {
+      const br = box.getBoundingClientRect();
+      if (br.bottom > y && br.height > 0) {
+        return { page: Number(box.dataset.pageBox), frac: Math.min(1, Math.max(0, (y - br.top) / br.height)) };
+      }
+    }
+    return null;
+  }
+  function reportParallelViewport() {
+    if (!parallelRef.current?.on || parallelRafRef.current) return;
+    parallelRafRef.current = requestAnimationFrame(() => {
+      parallelRafRef.current = 0;
+      if (Date.now() < parallelSilentUntilRef.current) return;
+      const v = viewportTopAt();
+      if (v) parallelRef.current?.onViewport(v.page, v.frac);
+    });
+  }
+  useEffect(() => {
+    if (parallel?.on && doc) reportParallelViewport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parallel?.on, doc, scale]);
+  const parallelScrollNonceRef = useRef(0);
+  useEffect(() => {
+    const req = parallel?.scrollReq;
+    const scroll = scrollRef.current;
+    if (!req || !scroll || parallelScrollNonceRef.current === req.nonce) return;
+    const box = scroll.querySelector<HTMLElement>(`[data-page-box="${req.page}"]`);
+    if (!box) return;
+    parallelScrollNonceRef.current = req.nonce;
+    const sr = scroll.getBoundingClientRect();
+    const br = box.getBoundingClientRect();
+    parallelSilentUntilRef.current = Date.now() + 250;
+    scroll.scrollTo({ top: scroll.scrollTop + br.top - sr.top + req.frac * br.height - 24 });
+  }, [parallel?.scrollReq]);
+  /** 鼠标在哪页哪处（页内 0–1）；不在页上返回 null */
+  function pagePointAt(x: number, y: number): { page: number; fx: number; fy: number } | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-page-box]");
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    return { page: Number(el.dataset.pageBox), fx: (x - r.left) / r.width, fy: (y - r.top) / r.height };
+  }
+  const parallelMarksByPage = useMemo(() => {
+    const m = new Map<number, { boxes: readonly PdfFracBox[]; tone: "hover" | "focus" }[]>();
+    for (const mk of parallel?.marks ?? []) {
+      const list = m.get(mk.page) ?? [];
+      list.push(mk);
+      m.set(mk.page, list);
+    }
+    return m;
+  }, [parallel?.marks]);
 
   // 对话回答里的 p.N「原句」：按查找同一份文字索引核对（首次用到才逐页取）
   useEffect(() => {
@@ -1793,6 +1881,17 @@ function PdfContinuousView({
                   标注 {annotations.length}
                 </button>
               )}
+              {parallel && (
+                <button
+                  type="button"
+                  aria-pressed={parallel.on}
+                  title={parallel.on ? "关掉双语对照，只看原文" : "双语对照：右边一条译文栏，按段对齐（自动翻当前页往后三页）"}
+                  className={`${zoomBtn} px-1.5 text-micro ${parallel.on ? "bg-seg-sel text-l1" : ""}`}
+                  onClick={parallel.onToggle}
+                >
+                  双语
+                </button>
+              )}
               {translations && translations.count > 0 && (
                 <button
                   type="button"
@@ -1993,7 +2092,18 @@ function PdfContinuousView({
               if (linkHoverRef.current.el) onLinkHover(null);
               const sc = scrollRef.current;
               if (readingReturn && sc && backAtReadingPos(sc.scrollTop, readingReturn.top)) setReadingReturn(null);
+              reportParallelViewport();
             }}
+            onMouseMove={
+              parallel?.on
+                ? (e) => {
+                    const pt = pagePointAt(e.clientX, e.clientY);
+                    if (pt) parallelRef.current?.onPointer(pt.page, pt.fx, pt.fy, false);
+                    else parallelRef.current?.onPointer(0, 0, 0, false);
+                  }
+                : undefined
+            }
+            onMouseLeave={parallel?.on ? () => parallelRef.current?.onPointer(0, 0, 0, false) : undefined}
             onMouseOver={onContentMouseOver}
             className="ccode-pdf-scroll relative min-h-0 flex-1 overflow-auto [overflow-anchor:none]"
           >
@@ -2026,11 +2136,21 @@ function PdfContinuousView({
                     data-page-box={n}
                     className={
                       shouldRender
-                        ? "overflow-hidden bg-white"
-                        : "rounded-sm bg-inset"
+                        ? "relative overflow-hidden bg-white"
+                        : "relative rounded-sm bg-inset"
                     }
                     style={{ width: boxW, height: boxH }}
                   >
+                    {parallelMarksByPage.get(n)?.flatMap((mk, i) =>
+                      mk.boxes.map((b, j) => (
+                        // 对照：鼠标指着 / 点中的那一段的外框，盖在页上不接指针
+                        <div
+                          key={`${i}-${j}`}
+                          className={`ccode-para-mark ccode-para-mark-${mk.tone}`}
+                          style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%` }}
+                        />
+                      )),
+                    )}
                     {shouldRender ? (
                       <PdfPageView
                         doc={doc}

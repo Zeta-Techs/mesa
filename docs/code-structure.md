@@ -74,6 +74,8 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   ⌘/Ctrl+滚轮与触控板双指捏合对准指针缩放；2026-10-18：查找条（findHotkey 接线才拦 ⌘F，
                              #   capture 相止传播）/目录（PDF 自带书签）/页码点击跳页/标注列表与高亮小卡/外部 jumpReq（页码·图表）/
                              #   页内标记 marks 按页 memo 交 PdfPageView）、
+                             #   2026-11-19：文内链接悬停预览与返回阅读位置、对话回答页码核对（onQuoteChecker）、双语对照接线（parallel：
+                             #   交文档、报视口顶、按请求滚、页盒里画段落框 .ccode-para-mark、报鼠标所指；PdfParallelBridge）、
                              #   阅读区 2026-10-18 补齐：笔记 watcher 自订一份（标注高亮与「让 AI 起草」显隐看盘上笔记）、
                              #   reader_paper_title 顶栏真实题名、标注增删/在笔记里看/笔记→PDF 跳转接线、译文浮窗 bounds（PDF 栏边界）、
                              #   spotCheck prop = 精读步抽查核对档（2026-10-23：pdfPath/notePath 按篇由 spot_check_item 解析，工作区笔记只读，
@@ -536,6 +538,9 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
                              # 目录拍平与落点高度、文内链接悬停预览区域与「返回阅读位置」判定（tests/pdf-search.test.ts）
+  pdf-paragraphs.ts          # PDF 页 → 段落（双语对照切段，纯逻辑）：文本项并视觉行（上下标同行、旋转水印丢掉）→ 按字号 / 换栏 / 空行 / 句末＋没写满或缩进断段，
+                             # 没写完且非大写开头接续；页眉页脚不进；图里小字记 fragment；段落哈希作译文缓存键（tests/pdf-paragraphs.test.ts）
+  reader-parallel.ts         # 双语对照纯逻辑：自动翻哪几页、分批（不跨页 ≤2500 字、哈希去重）、批前后文、视口顶 → 锚点段、鼠标 → 段落、进度（tests/reader-parallel.test.ts）
   pdf-figure-crop.ts         # 对照窗自动框图（纯逻辑）：graphicBoxesFromOps 从 getOperatorList 取图片 / 路径外框，cropFigureRegion 按图注往上（表往下按横线）聚块并进轴标，认不出 null 退整页（tests/pdf-figure-crop.test.ts）
   note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
                              # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）
@@ -1126,6 +1131,9 @@ kickoff-launch.ts          # 开工启动挑选纯逻辑：pickKickoffLaunch（�
 components/PdfFigurePeek.tsx  # 沉浸阅读区对照窗（2026-11-05）：PdfContinuousView 渲染、portal 到 body 的整窗浮窗（可拖到笔记 / 对话栏上），把一块页内区域（圈选「钉住对照」）或某张图所在整页（正文 / 笔记点 Fig. N，先滚到图注）按区域单独渲染；几项并存是标签，拖头换位、右下角改大小（记 ccode.readerPeekFloat），窗内 ⌘/Ctrl+滚轮只缩这扇窗；几何纯逻辑在 reader.ts（clampPdfPeekWin 等，tests/reader.test.ts），UI 测试 tests/figure-peek-ui.test.ts；导出 PdfRegionThumb（正文图号悬停小图）
 components/ReaderTranslatePanel.tsx  # 沉浸阅读区译文浮窗（2026-11-06 用户选「只留浮窗」，取代右栏原位 + 「译」悬浮球）：挂覆盖层根、只在 PDF 栏里（bounds）；摆位请求 TlPlace（划词选区或原文段外框）换 key 就按 readerTlWinPlace 摆到原文段下方 / 上方；拖表头换位、拖右下角改大小（readerTlCard 记住，双击复位）；Mesa 图标样「译」悬浮球 ReaderTlBall 贴窗左侧与窗一体（拖球或表头一起走，点球收起 / 展开）；表头 原文 / 存进笔记 / 复制 / ⋯（问这段、历史——在窗里列）/ ×（彻底关、连球收掉，PDF 顶栏「译文 N」再开）；onDisplay 报正文摆着哪条供 PDF 标原文段（tests/reader-translate-ui.test.ts）
                              #   App 标题栏与 ReaderOverlay 顶栏（盖住标题栏）各挂一份；对应 Rust lib.rs setup 的 set_decorations(false)
+components/ReaderParallelPane.tsx   # 沉浸阅读区「双语对照」译文栏（2026-11-19）：PDF 文档到手逐页切段（pdf-paragraphs）、按 reader-parallel 调度
+                                    # 当前页往后三页 / 翻译全文、两批并行、编号行批量协议；两边按段落锚点同步（程序滚动 250ms 静默），PDF 上画段落框经 onMarks 交回；
+                                    # 存进笔记 / 问这段 / 重译 / 重试；译文按 PDF 路径 + 段落哈希缓存在内存（tests/reader-parallel-ui.test.ts）
   acceptance-log.ts          # 验收账本文案：kind → 人话（进主仓 ≠ 科学验收）；acceptanceEntryRow = 设置抽屉验收记录一行
                              #   （lit-watch→文献雷达、版本短号进悬浮、系统备注「定时巡检采纳」不重复；AcceptanceLogList 渲染）
   project-context-load.ts    # 启动环境说明拼装：读档案卡和顶层目录，失败仍返回能用的短包；

@@ -37,7 +37,7 @@ function plainTextOf(e: TlHistoryEntry): string {
 
 /** 译文正文：$…$ 公式交 KaTeX 排（懒加载，与笔记预览同一套，排不了显示原始源码），其余照纯文本。
  *  KaTeX 会改写公式 span 的子节点，换文字时按 key 整段重挂，不让 React 去对已被改写的子节点 */
-function TranslatedText({ text, className, style }: { text: string; className: string; style?: CSSProperties }) {
+export function TranslatedText({ text, className, style }: { text: string; className: string; style?: CSSProperties }) {
   const ref = useRef<HTMLParagraphElement>(null);
   const parts = useMemo(() => splitInlineMath(text), [text]);
   useLayoutEffect(() => {

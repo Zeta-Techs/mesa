@@ -16,6 +16,8 @@ import {
   escapeGlossaryCell,
   findGlossaryMatches,
   glossaryForTranslation,
+  buildParallelBatchPrompt,
+  parseParallelBatch,
   excerptSurroundings,
   pdfReadingText,
   padAround,
@@ -898,4 +900,31 @@ test("readerTlWinPlace：译文浮窗摆到原文段下方，放不下放上方�
   assert.deepEqual(readerTlWinPlace({ top: 260, bottom: 700, left: 300 }, bounds, host, win), { x: 300, y: 48 });
   // 没有原文段：右上角
   assert.deepEqual(readerTlWinPlace(null, bounds, host, win), { x: 1092 - 416, y: 48 });
+});
+
+test("buildParallelBatchPrompt：编号行格式、题名、术语、前后文，原文最后", () => {
+  const p = buildParallelBatchPrompt(
+    [
+      { id: "P1", text: "1 INTRODUCTION" },
+      { id: "P2", text: "The overpotential of $T_i$ is low." },
+    ],
+    { title: "Borides", glossary: [{ term: "overpotential", meaning: "过电位" }], before: "Prev para.", after: "" },
+  );
+  assert.ok(p.startsWith("把下面 2 段学术文献原文逐段翻译为中文。要求：学术语境直译"));
+  assert.ok(p.includes("[[P1]]，原样照抄"));
+  assert.ok(p.includes("论文题名：Borides"));
+  assert.ok(p.includes("- overpotential：过电位"));
+  assert.ok(p.includes("前文（只用来理解，不要翻译）：\n\nPrev para."));
+  assert.ok(!p.includes("后文"));
+  assert.ok(p.endsWith("原文：\n\n[[P1]]\n1 INTRODUCTION\n\n[[P2]]\nThe overpotential of $T_i$ is low."));
+});
+
+test("parseParallelBatch：按编号切开，只认本批编号，容忍代码块与空格，空译文不算", () => {
+  const raw = "```\n [[P1]] \n1 引言\n\n[[P2]]\n$T_i$ 的过电位很低。\n第二行\n[[P9]]\n多出来的\n[[P3]]\n\n[[P1]]\n重复的\n```";
+  const m = parseParallelBatch(raw, ["P1", "P2", "P3"]);
+  assert.deepEqual([...m.entries()], [
+    ["P1", "1 引言"],
+    ["P2", "$T_i$ 的过电位很低。\n第二行"],
+  ]);
+  assert.equal(parseParallelBatch("没有编号的回答", ["P1"]).size, 0);
 });

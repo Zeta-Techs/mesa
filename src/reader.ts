@@ -556,14 +556,22 @@ export function relMdLinkPath(fromFile: string, targetAbs: string): string {
 /** 划词/段落翻译的统一 prompt（ai_prompt fnKey="translate"，设置页可配专用小模型）：
  *  纯文本输出（曾有的 bilingual 逐句对照模式已随块级对照改版下线——原文整段由
  *  历史条目的 original 字段承担，不再需要模型输出标记） */
+const TRANSLATE_STYLE =
+  "学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释。" +
+  "数学符号和行内公式写成 LaTeX 并用单个 $ 包住（如 $T_i$、$\\alpha$），被 PDF 抽字打散的上下标能确定就还原、不确定照抄原文，不输出 $$ 独立公式；" +
+  "原文里普通的美元符号写成 \\$；化学式、单位照原文写法，不改成 LaTeX";
+
+function glossaryBlock(terms: readonly { term: string; meaning: string }[]): string {
+  return `下列术语按本项目生词本的译法翻译（仍可括注原词）：\n${terms
+    .map((t) => `- ${t.term}：${t.meaning}`)
+    .join("\n")}`;
+}
+
 export function buildReaderTranslatePrompt(
   text: string,
   ctx: ReaderTranslateContext = {},
 ): string {
-  const rule =
-    "把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释。" +
-    "数学符号和行内公式写成 LaTeX 并用单个 $ 包住（如 $T_i$、$\\alpha$），被 PDF 抽字打散的上下标能确定就还原、不确定照抄原文，不输出 $$ 独立公式；" +
-    "原文里普通的美元符号写成 \\$；化学式、单位照原文写法，不改成 LaTeX";
+  const rule = `把以下学术文献内容翻译为中文。要求：${TRANSLATE_STYLE}`;
   const terms = glossaryForTranslation(text, ctx.glossary ?? []);
   const title = ctx.title?.trim() ?? "";
   const before = ctx.around?.before.trim() ?? "";
@@ -572,17 +580,59 @@ export function buildReaderTranslatePrompt(
   if (terms.length === 0 && !title && !before && !after) return `${rule}：\n\n${text}`;
   const blocks = [`${rule}。`];
   if (title) blocks.push(`论文题名：${title}`);
-  if (terms.length > 0) {
-    blocks.push(
-      `下列术语按本项目生词本的译法翻译（仍可括注原词）：\n${terms
-        .map((t) => `- ${t.term}：${t.meaning}`)
-        .join("\n")}`,
-    );
-  }
+  if (terms.length > 0) blocks.push(glossaryBlock(terms));
   if (before) blocks.push(`前文（只用来理解指代、缩写和术语，不要翻译）：\n\n${before}`);
   if (after) blocks.push(`后文（同上，不要翻译）：\n\n${after}`);
   blocks.push(`原文（只翻译这一段）：\n\n${text}`);
   return blocks.join("\n\n");
+}
+
+/** 对照模式一批里的一段：编号只在这一批里有效（P1、P2…），模型照抄编号回来 */
+export interface ParallelBatchItem {
+  id: string;
+  text: string;
+}
+
+/** 对照模式按批翻译：几段原文各带编号行 [[P1]]，要求按同样格式逐段返回——不用 JSON，
+ *  公式里的反斜杠不用转义、坏一段不连累整批。上下文同划词翻译：题名、这批里命中的生词本术语、前一段与后一段原文 */
+export function buildParallelBatchPrompt(
+  items: readonly ParallelBatchItem[],
+  ctx: { title?: string | null; glossary?: readonly Pick<GlossaryEntry, "term" | "meaning">[]; before?: string; after?: string } = {},
+): string {
+  const all = items.map((i) => i.text).join("\n");
+  const terms = glossaryForTranslation(all, ctx.glossary ?? []);
+  const title = ctx.title?.trim() ?? "";
+  const before = ctx.before?.trim() ?? "";
+  const after = ctx.after?.trim() ?? "";
+  const blocks = [
+    `把下面 ${items.length} 段学术文献原文逐段翻译为中文。要求：${TRANSLATE_STYLE}。`,
+    "输出格式：每段先单独一行写它的编号（如 [[P1]]，原样照抄），下一行起写这一段的译文；编号一个不漏、按原顺序，不合并、不拆分段落，编号和译文以外什么都不写。标题照样翻成标题。",
+  ];
+  if (title) blocks.push(`论文题名：${title}`);
+  if (terms.length > 0) blocks.push(glossaryBlock(terms));
+  if (before) blocks.push(`前文（只用来理解，不要翻译）：\n\n${before}`);
+  if (after) blocks.push(`后文（只用来理解，不要翻译）：\n\n${after}`);
+  blocks.push(`原文：\n\n${items.map((i) => `[[${i.id}]]\n${i.text}`).join("\n\n")}`);
+  return blocks.join("\n\n");
+}
+
+/** 解析按批翻译的输出：按编号行切开，只认这批里的编号（同一编号出现两次取第一次），空译文不算。
+ *  模型偶尔把整段包进 ``` 代码块、或在编号行前后加空格，都容忍 */
+export function parseParallelBatch(raw: string, ids: readonly string[]): Map<string, string> {
+  const known = new Set(ids);
+  const out = new Map<string, string>();
+  const text = raw.replace(/^\s*```[\w-]*\s*$/gm, "");
+  const re = /^[ \t]*\[\[\s*([A-Za-z]\d+)\s*\]\][ \t]*$/gm;
+  const marks: { id: string; start: number; end: number }[] = [];
+  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+    marks.push({ id: m[1].toUpperCase(), start: m.index, end: m.index + m[0].length });
+  }
+  marks.forEach((mk, i) => {
+    if (!known.has(mk.id) || out.has(mk.id)) return;
+    const body = text.slice(mk.end, i + 1 < marks.length ? marks[i + 1].start : text.length).trim();
+    if (body) out.set(mk.id, body);
+  });
+  return out;
 }
 
 /** 翻译附带的上下文（都可省） */

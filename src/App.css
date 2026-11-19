@@ -4272,6 +4272,27 @@ select:focus-visible {
   text-underline-offset: 2px;
 }
 
+/* 对照模式：鼠标指着 / 点中的那一段在 PDF 上的外框（不接指针，在文本层之下的视觉层） */
+.ccode-para-mark {
+  position: absolute;
+  pointer-events: none;
+  z-index: 1;
+  border-radius: 3px;
+  transition: opacity 160ms ease-out;
+}
+.ccode-para-mark-hover {
+  background: color-mix(in srgb, var(--color-cta) 8%, transparent);
+}
+.ccode-para-mark-focus {
+  background: color-mix(in srgb, var(--color-cta) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-cta) 45%, transparent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ccode-para-mark {
+    transition: none;
+  }
+}
+
 /* PDF 文内跳转链接（引用号、图表号、章节号）：盖在文本层上，平时不显形，悬停淡淡一层强调色 */
 .ccode-pdf-links {
   position: absolute;
