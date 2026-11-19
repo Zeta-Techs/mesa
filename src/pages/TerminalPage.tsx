@@ -109,7 +109,11 @@ import {
   notifyTitle,
 } from "../notify";
 import {
+  parseQuitCutOff,
   parseRecoverableTerminalState,
+  pickCutOffTabs,
+  QUIT_CUT_OFF_STORAGE_KEY,
+  serializeQuitCutOff,
   serializeRecoverableTerminalState,
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
@@ -229,6 +233,8 @@ interface Tab {
   forkSource?: { agent: string; sessionId: string };
   /** 应用重启后恢复出的元数据占位标签。 */
   restored?: boolean;
+  /** 上次退出 Mesa 时这一轮做到一半（QUIT_CUT_OFF_STORAGE_KEY）：输入框上挂一行，接回或人收起后清掉 */
+  cutOff?: boolean;
   /** 复用键（pendingTerminal.reuseKey 透传）：同 key 的重复开聊请求切换到本标签。
       仅内存标记，不进重启持久化白名单（恢复出的占位标签不参与复用——会话已断，新开更诚实） */
   reuseKey?: string;
@@ -255,6 +261,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const saved = parseRecoverableTerminalState(
       localStorage.getItem(TERMINAL_TABS_STORAGE_KEY),
     );
+    // 读一次就删：之后还没处理的，下次退出时按标签上的 cutOff 再记
+    const cutOff = parseQuitCutOff(localStorage.getItem(QUIT_CUT_OFF_STORAGE_KEY));
+    localStorage.removeItem(QUIT_CUT_OFF_STORAGE_KEY);
     if (saved.tabs.length === 0) {
       const tab: Tab = { id: crypto.randomUUID() };
       return { tabs: [tab], activeId: tab.id };
@@ -275,6 +284,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       taskId: tab.taskId ?? undefined,
       reuseKey: tab.reuseKey ?? undefined,
       restored: true,
+      cutOff: !!tab.id && cutOff.has(tab.id) && !!tab.sessionId && !tab.customRuntimeId && !tab.forkPending,
     }));
     return {
       tabs: restoredTabs,
@@ -1117,8 +1127,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   /** 成功拉起新 PTY 后，占位标签转为普通运行标签。 */
   const finishRestore = useCallback((id: string) => {
     setTabs((current) =>
-      current.map((tab) => (tab.id === id ? { ...tab, restored: false } : tab)),
+      current.map((tab) => (tab.id === id ? { ...tab, restored: false, cutOff: false } : tab)),
     );
+  }, []);
+
+  /** 「上次退出时没做完」那一行点了「不用了」 */
+  const dismissCutOff = useCallback((id: string) => {
+    setTabs((current) => current.map((tab) => (tab.id === id && tab.cutOff ? { ...tab, cutOff: false } : tab)));
   }, []);
 
   /** launch 已消费 resumeSessionId：从标签清掉，避免之后「启动」又接回旧会话 */
@@ -3104,9 +3119,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }, []);
 
   // 重启后只回到上次看的那段：别的恢复占位若进程已经不在（应用重启过），收掉——它们的记录都在侧栏；
-  // 网页重载（开发热更新）时进程还活着的照旧接回（pty_id_for_run 认得出）
+  // 网页重载（开发热更新）时进程还活着的照旧接回（pty_id_for_run 认得出）。
+  // 退出时做到一半的（cutOff）留着：那一行「还没做完」要人看见
   useEffect(() => {
-    const others = initialState.tabs.filter((t) => t.restored && t.id !== initialState.activeId);
+    const others = initialState.tabs.filter((t) => t.restored && !t.cutOff && t.id !== initialState.activeId);
     if (others.length === 0) return;
     let cancelled = false;
     void (async () => {
@@ -3269,6 +3285,29 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     let unlistenFlush: (() => void) | undefined;
     void listen("mesa:flush-before-close", () => {
       window.dispatchEvent(new CustomEvent("mesa:save-terminal-replays"));
+      // 这时进程还没停（lib.rs 等 350ms 才收尾），状态还是退出前那一刻的：记下做到一半的那几段
+      const live = statusesRef.current;
+      const ids = pickCutOffTabs(
+        tabsRef.current
+          .filter((t) => !t.shellOnly && !t.customRuntimeId)
+          .map((t) => {
+            const st = live[t.id];
+            return {
+              id: t.id,
+              running: st?.running ?? false,
+              shell: st?.shell ?? false,
+              attention: st?.attention ?? null,
+              hasSession: !!(st?.sessionId ?? t.resumeSessionId),
+              carried: !!t.cutOff,
+            };
+          }),
+      );
+      try {
+        if (ids.length > 0) localStorage.setItem(QUIT_CUT_OFF_STORAGE_KEY, serializeQuitCutOff(ids));
+        else localStorage.removeItem(QUIT_CUT_OFF_STORAGE_KEY);
+      } catch {
+        /* 存不下只是重启后少一行提示 */
+      }
     }).then((u) => {
       if (disposed) u();
       else unlistenFlush = u;
@@ -3912,6 +3951,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onRelayLoad={() => tabActionsRef.current.get(t.id)?.loadRelayOptions()}
                         recordPending={Boolean(t.resumeSessionId && !t.customRuntimeId && !sessionByTab[t.id])}
                         onRestore={() => tabActionsRef.current.get(t.id)?.restoreHere()}
+                        cutOffAtQuit={!!t.cutOff}
+                        onDismissCutOff={() => dismissCutOff(t.id)}
                         onDraftChange={(has) => reportDraft(t.id, has)}
                         onPickDir={(pick) => tabActionsRef.current.get(t.id)?.pickDir(pick)}
                         onNewProject={() => tabActionsRef.current.get(t.id)?.newProject()}

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseQuitCutOff,
   parseRecoverableTerminalState,
+  pickCutOffTabs,
+  serializeQuitCutOff,
   serializeRecoverableTerminalState,
 } from "../src/terminal-tab-persistence.ts";
 
@@ -122,4 +125,26 @@ test("分叉标签记下原会话；没落盘的分叉记 forkPending，没有�
   assert.equal(back[1].forkPending, undefined);
   assert.equal(back[2].forkOf, undefined);
   assert.equal(back[2].forkPending, undefined);
+});
+
+test("quit cut-off keeps mid-turn and carried tabs only", () => {
+  const base = { running: true, shell: false, attention: null, hasSession: true, carried: false } as const;
+  const ids = pickCutOffTabs([
+    { ...base, id: "working", attention: "working" },
+    { ...base, id: "confirm", attention: "confirm" },
+    { ...base, id: "idle", attention: "done" },
+    { ...base, id: "shell", shell: true, attention: "working" },
+    { ...base, id: "no-session", hasSession: false, attention: "working" },
+    { ...base, id: "carried", running: false, carried: true },
+    { ...base, id: "stopped", running: false },
+  ]);
+  assert.deepEqual(ids, ["working", "confirm", "carried"]);
+});
+
+test("quit cut-off round-trips and drops malformed ids", () => {
+  const raw = serializeQuitCutOff(["tab-1", "../evil", "tab-2"]);
+  assert.deepEqual([...parseQuitCutOff(raw)], ["tab-1", "tab-2"]);
+  assert.equal(parseQuitCutOff("{").size, 0);
+  assert.equal(parseQuitCutOff(JSON.stringify({ version: 2, tabIds: ["tab-1"] })).size, 0);
+  assert.equal(parseQuitCutOff(null).size, 0);
 });

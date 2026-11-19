@@ -116,3 +116,52 @@ export function serializeRecoverableTerminalState(
     : 0;
   return JSON.stringify({ version: 1, tabs, activeIndex });
 }
+
+/**
+ * 退出 Mesa 时做到一半的那一轮（2026-11-19）：退出会停掉所有对话，重启只恢复标签、不恢复进程，
+ * 被打断的那段对话在标签上看不出来。退出前置信号（`mesa:flush-before-close`，进程还没停）时记下这些标签，
+ * 重启后在输入框上挂一行，人点了才接回。只存标签 id，单独一个键，不进上面的白名单。
+ */
+export const QUIT_CUT_OFF_STORAGE_KEY = "ccode.terminal.quitCutOff.v1";
+
+/** 「让它接着做」发给 Agent 的话：先核对做到哪，不假设上次的进度 */
+export const CUT_OFF_CONTINUE_TEXT =
+  "上次 Mesa 退出时，你这一轮做到一半被停下了。先看看已经做到哪一步、有没有改到一半的文件，再把这一轮做完。";
+
+export interface CutOffCandidate {
+  id: string;
+  running: boolean;
+  shell: boolean;
+  attention: "done" | "working" | "confirm" | null;
+  /** 有能接回的会话（没有就算记下也接不回） */
+  hasSession: boolean;
+  /** 上次退出时就被打断、这次还没接回也没被人收起的 */
+  carried: boolean;
+}
+
+/** 这次退出会打断的：正在做 / 等你确认的那一轮，加上上次被打断、还没处理的 */
+export function pickCutOffTabs(tabs: CutOffCandidate[]): string[] {
+  return tabs
+    .filter((t) => t.hasSession && !t.shell)
+    .filter((t) => (t.running ? t.attention === "working" || t.attention === "confirm" : t.carried))
+    .map((t) => t.id);
+}
+
+export function serializeQuitCutOff(tabIds: string[]): string {
+  return JSON.stringify({ version: 1, tabIds: tabIds.filter((id) => /^[A-Za-z0-9-]{1,80}$/.test(id)).slice(0, MAX_TABS) });
+}
+
+export function parseQuitCutOff(raw: string | null): Set<string> {
+  if (!raw) return new Set();
+  try {
+    const value = JSON.parse(raw) as Record<string, unknown>;
+    if (!value || value.version !== 1 || !Array.isArray(value.tabIds)) return new Set();
+    return new Set(
+      value.tabIds
+        .slice(0, MAX_TABS)
+        .filter((id): id is string => typeof id === "string" && /^[A-Za-z0-9-]{1,80}$/.test(id)),
+    );
+  } catch {
+    return new Set();
+  }
+}

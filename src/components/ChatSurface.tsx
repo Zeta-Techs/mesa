@@ -38,6 +38,7 @@ import type {
 import type { MenuAnswer, TuiMenu } from "../tui-menu";
 import type { PermissionTierId } from "../chat-permission";
 import { dropAskedEcho, liveReplySupported, sameAsPrevReply, unsyncedTail } from "../live-reply";
+import { CUT_OFF_CONTINUE_TEXT } from "../terminal-tab-persistence";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
 import { AGENTS, type ProjectDto } from "../types";
@@ -144,6 +145,8 @@ export default function ChatSurface({
   recordPending = false,
   onPickLaunch,
   onRestore,
+  cutOffAtQuit = false,
+  onDismissCutOff,
   onDraftChange,
   onPickDir,
   onNewProject,
@@ -256,6 +259,9 @@ export default function ChatSurface({
   };
   /** 恢复占位：接回这个标签上次的会话 */
   onRestore?: () => void;
+  /** 上次退出 Mesa 时这一轮做到一半（terminal-tab-persistence.ts QUIT_CUT_OFF_STORAGE_KEY） */
+  cutOffAtQuit?: boolean;
+  onDismissCutOff?: () => void;
   /** 输入框里有没有没发的字或附件（标签那边据此决定切走时能不能顺手收掉这个标签） */
   onDraftChange?: (hasDraft: boolean) => void;
   /** 开聊前换项目 / 文件夹（项目芯片弹层、把文件夹拖进来）：选了项目由标签那边带上项目默认的 Agent */
@@ -1360,6 +1366,18 @@ export default function ChatSurface({
         actions: [{ label: "不换了", onClick: () => relayPickStable(null) }],
       }
     : null;
+  // 退出 Mesa 时做到一半：接回由人点，点了发一句固定的话让它先核对做到哪
+  const cutOffNotice: ComposerNotice | null =
+    cutOffAtQuit && !running
+      ? {
+          text: "上次退出 Mesa 时，这一轮还没做完",
+          title: `退出时它正在做事，做到一半停下了。点「让它接着做」会接回这段对话并发一句：\n${CUT_OFF_CONTINUE_TEXT}`,
+          actions: [
+            { label: "让它接着做", onClick: () => void sendFromComposer(CUT_OFF_CONTINUE_TEXT), primary: true },
+            { label: "不用了", onClick: () => onDismissCutOff?.() },
+          ],
+        }
+      : null;
   const cacheNotice: ComposerNotice | null =
     coldHint && coldHint.key !== coldDismissed
       ? {
@@ -1953,7 +1971,7 @@ export default function ChatSurface({
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId)}
-        notice={relayNotice ?? cacheNotice}
+        notice={relayNotice ?? cutOffNotice ?? cacheNotice}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

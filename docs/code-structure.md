@@ -816,7 +816,7 @@ terminal-cwd.ts            # 目录读取错误统一人话（FileTree / Termina
                              # 防切聊天瞬间被静默计时器误杀）；动画禁 CSS rotate（WKWebView 转轴圆心晃）、也禁 dashoffset
                              # 关键帧（主线程重绘，xterm 出字满载时一卡一卡）——8 段虚线按相位差闪 opacity（合成器线程，
                              # 2026-09-15 实测重做）（tests/tab-working.test.ts）
-  terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）
+  terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）；退出时做到一半的标签 id 另存一键（pickCutOffTabs）
   official-model-names.ts    # 官方账号模型别名的显示：用后端 official_model_aliases 实测表把别名显示成完整型号，测不出原样（启动仍传别名）
   agent-group-order.ts       # 连接页 Agent 分组顺序与组内连接顺序：存下的 id 列表合并默认顺序、只在看得见的项之间挪（localStorage）
   tab-drag.ts                # 标签条拖拽排序纯逻辑（侧栏项目树、连接页分组共用）：位移钳制 + 目标槽位判定（>= 中线守末槽边界）+ 高矮不一的块的让位 / 吸附
