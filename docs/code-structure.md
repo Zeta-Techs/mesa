@@ -535,7 +535,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   pdf-search.ts              # PDF 文本检索纯逻辑（2026-10-18）：页文本组装与归一（文本项原样拼、行尾补空格、断词复原、
                              # 大小写/弯引号/短横线/连字）——页级计数与页内高亮同一口径；命中→文本项分段、同行碎矩形合并、
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
-                             # 目录拍平与落点高度（tests/pdf-search.test.ts）
+                             # 目录拍平与落点高度、文内链接悬停预览区域与「返回阅读位置」判定（tests/pdf-search.test.ts）
   pdf-figure-crop.ts         # 对照窗自动框图（纯逻辑）：graphicBoxesFromOps 从 getOperatorList 取图片 / 路径外框，cropFigureRegion 按图注往上（表往下按横线）聚块并进轴标，认不出 null 退整页（tests/pdf-figure-crop.test.ts）
   note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
                              # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）

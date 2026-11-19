@@ -1155,6 +1155,11 @@
   同一套组装，第 k 处在两边是同一处**，勿各写一套。文字索引首次查找时逐页取、按文档缓存；全文抽不出字明说
   「扫描件」。目录 = PDF 自带书签（`flattenPdfOutline` 三层 300 条），没有书签不出按钮；落点高度按 XYZ/FitH/FitR
   换算到页内偏移。页码可点输入跳页。查找条/跳页输入/下拉/高亮小卡的 Esc 都在 capture 相先收自己，不连带关阅读区。
+- **文内链接（2026-11-19，借鉴 NeoRead）**：PdfPageView `links` 读本页 `getAnnotations` 里带目标（具名 / 显式）的 Link，
+  铺成 `.ccode-pdf-link` 盖在文本层上（同 pdf.js 注释层，链接处不能起手选字）；网址外链不铺。目标解析与目录共用
+  `resolveDest`。悬停 0.45s 出 `PdfRegionThumb` 小图（`pdfLinkPreviewRegion`：落点往下 12% 页高，有 XYZ 左缘只取所在半页），
+  点击跳转；**落点下有 `.ccode-figref` 时按图号处理**（`elementsFromPoint`，开对照窗不跳走）；⌘/Ctrl+点照旧是段落翻译。
+  跳出视口八成以外才给「返回阅读位置」，只记第一次出发的 scrollTop（倍率一变作废），滚回 48px 内自动收。
 - **页内高亮层（PdfPageView `marks`）**：查找命中 / 标注 / 跳转一闪共用——标记只存**摘句**不存坐标，textLayer
   落地后按 pdf-search 口径重定位、Range.getClientRects 量矩形（同行碎盒 `mergeLineRects` 合并，WebKit 一片两盒），
   换算成**页内百分比**画在文本层之前（pointer-events:none，选字/复制不变；缩放未停稳时与文本层同进退）。

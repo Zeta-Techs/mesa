@@ -13,6 +13,11 @@ import {
   pageSearchLines,
   pageSearchText,
   pdfDestTop,
+  pdfDestLeft,
+  pdfLinkPreviewRegion,
+  PDF_LINK_PREVIEW_H,
+  linkJumpNeedsReturn,
+  backAtReadingPos,
   quoteSearchCandidates,
 } from "../src/pdf-search.ts";
 
@@ -189,4 +194,32 @@ test("captionItemIndex：按 locateFigure 给的图注行找它的第一个文�
   const hit = locateFigure([lines], "figure", "2")!;
   assert.equal(captionItemIndex(items, hit.quote), 1);
   assert.equal(captionItemIndex(items, "fig. 9"), null);
+});
+
+test("pdfDestLeft 只认 XYZ 的左缘", () => {
+  assert.equal(pdfDestLeft([{ num: 1, gen: 0 }, { name: "XYZ" }, 306, 700, 0]), 306);
+  assert.equal(pdfDestLeft([{ num: 1, gen: 0 }, { name: "XYZ" }, null, 700, 0]), null);
+  assert.equal(pdfDestLeft([{ num: 1, gen: 0 }, { name: "FitH" }, 700]), null);
+});
+
+test("pdfLinkPreviewRegion 落点往下一截；有左缘取所在半页，越界夹住", () => {
+  // 右栏参考文献：左缘 330/612 ≈ 0.539，减 0.02 后夹到 0.5；落点 792-396 → y = 0.49
+  const right = pdfLinkPreviewRegion(330, 396, 612, 792);
+  assert.equal(right.x, 0.5);
+  assert.equal(right.w, 0.5);
+  assert.ok(Math.abs(right.y - 0.49) < 1e-9);
+  assert.equal(right.h, PDF_LINK_PREVIEW_H);
+  // 左栏
+  assert.ok(Math.abs(pdfLinkPreviewRegion(54, 700, 612, 792).x - (54 / 612 - 0.02)) < 1e-9);
+  // 没有左缘：整页宽；没有高度：页首；落点贴页底：夹在页内
+  assert.deepEqual(pdfLinkPreviewRegion(null, null, 612, 792), { x: 0, y: 0, w: 1, h: PDF_LINK_PREVIEW_H });
+  assert.equal(pdfLinkPreviewRegion(null, 2, 612, 792).y, 1 - PDF_LINK_PREVIEW_H);
+});
+
+test("返回阅读位置：同屏内的跳转不给，滚回 48px 内收掉", () => {
+  assert.equal(linkJumpNeedsReturn(1000, 1500, 800), false);
+  assert.equal(linkJumpNeedsReturn(1000, 9000, 800), true);
+  assert.equal(linkJumpNeedsReturn(9000, 1000, 800), true);
+  assert.equal(backAtReadingPos(1030, 1000), true);
+  assert.equal(backAtReadingPos(1100, 1000), false);
 });

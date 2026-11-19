@@ -55,6 +55,10 @@ import {
   pageSearchLines,
   pageSearchText,
   pdfDestTop,
+  pdfDestLeft,
+  pdfLinkPreviewRegion,
+  linkJumpNeedsReturn,
+  backAtReadingPos,
   type PdfOutlineEntry,
 } from "../pdf-search";
 import type { PdfAnnotation, PdfJumpReq } from "../reader-note";
@@ -440,7 +444,14 @@ function PdfContinuousView({
       与圈选模式互斥（圈选交互层盖住内容层，这里再守一道） */
   function onContentClick(e: React.MouseEvent<HTMLDivElement>) {
     if (captureOn) return;
-    const figRef = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref");
+    const link = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-pdf-link");
+    const figRef =
+      (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref") ??
+      (link ? figRefAt(e.clientX, e.clientY) : null);
+    if (link && !figRef && !e.metaKey && !e.ctrlKey && window.getSelection()?.isCollapsed !== false) {
+      void followLink(link.dataset.pdfDest ?? "");
+      return;
+    }
     if (figRef && window.getSelection()?.isCollapsed !== false && !e.metaKey && !e.ctrlKey) {
       const kind = figRef.dataset.figKind === "table" ? "table" : "figure";
       onFigRefHover(null);
@@ -493,7 +504,12 @@ function PdfContinuousView({
 
   /** 术语悬停释义：事件代理命中 .ccode-gloss（HoverTip 横向钳制同 useHoverTip 口径） */
   function onContentMouseOver(e: React.MouseEvent<HTMLDivElement>) {
-    onFigRefHover((e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref") ?? null);
+    const link = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-pdf-link") ?? null;
+    const fig =
+      (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref") ??
+      (link ? figRefAt(e.clientX, e.clientY) : null);
+    onFigRefHover(fig);
+    onLinkHover(fig ? null : link);
     const el = (e.target as HTMLElement).closest?.(".ccode-gloss");
     const meaning = el?.getAttribute("data-meaning") ?? "";
     if (el && meaning) {
@@ -981,23 +997,118 @@ function PdfContinuousView({
     };
   }, [doc]);
 
-  async function goOutline(entry: PdfOutlineEntry) {
-    setOutlineOpen(false);
-    if (!doc) return;
+  /** 目录项 / 文内链接的目标（具名或显式）→ 第几页、落点高度与左缘（PDF 坐标）；解析不了返回 null */
+  async function resolveDest(
+    dest: unknown,
+  ): Promise<{ page: number; top: number | null; left: number | null } | null> {
+    if (!doc) return null;
     try {
-      const explicit =
-        typeof entry.dest === "string" ? await doc.getDestination(entry.dest) : entry.dest;
-      if (!Array.isArray(explicit) || explicit.length === 0) throw new Error("no dest");
+      const explicit = typeof dest === "string" ? await doc.getDestination(dest) : dest;
+      if (!Array.isArray(explicit) || explicit.length === 0) return null;
       const ref = explicit[0];
       const index =
         typeof ref === "number"
           ? ref
           : await doc.getPageIndex(ref as Parameters<typeof doc.getPageIndex>[0]);
-      scrollToPage(index + 1, pdfDestTop(explicit));
+      return { page: index + 1, top: pdfDestTop(explicit), left: pdfDestLeft(explicit) };
     } catch {
-      showHint("这个目录项没有可跳转的位置");
+      return null;
     }
   }
+
+  async function goOutline(entry: PdfOutlineEntry) {
+    setOutlineOpen(false);
+    const r = await resolveDest(entry.dest);
+    if (r) scrollToPage(r.page, r.top);
+    else showHint("这个目录项没有可跳转的位置");
+  }
+
+  // ----- 文内链接（引用号、图表号、章节号）：悬停看目标、点了跳过去，跳远了给「返回阅读位置」 -----
+  /** 跳走前的位置（scrollTop 随倍率变，倍率一变就作废）；连跳几次只记第一次出发的地方 */
+  const [readingReturn, setReadingReturn] = useState<{ top: number; scale: number } | null>(null);
+  useEffect(() => {
+    setReadingReturn((r) => (r && r.scale !== scale ? null : r));
+  }, [scale]);
+  useEffect(() => {
+    setReadingReturn(null);
+  }, [doc]);
+  async function followLink(dest: string) {
+    onLinkHover(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(dest);
+    } catch {
+      parsed = null;
+    }
+    const r = await resolveDest(parsed);
+    const scroll = scrollRef.current;
+    if (!r || !scroll) {
+      showHint("这个链接没有可跳转的位置");
+      return;
+    }
+    const from = scroll.scrollTop;
+    scrollToPage(r.page, r.top);
+    if (linkJumpNeedsReturn(from, scroll.scrollTop, scroll.clientHeight)) {
+      setReadingReturn((prev) => prev ?? { top: from, scale });
+    }
+  }
+  function backToReading() {
+    const r = readingReturn;
+    setReadingReturn(null);
+    if (r) scrollRef.current?.scrollTo({ top: r.top });
+  }
+  /** 链接常常就盖在图号上（出版社把 Fig. 2 也做成链接）：落点下有 .ccode-figref 时按图号处理（开对照窗） */
+  function figRefAt(x: number, y: number): HTMLElement | null {
+    return (
+      (document
+        .elementsFromPoint(x, y)
+        .find((el) => el.classList.contains("ccode-figref")) as HTMLElement | undefined) ?? null
+    );
+  }
+  const [linkPreview, setLinkPreview] = useState<{ item: PdfPeekItem; x: number; y: number; below: boolean } | null>(null);
+  const linkHoverRef = useRef<{ el: Element | null; timer: ReturnType<typeof setTimeout> | null }>({ el: null, timer: null });
+  function onLinkHover(el: HTMLElement | null) {
+    const st = linkHoverRef.current;
+    if (st.el === el) return;
+    if (st.timer) clearTimeout(st.timer);
+    st.el = el;
+    st.timer = null;
+    if (!el) {
+      setLinkPreview(null);
+      return;
+    }
+    st.timer = setTimeout(() => {
+      let parsed: unknown = null;
+      try {
+        parsed = JSON.parse(el.dataset.pdfDest ?? "null");
+      } catch {
+        /* 坏数据不预览 */
+      }
+      void resolveDest(parsed).then((r) => {
+        if (!r || linkHoverRef.current.el !== el) return;
+        const natural = pageSizes[r.page] ?? pageSizes[1] ?? FALLBACK_PAGE;
+        const rect = el.getBoundingClientRect();
+        const below = rect.bottom + 300 < window.innerHeight;
+        setLinkPreview({
+          item: {
+            key: `link:${el.dataset.pdfDest}`,
+            page: r.page,
+            label: `p.${r.page}`,
+            region: pdfLinkPreviewRegion(r.left, r.top, natural.w, natural.h),
+          },
+          x: Math.min(Math.max(8, rect.left), window.innerWidth - 380),
+          y: below ? rect.bottom + 6 : rect.top - 6,
+          below,
+        });
+      });
+    }, 450);
+  }
+  useEffect(
+    () => () => {
+      if (linkHoverRef.current.timer) clearTimeout(linkHoverRef.current.timer);
+    },
+    [],
+  );
 
   // ----- 跳页（点页码输入） -----
   const [pageEdit, setPageEdit] = useState<string | null>(null);
@@ -1513,6 +1624,29 @@ function PdfContinuousView({
           </p>
         </div>
       )}
+      {doc && linkPreview && !figPreview && (
+        <div
+          role="tooltip"
+          className="ccode-float-surface pointer-events-none fixed z-50 w-[372px] overflow-hidden rounded-md border border-field p-1.5 shadow-lg"
+          style={
+            linkPreview.below
+              ? { left: linkPreview.x, top: linkPreview.y }
+              : { left: linkPreview.x, bottom: window.innerHeight - linkPreview.y }
+          }
+        >
+          <PdfRegionThumb doc={doc} item={linkPreview.item} width={360} maxHeight={200} dark={dark} />
+          <p className="mt-1 px-0.5 text-micro text-l3">p.{linkPreview.item.page} · 点一下跳过去</p>
+        </div>
+      )}
+      {readingReturn && (
+        <button
+          type="button"
+          onClick={backToReading}
+          className="ccode-float-surface absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-field px-3 py-1 text-xs text-l1 shadow-lg hover:bg-inset"
+        >
+          ← 返回阅读位置
+        </button>
+      )}
       {hint && (
         <p className="shrink-0 bg-inset px-3 py-1 text-xs text-l2">{hint}</p>
       )}
@@ -1835,6 +1969,9 @@ function PdfContinuousView({
               if (liveZoomingRef.current) return;
               setGlossTip(null);
               if (figHoverRef.current.el) onFigRefHover(null);
+              if (linkHoverRef.current.el) onLinkHover(null);
+              const sc = scrollRef.current;
+              if (readingReturn && sc && backAtReadingPos(sc.scrollTop, readingReturn.top)) setReadingReturn(null);
             }}
             onMouseOver={onContentMouseOver}
             className="ccode-pdf-scroll relative min-h-0 flex-1 overflow-auto [overflow-anchor:none]"
@@ -1883,6 +2020,7 @@ function PdfContinuousView({
                         active
                         glossTerms={glossTerms}
                         figRefs
+                        links
                         marks={marksByPage.get(n) ?? NO_PAGE_MARKS}
                         scrollTo={scrollMark?.page === n ? scrollMark : null}
                         onScrolledTo={markScrolled}

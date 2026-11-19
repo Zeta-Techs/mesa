@@ -4272,6 +4272,23 @@ select:focus-visible {
   text-underline-offset: 2px;
 }
 
+/* PDF 文内跳转链接（引用号、图表号、章节号）：盖在文本层上，平时不显形，悬停淡淡一层强调色 */
+.ccode-pdf-links {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.ccode-pdf-link {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.ccode-pdf-link:hover {
+  background: color-mix(in srgb, var(--color-cta) 16%, transparent);
+}
+
 /* PDF 页宿主：从全局 color-scheme:dark 里隔离出来。pdf.js 默认不透明 canvas +
    pdf_viewer.css 的 .textLayer { color-scheme:only light; inset:0 } 在
    Chromium/WebView2 里会给盖住 canvas 的 stacking context 铺一层 Canvas 白底，

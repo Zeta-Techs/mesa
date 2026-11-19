@@ -380,6 +380,39 @@ export function pdfDestTop(explicit: readonly unknown[]): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/** 显式目标里的落点左缘（PDF 坐标）：只有 XYZ 带（第 3 项），其余返回 null */
+export function pdfDestLeft(explicit: readonly unknown[]): number | null {
+  const kind = (explicit[1] as { name?: string } | null | undefined)?.name;
+  const v = kind === "XYZ" ? explicit[2] : null;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/** 正文链接（引用号、图表号、章节号）悬停预览取目标页的哪一块（页内 0–1，左上原点）：
+ *  从落点往下 12% 页高；有左缘时只取它所在的半页宽——双栏论文的参考文献条目在 360px 小图里才认得清字，
+ *  没有左缘取整页宽。落点高度口径同 scrollToPage（自然页高减 PDF 落点） */
+export const PDF_LINK_PREVIEW_H = 0.12;
+export function pdfLinkPreviewRegion(
+  left: number | null,
+  top: number | null,
+  pageW: number,
+  pageH: number,
+): { x: number; y: number; w: number; h: number } {
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+  const y = top === null || pageH <= 0 ? 0 : clamp((pageH - top) / pageH - 0.01, 0, 1 - PDF_LINK_PREVIEW_H);
+  if (left === null || pageW <= 0) return { x: 0, y, w: 1, h: PDF_LINK_PREVIEW_H };
+  return { x: clamp(left / pageW - 0.02, 0, 0.5), y, w: 0.5, h: PDF_LINK_PREVIEW_H };
+}
+
+/** 跳转后要不要给「返回阅读位置」：目标还在同一屏里（位移不到视口高的八成）就不给 */
+export function linkJumpNeedsReturn(fromTop: number, toTop: number, viewportH: number): boolean {
+  return Math.abs(toTop - fromTop) > viewportH * 0.8;
+}
+
+/** 自己滚回原处附近（48px 内）就收掉「返回阅读位置」 */
+export function backAtReadingPos(scrollTop: number, fromTop: number): boolean {
+  return Math.abs(scrollTop - fromTop) < 48;
+}
+
 /** 摘句在页内重定位的候选写法，依次试：原样 → 去掉词内连字符（摘句保留了行尾断开处的连字符，
  *  页文本按断词复原成一个词）→ 两者各取前 60 字（跨页摘句只找得到本页这一截）。
  *  查找（exact）只用原样：第 k 处要与页级计数对齐 */

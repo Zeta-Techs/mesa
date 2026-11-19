@@ -244,6 +244,7 @@ export const PdfPageView = memo(function PdfPageView({
   active,
   glossTerms,
   figRefs,
+  links,
   fillParent,
   marks = NO_MARKS,
   scrollTo,
@@ -260,6 +261,9 @@ export const PdfPageView = memo(function PdfPageView({
   glossTerms?: readonly GlossaryEntry[];
   /** 正文里的「Fig. 2」「Table 1」「图 2」包成可点的 .ccode-figref（阅读区对照窗，点击由 PdfContinuousView 代理） */
   figRefs?: boolean;
+  /** PDF 自带的文内跳转链接（引用号、图表号、章节号）铺成可点的 .ccode-pdf-link（data-pdf-dest = 目标的 JSON），
+   *  悬停预览与跳转由 PdfContinuousView 代理；外链（网址）不铺 */
+  links?: boolean;
   /** 连续滚动页盒已定尺寸时填满父级，backing store 仍按渲染倍率渲染 */
   fillParent?: boolean;
   /** 页内高亮（查找/标注/跳转一闪），同内容换引用不重算 */
@@ -536,6 +540,46 @@ export const PdfPageView = memo(function PdfPageView({
     };
   }, [textRendered, figRefs]);
 
+  // 文内跳转链接：读一次本页注释里带目标的 Link，矩形换成页内百分比（随页盒缩放，不随渲染倍率重算）
+  const [linkBoxes, setLinkBoxes] = useState<{ x: number; y: number; w: number; h: number; dest: string }[]>([]);
+  useEffect(() => {
+    if (!links) {
+      setLinkBoxes((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const page = await doc.getPage(pageNum);
+        const vp = page.getViewport({ scale: 1 });
+        const annots = (await page.getAnnotations({ intent: "display" })) as {
+          subtype?: string;
+          rect?: number[];
+          dest?: unknown;
+        }[];
+        const boxes: { x: number; y: number; w: number; h: number; dest: string }[] = [];
+        for (const a of annots) {
+          if (a.subtype !== "Link" || !a.rect || a.rect.length !== 4) continue;
+          if (typeof a.dest !== "string" && !(Array.isArray(a.dest) && a.dest.length > 0)) continue;
+          // 两个对角各换一次（含页面旋转），再取外接矩形
+          const [x1, y1] = vp.convertToViewportPoint(a.rect[0], a.rect[1]) as number[];
+          const [x2, y2] = vp.convertToViewportPoint(a.rect[2], a.rect[3]) as number[];
+          const x = (Math.min(x1, x2) / vp.width) * 100;
+          const y = (Math.min(y1, y2) / vp.height) * 100;
+          const w = (Math.abs(x2 - x1) / vp.width) * 100;
+          const h = (Math.abs(y2 - y1) / vp.height) * 100;
+          if (w > 0 && h > 0) boxes.push({ x, y, w, h, dest: JSON.stringify(a.dest) });
+        }
+        if (!cancelled) setLinkBoxes(boxes);
+      } catch {
+        if (!cancelled) setLinkBoxes([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [doc, pageNum, links]);
+
   // 页内高亮：textLayer 落地后（或标记变化后）按摘句重定位算矩形；矩形存页内百分比，
   // 布局倍率先行的缩放过程中不失位，重渲落地再按新文本层重算一次
   useEffect(() => {
@@ -591,6 +635,19 @@ export const PdfPageView = memo(function PdfPageView({
       )}
       {/* selectionRendering：关掉原生 ::selection（透明化），高亮由 DrawLayer 自绘 */}
       <div ref={textRef} className="textLayer selectionRendering" />
+      {linkBoxes.length > 0 && (
+        // 盖在文本层上（同 pdf.js 的注释层）：链接处点了跳转；缩放未停稳时与文本层同进退
+        <div className="ccode-pdf-links" style={{ visibility: rs === scale ? undefined : "hidden" }}>
+          {linkBoxes.map((b, i) => (
+            <div
+              key={i}
+              className="ccode-pdf-link"
+              data-pdf-dest={b.dest}
+              style={{ left: `${b.x}%`, top: `${b.y}%`, width: `${b.w}%`, height: `${b.h}%` }}
+            />
+          ))}
+        </div>
+      )}
       {error && (
         <InlineNotice tone="err" className="absolute inset-x-0 top-0 bg-strip px-3 py-1">第 {pageNum} 页渲染失败：{error}</InlineNotice>
       )}
