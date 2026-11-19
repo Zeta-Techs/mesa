@@ -5,6 +5,14 @@
 
 export const APP_UPDATE_CHECK_TIMEOUT_MS = 30_000;
 
+// 关窗默认只藏窗口，Mesa 常连开好几天：只在启动时查会错过之后发的新版本
+/** 开着期间每隔这么久重查一次 */
+export const APP_UPDATE_RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+/** 回到前台时补查：距上次检查超过这么久才查 */
+export const APP_UPDATE_FOCUS_RECHECK_MS = 60 * 60 * 1000;
+/** 定时器的节拍：睡眠唤醒后长定时器会推迟，用短节拍按间隔判 */
+export const APP_UPDATE_RECHECK_TICK_MS = 15 * 60 * 1000;
+
 export type AppUpdateStatus =
   | "idle"
   | "checking"
@@ -22,6 +30,23 @@ export function appUpdateInboxFields(
     key: `update:${info.version}`,
     text: `Mesa v${info.version} 可更新（当前 v${info.currentVersion}）`,
   };
+}
+
+/**
+ * 后台重查（定时 / 回前台）该不该发：启动那次还没开始（idle，含设置没读到、不能绕过代理出网）、
+ * 开发模式、正在查、正在下载安装（重查会关掉安装中的更新句柄）都不发；其余按上次检查（含失败）算间隔。
+ */
+export function shouldRecheckAppUpdate(opts: {
+  status: AppUpdateStatus;
+  installing: boolean;
+  lastCheckAt: number;
+  now: number;
+  minGapMs: number;
+}): boolean {
+  const { status, installing, lastCheckAt, now, minGapMs } = opts;
+  if (installing) return false;
+  if (status === "idle" || status === "dev" || status === "checking") return false;
+  return now - lastCheckAt >= minGapMs;
 }
 
 /** 用当前检查结果替换旧的 update: 条目；无更新则摘掉 */

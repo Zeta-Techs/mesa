@@ -50,6 +50,13 @@ import { HoverTip, useHoverTip } from "./components/HoverTip";
 import { LoadingRows, rowActionClass } from "./components/PageFrame";
 import "./App.css";
 import { useAppStore, runInboxAction, visibleInboxItems } from "./store";
+import {
+  APP_UPDATE_FOCUS_RECHECK_MS,
+  APP_UPDATE_RECHECK_INTERVAL_MS,
+  APP_UPDATE_RECHECK_TICK_MS,
+  shouldRecheckAppUpdate,
+} from "./app-update";
+import { isAppUpdateInstallInFlight } from "./app-update-install";
 import { useRouteWatch } from "./route-watch";
 import { bulkReadableItems } from "./inbox";
 import { groupInbox, type InboxCategory } from "./inbox";
@@ -1628,6 +1635,43 @@ function App() {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [loadAll, loadProjects, loadRecentRepos, loadSettings]);
+
+  // 应用更新：开着期间定时重查、回到前台补查；失败不弹提示（状态照常写进设置 → 更新）
+  useEffect(() => {
+    // 启动那次与本 effect 同时发出，起点按挂载时刻算，启动失败时不会一回前台就再查
+    let lastAttempt = Date.now();
+    const maybeCheck = (minGapMs: number) => {
+      const s = useAppStore.getState();
+      const now = Date.now();
+      if (
+        !shouldRecheckAppUpdate({
+          status: s.appUpdateStatus,
+          installing: isAppUpdateInstallInFlight(),
+          lastCheckAt: Math.max(lastAttempt, s.appUpdateCheckedAt ?? 0),
+          now,
+          minGapMs,
+        })
+      )
+        return;
+      lastAttempt = now;
+      void s.checkAppUpdate().catch(() => {});
+    };
+    const timer = window.setInterval(
+      () => maybeCheck(APP_UPDATE_RECHECK_INTERVAL_MS),
+      APP_UPDATE_RECHECK_TICK_MS,
+    );
+    const onFocus = () => maybeCheck(APP_UPDATE_FOCUS_RECHECK_MS);
+    const onVis = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
 
   return (
     <BootGate ready={bootDataReady || bootCapReached}>

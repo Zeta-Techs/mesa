@@ -8,8 +8,11 @@ import {
   appUpdateProgressPct,
   appUpdateStatusHint,
   mergeAppUpdateInbox,
+  shouldRecheckAppUpdate,
   summarizeUpdateCheckError,
   updaterProxyUrl,
+  APP_UPDATE_FOCUS_RECHECK_MS,
+  APP_UPDATE_RECHECK_INTERVAL_MS,
 } from "../src/app-update.ts";
 import { filterDismissed, inboxSignature } from "../src/inbox.ts";
 
@@ -142,4 +145,28 @@ test("appUpdateCheckedAtLabel：当天只写时分，跨天带月日，没查过
   assert.equal(appUpdateCheckedAtLabel(null, now), "");
   assert.equal(appUpdateCheckedAtLabel(new Date(2026, 10, 16, 9, 5).getTime(), now), "09:05 检查");
   assert.equal(appUpdateCheckedAtLabel(new Date(2026, 10, 15, 23, 59).getTime(), now), "11-15 23:59 检查");
+});
+
+test("shouldRecheckAppUpdate：启动那次没开始、开发模式、正在查、正在安装都不发", () => {
+  const base = { installing: false, lastCheckAt: 0, now: 10 * APP_UPDATE_RECHECK_INTERVAL_MS, minGapMs: APP_UPDATE_RECHECK_INTERVAL_MS };
+  for (const status of ["idle", "dev", "checking"] as const) {
+    assert.equal(shouldRecheckAppUpdate({ ...base, status }), false, status);
+  }
+  assert.equal(shouldRecheckAppUpdate({ ...base, status: "available", installing: true }), false);
+});
+
+test("shouldRecheckAppUpdate：已是最新 / 失败 / 已有更新都按间隔重查（可能又出了更新的版本）", () => {
+  const now = 1_000_000_000;
+  for (const status of ["none", "error", "available"] as const) {
+    assert.equal(
+      shouldRecheckAppUpdate({ status, installing: false, lastCheckAt: now - APP_UPDATE_FOCUS_RECHECK_MS, now, minGapMs: APP_UPDATE_FOCUS_RECHECK_MS }),
+      true,
+      status,
+    );
+    assert.equal(
+      shouldRecheckAppUpdate({ status, installing: false, lastCheckAt: now - APP_UPDATE_FOCUS_RECHECK_MS + 1, now, minGapMs: APP_UPDATE_FOCUS_RECHECK_MS }),
+      false,
+      status,
+    );
+  }
 });

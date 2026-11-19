@@ -19,6 +19,11 @@ export interface UpdateInstallProgress {
 // 两个入口各持一份 hook 状态；模块级闸防同一进程里重复下载
 let installInFlight = false;
 
+/** 后台重查更新时避开正在下载安装的那次（重查会关掉旧的更新句柄） */
+export function isAppUpdateInstallInFlight(): boolean {
+  return installInFlight;
+}
+
 // 下载块很碎（几十 MB 上千个事件），进度最多每 100ms 刷一次界面
 const PROGRESS_PAINT_MS = 100;
 
