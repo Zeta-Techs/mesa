@@ -440,6 +440,10 @@ test("buildReaderTranslatePrompt 学术直译约束 + 原文附上", () => {
   const p = buildReaderTranslatePrompt("interfacial resistance");
   assert.ok(p.includes("学术语境直译"));
   assert.ok(p.endsWith("\n\ninterfacial resistance"));
+  // 公式写 LaTeX 交浮窗排版，普通美元符号转义，化学式不改写
+  assert.ok(p.includes("用单个 $ 包住（如 $T_i$"));
+  assert.ok(p.includes("普通的美元符号写成 \\$"));
+  assert.ok(p.includes("化学式、单位照原文写法"));
   // 生词本没命中时与不带上下文逐字相同
   assert.equal(
     buildReaderTranslatePrompt("interfacial resistance", {

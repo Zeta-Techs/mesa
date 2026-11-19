@@ -561,12 +561,14 @@ export function buildReaderTranslatePrompt(
   ctx: ReaderTranslateContext = {},
 ): string {
   const rule =
-    "把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释";
+    "把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释。" +
+    "数学符号和行内公式写成 LaTeX 并用单个 $ 包住（如 $T_i$、$\\alpha$），被 PDF 抽字打散的上下标能确定就还原、不确定照抄原文，不输出 $$ 独立公式；" +
+    "原文里普通的美元符号写成 \\$；化学式、单位照原文写法，不改成 LaTeX";
   const terms = glossaryForTranslation(text, ctx.glossary ?? []);
   const title = ctx.title?.trim() ?? "";
   const before = ctx.around?.before.trim() ?? "";
   const after = ctx.around?.after.trim() ?? "";
-  // 没有上下文时与旧版逐字相同
+  // 没有上下文时只有要求和原文
   if (terms.length === 0 && !title && !before && !after) return `${rule}：\n\n${text}`;
   const blocks = [`${rule}。`];
   if (title) blocks.push(`论文题名：${title}`);

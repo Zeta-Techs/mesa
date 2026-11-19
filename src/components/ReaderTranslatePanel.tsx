@@ -1,4 +1,5 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { renderMathInto, splitInlineMath } from "../md-math";
 import {
   clampReaderTlCard,
   loadReaderTlCard,
@@ -32,6 +33,29 @@ export interface TlPlace {
 function plainTextOf(e: TlHistoryEntry): string {
   const pairs = parseBilingual(e.translated);
   return pairs ? plainFromBilingual(pairs) : e.translated;
+}
+
+/** 译文正文：$…$ 公式交 KaTeX 排（懒加载，与笔记预览同一套，排不了显示原始源码），其余照纯文本。
+ *  KaTeX 会改写公式 span 的子节点，换文字时按 key 整段重挂，不让 React 去对已被改写的子节点 */
+function TranslatedText({ text, className, style }: { text: string; className: string; style?: CSSProperties }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const parts = useMemo(() => splitInlineMath(text), [text]);
+  useLayoutEffect(() => {
+    if (ref.current) void renderMathInto(ref.current);
+  }, [parts]);
+  return (
+    <p key={text} ref={ref} style={style} className={className}>
+      {parts.map((p, i) =>
+        "tex" in p ? (
+          <span key={i} className={p.display ? "md-math md-math-display" : "md-math"} data-tex={p.tex}>
+            {p.display ? `$$${p.tex}$$` : `$${p.tex}$`}
+          </span>
+        ) : (
+          <Fragment key={i}>{p.text}</Fragment>
+        ),
+      )}
+    </p>
+  );
 }
 
 const DEFAULT_W = 416;
@@ -549,13 +573,12 @@ function ReaderTranslatePanel({
                     {reflowBlockText(current.original, { cjk: false })}
                   </p>
                 )}
-                <p
+                <TranslatedText
                   // 行高写内联：工作台给 .text-xs 的 1.15rem 不在 layer 里，leading-* 压不过它，中文挤成一团
                   style={{ lineHeight: 1.7 }}
                   className="mt-1.5 whitespace-pre-line text-justify text-xs text-l1"
-                >
-                  {reflowBlockText(plainTextOf(current), { cjk: true })}
-                </p>
+                  text={reflowBlockText(plainTextOf(current), { cjk: true })}
+                />
               </>
             )
           )}

@@ -589,6 +589,7 @@ document-html.ts           # DOMPurify 文档清洗两套：sanitizeDocumentHtml
                              # （边界规则/转义/代码块不渲染/货币不误判）+ renderMathInto 懒加载
                              # katex+CSS（独立 chunk 不进主包，失败回落原文，tests/md-math.test.ts）；mathExtensions 全局注册，
                              # chatMathExtensions 另认 \( \) / \[ \]（只给聊天 Marked 实例，占位一律写成 $ 形式）
+                             # splitInlineMath 给不走 Markdown 的纯文本切公式段（阅读区译文浮窗，同一定界口径，\$ 还原）
   task-cards.ts              # 任务卡纯逻辑：按步骤分桶/卡片排序/会话按卡分组/卡片 kind（idea 想法卡 / draft 讨论卡）过滤；
                              # 「＋ 话题」占位按当前步骤给例子（ideaTopicPlaceholder，综述大纲不写对照实验）
                              # （tests/task-cards.test.ts）

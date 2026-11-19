@@ -55,6 +55,38 @@ export function matchInlineMath(src: string): MathMatch | undefined {
   return { raw: m[0], tex: m[1], display: false };
 }
 
+/** 纯文本里的一段：普通文字，或一个行内公式 */
+export type TextMathPart = { text: string } | { tex: string; display: boolean };
+
+/** 纯文本（不走 Markdown 的地方，如阅读区译文浮窗）切出 $...$ / $$...$$ 公式段，定界口径同 matchInlineMath；
+ *  `\$` 还原成普通美元符号。没有公式时返回单段原文 */
+export function splitInlineMath(text: string): TextMathPart[] {
+  const parts: TextMathPart[] = [];
+  let buf = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "\\" && text[i + 1] === "$") {
+      buf += "$";
+      i += 2;
+      continue;
+    }
+    if (text[i] === "$") {
+      const m = matchInlineMath(text.slice(i));
+      if (m) {
+        if (buf) parts.push({ text: buf });
+        buf = "";
+        parts.push({ tex: m.tex, display: m.display });
+        i += m.raw.length;
+        continue;
+      }
+    }
+    buf += text[i];
+    i++;
+  }
+  if (buf || parts.length === 0) parts.push({ text: buf });
+  return parts;
+}
+
 /** marked startBlock：src 是剩余源码去掉首字符；返回下一个块级公式起点（首个 $ 的下标） */
 export function findBlockMathStart(src: string): number | undefined {
   const m = /\n( {0,3})\$\$/.exec(src);

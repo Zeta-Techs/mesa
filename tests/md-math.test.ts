@@ -6,6 +6,7 @@ import {
   findInlineMathStart,
   matchBlockMath,
   matchInlineMath,
+  splitInlineMath,
 } from "../src/md-math.ts";
 
 // ===== 纯逻辑：matchInlineMath =====
@@ -166,4 +167,19 @@ test("聊天：转义方括号 \\[1\\] 不当公式；代码里的 \\( 不碰；
   assert.ok(!chatParse("见 \\[1\\] 与 \\[2\\]").includes("md-math"));
   assert.ok(!chatParse("`\\(x\\)`").includes("md-math"));
   assert.ok(!(marked.parse("勾股 \\(a^2\\)") as string).includes("md-math"));
+});
+
+test("splitInlineMath 切出行内公式，\\$ 还原为美元符号，货币不误判", () => {
+  assert.deepEqual(splitInlineMath("事务 $T_i$ 先于 $T_j$ 提交"), [
+    { text: "事务 " },
+    { tex: "T_i", display: false },
+    { text: " 先于 " },
+    { tex: "T_j", display: false },
+    { text: " 提交" },
+  ]);
+  assert.deepEqual(splitInlineMath("成本 \\$5 与 $10 元"), [{ text: "成本 $5 与 $10 元" }]);
+  assert.deepEqual(splitInlineMath("$$E=mc^2$$"), [{ tex: "E=mc^2", display: true }]);
+  assert.deepEqual(splitInlineMath(""), [{ text: "" }]);
+  // 未闭合：原样
+  assert.deepEqual(splitInlineMath("a $x b"), [{ text: "a $x b" }]);
 });

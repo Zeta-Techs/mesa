@@ -15,6 +15,8 @@ test("译文浮窗：按原文段摆位、球和窗一体拖动、点球收起 /
     },
     bundle: true, write: false, format: "cjs", platform: "node", jsx: "automatic",
     external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
+    // 译文公式按需拉 katex 与其 CSS：CSS 空载（字体 url 随之不解析）
+    loader: { ".css": "empty" },
   });
   const dom = new JSDOM('<div id="host"><div id="root"></div></div>', { url: "http://localhost/" });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -38,7 +40,7 @@ test("译文浮窗：按原文段摆位、球和窗一体拖动、点球收起 /
   const { createElement: h, act, createRoot, Panel } = compiled.exports;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const entry = (at: string, page: number, translated: string) => ({ original: "orig", translated, page, saved: false, at });
-  const history = [entry("2", 3, "第二段译文"), entry("1", 2, "第一段译文")];
+  const history = [entry("2", 3, "第二段译文，事务 $T_i$ 花费 \\$5"), entry("1", 2, "第一段译文")];
   const modes: string[] = [];
   let cancelled = 0;
   const shown: Array<string | null> = [];
@@ -58,6 +60,9 @@ test("译文浮窗：按原文段摆位、球和窗一体拖动、点球收起 /
     assert.equal(win()!.style.left, "300px", "左缘对齐原文段");
     assert.equal(win()!.style.top, "328px", "贴在原文段下方 8px");
     assert.match(win()!.textContent!, /第二段译文/);
+    // 公式切成 .md-math 交 KaTeX；\$ 还原成普通美元符号
+    assert.equal(win()!.querySelector<HTMLElement>(".md-math")?.dataset.tex, "T_i");
+    assert.match(win()!.textContent!, /花费 \$5/);
     assert.equal(shown.at(-1), "2", "告诉上层在 PDF 上标出这条的原文段");
     // ⋯ 里只有问这段 / 历史，没有「钉在 PDF 上」
     await act(async () => button("⋯")!.click());
