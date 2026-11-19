@@ -3,6 +3,8 @@
 //! 走随包 helper：`mesa_helper peek agents|runs|changes`。Mesa 拉起 Agent 时注入 `MESA_PEEK_TOOL`（helper 路径）与
 //! `MESA_RUN_ID`（这次对话的 Run）；这里只读打开 app.db（runs::peek_context），只看同一项目，不列内部后台对话与登录标签。
 //! 改动只给文件、加减行数与片段（有上限），不给整个文件；输出整段过 `redact_sensitive_text`。
+//! `peek said`（2026-11-19）只给对方最后一轮：收到的那句话和之后的回答正文（有上限），不给整段对话、思考与工具调用；
+//! 会话文件按对话列表同一套扫描去找，只读会话文件。
 
 use crate::runs::RunDto;
 use std::path::{Path, PathBuf};
@@ -19,6 +21,11 @@ const OVERVIEW_DIFF_LINES: usize = 120;
 /// （2026-11-03 Codex 干跑实证：几千行的 RIS / JSON 把 300 行配额占满，一次看改动花了四万 token）
 const SMALL_CHANGE_LINES: u64 = 150;
 const MAX_EVENTS: usize = 8;
+/// `peek said` 的上限（字）：指定了 --worker 时收到的话 / 回答各给这么多，没指定时每个同伴只给个开头 / 结尾
+const SAID_ASK_CHARS: usize = 600;
+const SAID_REPLY_CHARS: usize = 3000;
+const SAID_OVERVIEW_ASK_CHARS: usize = 120;
+const SAID_OVERVIEW_REPLY_CHARS: usize = 400;
 
 pub const TOOL_ENV: &str = "MESA_PEEK_TOOL";
 pub const RUN_ENV: &str = "MESA_RUN_ID";
@@ -28,6 +35,7 @@ const USAGE: &str = "用法（只读，只看同一项目；Windows PowerShell �
   \"$MESA_PEEK_TOOL\" peek runs [--worker 名]               运行事实：开始 / 结束 / 退出码、最近事件、没通过的核验
   \"$MESA_PEEK_TOOL\" peek changes [--worker 名] [--file 路径]  改了哪些文件、各加减几行；指定工作者时给改动片段
   \"$MESA_PEEK_TOOL\" peek mail                            你发出的和收到的留话、送没送到
+  \"$MESA_PEEK_TOOL\" peek said [--worker 名]               它最后一轮收到的话和它的回答（不给整段对话）
   \"$MESA_PEEK_TOOL\" tell --to 名 \"要说的话\"               给同项目另一段工作留话（或 --file 文件），对方空闲时 Mesa 送进它的对话
 --worker / --to 可写步骤名、目标名、Agent 名、分支名或编号开头几位；--worker 写「我」看自己。
 别人工作副本里的文件只读不改；要用它们的产物，等评审采纳进项目再读。";
@@ -224,7 +232,7 @@ pub(crate) fn render_agents(workers: &[Worker]) -> String {
             ));
         }
     }
-    out.push_str("细看：peek runs --worker 编号或名字；peek changes --worker 编号或名字。");
+    out.push_str("细看：peek runs --worker 编号或名字；peek changes --worker 编号或名字；它最后说了什么：peek said --worker 编号或名字。");
     out
 }
 
@@ -480,10 +488,90 @@ fn render_mail(me: &RunDto, mails: &[crate::project_mail::MailDto]) -> String {
     out
 }
 
+/// 消息正文：只取 text 块（思考与工具调用不给）
+fn message_text(m: &crate::sessions::ChatMessageDto) -> String {
+    m.blocks.iter().filter(|b| b.kind == "text").map(|b| b.text.as_str()).collect::<Vec<_>>().join("\n")
+}
+
+/// 最后一轮：最后一句有字的人话（去掉 Mesa 拼在前面的项目说明），和它之后各条回答的正文；回答还没出来时为空串。
+/// 第三项是最后一条消息的时间
+pub(crate) fn last_exchange(messages: &[crate::sessions::ChatMessageDto]) -> Option<(String, String, Option<String>)> {
+    let at = messages.iter().rposition(|m| m.role == "user" && !message_text(m).trim().is_empty())?;
+    let ask = crate::sessions::strip_project_pack(&message_text(&messages[at])).trim().to_string();
+    let reply = messages[at + 1..]
+        .iter()
+        .filter(|m| m.role == "assistant")
+        .map(message_text)
+        .filter(|t| !t.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let when = messages.iter().rev().find_map(|m| m.timestamp.clone());
+    Some((ask, reply.trim().to_string(), when))
+}
+
+fn head_chars(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        return s.to_string();
+    }
+    format!("{}…（后面省略）", s.chars().take(n).collect::<String>())
+}
+
+/// 回答取结尾：结论多半在最后
+fn tail_chars(s: &str, n: usize) -> String {
+    let len = s.chars().count();
+    if len <= n {
+        return s.to_string();
+    }
+    format!("（前面省略）…{}", s.chars().skip(len - n).collect::<String>())
+}
+
+/// 这段工作的会话文件：扫描结果里按 Agent + 会话编号找；并进接续链的，取链代表那一份（最新的在里面）
+fn session_file_of(run: &RunDto, scan: &crate::sessions::ScanResult) -> Option<String> {
+    let sid = run.session_id.as_deref()?;
+    let agent = run.agent.as_str();
+    scan.sessions
+        .iter()
+        .chain(scan.hidden_members.iter())
+        .find(|s| s.agent == agent && s.session_id == sid)
+        .or_else(|| {
+            scan.sessions.iter().find(|s| {
+                s.agent == agent && scan.chain_members.get(&s.session_id).is_some_and(|m| m.iter().any(|x| x == sid))
+            })
+        })
+        .map(|s| s.file_path.clone())
+}
+
+pub(crate) fn render_said(w: &Worker, exchange: Result<Option<(String, String, Option<String>)>, String>, full: bool) -> String {
+    let (ask_cap, reply_cap) = if full { (SAID_ASK_CHARS, SAID_REPLY_CHARS) } else { (SAID_OVERVIEW_ASK_CHARS, SAID_OVERVIEW_REPLY_CHARS) };
+    let head = format!("{}（{}）", w.label, short_id(&w.run.id));
+    match exchange {
+        Err(e) => format!("{head}：{e}\n"),
+        Ok(None) => format!("{head}：对话里还没有人说过话。\n"),
+        Ok(Some((ask, reply, when))) => {
+            let when = when.map(|t| format!("，{}", time_text(&t))).unwrap_or_default();
+            let mut out = format!("{head}最后一轮{when}：\n收到的话：{}\n", head_chars(&ask, ask_cap).replace('\n', " "));
+            if reply.is_empty() {
+                out.push_str(if w.run.closed_at.is_none() { "还没有回答（可能正在做）。\n" } else { "这一轮没有回答就结束了。\n" });
+            } else {
+                out.push_str(&format!("它的回答：\n{}\n", tail_chars(&reply, reply_cap)));
+            }
+            out
+        }
+    }
+}
+
+fn read_exchange(run: &RunDto, scan: &crate::sessions::ScanResult) -> Result<Option<(String, String, Option<String>)>, String> {
+    if run.session_id.is_none() {
+        return Err("Mesa 还没认出它的对话（可能刚开始）".into());
+    }
+    let file = session_file_of(run, scan).ok_or("在本机的对话列表里找不到它的对话记录")?;
+    Ok(last_exchange(&crate::sessions::conversation_impl(&run.agent, &file)))
+}
+
 fn run_cli(args: &[String]) -> Result<String, String> {
     let is_tell = args.first().map(String::as_str) == Some("tell");
     let a = if is_tell { Args { cmd: "tell".into(), worker: None, file: None } } else { parse_args(args)? };
-    if !matches!(a.cmd.as_str(), "agents" | "runs" | "changes" | "mail" | "tell") {
+    if !matches!(a.cmd.as_str(), "agents" | "runs" | "changes" | "mail" | "said" | "tell") {
         return Err(USAGE.into());
     }
     let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
@@ -499,6 +587,26 @@ fn run_cli(args: &[String]) -> Result<String, String> {
     }
     match a.cmd.as_str() {
         "agents" => Ok(render_agents(&workers)),
+        "said" => {
+            let chosen: Vec<&Worker> = match &a.worker {
+                Some(k) => vec![select(&workers, k)?],
+                None => workers.iter().filter(|w| !w.is_me).collect(),
+            };
+            if chosen.is_empty() {
+                return Ok("同项目里现在没有别的工作。看自己：peek said --worker 我".into());
+            }
+            let scan = crate::sessions::scan_sessions();
+            let full = a.worker.is_some();
+            let mut out = String::new();
+            for w in chosen {
+                out.push_str(&render_said(w, read_exchange(&w.run, &scan), full));
+                out.push('\n');
+            }
+            if !full {
+                out.push_str("要看某一段的完整回答：peek said --worker 编号\n");
+            }
+            Ok(out)
+        }
         "runs" => {
             let chosen: Vec<&Worker> = match &a.worker {
                 Some(k) => vec![select(&workers, k)?],
@@ -764,5 +872,49 @@ mod tests {
         // 正文里出现的 - 开头的词照常算正文
         run_tell(&args(&["--to", "peer", "改成", "-1"]), &me, &workers).unwrap();
         fs::remove_dir_all(&dir).ok();
+    }
+
+    fn said_msg(role: &str, kind: &str, text: &str, at: Option<&str>) -> crate::sessions::ChatMessageDto {
+        crate::sessions::ChatMessageDto {
+            role: role.into(),
+            blocks: vec![crate::sessions::BlockDto { kind: kind.into(), text: text.into(), tool_name: None, is_error: false, call_id: None }],
+            timestamp: at.map(Into::into),
+            usage: None,
+            id: None,
+            cwd: None,
+        }
+    }
+
+    #[test]
+    fn last_exchange_takes_last_spoken_ask_and_text_replies_after_it() {
+        let ms = vec![
+            said_msg("user", "text", "先检索", None),
+            said_msg("assistant", "text", "检索完了", None),
+            said_msg("user", "text", "再筛一遍", None),
+            said_msg("assistant", "thinking", "想一想", None),
+            said_msg("assistant", "tool_use", "Bash ls", None),
+            // 只带工具结果的 user 条不算人话
+            said_msg("user", "tool_result", "a.md", None),
+            said_msg("assistant", "text", "留下 12 篇", None),
+            said_msg("assistant", "text", "清单在 papers/included.md", Some("2026-11-19T02:00:00Z")),
+        ];
+        let (ask, reply, when) = last_exchange(&ms).unwrap();
+        assert_eq!(ask, "再筛一遍");
+        assert_eq!(reply, "留下 12 篇\n\n清单在 papers/included.md");
+        assert_eq!(when.as_deref(), Some("2026-11-19T02:00:00Z"));
+        assert!(last_exchange(&[said_msg("assistant", "text", "你好", None)]).is_none());
+    }
+
+    #[test]
+    fn render_said_caps_and_says_when_no_reply_yet() {
+        let worker = w("bbbb2222", "研究流程：综述初稿", false);
+        let long = "字".repeat(SAID_OVERVIEW_REPLY_CHARS + 50);
+        let out = render_said(&worker, Ok(Some(("写引言".into(), format!("{long}结论"), None))), false);
+        assert!(out.contains("研究流程：综述初稿（bbbb2222）最后一轮"));
+        assert!(out.contains("（前面省略）…") && out.ends_with("结论\n"));
+        let open = render_said(&worker, Ok(Some(("写引言".into(), String::new(), None))), true);
+        assert!(open.contains("还没有回答（可能正在做）"));
+        let err = render_said(&worker, Err("在本机的对话列表里找不到它的对话记录".into()), true);
+        assert!(err.contains("找不到它的对话记录"));
     }
 }

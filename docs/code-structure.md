@@ -2037,7 +2037,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   project_mail.rs            # 项目内传话（2026-11-03 二期；2026-11-11 来回上限 RELAY_CAP + mark_held + mail_release）：发件箱 = 发话方工作目录 .ccode/outbox.jsonl（helper 写，peek.rs tell），collect 汇总同项目各 Run
                              # 的发件箱（from 须是工作目录在此的 Run、to 须同项目、7 天内），送达 / 撤回记配置目录 mail-state.json；mail_list / mail_take（取走并记已送）/
                              # mail_requeue / mail_withdraw / mail_send（人在任务面板留话，记 mail-state.json from_you，from = you）；delivery_text 是送进对话的那段话（你的在前）
-  peek.rs                    # 看一眼（2026-11-03 项目内协作一期，design-project-coordination.md）：mesa_helper peek agents / runs / changes / mail，tell（二期，写发件箱），
+  peek.rs                    # 看一眼（2026-11-03 项目内协作一期，design-project-coordination.md）：mesa_helper peek agents / runs / changes / mail / said（对方最后一轮，2026-11-19），tell（二期，写发件箱），
                              # 经 runs::peek_context / peek_events 只读打开 app.db；同伴 = 同项目、非内部、非登录、开着或 3 天内结束、最多 12 个；
                              # 改动对项目根当前分支的分叉点（项目根自己对 HEAD），.ccode/ 不算，没 --file 时只给改得少的文本片段（≤150 行改动、120 行上限）；
                              # 事件不含 run.output（终端原始字节）；输出整段 redact_sensitive_text。注入 MESA_PEEK_TOOL / MESA_RUN_ID 在 pty.rs；

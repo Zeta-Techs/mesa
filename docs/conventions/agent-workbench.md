@@ -553,4 +553,6 @@ Headless 支持取消但不承诺会话恢复；定时任务行显示「停止�
   不提交，做完写 `.ccode/fanout/lane-<k>.done`；收尾一路用这一步本来的复用键，在各路标记到齐后由终端页开。第一批只有精读声明了；新加声明要先拿真 Agent 干跑一路。
 - **看一眼（一期）**：`mesa_helper peek agents|runs|changes`，Mesa 拉起 Agent 时注入 `MESA_PEEK_TOOL` 与 `MESA_RUN_ID`；只读打开 app.db，只看同一项目，
   不列内部后台对话与登录标签，已结束的只列 3 天内、最多 12 个；改动只给文件、加减行数与片段（有上限），不给整文件；输出过 `redact_sensitive_text`。
+  **`peek said`（2026-11-19）**：只给对方最后一轮——最后一句有字的人话（去掉项目说明）和之后各条回答的 text 块，不给更早的对话、思考与工具调用；
+  指定 `--worker` 时收到的话 600 字、回答取结尾 3000 字，不指定时每个同伴 120 / 400 字。会话文件按对话列表同一套 `sessions::scan_sessions` 找（只读会话文件；app.db 只读分叉登记与解析缓存，不走 `cached_scan`、不落扫描缓存）。
 
