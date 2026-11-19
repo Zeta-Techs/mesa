@@ -16,6 +16,9 @@ import {
   escapeGlossaryCell,
   findGlossaryMatches,
   glossaryForTranslation,
+  excerptSurroundings,
+  pdfReadingText,
+  padAround,
   TRANSLATE_GLOSSARY_MAX,
   TRANSLATE_GLOSSARY_MEANING_MAX,
   formatPdfExcerptPrompt,
@@ -457,7 +460,74 @@ test("buildReaderTranslatePrompt 生词本命中的术语写进固定译法", ()
   });
   assert.ok(p.includes("- overpotential：过电位\n- HER：析氢反应"), p);
   assert.ok(!p.includes("塔费尔"));
-  assert.ok(p.endsWith("原文：\n\nThe Overpotential of HER and her results."));
+  assert.ok(p.endsWith("原文（只翻译这一段）：\n\nThe Overpotential of HER and her results."));
+});
+
+test("buildReaderTranslatePrompt 带题名与前后文，原文放最后", () => {
+  const p = buildReaderTranslatePrompt("It lowers the barrier.", {
+    title: "  MoS2 edges for HER ",
+    around: { before: "MoS2 edge sites are active.", after: "  " },
+  });
+  assert.ok(p.includes("论文题名：MoS2 edges for HER\n"), p);
+  assert.ok(p.includes("前文（只用来理解指代、缩写和术语，不要翻译）：\n\nMoS2 edge sites are active."));
+  assert.ok(!p.includes("后文"), "空后文不出现");
+  assert.ok(p.endsWith("原文（只翻译这一段）：\n\nIt lowers the barrier."));
+  // 题名为 null、前后文都空：退回旧版
+  assert.equal(
+    buildReaderTranslatePrompt("x", { title: null, around: { before: "", after: "" } }),
+    buildReaderTranslatePrompt("x"),
+  );
+});
+
+test("pdfReadingText 行尾断词接回、连字展开、保留大小写", () => {
+  assert.equal(
+    pdfReadingText([
+      { text: "The ﬁrst cata-", eol: true },
+      { text: "lyst is Pt", eol: false },
+      { text: "-based.", eol: true },
+      { text: "Range 1–", eol: true },
+      { text: "5 V", eol: false },
+    ]),
+    "The first catalyst is Pt-based. Range 1– 5 V",
+  );
+});
+
+test("excerptSurroundings 按原文开头定位，前后截到空白，找不到返回 null", () => {
+  const page = "Alpha beta gamma. The Volmer step is fast. Delta epsilon zeta.";
+  assert.deepEqual(excerptSurroundings(page, "The Volmer\nstep is fast."), {
+    before: "Alpha beta gamma.",
+    after: "Delta epsilon zeta.",
+  });
+  // 前后各只带 8 字：截到空白处，不留半个词
+  assert.deepEqual(excerptSurroundings(page, "The Volmer step is fast.", 8, 8), {
+    before: "gamma.",
+    after: "Delta",
+  });
+  // 选段跨行断词也认（选区文本行间是换行）
+  assert.deepEqual(excerptSurroundings("A cata lyst. The catalyst works. B.", "The cat-\nalyst works."), {
+    before: "A cata lyst.",
+    after: "B.",
+  });
+  // 大小写不同也能定位
+  assert.equal(excerptSurroundings(page, "the volmer step")?.before, "Alpha beta gamma.");
+  assert.equal(excerptSurroundings(page, "not on this page"), null);
+  assert.equal(excerptSurroundings(page, "   "), null);
+});
+
+test("padAround 页首页尾前后文不够时跨页补足", () => {
+  // 前文不够（< 30/3）：从上一页末尾补到 30 字，截到空白
+  assert.deepEqual(
+    padAround({ before: "", after: "enough after text here ok" }, "prev page one two three four five six", "next", 30, 30),
+    { before: "one two three four five six", after: "enough after text here ok" },
+  );
+  // 后文不够：从下一页开头补
+  assert.deepEqual(
+    padAround({ before: "already plenty before", after: "x" }, "prev", "alpha beta gamma delta epsilon zeta", 30, 12),
+    { before: "already plenty before", after: "x alpha beta" },
+  );
+  // 够了或没有相邻页：原样
+  const a = { before: "b".repeat(20), after: "" };
+  assert.deepEqual(padAround(a, "zzz", null, 30, 30), a);
 });
 
 test("glossaryForTranslation 去重、截断释义、封顶条数", () => {

@@ -51,6 +51,7 @@ import {
   type GlossaryEntry,
   type ReaderTranslateResult,
   type TlHistoryEntry,
+  type TranslateAround,
 } from "../reader";
 import ReaderTranslatePanel, {
   type TlPending,
@@ -540,23 +541,29 @@ export default function ReaderOverlay({
   }, [projectRoot]);
 
   /** 翻译统一入口（ai_prompt fnKey="translate"）：纯文本输出（bilingual 模式已随块级
-      对照改版下线）；生词本里在原文出现的术语带进 prompt 统一译法。
-      面板翻译的状态机见下方 runTranslate，生词预填直接用本函数 */
-  const requestTranslate = useCallback(
-    async (text: string): Promise<ReaderTranslateResult> => {
+      对照改版下线）；附上论文题名、生词本里在原文出现的术语、原文前后的正文（只作参考）。
+      面板翻译的状态机见下方 runTranslate */
+  const translateTitle = (spotMode ? spot.item?.title : null) ?? paperTitle;
+  const translateWith = useCallback(
+    async (text: string, around: TranslateAround | null): Promise<ReaderTranslateResult> => {
       if (needsProfile) return { ok: false, error: "还没有可用的 API 配置" };
       try {
         const zh = await invoke<string>("ai_prompt", {
           profileId: null,
           fnKey: "translate",
-          prompt: buildReaderTranslatePrompt(text, { glossary }),
+          prompt: buildReaderTranslatePrompt(text, { title: translateTitle, glossary, around }),
         });
         return { ok: true, text: zh.trim() };
       } catch (e) {
         return { ok: false, error: String(e) };
       }
     },
-    [needsProfile, glossary],
+    [needsProfile, glossary, translateTitle],
+  );
+  /** 生词预填：只译这个词，不带前后文 */
+  const requestTranslate = useCallback(
+    (text: string) => translateWith(text, null),
+    [translateWith],
   );
 
   // ===== 译文浮窗（2026-11-06 用户选「只留浮窗」：取代右栏原位 + 悬浮球）：历史/在途/开关上提到这里，
@@ -630,8 +637,12 @@ export default function ReaderOverlay({
 
   /** 面板翻译主链路：在途态 → 纯文本翻译 → 成功入历史（同原文替换置顶）。
       写盘放在 setState updater 里：StrictMode 双跑写同样内容，幂等无副作用 */
+  /** 上一次翻译带的前后文：浮窗「重试」只给原文和页码，同一段原文沿用 */
+  const tlAroundRef = useRef<{ text: string; around: TranslateAround | null } | null>(null);
   const runTranslate = useCallback(
-    async (text: string, page: number) => {
+    async (text: string, page: number, around?: TranslateAround | null) => {
+      if (around !== undefined) tlAroundRef.current = { text, around };
+      const ctx = tlAroundRef.current?.text === text ? tlAroundRef.current.around : null;
       const my = ++tlReqRef.current;
       setTlPending({ text, page, phase: "loading" });
       setTlMode("open");
@@ -657,7 +668,7 @@ export default function ReaderOverlay({
           });
         }
       }
-      const r = await requestTranslate(text);
+      const r = await translateWith(text, ctx);
       if (my !== tlReqRef.current) return;
       if (r.ok) {
         setTlPending(null);
@@ -676,7 +687,7 @@ export default function ReaderOverlay({
         setTlPending({ text, page, phase: "error", error: r.error });
       }
     },
-    [requestTranslate, pdfPath],
+    [translateWith, pdfPath],
   );
   /** PDF 顶栏「译文 N」（memo 住，PdfContinuousView 是 memo） */
   const tlCount = tlHistory.length;
@@ -690,7 +701,8 @@ export default function ReaderOverlay({
   );
   /** PDF 栏的翻译触发（稳定引用：PdfContinuousView 是 memo） */
   const translateFromPdf = useCallback(
-    (text: string, page: number) => void runTranslate(text, page),
+    (text: string, page: number, around: TranslateAround | null) =>
+      void runTranslate(text, page, around),
     [runTranslate],
   );
 

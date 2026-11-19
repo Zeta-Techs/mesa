@@ -39,6 +39,10 @@ import {
   loadFigRegion,
   saveFigRegion,
   type PdfPeekItem,
+  excerptSurroundings,
+  padAround,
+  pdfReadingText,
+  type TranslateAround,
 } from "../reader";
 import { cropFigureRegion, graphicBoxesFromOps, type Rect } from "../pdf-figure-crop";
 import { PdfRegionThumb } from "./PdfFigurePeek";
@@ -174,8 +178,9 @@ function PdfContinuousView({
   glossTerms?: readonly GlossaryEntry[];
   /** 护眼反色开关（只反 canvas 层，CSS filter，不动 canvas 数据） */
   dark?: boolean;
-  /** 翻译触发（选段「译」/ ⌘+点击段落）：状态机与译文浮窗都在上层（ReaderOverlay），本组件只上送原文与页码 */
-  onTranslate?: (text: string, page: number) => void;
+  /** 翻译触发（选段「译」/ ⌘+点击段落）：状态机与译文浮窗都在上层（ReaderOverlay），本组件只上送原文、页码
+   *  和原文前后的正文（在页里定位不到时为 null） */
+  onTranslate?: (text: string, page: number, around: TranslateAround | null) => void;
   /** 顶栏「译文 N」：本篇有翻译才出，点了开 / 关译文浮窗（2026-11-06：浮窗 × 彻底关掉，从这里再打开） */
   translations?: { count: number; open: boolean; onToggle: () => void };
   /** 纯文本翻译请求（＋生词预填要的是释义）；面板翻译走 onTranslate，不经本回调 */
@@ -347,7 +352,51 @@ function PdfContinuousView({
     const excerpt = selectedExcerpt();
     if (!excerpt || !onTranslate) return;
     clearSelection();
-    onTranslate(excerpt.text, excerpt.page);
+    sendTranslate(excerpt.text, excerpt.page);
+  }
+
+  /** 每页的阅读文本（翻译带前后文用）：按需取、按文档缓存 */
+  const readingTextRef = useRef<{
+    doc: pdfjs.PDFDocumentProxy;
+    pages: Map<number, Promise<string>>;
+  } | null>(null);
+  function pageReadingText(n: number): Promise<string> {
+    if (!doc || n < 1 || n > doc.numPages) return Promise.resolve("");
+    let cache = readingTextRef.current;
+    if (!cache || cache.doc !== doc) {
+      cache = { doc, pages: new Map() };
+      readingTextRef.current = cache;
+    }
+    let job = cache.pages.get(n);
+    if (!job) {
+      job = doc
+        .getPage(n)
+        .then((p) => p.getTextContent())
+        .then((tc) =>
+          pdfReadingText(
+            (tc.items as { str?: string; hasEOL?: boolean }[])
+              .filter((it) => typeof it.str === "string")
+              .map((it) => ({ text: it.str ?? "", eol: Boolean(it.hasEOL) })),
+          ),
+        )
+        .catch(() => "");
+      cache.pages.set(n, job);
+    }
+    return job;
+  }
+
+  /** 原文前后的正文：本页定位，页首页尾不够时跨页补；定位不到就不带 */
+  async function translateAround(text: string, page: number): Promise<TranslateAround | null> {
+    const around = excerptSurroundings(await pageReadingText(page), text);
+    if (!around) return null;
+    const [prev, next] = await Promise.all([pageReadingText(page - 1), pageReadingText(page + 1)]);
+    return padAround(around, prev || null, next || null);
+  }
+
+  function sendTranslate(text: string, page: number) {
+    void translateAround(text, page)
+      .catch(() => null)
+      .then((around) => onTranslate?.(text, page, around));
   }
 
   /** 「＋ 生词」：浮卡 = 术语（选中词）+ 释义（自动预填，手改不覆盖）+ 出处自动记 */
@@ -439,7 +488,7 @@ function PdfContinuousView({
     const text = joinParagraphLines(lines.slice(start, end + 1));
     if (!text) return;
     e.preventDefault();
-    onTranslate(text, page);
+    sendTranslate(text, page);
   }
 
   /** 术语悬停释义：事件代理命中 .ccode-gloss（HoverTip 横向钳制同 useHoverTip 口径） */

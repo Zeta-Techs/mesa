@@ -563,22 +563,130 @@ export function buildReaderTranslatePrompt(
   const rule =
     "把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释";
   const terms = glossaryForTranslation(text, ctx.glossary ?? []);
+  const title = ctx.title?.trim() ?? "";
+  const before = ctx.around?.before.trim() ?? "";
+  const after = ctx.around?.after.trim() ?? "";
   // 没有上下文时与旧版逐字相同
-  if (terms.length === 0) return `${rule}：\n\n${text}`;
-  const blocks = [
-    `${rule}。`,
-    `下列术语按本项目生词本的译法翻译（仍可括注原词）：\n${terms
-      .map((t) => `- ${t.term}：${t.meaning}`)
-      .join("\n")}`,
-    `原文：\n\n${text}`,
-  ];
+  if (terms.length === 0 && !title && !before && !after) return `${rule}：\n\n${text}`;
+  const blocks = [`${rule}。`];
+  if (title) blocks.push(`论文题名：${title}`);
+  if (terms.length > 0) {
+    blocks.push(
+      `下列术语按本项目生词本的译法翻译（仍可括注原词）：\n${terms
+        .map((t) => `- ${t.term}：${t.meaning}`)
+        .join("\n")}`,
+    );
+  }
+  if (before) blocks.push(`前文（只用来理解指代、缩写和术语，不要翻译）：\n\n${before}`);
+  if (after) blocks.push(`后文（同上，不要翻译）：\n\n${after}`);
+  blocks.push(`原文（只翻译这一段）：\n\n${text}`);
   return blocks.join("\n\n");
 }
 
 /** 翻译附带的上下文（都可省） */
 export interface ReaderTranslateContext {
+  /** 论文真实题名（查不到就不带，不拿文件名凑） */
+  title?: string | null;
   /** 本项目生词本：只挑原文里出现的术语，按其释义统一译法 */
   glossary?: readonly Pick<GlossaryEntry, "term" | "meaning">[];
+  /** 原文前后的正文（只作参考，不翻译） */
+  around?: TranslateAround | null;
+}
+
+/** 原文在 PDF 里前后紧挨着的正文 */
+export interface TranslateAround {
+  before: string;
+  after: string;
+}
+
+/** 前文 / 后文各带多少字（按阅读顺序；不足时跨到上一页 / 下一页补） */
+export const TRANSLATE_BEFORE_CHARS = 600;
+export const TRANSLATE_AFTER_CHARS = 400;
+
+const INVISIBLE_CHAR = /[​‌‍⁠﻿­]/g;
+const LIGATURES: Record<string, string> = {
+  "ﬀ": "ff",
+  "ﬁ": "fi",
+  "ﬂ": "fl",
+  "ﬃ": "ffi",
+  "ﬄ": "ffl",
+};
+
+/** 文本项序列 → 保留大小写的阅读文本：组装口径同 pdf-search buildSearchStream（项间不补空格、
+ *  行尾补一个空格、字母后的行尾连字符接回下一行），另把连字展开、空白折叠。
+ *  文本项按 getTextContent / textLayer 的顺序，即 PDF 内容流顺序，出版社排版的双栏论文就是阅读顺序 */
+export function pdfReadingText(pieces: readonly { text: string; eol: boolean }[]): string {
+  let out = "";
+  for (const p of pieces) {
+    out += p.text.replace(INVISIBLE_CHAR, "").replace(/[ﬀ-ﬄ]/g, (c) => LIGATURES[c] ?? c);
+    if (!p.eol) continue;
+    if (/\p{L}[-‐]$/u.test(out)) out = out.slice(0, -1);
+    else out += " ";
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
+/** 选段 / 段落原文（行间是换行）→ 与 pdfReadingText 同口径的串 */
+export function excerptReadingText(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  return pdfReadingText(lines.map((text, i) => ({ text, eol: i < lines.length - 1 })));
+}
+
+/** 在一页的阅读文本里找原文，返回它前后的正文（找不到返回 null：不拿位置猜）。
+ *  先用原文开头 60 字定位，同一页出现多次时取第一次；前后各截到最近的空白处，不切半个词 */
+export function excerptSurroundings(
+  pageText: string,
+  excerpt: string,
+  beforeChars = TRANSLATE_BEFORE_CHARS,
+  afterChars = TRANSLATE_AFTER_CHARS,
+): TranslateAround | null {
+  const norm = excerptReadingText(excerpt);
+  if (!norm) return null;
+  const head = norm.slice(0, 60);
+  let at = pageText.indexOf(head);
+  if (at < 0) {
+    const lower = pageText.toLowerCase();
+    // toLowerCase 改变长度（如 İ）时下标对不上，宁可不带上下文
+    if (lower.length !== pageText.length) return null;
+    at = lower.indexOf(head.toLowerCase());
+    if (at < 0) return null;
+  }
+  // 原文全长在页里能对上就从它末尾接后文；对不上（⌘+点段落的双栏行拼接）只认开头，后文从开头往后数
+  const end = pageText.startsWith(norm, at) ? at + norm.length : at + head.length;
+  const from = Math.max(0, at - beforeChars);
+  let before = pageText.slice(from, at);
+  if (from > 0 && /\S/.test(pageText[from - 1])) before = before.replace(/^\S*/, "");
+  const to = end + afterChars;
+  let after = pageText.slice(end, to);
+  if (to < pageText.length && /\S/.test(pageText[to])) after = after.replace(/\S*$/, "");
+  return { before: before.trim(), after: after.trim() };
+}
+
+/** 原文在页首 / 页尾、本页前后文不够时，从上一页末尾 / 下一页开头补足（截到空白处）。
+ *  不够的门槛是目标字数的三分之一；补上的那页拿不到（首页、末页、取文失败）就传 null */
+export function padAround(
+  around: TranslateAround,
+  prevPage: string | null,
+  nextPage: string | null,
+  beforeChars = TRANSLATE_BEFORE_CHARS,
+  afterChars = TRANSLATE_AFTER_CHARS,
+): TranslateAround {
+  let { before, after } = around;
+  if (prevPage && before.length < beforeChars / 3) {
+    const need = beforeChars - before.length;
+    let tail = prevPage.slice(-need);
+    if (prevPage.length > need && /\S/.test(prevPage[prevPage.length - need - 1])) {
+      tail = tail.replace(/^\S*/, "");
+    }
+    before = `${tail.trim()} ${before}`.trim();
+  }
+  if (nextPage && after.length < afterChars / 3) {
+    const need = afterChars - after.length;
+    let head = nextPage.slice(0, need);
+    if (nextPage.length > need && /\S/.test(nextPage[need])) head = head.replace(/\S*$/, "");
+    after = `${after} ${head.trim()}`.trim();
+  }
+  return { before, after };
 }
 
 /** 一次翻译最多带几条术语 / 每条释义最多几个字（释义可能是长解释，取首行截断） */
