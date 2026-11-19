@@ -1,3 +1,4 @@
+import { FileText } from "lucide-react";
 import CoachTip from "./CoachTip";
 import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
 import { discussOpeningPrompt, discussReuseKey } from "../discuss-prompt";
@@ -490,15 +491,16 @@ function SpotCheckPicks({
   }, [rootsKey, refreshKey]);
   if (!picks) return null;
   return (
-    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1" title={hint}>
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5" title={hint}>
       {picks.items.map((pick, index) => {
         const rel = pick.notePath.replace(/\\/g, "/");
-        const name = rel.split("/").pop() ?? rel;
+        const rawName = rel.split("/").pop() ?? rel;
+        const displayName = rawName.replace(/\.md$/i, "").replace(/[-_]+/g, " ");
         return (
           <button
             key={pick.notePath}
             type="button"
-            className="inline-flex max-w-[16rem] items-center gap-1 rounded-sm px-1 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+            className="group/pick inline-flex max-w-[17rem] items-center gap-1.5 rounded-md border border-hairline/80 bg-canvas/45 px-2 py-1 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
             title={`对照原文看 ${rel}`}
             onClick={() => {
               setReaderReq({
@@ -518,8 +520,15 @@ function SpotCheckPicks({
               setPage("terminal");
             }}
           >
-            <span className="min-w-0 truncate underline decoration-dotted underline-offset-2">{name}</span>
-            <span className="shrink-0 text-micro text-l4">{pick.fulltext ? "全文" : "仅摘要"}</span>
+            <FileText size={12} strokeWidth={1.8} className="shrink-0 text-l4 group-hover/pick:text-l2" aria-hidden="true" />
+            <span className="min-w-0 truncate">{displayName}</span>
+            <span
+              className={`shrink-0 rounded-sm px-1 py-px text-micro ${
+                pick.fulltext ? "bg-inset text-l2" : "text-l4"
+              }`}
+            >
+              {pick.fulltext ? "全文" : "仅摘要"}
+            </span>
           </button>
         );
       })}

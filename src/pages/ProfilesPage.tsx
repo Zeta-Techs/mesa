@@ -22,6 +22,7 @@ import {
   Import,
   LayoutList,
   LogIn,
+  MoreHorizontal,
   RefreshCw,
   Search,
   RotateCcw,
@@ -5310,7 +5311,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                             }`
                           : `Codex 配置里有 ${c.plaintextBlocks} 个 Mesa 写下的渠道还存着明文密钥。补齐后改成用时从 Mesa 取，配置文件里不再留密钥。`;
                       return (
-                        <div className="mx-3 mt-2 flex items-start gap-3 rounded-sm ccode-well p-2 text-xs text-l2">
+                        <div className="mx-3 mt-2 flex items-start gap-3 rounded-md border border-hairline bg-canvas/55 p-2.5 text-xs text-l2">
                           <p className="min-w-0 flex-1">{text}</p>
                           <button
                             type="button"
@@ -5696,7 +5697,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       onClick={() => void probeRow(profile)}
                                       title="测试：用这条官方账号发一句话试试（走 CLI 自己的登录，会用一点官方额度）"
                                       aria-label={`测试官方账号：${labelOf(profile.agent)}`}
-                                      className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                                      className="hidden h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
                                     >
                                       <Activity size={14} strokeWidth={1.8} aria-hidden="true" />
                                     </button>
@@ -5712,7 +5713,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                         : "测试：用它的启动模型发一次请求，结果写在这里"
                                     }
                                     aria-label={`测试连接：${profile.name}`}
-                                    className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                                    className="hidden h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
                                   >
                                     <Activity size={14} strokeWidth={1.8} aria-hidden="true" />
                                   </button>
@@ -5727,7 +5728,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     : "外部终端：选择工作文件夹与权限，在外部终端新开会话"
                                 }
                                 aria-label={`外部终端打开：${profile.name}`}
-                                className="hidden h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
+                                className="hidden h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 group-focus-within:flex md:group-hover:flex"
                               >
                                 <SquareArrowOutUpRight size={14} strokeWidth={1.8} aria-hidden="true" />
                               </button>
@@ -5742,7 +5743,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                       : `设为全局：把外部 ${labelOf(profile.agent)} 切到这条连接（直接写，提示里可撤销）`
                                   }
                                   aria-label={`设为全局：${profile.name}`}
-                                  className={`h-7 w-7 items-center justify-center rounded-lg text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50 ${
+                                  className={`h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50 ${
                                     globalBusy === profile.id ? "flex" : "hidden group-focus-within:flex md:group-hover:flex"
                                   }`}
                                 >
@@ -5762,7 +5763,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   disabled
                                   title={AGY_API_GLOBAL_REASON}
                                   aria-label={`不可设为全局：${profile.name}`}
-                                  className="hidden h-7 w-7 cursor-not-allowed items-center justify-center rounded-lg text-l4 opacity-50 group-focus-within:flex md:group-hover:flex"
+                                  className="hidden h-7 w-7 cursor-not-allowed items-center justify-center rounded-md text-l4 opacity-50 group-focus-within:flex md:group-hover:flex"
                                 >
                                   <Globe size={14} strokeWidth={1.8} aria-hidden="true" />
                                 </button>
@@ -5773,9 +5774,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 onClick={() => openChatWith(profile)}
                                 title="新对话：用这个连接开一段新对话，发一句话就能看出它能不能用"
                                 aria-label={`新对话：${profile.name}`}
-                                className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                                className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
                               >
-                                <NAV_ICONS.quickChat size={13} strokeWidth={1.8} aria-hidden="true" />
+                                <NAV_ICONS.quickChat size={14} strokeWidth={1.8} aria-hidden="true" />
                                 <span>新对话</span>
                               </button>
                               <button
@@ -5797,9 +5798,9 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   });
                                 }}
                                 aria-label={`更多操作：${profile.name}`}
-                                className="flex h-7 w-7 items-center justify-center rounded-lg text-sm text-l3 transition-colors hover:bg-hover hover:text-l1"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
                               >
-                                ⋯
+                                <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
                               </button>
                             </span>
                           </li>

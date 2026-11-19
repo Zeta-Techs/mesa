@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Bot, Clock3, Files, ListChecks } from "lucide-react";
 import {
   projectTaskLabel,
@@ -39,6 +39,7 @@ export default function ProjectSurfaceTabs({
   const selectedIndex = tabIds.indexOf(active);
   const [focusIndex, setFocusIndex] = useState(selectedIndex);
   const [scrolled, setScrolled] = useState(false);
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
 
   // 当前选中项变化（含键盘切换、外部跳转）时，把游标收回到它身上
@@ -50,6 +51,28 @@ export default function ProjectSurfaceTabs({
   useEffect(() => {
     setScrolled(false);
   }, [active, project?.path]);
+
+  useLayoutEffect(() => {
+    if (!project || selectedIndex < 0) {
+      setIndicator(null);
+      return;
+    }
+    const measure = () => {
+      const btn = buttons.current[selectedIndex];
+      if (!btn || btn.offsetWidth <= 0) {
+        setIndicator(null);
+        return;
+      }
+      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth });
+    };
+    measure();
+    const btn = buttons.current[selectedIndex];
+    if (!btn || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(btn);
+    if (btn.parentElement) ro.observe(btn.parentElement);
+    return () => ro.disconnect();
+  }, [project, selectedIndex, tabIds.length]);
 
   if (!project) {
     return (
@@ -89,12 +112,24 @@ export default function ProjectSurfaceTabs({
   return (
     <section aria-label="项目视图" className="flex min-h-0 flex-1 flex-col">
       <div className="mb-3 flex shrink-0 flex-wrap items-center gap-2 text-xs">
+        {/* 与全站 SegTabs(boxed) 统一同一套分段托盘语法：同心圆角 + 浅色白块浮起 + 弹簧滑动滑块 */}
         <div
-          className="inline-flex items-center gap-1 rounded-lg bg-inset/70 p-1"
+          data-sliding={indicator ? "true" : undefined}
+          className="ccode-seg-boxed inline-flex items-center"
           role="tablist"
           aria-label="项目视图"
           onKeyDown={moveFocus}
         >
+          {indicator && (
+            <span
+              aria-hidden="true"
+              className="ccode-seg-indicator"
+              style={{
+                width: indicator.width,
+                transform: `translateX(${indicator.left}px)`,
+              }}
+            />
+          )}
           {tabs.map((tab, index) => {
             const Icon = TAB_ICONS[tab.id];
             const selected = tab.id === active;
@@ -110,14 +145,12 @@ export default function ProjectSurfaceTabs({
                 tabIndex={tabStopIndex(index, stop)}
                 onFocus={() => setFocusIndex(index)}
                 onClick={() => onChange(tab.id)}
-                className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${
-                  selected
-                    ? "bg-seg-sel font-medium text-l1 shadow-2xs"
-                    : "text-l3 hover:bg-hover hover:text-l1"
+                className={`ccode-seg-boxed-item inline-flex items-center gap-1.5 whitespace-nowrap transition-colors ${
+                  selected ? "font-medium text-l1" : "text-l3 hover:text-l1"
                 }`}
               >
                 <Icon
-                  size={13.5}
+                  size={14}
                   strokeWidth={1.8}
                   className={selected ? "text-cta" : undefined}
                   aria-hidden="true"

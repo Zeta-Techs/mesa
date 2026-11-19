@@ -1,7 +1,7 @@
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X } from "lucide-react";
 import { splitNoticeText } from "../notice-text";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
@@ -104,8 +104,8 @@ export function PageHeader({
       <div className="flex min-w-0 items-center gap-2.5">
         {leading}
         <div className="flex min-w-0 items-baseline gap-2.5">
-          {/* 页名与工作台「项目」等节标题同一档（text-lg 粗体，2026-10-29 用户「用工作台那个项目页头大小就行了」） */}
-          <h1 className="shrink-0 text-lg font-semibold text-l1">
+          {/* 页名与工作台「项目」等节标题同一档（text-lg 粗体，微收字距增强轮廓感） */}
+          <h1 className="shrink-0 text-lg font-semibold tracking-[-0.015em] text-l1">
             {title}
           </h1>
           {meta && <span className="truncate text-micro text-l4">{meta}</span>}
@@ -117,56 +117,56 @@ export function PageHeader({
 }
 
 export const primaryActionClass =
-  "ccode-action-primary inline-flex h-8 items-center justify-center rounded-lg border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-primary inline-flex h-8 items-center justify-center rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 危险主按钮（删除/清除这类不可逆动作的确认钮）：实心错误色 + 画布色字，深浅主题都够对比。
  *  替代旧「bg-err + text-err-text」淡粉小块——那是状态 pill 的配方，放在按钮上读不出「这下点了收不回」。
  *  与之配对的取消钮用 secondaryActionClass，且焦点默认给取消（HIG：破坏性动作不做默认按钮）。 */
 export const dangerActionClass =
-  "ccode-action-danger inline-flex h-8 items-center justify-center rounded-lg bg-err-text px-3 text-xs font-medium text-canvas transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-danger inline-flex h-8 items-center justify-center rounded-md bg-err-text px-3 text-xs font-medium text-canvas transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
 
 export const secondaryActionClass =
-  "ccode-action-secondary inline-flex h-8 items-center justify-center rounded-lg border border-field bg-strip px-3 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-secondary inline-flex h-8 items-center justify-center rounded-md border border-field bg-strip px-3 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 内容卡统一底色：由所在 PageFrame 画布派生，保留现有项目页公共类名 */
 export const projectWellClass = "ccode-well rounded-lg p-3";
 
 /** 行内 28px 描边次按钮：列表行/工具栏次级操作统一口径（原各页 secBtn 逐字复制的收敛点） */
 export const rowActionClass =
-  "inline-flex h-7 items-center justify-center rounded-lg border border-field bg-strip px-2.5 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-md border border-field bg-strip px-2.5 text-xs text-l2 transition-colors hover:bg-inset hover:text-l1 disabled:opacity-50";
 
 /** 弹窗页脚里的低调动作（跳过 / 忽略 / 稍后）：无框、与主次按钮同为 32px 高——
  *  ghostActionClass 是 28px 行内尺寸，放进弹窗页脚会和旁边的主按钮高低不齐 */
 export const quietActionClass =
-  "ccode-action-quiet inline-flex h-8 items-center justify-center rounded-lg px-3 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+  "ccode-action-quiet inline-flex h-8 items-center justify-center rounded-md px-3 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 设置页按钮（2026-10-18，借鉴 Codex 设置页）：抬底胶囊，行内操作与卡头动作统一一档 */
 export const settingsPillClass =
-  "inline-flex h-8 items-center justify-center rounded-lg border border-hairline bg-raised px-3.5 text-xs font-medium text-l1 transition-colors hover:bg-seg-sel disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-8 items-center justify-center rounded-md border border-hairline bg-raised px-3.5 text-xs font-medium text-l1 transition-colors hover:bg-seg-sel disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 行内 28px 无框低调按钮：辅助/低频动作 */
 export const ghostActionClass =
-  "inline-flex h-7 items-center justify-center rounded-lg px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
 
 /** 流程卡片内的轻量操作：与列表行操作共用 28px 热区，但不带描边。 */
 export const inlineActionClass =
-  "inline-flex h-7 items-center justify-center rounded-lg px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50";
 
 /** 流程卡片内的紧凑主动作：仅用于卡片内部，不与页面主 CTA 抢层级。 */
 export const compactPrimaryActionClass =
-  "inline-flex h-7 items-center justify-center rounded-lg border border-cta-bd bg-cta px-2 text-xs text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-2 text-xs text-cta-text transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 紧凑表单控件：与标准 field 同源，只收窄高度和字号。 */
 export const compactFieldClass =
-  "h-7 rounded-lg border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "h-7 rounded-md border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 /** 表单输入框：模态与内联表单统一（canvas 底 + field 边） */
 export const fieldClass =
-  "w-full rounded-lg border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "w-full rounded-md border border-field bg-canvas px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 /** 浮层/卡片上的输入：跟表面同底，避免 canvas 在 raised 上挖出一块黑。 */
 export const surfaceFieldClass =
-  "w-full rounded-lg border border-field bg-strip px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
+  "w-full rounded-md border border-field bg-strip px-2 py-1.5 text-sm text-l2 outline-none placeholder:text-l4 focus:border-l4";
 
 export function MenuSelect({
   value,
@@ -187,7 +187,7 @@ export function MenuSelect({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; flipUp: boolean } | null>(
     null,
   );
   // 关闭后保持挂载 150ms 播退场（pos 不清空，退场期间位置不动）；
@@ -200,7 +200,13 @@ export function MenuSelect({
     const place = () => {
       const rect = wrapRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+      const estHeight = Math.min(options.length * 32 + 10, 256);
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const flipUp = spaceBelow < estHeight && rect.top > spaceBelow;
+      const top = flipUp ? Math.max(8, rect.top - estHeight - 4) : rect.bottom + 4;
+      const width = Math.max(rect.width, 140);
+      const left = Math.min(Math.max(8, rect.left), Math.max(8, window.innerWidth - width - 8));
+      setPos({ top, left, width, flipUp });
     };
     place();
     const onDoc = (event: globalThis.MouseEvent) => {
@@ -221,7 +227,47 @@ export function MenuSelect({
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
+  }, [open, options.length]);
+
+  useLayoutEffect(() => {
+    if (!open || !pos?.flipUp || !menuRef.current || !wrapRef.current) return;
+    const rect = wrapRef.current.getBoundingClientRect();
+    const actualH = menuRef.current.offsetHeight;
+    const nextTop = Math.max(8, rect.top - actualH - 4);
+    if (Math.abs(nextTop - pos.top) > 1) {
+      setPos((prev) => (prev ? { ...prev, top: nextTop } : prev));
+    }
+  }, [open, pos?.flipUp, pos?.top]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      const target =
+        menuRef.current?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]:not(:disabled)') ??
+        menuRef.current?.querySelector<HTMLElement>('[role="option"]:not(:disabled)');
+      target?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [open]);
+
+  function onListKeyDown(event: ReactKeyboardEvent<HTMLUListElement>) {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('[role="option"]:not(:disabled)'),
+    );
+    if (!items.length) return;
+    const idx = items.indexOf(document.activeElement as HTMLElement);
+    const next =
+      event.key === "Home"
+        ? items[0]
+        : event.key === "End"
+          ? items[items.length - 1]
+          : event.key === "ArrowDown"
+            ? items[(idx + 1 + items.length) % items.length]
+            : items[(idx - 1 + items.length) % items.length];
+    next.focus();
+  }
 
   return (
     <div ref={wrapRef} className="relative">
@@ -245,7 +291,7 @@ export function MenuSelect({
         <ChevronDown
           size={14}
           strokeWidth={1.8}
-          className="shrink-0 text-l4"
+          className={`shrink-0 text-l4 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>
@@ -257,8 +303,9 @@ export function MenuSelect({
           <ul
             ref={menuRef}
             role="listbox"
+            onKeyDown={onListKeyDown}
             style={{ top: pos.top, left: pos.left, width: pos.width }}
-            className={`ccode-anchor-topleft ccode-float-surface fixed z-50 max-h-64 overflow-auto py-1${exiting ? " ccode-exiting" : ""}`}
+            className={`${pos.flipUp ? "ccode-anchor-bottomleft" : "ccode-anchor-topleft"} ccode-float-surface ccode-menu-surface fixed z-50 max-h-64 overflow-auto rounded-lg border border-field p-1${exiting ? " ccode-exiting" : ""}`}
           >
             {options.map((item) => {
               const selected = item.value === value;
@@ -269,10 +316,10 @@ export function MenuSelect({
                     role="option"
                     aria-selected={selected}
                     disabled={item.disabled}
-                    className={`flex h-8 w-full items-center gap-2 px-2.5 text-left text-sm disabled:opacity-40 ${
+                    className={`ccode-menu-item flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-xs transition-colors disabled:opacity-40 ${
                       selected
-                        ? "bg-hover text-l1"
-                        : "text-l2 hover:bg-hover hover:text-l1"
+                        ? "bg-hover font-medium text-l1"
+                        : "text-l2 hover:bg-hover hover:text-l1 focus:bg-hover focus:text-l1"
                     }`}
                     onClick={() => {
                       onChange(item.value);
@@ -281,7 +328,10 @@ export function MenuSelect({
                     }}
                   >
                     {item.icon}
-                    <span className="truncate">{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {selected && (
+                      <Check size={13} strokeWidth={2.2} className="shrink-0 text-cta" aria-hidden="true" />
+                    )}
                   </button>
                 </li>
               );
@@ -296,7 +346,7 @@ export function MenuSelect({
 /** 搜索输入框：inset 底色分层（无描边，聚焦时底色加深一档），与表单输入区分开。
  *  占位字用 l3：l4 在 inset 上只有 3.16:1，低于 4.5:1（2026-10-23） */
 export const searchFieldClass =
-  "h-8 rounded-lg bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l3 focus:bg-raised";
+  "h-8 rounded-md bg-inset px-2.5 text-xs text-l2 outline-none transition-colors placeholder:text-l3 focus:bg-raised";
 
 /** hover 才现的低频操作：行挂 group，按钮用此类；键盘 Tab 聚焦（focus-visible）同样显示 */
 export const hoverRevealClass =
@@ -304,7 +354,7 @@ export const hoverRevealClass =
 
 /** 行内 28px 图标按钮：文件行 / 雷达条目 / 筛选工具 */
 export const iconActionClass =
-  "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-l3 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
+  "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 disabled:cursor-not-allowed disabled:opacity-50";
 
 /** 行内悬浮操作钮（v3.93）：自带「锚点上方」应用内 tooltip——原生 title 渲染在光标下方，
  *  与胶囊动作栏视觉脱节；点击先收 tooltip 再透传事件（⋯ 要取按钮锚点定位菜单）。
@@ -342,7 +392,7 @@ export function RowAction({
   );
 }
 
-/** 分段切换（状态筛选/时间范围）：胶囊行，选中 bg-seg-sel，未选中灰字 */
+/** 分段切换（状态筛选/时间范围）：胶囊行或滑动托盘（boxed 含平滑滑动高亮块） */
 export function SegTabs<T extends string>({
   items,
   value,
@@ -362,8 +412,34 @@ export function SegTabs<T extends string>({
 }) {
   const selectedIndex = items.findIndex((item) => item.id === value);
   const boxed = variant === "boxed";
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!boxed || selectedIndex < 0) {
+      setIndicator(null);
+      return;
+    }
+    const measure = () => {
+      const btn = tabRefs.current[selectedIndex];
+      if (!btn || btn.offsetWidth <= 0) {
+        setIndicator(null);
+        return;
+      }
+      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth });
+    };
+    measure();
+    const btn = tabRefs.current[selectedIndex];
+    if (!btn || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(btn);
+    if (btn.parentElement) ro.observe(btn.parentElement);
+    return () => ro.disconnect();
+  }, [boxed, selectedIndex, items.length]);
+
   return (
     <div
+      data-sliding={boxed && indicator ? "true" : undefined}
       className={`${
         boxed ? `ccode-seg-boxed inline-flex items-center ${size === "sm" ? "is-sm" : ""}` : "flex items-center gap-1"
       } ${className}`}
@@ -376,9 +452,22 @@ export function SegTabs<T extends string>({
         onChange(items[nextTabIndex(selectedIndex, delta, items.length)].id);
       }}
     >
+      {boxed && indicator && (
+        <span
+          aria-hidden="true"
+          className="ccode-seg-indicator"
+          style={{
+            width: indicator.width,
+            transform: `translateX(${indicator.left}px)`,
+          }}
+        />
+      )}
       {items.map((item, index) => (
         <button
           key={item.id}
+          ref={(node) => {
+            tabRefs.current[index] = node;
+          }}
           type="button"
           role="tab"
           aria-selected={value === item.id}
@@ -461,18 +550,12 @@ export function Toggle({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-5 w-9 shrink-0 rounded-full border transition-colors ${
+      className={`ccode-toggle relative h-5 w-9 shrink-0 rounded-full border transition-colors ${
         checked ? "border-cta-bd bg-cta" : "border-field bg-switch-off"
       }`}
     >
-      {/* 滑块用专用令牌而非 bg-l1：l1 是「文字最亮档」，在浅色主题是近黑 #171a26，
-          直接当滑块会渲染成白底上的黑疙瘩（v3.85 修）。滑块永远是浅色，状态由轨道表达。
-          开启态轨道 = 品牌色 bg-cta（随主题；2026-08-25 试过降调柔绿 bg-ok-text，用户拍板改回） */}
-      <span
-        className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-switch-knob transition-[left] ${
-          checked ? "left-[18px]" : "left-0.5"
-        }`}
-      />
+      {/* 滑块用专用令牌 + GPU translateX 弹簧位移（App.css .ccode-toggle-knob） */}
+      <span className="ccode-toggle-knob" />
     </button>
   );
 }
@@ -583,13 +666,17 @@ export function Checkbox({
       />
       <span
         aria-hidden="true"
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border text-micro ${align === "start" ? "mt-0.5" : ""} ${
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border transition-colors ${align === "start" ? "mt-0.5" : ""} ${
           checked
             ? "border-cta-bd bg-cta text-cta-text"
             : "border-field bg-transparent text-transparent"
         }`}
       >
-        {checked ? "✓" : ""}
+        <Check
+          size={11}
+          strokeWidth={2.4}
+          className={`transition-transform duration-150 ${checked ? "scale-100 opacity-100" : "scale-75 opacity-0"}`}
+        />
       </span>
       {label}
     </label>

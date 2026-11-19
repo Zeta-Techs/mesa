@@ -2,13 +2,16 @@ import {
   FolderMinus,
   History,
   PenLine,
+  Plus,
   Settings2,
+  TriangleAlert,
   Workflow,
 } from "lucide-react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
+import { HoverTip, useHoverTip } from "./HoverTip";
 import {
   compactFieldClass,
   inlineActionClass,
@@ -59,6 +62,8 @@ export default function ProjectIdentityHeader({
   const [topicDraft, setTopicDraft] = useState("");
   const [warnOpen, setWarnOpen] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const topicBtnRef = useRef<HTMLButtonElement>(null);
+  const topicTip = useHoverTip(topicBtnRef);
 
   useEffect(() => {
     if (!project) {
@@ -188,42 +193,70 @@ export default function ProjectIdentityHeader({
         )}
         {showTopic &&
           (topicText && !topicDuplicatesTitle ? (
-            <button
-              type="button"
-              className="min-w-0 max-w-[16rem] truncate text-left text-sm text-l3 hover:text-l1"
-              title={topicText}
-              onClick={() => {
-                setTopicDraft(topicText);
-                setEditingTopic(true);
-              }}
-            >
-              {topicText}
-            </button>
+            <>
+              <button
+                ref={topicBtnRef}
+                type="button"
+                className="min-w-0 max-w-[16rem] truncate text-left text-sm text-l3 hover:text-l1"
+                onMouseEnter={topicTip.show}
+                onMouseLeave={topicTip.hide}
+                onFocus={topicTip.show}
+                onBlur={topicTip.hide}
+                onClick={() => {
+                  topicTip.hide();
+                  setTopicDraft(topicText);
+                  setEditingTopic(true);
+                }}
+              >
+                {topicText}
+              </button>
+              <HoverTip tip={topicTip.tip} text={`${topicText}\n点击编辑课题主题`} />
+            </>
           ) : topicDuplicatesTitle ? (
-            <button
-              type="button"
-              onClick={() => {
-                setTopicDraft(topicText);
-                setEditingTopic(true);
-              }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
-              title={`当前课题主题与项目名相同（${topicText}），点击补充更具体的一句话说明；会写进每次开工的 TASK.md`}
-            >
-              <PenLine size={11.5} strokeWidth={1.8} aria-hidden="true" />
-              补充课题说明
-            </button>
+            <>
+              <button
+                ref={topicBtnRef}
+                type="button"
+                onMouseEnter={topicTip.show}
+                onMouseLeave={topicTip.hide}
+                onFocus={topicTip.show}
+                onBlur={topicTip.hide}
+                onClick={() => {
+                  topicTip.hide();
+                  setTopicDraft(topicText);
+                  setEditingTopic(true);
+                }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+              >
+                <PenLine size={12} strokeWidth={1.8} aria-hidden="true" />
+                补充课题说明
+              </button>
+              <HoverTip
+                tip={topicTip.tip}
+                text={`当前课题主题与项目名相同（${topicText}）\n点击补充一句更具体的说明，会写进每次开工的 TASK.md`}
+              />
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setTopicDraft("");
-                setEditingTopic(true);
-              }}
-              className="shrink-0 text-xs text-l4 hover:text-l2"
-              title="课题主题会写进每次开工的 TASK.md"
-            >
-              ＋ 写一句课题主题
-            </button>
+            <>
+              <button
+                ref={topicBtnRef}
+                type="button"
+                onMouseEnter={topicTip.show}
+                onMouseLeave={topicTip.hide}
+                onFocus={topicTip.show}
+                onBlur={topicTip.hide}
+                onClick={() => {
+                  topicTip.hide();
+                  setTopicDraft("");
+                  setEditingTopic(true);
+                }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
+              >
+                <Plus size={12} strokeWidth={1.8} aria-hidden="true" />
+                写一句课题主题
+              </button>
+              <HoverTip tip={topicTip.tip} text="课题主题会写进每次开工的 TASK.md" />
+            </>
           ))}
         {!registered && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-inset px-1.5 py-0.5 text-xs text-l3">
@@ -237,10 +270,11 @@ export default function ProjectIdentityHeader({
               type="button"
               aria-expanded={warnOpen}
               title="查看全部校验提示"
-              className="rounded-sm px-1 text-xs text-warn-text hover:bg-hover"
+              className="inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs tabular-nums text-warn-text hover:bg-hover"
               onClick={() => setWarnOpen((open) => !open)}
             >
-              ! {cfgWarnings.length}
+              <TriangleAlert size={12} strokeWidth={1.8} aria-hidden="true" />
+              <span>{cfgWarnings.length}</span>
             </button>
             {warnOpen && (
               <>

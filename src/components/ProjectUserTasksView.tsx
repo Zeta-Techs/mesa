@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Info, Play, Plus, RotateCw, Square } from "lucide-react";
+import { Archive, Info, Play, Plus, RotateCw, Square, X } from "lucide-react";
 import CoachTip from "./CoachTip";
 import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
 import { runInboxAction, selectHiddenProfiles, useAppStore } from "../store";
@@ -1947,7 +1947,7 @@ function TaskMaterialsPicker({
               title="移出"
             >
               <span className="truncate">{path}</span>
-              <span aria-hidden="true">×</span>
+              <X size={12} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
             </button>
           ))}
         </div>

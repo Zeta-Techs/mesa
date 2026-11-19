@@ -15,6 +15,7 @@ import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   Bookmark,
   BookmarkPlus,
+  Check,
   Copy,
   Download,
   ExternalLink,
@@ -2499,7 +2500,7 @@ export default function LitWatchCard({
             toast.hiding ? "translate-y-1 opacity-0" : "translate-y-0 opacity-100"
           }`}
         >
-          <span>✓</span>
+          <Check size={14} strokeWidth={2.2} aria-hidden="true" />
           <span>{toast.text}</span>
         </div>
       )}

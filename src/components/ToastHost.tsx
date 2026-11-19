@@ -1,13 +1,47 @@
-import { useEffect, useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LoaderCircle, X } from "lucide-react";
 import { subscribeToastDismiss, subscribeToastPatch, subscribeToasts, type ToastNotice } from "../toast";
 import { noticeDurationMs, splitNoticeText } from "../notice-text";
+import { prefersReducedMotion } from "../exit-animation";
 import { compactPrimaryActionClass, rowActionClass } from "./PageFrame";
+
+const TOAST_EXIT_MS = 150;
 
 export default function ToastHost() {
   const [items, setItems] = useState<ToastNotice[]>([]);
+  const [exitingIds, setExitingIds] = useState<Set<number>>(() => new Set());
   /** 每条会自动消失的提示的计时器（补了按钮的要重新计时，多留一会儿） */
   const timers = useRef(new Map<number, number>());
+  const exitTimers = useRef(new Map<number, number>());
+
+  const remove = useCallback((id: number) => {
+    const old = timers.current.get(id);
+    if (old !== undefined) {
+      window.clearTimeout(old);
+      timers.current.delete(id);
+    }
+    if (prefersReducedMotion()) {
+      setItems((current) => current.filter((entry) => entry.id !== id));
+      return;
+    }
+    if (exitTimers.current.has(id)) return;
+    setExitingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+    const t = window.setTimeout(() => {
+      exitTimers.current.delete(id);
+      setItems((current) => current.filter((entry) => entry.id !== id));
+      setExitingIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }, TOAST_EXIT_MS);
+    exitTimers.current.set(id, t);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribeToasts((notice) => {
@@ -29,7 +63,7 @@ export default function ToastHost() {
         notice.id,
         window.setTimeout(() => {
           timers.current.delete(notice.id);
-          setItems((current) => current.filter((item) => item.id !== notice.id));
+          remove(notice.id);
         }, noticeDurationMs(notice.message, notice.tone)),
       );
     });
@@ -44,22 +78,29 @@ export default function ToastHost() {
         id,
         window.setTimeout(() => {
           timers.current.delete(id);
-          setItems((current) => current.filter((item) => item.id !== id));
+          remove(id);
         }, 12_000),
       );
     });
     const unsubscribeDismiss = subscribeToastDismiss((key) => {
-      setItems((current) => current.filter((item) => item.key !== key));
+      setItems((current) => {
+        const matched = current.filter((item) => item.key === key);
+        for (const item of matched) remove(item.id);
+        return current;
+      });
     });
+    const activeTimers = timers.current;
+    const activeExitTimers = exitTimers.current;
     return () => {
       unsubscribe();
       unsubscribeDismiss();
       unsubscribePatch();
+      for (const t of activeTimers.values()) window.clearTimeout(t);
+      for (const t of activeExitTimers.values()) window.clearTimeout(t);
+      activeTimers.clear();
+      activeExitTimers.clear();
     };
-  }, []);
-
-  const remove = (id: number) =>
-    setItems((current) => current.filter((entry) => entry.id !== id));
+  }, [remove]);
 
   return (
     <div className="ccode-toast-region" role="region" aria-label="通知" aria-live="polite" aria-atomic="false">
@@ -67,6 +108,7 @@ export default function ToastHost() {
         <div
           key={item.id}
           role={item.tone === "error" ? "alert" : "status"}
+          data-exiting={exitingIds.has(item.id) ? "true" : undefined}
           className={`ccode-toast ccode-toast-${item.tone}`}
         >
           {(() => {
@@ -77,7 +119,7 @@ export default function ToastHost() {
                 <span className={parts.details.length ? "ccode-toast-headline" : undefined}>
                   {item.busy && (
                     <LoaderCircle
-                      size={13}
+                      size={14}
                       strokeWidth={2}
                       aria-hidden="true"
                       className="mr-1.5 inline-block animate-spin align-[-2px] text-l3"
@@ -116,7 +158,7 @@ export default function ToastHost() {
             className="ccode-toast-close"
             onClick={() => remove(item.id)}
           >
-            ×
+            <X size={14} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
       ))}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Channel, invoke } from "@tauri-apps/api/core";
-import { ExternalLink, GripVertical, RotateCw } from "lucide-react";
+import { Check, ExternalLink, GripVertical, RotateCw } from "lucide-react";
 import { FoldMark, iconActionClass } from "./PageFrame";
 import FileTypeMark from "./FileTypeMark";
 import type { DirEntryDto } from "./FileTree";
@@ -422,7 +422,7 @@ export default function ArtifactChecklist({
               onClick={() => openFile(f)}
             >
               {showCheck ? (
-                <span className="shrink-0 text-done">✓</span>
+                <Check size={12} strokeWidth={2.2} className="shrink-0 text-done" aria-hidden="true" />
               ) : (
                 <FileTypeMark path={f.name} />
               )}
@@ -459,7 +459,7 @@ export default function ArtifactChecklist({
               ) : (
                 <>
                   <div className="flex h-7 items-center gap-2 rounded-md px-1.5 text-xs">
-                    <span className="shrink-0 text-done">✓</span>
+                    <Check size={12} strokeWidth={2.2} className="shrink-0 text-done" aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate font-mono text-l2">
                       {row.entry}
                     </span>

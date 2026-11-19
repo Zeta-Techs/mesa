@@ -1,4 +1,6 @@
 import {
+  ChevronLeft,
+  ChevronRight,
   MessageCircle,
   Pencil,
   Trash2,
@@ -1654,7 +1656,7 @@ export default function TaskCardsSection({
       {focusStep && focusStepDto ? (
         /* shadow-sm：当前步骤卡是本屏唯一「现在该干嘛」答案，微弱投影把它从画布上抬起来（v3.92 走查） */
         <div className="ccode-well mt-2 rounded-lg px-4 py-3.5 shadow-sm">
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="mb-3.5 flex flex-wrap items-center gap-2 border-b border-hairline/60 pb-3">
             {focusIdx >= 0 && steps.length > 0 && (
               <span className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-sm bg-inset px-1.5 font-mono text-micro font-medium tabular-nums text-l3">
                 {String(focusIdx + 1).padStart(2, "0")}
@@ -1686,18 +1688,18 @@ export default function TaskCardsSection({
               </span>
             )}
             {onFocusIndex && steps.length > 1 && (
-              <div className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/75 p-0.5 text-xs">
+              <div className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded-md border border-hairline/75 bg-canvas/45 p-0.5 text-xs">
                 <button
                   type="button"
                   disabled={focusIdx <= 0}
                   onClick={() => onFocusIndex(focusIdx - 1)}
                   title={focusIdx > 0 ? `上一步：${steps[focusIdx - 1].name}` : "已是第一步"}
                   aria-label="上一步"
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                  className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
                 >
-                  ‹
+                  <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
                 </button>
-                <span className="px-1 font-mono text-micro tabular-nums text-l4" aria-hidden="true">
+                <span className="px-1 font-mono text-micro tabular-nums text-l3" aria-hidden="true">
                   {focusIdx + 1}/{steps.length}
                 </span>
                 <button
@@ -1710,9 +1712,9 @@ export default function TaskCardsSection({
                       : "已是最后一步"
                   }
                   aria-label="下一步"
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
+                  className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-30"
                 >
-                  ›
+                  <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               </div>
             )}

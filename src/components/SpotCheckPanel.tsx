@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Check } from "lucide-react";
 import {
   loadSpotIssues,
   saveSpotIssues,
@@ -108,7 +109,9 @@ export function SpotCheckStrip({
             }`}
           >
             {i + 1}
-            {spot.visited.has(i) && spot.index !== i && <span className="text-micro text-done">✓</span>}
+            {spot.visited.has(i) && spot.index !== i && (
+              <Check size={12} strokeWidth={2.2} className="text-done" aria-hidden="true" />
+            )}
           </button>
         ))}
       </div>

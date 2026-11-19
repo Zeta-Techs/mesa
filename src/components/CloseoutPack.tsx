@@ -6,6 +6,7 @@ import { pathWithin } from "../path-utils";
 import { readResearchFile } from "../research-report-load";
 import { loadArtifactRows } from "./ArtifactChecklist";
 import FileTypeMark from "./FileTypeMark";
+import { FoldMark } from "./PageFrame";
 import type { DirEntryDto } from "./FileTree";
 import {
   closeoutFigureCards,
@@ -63,9 +64,8 @@ export default function CloseoutPack({
   const [index, setIndex] = useState<CloseoutNoteIndex[]>([]);
   const [pdfs, setPdfs] = useState<CloseoutFile[]>([]);
   const [sources, setSources] = useState<CloseoutNoteSource[]>([]);
-  const [open, setOpen] = useState<"figures" | "notes" | null>(null);
+  const [activeTab, setActiveTab] = useState<CloseoutGroupId | "figures" | "notes" | null>(null);
   const [packOpen, setPackOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
   const entryKey = entries.join("\n");
@@ -164,138 +164,152 @@ export default function CloseoutPack({
     ? noteRows.filter((row) => `${row.title} ${row.note.name}`.toLowerCase().includes(needle))
     : noteRows;
 
+  const categoryTabs: { id: CloseoutGroupId | "figures" | "notes"; label: string; count: number }[] = [
+    ...LINE_GROUPS.flatMap(({ id, label }) => {
+      const group = byId.get(id);
+      return group ? [{ id, label, count: group.files.length }] : [];
+    }),
+    ...(figures.length > 0
+      ? [{ id: "figures" as const, label: "附图", count: figures.filter((file) => file.label.startsWith("图 ")).length }]
+      : []),
+    ...(noteRows.length > 0 ? [{ id: "notes" as const, label: "笔记", count: noteRows.length }] : []),
+  ];
+
   return (
-    <div className="ccode-well mb-4 rounded-lg px-4 py-3.5">
+    <div className="ccode-well mt-3 rounded-lg px-4 py-3">
       <button
         type="button"
         aria-expanded={packOpen}
         onClick={() => setPackOpen((cur) => !cur)}
-        className="flex w-full items-center gap-2 text-left text-xs text-l2"
+        className="flex w-full items-center gap-1.5 text-left text-xs text-l2 hover:text-l1"
       >
-        <span className="text-micro text-l4">{packOpen ? "▾" : "▸"}</span>
-        完结文件
-        <span className="text-micro text-l4">
+        <FoldMark open={packOpen} />
+        <span className="font-medium text-l1">完结文件</span>
+        <span className="text-micro tabular-nums text-l4">
           {finals.length > 0 ? `${finals.length} 份最终稿 · 共 ${fileCount} 份` : `${fileCount} 份`}
         </span>
       </button>
       {packOpen && (
-    <div className="mt-2 space-y-2.5">
-      {finals.length > 0 && (
-        <section>
-          <h3 className="px-1 pb-1 text-micro text-l4">最终稿</h3>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-1.5">
-            {finals.map((file) => {
-              const fieldDoc = isCloseoutFieldDoc(file.rel);
-              return (
-                <div key={file.rel} className="group flex items-center rounded-md bg-inset hover:bg-hover">
-                  <button
-                    type="button"
-                    onClick={() => openFile(file)}
-                    title={fieldDoc ? FIELD_DOC_HINT : file.rel}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5 text-left"
-                  >
-                    <FileTypeMark path={file.name} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-xs text-l1">{file.label}</span>
-                      {closeoutHint(file.rel) && (
-                        <span className="block truncate text-micro text-l4">{closeoutHint(file.rel)}</span>
-                      )}
-                    </span>
-                  </button>
-                  {!fieldDoc && (
-                    <button
-                      type="button"
-                      onClick={() => openExternal(file)}
-                      title="用系统默认应用打开（PDF 阅读器、Word）"
-                      aria-label={`用系统应用打开 ${file.label}`}
-                      className="mr-1 flex size-6 shrink-0 items-center justify-center rounded-sm text-l4 opacity-0 hover:bg-hover hover:text-l2 focus:opacity-100 group-hover:opacity-100"
+        <div className="mt-3 space-y-3 border-t border-hairline/60 pt-3">
+          {finals.length > 0 && (
+            <section>
+              <h3 className="mb-1.5 text-micro font-medium text-l4">最终稿</h3>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {finals.map((file) => {
+                  const fieldDoc = isCloseoutFieldDoc(file.rel);
+                  return (
+                    <div
+                      key={file.rel}
+                      className="group flex items-center rounded-md border border-hairline/75 bg-canvas/45 transition-colors hover:border-field hover:bg-hover"
                     >
-                      <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
+                      <button
+                        type="button"
+                        onClick={() => openFile(file)}
+                        title={fieldDoc ? FIELD_DOC_HINT : file.rel}
+                        className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left"
+                      >
+                        <FileTypeMark path={file.name} />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-medium text-l1">{file.label}</span>
+                          {closeoutHint(file.rel) && (
+                            <span className="mt-0.5 block truncate text-micro text-l4">{closeoutHint(file.rel)}</span>
+                          )}
+                        </span>
+                      </button>
+                      {!fieldDoc && (
+                        <button
+                          type="button"
+                          onClick={() => openExternal(file)}
+                          title="用系统默认应用打开（PDF 阅读器、Word）"
+                          aria-label={`用系统应用打开 ${file.label}`}
+                          className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-sm text-l4 opacity-0 transition-opacity hover:bg-hover hover:text-l2 focus:opacity-100 group-hover:opacity-100"
+                        >
+                          <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+          {openError && <p className="px-1 text-micro text-err-text">{openError}</p>}
+          {categoryTabs.length > 0 && (
+            <div className="border-t border-hairline/55 pt-2.5">
+              <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="过程文件分类">
+                {categoryTabs.map((tab) => {
+                  const selected = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      onClick={() => setActiveTab((cur) => (cur === tab.id ? null : tab.id))}
+                      className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
+                        selected
+                          ? "border-field bg-seg-sel font-medium text-l1"
+                          : "border-transparent bg-canvas/40 text-l3 hover:border-hairline hover:bg-hover hover:text-l1"
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span className="font-mono text-micro tabular-nums text-l4">{tab.count}</span>
                     </button>
-                  )}
+                  );
+                })}
+              </div>
+              {activeTab && activeTab !== "notes" && activeTab !== "figures" && byId.get(activeTab) && (
+                <div className="mt-2.5 rounded-md border border-hairline/60 bg-canvas/35 p-2">
+                  <FileSection files={byId.get(activeTab)!.files} onOpen={openFile} />
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-      {openError && <p className="px-1 text-micro text-err-text">{openError}</p>}
-      {LINE_GROUPS.map(({ id, label }) => {
-        const group = byId.get(id);
-        if (!group) return null;
-        const shown = openGroups.has(id);
-        return (
-          <Fold
-            key={id}
-            label={label}
-            count={group.files.length}
-            open={shown}
-            onToggle={() => setOpenGroups((cur) => {
-              const next = new Set(cur);
-              if (next.has(id)) next.delete(id);
-              else next.add(id);
-              return next;
-            })}
-          >
-            <FileSection files={group.files} onOpen={openFile} />
-          </Fold>
-        );
-      })}
-      {figures.length > 0 && (
-        <Fold
-          label="附图"
-          count={figures.filter((file) => file.label.startsWith("图 ")).length}
-          open={open === "figures"}
-          onToggle={() => setOpen((cur) => (cur === "figures" ? null : "figures"))}
-        >
-          <FileSection files={figures} onOpen={openFile} />
-        </Fold>
-      )}
-      {noteRows.length > 0 && (
-        <Fold
-          label="笔记"
-          count={noteRows.length}
-          open={open === "notes"}
-          onToggle={() => setOpen((cur) => (cur === "notes" ? null : "notes"))}
-        >
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="题名、作者或年份"
-            className="mb-1 w-full rounded-sm border border-field bg-canvas px-2 py-1 text-xs text-l2 outline-none placeholder:text-l4"
-          />
-          <ul className="max-h-64 overflow-auto">
-            {shownNotes.map((row) => (
-              <li key={row.note.rel} className="flex items-center gap-2 rounded-md px-1 hover:bg-hover">
-                <button
-                  type="button"
-                  title={row.note.rel}
-                  onClick={() => openFile(row.note)}
-                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left text-xs text-l2"
-                >
-                  <FileTypeMark path={row.note.name} />
-                  <span className="truncate">{row.title}</span>
-                </button>
-                {row.pdf ? (
-                  <button
-                    type="button"
-                    title={row.pdf.name}
-                    aria-label="打开全文"
-                    onClick={() => openFile(row.pdf!)}
-                    className="shrink-0 rounded-md p-1 hover:bg-hover"
-                  >
-                    <FileTypeMark path={row.pdf.name} />
-                  </button>
-                ) : (
-                  <span className="shrink-0 text-micro text-l4">无全文</span>
-                )}
-              </li>
-            ))}
-          </ul>
-          {shownNotes.length === 0 && <p className="mt-1 text-micro text-l4">没有这一篇。</p>}
-        </Fold>
-      )}
-    </div>
+              )}
+              {activeTab === "figures" && figures.length > 0 && (
+                <div className="mt-2.5 rounded-md border border-hairline/60 bg-canvas/35 p-2">
+                  <FileSection files={figures} onOpen={openFile} />
+                </div>
+              )}
+              {activeTab === "notes" && noteRows.length > 0 && (
+                <div className="mt-2.5 rounded-md border border-hairline/60 bg-canvas/35 p-2">
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="筛选题名、作者或年份"
+                    className="mb-1.5 h-7 w-full rounded-md border border-field bg-canvas px-2 text-xs text-l2 outline-none placeholder:text-l4 focus:border-l4"
+                  />
+                  <ul className="max-h-64 overflow-auto">
+                    {shownNotes.map((row) => (
+                      <li key={row.note.rel} className="flex items-center gap-2 rounded-md px-1.5 hover:bg-hover">
+                        <button
+                          type="button"
+                          title={row.note.rel}
+                          onClick={() => openFile(row.note)}
+                          className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left text-xs text-l2 hover:text-l1"
+                        >
+                          <FileTypeMark path={row.note.name} />
+                          <span className="truncate">{row.title}</span>
+                        </button>
+                        {row.pdf ? (
+                          <button
+                            type="button"
+                            title={row.pdf.name}
+                            aria-label="打开全文"
+                            onClick={() => openFile(row.pdf!)}
+                            className="shrink-0 rounded-md p-1 hover:bg-hover"
+                          >
+                            <FileTypeMark path={row.pdf.name} />
+                          </button>
+                        ) : (
+                          <span className="shrink-0 text-micro text-l4">无全文</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {shownNotes.length === 0 && <p className="mt-1 px-1 text-micro text-l4">没有这一篇。</p>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -310,7 +324,7 @@ function FileSection({
   onOpen: (file: CloseoutFile) => void;
 }) {
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-x-3">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-x-3 gap-y-0.5">
       {files.map((file) => {
         const hint = closeoutHint(file.rel);
         return (
@@ -319,7 +333,7 @@ function FileSection({
             type="button"
             title={file.rel}
             onClick={() => onOpen(file)}
-            className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1 text-left text-xs hover:bg-hover"
+            className="flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-left text-xs hover:bg-hover"
           >
             <FileTypeMark path={file.name} />
             <span className="shrink-0 text-l2">{file.label}</span>
@@ -327,31 +341,6 @@ function FileSection({
           </button>
         );
       })}
-    </div>
-  );
-}
-
-function Fold({
-  label,
-  count,
-  open,
-  onToggle,
-  children,
-}: {
-  label: string;
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <button type="button" onClick={onToggle} className="text-xs text-l3 hover:text-l1">
-        <span className="mr-1 inline-block w-3 text-micro text-l4">{open ? "▾" : "▸"}</span>
-        {label}
-        <span className="ml-1 text-micro text-l4">{count}</span>
-      </button>
-      {open && <div className="mt-1.5 pl-4">{children}</div>}
     </div>
   );
 }

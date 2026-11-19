@@ -165,7 +165,7 @@ function SectionHeading({
 }) {
   return (
     <div className="mb-2.5 flex min-h-8 flex-wrap items-center gap-2 px-1">
-      <h2 className="text-lg font-semibold text-l1">{title}</h2>
+      <h2 className="text-lg font-semibold tracking-[-0.015em] text-l1">{title}</h2>
       {action && <div className="ml-auto">{action}</div>}
     </div>
   );

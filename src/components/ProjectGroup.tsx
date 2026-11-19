@@ -2,6 +2,7 @@ import { doctorGate } from "./DoctorDialog";
 import {
   Copy,
   Files,
+  MoreHorizontal,
   SquareTerminal,
   Unlink,
   Workflow,
@@ -2146,9 +2147,9 @@ export default function ProjectGroup({
                         }}
                         title="步骤操作"
                         aria-label={`步骤操作：${step.name}`}
-                        className={`absolute right-0 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-sm text-xs text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
+                        className={`absolute right-0 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 ${hoverRevealClass}`}
                       >
-                        ⋯
+                        <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
                       </button>
                     </div>
                   </li>
@@ -2258,8 +2259,6 @@ export default function ProjectGroup({
                         className="flex h-4 min-w-0 items-center justify-center"
                       >
                         {text && text.text === "出错了" && stepFailures[i] ? (
-                          // 出错了直接问项目助手（2026-11-04）：带着这次出错的运行打开，它会去看记录、必要时只读打开文件
-                          // 看起来和别的状态小字一样安静（2026-11-04 用户：入口太多，进度条变吵），悬停才写原因与「点一下问为什么」
                           <button
                             type="button"
                             className={`truncate text-micro leading-4 hover:underline ${text.tone}`}
@@ -2362,16 +2361,6 @@ export default function ProjectGroup({
         >研究流程已就位。</NoticeBar>
       )}
 
-      {cfg && closeoutPackVisible(cfg.steps, stepDoneFlags) && (
-        <CloseoutPack
-            projectRoot={projectPath}
-            worktrees={workspaces
-              .filter((workspace) => workspace.status === "active")
-              .map((workspace) => workspace.worktreePath)}
-            entries={closeoutScanEntries(cfg.steps)}
-          />
-      )}
-
       {/* 人工事项清单已并入聚焦视图（TaskCardsSection 聚焦步骤时顶部渲染）；原 ⋯ 手风琴面板删除 */}
 
       {/* 产物核验手风琴（步骤 ⋯ 菜单触发）：strip 下方就地展开（单开）；root 口径同任务行——已合并读项目根，其余读工作树 */}
@@ -2445,6 +2434,17 @@ export default function ProjectGroup({
           onStartStep={(index, originCardId) => startStep(index, originCardId)}
           onReadPaper={demoPaper ? () => immerseResource(demoPaper) : undefined}
           readPaperPrimary={Boolean(demoPaper)}
+        />
+      )}
+
+      {/* 完结文件紧跟在当前步骤卡之后：步进器 → 聚焦步骤卡直接相连不被隔断，项目级最终交付物在下方收口 */}
+      {cfg && closeoutPackVisible(cfg.steps, stepDoneFlags) && (
+        <CloseoutPack
+          projectRoot={projectPath}
+          worktrees={workspaces
+            .filter((workspace) => workspace.status === "active")
+            .map((workspace) => workspace.worktreePath)}
+          entries={closeoutScanEntries(cfg.steps)}
         />
       )}
 

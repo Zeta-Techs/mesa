@@ -107,7 +107,7 @@ export default function ChatEmptyStart({
               title={`把这段对话放到「${p.name}」里开始（还没发出去，之后还能换）\n${p.path}`}
               className="ccode-well flex max-w-[12rem] items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l2 transition-colors hover:border-field hover:bg-hover hover:text-l1"
             >
-              <ModeIcon size={12.5} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+              <ModeIcon size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
               <span className="shrink-0 text-l3">接着做</span>
               <span className="truncate font-medium text-l1">{p.name}</span>
             </button>
@@ -133,7 +133,7 @@ export default function ChatEmptyStart({
             title="同一个问题请二到四家不同模型的 AI 只读作答、互相补充，结论由你记；输入框里写的话会带过去当问题"
             className="flex items-center gap-1.5 rounded-full border border-hairline px-3 py-1.5 text-xs text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1"
           >
-            <Users size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+            <Users size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
             请几家研讨
           </button>
         )}

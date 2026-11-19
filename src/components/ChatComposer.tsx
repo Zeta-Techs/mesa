@@ -232,7 +232,7 @@ function AddMenu({
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <ul className="absolute bottom-full left-0 z-50 mb-2 max-h-80 w-72 overflow-auto rounded-lg border border-field ccode-float-surface p-1">
+          <ul className="absolute bottom-full left-0 z-50 mb-2 max-h-80 w-72 overflow-auto rounded-lg border border-field ccode-float-surface ccode-menu-surface p-1">
             <li>
               <button
                 type="button"

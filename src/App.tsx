@@ -1750,7 +1750,7 @@ function App() {
                     aria-label={collapsed ? "展开侧栏" : "收起为图标"}
                     className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                   >
-                    <PanelLeft size={14.5} strokeWidth={1.8} aria-hidden="true" />
+                    <PanelLeft size={14} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                   <button
                     type="button"
@@ -1760,7 +1760,7 @@ function App() {
                     aria-haspopup="dialog"
                     className="flex size-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
                   >
-                    <NAV_ICONS.search size={14.5} strokeWidth={1.8} aria-hidden="true" />
+                    <NAV_ICONS.search size={14} strokeWidth={1.8} aria-hidden="true" />
                   </button>
                 </>
               )}
@@ -1842,7 +1842,7 @@ function App() {
                               : items[(idx - 1 + items.length) % items.length];
                       next.focus();
                     }}
-                    className="absolute right-0 top-full z-40 mt-1.5 w-64 rounded-md border border-field ccode-float-surface p-1"
+                    className="absolute right-0 top-full z-40 mt-1.5 w-64 rounded-lg border border-field ccode-float-surface ccode-menu-surface p-1"
                   >
                     {HELP_MENU.map((group) => (
                       <div key={group.label}>
