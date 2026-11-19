@@ -539,8 +539,9 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 标注重定位候选 quoteSearchCandidates（原样→去词内连字符→前 60 字）、图表定位 locateFigure（行首图注优先）、
                              # 目录拍平与落点高度、文内链接悬停预览区域与「返回阅读位置」判定（tests/pdf-search.test.ts）
   pdf-paragraphs.ts          # PDF 页 → 段落（双语对照切段，纯逻辑）：文本项并视觉行（上下标同行、旋转水印丢掉）→ 按字号 / 换栏 / 空行 / 句末＋没写满或缩进断段，
-                             # 没写完且非大写开头接续；页眉页脚不进；图里小字记 fragment；段落哈希作译文缓存键（tests/pdf-paragraphs.test.ts）
-  reader-parallel.ts         # 双语对照纯逻辑：自动翻哪几页、分批（不跨页 ≤2500 字、哈希去重）、批前后文、视口顶 → 锚点段、鼠标 → 段落、进度（tests/reader-parallel.test.ts）
+                             # 没写完且非大写开头接续；页眉页脚不进；图里小字记 fragment；编号小节标题认成 heading；段落哈希作译文缓存键；
+                             # documentParagraphs 整篇再过一遍：题录 meta、参考文献起往后 reference、跨页没写完的段并进上一页（下页那截 continued）（tests/pdf-paragraphs.test.ts）
+  reader-parallel.ts         # 双语对照纯逻辑：翻译顺序、分批（不跨页 ≤2500 字、哈希去重）、批前后文、视口顶 → 锚点段、鼠标 → 段落、进度（tests/reader-parallel.test.ts）
   pdf-figure-crop.ts         # 对照窗自动框图（纯逻辑）：graphicBoxesFromOps 从 getOperatorList 取图片 / 路径外框，cropFigureRegion 按图注往上（表往下按横线）聚块并进轴标，认不出 null 退整页（tests/pdf-figure-crop.test.ts）
   note-pdf-pair.ts           # md 笔记配不配得上本篇 PDF（reader_for_note 结果按路径缓存 30 秒、同路径并发只问一次 + useNotePaired）：
                              # 「沉浸阅读」入口只给配得上的——FilePreviewEditor 预览右上角、ProjectFilesView 文件行悬停、FileTree 右键（2026-10-25；tests/note-pdf-pair.test.ts）

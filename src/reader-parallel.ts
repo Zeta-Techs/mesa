@@ -15,9 +15,20 @@ export interface ParaState {
 /** 一批最多多少字原文（一段比这长就单独一批，不切段） */
 export const PARALLEL_BATCH_CHARS = 2500;
 
-/** 要送翻译的段：碎片（图里的小字、表格格子）不翻 */
+/** 要送翻译、在译文栏列出的段：只有正文和标题（碎片、题录、参考文献不翻；跨页续写的那截并进了上一页那段） */
 export function translatable(p: PdfParagraph): boolean {
-  return p.kind !== "fragment";
+  return p.kind === "body" || p.kind === "heading";
+}
+
+/** 跨页续写的那截 → 它并进去的那段（在前一页或更前） */
+export function resolveParagraph(
+  pages: ReadonlyMap<number, readonly PdfParagraph[]>,
+  p: PdfParagraph,
+): PdfParagraph | null {
+  if (p.kind !== "continued") return p;
+  if (!p.of) return null;
+  const page = Number(p.of.split(":")[0]);
+  return pages.get(page)?.find((q) => q.id === p.of) ?? null;
 }
 
 /** 打开文献就在后台翻全文：从当前页往后翻到底，再回头翻前面的页 */
@@ -95,34 +106,37 @@ export function anchorForViewport(
   const sorted = [...pages.keys()].sort((a, b) => a - b);
   let last: PdfParagraph | null = null;
   for (const n of sorted) {
-    const paras = (pages.get(n) ?? []).filter(translatable);
+    // 跨页续写的那截算它上一页那段：视口顶落在续写处时译文栏停在那段
+    const paras = (pages.get(n) ?? []).filter((p) => translatable(p) || p.kind === "continued");
     if (paras.length === 0) continue;
     if (n < page) {
       last = paras[paras.length - 1];
       continue;
     }
-    if (n > page) return paras[0];
+    if (n > page) return resolveParagraph(pages, paras[0]);
     const hit = paras.find((p) => p.boxes.some((b) => b.y + b.h > frac));
-    if (hit) return hit;
+    if (hit) return resolveParagraph(pages, hit);
     last = paras[paras.length - 1];
   }
-  return last;
+  return last && resolveParagraph(pages, last);
 }
 
-/** 鼠标在第 page 页的 (fx, fy)（页内 0–1）指着哪一段（外框放宽半个百分点） */
+/** 鼠标在第 page 页的 (fx, fy)（页内 0–1）指着哪一段（外框放宽半个百分点；指着续写的那截算它并进去的那段） */
 export function paragraphAt(
-  paras: readonly PdfParagraph[] | undefined,
+  pages: ReadonlyMap<number, readonly PdfParagraph[]>,
+  page: number,
   fx: number,
   fy: number,
 ): PdfParagraph | null {
   const pad = 0.005;
-  return (
-    paras?.find(
+  const hit = pages
+    .get(page)
+    ?.find(
       (p) =>
-        translatable(p) &&
+        (translatable(p) || p.kind === "continued") &&
         p.boxes.some((b) => fx >= b.x - pad && fx <= b.x + b.w + pad && fy >= b.y - pad && fy <= b.y + b.h + pad),
-    ) ?? null
-  );
+    );
+  return hit ? resolveParagraph(pages, hit) : null;
 }
 
 /** 已译 / 要翻的段数（进度用；碎片不计） */

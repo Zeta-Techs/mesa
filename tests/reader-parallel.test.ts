@@ -63,9 +63,22 @@ test("anchorForViewport：本页第一段底边在视口顶以下的；本页翻
 });
 
 test("paragraphAt：指着外框里（放宽半个百分点），碎片不算", () => {
-  assert.equal(paragraphAt(pages.get(1), 0.2, 0.25)?.id, "1:1");
-  assert.equal(paragraphAt(pages.get(1), 0.2, 0.35), null);
-  assert.equal(paragraphAt(pages.get(3), 0.546, 0.25)?.id, "3:0");
+  assert.equal(paragraphAt(pages, 1, 0.2, 0.25)?.id, "1:1");
+  assert.equal(paragraphAt(pages, 1, 0.2, 0.35), null);
+  assert.equal(paragraphAt(pages, 3, 0.546, 0.25)?.id, "3:0");
+});
+
+test("跨页续写的那截：指着它、视口顶落在它上面，都算它并进去的那段；题录和参考文献不列", () => {
+  const cont: PdfParagraph = { ...para(5, 0, "tail of it", 0.1), kind: "continued", of: "4:1" };
+  const doc = new Map<number, PdfParagraph[]>([
+    [4, [para(4, 0, "Head.", 0.1, { kind: "heading" }), para(4, 1, "unfinished paragraph", 0.6)]],
+    [5, [cont, para(5, 1, "Next one.", 0.4), para(5, 2, "a@b.com", 0.7, { kind: "meta" }), para(5, 3, "References", 0.8, { kind: "reference" })]],
+  ]);
+  assert.equal(paragraphAt(doc, 5, 0.2, 0.15)?.id, "4:1");
+  assert.equal(anchorForViewport(doc, 5, 0.05)?.id, "4:1");
+  assert.equal(anchorForViewport(doc, 5, 0.3)?.id, "5:1");
+  assert.equal(paragraphAt(doc, 5, 0.2, 0.75), null, "题录不接");
+  assert.deepEqual(parallelProgress(doc, () => "idle").total, 3);
 });
 
 test("parallelProgress：按不同原文计数，碎片不计", () => {

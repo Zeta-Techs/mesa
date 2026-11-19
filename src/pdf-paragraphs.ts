@@ -10,6 +10,11 @@
  * 上一行没写完（不以句末标点结尾）、本行又不是大写开头时，同一句还没完：换栏、字号变了（ACS 首行放大）都接着算同一段。
  * 页眉页脚（页面最上 8% / 最下 7% 内的短行）与旋转的字（页边下载水印）不进段落。
  * 太短、不像句子的碎片（图里的轴标、图例、表格格子）记成 fragment：显示原文，不送翻译。
+ *
+ * 整篇再过一遍（documentParagraphs，2026-11-19 用户：参考文献不用翻）：
+ * - 作者单位、通讯作者、邮箱、期刊页眉、DOI / 收稿日期 / 版权这类题录记 meta，参考文献标题起往后记 reference，都不翻不列；
+ * - 上一页最后一段没写完、下一页开头接着小写往下写的（双栏论文几乎每页都这样断），并成一段放在上一页，
+ *   下一页那截记 continued（of 指回去），译文只出一份。
  */
 
 /** 一个文本项（scale=1 视口坐标，左上原点；y 是基线离页顶的距离） */
@@ -32,7 +37,7 @@ export interface PdfFracBox {
   h: number;
 }
 
-export type PdfParagraphKind = "body" | "heading" | "fragment";
+export type PdfParagraphKind = "body" | "heading" | "fragment" | "meta" | "reference" | "continued";
 
 export interface PdfParagraph {
   /** 页内序号，`页:序号`（同一版式下稳定，换了切法就变——缓存认 hash 不认 id） */
@@ -44,6 +49,10 @@ export interface PdfParagraph {
   hash: string;
   /** 每一栏一块的外框（跨栏续写的段有两块），对照时高亮与对齐用 */
   boxes: PdfFracBox[];
+  /** 续到后面几页的那几截的外框（documentParagraphs 跨页并段后才有） */
+  tail?: { page: number; boxes: PdfFracBox[] }[];
+  /** kind = continued：并进了哪一段（id） */
+  of?: string;
 }
 
 interface Line {
@@ -228,8 +237,10 @@ export function pageParagraphs(
     const cjk = (text.match(new RegExp(CJK.source, "g")) ?? []).length;
     // 图里的轴标、图例：比正文小一号、短、不成句
     const figureLabel = h < body * 0.9 && text.length < 60 && !SENTENCE_END.test(text);
+    // 正文字号加粗的编号小节标题（「3.2. Electrocatalytic activity analysis」）字号认不出，按编号认
+    const numbered = text.length <= 100 && /^\d+(?:\.\d+)*\.?\s+\p{Lu}/u.test(text) && !SENTENCE_END.test(text) && words >= 1;
     const kind: PdfParagraphKind =
-      minH >= body * 1.15 && text.length <= 200 && (words >= 1 || cjk >= 2)
+      (minH >= body * 1.15 && text.length <= 200 && (words >= 1 || cjk >= 2)) || numbered
         ? "heading"
         : text.length < 20 || (words < 3 && cjk < 6) || figureLabel
           ? "fragment"
@@ -243,4 +254,122 @@ export function pageParagraphs(
     });
     return { id: `${page}:${i}`, page, text, kind, hash: paragraphKey(text), boxes };
   });
+}
+
+const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/;
+const META_PHRASE =
+  /corresponding authors?|contents lists available|journal homepage|article history|cite this:|how to cite:|all rights reserved|creative commons|metrics & more|article recommendations|©|^\s*(?:read online|www[.:]|https?:\/\/|doi:)/i;
+const META_DATE = /\b(?:received|accepted|revised|available online|published(?: online)?)\b[^.]{0,80}\b(?:19|20)\d{2}\b/i;
+const AFFILIATION = /\b(?:Universit|Institut|College|School of|Laborator|Department|Academy|Centre|Center for|Co\., Ltd)/;
+const CAPTION = /^(?:Fig\.?|Figure|Table|Scheme|图|表)\s*S?\d/i;
+/** 作者信息、补充材料这类小节：标题到下一个标题之间整块是题录（ACS 的「■ AUTHOR INFORMATION」） */
+const META_SECTION = /^(?:author information|associated content|author contributions)\b/i;
+/** 一条参考文献的样子：[12] / (12) / 12 / 12. 开头，接「S. Sharma」或「Edwards, P. P.」，后面有年份。
+ *  没有「References」标题的排版（Wiley、RSC）靠连着两段都长这样认出参考文献开始 */
+const REF_ENTRY =
+  /^(?:\[\d{1,3}\]|\(\d{1,3}\)|\d{1,3}\.?)\s+(?:a\)\s*)?(?:\p{Lu}\.\s?(?:-?\p{Lu}\.\s?)*\p{Lu}[\p{L}'-]+|\p{Lu}[\p{L}'-]+,\s*\p{Lu}\.).*\b(?:19|20)\d{2}\b/su;
+/** 参考文献标题：单独一行，或后面直接跟第一条（[1] / (1) / 1. / 姓, 名缩写.） */
+const REF_HEAD = /^(?:\d+\.?\s*)?(?:references(?: and notes)?|bibliography|literature cited|参考文献)(?:\s*$|\s+(?:\[1\]|\(1\)|1\.\s|\p{Lu}[\p{L}'-]+,\s*\p{Lu}\.))/iu;
+
+/** 题录类的段（不值得读译文）：邮箱、通讯作者、期刊页眉、DOI / 收稿日期 / 版权；第 1 页的作者名单与单位块 */
+export function isFrontMatter(text: string, page: number): boolean {
+  if (text.length > 600) return false;
+  if (EMAIL.test(text) || META_PHRASE.test(text) || META_DATE.test(text)) return true;
+  if (page !== 1) return false;
+  const words = text.match(/\p{L}+/gu) ?? [];
+  const commas = (text.match(/,/g) ?? []).length;
+  if (words.length < 4) return false;
+  // 单位块：逗号密、带单位名，或「Dr. / Prof.」打头列人名
+  if (AFFILIATION.test(text) && (commas / words.length >= 0.15 || /\b(?:Dr|Prof)\.\s/.test(text))) return true;
+  // 作者名单：逗号密、几乎全是大写开头的词（只夹着 and）
+  const lower = words.filter((w) => /^\p{Ll}/u.test(w) && w !== "and").length;
+  return commas >= 3 && commas / words.length >= 0.2 && lower / words.length <= 0.1;
+}
+
+/** 参考文献标题（去掉 ACS「■」这类前缀符号后比） */
+export function isReferenceHeading(text: string): boolean {
+  const t = text
+    .replace(/^[^\p{L}\d]+/u, "")
+    // 字距拉开的标题（「REFER ENCES」）先并回去
+    .replace(/^(?:\p{Lu}\s?){5,20}/u, (m) => m.replace(/(\p{Lu})\s(?=\p{Lu})/gu, "$1"));
+  return REF_HEAD.test(t);
+}
+
+/** 段中间起头的一条（「Soc. 2009, 131, 1862. [2] Y. Liu, …」，按行切出来的参考文献常这样） */
+const INLINE_REF = /\[\d{1,3}\]\s+(?:a\)\s*)?\p{Lu}\.\s?(?:-?\p{Lu}\.\s?)*\p{Lu}[\p{L}'-]+.*\b(?:19|20)\d{2}\b/su;
+
+/** 像不像一条参考文献（开头就是一条，或中间起头一条） */
+export function looksLikeReference(text: string): boolean {
+  return REF_ENTRY.test(text) || INLINE_REF.test(text);
+}
+
+/**
+ * 整篇的第二遍：题录记 meta、参考文献起往后记 reference、跨页没写完的段并进上一页。输入是逐页 pageParagraphs 的结果
+ * （可以只读了前几页，读多少过多少），不改输入。参考文献标题只认后 60% 的页，免得正文里提一句 References 把后面全吞了。
+ */
+export function documentParagraphs(
+  raw: ReadonlyMap<number, readonly PdfParagraph[]>,
+  pageCount: number,
+): Map<number, PdfParagraph[]> {
+  const out = new Map<number, PdfParagraph[]>();
+  const sorted = [...raw.keys()].sort((a, b) => a - b);
+  const refFrom = Math.max(2, Math.ceil(pageCount * 0.4));
+  // 参考文献从哪段开始：「References」标题（单独一行常被记成碎片，也认）；没有标题时，一段像参考文献、
+  // 后面三段正文里还有一段也像（Angewandte 一条拆成好几行），再往回带上紧挨着的「[1]」这类编号段
+  const flat = sorted.flatMap((n) => raw.get(n) ?? []);
+  const text = flat.filter((p) => p.kind !== "fragment");
+  let refStart = flat.find((p) => p.page >= refFrom && isReferenceHeading(p.text));
+  if (!refStart) {
+    let i = text.findIndex(
+      (p, k) => p.page >= refFrom && looksLikeReference(p.text) && text.slice(k + 1, k + 4).some((q) => looksLikeReference(q.text)),
+    );
+    // 往回带：编号开头的、中间起头一条的、带「年, 卷, 页」尾巴的（一条拆成几行时的续行）
+    const refLike = (t: string) =>
+      looksLikeReference(t) || /^(?:\[\d{1,3}\]|\(\d{1,3}\))\s/.test(t) || /\b(?:19|20)\d{2}\s*,\s*\d{1,4}\s*,\s*\d/.test(t);
+    while (i > 0 && text[i - 1].page >= refFrom && refLike(text[i - 1].text)) i--;
+    refStart = text[i];
+  }
+  let inRefs = false;
+  let inMetaSection = false;
+  for (const n of sorted) {
+    out.set(
+      n,
+      (raw.get(n) ?? []).map((p) => {
+        if (p === refStart) inRefs = true;
+        if (inRefs) return { ...p, kind: "reference" as const };
+        if (p.kind === "heading") inMetaSection = META_SECTION.test(p.text.replace(/^[^\p{L}\d]+/u, ""));
+        if ((inMetaSection && !CAPTION.test(p.text)) || (p.kind !== "fragment" && isFrontMatter(p.text, n))) {
+          return { ...p, kind: "meta" as const };
+        }
+        return { ...p };
+      }),
+    );
+  }
+  // 跨页并段：上一页最后一段正文没写完，下一页前三段正文里第一段不是大写开头的接上（同页内接续的口径；遇到标题就不找了）
+  const byId = new Map<string, PdfParagraph>();
+  for (const paras of out.values()) for (const p of paras) byId.set(p.id, p);
+  for (const n of sorted) {
+    const next = out.get(n + 1);
+    if (!next) continue;
+    const here = out.get(n) ?? [];
+    // 页底常压着图注 / 表注：跳过它们找正文最后一段
+    const last = [...here].reverse().find((p) => (p.kind === "body" && !CAPTION.test(p.text)) || p.kind === "continued");
+    if (!last) continue;
+    const root = last.kind === "continued" && last.of ? byId.get(last.of) : last;
+    if (!root || SENTENCE_END.test(last.text)) continue;
+    let tries = 0;
+    for (const q of next) {
+      if (q.kind === "heading" || q.kind === "reference" || tries >= 3) break;
+      if (q.kind !== "body") continue;
+      tries++;
+      if (/^\p{Lu}/u.test(q.text)) continue;
+      root.text = joinLines([root.text, q.text]);
+      root.hash = paragraphKey(root.text);
+      root.tail = [...(root.tail ?? []), { page: q.page, boxes: q.boxes }];
+      q.kind = "continued";
+      q.of = root.id;
+      break;
+    }
+  }
+  return out;
 }

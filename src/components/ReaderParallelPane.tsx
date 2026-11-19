@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import type * as pdfjs from "pdfjs-dist";
-import { pageParagraphs, type PdfFracBox, type PdfParagraph, type PdfTextItem } from "../pdf-paragraphs";
+import { documentParagraphs, pageParagraphs, type PdfFracBox, type PdfParagraph, type PdfTextItem } from "../pdf-paragraphs";
 import {
   anchorForViewport,
   batchNeighbors,
@@ -152,6 +152,8 @@ export default function ReaderParallelPane({
   const runningRef = useRef(0);
   const pagesRef = useRef(pages);
   pagesRef.current = pages;
+  /** 还在读页时读到了第几页（读完 = 0）：这页最后一段可能要并下一页的开头，先不翻 */
+  const readUpToRef = useRef(0);
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
 
@@ -161,7 +163,7 @@ export default function ReaderParallelPane({
   );
   const zhOf = (hash: string) => statesRef.current.get(hash)?.zh ?? cache.get(hash);
 
-  // ----- 切段：文档到手就从第 1 页逐页读，读一批画一批 -----
+  // ----- 切段：文档到手就从第 1 页逐页读，读一批画一批；每批整篇再过一遍（题录、参考文献、跨页并段） -----
   useEffect(() => {
     const gen = ++genRef.current;
     statesRef.current = new Map();
@@ -170,6 +172,7 @@ export default function ReaderParallelPane({
     setHoverId(null);
     if (!doc) return;
     const total = Math.min(doc.numPages, MAX_PAGES);
+    readUpToRef.current = 0;
     setReading({ done: 0, total });
     void (async () => {
       const acc = new Map<number, PdfParagraph[]>();
@@ -183,7 +186,8 @@ export default function ReaderParallelPane({
         }
         if (n % 4 === 0 || n === total) {
           if (gen !== genRef.current) return;
-          setPages(new Map(acc));
+          readUpToRef.current = n < total ? n : 0;
+          setPages(documentParagraphs(acc, total));
           setReading({ done: n, total });
         }
       }
@@ -200,7 +204,8 @@ export default function ReaderParallelPane({
     if (pageCount === 0) return;
     // 页还没读完时视口可能在已读范围之后：夹进已读的页
     const cur = Math.min(Math.max(1, viewRef.current.page), pageCount);
-    const order = translationOrder(cur, pageCount);
+    const upTo = readUpToRef.current;
+    const order = translationOrder(cur, pageCount).filter((n) => !upTo || n < upTo);
     while (runningRef.current < CONCURRENCY) {
       const [batch] = planBatches(all, order, stateOf);
       if (!batch) return;
@@ -286,7 +291,7 @@ export default function ReaderParallelPane({
         if (a) scrollPaneTo(a.id, "top");
       },
       onPointer(page, fx, fy, click) {
-        const p = page > 0 ? paragraphAt(pagesRef.current.get(page), fx, fy) : null;
+        const p = page > 0 ? paragraphAt(pagesRef.current, page, fx, fy) : null;
         if (!click) {
           setHoverId(p?.id ?? null);
           return false;
@@ -320,13 +325,16 @@ export default function ReaderParallelPane({
   }
   useEffect(() => () => cancelAnimationFrame(bodyRafRef.current), []);
 
-  // PDF 上画框：鼠标指着的一段（淡）+ 点中的一段（深）
+  // PDF 上画框：鼠标指着的一段（淡）+ 点中的一段（深）；跨页并过的段，续写的那几截一起画
   useEffect(() => {
     const marks: ParallelMark[] = [];
-    const f = paraById(focusId);
-    if (f) marks.push({ page: f.page, boxes: f.boxes, tone: "focus" });
-    const hv = paraById(hoverId);
-    if (hv && hv.id !== focusId) marks.push({ page: hv.page, boxes: hv.boxes, tone: "hover" });
+    const add = (p: PdfParagraph | null, tone: ParallelMark["tone"]) => {
+      if (!p) return;
+      marks.push({ page: p.page, boxes: p.boxes, tone });
+      for (const t of p.tail ?? []) marks.push({ page: t.page, boxes: t.boxes, tone });
+    };
+    add(paraById(focusId), "focus");
+    if (hoverId !== focusId) add(paraById(hoverId), "hover");
     onMarks(marks);
   }, [hoverId, focusId, paraById, onMarks, pages]);
   useEffect(() => () => onMarks([]), [onMarks]);
@@ -399,14 +407,20 @@ export default function ReaderParallelPane({
         </button>
       </div>
       <div ref={bodyRef} onScroll={onBodyScroll} className="relative min-h-0 flex-1 overflow-y-auto px-4 pb-10">
+        {/* 一行四十来个字最好读：栏再宽，正文也不铺满 */}
+        <div className="relative mx-auto max-w-[40em]">
         {sortedPages.map((n) => {
-          const paras = (pages.get(n) ?? []).filter(translatable);
+          const all = pages.get(n) ?? [];
+          const paras = all.filter(translatable);
+          const refStart = all.findIndex((p) => p.kind === "reference");
+          // 参考文献起往后的页整页不列，只在开头那页留一句
+          if (paras.length === 0 && refStart === 0 && pages.get(n - 1)?.some((p) => p.kind === "reference")) return null;
           return (
             <section key={n}>
-              <div className="my-2 flex items-center gap-2 text-micro text-l4">
+              <div className="my-3 flex items-center gap-2 text-micro text-l4">
                 <span className="h-px flex-1 bg-hairline" />第 {n} 页<span className="h-px flex-1 bg-hairline" />
               </div>
-              {paras.length === 0 && <p className="py-1 text-micro text-l4">这一页没有可读的文字（扫描页或整页是图）</p>}
+              {all.length === 0 && <p className="py-1 text-micro text-l4">这一页没有可读的文字（扫描页或整页是图）</p>}
               {paras.map((p) => {
                 const st = stateOf(p.hash);
                 const zh = zhOf(p.hash);
@@ -423,7 +437,7 @@ export default function ReaderParallelPane({
                       setFocusId(p.id);
                       onScrollPdf(p.page, Math.max(0, (p.boxes[0]?.y ?? 0) - 0.02));
                     }}
-                    className={`group relative -mx-2 my-1 cursor-default rounded-md px-2 py-1.5 transition-colors ${lit}`}
+                    className={`group relative -mx-2 my-2 cursor-default rounded-md px-2 py-1.5 transition-colors ${lit}`}
                   >
                     {st === "done" && zh ? (
                       <TranslatedText
@@ -452,7 +466,8 @@ export default function ReaderParallelPane({
                       </p>
                     )}
                     {st === "done" && zh && (
-                      <div className="ccode-float-surface absolute right-1 top-1 hidden items-center gap-0.5 rounded-sm border border-field px-0.5 shadow group-hover:flex">
+                      // 浮在这段上沿外面（落在上一段末行右侧的空白里），不压这段的字
+                      <div className="ccode-float-surface absolute -top-4 right-1 z-10 hidden items-center gap-0.5 rounded-sm border border-field px-0.5 shadow group-hover:flex">
                         {onSaveToNote && (
                           <button type="button" className={btn} onClick={() => onSaveToNote(p.text, zh, p.page)}>
                             存进笔记
@@ -471,12 +486,16 @@ export default function ReaderParallelPane({
                   </div>
                 );
               })}
+              {refStart >= 0 && !pages.get(n - 1)?.some((p) => p.kind === "reference") && (
+                <p className="my-3 text-center text-micro text-l4">参考文献从这里开始，不翻译</p>
+              )}
             </section>
           );
         })}
         {sortedPages.length === 0 && (
           <p className="py-6 text-center text-xs text-l4">{doc ? "正在读取 PDF 的文字…" : "PDF 还没打开"}</p>
         )}
+        </div>
       </div>
     </div>
   );
