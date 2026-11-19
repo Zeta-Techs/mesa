@@ -494,11 +494,27 @@ export function splitAnswerLead(text: string): { lead: string | null; rest: stri
   return { lead: first.replace(/^\*\*(.+)\*\*$/, "$1"), rest };
 }
 
+/** 秒数说成「两分钟」「十分钟」；不满一分钟照秒说 */
+function minutesText(secs: number): string {
+  if (secs < 60) return `${secs} 秒`;
+  const m = Math.round(secs / 60);
+  const zh = ["", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十"][m];
+  return zh ? `${zh}分钟` : `${m} 分钟`;
+}
+
 /** 没问成时给人看的话：常见几类译成白话 + 怎么办，其余照原文（不吞原因） */
 export function assistantErrorText(reason: string): string {
   const r = reason.replace(/^Error:\s*/, "").trim();
+  // 后端两种超时（2026-11-19）：连续一段时间没有任何新输出，或一直在答但到了十分钟总上限
+  const timeout = r.match(/AI 调用超时（(\d+)s( 没有新输出)?）/);
+  if (timeout) {
+    const mins = minutesText(Number(timeout[1]));
+    return timeout[2]
+      ? `${mins}没有任何新动静，多半是这条连接卡住了或网络不稳。可以再问一次，或在 Agent 分工 → 专属绑定 → 项目助手 换一条连接。`
+      : `答了${mins}还没答完，这条连接太慢了。可以把问题问得具体些再问一次，或在 Agent 分工 → 专属绑定 → 项目助手 换一条快一点的连接。`;
+  }
   if (/AI 调用超时/.test(r)) {
-    return "等了两分钟还没答完，多半是这条连接太慢或网络不稳。可以再问一次，或在 Agent 分工 → 专属绑定 → 项目助手 换一条快一点的连接。";
+    return "等了很久还没答完，多半是这条连接太慢或网络不稳。可以再问一次，或在 Agent 分工 → 专属绑定 → 项目助手 换一条快一点的连接。";
   }
   if (/未找到 .+（PATH/.test(r)) return `这条连接对应的 Agent 在这台电脑上找不到：${r}。去连接页装好，或给项目助手换一条连接。`;
   if (/不支持无头调用/.test(r)) return "这条连接所属的 Agent 不能后台问答，给项目助手换一条连接（Agent 分工 → 专属绑定 → 项目助手）。";

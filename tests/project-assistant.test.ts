@@ -96,7 +96,9 @@ test("依据一行：说明书哪几节 + 项目记录；小节能拆出来做�
 });
 
 test("没问成：超时、找不到 Agent 译成白话，其余照原文", () => {
-  assert.match(assistantErrorText("AI 调用超时（120s）。"), /两分钟还没答完/);
+  assert.match(assistantErrorText("AI 调用超时（120s 没有新输出）。"), /^两分钟没有任何新动静/);
+  assert.match(assistantErrorText("AI 调用超时（240s 没有新输出）。无输出"), /^四分钟没有任何新动静/);
+  assert.match(assistantErrorText("AI 调用超时（600s）。"), /^答了十分钟还没答完/);
   assert.match(assistantErrorText("未找到 claude（PATH 与常见安装目录均无）"), /找不到/);
   assert.equal(assistantErrorText("Error: something odd"), "something odd");
 });

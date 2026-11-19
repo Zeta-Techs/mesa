@@ -8,6 +8,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 const AI_TIMEOUT: Duration = Duration::from_secs(120);
+/// 有人盯着看、能随时点停止的问答（项目助手、研讨，边生成边推）：上面两档改作「连续多久没动静」，
+/// 一直在出字、在查文件就接着等，总时长到这里为止（2026-11-19 用户反馈：慢模型答到一半被两分钟整掐断）
+const WATCHED_CAP: Duration = Duration::from_secs(600);
 const DIFF_CAP: usize = 8 * 1024;
 const USER_TURN_CAP: usize = 800;
 const USER_TITLE_CAP: usize = 4 * 1024;
@@ -985,7 +988,7 @@ fn run_capture_for(
     run_id: Option<&str>,
     session_out: &mut Option<String>,
 ) -> Result<String, String> {
-    run_capture_with(agent, expected_host, cmd, timeout, run_id, session_out, None)
+    run_capture_with(agent, expected_host, cmd, timeout, None, run_id, session_out, None)
 }
 
 /// 把 stdout 字节流切成完整的行交给回调（最后一段不完整的留在 pending 里等下一批）
@@ -1006,11 +1009,12 @@ fn run_capture_with(
     expected_host: Option<&str>,
     cmd: &mut crate::process::BackgroundCommand,
     timeout: Duration,
+    idle: Option<Duration>,
     run_id: Option<&str>,
     session_out: &mut Option<String>,
     on_stdout: Option<&mut dyn FnMut(&[u8])>,
 ) -> Result<String, String> {
-    let captured = crate::process::capture_command_streaming(cmd, timeout, 8 * 1024 * 1024, run_id, on_stdout)?;
+    let captured = crate::process::capture_command_streaming(cmd, timeout, idle, 8 * 1024 * 1024, run_id, on_stdout)?;
     if captured.cancelled {
         return Err("任务已取消".into());
     }
@@ -1021,7 +1025,10 @@ fn run_capture_with(
     }
     if captured.timed_out {
         let detail = summarize_headless_error(format!("{out}\n{err}").trim(), expected_host);
-        return Err(format!("AI 调用超时（{}s）。{detail}", timeout.as_secs()));
+        return Err(match idle {
+            Some(window) if captured.stalled => format!("AI 调用超时（{}s 没有新输出）。{detail}", window.as_secs()),
+            _ => format!("AI 调用超时（{}s）。{detail}", timeout.as_secs()),
+        });
     }
     if captured.truncated {
         return Err("AI 输出超过 8 MB 安全上限，结果未采用；请缩小任务范围".into());
@@ -1251,7 +1258,8 @@ pub(crate) fn ai_prompt_impl_full(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
-        AI_TIMEOUT,
+        if streaming { WATCHED_CAP } else { AI_TIMEOUT },
+        streaming.then_some(AI_TIMEOUT),
         Some(&run.id),
         &mut session_id,
         Some(&mut feed),
@@ -1568,6 +1576,7 @@ pub(crate) fn ai_inspect_readonly(
     if !project_root.is_dir() {
         return Err("项目文件夹不在了".into());
     }
+    let streaming = on_line.is_some();
     let settings = crate::settings::read_current_checked()?;
     let fn_key = "project-assistant";
     let fn_profile = settings.ai_profiles.as_ref().and_then(|m| m.get(fn_key).cloned());
@@ -1695,7 +1704,8 @@ pub(crate) fn ai_inspect_readonly(
         Some(&profile.agent),
         host.as_deref(),
         &mut cmd,
-        INSPECT_TIMEOUT,
+        if streaming { WATCHED_CAP } else { INSPECT_TIMEOUT },
+        streaming.then_some(INSPECT_TIMEOUT),
         Some(&run.id),
         &mut session_id,
         Some(&mut feed),
@@ -2139,6 +2149,7 @@ pub(crate) fn run_agent_task_granted(
         host.as_deref(),
         &mut cmd,
         timeout,
+        None,
         Some(&run.id),
         &mut seen_session,
         Some(&mut on_output),
@@ -2281,6 +2292,7 @@ pub(crate) fn run_goal_headless_to_exit(
     let captured = crate::process::capture_command_streaming_both(
         &mut cmd,
         timeout,
+        None,
         8 * 1024 * 1024,
         Some(run_id),
         Some(&mut on_out),

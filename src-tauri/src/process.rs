@@ -924,6 +924,8 @@ pub(crate) struct CapturedOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub timed_out: bool,
+    /// 超时是因为连续 idle 窗口没有任何输出（不是到了总时长上限）
+    pub stalled: bool,
     pub cancelled: bool,
     pub truncated: bool,
 }
@@ -984,25 +986,28 @@ pub(crate) fn capture_command_for(
     cap: usize,
     run_id: Option<&str>,
 ) -> Result<CapturedOutput, String> {
-    capture_command_streaming(cmd, timeout, cap, run_id, None)
+    capture_command_streaming(cmd, timeout, None, cap, run_id, None)
 }
 
 /// 同 `capture_command_for`，另可边跑边拿到 stdout 新到的字节（项目助手边生成边推到面板，2026-11-04）：
-/// 等待循环里每一圈把缓冲里新增的部分交给回调；回调只读，完整输出照旧在返回值里
+/// 等待循环里每一圈把缓冲里新增的部分交给回调；回调只读，完整输出照旧在返回值里。
+/// `idle` 给了时 `timeout` 是总时长上限，另外连续 `idle` 没有任何输出也算超时（有人盯着、能点停止的问答用）
 pub(crate) fn capture_command_streaming(
     cmd: &mut BackgroundCommand,
     timeout: std::time::Duration,
+    idle: Option<std::time::Duration>,
     cap: usize,
     run_id: Option<&str>,
     on_stdout: Option<&mut dyn FnMut(&[u8])>,
 ) -> Result<CapturedOutput, String> {
-    capture_command_streaming_both(cmd, timeout, cap, run_id, on_stdout, None)
+    capture_command_streaming_both(cmd, timeout, idle, cap, run_id, on_stdout, None)
 }
 
 /// 同 `capture_command_streaming`，stderr 也边跑边交给回调（目标无头运行把两路进度都写进运行记录，2026-11-06）
 pub(crate) fn capture_command_streaming_both(
     cmd: &mut BackgroundCommand,
     timeout: std::time::Duration,
+    idle: Option<std::time::Duration>,
     cap: usize,
     run_id: Option<&str>,
     mut on_stdout: Option<&mut dyn FnMut(&[u8])>,
@@ -1079,6 +1084,7 @@ pub(crate) fn capture_command_streaming_both(
     let mut status = None;
     let mut failure = None;
     let mut timed_out = false;
+    let mut stalled = false;
     let mut streamed = 0usize;
     let mut streamed_err = 0usize;
     fn pump(
@@ -1117,6 +1123,14 @@ pub(crate) fn capture_command_streaming_both(
         if Instant::now() >= deadline {
             timed_out = true;
             break;
+        }
+        if let Some(window) = idle {
+            let quiet = now_unix_ms().saturating_sub(activity.load(std::sync::atomic::Ordering::Acquire));
+            if quiet >= window.as_millis() as u64 {
+                timed_out = true;
+                stalled = true;
+                break;
+            }
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -1163,6 +1177,7 @@ pub(crate) fn capture_command_streaming_both(
         stdout: std::mem::take(&mut out.bytes),
         stderr: std::mem::take(&mut err.bytes),
         timed_out,
+        stalled,
         cancelled: was_cancelled,
         truncated: out.truncated || err.truncated,
     })
@@ -1437,6 +1452,35 @@ mod tests {
         .unwrap();
         assert!(got.timed_out);
         assert!(got.status.is_some(), "超时子进程必须被回收");
+        assert_eq!(got.stdout, b"started");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_idle_window_waits_while_output_keeps_coming() {
+        // 一直有输出：总时长超过 idle 窗口也接着等到跑完
+        let got = capture_command_streaming(
+            &mut shell("i=0; while [ $i -lt 30 ]; do printf .; sleep 0.2; i=$((i+1)); done"),
+            std::time::Duration::from_secs(60),
+            Some(std::time::Duration::from_secs(5)),
+            1024,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(!got.timed_out);
+        assert_eq!(got.stdout.len(), 30);
+        // 出过一次字就没动静：按 idle 窗口停，标成 stalled
+        let got = capture_command_streaming(
+            &mut shell("printf started; exec sleep 60"),
+            std::time::Duration::from_secs(60),
+            Some(std::time::Duration::from_secs(1)),
+            1024,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(got.timed_out && got.stalled);
         assert_eq!(got.stdout, b"started");
     }
 
