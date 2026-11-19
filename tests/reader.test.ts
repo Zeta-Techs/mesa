@@ -15,6 +15,9 @@ import {
   mdImageAbsPath,
   escapeGlossaryCell,
   findGlossaryMatches,
+  glossaryForTranslation,
+  TRANSLATE_GLOSSARY_MAX,
+  TRANSLATE_GLOSSARY_MEANING_MAX,
   formatPdfExcerptPrompt,
   formatReaderCapturePrompt,
   groupTextLines,
@@ -434,6 +437,38 @@ test("buildReaderTranslatePrompt 学术直译约束 + 原文附上", () => {
   const p = buildReaderTranslatePrompt("interfacial resistance");
   assert.ok(p.includes("学术语境直译"));
   assert.ok(p.endsWith("\n\ninterfacial resistance"));
+  // 生词本没命中时与不带上下文逐字相同
+  assert.equal(
+    buildReaderTranslatePrompt("interfacial resistance", {
+      glossary: [{ term: "overpotential", meaning: "过电位" }],
+    }),
+    p,
+  );
+});
+
+test("buildReaderTranslatePrompt 生词本命中的术语写进固定译法", () => {
+  const p = buildReaderTranslatePrompt("The Overpotential of HER and her results.", {
+    glossary: [
+      { term: "overpotential", meaning: "过电位\n（电极反应偏离平衡电位）" },
+      { term: "HER", meaning: "析氢反应" },
+      { term: "Tafel slope", meaning: "塔费尔斜率" },
+      { term: "空释义", meaning: "  " },
+    ],
+  });
+  assert.ok(p.includes("- overpotential：过电位\n- HER：析氢反应"), p);
+  assert.ok(!p.includes("塔费尔"));
+  assert.ok(p.endsWith("原文：\n\nThe Overpotential of HER and her results."));
+});
+
+test("glossaryForTranslation 去重、截断释义、封顶条数", () => {
+  const terms = glossaryForTranslation("cat cat dog", [
+    { term: "cat", meaning: "猫".repeat(100) },
+    { term: "dog", meaning: "" },
+  ]);
+  assert.deepEqual(terms, [{ term: "cat", meaning: "猫".repeat(TRANSLATE_GLOSSARY_MEANING_MAX) }]);
+  const many = Array.from({ length: 40 }, (_, i) => ({ term: `w${i}`, meaning: `词${i}` }));
+  const text = many.map((m) => m.term).join(" ");
+  assert.equal(glossaryForTranslation(text, many).length, TRANSLATE_GLOSSARY_MAX);
 });
 
 test("进度记忆与护眼的 localStorage 键格式", () => {

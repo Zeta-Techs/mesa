@@ -540,7 +540,8 @@ export default function ReaderOverlay({
   }, [projectRoot]);
 
   /** 翻译统一入口（ai_prompt fnKey="translate"）：纯文本输出（bilingual 模式已随块级
-      对照改版下线）；面板翻译的状态机见下方 runTranslate，生词预填直接用本函数 */
+      对照改版下线）；生词本里在原文出现的术语带进 prompt 统一译法。
+      面板翻译的状态机见下方 runTranslate，生词预填直接用本函数 */
   const requestTranslate = useCallback(
     async (text: string): Promise<ReaderTranslateResult> => {
       if (needsProfile) return { ok: false, error: "还没有可用的 API 配置" };
@@ -548,14 +549,14 @@ export default function ReaderOverlay({
         const zh = await invoke<string>("ai_prompt", {
           profileId: null,
           fnKey: "translate",
-          prompt: buildReaderTranslatePrompt(text),
+          prompt: buildReaderTranslatePrompt(text, { glossary }),
         });
         return { ok: true, text: zh.trim() };
       } catch (e) {
         return { ok: false, error: String(e) };
       }
     },
-    [needsProfile],
+    [needsProfile, glossary],
   );
 
   // ===== 译文浮窗（2026-11-06 用户选「只留浮窗」：取代右栏原位 + 悬浮球）：历史/在途/开关上提到这里，

@@ -556,8 +556,58 @@ export function relMdLinkPath(fromFile: string, targetAbs: string): string {
 /** 划词/段落翻译的统一 prompt（ai_prompt fnKey="translate"，设置页可配专用小模型）：
  *  纯文本输出（曾有的 bilingual 逐句对照模式已随块级对照改版下线——原文整段由
  *  历史条目的 original 字段承担，不再需要模型输出标记） */
-export function buildReaderTranslatePrompt(text: string): string {
-  return `把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释：\n\n${text}`;
+export function buildReaderTranslatePrompt(
+  text: string,
+  ctx: ReaderTranslateContext = {},
+): string {
+  const rule =
+    "把以下学术文献内容翻译为中文。要求：学术语境直译，专业术语保留原词（必要时括注原文），不增减内容，只输出译文，不要任何解释";
+  const terms = glossaryForTranslation(text, ctx.glossary ?? []);
+  // 没有上下文时与旧版逐字相同
+  if (terms.length === 0) return `${rule}：\n\n${text}`;
+  const blocks = [
+    `${rule}。`,
+    `下列术语按本项目生词本的译法翻译（仍可括注原词）：\n${terms
+      .map((t) => `- ${t.term}：${t.meaning}`)
+      .join("\n")}`,
+    `原文：\n\n${text}`,
+  ];
+  return blocks.join("\n\n");
+}
+
+/** 翻译附带的上下文（都可省） */
+export interface ReaderTranslateContext {
+  /** 本项目生词本：只挑原文里出现的术语，按其释义统一译法 */
+  glossary?: readonly Pick<GlossaryEntry, "term" | "meaning">[];
+}
+
+/** 一次翻译最多带几条术语 / 每条释义最多几个字（释义可能是长解释，取首行截断） */
+export const TRANSLATE_GLOSSARY_MAX = 30;
+export const TRANSLATE_GLOSSARY_MEANING_MAX = 40;
+
+/** 生词本里在原文出现过的术语（命中口径同术语高亮 findGlossaryMatches），按首次出现排序、去重 */
+export function glossaryForTranslation(
+  text: string,
+  glossary: readonly Pick<GlossaryEntry, "term" | "meaning">[],
+): { term: string; meaning: string }[] {
+  const byLower = new Map<string, string>();
+  for (const g of glossary) {
+    const key = g.term.trim().toLowerCase();
+    if (key && !byLower.has(key)) byLower.set(key, g.term.trim());
+  }
+  const out: { term: string; meaning: string }[] = [];
+  const seen = new Set<string>();
+  for (const m of findGlossaryMatches(text, glossary)) {
+    const key = text.slice(m.start, m.end).toLowerCase();
+    const meaning = (m.meaning.split(/\r?\n/).find((l) => l.trim()) ?? "")
+      .trim()
+      .slice(0, TRANSLATE_GLOSSARY_MEANING_MAX);
+    if (seen.has(key) || !meaning) continue;
+    seen.add(key);
+    out.push({ term: byLower.get(key) ?? text.slice(m.start, m.end), meaning });
+    if (out.length >= TRANSLATE_GLOSSARY_MAX) break;
+  }
+  return out;
 }
 
 /** 逐句对照的一对（原句 + 译句） */
