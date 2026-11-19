@@ -176,7 +176,7 @@ import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { activeScreenCells, activeScreenLines, italicLine } from "../screen-cells";
 import { type MesaCommand } from "../composer-assist";
-import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, outputTokensSupported, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import { classifierBillingNotice, classifierNoticeAutoSkip } from "../cli-notices";
 import {
@@ -2983,7 +2983,8 @@ export const TerminalView = memo(function TerminalView({
   // （2026-10-27 用户截图）。writeChatMessage 记下发送前的屏之后放开
   const liveHoldRef = useRef(false);
   function scanLiveReplySoon() {
-    if (!liveReplySupported(launchAgentRef.current)) return;
+    const agent = launchAgentRef.current;
+    if (!liveReplySupported(agent) && !outputTokensSupported(agent)) return;
     if (liveHoldRef.current) return;
     // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏；hooks 与 program-status 仍靠读屏展示流式正文与思考
     const ch = channelRef.current;
@@ -3007,18 +3008,20 @@ export const TerminalView = memo(function TerminalView({
     liveSyncWaitsRef.current = 0;
     liveScanAtRef.current = Date.now();
     const lines = screenLines();
-    // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
-    const read = extractLiveReply(lines, launchAgentRef.current, screenItalicRow);
-    // Claude 转圈行的已生成 token 数（Windows 上 Claude 不边写边画，聊天层靠它看出还在出字）
-    if (launchAgentRef.current === "claude-code") {
+    const agent = launchAgentRef.current;
+    // 转圈行的已生成 token 数（Windows 上 Claude Code、两平台 CodeBuddy 都不边写边画，聊天层靠它看出还在出字）
+    if (outputTokensSupported(agent)) {
       const tokens = claudeOutputTokens(lines);
       if (tokens !== null && tokens !== liveTokensRef.current) {
         liveTokensRef.current = tokens;
         setLiveTokens(tokens);
       }
     }
+    if (!liveReplySupported(agent)) return;
+    // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
+    const read = extractLiveReply(lines, agent, screenItalicRow);
     // 正在想的那一框（Grok、Kimi）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
-    const thinking = extractLiveThinking(lines, launchAgentRef.current)?.join("\n") ?? null;
+    const thinking = extractLiveThinking(lines, agent)?.join("\n") ?? null;
     if (thinking !== liveThinkingRef.current) {
       liveThinkingRef.current = thinking;
       setLiveThinking(thinking);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, sameAsPrevReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, outputTokensSupported, sameAsPrevReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -1231,4 +1231,35 @@ test("Antigravity CLI 1.5.8：读出缩进两格的流式回复，审批菜单�
   ]);
   // 泛状态行（Generating.../Working.../Thinking...）不当作思考正文
   assert.equal(extractLiveThinking(streaming, "agy"), null);
+});
+
+test("Windows：Grok 1.0.89 输入框换方角 ┌──┐ 也能认出实时预览与输入框（2026-11-18 金丝雀抓屏）", () => {
+  const rows = [
+    "  ~/work                                                         6 / 256k │ [Dashboard]",
+    "     > TRIGGER_SLOW 讲一段                                                      9:06 AM",
+    "     第一段：这是一段慢慢流出来的回复。                                          9:06 AM",
+    "     • 要点一：终端先画出来",
+    "     echo mesa",
+    "     ○ bash   [Copy]",
+    "     最后一行：完毕。",
+    "     Worked for 6.2s",
+    `  ┌${"─".repeat(80)}┐`,
+    `  │ > ok${" ".repeat(74)}│`,
+    `  └${"─".repeat(66)} e2e-picked ─┘`,
+  ];
+  assert.equal(terminalHasInputBox(rows, "grok"), true);
+  assert.deepEqual(extractLiveReply(rows, "grok")?.lines, [
+    "第一段：这是一段慢慢流出来的回复。",
+    "• 要点一：终端先画出来",
+    "echo mesa",
+    "最后一行：完毕。",
+  ]);
+});
+
+test("CodeBuddy 2.185：虽不逐字流式正文，但转圈行的 ↓ N tokens 可读并在聊天层报进度", () => {
+  assert.equal(outputTokensSupported("claude-code"), true);
+  assert.equal(outputTokensSupported("codebuddy"), true);
+  assert.equal(outputTokensSupported("codex"), false);
+  assert.equal(claudeOutputTokens(["✹ Waking… (2s · streaming · ↓ 10 tokens)"]), 10);
+  assert.equal(claudeOutputTokens(["✹ Notifying… (7s · streaming · ↓ 1.2k tokens)"]), 1200);
 });

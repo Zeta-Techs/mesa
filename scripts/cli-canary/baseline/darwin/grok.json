@@ -7,13 +7,18 @@
   "kind": "program-status",
   "statuses": [
    "-",
+   "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
  "checks": {
   "假网关收到主对话请求": true,
   "全局配置：外部 CLI 带的是 Mesa 写的密钥": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的温度": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的自定义请求头": true,
+  "全局配置：外部 CLI 带的是 Mesa 写的输出上限": true,
   "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
   "抓屏跑完": true,
   "旁路拿到会话文件": true,
@@ -72,10 +77,10 @@
   "liveReplySupported": true,
   "menu": {
    "options": [
-    "Yes, and don't ask again for anything (always-approve mode)",
     "Yes, proceed",
     "No, reject (type to add feedback)",
-    "Never allow: echo"
+    "Never allow: echo",
+    "Yes, and don't ask again for anything (always-approve mode)"
    ],
    "question": "echo mesa > mesa_probe.txt"
   },
@@ -86,9 +91,10 @@
    "keys": [
     "method",
     "params",
-    "timestamp"
+    "timestamp",
+    "timestamp_us"
    ]
   }
  },
- "version": "1.0.77"
+ "version": "1.0.89"
 }

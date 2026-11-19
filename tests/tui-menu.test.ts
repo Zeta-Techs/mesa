@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { menuAnswerKeys, menuEchoesText, parseKimiEffortPicker, parseTuiMenu, pickerTargetIndex, sameTuiMenu } from "../src/tui-menu.ts";
+import { menuAnswerKeys, menuEchoesText, menuReadyToConfirm, parseKimiEffortPicker, parseTuiMenu, pickerTargetIndex, sameTuiMenu } from "../src/tui-menu.ts";
 
 test("认出切换确认菜单：问句、选项、当前高亮", () => {
   const menu = parseTuiMenu([
@@ -551,4 +551,44 @@ test("Antigravity CLI 审批菜单与正文列表区分：↑/↓ Navigate 提�
     "agy",
   );
   assert.equal(bodyList, null);
+});
+
+test("Grok 1.0.89 审批菜单：无数字前缀的第 4 项单选不丢失，→ narrow scope 不混进说明（2026-11-18 金丝雀抓屏）", () => {
+  const screen = [
+    "  ┃",
+    "  ┃  ›  写一个探针文件",
+    "  ┃  │ echo mesa > mesa_probe.txt",
+    "  ┃  → narrow scope",
+    "  ┃",
+    "  ┃  2 (●) Yes, proceed",
+    "  ┃  3 (○) No, reject (type to add feedback)",
+    "  ┃  4 (○) Never allow: echo",
+    "  ┃    (○) Yes, and don't ask again for anything (always-approve mode)",
+    "  ┃",
+    "  2/4:select  │  Tab:next option  │  →:scope  │  Ctrl+c:cancel  │  Esc:scrollback",
+  ];
+  const m = parseTuiMenu(screen, undefined, "grok");
+  assert.ok(m);
+  assert.equal(m.question, "echo mesa > mesa_probe.txt");
+  assert.equal(m.detail, null);
+  assert.deepEqual(m.options, [
+    "Yes, proceed",
+    "No, reject (type to add feedback)",
+    "Never allow: echo",
+    "Yes, and don't ask again for anything (always-approve mode)",
+  ]);
+  assert.equal(m.selected, 0);
+
+  // 高亮挪到无编号第 4 项（含 Windows 的 • 字形）时同样认准
+  const picked4 = parseTuiMenu(
+    screen.map((l) => l.replace("2 (●)", "2 (○)").replace("  (○) Yes, and don't", "  (•) Yes, and don't")),
+    undefined,
+    "grok",
+  );
+  assert.ok(picked4);
+  assert.equal(picked4.selected, 3);
+  assert.equal(menuReadyToConfirm(m, 3, picked4), true);
+
+  // 对话正文里孤立的一行 (○) 不当菜单
+  assert.equal(parseTuiMenu(["     这里说明一下：", "     (○) 孤立选项示例", "     结束。"]), null);
 });

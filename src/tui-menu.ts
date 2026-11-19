@@ -45,8 +45,12 @@ const MARKED_NO_DOT = /^\s*(?:[❯›]\s*(?:\d+[.)]\s*)?|[>▶]\s*\d+[.)]\s*)(\S
 const NUMBERED_NO_DOT = /^\s*(?:[❯›>▶]\s*)?\d+[.)]\s/;
 const DOT_IS_BODY_LEAD = new Set(["claude-code", "kimi", "agy"]);
 // Grok 的单选写法「2 (●) Yes, proceed」「3 (○) No, reject」：先改写成「❯ 2. …」「  3. …」再认。
-// Windows 上 Grok 的选中点画成 •（2026-10-20 ConPTY 抓屏）
+// Windows 上 Grok 的选中点画成 •（2026-10-20 ConPTY 抓屏）。
+// 1.0.89 起最后一项「always-approve」去掉了快捷键数字、写成「    (○) Yes, and don't ask again…」（2026-11-18 金丝雀抓屏）：
+// 紧邻单选块出现时顺延补序号，免得漏掉选项
 const RADIO = /^(\s*)(\d+)\s+\(([●•○◉◯])\)\s+(.*)$/;
+const RADIO_BARE = /^(\s+)\(([●•○◉◯])\)\s+(.*)$/;
+const RADIO_ON = new Set(["●", "•", "◉"]);
 // 未选中的选项行：缩进 + 可选序号 + 文字；边框线、空行、工具输出续行（⎿）不算
 const PLAIN = /^\s{1,8}(?:\d+[.)]\s*)?([^\s─━═│┃╭╮╰╯▔▁⎿].*?)\s*$/;
 
@@ -62,21 +66,46 @@ const KEY_HINT = /^\s*(?:(?:shift|ctrl|alt|option|cmd)\+\w+|Enter|Esc|Tab|Space|
 
 /**
  * 去掉方框的左右竖边和滚动条（Gemini 审批整个画在 ╭│╰ 框里、右边还有 █ 滚动条；Grok 审批左边一条 ┃），
- * 嵌套的框一层层剥；左边框换成空格，保留原来的缩进关系。单选写法改写成标准序号行。
+ * 嵌套的框一层层剥；左边框换成空格，保留原来的缩进关系。
  */
-function unbox(line: string): string {
+function stripBox(line: string): string {
   let t = line.replace(/[\s█▐▌]+$/, "");
   for (let k = 0; k < 3; k++) {
     const next = t.replace(/\s*[│┃]$/, "").replace(/^(\s*)[│┃]/, "$1 ");
     if (next === t) break;
     t = next;
   }
-  const radio = RADIO.exec(t);
-  if (radio) {
-    const on = radio[3] === "●" || radio[3] === "•" || radio[3] === "◉";
-    t = `${radio[1]}${on ? "❯ " : "  "}${radio[2]}. ${radio[4]}`;
-  }
   return t;
+}
+
+/** 剥边框并把单选行块改写成标准序号行（支持 Grok 1.0.89 无数字后缀单选项顺延编号） */
+function unboxLines(raw: readonly string[]): string[] {
+  const stripped = raw.map(stripBox);
+  const radioAt = stripped.map((t) => {
+    const m = RADIO.exec(t);
+    if (m) return { indent: m[1], num: Number(m[2]), on: RADIO_ON.has(m[3]), text: m[4] };
+    const b = RADIO_BARE.exec(t);
+    if (b) return { indent: b[1], num: null as number | null, on: RADIO_ON.has(b[2]), text: b[3] };
+    return null;
+  });
+  return stripped.map((t, i) => {
+    const cur = radioAt[i];
+    if (!cur) return t;
+    if (cur.num !== null) return `${cur.indent}${cur.on ? "❯ " : "  "}${cur.num}. ${cur.text}`;
+    // 无数字的单选行：只认紧邻另一条单选行（同块内）的，避免正文里孤立的「(○) xxx」误判
+    let prev = i - 1;
+    while (prev >= 0 && radioAt[prev] !== null) {
+      if (radioAt[prev]!.num !== null) {
+        const seq = radioAt[prev]!.num! + (i - prev);
+        return `${cur.indent}${cur.on ? "❯ " : "  "}${seq}. ${cur.text}`;
+      }
+      prev--;
+    }
+    const hasNeighbor = (i > 0 && radioAt[i - 1] !== null) || (i + 1 < radioAt.length && radioAt[i + 1] !== null);
+    if (!hasNeighbor) return t;
+    const seq = i - prev;
+    return `${cur.indent}${cur.on ? "❯ " : "  "}${seq}. ${cur.text}`;
+  });
 }
 
 interface Marks {
@@ -94,7 +123,7 @@ export function parseTuiMenu(
     agent && DOT_IS_BODY_LEAD.has(agent)
       ? { marked: MARKED_NO_DOT, numbered: NUMBERED_NO_DOT }
       : { marked: MARKED, numbered: NUMBERED };
-  const lines = raw.map(unbox);
+  const lines = unboxLines(raw);
   if (agent === "kimi") {
     const asked = kimiQuestion(lines);
     if (asked) return asked;
@@ -367,8 +396,13 @@ function menuAround(
       if (!DASHED.test(t)) context.unshift(t);
     }
   }
-  // 「Tip: …」是 CLI 的推广提示，「❯ / › / > 开头」是用户输入的回显，都不是这道题的说明
-  context = context.filter((t) => !/^Tip:/i.test(t) && !ECHO.test(t));
+  // 「Tip: …」是 CLI 的推广提示，「❯ / › / > 开头」是用户输入的回显，纯方向键提示（Grok「→ narrow scope」「← → narrow scope」）都不是这道题的说明
+  context = context.filter(
+    (t) =>
+      !/^Tip:/i.test(t) &&
+      !ECHO.test(t) &&
+      !/^[←→↑↓]+(?:\s+[←→↑↓]+)*\s+(?:narrow|expand|switch|toggle|cycle|move|navigate|select)\b/i.test(t),
+  );
   // 问句：离选项最近的「常见发问开头」行，再认问号结尾的最后一行，都没有取第一行。
   // Codex 的「Reason: …」是模型写的理由，也可能以问号结尾，所以发问开头优先；
   // CodeBuddy 框顶是标题「Confirm」、贴着选项的才是问句「Are you sure you want to do this?」，所以取最近的

@@ -92,8 +92,8 @@ interface Layout {
 
 // 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
 const THINK_GUTTER = /^\s*[│┃]/;
-// 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」也算）
-const BORDER = /^[╭╰]?[─━═▄▀]{8,}[╮╯]?$/;
+// 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」及 Windows 方角「┌────」也算；表格已先由 tableRows 放行）
+const BORDER = /^[╭╰┌└]?[─━═▄▀]{8,}[╮╯┐┘]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
 const SPINNER = /^\s*[\u2800-\u28ff]\s/;
 // Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
@@ -183,9 +183,10 @@ const LAYOUTS: Record<string, Layout> = {
     indent: 3,
   },
   grok: {
-    // Windows 上 Grok 换了一套字形（2026-10-20 ConPTY 抓屏）：回显与输入框 ❯ → >，工具 ◆ → ♦，代码块标签 ◇ → ○
+    // Windows 上 Grok 换了一套字形（2026-10-20 ConPTY 抓屏）：回显与输入框 ❯ → >，工具 ◆ → ♦，代码块标签 ◇ → ○；
+    // 1.0.89 起 Windows 输入框也从圆角 ╭──╮ 换成方角 ┌──┐（2026-11-18 金丝雀抓屏）
     boxTop: (rows) =>
-      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
+      lastBox(rows, (i) => (/^\s*[╭┌][─━]+[╮┐]$/.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
     echo: /^\s+[❯>]\s+\S/,
     lead: null,
     tool: /^\s*[◆♦]\s/,
@@ -241,9 +242,9 @@ const LAYOUTS: Record<string, Layout> = {
 };
 
 /**
- * Claude Code 转圈行里这一轮已生成的 token 数：「✶ Musing… (5s · ↓ 1.2k tokens)」→ 1200。
- * Windows 上 Claude Code 整条消息收完才画出来（2026-10-21 抓屏：2.1.292 / 2.1.305 都是转圈计数、最后一次画出；
- * 2026-10-26 查 2.1.310 二进制：Windows 版把「生成中文字可见」的平台判断编译成常量假，无开关可开，见 architecture §10 2026-10-21「Windows 上 Claude 回复不流式」条），
+ * 转圈行里这一轮已生成的 token 数（Claude Code「✶ Musing… (5s · ↓ 1.2k tokens)」、CodeBuddy 2.185
+ * 「✹ Waking… (2s · streaming · ↓ 10 tokens)」）→ 1200 / 10。
+ * Windows 上 Claude Code 与两平台上的 CodeBuddy 都是整条消息收完才画正文（2026-10-21 / 2026-11-18 金丝雀抓屏），
  * 聊天层没有逐字预览，拿它告诉人还在出字；长思考时也有用。只认 ↓（收到的），认不出返回 null
  */
 export function claudeOutputTokens(lines: readonly string[]): number | null {
@@ -255,6 +256,11 @@ export function claudeOutputTokens(lines: readonly string[]): number | null {
     }
   }
   return null;
+}
+
+/** 屏上转圈行带「↓ N tokens」的家：就算没有逐字正文预览（CodeBuddy）也能在聊天层报已生成 token 数 */
+export function outputTokensSupported(agentId: string): boolean {
+  return agentId === "claude-code" || agentId === "codebuddy";
 }
 
 export function liveReplySupported(agentId: string): boolean {
