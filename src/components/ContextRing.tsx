@@ -241,7 +241,7 @@ export default function ContextRing({
               ref={panelRef}
               role="dialog"
               aria-label="上下文"
-              className="ccode-float-surface w-[18rem] rounded-lg border border-field p-3 text-left text-xs shadow-lg"
+              className="ccode-float-surface w-[20rem] rounded-lg border border-field p-3 text-left text-sm shadow-lg"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-baseline justify-between gap-2">
@@ -281,45 +281,51 @@ export default function ContextRing({
                     />
                     <span className="min-w-0 flex-1 truncate text-l2">{row.label}</span>
                     <span className="text-l3">{contextFmtTokens(row.tokens)}</span>
-                    <span className="w-12 text-right text-l4">{fmtRatio(row.ratio)}</span>
+                    <span className="w-14 text-right text-l4">{fmtRatio(row.ratio)}</span>
                   </div>
                 ))}
               </div>
               {longContextHint(used) && (
                 <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
               )}
-              {/* 卡底一块（2026-11-20 用户：压缩和说明放一起、说明字小一点）：左边短句说明，右边压缩钮贴底。
+              {/* 卡底一块（2026-11-20 用户：压缩和说明放一起、说明字小一点、别乱）：正文 text-sm、卡底 text-micro 才拉得开字号；
+                  左边累计与连接各一行、右边压缩钮居中，下面整行短句说明，不让按钮挤得说明折行。「离自动压缩还有」与上面「剩余」同一个数，不再写。
                   字号挂在这层：全站 button { font: inherit } 会吞掉按钮自己的 text-* */}
-              <div className="mt-2.5 flex items-end gap-3 border-t border-hairline pt-2.5 text-micro">
-                <div className="min-w-0 flex-1 space-y-0.5">
-                  {view.untilCompact !== null && (
-                    <div className="tabular-nums text-l3">离自动压缩还有 {contextFmtTokens(view.untilCompact)}</div>
-                  )}
-                  {extra.length > 0 && <div className="tabular-nums text-l3">{extra.join(" · ")}</div>}
-                  {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-                  <div className="text-l4">首轮已含系统提示、技能和工具定义</div>
-                  <div className="text-l4">
-                    {note}
-                    {detail.state === "error" && (
-                      <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
-                        重试
+              <div className="mt-2.5 space-y-0.5 border-t border-hairline pt-2.5 text-micro">
+                {(extra.length > 0 || onCompact) && (
+                  <div className="flex min-h-6 items-center gap-3">
+                    <div className="min-w-0 flex-1 space-y-0.5 tabular-nums text-l3">
+                      {extra.map((line) => (
+                        <div key={line} className="truncate" title={line}>
+                          {line}
+                        </div>
+                      ))}
+                    </div>
+                    {onCompact && (
+                      <button
+                        type="button"
+                        className="h-6 shrink-0 rounded-md border border-field px-2 text-l2 hover:bg-hover"
+                        title="把前面的对话压成摘要，腾出上下文"
+                        onClick={() => {
+                          setPanel(null);
+                          onCompact();
+                        }}
+                      >
+                        压缩上下文
                       </button>
                     )}
                   </div>
-                </div>
-                {onCompact && (
-                  <button
-                    type="button"
-                    className="h-6 shrink-0 rounded-md border border-field px-2 text-l2 hover:bg-hover"
-                    title="把前面的对话压成摘要，腾出上下文"
-                    onClick={() => {
-                      setPanel(null);
-                      onCompact();
-                    }}
-                  >
-                    压缩上下文
-                  </button>
                 )}
+                {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+                <div className="text-l4">首轮已含系统提示、技能和工具定义</div>
+                <div className="text-l4">
+                  {note}
+                  {detail.state === "error" && (
+                    <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
+                      重试
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>,
