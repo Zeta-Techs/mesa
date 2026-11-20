@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { JSDOM } from "jsdom";
-import { createHtmlPreviewSanitizer } from "../src/document-html.ts";
 import {
   HTML_IFRAME_SANDBOX,
   htmlLocalImageSrcs,
+  htmlLocalScriptSrcs,
   htmlStylesheetHrefs,
   isLocalStylesheetHref,
   replaceHtmlImageSrc,
+  replaceLocalScripts,
   replaceStylesheetLinks,
-  wrapHtmlSrcdoc,
+  wrapHtmlDocument,
 } from "../src/html-preview.ts";
 
 test("抽出 stylesheet href，跳过 icon", () => {
@@ -37,8 +37,8 @@ test("isLocalStylesheetHref 拒外链", () => {
 });
 
 test("不完整文档包一层 html 骨架", () => {
-  assert.match(wrapHtmlSrcdoc("<p>hi</p>"), /<!DOCTYPE html>/i);
-  assert.equal(wrapHtmlSrcdoc("<!DOCTYPE html><html></html>"), "<!DOCTYPE html><html></html>");
+  assert.match(wrapHtmlDocument("<p>hi</p>"), /<!DOCTYPE html>/i);
+  assert.equal(wrapHtmlDocument("<!DOCTYPE html><html></html>"), "<!DOCTYPE html><html></html>");
 });
 
 test("沙箱不含 same-origin 与 top-navigation", () => {
@@ -47,44 +47,23 @@ test("沙箱不含 same-origin 与 top-navigation", () => {
   assert.doesNotMatch(HTML_IFRAME_SANDBOX, /top-navigation/);
 });
 
-test("HTML 预览消毒剥脚本保留 style", () => {
-  const dom = new JSDOM("");
-  const sanitize = createHtmlPreviewSanitizer(dom.window);
-  const out = sanitize(
-    `<!DOCTYPE html><html><head><style>p{color:red}</style><script>alert(1)</script></head><body><p onclick="x()">ok</p><iframe></iframe></body></html>`,
-  );
-  assert.match(out, /<style>/i);
-  assert.doesNotMatch(out, /script/i);
-  assert.doesNotMatch(out, /iframe/i);
-  assert.doesNotMatch(out, /onclick/i);
-  assert.match(out, />ok</);
+test("沙箱不给 allow-modals：脚本能跑后死循环 alert 会卡住窗口", () => {
+  assert.doesNotMatch(HTML_IFRAME_SANDBOX, /modals/);
 });
 
-test("HTML 预览消毒保留报告要用的内联 style、内嵌 SVG 与 MathML，仍剥脚本与事件", () => {
-  const dom = new JSDOM("");
-  const sanitize = createHtmlPreviewSanitizer(dom.window);
-  const out = sanitize(
-    `<!DOCTYPE html><html><head><title>报告</title></head><body>` +
-      `<div style="color:red">红字</div>` +
-      `<svg width="10" height="10" onload="x()"><rect width="5" height="5" fill="blue"/><script>alert(1)</script></svg>` +
-      `<math><mi>x</mi></math>` +
-      `<a href="javascript:alert(1)">坏链</a><form><input></form></body></html>`,
-  );
-  assert.match(out, /style="color:red"/);
-  assert.match(out, /<svg[^>]*>/);
-  assert.match(out, /<rect/);
-  assert.match(out, /<math>/);
-  assert.doesNotMatch(out, /script|onload|javascript:|<form|<input/i);
+test("本地外置脚本收集与内联，外链与内联脚本跳过", () => {
+  const html =
+    `<script src="./app.js"></script><script type="module" src='lib/m.js'></script>` +
+    `<script src="https://cdn.ex.com/d3.js"></script><script>tick()</script>`;
+  assert.deepEqual(htmlLocalScriptSrcs(html), ["./app.js", "lib/m.js"]);
+  const out = replaceLocalScripts(html, { "./app.js": "go('</script>')", "lib/m.js": "export {}" });
+  assert.match(out, /<script>go\('<\\\/script>'\)<\/script>/);
+  assert.match(out, /<script type="module">export \{\}<\/script>/);
+  assert.match(out, /<script src="https:\/\/cdn\.ex\.com\/d3\.js"><\/script>/);
+  assert.match(out, /<script>tick\(\)<\/script>/);
 });
 
-test("HTML 预览消毒剥按钮连里面的图标一起剥，不留孤零零的 SVG", () => {
-  const dom = new JSDOM("");
-  const sanitize = createHtmlPreviewSanitizer(dom.window);
-  const out = sanitize(
-    `<!DOCTYPE html><html><body><main><svg id="scene" width="100"></svg>` +
-      `<button hidden><svg width="19"><path d="M6 3.5v13L16 10Z"/></svg></button>` +
-      `<select><option>甲</option></select></main></body></html>`,
-  );
-  assert.match(out, /id="scene"/);
-  assert.doesNotMatch(out, /<button|width="19"|M6 3\.5|<select|甲/);
+test("读不到的本地脚本保留原标签", () => {
+  const html = `<script src="miss.js"></script>`;
+  assert.equal(replaceLocalScripts(html, {}), html);
 });

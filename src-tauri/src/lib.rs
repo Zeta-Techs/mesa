@@ -40,6 +40,7 @@ mod relay;
 mod relay_brief;
 mod relay_facts;
 mod hooks;
+mod html_preview;
 
 /// helper 出图子命令（`mesa_helper image …`）：Agent 经 MESA_IMAGE_TOOL 调用，返回退出码
 pub fn helper_image(args: &[String]) -> i32 {
@@ -237,6 +238,10 @@ pub fn run() {
         // 产物文件 OS 级拖出（v3.97：把 to-fetch.ris / PDF 从产物核验清单直接拖进 Zotero 等外部应用；
         // WebView 的 HTML5 拖拽出不了窗口，必须走系统拖拽会话）
         .plugin(tauri_plugin_drag::init())
+        // 本地 HTML 预览页走自己的协议与 CSP，脚本在不透明源沙箱里跑（html_preview.rs）
+        .register_uri_scheme_protocol(html_preview::SCHEME, |_ctx, request| {
+            html_preview::serve(&request)
+        })
         .manage(profiles::ProfileStore::new().expect("初始化 ProfileStore 失败"))
         .manage(pty::PtyManager::default())
         // 内置技能种子：启动时把库里没有的内置技能补进去（幂等，不覆盖用户已有同名技能）
@@ -860,6 +865,8 @@ pub fn run() {
             office_view::slides_outline,
             office_view::office_converter,
             office_view::office_to_pdf,
+            html_preview::html_preview_put,
+            html_preview::html_preview_release,
             sheet_preview::read_sheet_preview,
             citation::check_citation_health,
             citation::cite_lookup,

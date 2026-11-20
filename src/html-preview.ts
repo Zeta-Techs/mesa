@@ -1,8 +1,11 @@
 import { classifyMdHref } from "./reader.ts";
 
-/** 沙箱不含 allow-same-origin：文档源为不透明源，读不到 GUI。 */
-export const HTML_IFRAME_SANDBOX =
-  "allow-scripts allow-popups allow-downloads allow-modals";
+/**
+ * 沙箱不含 allow-same-origin：文档源为不透明源，读不到 GUI。脚本照跑（动画、交互图表），
+ * 页面自己的 CSP 由 mesa-html 协议给（html_preview.rs）。不给 allow-modals：脚本能跑以后
+ * 一个死循环 alert 就能把窗口卡住。
+ */
+export const HTML_IFRAME_SANDBOX = "allow-scripts allow-popups allow-downloads";
 
 function linkHref(tag: string): string | null {
   const quoted = /\bhref\s*=\s*(['"])([\s\S]*?)\1/i.exec(tag);
@@ -84,7 +87,41 @@ export function replaceHtmlImageSrc(
   return html.replace(re, `$1$2${dataUrl}$2`);
 }
 
-export function wrapHtmlSrcdoc(html: string): string {
+const SCRIPT_RE = /<script\b([^>]*)>\s*<\/script\s*>/gi;
+
+/** 带本地 src 的外置脚本（跳过 http/data/blob），供预览时内联：预览页地址不在原文件旁，相对路径取不到。 */
+export function htmlLocalScriptSrcs(html: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  SCRIPT_RE.lastIndex = 0;
+  while ((m = SCRIPT_RE.exec(html))) {
+    const src = matchSrc(m[1] ?? "");
+    if (!src || /^(data:|blob:)/i.test(src)) continue;
+    if (classifyMdHref(src) !== "local") continue;
+    if (seen.has(src)) continue;
+    seen.add(src);
+    out.push(src);
+  }
+  return out;
+}
+
+/** 把已读到的本地脚本换成内联 `<script>`（保留 type 等属性）；读不到的原样留着，预览里只是不跑。 */
+export function replaceLocalScripts(
+  html: string,
+  jsBySrc: Readonly<Record<string, string>>,
+): string {
+  return html.replace(SCRIPT_RE, (tag, attrs: string) => {
+    const src = matchSrc(attrs ?? "");
+    if (!src) return tag;
+    const js = jsBySrc[src];
+    if (js == null) return tag;
+    const rest = attrs.replace(/\s*\bsrc\s*=\s*(?:(['"])[\s\S]*?\1|[^\s>]+)/i, "");
+    return `<script${rest}>${js.replace(/<\/script/gi, "<\\/script")}</script>`;
+  });
+}
+
+export function wrapHtmlDocument(html: string): string {
   const trimmed = html.trim();
   if (/^<!doctype/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
     return html;

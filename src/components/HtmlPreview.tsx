@@ -1,21 +1,22 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { sanitizeHtmlPreviewDocument } from "../document-html";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   HTML_IFRAME_SANDBOX,
   htmlLocalImageSrcs,
+  htmlLocalScriptSrcs,
   htmlStylesheetHrefs,
   isLocalStylesheetHref,
   replaceHtmlImageSrc,
+  replaceLocalScripts,
   replaceStylesheetLinks,
-  wrapHtmlSrcdoc,
+  wrapHtmlDocument,
 } from "../html-preview";
 import { mdImageAbsPath, resolveMdPath } from "../reader";
 import PreviewErrorState from "./PreviewErrorState";
 
 /**
- * 本地 HTML 沙箱预览：消毒后进不透明源 iframe。
- * 相对 CSS 经 read_file_preview 内联；本地图经 read_image_bytes 换成 data URL。
+ * 本地 HTML 沙箱预览：整页交给后端 mesa-html 协议，带自己的 CSP 进不透明源 iframe，脚本照跑。
+ * 预览地址不在原文件旁，相对资源先内联：CSS、脚本经 read_file_preview，本地图经 read_image_bytes 换成 data URL。
  */
 export default function HtmlPreview({
   html,
@@ -29,13 +30,14 @@ export default function HtmlPreview({
   /** 编辑器只读到前 256 KB：渲染时另读整份（自包含的报告动辄几 MB，截半就排不出来） */
   truncated?: boolean;
 }) {
-  const [srcdoc, setSrcdoc] = useState<string | null>(null);
+  const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    setSrcdoc(null);
+    let token: string | null = null;
+    setSrc(null);
     setError(null);
     void (async () => {
       try {
@@ -58,6 +60,19 @@ export default function HtmlPreview({
           }
         }
         let next = replaceStylesheetLinks(source, cssByHref);
+        const jsBySrc: Record<string, string> = {};
+        for (const href of htmlLocalScriptSrcs(next)) {
+          try {
+            const p = await invoke<{ text: string }>("read_file_preview", {
+              path: resolveMdPath(filePath, href),
+              root,
+            });
+            jsBySrc[href] = p.text;
+          } catch {
+            /* 读不到的脚本留原标签，预览里只是不跑 */
+          }
+        }
+        next = replaceLocalScripts(next, jsBySrc);
         for (const src of htmlLocalImageSrcs(next)) {
           const abs = mdImageAbsPath(src, filePath);
           if (!abs) continue;
@@ -76,13 +91,20 @@ export default function HtmlPreview({
           }
         }
         if (cancelled) return;
-        setSrcdoc(wrapHtmlSrcdoc(sanitizeHtmlPreviewDocument(next)));
+        const put = await invoke<string>("html_preview_put", { html: wrapHtmlDocument(next) });
+        if (cancelled) {
+          void invoke("html_preview_release", { token: put });
+          return;
+        }
+        token = put;
+        setSrc(convertFileSrc(put, "mesa-html"));
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
     })();
     return () => {
       cancelled = true;
+      if (token) void invoke("html_preview_release", { token });
     };
   }, [html, filePath, root, retry, truncated]);
 
@@ -95,7 +117,7 @@ export default function HtmlPreview({
       />
     );
   }
-  if (srcdoc == null) {
+  if (src == null) {
     return (
       <div className="p-3">
         <p className="text-sm text-l4">正在加载网页预览…</p>
@@ -108,7 +130,8 @@ export default function HtmlPreview({
       sandbox={HTML_IFRAME_SANDBOX}
       referrerPolicy="no-referrer"
       allow=""
-      srcDoc={srcdoc}
+      key={src}
+      src={src}
       className="min-h-0 w-full flex-1 border-0 bg-canvas"
     />
   );

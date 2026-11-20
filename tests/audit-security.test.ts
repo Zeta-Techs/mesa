@@ -10,8 +10,13 @@ test("CSP：生产禁止脚本内联与 eval，保留 IPC、worker 和图片功�
   const scripts = policy.split(";").find((part) => part.trim().startsWith("script-src"))!;
   assert.ok(!scripts.includes("'unsafe-inline'"));
   assert.ok(!scripts.includes("'unsafe-eval'"));
-  for (const directive of ["object-src 'none'", "frame-src 'none'", "base-uri 'none'", "form-action 'none'", "worker-src 'self' blob:", "ipc:"]) assert.ok(policy.includes(directive), directive);
+  for (const directive of ["object-src 'none'", "base-uri 'none'", "form-action 'none'", "worker-src 'self' blob:", "ipc:"]) assert.ok(policy.includes(directive), directive);
   assert.ok(config.app.security.devCsp.includes("ws://127.0.0.1:*"));
+  // 框只放本地 HTML 预览的专用协议（页面自带隔离 CSP，html_preview.rs），不放任何网页地址
+  for (const csp of [policy, config.app.security.devCsp as string]) {
+    const frames = csp.split(";").find((part) => part.trim().startsWith("frame-src"))!;
+    assert.equal(frames.trim(), "frame-src mesa-html: http://mesa-html.localhost");
+  }
 });
 
 test("CSP：打包时 Tauri 不给 style-src 加 nonce（否则 'unsafe-inline' 失效，Monaco / KaTeX 的内联样式全被拦）", () => {

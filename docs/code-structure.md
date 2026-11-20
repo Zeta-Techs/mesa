@@ -125,7 +125,7 @@ components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（Proje
   components/OfficePdfView.tsx # Word / 幻灯经 LibreOffice 转出的 PDF 视图（原文件改了重转）
 components/SelectionFloatBar.tsx  # 选区浮动动作条（PdfPreview / FilePreviewEditor / PdfContinuousView 共用）：容器内选中文字就在选区末端下方出按钮条、失选即收；pinned=true 时不随失选收（审阅划选后浮条里直接写意见，点进输入框选区被抢也不丢）；按钮由调用方 children 给，须 onMouseDown preventDefault 保住选区、click 时再读 window.getSelection；FloatBarOverflow = 浮动条 ⋯ 溢出菜单（低频动作收这里，主条只留一个蓝色主钮）；useDistillSkill = ⋯ 里的「✦ 沉淀为技能…」项（ai_distill_skill 出草稿跳技能页预填新建）
   components/NotebookPreview.tsx # Jupyter 笔记本按单元预览（Markdown / 高亮代码 / 输出文字图表格报错），「源码」切回编辑器
-components/HtmlPreview.tsx  # 本地 HTML 沙箱预览（FilePreviewEditor 唯一消费者）：消毒后进不透明源 iframe（HTML_IFRAME_SANDBOX），相对 CSS 经 read_file_preview 内联、本地图换 data URL；编辑器只读到 256KB 时另读整份再渲染（自包含报告动辄几 MB，截半排不出来）；拼装纯逻辑在 html-preview.ts
+components/HtmlPreview.tsx  # 本地 HTML 沙箱预览（FilePreviewEditor 唯一消费者）：整页经 html_preview_put 换 mesa-html 地址进不透明源 iframe（HTML_IFRAME_SANDBOX），脚本照跑、隔离靠协议给的 CSP；相对 CSS / 脚本经 read_file_preview 内联、本地图换 data URL；编辑器只读到 256KB 时另读整份再渲染（自包含报告动辄几 MB，截半排不出来）；拼装纯逻辑在 html-preview.ts
   components/MediaPreview.tsx # 音视频预览：grant_media_url 放行后经 asset 协议流式播放，放不了的编码提示系统打开
   components/UnsupportedPreview.tsx # 本来就不在 Mesa 里预览的文件（二进制 / 旧版 doc、rtf）：中性说明 + 系统打开 / 在文件夹中显示
 components/PreviewErrorState.tsx  # 文件预览统一失败态（Pdf/Docx/Xlsx/Slides/Image/Html/Notebook 预览与 FilePreviewEditor 八处共用）：原因 + 重试 + 可复制的文件类型；带路径的（二进制等无法内嵌）另给「用系统应用打开 / 在文件夹中显示」
@@ -585,8 +585,8 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
                              # 编辑器格式行与 ⌘B 等快捷键同一套（tests/md-edit.test.ts）
   mermaid-blocks.ts          # mermaid 围栏检测（无围栏不加载 chunk）
   mermaid-sanitize.ts        # mermaid SVG 二次清洗（strict + 剥脚本/链接）
-  html-preview.ts            # html 沙箱预览：stylesheet 内联 / 本地图 / srcdoc
-document-html.ts           # DOMPurify 文档清洗两套：sanitizeDocumentHtml（md 阅读版式/聊天 Markdown/docx/幻灯/笔记本/更新说明/许可浮层等渲染共用——白名单标签，链接只放行本地与 http(s)/mailto/tel，class 只留 md-* 有限集防文档借 fixed/inset/z-index 盖工作台，checkbox 一律禁用）与 sanitizeHtmlPreviewDocument（html 文件沙箱预览，2026-10-26 放宽到「报告能看」：放行内联 style/内嵌 SVG/MathML 供 Quarto/Jupyter 导出排版，脚本表单内嵌框架仍剥，交互图表只看静态＋「在浏览器打开」）；本地路径只决定能否读文件、不决定其中 HTML 可信（tests/document-html.test.ts）
+  html-preview.ts            # html 沙箱预览：stylesheet / 本地脚本内联、本地图、补文档骨架
+document-html.ts           # DOMPurify 文档清洗：sanitizeDocumentHtml（md 阅读版式/聊天 Markdown/docx/幻灯/笔记本/更新说明/许可浮层等渲染共用——白名单标签，链接只放行本地与 http(s)/mailto/tel，class 只留 md-* 有限集防文档借 fixed/inset/z-index 盖工作台，checkbox 一律禁用）（html 文件预览 2026-11-20 起不再消毒，隔离见 html_preview.rs）；本地路径只决定能否读文件、不决定其中 HTML 可信（tests/document-html.test.ts）
   md-find.ts                 # md 阅读态页内查找：按块拼文字找、跨行内元素逐节点包 mark、清除复原；跳过 .md-cite（tests/md-find.test.ts）
   editor-font.ts             # 文件预览编辑器字号（本机存储 + CustomEvent 广播，10–22 一档一像素）（tests/editor-font.test.ts）
   md-render.ts               # 文档版 md 渲染：splitMdFrontmatter 拆 YAML 头（画成 MdFrontmatterCard）、脚注扩展只在 withDocMode 内生效，
@@ -1726,6 +1726,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
   grok_login.rs              # Grok 卡在续期过期的 xAI 官方登录上（2026-10-26）：grok_login_check 读 auth.json 判过期 +
                              #   日志 network_unreachable / 启动时探 auth.x.ai 判卡住（只读）；grok_logout 跑 CLI 自己的
                              #   grok logout 后重读确认清掉（别的标签占锁没清掉要报错）；$GROK_HOME 优先
+  html_preview.rs            # 本地 HTML 预览专用协议 mesa-html（2026-11-20）：html_preview_put / release 登记整页换一次性令牌，
+                             #   serve 按令牌吐页面并附隔离 CSP（sandbox 无 same-origin、connect-src 'none'）；红线：IPC 只靠主框架注入挡住，
+                             #   禁开「所有框架」注入脚本（safety.md「本地 HTML 预览」）
   hooks.rs                   # 精确注意力标记（七家 hooks 桥接）：BRIDGE_SPECS 每 agent 一张桥接规格（claude/qwen/
                              # codebuddy/gemini/kimi/grok/codex；cursor 无「等待确认」等价事件、opencode 无 shell hooks
                              #   形态，两家未接入），写各家 hooks 配置（备份留 10 份 + 原子写 + marker 合并/移除 +

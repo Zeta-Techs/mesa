@@ -221,8 +221,13 @@
      拒受保护路径与项目根本身、重名拒绝（只改大小写经临时名中转）；「移动到…」目标必须在项目根内；
      **从访达拖进来 = 复制**（`fs_import_paths`），源路径只认原生拖放 / Rust 选择器登记过的（`attach_grants::user_supplied`，
      文件按读取登记、文件夹按拖放另登记），前端传来的任意路径不复制——否则可被诱导把 ~/.ssh 之类拷进项目；
-     本地 HTML 预览（2026-10-26）：消毒放宽到内联 style / SVG / MathML，**脚本、框架、表单、base、srcset 一律剥**，
-     iframe 不加 allow-same-origin；交互内容只走「在浏览器打开」，不在应用里跑任意本地 HTML 脚本。
+     本地 HTML 预览（2026-11-20 取代 10-26「一律剥脚本」）：**脚本照跑，隔离代替消毒**——整页经 `html_preview_put`
+     交给专用协议 `mesa-html`（`html_preview.rs`），响应自带 CSP：`sandbox` 不给 allow-same-origin / allow-top-navigation、
+     `connect-src 'none'`（不许 fetch / XHR / WebSocket）、只放内联脚本样式与 https 静态资源、禁框架表单插件；
+     iframe sandbox 同样不给 allow-same-origin，也不给 allow-modals（防 alert 死循环卡窗口）。前提是 Tauri 的 IPC 脚本与
+     调用密钥只注入主框架——**禁止用 `initialization_script_for_all_frames` 或给任何插件开「所有框架」注入**，否则预览框里的
+     脚本能调后端命令。主窗口 CSP 的 `frame-src` 只放这个协议，不放任何网页地址；srcdoc / blob / data 框会继承主窗口
+     CSP、脚本跑不起来，不要退回。本地相对 CSS / 脚本 / 图在前端先内联，协议不读盘。
      LibreOffice 转 PDF 只读白名单内的源文件，输出落 `<config>/ccode/tmp/office-pdf/`，独立 UserInstallation、超时杀树；
      asset 协议（音视频流式播放）默认 scope 为空，只经 `grant_media_url` 过读取白名单后逐个文件放行，不得在 tauri.conf 里配目录级 scope；
   5. **内部对话保留期清理**（2026-10-17，`internal_sessions.rs`）：设置「数据与存储」的自动清理开关（默认开、保留 30 天）

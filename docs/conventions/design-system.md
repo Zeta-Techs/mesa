@@ -1017,7 +1017,7 @@ aria-live）。上下文圆环说明改自绘浮层（portal + 外层定位 / �
   隐藏（未保存改动/undo 不丢）；「⛶ 沉浸阅读」为 `fixed inset-0 z-40` 三栏阅读区（Esc 退出，终端/PTY 保持挂载）；外部写盘
   自动刷新沿用现有 watcher 链路，编辑中（dirty）不覆盖。
   标题 ≥3 出浮动目录；围栏代码块语言名 + ⧉ 复制（不做 Shiki 高亮）；````mermaid` 围栏懒加载 mermaid（`securityLevel: 'strict'` + SVG 二次清洗，点图放大）。
-- **HTML 预览**：`.html` / `.htm` 默认沙箱 iframe（不透明源，无 `allow-same-origin`），可切回源码；相对 CSS 内联、本地图走 `read_image_bytes`。
+- **HTML 预览**：`.html` / `.htm` 默认沙箱 iframe（不透明源，无 `allow-same-origin`，页面经 `mesa-html` 协议带自己的 CSP，脚本照跑），可切回源码；相对 CSS / 脚本内联、本地图走 `read_image_bytes`。
 - **表格预览**：xlsx/xls/ods 走 calamine；csv/tsv 前端按 RFC 4180 解析后复用同一套格子（200×256）。
 - **认不出的二进制**：失败态给「用系统应用打开 / 在文件夹中显示」，不只报「二进制不支持」。
 - **步骤对照（RX2b）**：跨页「文件树切根」走 store 一次性 `enterCwdReq`（终端页消费后复用 enterCwd/externalCwd「真进入」
