@@ -18,6 +18,14 @@ test("pickKickoffPermission：本项目上次 > 本机设置 > 帮我批准 > �
   assert.equal(pickKickoffPermission([], "auto", "auto"), null);
 });
 
+test("pickKickoffPermission：项目默认的权限预设排在本项目上次之前，完全访问也照带；这家没有的档跳过", () => {
+  const all = ["ask", "auto", "full"];
+  assert.equal(pickKickoffPermission(all, "ask", null, "full"), "full");
+  assert.equal(pickKickoffPermission(all, "auto", null, "ask"), "ask");
+  assert.equal(pickKickoffPermission(["ask", "auto"], "auto", null, "full"), "auto");
+  assert.equal(pickKickoffPermission(all, "ask", null, "discuss"), "ask");
+});
+
 // Claude Code 2.1.305 实录（tests/tui-panel.test.ts 同一份）：按终端宽度折行
 const NOTICE = [
   "─".repeat(100),

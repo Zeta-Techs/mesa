@@ -14,7 +14,13 @@ import { renderTaskMd, type UpstreamStepDecisions } from "./task-md";
 import { openPeerCount } from "./peek";
 import { fanOutSummary, laneReuseKey, lanePrompt, mergePrompt, type FanOutPending } from "./fan-out";
 import { IS_WINDOWS } from "./hotkeys";
-import { stepSlotKey, taskBindingLaunch, workspaceLaunchChain } from "./project-agents";
+import {
+  projectDefaultPreset,
+  stepSlotKey,
+  taskBindingLaunch,
+  workspaceLaunchChain,
+  type ProjectDefaultPresets,
+} from "./project-agents";
 export { renderTaskMd };
 import { loadKickoffPermission, pickKickoffPermission, type KickoffLaunch, type KickoffPermission } from "./kickoff-launch";
 import type { PendingTerminal } from "./store";
@@ -397,17 +403,32 @@ export interface WorkspaceLaunchGuardSource {
     | undefined;
 }
 
+/** 项目默认给这家的思考强度与权限预设（Agent 分工页顶部「换默认模型」里设的）；读不到当没设 */
+async function projectPresetFor(projectRoot: string, agentId: string | undefined) {
+  if (!agentId) return {};
+  try {
+    const map = await invoke<ProjectDefaultPresets>("get_project_default_presets", { projectRoot });
+    return projectDefaultPreset(map, agentId);
+  } catch {
+    return {};
+  }
+}
+
 /** 不经开工弹层就自动拉起的步骤入口（继续、跟进、派活、退回修改）用哪一档权限：与开工弹层同一预选口径
- *  （本项目上次 > CLI 本机设置 > 帮我批准 > 请求批准），完全访问不带过来。2026-11-10 HER 大纲：Kimi「继续」不带档，
- *  落回 CLI 默认，每条命令都停下来问，人走开就白等 */
-async function defaultStepPermission(projectRoot: string, agentId: string | undefined): Promise<KickoffPermission | null> {
+ *  （项目默认预设 > 本项目上次 > CLI 本机设置 > 帮我批准 > 请求批准），上次选的完全访问不带过来。2026-11-10 HER 大纲：
+ *  Kimi「继续」不带档，落回 CLI 默认，每条命令都停下来问，人走开就白等 */
+async function defaultStepPermission(
+  projectRoot: string,
+  agentId: string | undefined,
+  projectTier: string | undefined,
+): Promise<KickoffPermission | null> {
   if (!agentId) return null;
   const available = wsLastGuardSource?.()?.permissionModes?.[agentId] ?? [];
   if (available.length === 0) return null;
   const local = await invoke<{ tier: string | null } | null>("cli_default_permission", { agent: agentId })
     .then((note) => note?.tier ?? null)
     .catch(() => null);
-  return pickKickoffPermission(available, loadKickoffPermission(projectRoot), local);
+  return pickKickoffPermission(available, loadKickoffPermission(projectRoot), local, projectTier);
 }
 let wsLastGuardSource: WorkspaceLaunchGuardSource | undefined;
 export function wireWorkspaceLaunchGuard(get: WorkspaceLaunchGuardSource) {
@@ -510,10 +531,12 @@ export async function buildWorkspaceTerminalRequest(
     opts.stepLaunch.agentId === (resume?.agentId ?? chain.agentId)
       ? opts.stepLaunch.permissionTier
       : null;
+  const launchAgentId = resume?.agentId ?? chain.agentId;
+  const projectPreset = await projectPresetFor(ws.repoPath, launchAgentId);
   const permissionMode =
     opts?.launch?.permissionMode ??
     stepPermMode ??
-    (opts?.autoStart ? await defaultStepPermission(ws.repoPath, resume?.agentId ?? chain.agentId) : null);
+    (opts?.autoStart ? await defaultStepPermission(ws.repoPath, launchAgentId, projectPreset.permissionTier) : null);
   const railStep = await workspaceStep(ws);
   return {
     cwd: ws.worktreePath,
@@ -533,11 +556,11 @@ export async function buildWorkspaceTerminalRequest(
     autoLaunchProfileId: sameAgentBinding?.profileId,
     // 开工弹层的本次思考档覆盖 > 步骤槽绑定预设思考档（空 = 绑定默认）：随标签种子传递，launch 时经
     // pty_spawn effortOverride 注入，不写回连接本身
+    // 都没有时新开的会话用项目默认预设（接回的会话思考档沿用上次，不拿项目默认去改）
     effort:
       opts?.launch?.effort ??
-      (opts?.stepLaunch?.agentId === (resume?.agentId ?? chain.agentId)
-        ? (opts?.stepLaunch?.effort ?? undefined)
-        : undefined),
+      (opts?.stepLaunch?.agentId === launchAgentId ? (opts?.stepLaunch?.effort ?? undefined) : undefined) ??
+      (resume ? undefined : projectPreset.effort),
     // 开工弹层选的权限档（只加在这次命令行）；自动拉起的入口优先步骤槽绑定预设、再按开工弹层同一口径预选；都没有 = 按本机设置
     ...(permissionMode ? { permission: "write_tree" as const, permissionMode } : {}),
     resume: resume ?? undefined,

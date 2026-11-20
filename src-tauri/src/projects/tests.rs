@@ -3225,3 +3225,30 @@ fn bootstrap_commit_tops_up_mesa_ignore_lines_for_old_projects() {
     assert!(!commit_bootstrap_at(&project).unwrap().committed);
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// 项目默认的思考强度与权限预设（2026-11-20）：按 Agent 存、两项都空即撤；权限只收写树三档
+#[test]
+fn project_default_preset_round_trips_and_rejects_readonly_tier() {
+    let dir = temp_dir("default-preset");
+    let conn = db_at(&dir.join("app.db")).unwrap();
+    conn.execute(
+        "INSERT INTO projects(path, name, created_at, last_opened_at, id) VALUES('/p', 'p', 't', 't', 'id-p')",
+        [],
+    )
+    .unwrap();
+    set_project_default_preset_at(&conn, "/p", "codex", Some(" high "), Some("auto")).unwrap();
+    let listed = list_projects_in(&conn).unwrap();
+    let preset = &listed[0].default_presets["codex"];
+    assert_eq!(preset.effort.as_deref(), Some("high"));
+    assert_eq!(preset.permission_tier.as_deref(), Some("auto"));
+    let json = serde_json::to_string(&listed[0]).unwrap();
+    assert!(json.contains(r#""defaultPresets":{"codex":{"effort":"high","permissionTier":"auto"}}"#), "{json}");
+
+    assert!(set_project_default_preset_at(&conn, "/p", "codex", None, Some("discuss")).is_err());
+    assert!(set_project_default_preset_at(&conn, "/p", "nope", Some("high"), None).is_err());
+    assert!(set_project_default_preset_at(&conn, "/missing", "codex", Some("high"), None).is_err());
+
+    set_project_default_preset_at(&conn, "/p", "codex", None, None).unwrap();
+    assert!(list_projects_in(&conn).unwrap()[0].default_presets.is_empty());
+    std::fs::remove_dir_all(&dir).ok();
+}

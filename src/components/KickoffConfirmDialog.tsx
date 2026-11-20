@@ -48,9 +48,11 @@ import {
   type KickoffPermission,
 } from "../kickoff-launch";
 import {
+  projectDefaultPreset,
   stepSlotKey,
   taskBindingLaunch,
   type ProjectAgentBinding,
+  type ProjectDefaultPresets,
 } from "../project-agents";
 import {
   accumulationChip,
@@ -131,6 +133,7 @@ export default function KickoffConfirmDialog({
   step,
   cfg,
   taskBindings,
+  defaultPresets,
   preferredAgent,
   preferredProfile,
   preferredModel,
@@ -146,6 +149,8 @@ export default function KickoffConfirmDialog({
   cfg: ProjectConfigDto;
   /** 项目槽位专属绑定（projects 表 taskBindings；本弹层消费 step:<步骤名> 槽做预选） */
   taskBindings?: Record<string, ProjectAgentBinding> | null;
+  /** 项目默认给各家的思考强度与权限预设：步骤槽这一项留空（跟随默认）时用它 */
+  defaultPresets?: ProjectDefaultPresets | null;
   /** 项目级默认 Agent；单次开工仍可在弹层里改选 */
   preferredAgent?: string | null;
   /** 项目级默认 profile；仅在与默认 Agent 匹配时生效 */
@@ -427,12 +432,15 @@ export default function KickoffConfirmDialog({
   // 运行中仍可在底部状态栏调（状态栏是运行层，这里是起点，数据源同是 combo）。
   const [kickEffort, setKickEffort] = useState(() => stepBinding?.effort ?? "");
   const effortTouchedRef = useRef(false);
+  const projectPreset = projectDefaultPreset(defaultPresets, agentId);
   useEffect(() => {
     if (effortTouchedRef.current || launchTouchedRef.current) return;
     if (stepBinding?.effort && stepBinding.profileId === profileId) {
       setKickEffort(stepBinding.effort);
+    } else if (projectPreset.effort) {
+      setKickEffort(projectPreset.effort);
     }
-  }, [stepBinding?.effort, stepBinding?.profileId, profileId]);
+  }, [stepBinding?.effort, stepBinding?.profileId, profileId, projectPreset.effort]);
   const [effortInjectable, setEffortInjectable] = useState(false);
   const [comboLevels, setComboLevels] = useState<string[]>([]);
   useEffect(() => {
@@ -504,7 +512,12 @@ export default function KickoffConfirmDialog({
       ? permPick
       : stepPermTier && permAvailable.includes(stepPermTier)
         ? stepPermTier
-        : pickKickoffPermission(permAvailable, loadKickoffPermission(projectPath), localPermTier);
+        : pickKickoffPermission(
+            permAvailable,
+            loadKickoffPermission(projectPath),
+            localPermTier,
+            projectPreset.permissionTier,
+          );
   async function choosePermission(tier: KickoffPermission) {
     if (tier === "full" && permTier !== "full") {
       const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;

@@ -1528,6 +1528,12 @@ export const AGENT_PROTOCOLS: Record<string, { options: string[]; default: strin
 };
 
 /** 项目注册表条目（§11.4 P1b；app.db projects 表） */
+/** 项目默认给某家 Agent 的预设（projects 表 default_presets） */
+export interface ProjectDefaultPreset {
+  effort?: string | null;
+  permissionTier?: "ask" | "auto" | "full" | null;
+}
+
 export interface ProjectDto {
   /** 稳定身份（uuid，存 project.toml 顶层 id 行，跟随文件夹移动）；空串 = 旧项目尚未分配 */
   id?: string;
@@ -1544,6 +1550,8 @@ export interface ProjectDto {
   defaultProfiles?: Record<string, string>;
   /** Agent id → 本项目在该默认连接里选用的模型。空 = 用连接名单的第一个。 */
   defaultModels?: Record<string, string>;
+  /** Agent id → 项目默认的思考强度与权限预设（权限只有 ask / auto / full）；专属绑定没设的入口用它 */
+  defaultPresets?: Record<string, ProjectDefaultPreset>;
   /** 槽位 → 专属绑定（固定用途单独指一条连接+模型+可选思考/权限预设，agent 跟随连接；键见
    *  project-agents.ts READER_BINDING_SLOT 等，与后端 PROJECT_AGENT_BINDING_SLOTS 同源） */
   taskBindings?: Record<

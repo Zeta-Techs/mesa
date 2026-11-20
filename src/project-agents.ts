@@ -234,14 +234,50 @@ export function projectBoundProfileId(
   return id || undefined;
 }
 
+/** 项目默认的预设（思考强度 / 权限，2026-11-20）。按 Agent 存；权限只认写树三档，坏值当没设 */
+export type ProjectDefaultPresets = Record<
+  string,
+  { effort?: string | null; permissionTier?: string | null }
+>;
+
+/** 专属绑定里留空的思考强度 / 权限（弹层上的「跟随默认」「按默认」）按项目默认给这家 Agent 的预设补上 */
+export function withProjectPreset(
+  launch: ResolvedTaskBindingLaunch | null,
+  presets: ProjectDefaultPresets | null | undefined,
+): ResolvedTaskBindingLaunch | null {
+  if (!launch) return null;
+  const preset = projectDefaultPreset(presets, launch.agentId);
+  return {
+    ...launch,
+    ...(!launch.effort && preset.effort ? { effort: preset.effort } : {}),
+    ...(!launch.permissionTier && preset.permissionTier ? { permissionTier: preset.permissionTier } : {}),
+  };
+}
+
+export function projectDefaultPreset(
+  presets: ProjectDefaultPresets | null | undefined,
+  agentId: string | null | undefined,
+): { effort?: string; permissionTier?: "ask" | "auto" | "full" } {
+  const raw = agentId ? presets?.[agentId] : undefined;
+  if (!raw) return {};
+  const effort = raw.effort?.trim() || undefined;
+  const tier = normalizeBindingPermissionTier(raw.permissionTier);
+  return {
+    ...(effort ? { effort } : {}),
+    ...(tier && tier !== "discuss" ? { permissionTier: tier } : {}),
+  };
+}
+
 /** 项目 Agents 名册 → 新会话启动。有项目默认 Agent 且这家有可用连接才返回；
- *  绑定已删则回落该 Agent 第一条。未设项目默认返回 null，由调用方去弹层选。 */
+ *  绑定已删则回落该 Agent 第一条。未设项目默认返回 null，由调用方去弹层选。
+ *  传了 defaultPresets 时一并带上这家的思考强度与权限预设 */
 export function projectAgentLaunch(
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
   defaultAgent?: string | null,
   defaultProfiles?: Record<string, string> | null,
   defaultModels?: Record<string, string> | null,
-): { agentId: string; profileId: string; model: string } | null {
+  defaultPresets?: ProjectDefaultPresets | null,
+): ResolvedTaskBindingLaunch | null {
   const agent = defaultAgent?.trim() ?? "";
   if (!agent) return null;
   const forAgent = profiles.filter((p) => p.agent === agent);
@@ -252,27 +288,33 @@ export function projectAgentLaunch(
     agentId: agent,
     profileId: profile.id,
     model: resolveProfileModel(profile.models, defaultModels?.[agent]),
+    ...projectDefaultPreset(defaultPresets, agent),
   };
 }
 
-/** 项目默认 Agent、连接、以及这条连接里点选的模型。没设项目默认时三个都空。 */
+/** 项目默认 Agent、连接、这条连接里点选的模型，以及项目默认的思考强度预设。没设项目默认时都空。
+ *  权限预设不在这里：用它的问 AI / 聊想法是只读入口 */
 export function projectAgentPrefs(project?: {
   defaultAgent?: string | null;
   defaultProfiles?: Record<string, string> | null;
   defaultModels?: Record<string, string> | null;
+  defaultPresets?: ProjectDefaultPresets | null;
 } | null): {
   preferredAgent?: string;
   preferredProfile?: string;
   preferredModel?: string;
+  preferredEffort?: string;
 } {
   const preferredAgent = project?.defaultAgent?.trim() || undefined;
   if (!preferredAgent) return {};
   const preferredProfile = project?.defaultProfiles?.[preferredAgent]?.trim() || undefined;
   const preferredModel = project?.defaultModels?.[preferredAgent]?.trim() || undefined;
+  const preferredEffort = projectDefaultPreset(project?.defaultPresets, preferredAgent).effort;
   return {
     preferredAgent,
     ...(preferredProfile ? { preferredProfile } : {}),
     ...(preferredModel ? { preferredModel } : {}),
+    ...(preferredEffort ? { preferredEffort } : {}),
   };
 }
 
@@ -341,7 +383,7 @@ export const CHAT_BINDING_SLOT = "chat";
 
 /**
  * 聊天输入框开聊前选了这个项目：用谁开聊（2026-10-22）。与项目里「＋ 新对话」同一条塔：
- * chat 槽专属绑定 > 项目默认（名册）；都没有返回 null（不动当前选择）。
+ * chat 槽专属绑定 > 项目默认（名册，连同项目默认的思考强度与权限预设）；都没有返回 null（不动当前选择）。
  */
 export function projectChatLaunch(
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
@@ -349,13 +391,23 @@ export function projectChatLaunch(
     defaultAgent?: string | null;
     defaultProfiles?: Record<string, string> | null;
     defaultModels?: Record<string, string> | null;
+    defaultPresets?: ProjectDefaultPresets | null;
     taskBindings?: Record<string, ProjectAgentBinding> | null;
   } | null | undefined,
 ): ResolvedTaskBindingLaunch | null {
   if (!project) return null;
   return (
-    taskBindingLaunch(profiles, project.taskBindings?.[CHAT_BINDING_SLOT]) ??
-    projectAgentLaunch(profiles, project.defaultAgent, project.defaultProfiles, project.defaultModels)
+    withProjectPreset(
+      taskBindingLaunch(profiles, project.taskBindings?.[CHAT_BINDING_SLOT]),
+      project.defaultPresets,
+    ) ??
+    projectAgentLaunch(
+      profiles,
+      project.defaultAgent,
+      project.defaultProfiles,
+      project.defaultModels,
+      project.defaultPresets,
+    )
   );
 }
 
@@ -386,6 +438,7 @@ export function slotPrefs(
     defaultAgent?: string | null;
     defaultProfiles?: Record<string, string> | null;
     defaultModels?: Record<string, string> | null;
+    defaultPresets?: ProjectDefaultPresets | null;
     taskBindings?: Record<string, ProjectAgentBinding> | null;
   } | null | undefined,
   slot: string,
@@ -396,7 +449,7 @@ export function slotPrefs(
   preferredEffort?: string;
 } {
   const binding = project?.taskBindings?.[slot];
-  const launch = taskBindingLaunch(profiles, binding);
+  const launch = withProjectPreset(taskBindingLaunch(profiles, binding), project?.defaultPresets);
   if (launch) {
     return {
       preferredAgent: launch.agentId,

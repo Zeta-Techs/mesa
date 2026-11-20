@@ -944,6 +944,8 @@ pub fn run() {
             projects::register_project,
             projects::set_project_default_agent,
             projects::set_project_default_profile,
+            projects::set_project_default_preset,
+            projects::get_project_default_presets,
             projects::set_project_agent_binding,
             projects::get_project_agent_binding,
             projects::remove_project,

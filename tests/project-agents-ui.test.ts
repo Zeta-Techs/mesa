@@ -92,6 +92,7 @@ async function renderView(options: {
             "set_project_default_agent",
             "set_project_default_profile",
             "set_project_agent_binding",
+            "set_project_default_preset",
           ].includes(command)
         ) {
           await options.write?.(command);
@@ -222,24 +223,30 @@ test("默认 Agent 的设置和取消仅调用项目接口，不改变各家的�
   }
 });
 
+/** 打开「换默认模型」会现查一次思考强度能力（combo_surface），只看写操作 */
+function writes(calls: Array<{ command: string; args: unknown }>) {
+  return calls.filter((call) => call.command !== "combo_surface");
+}
+
 test("连接菜单分行显示并保持原有选择、回退和保存范围", async () => {
   const view = await renderView({ project: { defaultProfiles: { gemini: "gemini-a" } } });
   try {
     const spotlight = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
     assert.match(spotlight.textContent!, /Codex-GPT-6 \/ gpt-6-astra/, "未绑定时仍展示第一条连接");
     await view.click("更换 Codex 的项目连接");
-    const menu = view.host.querySelector('[role="listbox"]')!;
-    assert.ok(menu.classList.contains("max-h-64"));
-    assert.ok(menu.classList.contains("right-0"));
-    assert.ok(menu.classList.contains("z-50"));
+    const panel = view.host.querySelector('[role="dialog"][aria-label="Codex 的项目默认"]')!;
+    assert.ok(panel.classList.contains("right-0"));
+    assert.ok(panel.classList.contains("z-50"));
+    const menu = panel.querySelector('[role="listbox"]')!;
+    assert.ok(menu.classList.contains("shrink-0"), "面板限高滚动时列表不能被压成零高");
     const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="option"]'));
     assert.equal(items[0].getAttribute("aria-selected"), "true");
     assert.equal(items[1].querySelector(".font-medium")!.textContent, "科研 · 精读");
     assert.equal(items[1].querySelector(".text-l3")!.textContent, "gpt-6-astra-review");
     await view.act(async () => items[1].click());
-    assert.equal(view.host.querySelector('[role="listbox"]'), null);
+    assert.ok(view.host.querySelector('[role="listbox"]'), "选完模型面板留着，下面还能接着调预设");
     assert.match(spotlight.textContent!, /科研 · 精读 \/ gpt-6-astra-review/);
-    assert.deepEqual(view.calls, [{
+    assert.deepEqual(writes(view.calls), [{
       command: "set_project_default_profile",
       args: {
         projectRoot: "/project",
@@ -256,7 +263,7 @@ test("连接菜单分行显示并保持原有选择、回退和保存范围", as
     assert.equal(view.host.querySelectorAll('[role="option"]').length, 1, "单连接仍能打开菜单");
     await view.click("去连接页添加");
     assert.deepEqual(view.pages, ["profiles"]);
-    assert.equal(view.calls.length, 2);
+    assert.equal(writes(view.calls).length, 2);
   } finally {
     await view.close();
   }
@@ -288,7 +295,7 @@ test("同一条连接的其他模型可以点选，不再只留第一个", async
     assert.equal(items[1].getAttribute("aria-selected"), "false");
     await view.act(async () => items[1].click());
     assert.match(spotlight.textContent!, /Test \/ deepseek-v4\.1-flash/);
-    assert.deepEqual(view.calls, [{
+    assert.deepEqual(writes(view.calls), [{
       command: "set_project_default_profile",
       args: {
         projectRoot: "/project",
@@ -317,7 +324,7 @@ test("连接菜单支持 Escape 归还焦点与点击外部关闭", async () => 
     await view.click("更换 Codex 的项目连接");
     await view.act(async () => view.host.dispatchEvent(new view.dom.window.MouseEvent("mousedown", { bubbles: true })));
     assert.equal(view.host.querySelector('[role="listbox"]'), null);
-    assert.equal(view.calls.length, 0);
+    assert.equal(writes(view.calls).length, 0);
   } finally {
     await view.close();
   }
@@ -335,7 +342,7 @@ test("保存中的默认操作和已打开菜单都禁用，失败不冒充成�
     const option = view.host.querySelector<HTMLButtonElement>('[role="option"]')!;
     assert.ok(option.disabled);
     await view.act(async () => option.click());
-    assert.equal(view.calls.length, 1);
+    assert.equal(writes(view.calls).length, 1);
     await view.act(async () => finish());
     assert.ok(!view.button("更换 Gemini CLI 的项目连接").disabled);
   } finally {
@@ -515,6 +522,47 @@ test("专属绑定筛选面板：按 Agent→连接→模型分层选择，并�
     assert.match(stepDialog.textContent!, /帮我批准/);
     assert.match(stepDialog.textContent!, /完全访问/);
     assert.ok(!stepDialog.textContent!.includes("先出方案"), "科研步骤不提供先出方案档");
+  } finally {
+    await view.close();
+  }
+});
+
+test("项目默认面板可设思考强度与权限预设，名册上出预设微标，再点一次撤掉", async () => {
+  const view = await renderView({ project: { defaultAgent: "codex", defaultProfiles: { codex: "codex-a" } } });
+  try {
+    await view.click("更换 Codex 的项目连接");
+    const panel = () => view.host.querySelector('[role="dialog"][aria-label="Codex 的项目默认"]')!;
+    assert.match(panel().textContent!, /思考强度预设/);
+    assert.match(panel().textContent!, /权限预设/);
+    const tierLabels = Array.from(panel().querySelectorAll(".grid button")).map((b) => b.textContent?.trim());
+    assert.deepEqual(tierLabels, ["请求批准", "帮我批准", "完全访问"], "项目默认只给写树三档");
+    const pick = async (text: string) => {
+      const target = Array.from(panel().querySelectorAll<HTMLButtonElement>("button")).find(
+        (b) => b.textContent?.trim() === text,
+      )!;
+      await view.act(async () => target.click());
+    };
+    await pick("high");
+    assert.deepEqual(writes(view.calls).at(-1), {
+      command: "set_project_default_preset",
+      args: { projectRoot: "/project", agent: "codex", effort: "high", permissionTier: null },
+    });
+    await pick("帮我批准");
+    assert.deepEqual(writes(view.calls).at(-1), {
+      command: "set_project_default_preset",
+      args: { projectRoot: "/project", agent: "codex", effort: "high", permissionTier: "auto" },
+    });
+    assert.deepEqual(view.changes.at(-1)!.defaultPresets, { codex: { effort: "high", permissionTier: "auto" } });
+    const spotlight = view.host.querySelector('[aria-label="项目 Agent 名册"]')!;
+    assert.match(spotlight.textContent!, /帮我批准/);
+    assert.match(spotlight.textContent!, /high/);
+    await pick("帮我批准");
+    await pick("默认");
+    assert.deepEqual(writes(view.calls).at(-1), {
+      command: "set_project_default_preset",
+      args: { projectRoot: "/project", agent: "codex", effort: null, permissionTier: null },
+    });
+    assert.deepEqual(view.changes.at(-1)!.defaultPresets, {});
   } finally {
     await view.close();
   }

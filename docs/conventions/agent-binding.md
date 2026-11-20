@@ -9,10 +9,16 @@
 本次手选（弹层/启动栏改的，永远最高）
 L4 实体绑定   step:<步骤名> 槽 / 目标 tasks.agent+profile_id+model / 日程 schedule.profile_id+model
 L3 用途槽位   reader（精读）/ chat（项目对话）/ discuss（问 AI 与聊想法）/ assistant（项目助手，只做无头问答）
-L2 项目默认   defaultAgent + defaultProfiles/defaultModels（Agents 名册）
+L2 项目默认   defaultAgent + defaultProfiles/defaultModels（Agents 名册）+ defaultPresets（各家思考强度 / 权限预设）
 L1 记忆       ccode.wsLast（目录）/ ccode.kickoffLast.<projectRoot>（开工）/ ccode.askAi（问 AI）/ ccode.quickChat
 L0 全局设置   settings.defaultProfiles / ai_profile_id / ai_profiles[fn]（含 translate、watch-explain）
 ```
+
+**项目默认预设（2026-11-20）**：`projects.default_presets`（Agent → `{effort?, permissionTier?}`，权限只收 `ask | auto | full`，写 `set_project_default_preset`、
+自动拉起入口现读 `get_project_default_presets`）。按 Agent 生效：哪个入口最终启动的是这家，就补上这家的预设；专属绑定里**留空**的项
+（弹层的「跟随默认」「按默认」）也按它补，绑定里设了的不动（`withProjectPreset`）。入口口径：项目对话（chat 槽 > 项目默认）带思考强度与权限；
+问 AI / 聊想法只带思考强度（固定只读）；开工弹层与自动拉起的步骤入口——思考强度：步骤槽 > 项目默认（接回旧会话的不改）；
+权限：步骤槽 > 项目默认 > 本项目上次（`pickKickoffPermission` 第四参，项目默认的完全访问照带，因为设时已二次确认）。项目助手与定时任务不吃预设。
 
 规则：上层失效回落下层；**agent 恒随 profile 所属 CLI**（不单独绑工具）；密钥只在连接，实体只存引用；显式绑定尊重停用项；绑定连接被删 → 写侧级联清理（`clear_project_default_profile` 对任意槽键通用）+ 读侧回落。
 

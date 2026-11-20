@@ -51,15 +51,18 @@ export function saveKickoffPermission(projectRoot: string, tier: KickoffPermissi
   }
 }
 
-/** 开工弹层预选哪一档：本项目上次选的 > 这家 CLI 本机设置对应的 > 帮我批准 > 请求批准；
- *  这家一档原生参数都没有（available 空）返回 null = 按本机设置，不给选 */
+/** 开工弹层预选哪一档：项目默认的权限预设 > 本项目上次选的 > 这家 CLI 本机设置对应的 > 帮我批准 > 请求批准；
+ *  这家一档原生参数都没有（available 空）返回 null = 按本机设置，不给选。项目默认是人在 Agent 分工页
+ *  显式定的（完全访问当时已二次确认），所以完全访问也照带 */
 export function pickKickoffPermission(
   available: readonly string[],
   remembered: KickoffPermission | null,
   localTier: string | null | undefined,
+  projectDefault?: string | null,
 ): KickoffPermission | null {
   const ok = (t: string | null | undefined): t is KickoffPermission =>
     !!t && (KICKOFF_PERMISSIONS as readonly string[]).includes(t) && available.includes(t);
+  if (ok(projectDefault)) return projectDefault;
   if (ok(remembered)) return remembered;
   if (ok(localTier)) return localTier;
   if (ok("auto")) return "auto";

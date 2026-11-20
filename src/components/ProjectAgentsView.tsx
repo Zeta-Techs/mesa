@@ -40,6 +40,7 @@ import {
   normalizeBindingPermissionTier,
   projectAgentsEmptyWorkHint,
   projectAgentLaunch,
+  projectDefaultPreset,
   resolveProfileModel,
   selectedProjectAgentProfile,
   READER_BINDING_SLOT,
@@ -86,6 +87,9 @@ export default function ProjectAgentsView({
   const [defaultModels, setDefaultModels] = useState<Record<string, string>>(
     project.defaultModels ?? {},
   );
+  const [defaultPresets, setDefaultPresets] = useState<NonNullable<ProjectDto["defaultPresets"]>>(
+    project.defaultPresets ?? {},
+  );
   const [taskBindings, setTaskBindings] = useState<NonNullable<ProjectDto["taskBindings"]>>(
     project.taskBindings ?? {},
   );
@@ -100,8 +104,9 @@ export default function ProjectAgentsView({
     setDefaultAgent(project.defaultAgent ?? "");
     setDefaultProfiles(project.defaultProfiles ?? {});
     setDefaultModels(project.defaultModels ?? {});
+    setDefaultPresets(project.defaultPresets ?? {});
     setTaskBindings(project.taskBindings ?? {});
-  }, [project.defaultAgent, project.defaultModels, project.defaultProfiles, project.taskBindings]);
+  }, [project.defaultAgent, project.defaultModels, project.defaultPresets, project.defaultProfiles, project.taskBindings]);
 
   const taskKinds = useMemo(
     () => declaredTaskKindsForMode(project.workMode),
@@ -210,6 +215,7 @@ export default function ProjectAgentsView({
         defaultAgent: agent || null,
         defaultProfiles,
         defaultModels,
+        defaultPresets,
       });
     } catch (reason) {
       onError(`保存项目默认 Agent 失败：${String(reason)}`);
@@ -241,9 +247,43 @@ export default function ProjectAgentsView({
         defaultAgent: defaultAgent || null,
         defaultProfiles: next,
         defaultModels: nextModels,
+        defaultPresets,
       });
     } catch (reason) {
       onError(`保存默认配置失败：${String(reason)}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** 项目默认给这家的思考强度与权限预设（2026-11-20）；两项都空即撤 */
+  async function savePreset(agent: string, effort: string | null, permissionTier: BindingPermissionTier | null) {
+    if (!agent) return;
+    setSaving(true);
+    const tier = permissionTier && permissionTier !== "discuss" ? permissionTier : null;
+    const next = { ...defaultPresets };
+    if (effort || tier) {
+      next[agent] = { ...(effort ? { effort } : {}), ...(tier ? { permissionTier: tier } : {}) };
+    } else {
+      delete next[agent];
+    }
+    try {
+      await invoke("set_project_default_preset", {
+        projectRoot: project.path,
+        agent,
+        effort,
+        permissionTier: tier,
+      });
+      setDefaultPresets(next);
+      onProjectChanged({
+        ...project,
+        defaultAgent: defaultAgent || null,
+        defaultProfiles,
+        defaultModels,
+        defaultPresets: next,
+      });
+    } catch (reason) {
+      onError(`保存项目默认预设失败：${String(reason)}`);
     } finally {
       setSaving(false);
     }
@@ -659,9 +699,16 @@ export default function ProjectAgentsView({
                       项目默认
                     </button>
                     {defaultSelectedProfile ? (
-                      <span className="min-w-0 truncate font-mono text-xs text-l2">
-                        {defaultSelectedProfile.name} / {defaultSelectedProfile.model}
-                      </span>
+                      <>
+                        <span className="min-w-0 truncate font-mono text-xs text-l2">
+                          {defaultSelectedProfile.name} / {defaultSelectedProfile.model}
+                        </span>
+                        <DefaultPresetChips
+                          agents={agents}
+                          agentId={defaultRow.agentId}
+                          preset={projectDefaultPreset(defaultPresets, defaultRow.agentId)}
+                        />
+                      </>
                     ) : (
                       <button
                         type="button"
@@ -677,11 +724,14 @@ export default function ProjectAgentsView({
               <div className="flex shrink-0 items-center gap-2">
                 {defaultRow.profiles.length > 0 && (
                   <DefaultModelMenu
+                    key={defaultRow.agentId}
                     row={defaultRow}
+                    preset={projectDefaultPreset(defaultPresets, defaultRow.agentId)}
                     disabled={saving}
                     onPick={(profileId, modelId) =>
                       void saveProfile(defaultRow.agentId, profileId, modelId)
                     }
+                    onPreset={(effort, tier) => void savePreset(defaultRow.agentId, effort, tier)}
                     onAdd={() => setPage("profiles")}
                   />
                 )}
@@ -1614,16 +1664,6 @@ function SlotBindingPopover({
   const cardPermMeta = boundPerm
     ? PERMISSION_TIERS.find((t) => t.id === boundPerm)
     : null;
-  const effChoices = useMemo(
-    () => [{ value: "", label: "默认" }, ...effortLevels.map((l) => ({ value: l, label: l }))],
-    [effortLevels],
-  );
-  const effIdx = Math.max(
-    0,
-    effChoices.findIndex((c) => c.value === currentEffort),
-  );
-  const effPct = effChoices.length > 1 ? (effIdx / (effChoices.length - 1)) * 100 : 0;
-  const effDepth = currentEffort ? effortDepth(currentEffort, effortLevels) : null;
 
   return (
     <div ref={wrapRef} className="relative">
@@ -1855,74 +1895,12 @@ function SlotBindingPopover({
           {supportsEffortPreset && effortInjectable && (
             <>
               <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
-              <div className="px-2 pb-1.5 pt-0.5">
-                <div className="mb-1.5 flex items-center justify-between text-micro">
-                  <span className="text-l3">思考强度预设</span>
-                  <span className="inline-flex items-center gap-1 font-medium text-l1">
-                    <EffortMark depth={effDepth} />
-                    <span>{currentEffort || "跟随默认"}</span>
-                  </span>
-                </div>
-                <div className="relative mx-2 h-4">
-                  <span className="absolute bottom-1 left-0 h-0.5 w-full rounded-full bg-field" />
-                  <span
-                    className="absolute bottom-1 left-0 h-0.5 rounded-full bg-l3 transition-[width] duration-[120ms]"
-                    style={{ width: `${effPct}%` }}
-                  />
-                  {effChoices.map((c, idx) =>
-                    idx === effIdx ? null : (
-                      <span
-                        key={c.value || "default"}
-                        aria-hidden="true"
-                        className={`absolute bottom-1 h-1.5 w-px -translate-x-1/2 ${
-                          idx < effIdx ? "bg-l3" : "bg-l4"
-                        }`}
-                        style={{ left: `${(idx / Math.max(1, effChoices.length - 1)) * 100}%` }}
-                      />
-                    ),
-                  )}
-                  <span
-                    aria-hidden="true"
-                    className="ccode-effort-knob pointer-events-none absolute bottom-1 h-2 w-3.5 -translate-x-1/2 rounded-xs transition-[left] duration-[120ms]"
-                    style={{ left: `${effPct}%` }}
-                  />
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(0, effChoices.length - 1)}
-                    step={1}
-                    value={effIdx}
-                    disabled={disabled}
-                    aria-label="思考强度预设"
-                    onChange={(e) => {
-                      const next = effChoices[Number(e.target.value)];
-                      if (next) handlePickEffort(next.value);
-                    }}
-                    className="absolute inset-y-0 -right-2 -left-2 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
-                  />
-                </div>
-                <div className="mt-1 flex flex-wrap items-center justify-between gap-1">
-                  {effChoices.map((c) => {
-                    const selected = c.value === currentEffort;
-                    return (
-                      <button
-                        key={c.value || "default"}
-                        type="button"
-                        disabled={disabled}
-                        aria-pressed={selected}
-                        onClick={() => handlePickEffort(c.value)}
-                        className={`rounded px-1.5 py-0.5 text-micro transition-colors disabled:opacity-50 ${
-                          selected
-                            ? "bg-seg-sel font-medium text-l1"
-                            : "text-l4 hover:bg-hover hover:text-l2"
-                        }`}
-                      >
-                        {c.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <EffortPresetSection
+                levels={effortLevels}
+                current={currentEffort}
+                disabled={disabled}
+                onPick={handlePickEffort}
+              />
             </>
           )}
 
@@ -1930,59 +1908,15 @@ function SlotBindingPopover({
           {permChoices.length > 0 && (
             <>
               <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
-              <div className="px-1.5 pb-1 pt-0.5">
-                <div className="mb-1.5 flex items-center justify-between px-0.5 text-micro">
-                  <span className="text-l3">权限预设</span>
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    aria-pressed={currentPerm === null}
-                    onClick={() => void handlePickPerm(null)}
-                    className={`rounded px-1.5 py-0.5 transition-colors disabled:opacity-50 ${
-                      currentPerm === null
-                        ? "font-medium text-l2"
-                        : "text-l4 hover:bg-hover hover:text-l2"
-                    }`}
-                  >
-                    {currentPerm === null ? "按默认" : "恢复按默认"}
-                  </button>
-                </div>
-                <div
-                  className={`grid gap-1 rounded-lg bg-inset p-0.5 ${
-                    permChoices.length === 3 ? "grid-cols-3" : "grid-cols-4"
-                  }`}
-                >
-                  {permChoices.map((t) => {
-                    const tier = t.id as BindingPermissionTier;
-                    const available = isPermAvailableForAgent(agents, activeAgentId, tier);
-                    const selected = currentPerm === tier;
-                    const danger = tier === "full";
-                    return (
-                      <button
-                        key={tier}
-                        type="button"
-                        disabled={disabled || !available}
-                        aria-pressed={selected}
-                        title={available ? t.desc : `${activeAgentLabel} 没有这一档`}
-                        onClick={() => void handlePickPerm(tier)}
-                        className={`flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-micro transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-                          selected
-                            ? danger
-                              ? "bg-seg-sel font-medium text-caution-text"
-                              : "bg-seg-sel font-medium text-l1"
-                            : "text-l3 hover:bg-hover hover:text-l1"
-                        }`}
-                      >
-                        <PermissionGlyph
-                          tier={t.id}
-                          className={danger ? "text-caution-text" : selected ? "text-l1" : "text-l3"}
-                        />
-                        <span className="truncate">{t.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              <PermissionPresetSection
+                choices={permChoices}
+                current={currentPerm}
+                disabled={disabled}
+                agents={agents}
+                agentId={activeAgentId}
+                agentLabel={activeAgentLabel}
+                onPick={(tier) => void handlePickPerm(tier)}
+              />
             </>
           )}
 
@@ -2017,29 +1951,275 @@ function SlotBindingPopover({
   );
 }
 
-function DefaultModelMenu({
-  row,
+/** 项目默认那一行的预设微标（与专属绑定卡片同一套 .ccode-preset-chip） */
+function DefaultPresetChips({
+  agents,
+  agentId,
+  preset,
+}: {
+  agents: readonly DetectResult[];
+  agentId: string;
+  preset: { effort?: string; permissionTier?: "ask" | "auto" | "full" };
+}) {
+  const perm = preset.permissionTier
+    ? PERMISSION_TIERS.find((t) => t.id === preset.permissionTier)
+    : null;
+  if (!perm && !preset.effort) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      {perm && (
+        <span
+          className={`ccode-preset-chip text-micro ${
+            preset.permissionTier === "full" ? "text-caution-text" : ""
+          }`}
+        >
+          <PermissionGlyph tier={perm.id} />
+          <span>{perm.label}</span>
+        </span>
+      )}
+      {preset.effort && (
+        <span className="ccode-preset-chip text-micro">
+          <EffortMark depth={effortDepth(preset.effort, defaultEffortLevelsForAgent(agents, agentId))} />
+          <span>{preset.effort}</span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** 思考强度预设（M▁ 琥珀标尺滑块）：专属绑定弹层与项目默认面板共用 */
+function EffortPresetSection({
+  levels,
+  current,
   disabled,
   onPick,
+}: {
+  levels: readonly string[];
+  current: string;
+  disabled: boolean;
+  onPick: (level: string) => void;
+}) {
+  const choices = useMemo(
+    () => [{ value: "", label: "默认" }, ...levels.map((l) => ({ value: l, label: l }))],
+    [levels],
+  );
+  const idx = Math.max(
+    0,
+    choices.findIndex((c) => c.value === current),
+  );
+  const pct = choices.length > 1 ? (idx / (choices.length - 1)) * 100 : 0;
+  const depth = current ? effortDepth(current, [...levels]) : null;
+  return (
+    <div className="px-2 pb-1.5 pt-0.5">
+      <div className="mb-1.5 flex items-center justify-between text-micro">
+        <span className="text-l3">思考强度预设</span>
+        <span className="inline-flex items-center gap-1 font-medium text-l1">
+          <EffortMark depth={depth} />
+          <span>{current || "跟随默认"}</span>
+        </span>
+      </div>
+      <div className="relative mx-2 h-4">
+        <span className="absolute bottom-1 left-0 h-0.5 w-full rounded-full bg-field" />
+        <span
+          className="absolute bottom-1 left-0 h-0.5 rounded-full bg-l3 transition-[width] duration-[120ms]"
+          style={{ width: `${pct}%` }}
+        />
+        {choices.map((c, i) =>
+          i === idx ? null : (
+            <span
+              key={c.value || "default"}
+              aria-hidden="true"
+              className={`absolute bottom-1 h-1.5 w-px -translate-x-1/2 ${
+                i < idx ? "bg-l3" : "bg-l4"
+              }`}
+              style={{ left: `${(i / Math.max(1, choices.length - 1)) * 100}%` }}
+            />
+          ),
+        )}
+        <span
+          aria-hidden="true"
+          className="ccode-effort-knob pointer-events-none absolute bottom-1 h-2 w-3.5 -translate-x-1/2 rounded-xs transition-[left] duration-[120ms]"
+          style={{ left: `${pct}%` }}
+        />
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0, choices.length - 1)}
+          step={1}
+          value={idx}
+          disabled={disabled}
+          aria-label="思考强度预设"
+          onChange={(e) => {
+            const next = choices[Number(e.target.value)];
+            if (next) onPick(next.value);
+          }}
+          className="absolute inset-y-0 -right-2 -left-2 m-0 h-full cursor-pointer appearance-none bg-transparent opacity-0 disabled:cursor-default"
+        />
+      </div>
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-1">
+        {choices.map((c) => {
+          const selected = c.value === current;
+          return (
+            <button
+              key={c.value || "default"}
+              type="button"
+              disabled={disabled}
+              aria-pressed={selected}
+              onClick={() => onPick(c.value)}
+              className={`rounded px-1.5 py-0.5 text-micro transition-colors disabled:opacity-50 ${
+                selected
+                  ? "bg-seg-sel font-medium text-l1"
+                  : "text-l4 hover:bg-hover hover:text-l2"
+              }`}
+            >
+              {c.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 权限预设分段：这家没有的档置灰；「按默认」清掉预设。专属绑定弹层与项目默认面板共用 */
+function PermissionPresetSection({
+  choices,
+  current,
+  disabled,
+  agents,
+  agentId,
+  agentLabel,
+  onPick,
+}: {
+  choices: typeof PERMISSION_TIERS;
+  current: BindingPermissionTier | null;
+  disabled: boolean;
+  agents: readonly DetectResult[];
+  agentId: string;
+  agentLabel: string;
+  onPick: (tier: BindingPermissionTier | null) => void;
+}) {
+  return (
+    <div className="px-1.5 pb-1 pt-0.5">
+      <div className="mb-1.5 flex items-center justify-between px-0.5 text-micro">
+        <span className="text-l3">权限预设</span>
+        <button
+          type="button"
+          disabled={disabled}
+          aria-pressed={current === null}
+          onClick={() => onPick(null)}
+          className={`rounded px-1.5 py-0.5 transition-colors disabled:opacity-50 ${
+            current === null
+              ? "font-medium text-l2"
+              : "text-l4 hover:bg-hover hover:text-l2"
+          }`}
+        >
+          {current === null ? "按默认" : "恢复按默认"}
+        </button>
+      </div>
+      <div
+        className={`grid gap-1 rounded-lg bg-inset p-0.5 ${
+          choices.length === 3 ? "grid-cols-3" : "grid-cols-4"
+        }`}
+      >
+        {choices.map((t) => {
+          const tier = t.id as BindingPermissionTier;
+          const available = isPermAvailableForAgent(agents, agentId, tier);
+          const selected = current === tier;
+          const danger = tier === "full";
+          return (
+            <button
+              key={tier}
+              type="button"
+              disabled={disabled || !available}
+              aria-pressed={selected}
+              title={available ? t.desc : `${agentLabel} 没有这一档`}
+              onClick={() => onPick(tier)}
+              className={`flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-micro transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                selected
+                  ? danger
+                    ? "bg-seg-sel font-medium text-caution-text"
+                    : "bg-seg-sel font-medium text-l1"
+                  : "text-l3 hover:bg-hover hover:text-l1"
+              }`}
+            >
+              <PermissionGlyph
+                tier={t.id}
+                className={danger ? "text-caution-text" : selected ? "text-l1" : "text-l3"}
+              />
+              <span className="truncate">{t.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** 顶部「换默认模型」面板：连接与模型，加项目默认的思考强度与权限预设（2026-11-20）。
+ *  预设按 Agent 存，专属绑定里留空（跟随默认 / 按默认）的入口用它；权限只给写树三档 */
+function DefaultModelMenu({
+  row,
+  preset,
+  disabled,
+  onPick,
+  onPreset,
   onAdd,
 }: {
   row: ProjectAgentRow;
+  preset: { effort?: string; permissionTier?: "ask" | "auto" | "full" };
   disabled: boolean;
   onPick: (profileId: string, modelId: string) => void;
+  onPreset: (effort: string | null, permissionTier: BindingPermissionTier | null) => void;
   onAdd: () => void;
 }) {
+  const agents = useAppStore((state) => state.agents ?? EMPTY_AGENTS);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = selectedProjectAgentProfile(row);
   const line = currentProfileLine(row);
+  const currentEffort = preset.effort ?? "";
+  const currentPerm: BindingPermissionTier | null = preset.permissionTier ?? null;
+
+  // 思考强度只在这条连接 + 模型有启动注入通道时给选（与专属绑定弹层同一口径）
+  const [effortInjectable, setEffortInjectable] = useState(false);
+  const [comboLevels, setComboLevels] = useState<string[]>([]);
+  useEffect(() => {
+    if (!open || !current?.id) return;
+    let cancelled = false;
+    invoke<ComboSurfaceDto>("combo_surface", {
+      profileId: current.id,
+      model: current.modelId.trim() || null,
+    })
+      .then((c) => {
+        if (cancelled) return;
+        setEffortInjectable(c.injectEffortAllowed === true);
+        setComboLevels(Array.isArray(c.effortLevels) ? c.effortLevels : []);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setEffortInjectable(false);
+        setComboLevels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, current?.id, current?.modelId]);
+  const effortLevels = useMemo(
+    () => (comboLevels.length > 0 ? comboLevels : defaultEffortLevelsForAgent(agents, row.agentId)),
+    [comboLevels, agents, row.agentId],
+  );
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (event: MouseEvent) => {
+      const target = event.target as Element | null;
+      if (confirmDialogOpen() || target?.closest?.('[role="alertdialog"]')) return;
       if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
+      if (confirmDialogOpen()) return;
       if (event.key === "Escape") {
         setOpen(false);
         triggerRef.current?.focus();
@@ -2053,6 +2233,14 @@ function DefaultModelMenu({
     };
   }, [open]);
 
+  async function pickPerm(tier: BindingPermissionTier | null) {
+    const next = tier === currentPerm ? null : tier;
+    if (next === "full" && currentPerm !== "full") {
+      if (!(await confirmPermissionChoice(row.label, "full", false))) return;
+    }
+    onPreset(currentEffort || null, next);
+  }
+
   return (
     <div ref={wrapRef} className="relative">
       <button
@@ -2060,9 +2248,9 @@ function DefaultModelMenu({
         type="button"
         disabled={disabled}
         aria-expanded={open}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-label={`更换 ${row.label} 的项目连接`}
-        title={`${line ?? "还没有连接"}；只修改本项目的默认连接和模型`}
+        title={`${line ?? "还没有连接"}；只修改本项目的默认连接、模型与预设`}
         className={`${secondaryActionClass} gap-1.5`}
         onClick={() => setOpen((value) => !value)}
       >
@@ -2074,50 +2262,83 @@ function DefaultModelMenu({
         />
       </button>
       {open && (
-        <ul
-          role="listbox"
-          aria-label={`${row.label} 的项目连接`}
-          className="ccode-float-surface absolute right-0 z-50 mt-1.5 max-h-64 w-72 max-w-[calc(100vw-2rem)] overflow-y-auto overscroll-contain rounded-xl border border-field p-1 shadow-lg"
+        <div
+          role="dialog"
+          aria-label={`${row.label} 的项目默认`}
+          className="ccode-float-surface absolute right-0 z-50 mt-1.5 flex max-h-[min(32rem,calc(100vh-8rem))] w-80 max-w-[calc(100vw-2rem)] flex-col overflow-y-auto overscroll-contain rounded-xl border border-field p-1.5 text-xs shadow-lg"
         >
-          {row.profiles.map((profile) => {
-            const selected = profile.id === current?.id && profile.modelId === current?.modelId;
-            return (
-              <li key={`${profile.id}\n${profile.modelId}`}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  disabled={disabled}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left disabled:opacity-50 ${
-                    selected ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
-                  }`}
-                  onClick={() => {
-                    onPick(profile.id, profile.modelId);
-                    setOpen(false);
-                  }}
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{profile.name}</span>
-                    <span className="mt-0.5 block truncate text-xs text-l3">{profile.model}</span>
-                  </span>
-                  {selected && <Check size={14} className="shrink-0 text-cta" aria-hidden="true" />}
-                </button>
-              </li>
-            );
-          })}
-          <li className="mt-1 border-t border-hairline pt-1">
-            <button
-              type="button"
-              className="flex h-7 w-full items-center rounded-lg px-2.5 text-left text-xs text-l4 hover:bg-hover hover:text-l1"
-              onClick={() => {
-                setOpen(false);
-                onAdd();
-              }}
-            >
-              去连接页添加
-            </button>
-          </li>
-        </ul>
+          <div className="flex shrink-0 items-center justify-between px-2 pb-1 text-micro text-l3">
+            <span>连接与模型</span>
+            <span className="text-l4">点选即指定</span>
+          </div>
+          <ul
+            role="listbox"
+            aria-label={`${row.label} 的项目连接`}
+            className="max-h-48 shrink-0 overflow-y-auto overscroll-contain"
+          >
+            {row.profiles.map((profile) => {
+              const selected = profile.id === current?.id && profile.modelId === current?.modelId;
+              return (
+                <li key={`${profile.id}\n${profile.modelId}`}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    disabled={disabled}
+                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left disabled:opacity-50 ${
+                      selected ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
+                    }`}
+                    onClick={() => onPick(profile.id, profile.modelId)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{profile.name}</span>
+                      <span className="mt-0.5 block truncate text-xs text-l3">{profile.model}</span>
+                    </span>
+                    {selected && <Check size={14} className="shrink-0 text-cta" aria-hidden="true" />}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+
+          {effortInjectable && (
+            <>
+              <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+              <EffortPresetSection
+                levels={effortLevels}
+                current={currentEffort}
+                disabled={disabled}
+                onPick={(level) => onPreset(level || null, currentPerm)}
+              />
+            </>
+          )}
+
+          <div className="mx-1 my-1.5 h-px shrink-0 bg-hairline" />
+          <PermissionPresetSection
+            choices={permTiersForSlot("step")}
+            current={currentPerm}
+            disabled={disabled}
+            agents={agents}
+            agentId={row.agentId}
+            agentLabel={row.label}
+            onPick={(tier) => void pickPerm(tier)}
+          />
+          <p className="shrink-0 px-2 pb-1 pt-1.5 text-micro text-l4">
+            项目对话、步骤开工等没单独指定的入口照这个来；问 AI / 聊想法固定只读，只用思考强度。
+          </p>
+
+          <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
+          <button
+            type="button"
+            className="flex h-7 w-full shrink-0 items-center rounded-lg px-2.5 text-left text-xs text-l4 hover:bg-hover hover:text-l1"
+            onClick={() => {
+              setOpen(false);
+              onAdd();
+            }}
+          >
+            去连接页添加
+          </button>
+        </div>
       )}
     </div>
   );

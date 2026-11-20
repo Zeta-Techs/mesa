@@ -672,3 +672,47 @@ test("专属绑定预设：taskBindingLaunch / projectChatLaunch / slotPrefs / r
     },
   );
 });
+
+test("项目默认预设：专属绑定没设的思考强度 / 权限跟随项目默认给这家的预设，别家不沾", async () => {
+  const { projectChatLaunch, projectDefaultPreset } = await import("../src/project-agents.ts");
+  const profiles = [
+    { id: "cc1", agent: "claude-code", models: ["glm-5.3"] },
+    { id: "cx1", agent: "codex", models: ["gpt-6.2-sol"] },
+  ];
+  const defaultPresets = { codex: { effort: "high", permissionTier: "full" } };
+  // 没绑 chat 槽：项目默认连同预设
+  assert.deepEqual(projectChatLaunch(profiles, { defaultAgent: "codex", defaultPresets }), {
+    agentId: "codex",
+    profileId: "cx1",
+    model: "gpt-6.2-sol",
+    effort: "high",
+    permissionTier: "full",
+  });
+  // chat 槽绑了同一家、留空的项补项目默认，设了的不动
+  assert.deepEqual(
+    projectChatLaunch(profiles, {
+      defaultAgent: "codex",
+      defaultPresets,
+      taskBindings: { chat: { profile: "cx1", permissionTier: "ask" } },
+    }),
+    { agentId: "codex", profileId: "cx1", model: "gpt-6.2-sol", effort: "high", permissionTier: "ask" },
+  );
+  // chat 槽绑的是别家：Codex 的预设不带过去
+  assert.deepEqual(
+    projectChatLaunch(profiles, {
+      defaultAgent: "codex",
+      defaultPresets,
+      taskBindings: { chat: { profile: "cc1" } },
+    }),
+    { agentId: "claude-code", profileId: "cc1", model: "glm-5.3" },
+  );
+  // 问 AI / 聊想法只拿思考强度
+  assert.deepEqual(
+    slotPrefs(profiles, { defaultAgent: "codex", defaultPresets }, DISCUSS_BINDING_SLOT),
+    { preferredAgent: "codex", preferredEffort: "high" },
+  );
+  // 只读档与坏值不当项目默认权限
+  assert.deepEqual(projectDefaultPreset({ codex: { permissionTier: "discuss" } }, "codex"), {});
+  assert.deepEqual(projectDefaultPreset({ codex: { effort: " ", permissionTier: "bogus" } }, "codex"), {});
+  assert.deepEqual(projectDefaultPreset(defaultPresets, null), {});
+});

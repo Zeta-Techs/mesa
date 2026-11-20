@@ -36,10 +36,24 @@ pub struct ProjectDto {
     /// Agent id → 本项目选用的模型 id。须属于该默认连接的模型名单；空 = 用名单第一个。
     #[serde(default)]
     pub default_models: BTreeMap<String, String>,
+    /// Agent id → 项目默认的思考强度与权限预设（2026-11-20）：专属绑定没设的入口用它
+    #[serde(default)]
+    pub default_presets: BTreeMap<String, ProjectDefaultPreset>,
     /// 槽位 → 专属 Agent 绑定（见 ProjectAgentBinding）：某个固定用途不吃项目默认、
     /// 单独指一条连接+模型。槽位是稳定 key（reader = 沉浸阅读会话），按需扩展。
     #[serde(default)]
     pub task_bindings: BTreeMap<String, ProjectAgentBinding>,
+}
+
+/// 项目默认的预设：思考强度跟连接走（档名由 combo_surface 给），权限只收写树三档——
+/// 问 AI / 聊想法这类只读入口不吃权限，步骤不接「先出方案」
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ProjectDefaultPreset {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_tier: Option<String>,
 }
 
 /// 项目槽位的专属 Agent 绑定：agent 不单存，跟随 profile 所属 CLI。
@@ -480,6 +494,13 @@ fn db_at(path: &Path) -> Result<Connection, String> {
         )
         .map_err(|e| format!("升级 projects 表失败: {e}"))?;
     }
+    if !columns.iter().any(|c| c == "default_presets") {
+        conn.execute(
+            "ALTER TABLE projects ADD COLUMN default_presets TEXT NOT NULL DEFAULT '{}'",
+            [],
+        )
+        .map_err(|e| format!("升级 projects 表失败: {e}"))?;
+    }
     if !columns.iter().any(|c| c == "task_bindings") {
         conn.execute(
             "ALTER TABLE projects ADD COLUMN task_bindings TEXT NOT NULL DEFAULT '{}'",
@@ -600,6 +621,7 @@ fn register_at(
                     .flatten(),
                 default_profiles: project_string_map(&conn, &key, "default_profiles"),
                 default_models: project_string_map(&conn, &key, "default_models"),
+                default_presets: project_default_presets(&conn, &key),
                 task_bindings: project_task_bindings(&conn, &key),
             }));
         }
@@ -639,6 +661,7 @@ fn register_at(
             .flatten(),
         default_profiles: project_string_map(&conn, &key, "default_profiles"),
         default_models: project_string_map(&conn, &key, "default_models"),
+        default_presets: project_default_presets(&conn, &key),
         task_bindings: project_task_bindings(&conn, &key),
     }))
 }
@@ -691,6 +714,18 @@ fn project_string_map(conn: &Connection, path: &str, column: &str) -> BTreeMap<S
         .unwrap_or_default()
 }
 
+/// default_presets 列（Agent → ProjectDefaultPreset 的 JSON map）；坏值按空处理
+fn project_default_presets(conn: &Connection, path: &str) -> BTreeMap<String, ProjectDefaultPreset> {
+    conn.query_row(
+        "SELECT default_presets FROM projects WHERE path=?1",
+        params![path],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .and_then(|raw| serde_json::from_str(&raw).ok())
+    .unwrap_or_default()
+}
+
 /// task_bindings 列（槽位 → ProjectAgentBinding 的 JSON map）；坏值按空处理
 fn project_task_bindings(
     conn: &Connection,
@@ -728,7 +763,7 @@ fn attach_work_mode(mut p: ProjectDto) -> ProjectDto {
 pub(crate) fn list_projects_in(conn: &Connection) -> Result<Vec<ProjectDto>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models, task_bindings FROM projects
+            "SELECT path, name, created_at, last_opened_at, default_agent, default_profiles, id, default_models, task_bindings, default_presets FROM projects
              ORDER BY last_opened_at DESC, path ASC",
         )
         .map_err(|e| format!("读取项目列表失败: {e}"))?;
@@ -745,6 +780,7 @@ pub(crate) fn list_projects_in(conn: &Connection) -> Result<Vec<ProjectDto>, Str
                 default_profiles: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
                 default_models: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
                 task_bindings: serde_json::from_str(&r.get::<_, String>(8)?).unwrap_or_default(),
+                default_presets: serde_json::from_str(&r.get::<_, String>(9)?).unwrap_or_default(),
             })
         })
         .map_err(|e| format!("读取项目列表失败: {e}"))?;
@@ -3800,6 +3836,85 @@ pub async fn set_project_default_profile(
     })
     .await
     .map_err(|e| format!("保存项目默认配置失败: {e}"))?
+}
+
+/// 保存项目默认给某家 Agent 的思考强度与权限预设（2026-11-20）。两项都空 = 撤掉这家的预设。
+/// 权限只收 ask / auto / full：项目默认同时喂项目对话与步骤，步骤不接「先出方案」
+#[tauri::command]
+pub async fn set_project_default_preset(
+    project_root: String,
+    agent: String,
+    effort: Option<String>,
+    permission_tier: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = PathBuf::from(crate::sessions::expand_tilde(&project_root));
+        let key = canonical_key(&project);
+        let conn = db()?;
+        set_project_default_preset_at(&conn, &key, &agent, effort.as_deref(), permission_tier.as_deref())
+    })
+    .await
+    .map_err(|e| format!("保存项目默认预设失败: {e}"))?
+}
+
+/// 读项目默认的各家预设（自动拉起的步骤入口现读，不走前端缓存的项目列表）；未注册返回空
+#[tauri::command]
+pub async fn get_project_default_presets(
+    project_root: String,
+) -> Result<BTreeMap<String, ProjectDefaultPreset>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = PathBuf::from(crate::sessions::expand_tilde(&project_root));
+        let conn = db()?;
+        Ok(project_default_presets(&conn, &canonical_key(&project)))
+    })
+    .await
+    .map_err(|e| format!("读取项目默认预设失败: {e}"))?
+}
+
+fn set_project_default_preset_at(
+    conn: &Connection,
+    key: &str,
+    agent: &str,
+    effort: Option<&str>,
+    permission_tier: Option<&str>,
+) -> Result<(), String> {
+    if crate::agent_specs::agent_spec(agent).is_none() {
+        return Err(format!("未知 Agent：{agent}"));
+    }
+    let effort = accept_binding_effort("", effort)?;
+    let permission_tier = permission_tier.map(str::trim).filter(|t| !t.is_empty());
+    if let Some(tier) = permission_tier {
+        if !matches!(tier, "ask" | "auto" | "full") {
+            return Err(format!("项目默认不支持这个权限档位：{tier}"));
+        }
+    }
+    let raw: String = conn
+        .query_row(
+            "SELECT default_presets FROM projects WHERE path=?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .map_err(|_| "项目尚未注册，不能保存默认预设".to_string())?;
+    let mut map: BTreeMap<String, ProjectDefaultPreset> =
+        serde_json::from_str(&raw).unwrap_or_default();
+    if effort.is_none() && permission_tier.is_none() {
+        map.remove(agent);
+    } else {
+        map.insert(
+            agent.to_string(),
+            ProjectDefaultPreset {
+                effort,
+                permission_tier: permission_tier.map(str::to_string),
+            },
+        );
+    }
+    let encoded = serde_json::to_string(&map).map_err(|e| format!("保存项目默认预设失败: {e}"))?;
+    conn.execute(
+        "UPDATE projects SET default_presets=?2 WHERE path=?1",
+        params![key, encoded],
+    )
+    .map_err(|e| format!("保存项目默认预设失败: {e}"))?;
+    Ok(())
 }
 
 /// 项目槽位专属 Agent 绑定可用槽位（白名单：槽位是稳定契约 key，先开一个，

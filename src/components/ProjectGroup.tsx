@@ -2961,6 +2961,7 @@ export default function ProjectGroup({
           step={cfg.steps[kickoff.index]}
           cfg={cfg}
           taskBindings={project.taskBindings ?? null}
+          defaultPresets={project.defaultPresets ?? null}
           {...projectAgentPrefs(project)}
           originCardId={kickoff.originCardId}
           busy={starting !== null}
