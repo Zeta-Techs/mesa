@@ -4330,3 +4330,32 @@ fn step_index_is_one_based_position_by_name() {
     assert_eq!(step_index_in(&order, "文献精读与笔记"), Some(2));
     assert_eq!(step_index_in(&order, "已删的步骤"), None);
 }
+
+/// 侧栏把对话拖进某一步 / ⋯ 移出这一步（2026-11-20）：只写 session_meta.step_name，移出 = 清空
+#[test]
+fn set_session_step_assigns_and_clears() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS session_meta(
+              agent TEXT NOT NULL, session_id TEXT NOT NULL,
+              pinned INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
+              custom_title TEXT, tags TEXT NOT NULL DEFAULT '[]',
+              note TEXT, pinned_at TEXT,
+              PRIMARY KEY(agent, session_id));",
+    )
+    .unwrap();
+    migrate_session_meta(&conn);
+    let step = |conn: &Connection| -> Option<String> {
+        conn.query_row(
+            "SELECT step_name FROM session_meta WHERE agent='codex' AND session_id='s1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    set_session_step_at(&conn, "codex", "s1", Some(" 文献检索与筛选 ")).unwrap();
+    assert_eq!(step(&conn).as_deref(), Some("文献检索与筛选"));
+    set_session_step_at(&conn, "codex", "s1", Some("")).unwrap();
+    assert_eq!(step(&conn), None, "空步骤名 = 移出");
+    assert!(set_session_step_at(&conn, "", "s1", Some("x")).is_err());
+}

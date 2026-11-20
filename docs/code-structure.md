@@ -699,6 +699,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   app-update-install.ts      # 「下载并安装」hook（设置→更新与帮助菜单更新弹窗共用）：先查后台任务要人点头、进度累计（每 100ms 刷一次）并报所在段；失败只回 error 由入口写在卡片里；先 download 再存回放 + prepare_app_exit 收尾，最后 install + relaunch；模块级闸防双下载
   diagnostics.ts             # 前端诊断：WebGL 探针/软件渲染判定、monaco 取消拒绝识别、诊断包前端采集；应用日志展示纯逻辑（UTC→本机时间、错误/警告短标、计数、复制文本）（tests/diagnostics.test.ts）
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
+  chat-step-drag.ts          # 侧栏把对话拖进某一步的纯逻辑（2026-11-20，tests/chat-step-drag.test.ts）：能不能拖（工作区 / 精读 / 内部对话不给）、⋯ 能不能移出、
+                             #   拖时补出还没有对话的步骤落点、接力对话各段一起写（stepWriteTargets）；落库走 sessions::set_session_step
   chat-handoff-log.ts        # 聊天层转到终端记数（2026-10-22，tests/chat-handoff-log.test.ts）：原因闭集 HANDOFF_REASONS（与 chat_handoff_log.rs
                              # REASONS 同名同序，测试钉住）、说法、确认卡种类 decisionKind、同家同原因 3 秒去重；记录失败静默。
                              # 记数点：标签栏与 /terminal 切终端（TerminalPage），ChatSurface 出「终端在等你」卡（认不出的确认 / 卡住 / 选择器）、卡片与「看实时输出」按钮；

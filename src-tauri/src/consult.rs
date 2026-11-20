@@ -200,6 +200,9 @@ pub struct ConsultSummary {
     /// 停在「先停一下，等你发话」（接力到上限）：最后一条是 Mesa 的提示（工作台「正在进行」据此露出）
     #[serde(default)]
     pub awaiting: bool,
+    /// 从步骤卡发起时是哪一步：侧栏把这场研讨挂到那一步下面（2026-11-20）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
 }
 
 // ───────────────────────── 文件 ─────────────────────────
@@ -318,6 +321,7 @@ pub(crate) fn summary_of(root: &Path, c: &Consult, updated_at: String) -> Consul
         updated_at,
         message_count: c.messages.iter().filter(|m| !m.pass && m.role != "system" && m.status != "running").count(),
         awaiting: c.messages.iter().rev().find(|m| m.status != "running").is_some_and(|m| m.role == "system"),
+        step: c.meta.step.clone().filter(|s| !s.trim().is_empty()),
     }
 }
 

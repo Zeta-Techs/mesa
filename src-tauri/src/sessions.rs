@@ -2937,11 +2937,12 @@ pub(crate) fn list_sessions_sync() -> Vec<SessionMetaDto> {
         apply_meta(&mut sessions, &scan.chain_members, &meta);
         apply_provenance(&conn, &mut sessions, &scan.provenance_paths);
         crate::handoff::apply_handoff(&conn, &mut sessions);
-        crate::relay::apply_relay_chains(&conn, &mut sessions);
         apply_card_claims(&conn, &mut sessions);
         apply_step_claims(&conn, &mut sessions);
         crate::runs::apply_reader_runs(&conn, &mut sessions, &scan.chain_members);
         crate::runs::apply_step_runs(&conn, &mut sessions, &scan.chain_members);
+        // 接力合并放在步骤归属都回填之后：代表那段要能接过前面几段的步骤（relay.rs）
+        crate::relay::apply_relay_chains(&conn, &mut sessions);
     }
     apply_task_names(&mut sessions);
     apply_step_index(&mut sessions);
@@ -4908,6 +4909,43 @@ pub(crate) fn assign_session_step_at(
     )
     .map_err(|e| format!("写入 session_meta 失败: {e}"))?;
     Ok(())
+}
+
+/// 人手把对话挪进 / 移出某一步（2026-11-20：侧栏把对话拖到步骤组上，⋯「移出这一步」）。只写 Mesa 自己的
+/// session_meta.step_name，不碰会话文件；会话在步骤工作区里的照工作区认，这里写了也不盖过（apply_meta 只补空）
+#[tauri::command]
+pub async fn set_session_step(
+    agent: String,
+    session_id: String,
+    step_name: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = open_db()?;
+        set_session_step_at(&conn, &agent, &session_id, step_name.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn set_session_step_at(
+    conn: &Connection,
+    agent: &str,
+    session_id: &str,
+    step_name: Option<&str>,
+) -> Result<(), String> {
+    if agent.trim().is_empty() || session_id.trim().is_empty() {
+        return Err("缺少对话标识".into());
+    }
+    match step_name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => assign_session_step_at(conn, agent, session_id, name),
+        None => conn
+            .execute(
+                "UPDATE session_meta SET step_name=NULL WHERE agent=?1 AND session_id=?2",
+                params![agent, session_id],
+            )
+            .map(|_| ())
+            .map_err(|e| format!("写入 session_meta 失败: {e}")),
+    }
 }
 
 // ===== 删除（用户显式发起，是只读原则的唯一例外） =====

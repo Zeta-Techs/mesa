@@ -788,6 +788,8 @@ export interface StepChatGroup {
   /** 开着、会话还没认出来的标签（2026-11-12 用户：点「与 AI 商量一下」侧栏不能立马挂到这一步下面）：
    *  商量的放组首（head），分路与收尾进分路子组（lanes），其余放组尾（tail，认出来后也落在最后） */
   tabs: { head: StepTabRow[]; lanes: StepTabRow[]; tail: StepTabRow[] };
+  /** 从这一步发起的研讨（id，按传入先后）：画在组尾（2026-11-20 用户：在步骤里发起的研讨要挂在这一步下面） */
+  consults: string[];
 }
 
 /** 步骤组里一个还没认出会话的标签；label 同 StepChatRow（认出来后那一行写的名字，位置也不挪）；null = 照写标签标题 */
@@ -817,10 +819,12 @@ export function stepRoleLabel(s: SessionMetaDto): string | null {
 
 /** 项目内置顶里的流程对话按步骤分组（输入：splitProjectPinned 的 pinned 套上 ForkRow）；没有步骤名的（人手钉的）原样留在 manual。
  *  同一步里同一种角色不止一段（退回后重写、商量了两回）的，各自后面接开的日期「 · MM-DD」。
- *  tabs：这个文件夹里开着、带步骤、会话还没认出来的标签（openTabRows 里 step 非空的），这一步还没有对话也照样建组 */
+ *  tabs：这个文件夹里开着、带步骤、会话还没认出来的标签（openTabRows 里 step 非空的），这一步还没有对话也照样建组。
+ *  consults：这个课题里带步骤名的研讨，挂进那一步（这一步还没有对话也建组）；没步骤名的不收，调用方照旧单列 */
 export function groupStepChats(
   rows: readonly ForkRow[],
   tabs: readonly OpenTabRow[] = [],
+  consults: readonly { id: string; step?: string | null }[] = [],
 ): { groups: StepChatGroup[]; manual: ForkRow[] } {
   const byStep = new Map<string, ForkRow[]>();
   const manual: ForkRow[] = [];
@@ -837,6 +841,13 @@ export function groupStepChats(
     if (!t.step) continue;
     tabsOf.set(t.step.name, [...(tabsOf.get(t.step.name) ?? []), t]);
     if (!byStep.has(t.step.name)) byStep.set(t.step.name, []);
+  }
+  const consultsOf = new Map<string, string[]>();
+  for (const c of consults) {
+    const step = c.step?.trim();
+    if (!step) continue;
+    consultsOf.set(step, [...(consultsOf.get(step) ?? []), c.id]);
+    if (!byStep.has(step)) byStep.set(step, []);
   }
   const created = (r: ForkRow) => r.s.createdAt ?? r.s.updatedAt ?? "";
   const groups: StepChatGroup[] = [];
@@ -889,6 +900,7 @@ export function groupStepChats(
       after: rest.filter(isAfter).map(toRow),
       lanes: hasLanes ? { rows: [...lanesRaw, ...merges].map(toRow), total: laneNos.size, done: doneNos.size } : null,
       tabs: tabRows,
+      consults: consultsOf.get(step) ?? [],
     });
   }
   groups.sort((a, b) => (a.index ?? 1e9) - (b.index ?? 1e9) || a.step.localeCompare(b.step));
@@ -907,10 +919,12 @@ export function defaultOpenStep(
   isHot: (s: SessionMetaDto) => boolean,
   /** 还没认出会话的标签算不算看着 / 在跑；刚开的标签所在的组也要开着 */
   isHotTab: (t: OpenTabRow) => boolean = () => false,
+  /** 这一步发起的研讨算不算看着 / 在答 */
+  isHotConsult: (id: string) => boolean = () => false,
 ): string | null {
   const all = (g: StepChatGroup) => [...g.rows, ...(g.lanes?.rows ?? []), ...g.after].map((r) => r.row.s);
   const tabsOf = (g: StepChatGroup) => [...g.tabs.head, ...g.tabs.lanes, ...g.tabs.tail].map((t) => t.tab);
-  const hot = groups.find((g) => all(g).some(isHot) || tabsOf(g).some(isHotTab));
+  const hot = groups.find((g) => all(g).some(isHot) || tabsOf(g).some(isHotTab) || g.consults.some(isHotConsult));
   if (hot) return hot.step;
   let best: { step: string; at: string } | null = null;
   for (const g of groups) {

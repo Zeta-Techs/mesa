@@ -195,7 +195,7 @@ async function renderTree(
     __TAURI_INTERNALS__: {
       transformCallback: () => 0,
       invoke: async (command: string, args?: unknown) => {
-        if (command === "set_session_meta" || command === "delete_session") {
+        if (command === "set_session_meta" || command === "delete_session" || command === "set_session_step") {
           calls.push([command, args]);
           return null;
         }
@@ -1390,6 +1390,86 @@ test("课题下挂研讨：进行中的在最上面带光标，点了打开研�
     await view.act(async () => view.button("综述流程测试 的更多操作").click());
     await view.act(async () => view.button("请几家研讨…").click());
     assert.deepEqual(asked, [{ projectRoot: PROJECT.path }]);
+  } finally {
+    await view.close();
+  }
+});
+
+test("从步骤发起的研讨挂进那一步的组里，在答时那一组自己展开；没步骤名的照旧单列（2026-11-20 用户）", async () => {
+  const now = Date.now();
+  const consult = (id: string, title: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    projectRoot: PROJECT.path,
+    title,
+    members: [{ id: "m1" }, { id: "m2" }],
+    createdAt: new Date(now - 3600_000).toISOString(),
+    updatedAt: new Date(now - 60_000).toISOString(),
+    messageCount: 2,
+    busy: false,
+    ...extra,
+  });
+  const view = await renderTree({ consultOpen: null }, undefined, {
+    consults: [
+      consult("c1", "1120|研究|第 1 步「文献检索」：照现在的检索式够不够", { busy: true, answering: 2, step: "文献检索" }),
+      consult("c2", "1120|研究|随便问问"),
+    ],
+  });
+  try {
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const stepGroup = view.host.querySelector('[role="group"][aria-label="文献检索"]')!;
+    assert.ok(stepGroup, "这一步还没有对话也为研讨建组");
+    assert.equal(stepGroup.querySelector("button[aria-expanded]")?.getAttribute("aria-expanded"), "true", "研讨在答，组自己开着");
+    assert.match(stepGroup.textContent ?? "", /照现在的检索式够不够/);
+    assert.ok(stepGroup.querySelector("button[data-step-drop]"), "组头是拖对话的落点");
+    const loose = view.host.querySelector('[aria-label="综述流程测试 里置顶的对话"]')!;
+    assert.ok(!(loose.textContent ?? "").includes("随便问问"), "没步骤名的研讨不进步骤组");
+    assert.match(view.chatGroup("综述流程测试")!.textContent ?? "", /随便问问/);
+  } finally {
+    await view.close();
+  }
+});
+
+test("记出来的步骤归属可从 ⋯「移出」，接力对话各段一起移；工作区里的对话不给移", async () => {
+  const view = await renderTree({
+    sessions: [
+      ...reviewChats,
+      session({
+        sessionId: "B",
+        agent: "codex",
+        customTitle: "1120|研究|商量检索式",
+        stepName: "文献检索",
+        stepIndex: 1,
+        stepRole: "discuss",
+        updatedAt: "2026-11-20T00:00:00Z",
+        relayAgents: ["claude-code", "codex"],
+        relaySegments: [
+          { agent: "claude-code", sessionId: "A", title: "商量检索式", filePath: "/a.jsonl", updatedAt: "2026-11-19T00:00:00Z" },
+          { agent: "codex", sessionId: "B", title: "商量检索式", filePath: "/b.jsonl", updatedAt: "2026-11-20T00:00:00Z" },
+        ],
+      }),
+      session({ sessionId: "W", customTitle: "1120|研究|执行", stepName: "文献检索", stepIndex: 1, stepRole: "work", workspace: "lit-search", updatedAt: "2026-11-19T00:00:00Z" }),
+    ],
+  }, undefined, { storage: { "ccode.projectShowStepChats": JSON.stringify(["/work/review"]) } });
+  try {
+    await view.act(async () => view.button("「商量任务书」的更多操作").click());
+    await view.act(async () => view.button("移出「文献检索」").click());
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.deepEqual(
+      view.calls.filter(([c]) => c === "set_session_step"),
+      [
+        ["set_session_step", { agent: "codex", sessionId: "B", stepName: null }],
+        ["set_session_step", { agent: "claude-code", sessionId: "A", stepName: null }],
+      ],
+    );
+    await view.act(async () => view.button("「执行任务书」的更多操作").click());
+    assert.ok(
+      !Array.from(view.host.querySelectorAll("button")).some((b) => b.textContent?.trim().startsWith("移出「")),
+      "工作区里的对话步骤由工作区定，不给移",
+    );
   } finally {
     await view.close();
   }

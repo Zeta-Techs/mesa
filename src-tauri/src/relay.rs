@@ -573,7 +573,9 @@ pub async fn relay_segment(brief_name: String) -> Result<Option<RelaySegmentDto>
 }
 
 /// 列表收尾：一段接力对话只占一行。代表 = 最近一次接力接手的那段（还在列表里的话），
-/// 其余各段从列表里拿掉、记进代表的 relay_segments；代表的标题没人改过时用第一段的标题
+/// 其余各段从列表里拿掉、记进代表的 relay_segments；代表的标题没人改过时用第一段的标题。
+/// 代表没有步骤归属时接过最早那段有归属的步骤与角色（2026-11-20 用户：商量任务书换一家接着做，侧栏这一行从步骤下面掉了）——
+/// 所以调用方要在步骤认领与 Run 角色都回填之后再调
 pub(crate) fn apply_relay_chains(conn: &Connection, list: &mut Vec<SessionMetaDto>) {
     let links: Vec<RelayLink> = all_links(conn)
         .into_iter()
@@ -656,7 +658,18 @@ pub(crate) fn apply_relay_chains(conn: &Connection, list: &mut Vec<SessionMetaDt
             }
         }
         let first = segments.first().cloned();
+        let inherited_step = present.iter().map(|k| &list[index[k.as_str()]]).find_map(|s| {
+            s.step_name
+                .clone()
+                .map(|name| (name, s.step_meta.clone()))
+        });
         let rep = &mut list[rep_i];
+        if rep.step_name.is_none() {
+            if let Some((name, meta)) = inherited_step {
+                rep.step_name = Some(name);
+                rep.step_meta = meta;
+            }
+        }
         if !rep.title_by_user {
             if let Some(t) = first.and_then(|f| f.title).filter(|t| !t.trim().is_empty()) {
                 rep.custom_title = Some(t);
@@ -783,6 +796,21 @@ mod tests {
         assert_eq!(a.relay.relay_segments.len(), 2);
         assert_eq!(a.custom_title.as_deref(), Some("claude-code-A"));
         assert!(list.iter().any(|s| s.session_id == "K" && s.relay.relay_agents.is_empty()));
+    }
+
+    #[test]
+    fn relayed_discuss_keeps_its_step_on_the_latest_segment() {
+        let conn = db();
+        insert_link(&conn, &link("handoff-1-aaaa.md", "claude-code", "A", 4, Some("codex"), Some("B"), "full", "1")).unwrap();
+        let mut a = meta("claude-code", "A", "1");
+        a.step_name = Some("文献检索与筛选".into());
+        a.step_meta.step_role = Some("discuss".into());
+        let mut list = vec![a, meta("codex", "B", "2")];
+        apply_relay_chains(&conn, &mut list);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].session_id, "B");
+        assert_eq!(list[0].step_name.as_deref(), Some("文献检索与筛选"));
+        assert_eq!(list[0].step_meta.step_role.as_deref(), Some("discuss"));
     }
 
     #[test]

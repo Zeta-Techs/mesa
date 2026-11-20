@@ -760,6 +760,7 @@ pub fn run() {
             sessions::assign_session_task,
             sessions::claim_next_session_for_card,
             sessions::claim_next_session_for_step,
+            sessions::set_session_step,
             sessions::delete_session,
             sessions::record_session_fork,
             internal_sessions::internal_sessions_stats,

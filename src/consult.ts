@@ -174,6 +174,8 @@ export interface ConsultListItem {
   answering?: number;
   /** 停在「先停一下，等你发话」 */
   awaiting?: boolean;
+  /** 从步骤卡发起时是哪一步：侧栏挂到那一步下面 */
+  step?: string | null;
 }
 
 export interface ConsultEvent {

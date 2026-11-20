@@ -9,6 +9,7 @@ import {
   Columns2,
   BookOpen,
   ListOrdered,
+  ListX,
   Copy,
   Eraser,
   Folder,
@@ -38,6 +39,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import AgentIcon from "./AgentIcon";
+import {
+  canDragChatToStep,
+  canLeaveStep,
+  missingStepTargets,
+  pastChatDragThreshold,
+  stepWriteTargets,
+} from "../chat-step-drag";
 import {
   groupByWorkMode,
   normalizeWorkMode,
@@ -602,6 +610,85 @@ export default function ProjectTree({
       void un.then((f) => f());
     };
   }, [consultRootsSig, consultOpen?.id]);
+  // 把对话拖进某一步（2026-11-20，chat-step-drag.ts）：pointer 事件自己跟手（HTML5 拖放会被 Tauri 原生文件拖放拦掉，
+  // 见 terminal.md「标签支持拖拽排序」）；落点是课题下的步骤组头，拖的时候补出还没有对话的步骤
+  const [chatDrag, setChatDrag] = useState<{
+    s: SessionMetaDto;
+    projectPath: string;
+    title: string;
+    x: number;
+    y: number;
+    over: string | null;
+    /** 档案卡里的步骤（拖起来才读）；读不到为空，只能落到已有的组头 */
+    steps: string[];
+  } | null>(null);
+  function startChatDrag(e: React.PointerEvent, s: SessionMetaDto, project: ProjectDto | null, title: string) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (!project || !canDragChatToStep(s, true)) return;
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    let active = false;
+    let lastOver: string | null = null;
+    const overAt = (x: number, y: number) => {
+      const el = document.elementFromPoint?.(x, y)?.closest<HTMLElement>("[data-step-drop]");
+      return el && samePath(el.dataset.stepDropRoot ?? "", project.path, IS_WINDOWS) ? el.dataset.stepDrop ?? null : null;
+    };
+    const move = (ev: PointerEvent) => {
+      if (!active) {
+        if (!pastChatDragThreshold(ev.clientX - x0, ev.clientY - y0)) return;
+        active = true;
+        document.body.style.userSelect = "none";
+        setChatDrag({ s, projectPath: project.path, title, x: ev.clientX, y: ev.clientY, over: null, steps: [] });
+        void invoke<{ config: { steps: { name: string }[] } }>("read_project_config", { path: project.path })
+          .then((r) => {
+            const steps = r.config.steps.map((x) => x.name);
+            setChatDrag((d) => (d && d.s === s ? { ...d, steps } : d));
+          })
+          .catch(() => {});
+      }
+      const over = overAt(ev.clientX, ev.clientY);
+      lastOver = over;
+      setChatDrag((d) => (d ? { ...d, x: ev.clientX, y: ev.clientY, over } : d));
+    };
+    const stop = (drop: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", esc, true);
+      document.body.style.userSelect = "";
+      setChatDrag(null);
+      if (drop && lastOver && lastOver !== s.stepName) void moveChatToStep(s, lastOver);
+    };
+    const up = () => stop(active);
+    const cancel = () => stop(false);
+    const esc = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape" && active) {
+        ev.stopPropagation();
+        stop(false);
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", esc, true);
+  }
+  /** 把对话放进 / 移出某一步：接力对话各段都写（只写 Mesa 自己的记录） */
+  async function moveChatToStep(s: SessionMetaDto, stepName: string | null) {
+    try {
+      for (const t of stepWriteTargets(s)) {
+        await invoke("set_session_step", { agent: t.agent, sessionId: t.sessionId, stepName });
+      }
+      useAppStore.setState({
+        sessions: useAppStore
+          .getState()
+          .sessions.map((x) => (x.agent === s.agent && x.sessionId === s.sessionId ? { ...x, stepName } : x)),
+      });
+      void useAppStore.getState().loadSessions(true);
+      toast(stepName ? `已放进「${stepName}」` : `已移出「${s.stepName}」`);
+    } catch (reason) {
+      toast(`${stepName ? "放进步骤" : "移出步骤"}失败：${String(reason)}`, "error");
+    }
+  }
   const [chatMenu, setChatMenu] = useState<{
     x: number;
     y: number;
@@ -844,6 +931,16 @@ export default function ProjectTree({
                 if (row) noteMouseCloseChat(row.getBoundingClientRect(), "right", listRef.current);
                 useAppStore.getState().requestCloseTab(holder.tabId);
               },
+            },
+          ]
+        : []),
+      ...(canLeaveStep(s) && inRegisteredProject(s)
+        ? [
+            {
+              label: `移出「${s.stepName}」`,
+              icon: ListX,
+              title: "不再挂在这一步下面，回到课题的对话里；对话本身不动。想放回去，按住它拖到那一步上",
+              onSelect: () => void moveChatToStep(s, null),
             },
           ]
         : []),
@@ -1418,6 +1515,8 @@ export default function ProjectTree({
           // 不按修饰键点下去 = 打开这一段，同时清掉多选
           onPointerDown={(e) => {
             if (e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey) clearPicked();
+            // 按住拖到课题下某一步的组头上松手 = 放进那一步（点一下照旧打开）
+            startChatDrag(e, s, project, short);
           }}
           onClick={(e) => {
             // ⌘ 点（Windows 上 Ctrl；Mac 上 Ctrl 点是右键）加进 / 拿出，⇧ 点整段选上：只选不开
@@ -1745,15 +1844,28 @@ export default function ProjectTree({
     name: string,
     folderKey: string,
     forkOpenOf: Map<string, OpenTabRow[]>,
+    /** 这个课题里从某一步发起的研讨：挂进那一步的组尾 */
+    stepConsults: ConsultListItem[] = [],
   ) {
-    const { groups, manual } = groupStepChats(pinnedRows, stepTabs);
+    const { groups, manual } = groupStepChats(pinnedRows, stepTabs, stepConsults);
+    const consultById = new Map(stepConsults.map((c) => [c.id, c]));
+    const dragHere = chatDrag && project && samePath(chatDrag.projectPath, project.path, IS_WINDOWS) ? chatDrag : null;
+    const dropCls = (step: string) =>
+      dragHere ? (dragHere.over === step ? " bg-hover text-l1 ring-1 ring-inset ring-cta-bd" : " ring-1 ring-inset ring-hairline") : "";
+    const missing = dragHere ? missingStepTargets(dragHere.steps, groups.map((g) => g.step)) : [];
     const hot = (s: SessionMetaDto) => {
       const d = chatDot(s, terminalRunInputs);
       return chatKey(s) === highlightChatKey || d === "working" || d === "confirm";
     };
     const hotTab = (t: OpenTabRow) =>
       (page === "terminal" && t.tabId === terminalActiveTabId) || t.dot === "working" || t.dot === "confirm";
-    const openByDefault = defaultOpenStep(groups, hot, hotTab);
+    const hotConsult = (id: string) => {
+      const c = consultById.get(id);
+      if (!c) return false;
+      const viewing = page === "consult" && consultOpen?.id === c.id && samePath(consultOpen.projectRoot, c.projectRoot, IS_WINDOWS);
+      return viewing || consultCaret(c, Date.now()) != null;
+    };
+    const openByDefault = defaultOpenStep(groups, hot, hotTab, hotConsult);
     const headCls = "group/step flex h-7 w-full items-center gap-0.5 rounded-md pl-2 pr-0.5 text-left text-xs text-l3 hover:bg-hover hover:text-l1";
     // 行尾一格（2026-11-11 用户：步骤组头、研讨、对话的字都顶格对齐，图标挪到行尾；开合箭头平时藏起来）：
     // 平时只有收着时组里最要紧的光标，悬停 / 聚焦时开合箭头原地换掉它（同对话行 ⋯ 换光标）；展开时组里各段自己报，不挂光标
@@ -1780,10 +1892,14 @@ export default function ProjectTree({
       const run = terminalRunInputs.find((x) => x.tabId === t.tab.tabId);
       return withUnread(t.tab.dot, run != null && unreadSet.has(unreadKeyOf(run)));
     };
-    const caretOf = (rows: StepChatRow[], tabs: StepTabRow[] = []) =>
+    const caretOf = (rows: StepChatRow[], tabs: StepTabRow[] = [], consultIds: string[] = []) =>
       strongestCaret([
         ...rows.map((r) => withUnread(chatDot(r.row.s, terminalRunInputs), unreadSet.has(chatKey(r.row.s)))),
         ...tabs.map(tabDot),
+        ...consultIds.map((id) => {
+          const c = consultById.get(id);
+          return c ? consultCaret(c, Date.now()) : null;
+        }),
       ]);
     return (
       <>
@@ -1791,7 +1907,7 @@ export default function ProjectTree({
           const gKey = `${folderKey}\n${g.step}`;
           const open = stepOpen[gKey] ?? g.step === openByDefault;
           const all = [...g.rows, ...(g.lanes?.rows ?? []), ...g.after];
-          const dot = open ? null : caretOf(all, [...g.tabs.head, ...g.tabs.lanes, ...g.tabs.tail]);
+          const dot = open ? null : caretOf(all, [...g.tabs.head, ...g.tabs.lanes, ...g.tabs.tail], g.consults);
           const lKey = `${gKey}\nlanes`;
           const lanesOpen = stepOpen[lKey] ?? true;
           return (
@@ -1801,8 +1917,10 @@ export default function ProjectTree({
                 data-rail-nav
                 aria-expanded={open}
                 onClick={() => toggleStepGroup(gKey, !open)}
-                className={headCls}
+                className={`${headCls}${dropCls(g.step)}`}
                 title={open ? `收起「${g.step}」的对话` : `展开「${g.step}」的对话`}
+                data-step-drop={g.step}
+                data-step-drop-root={project?.path}
               >
                 {/* 步骤号占定宽一格，组里的对话缩进 = 这一格 + 间距，对话标题与步骤名的字左对齐（2026-11-11 用户） */}
                 <span className="ccode-rail-text w-4 shrink-0">{circledIndex(g.index)}</span>
@@ -1837,11 +1955,27 @@ export default function ProjectTree({
                   )}
                   {g.after.map(line)}
                   {g.tabs.tail.map(tabLine)}
+                  {g.consults.map((id) => {
+                    const c = consultById.get(id);
+                    return c ? renderConsultRow(c, name) : null;
+                  })}
                 </div>
               )}
             </div>
           );
         })}
+        {/* 拖对话时补出还没有对话的步骤当落点 */}
+        {missing.map((t) => (
+          <div
+            key={`drop:${t.name}`}
+            className={`flex h-7 items-center gap-0.5 rounded-md pl-2 pr-0.5 text-xs text-l4${dropCls(t.name)}`}
+            data-step-drop={t.name}
+            data-step-drop-root={project?.path}
+          >
+            <span className="ccode-rail-text w-4 shrink-0">{circledIndex(t.index)}</span>
+            <span className="ccode-rail-text min-w-0 flex-1 truncate">{t.name}</span>
+          </div>
+        ))}
         {manual.map((r) => (
           <Fragment key={chatKey(r.s)}>
             {renderChat(r.s, project, name, null, true, r, true)}
@@ -1895,17 +2029,21 @@ export default function ProjectTree({
           consultOpen && samePath(consultOpen.projectRoot, projectPath, IS_WINDOWS) ? consultOpen.id : null,
         )
       : [];
+    // 从某一步发起的研讨挂进那一步的组（2026-11-20 用户），其余照旧单列
+    const stepConsults = consultRows.filter((c) => c.step?.trim());
+    const looseConsults = consultRows.filter((c) => !c.step?.trim());
+    const dragHere = Boolean(chatDrag && projectPath && samePath(chatDrag.projectPath, projectPath, IS_WINDOWS));
     return (
       <div role="group" aria-label={`${name} 的对话`} className="space-y-[3px] pb-1 pt-[3px]">
         {opened.map((r) => renderOpenRow(r))}
         {/* 项目内置顶：流程对话按步骤分组（2026-11-10 用户拍板，取代 11-05「行尾写步骤名」——长标题和步骤名一窄就截断、分路几段认不出），
             每行写角色（商量任务书 / 执行任务书 / 第 k 路 / 收尾），分路收进子组；人手钉的照旧行尾一枚图钉。和下面按最近活动的隔开一点 */}
-        {(pinnedRows.length > 0 || stepTabs.length > 0) && (
-          <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 || consultRows.length > 0 ? "pb-1.5" : ""}`}>
-            {renderStepGroups(pinnedRows, stepTabs, project, name, folderKey, forkOpenOf)}
+        {(pinnedRows.length > 0 || stepTabs.length > 0 || stepConsults.length > 0 || dragHere) && (
+          <div role="group" aria-label={`${name} 里置顶的对话`} className={`space-y-[3px] ${chats.length > 0 || looseConsults.length > 0 ? "pb-1.5" : ""}`}>
+            {renderStepGroups(pinnedRows, stepTabs, project, name, folderKey, forkOpenOf, stepConsults)}
           </div>
         )}
-        {consultRows.map((c) => renderConsultRow(c, name))}
+        {looseConsults.map((c) => renderConsultRow(c, name))}
         {chats.length === 0 ? (
           opened.length === 0 && pinnedRows.length === 0 && stepTabs.length === 0 && consultRows.length === 0 && <p className="py-1 pl-2 pr-2 text-xs text-l4">还没有对话</p>
         ) : (
@@ -2940,6 +3078,17 @@ export default function ProjectTree({
           items={scratchMenuItems()}
         />
       )}
+      {chatDrag &&
+        createPortal(
+          <div
+            aria-hidden="true"
+            className="ccode-float-surface pointer-events-none fixed z-50 max-w-[16rem] truncate rounded-md border border-field px-2 py-1 text-xs text-l1 shadow-lg"
+            style={{ left: chatDrag.x + 12, top: chatDrag.y + 10 }}
+          >
+            {chatDrag.over ? `放进「${chatDrag.over}」` : `${chatDrag.title} · 拖到某一步上松手`}
+          </div>,
+          document.body,
+        )}
       {chatMenu && (
         <ContextMenu
           x={chatMenu.x}
