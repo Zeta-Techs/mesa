@@ -636,8 +636,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           {chipEffort ? ` · ${chipEffort}` : ""}
         </span>
         {pendingMark && rt.modelState === "pending" && <span className="shrink-0 text-l4">待确认</span>}
-        {/* CLI 比 Mesa 核对过的新（原「测试版」格上的小点，2026-10-23 随它收进菜单） */}
-        {beta.newer && <span aria-label="CLI 比核对过的新" className="size-1.5 shrink-0 rounded-full bg-caution-text" />}
+        {/* CLI 比 Mesa 核对过的新：芯片上不再挂点（2026-11-20 用户），提醒只在菜单里那一行与悬停 */}
         <ChevronDown size={11} strokeWidth={1.8} aria-hidden="true" className="shrink-0 opacity-60" />
       </button>
       {open && (

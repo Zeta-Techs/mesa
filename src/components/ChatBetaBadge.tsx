@@ -8,7 +8,7 @@ import { IS_WINDOWS } from "../hotkeys";
 /**
  * 聊天层「测试版」说明（2026-10-22 用户：聊天层要不要标一个测试版）：说清楚这一家在聊天里能做到哪一步、
  * 哪些事要回终端；用户装的 CLI 比 Mesa 核对过的新时多一句提醒（chat-fidelity.ts）。只说明，不挡任何操作。
- * 2026-10-23 起不再单独占输入框底下一格，收进模型菜单底部一行（点开是这里的正文）；CLI 比核对过的新时模型芯片上带个小点
+ * 2026-10-23 起不再单独占输入框底下一格，收进模型菜单底部一行（点开是这里的正文）；CLI 比核对过的新时只在菜单里那一行带点，芯片上不挂（2026-11-20）
  */
 export function useChatBeta(agentId: string | null) {
   const fidelity = chatFidelity(agentId, IS_WINDOWS);
