@@ -184,7 +184,7 @@ export default function ContextRing({
   const supported = breakdownSupported(agentId);
   const note =
     detail.state === "ok"
-      ? `分类由 ${label} 的 /context 估算，与实际略有出入`
+      ? "分类由 /context 估算，与实际略有出入"
       : detail.state === "loading"
         ? `正在向 ${label} 要分类明细…`
         : detail.state === "error"
@@ -285,39 +285,39 @@ export default function ContextRing({
                   </div>
                 ))}
               </div>
-              {(view.untilCompact !== null || onCompact) && (
-                <div className="mt-2.5 flex min-h-7 items-center justify-between gap-2 border-t border-hairline pt-2.5">
-                  <span className="tabular-nums text-l3">
-                    {view.untilCompact !== null ? `离自动压缩还有 ${contextFmtTokens(view.untilCompact)}` : ""}
-                  </span>
-                  {onCompact && (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md border border-field px-2 py-1 text-l2 hover:bg-hover"
-                      title="把前面的对话压成摘要，腾出上下文"
-                      onClick={() => {
-                        setPanel(null);
-                        onCompact();
-                      }}
-                    >
-                      压缩上下文
-                    </button>
-                  )}
-                </div>
-              )}
               {longContextHint(used) && (
                 <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
               )}
-              {extra.length > 0 && (
-                <div className="mt-2.5 border-t border-hairline pt-2.5 tabular-nums text-l3">{extra.join(" · ")}</div>
-              )}
-              {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-              <div className="mt-2 leading-[18px] text-l4">首轮已含系统提示、技能清单和工具定义</div>
-              <div className="mt-0.5 leading-[18px] text-l4">
-                {note}
-                {detail.state === "error" && (
-                  <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
-                    重试
+              {/* 卡底一块（2026-11-20 用户：压缩和说明放一起、说明字小一点）：左边短句说明，右边压缩钮贴底。
+                  字号挂在这层：全站 button { font: inherit } 会吞掉按钮自己的 text-* */}
+              <div className="mt-2.5 flex items-end gap-3 border-t border-hairline pt-2.5 text-micro">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  {view.untilCompact !== null && (
+                    <div className="tabular-nums text-l3">离自动压缩还有 {contextFmtTokens(view.untilCompact)}</div>
+                  )}
+                  {extra.length > 0 && <div className="tabular-nums text-l3">{extra.join(" · ")}</div>}
+                  {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+                  <div className="text-l4">首轮已含系统提示、技能和工具定义</div>
+                  <div className="text-l4">
+                    {note}
+                    {detail.state === "error" && (
+                      <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
+                        重试
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {onCompact && (
+                  <button
+                    type="button"
+                    className="h-6 shrink-0 rounded-md border border-field px-2 text-l2 hover:bg-hover"
+                    title="把前面的对话压成摘要，腾出上下文"
+                    onClick={() => {
+                      setPanel(null);
+                      onCompact();
+                    }}
+                  >
+                    压缩上下文
                   </button>
                 )}
               </div>
