@@ -7,8 +7,15 @@ import {
   profilePermissionMode,
   rememberChatPermission,
   rememberedFullAccess,
+  resumeAsReadOnly,
   resumeSessionReuseKey,
 } from "../src/chat-permission.ts";
+
+test("接着聊只按上次真实权限判只读：商量任务书跑的是可写档，不当只读接回", () => {
+  assert.equal(resumeAsReadOnly({ permission: "discuss" }), true);
+  assert.equal(resumeAsReadOnly({ permission: "write_tree" }), false, "商量任务书的 Run 是 write_tree");
+  assert.equal(resumeAsReadOnly(null), false);
+});
 
 test("权限示例按项目类型取，四档都有一句", () => {
   const coding = permissionExample("coding");

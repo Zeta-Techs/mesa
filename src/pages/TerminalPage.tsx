@@ -4027,6 +4027,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         canResume={statuses[t.id]?.canResume ?? false}
                         attention={statuses[t.id]?.attention ?? null}
                         readOnly={Boolean(t.readonly && !writableForks[t.id])}
+                        readOnlyFork={Boolean(t.forkSource)}
                         readonlySupported={det?.readonlySupported ?? false}
                         busy={chatBusy}
                         skills={sessionByTab[t.id]?.skills ?? []}

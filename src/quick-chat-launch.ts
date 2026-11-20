@@ -21,7 +21,7 @@ import { projectChatLaunch, sessionProjectResumeProfileId } from "./project-agen
 import { IS_WINDOWS } from "./hotkeys";
 import { normalizeWorkMode, projectChatReuseKey } from "./work-mode";
 import { confirmDialog } from "./components/ConfirmDialog";
-import { resumeSessionReuseKey } from "./chat-permission";
+import { resumeAsReadOnly, resumeSessionReuseKey } from "./chat-permission";
 import { lastWriteIsMesas, resumeModelChoice, resumeProfileChoice } from "./terminal-resume";
 import {
   QUICK_CHAT_KEY_PREFIX,
@@ -372,7 +372,7 @@ export function resumeSessionInTerminal(
     });
     const chosen = profiles.find((p) => p.id === (choice.profileId ?? choice.autoLaunchProfileId));
     const reuseKey = resumeSessionReuseKey(s, run?.reuseKey);
-    const isDiscuss = run?.permission === "discuss" || s.stepRole === "discuss";
+    const isDiscuss = resumeAsReadOnly(run);
     const isReader = Boolean(s.reader || reuseKey.startsWith("reader:"));
     const readerAsk =
       !isDiscuss && isReader && agents.find((a) => a.id === s.agent)?.permissionModes.includes("ask");

@@ -111,6 +111,12 @@ export function chatPermissionMemoryApplies(reuseKey: string | null | undefined)
   return !reuseKey || isNewChatKey(reuseKey) || reuseKey.startsWith("resume:");
 }
 
+/** 「接着聊」时按只读（先出方案）接回吗：只看这段对话上次真实的权限。步骤角色「商量任务书」（stepRole=discuss）
+ *  名字撞了但要改任务书草稿、跑的是可写档，不能当只读接回（2026-11-20 用户：商量任务书换一家接着做后点开成了只读） */
+export function resumeAsReadOnly(run: { permission?: string | null } | null | undefined): boolean {
+  return run?.permission === "discuss";
+}
+
 /** 侧栏 / 对话页「接着聊」派发时的复用键：
  *  - 原 Run 已记下非聊天复用键（`ws:` / `reader:` / `discuss:` / `lane:` / `task:` 等）：原样沿用，
  *    既能与步骤卡 / 阅读区的标签互认，也不会把聊天连接的完全访问带进步骤或精读；

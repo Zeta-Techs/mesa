@@ -118,6 +118,7 @@ export default function ChatSurface({
   canResume,
   attention,
   readOnly,
+  readOnlyFork = false,
   readonlySupported,
   busy,
   skills,
@@ -214,6 +215,8 @@ export default function ChatSurface({
   canResume: boolean;
   attention: "done" | "working" | "confirm" | null;
   readOnly: boolean;
+  /** 只读是因为这是分叉出来的那段（标签写「只读分叉」）；别的只读（先出方案接回的）只写「只读」 */
+  readOnlyFork?: boolean;
   readonlySupported: boolean;
   busy?: boolean;
   skills: SkillDto[];
@@ -1454,11 +1457,11 @@ export default function ChatSurface({
           className="ml-1 shrink-0 rounded-md bg-inset px-1.5 py-0.5 text-micro text-warn-text"
           title={
             readonlySupported
-              ? "该分叉会话启用了 Agent 原生只读/计划模式"
+              ? `${readOnlyFork ? "该分叉会话" : "这段对话"}启用了 Agent 原生只读/计划模式`
               : "该 Agent 没有原生只读参数，仅提供提示约束"
           }
         >
-          只读分叉
+          {readOnlyFork ? "只读分叉" : "只读"}
         </span>
       )}
       {readOnly && (
@@ -1938,7 +1941,7 @@ export default function ChatSurface({
             : decision
             ? "先在上面选一项，或者直接回复"
             : readOnly
-            ? "这是只读分叉；可以提问、分析和规划"
+            ? `这是${readOnlyFork ? "只读分叉" : "只读对话"}；可以提问、分析和规划`
             : generating && running
               ? runningPlaceholder(midTurn, null)
             : messages.length === 0
