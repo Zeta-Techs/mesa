@@ -7,8 +7,10 @@ import {
   sidebarConsults,
   workbenchLiveConsults,
   contrastRows,
+  discussCarrySummaryText,
   discussCarryText,
   estimateCost,
+  reviewCarrySummaryLines,
   reviewCarryText,
   memberNames,
   memberOptions,
@@ -312,4 +314,37 @@ test("带回商量：写明哪场研讨、谁的结论，自带「我认同、�
   assert.equal(lines[0], "研讨「t」里 GPT 的结论（我认同，请据此改进任务书，改了哪里告诉我）：第二节证据太薄，先补两篇再写");
   assert.equal(lines[1], "依据：notes/a.md §2；outline.md 12-40");
   assert.equal(discussCarryText(rec, m({ member: "m1", conclusion: "x" })).split("\n").length, 1, "没依据不写空行");
+});
+
+test("contrastRows 挂出最新结论消息 latestMsg，批量带回商量 / 退回意见与单条口径对齐", () => {
+  const r1a = m({ id: "a", member: "m1", phase: "r1", conclusion: "首轮意见 A" });
+  const r1b = m({ id: "b", member: "m2", phase: "r1", conclusion: "首轮意见 B" });
+  const c2b = m({
+    id: "c",
+    member: "m2",
+    phase: "cross",
+    round: 1,
+    conclusion: "交叉更新 B2",
+    refs: [
+      { raw: "drafts/lit-search.md:14", path: "drafts/lit-search.md", loc: "14", state: "ok" },
+      { raw: "missing.md", path: "missing.md", loc: "", state: "missing" },
+    ],
+  });
+  const rec = record([r1a, r1b, c2b]);
+  const rows = contrastRows(rec);
+  assert.equal(rows[0].latestMsg?.id, "a");
+  assert.equal(rows[1].latestMsg?.id, "c");
+  assert.equal(rows[2].latestMsg, null);
+
+  assert.equal(discussCarrySummaryText(rec, [r1a]), discussCarryText(rec, r1a), "单条直接复用单条格式");
+  const multi = discussCarrySummaryText(rec, [r1a, c2b]);
+  assert.match(multi, /研讨「t」里各家的最新结论/);
+  assert.match(multi, /- Claude：首轮意见 A/);
+  assert.match(multi, /- GPT：交叉更新 B2（依据：drafts\/lit-search\.md:14）/);
+  assert.doesNotMatch(multi, /missing\.md/);
+
+  const lines = reviewCarrySummaryLines(rec, [r1a, c2b]);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /Claude/);
+  assert.match(lines[1], /交叉更新 B2/);
 });

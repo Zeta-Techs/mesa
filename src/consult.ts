@@ -74,6 +74,31 @@ export function discussCarryText(record: ConsultRecord, msg: ConsultMessage): st
   ].join("\n");
 }
 
+/** 研讨「各家结论对照」批量带回商量（2026-11-20）：只带 1 条时与单条口径完全一致；
+ *  多条时按成员逐条列出最终结论与核验通过的依据，放进商量输入框不自动发，让人改好取舍后再让商量 AI 改任务书。 */
+export function discussCarrySummaryText(record: ConsultRecord, msgs: readonly ConsultMessage[]): string {
+  const valid = msgs.filter((m) => (m.conclusion ?? "").trim().length > 0);
+  if (valid.length === 0) return "";
+  if (valid.length === 1) return discussCarryText(record, valid[0]);
+  const lines = [
+    `研讨「${record.meta.title}」里各家的最新结论（请对照以下意见，帮我梳理取舍并据此改进任务书，改了哪里告诉我；有我不同意或要调整的地方会在发送前或下一轮说明）：`,
+  ];
+  for (const msg of valid) {
+    const who = memberOf(record, msg.member)?.name ?? "其中一位";
+    const refs = msg.refs.filter((r) => r.state !== "missing").map((r) => r.raw.trim()).filter(Boolean);
+    const body = (msg.conclusion ?? "").trim().replace(/\s*\n\s*/g, " ");
+    lines.push(`- ${who}：${body}${refs.length > 0 ? `（依据：${refs.join("；")}）` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+/** 步骤开工后从对照表批量加进退回意见：逐条复用 reviewCarryText */
+export function reviewCarrySummaryLines(record: ConsultRecord, msgs: readonly ConsultMessage[]): string[] {
+  return msgs
+    .filter((m) => (m.conclusion ?? "").trim().length > 0)
+    .map((m) => reviewCarryText(record, m));
+}
+
 export function isImagePath(p: string): boolean {
   return /\.(png|jpe?g|gif|webp)$/i.test(p);
 }
@@ -316,6 +341,8 @@ export interface ContrastRow {
   first: string | null;
   /** 之后改过的结论（与第一轮不同才给） */
   latest: string | null;
+  /** 该成员最新的有效结论所在消息（交叉/追问有结论用最新那条，否则用第一轮；对照表直接带回商量 / 记知识用） */
+  latestMsg: ConsultMessage | null;
   /** 交叉里回了 PASS */
   crossPassed: boolean;
   /** 依据里找不到 / 没给它看的条数（全部回答合计） */
@@ -330,13 +357,16 @@ export function contrastRows(record: ConsultRecord): ContrastRow[] {
     const mine = record.messages.filter((m) => m.member === member.id && m.role === "member");
     const r1 = mine.find((m) => m.phase === "r1");
     const later = mine.filter((m) => m.phase !== "r1" && m.status === "ok" && !m.pass && m.conclusion);
-    const last = later.length ? later[later.length - 1].conclusion : null;
+    const lastMsg = later.length ? later[later.length - 1] : null;
+    const last = lastMsg?.conclusion ?? null;
     const first = r1?.status === "ok" ? r1.conclusion : null;
+    const latestMsg = lastMsg ?? (r1?.status === "ok" && r1.conclusion ? r1 : null);
     const refs = mine.flatMap((m) => m.refs);
     return {
       member,
       first,
       latest: last && last !== first ? last : null,
+      latestMsg,
       crossPassed: mine.some((m) => m.phase === "cross" && m.pass) && !mine.some((m) => m.phase === "cross" && !m.pass),
       missing: refs.filter((r) => r.state === "missing").length,
       unseen: refs.filter((r) => r.state === "unseen").length,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { ArrowUp, BookmarkPlus, Copy, CornerDownLeft, Library, ListPlus, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
+import { ArrowUp, BookmarkPlus, Check, Copy, CornerDownLeft, Library, ListPlus, MoreHorizontal, RotateCcw, Send, Square, Users } from "lucide-react";
 import ChatMarkdown from "./ChatMarkdown";
 import VendorIcon from "./VendorIcon";
 import RememberCard from "./RememberCard";
@@ -11,8 +11,10 @@ import { toast } from "../toast";
 import type { VendorId } from "../vendor-icon";
 import {
   contrastRows,
+  discussCarrySummaryText,
   discussCarryText,
   memberOf,
+  reviewCarrySummaryLines,
   reviewCarryText,
   mentionedNames,
   REF_NOTE,
@@ -34,25 +36,6 @@ import { appendStoredNote } from "../review-notes";
 import { CATEGORY_EXAMPLES } from "../research-profile";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
-
-const FAMILY_ACCENT: Record<string, string> = {
-  anthropic: "#d97757",
-  claude: "#d97757",
-  openai: "#10a37f",
-  google: "#4285f4",
-  gemini: "#4285f4",
-  deepseek: "#4d6bfe",
-  moonshot: "#6366f1",
-  kimi: "#6366f1",
-  qwen: "#8b5cf6",
-  xai: "#a1a1aa",
-  grok: "#a1a1aa",
-};
-
-function familyAccentColor(family: string | null | undefined): string {
-  if (!family) return "var(--color-cta)";
-  return FAMILY_ACCENT[family.toLowerCase()] ?? "var(--color-cta)";
-}
 
 /** 成员头像：所选模型的厂商图标（认不出用首字），圆底 */
 export function MemberAvatar({ member, size = 22 }: { member: Pick<ConsultMember, "family" | "name">; size?: number }) {
@@ -230,8 +213,16 @@ export default function ConsultView({
   const [remembering, setRemembering] = useState<string | null>(null);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [excludedMembers, setExcludedMembers] = useState<Set<string>>(new Set());
+  // 对照卡里「首轮」默认收成一行，点开看全文
+  const [firstOpen, setFirstOpen] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  useEffect(() => {
+    setExcludedMembers(new Set());
+    setRemembering(null);
+    setPromoting(null);
+  }, [id]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const openAssistant = useAppStore((s) => s.openAssistant);
@@ -338,9 +329,13 @@ export default function ConsultView({
 
   /** 「带回商量」（步骤卡发起的研讨才有）：进这个项目、聚焦那一步，照「继续讨论」原路接回商量，
    *  结论放进输入框不发送——研讨自己不写任务书，由商量那家 AI 改，你当场看到改了什么 */
-  async function carryToDiscuss(m: ConsultMessage) {
+  async function carryToDiscuss(target: ConsultMessage | readonly ConsultMessage[]) {
     const stepName = record!.meta.step;
     if (!stepName) return;
+    const text = Array.isArray(target)
+      ? discussCarrySummaryText(record!, target)
+      : discussCarryText(record!, target as ConsultMessage);
+    if (!text) return;
     const cfg = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectRoot }).catch(() => null);
     const stepIndex = cfg?.config.steps.findIndex((s) => s.name === stepName) ?? -1;
     if (stepIndex < 0) {
@@ -349,7 +344,7 @@ export default function ConsultView({
     }
     const s = useAppStore.getState();
     const token = Date.now();
-    s.setDiscussCarryReq({ projectRoot, stepName, text: discussCarryText(record!, m), token });
+    s.setDiscussCarryReq({ projectRoot, stepName, text, token });
     s.setSelectProjectReq(projectRoot);
     s.setProjectFocusReq({ projectRoot, focus: "step", stepIndex, token });
     s.setPage("workspaces");
@@ -357,11 +352,16 @@ export default function ConsultView({
 
   /** 「加进退回意见」（这一步开着工作副本时）：结论写成一行追加进评审页意见栏，点「退回修改…」时随意见交给那一轮 AI；
    *  不写任何文件，不替人退回 */
-  function addToReturnNotes(m: ConsultMessage) {
+  function addToReturnNotes(target: ConsultMessage | readonly ConsultMessage[]) {
     if (!roundPath) return;
-    appendStoredNote(roundPath, reviewCarryText(record!, m));
+    const lines = Array.isArray(target)
+      ? reviewCarrySummaryLines(record!, target)
+      : [reviewCarryText(record!, target as ConsultMessage)];
+    if (lines.length === 0) return;
+    for (const line of lines) appendStoredNote(roundPath, line);
     const worktreePath = roundPath;
-    toast(`已加进「${record!.meta.step}」的退回意见，评审时点「退回修改…」一起交给 AI`, "success", {
+    const countText = lines.length > 1 ? ` ${lines.length} 条结论` : "";
+    toast(`已把${countText}加进「${record!.meta.step}」的退回意见，评审时点「退回修改…」一起交给 AI`, "success", {
       actions: [
         {
           label: "去评审",
@@ -372,6 +372,21 @@ export default function ConsultView({
           },
         },
       ],
+    });
+  }
+
+  const canCarryDiscuss = Boolean(record.meta.step && stepRound?.step === record.meta.step && !roundPath);
+  const canReturnNotes = Boolean(record.meta.step && roundPath);
+  const rowsWithConclusion = rows.filter((r) => r.latestMsg);
+  const pickedMsgs = rowsWithConclusion
+    .filter((r) => !excludedMembers.has(r.member.id))
+    .map((r) => r.latestMsg!);
+  function toggleMemberPick(memberId: string) {
+    setExcludedMembers((prev) => {
+      const next = new Set(prev);
+      if (next.has(memberId)) next.delete(memberId);
+      else next.add(memberId);
+      return next;
     });
   }
 
@@ -405,7 +420,7 @@ export default function ConsultView({
   }
 
   const actions = (m: ConsultMessage) => (
-    <div className="mt-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
+    <div className="mt-1.5 flex flex-wrap items-center gap-0.5 opacity-70 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
       {m.conclusion && record.meta.step && roundPath && (
         <button
           type="button"
@@ -583,6 +598,191 @@ export default function ConsultView({
         ? "已完成 · 首轮对照"
         : "第一轮作答";
 
+  const hasLaterStream = stream.length > 0 || liveLater.length > 0;
+  const showContrast = revealed && rows.some((r) => r.status !== "pending");
+  const hasAnyUpdated = rows.some((r) => r.latest);
+  const showPickCheckboxes = (canCarryDiscuss || canReturnNotes) && rowsWithConclusion.length > 1;
+  const contrastPanel = showContrast ? (
+    <div className={`ccode-well ${hasLaterStream ? "mt-5" : "mt-3"} overflow-hidden rounded-xl border border-hairline`}>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline bg-strip/50 px-3.5 py-2">
+        <span className="text-xs font-semibold text-l1">
+          {hasAnyUpdated ? "各家最终结论对照" : "各家结论对照"}
+        </span>
+        <span className="text-micro text-l4">原话照搬 · Mesa 只排对照与核依据，不判谁对</span>
+      </div>
+      {rows.map((r) => {
+        const picked = r.latestMsg != null && !excludedMembers.has(r.member.id);
+        const rememberKey = `contrast:${r.member.id}`;
+        const primaryText =
+          r.latest ??
+          r.first ??
+          (r.status === "ok" ? "（没写结论）" : r.status === "pending" ? "还在答" : STATUS_TEXT[r.status as "error"]);
+        return (
+          <div
+            key={r.member.id}
+            className="grid grid-cols-1 gap-1.5 border-t border-hairline px-3.5 py-2 first:border-t-0 sm:grid-cols-[7.5rem_1fr] sm:gap-3"
+          >
+            {/* 左栏：勾选 + 头像 + 名字一行，下面是状态小标和这一行的图标操作（2026-11-20 用户：卡片太大，收窄左栏、按钮改图标） */}
+            <div className="flex min-w-0 flex-col gap-1 self-start">
+              <div className="flex min-w-0 items-center gap-1.5" title={`${r.member.name} · 经 ${agentLabel(r.member.agent)}`}>
+                {showPickCheckboxes && r.latestMsg && (
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={picked}
+                    aria-label={`${picked ? "取消勾选" : "勾选"} ${r.member.name} 的结论`}
+                    onClick={() => toggleMemberPick(r.member.id)}
+                    className={`inline-flex size-3.5 shrink-0 items-center justify-center rounded-xs border transition-colors ${
+                      picked
+                        ? "border-cta bg-cta text-cta-text"
+                        : "border-field bg-canvas text-transparent hover:border-l3"
+                    }`}
+                  >
+                    <Check size={10} strokeWidth={2.5} aria-hidden="true" />
+                  </button>
+                )}
+                <MemberAvatar member={r.member} size={16} />
+                <span className="truncate text-xs font-medium text-l1">{r.member.name}</span>
+              </div>
+              {(r.latest || r.crossPassed || r.missing > 0 || r.unseen > 0) && (
+                <div className="flex flex-wrap items-center gap-1">
+                  {r.latest && <span className="text-micro text-cta-pill-text">交叉后更新</span>}
+                  {r.crossPassed && <span className="text-micro text-l4">交叉：没补充</span>}
+                  {r.missing > 0 && <span className="text-micro text-warn-text">{r.missing} 处依据找不到</span>}
+                  {r.unseen > 0 && <span className="text-micro text-l4">{r.unseen} 处它没看到</span>}
+                </div>
+              )}
+              {r.latestMsg && (
+                <div className="-ml-1 flex items-center">
+                  {canCarryDiscuss && (
+                    <button
+                      type="button"
+                      onClick={() => void carryToDiscuss(r.latestMsg!)}
+                      aria-label={rowsWithConclusion.length > 1 ? `只把 ${r.member.name} 这条带回商量` : "带回商量"}
+                      title={`只把 ${r.member.name} 这条最新结论放进「${record.meta.step}」商量输入框（不自动发送）`}
+                      className="inline-flex size-6 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1"
+                    >
+                      <CornerDownLeft size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
+                  {canReturnNotes && (
+                    <button
+                      type="button"
+                      onClick={() => addToReturnNotes(r.latestMsg!)}
+                      aria-label={rowsWithConclusion.length > 1 ? `只把 ${r.member.name} 这条加进退回意见` : "加进退回意见"}
+                      title={`只把 ${r.member.name} 这条最新结论加进评审页退回意见栏`}
+                      className="inline-flex size-6 items-center justify-center rounded-md text-l4 hover:bg-hover hover:text-l1"
+                    >
+                      <ListPlus size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setRemembering(remembering === rememberKey ? null : rememberKey)}
+                    aria-label={`把 ${r.member.name} 这条记进项目知识`}
+                    title="把这条结论改写成一句，记进项目的「已定 / 不做」"
+                    className={`inline-flex size-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
+                      remembering === rememberKey ? "bg-hover text-l1" : "text-l4"
+                    }`}
+                  >
+                    <BookmarkPlus size={12} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs leading-relaxed text-l1">{primaryText}</div>
+              {r.latest && r.first && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFirstOpen((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(r.member.id)) next.delete(r.member.id);
+                      else next.add(r.member.id);
+                      return next;
+                    })
+                  }
+                  aria-expanded={firstOpen.has(r.member.id)}
+                  title={firstOpen.has(r.member.id) ? "收起首轮结论" : `首轮：${r.first}`}
+                  className="mt-0.5 block w-full min-w-0 text-left text-l4 hover:text-l3"
+                >
+                  <span className={`block text-micro leading-relaxed ${firstOpen.has(r.member.id) ? "" : "truncate"}`}>
+                    首轮：{r.first}
+                  </span>
+                </button>
+              )}
+              {r.latestMsg && remembering === rememberKey && (
+                <RememberCard text={r.latestMsg.conclusion ?? ""} projectPath={projectRoot} />
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {rowsWithConclusion.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline bg-strip/40 px-3.5 py-2">
+          <div className="min-w-0 flex-1 truncate text-micro text-l4">
+            {canCarryDiscuss
+              ? "带回后填进商量输入框，不自动发送，改好取舍再发。"
+              : canReturnNotes
+                ? "加进评审页退回意见栏，「退回修改…」时一起交给干活的 AI。"
+                : "长期口径点各行的书签记进项目知识；要动手交给项目助手起草派活单。"}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+            {canCarryDiscuss && (
+              <button
+                type="button"
+                disabled={pickedMsgs.length === 0}
+                onClick={() => void carryToDiscuss(pickedMsgs)}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text transition-[filter] hover:brightness-110 disabled:opacity-45"
+                title={`切回「${record.meta.step}」商量对话，把勾选的结论放进输入框（不自动发送）`}
+              >
+                <CornerDownLeft size={12} strokeWidth={2} aria-hidden="true" />
+                <span>
+                  {pickedMsgs.length === 0
+                    ? "请先勾选结论"
+                    : rowsWithConclusion.length === 1 || pickedMsgs.length === 1
+                      ? `把 ${nameOf(pickedMsgs[0].member)} 的结论带回商量`
+                      : `把勾选的 ${pickedMsgs.length} 家结论带回商量`}
+                </span>
+              </button>
+            )}
+            {canReturnNotes && (
+              <button
+                type="button"
+                disabled={pickedMsgs.length === 0}
+                onClick={() => addToReturnNotes(pickedMsgs)}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text transition-[filter] hover:brightness-110 disabled:opacity-45"
+              >
+                <ListPlus size={12} strokeWidth={2} aria-hidden="true" />
+                <span>
+                  {pickedMsgs.length === 0
+                    ? "请先勾选结论"
+                    : rowsWithConclusion.length === 1 || pickedMsgs.length === 1
+                      ? `把 ${nameOf(pickedMsgs[0].member)} 的结论加进退回意见`
+                      : `把勾选的 ${pickedMsgs.length} 家结论加进退回意见`}
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => draftWorkOrder()}
+              className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${
+                canCarryDiscuss || canReturnNotes
+                  ? "border border-hairline bg-canvas text-l2 hover:bg-hover hover:text-l1"
+                  : "border border-cta-bd bg-cta font-medium text-cta-text hover:brightness-110"
+              }`}
+              title="交给项目助手按各家结论起草派活单；派不派你在项目助手里点"
+            >
+              <Send size={12} strokeWidth={1.8} aria-hidden="true" />
+              <span>起草派活单</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* 头部：标题 + 阶段胶囊 + 成员阵容 */}
@@ -684,63 +884,12 @@ export default function ConsultView({
             </div>
           </div>
 
-          <SectionLabel title="第一轮 · 各答各的" note={revealed ? "看完再往下读对照" : "彼此看不见，全部回来后一起展开"} />
+          <SectionLabel title="第一轮 · 各答各的" note={revealed ? (hasLaterStream ? "最终结论与带回入口见最下方" : "看完再往下读对照") : "彼此看不见，全部回来后一起展开"} />
           <div className={`grid grid-cols-1 gap-2.5 ${cols}`}>{members.map(card)}</div>
 
-          {revealed && rows.some((r) => r.status !== "pending") && (
-            <div className="ccode-well mt-3 overflow-hidden rounded-xl border border-hairline">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-hairline bg-strip/50 px-3.5 py-2">
-                <span className="text-xs font-semibold text-l1">各家结论对照</span>
-                <span className="text-micro text-l4">原话照搬 · Mesa 只排对照与核依据，不判谁对</span>
-              </div>
-              {rows.map((r) => (
-                <div
-                  key={r.member.id}
-                  className="grid grid-cols-1 gap-2 border-t border-hairline border-l-2 px-3.5 py-2.5 first:border-t-0 sm:grid-cols-[9.5rem_1fr] sm:gap-3"
-                  style={{ borderLeftColor: familyAccentColor(r.member.family) }}
-                >
-                  <div className="flex min-w-0 flex-col gap-0.5 self-start">
-                    <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-l1">
-                      <MemberAvatar member={r.member} size={18} />
-                      <span className="truncate">{r.member.name}</span>
-                    </span>
-                    <span className="pl-[26px] text-micro text-l4">经 {agentLabel(r.member.agent)}</span>
-                  </div>
-                  <div className="min-w-0 text-xs leading-relaxed text-l2">
-                    <div>
-                      {r.first ?? (r.status === "ok" ? "（没写结论）" : r.status === "pending" ? "还在答" : STATUS_TEXT[r.status as "error"])}
-                    </div>
-                    {(r.latest || r.crossPassed || r.missing > 0 || r.unseen > 0) && (
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        {r.latest && (
-                          <span className="inline-flex items-center rounded-sm bg-cta-pill px-1.5 py-0.5 text-micro text-cta-pill-text">
-                            交叉后更新：{r.latest}
-                          </span>
-                        )}
-                        {r.crossPassed && (
-                          <span className="inline-flex items-center rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
-                            交叉：没补充
-                          </span>
-                        )}
-                        {r.missing > 0 && (
-                          <span className="inline-flex items-center rounded-sm bg-warn px-1.5 py-0.5 text-micro text-warn-text">
-                            依据里 {r.missing} 处找不到
-                          </span>
-                        )}
-                        {r.unseen > 0 && (
-                          <span className="inline-flex items-center rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l3">
-                            {r.unseen} 处它没看到
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+          {!hasLaterStream && contrastPanel}
 
-          {(stream.length > 0 || liveLater.length > 0) && (
+          {hasLaterStream && (
             <div className="ccode-chat-column mx-auto">
               {crossRounds > 0 && <SectionLabel title={`交叉 · ${crossRounds} 轮`} note="每家看了别家第一轮的回答" />}
               {stream.map((m) =>
@@ -819,6 +968,7 @@ export default function ConsultView({
               })}
             </div>
           )}
+          {hasLaterStream && contrastPanel}
         </div>
       </div>
 
@@ -882,6 +1032,12 @@ export default function ConsultView({
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            ...(canCarryDiscuss && pickedMsgs.length > 0
+              ? [{ label: `把各家结论带回「${record.meta.step}」商量`, onSelect: () => void carryToDiscuss(pickedMsgs) }]
+              : []),
+            ...(canReturnNotes && pickedMsgs.length > 0
+              ? [{ label: `把各家结论加进退回意见`, onSelect: () => addToReturnNotes(pickedMsgs) }]
+              : []),
             { label: "按结论起草派活单", onSelect: () => draftWorkOrder() },
             {
               label: "复制全部（Markdown）",
