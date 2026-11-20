@@ -184,14 +184,14 @@ export default function ContextRing({
   const supported = breakdownSupported(agentId);
   const note =
     detail.state === "ok"
-      ? `分类是 ${label} 用 /context 估算的，和上一轮的实际用量可能略有出入。`
+      ? `分类由 ${label} 的 /context 估算，与实际略有出入`
       : detail.state === "loading"
         ? `正在向 ${label} 要分类明细…`
         : detail.state === "error"
           ? `没读到分类明细：${detail.message}`
           : supported
-            ? "这段对话还没接上会话文件，暂时只有总量。"
-            : `${label} 不提供分类明细，这里只有总量。`;
+            ? "还没接上会话文件，暂时只有总量"
+            : `${label} 不提供分类明细`;
 
   return (
     <button
@@ -309,15 +309,11 @@ export default function ContextRing({
                 <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
               )}
               {extra.length > 0 && (
-                <div className="mt-2.5 space-y-0.5 border-t border-hairline pt-2.5 tabular-nums text-l3">
-                  {extra.map((line) => (
-                    <div key={line}>{line}</div>
-                  ))}
-                </div>
+                <div className="mt-2.5 border-t border-hairline pt-2.5 tabular-nums text-l3">{extra.join(" · ")}</div>
               )}
-              {/* 只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-              <div className="mt-2 leading-[18px] text-l4">首轮的用量已包含 {label} 的系统提示、技能清单和工具定义。</div>
-              <div className="mt-1 leading-[18px] text-l4">
+              {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+              <div className="mt-2 leading-[18px] text-l4">首轮已含系统提示、技能清单和工具定义</div>
+              <div className="mt-0.5 leading-[18px] text-l4">
                 {note}
                 {detail.state === "error" && (
                   <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>

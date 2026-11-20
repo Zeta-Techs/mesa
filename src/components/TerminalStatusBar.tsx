@@ -392,8 +392,9 @@ export default function TerminalStatusBar({
       : null;
   // 底栏不再单写的两件事收进圆环点开的浮层（2026-10-23 进悬停，2026-11-20 挪进浮层）：这段对话累计多少、经哪条连接
   const ringExtra = [
-    ...(usage && usageTotal(usage) > 0 ? [`这段对话累计 ${fmtTokensZh(usageTotal(usage))} token`] : []),
-    ...(profileName ? [`经「${profileName}」`] : []),
+    ...(usage && usageTotal(usage) > 0 ? [`累计 ${fmtTokensZh(usageTotal(usage))} token`] : []),
+    // 连接名就是 Agent 名（官方账号）时不重复写
+    ...(profileName && profileName !== agentLabel ? [`经「${profileName}」`] : []),
   ];
   const [cwdMenuOpen, setCwdMenuOpen] = useState(false);
   const [cwdDraft, setCwdDraft] = useState("");
