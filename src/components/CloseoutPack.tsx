@@ -152,8 +152,24 @@ export default function CloseoutPack({
       return;
     }
     const roots = [projectRoot, ...worktrees];
-    const root = roots.find((r) => pathWithin(file.abs, r, IS_WINDOWS)) ?? projectRoot;
-    void showProjectFile({ projectRoot, root, path: file.abs, from: "完结文件" });
+    const resolveRoot = (abs: string) => roots.find((r) => pathWithin(abs, r, IS_WINDOWS)) ?? projectRoot;
+    const root = resolveRoot(file.abs);
+    const list = groups
+      .flatMap((group) => group.files)
+      .filter((item) => !isCloseoutFieldDoc(item.rel))
+      .map((item) => ({
+        path: item.abs,
+        name: item.name,
+        root: resolveRoot(item.abs),
+        rel: item.rel,
+      }));
+    void showProjectFile({
+      projectRoot,
+      root,
+      path: file.abs,
+      list: list.length > 1 ? list : undefined,
+      from: "完结文件",
+    });
   }
 
   const finals = byId.get("final")?.files ?? [];

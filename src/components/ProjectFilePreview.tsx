@@ -53,6 +53,8 @@ function PreviewContent({
   hideReadOnlyToolbar?: boolean;
   /** 审阅里不挂「文件版本」：审阅的是工作副本，历史版本在项目文件页看 */
   hideVersions?: boolean;
+  /** 宿主接管「文件版本」入口（如 ProjectFilePaneHost / FileViewerApp），避免组件内与宿主状态脱节 */
+  onOpenVersions?: () => void | Promise<void>;
 }) {
   const kind = projectFilePreviewKind(path);
   const frame = "flex min-h-0 flex-1 flex-col";
@@ -158,7 +160,12 @@ export default function ProjectFilePreview(props: ComponentProps<typeof PreviewC
   const [dirty, setDirty] = useState(false);
   async function openVersions() {
     if (dirty && !(await confirmDialog("有未保存的编辑，查看历史将放弃这些编辑，继续？", { danger: true, confirmText: "查看历史", focusCancel: true }))) return;
-    setDirty(false); props.onDirtyChange?.(false); setVersionsPath(props.path);
+    setDirty(false); props.onDirtyChange?.(false);
+    if (props.onOpenVersions) {
+      await props.onOpenVersions();
+      return;
+    }
+    setVersionsPath(props.path);
   }
   const kind = projectFilePreviewKind(props.path);
   const isBinary = BINARY_PREVIEW_KINDS.has(kind);

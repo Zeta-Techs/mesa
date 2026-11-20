@@ -186,7 +186,7 @@ export default function FileViewerApp() {
       root: next.root ?? state.root,
       line: undefined,
       showList: listOpen,
-      versions: undefined,
+      versions: versionsOpen || undefined,
       nonce: state.nonce + 1,
     };
     setError(null);
@@ -274,7 +274,7 @@ export default function FileViewerApp() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
-          {!versionsOpen && total > 1 && (
+          {total > 1 && (
             <button
               type="button"
               aria-expanded={listOpen}
@@ -286,7 +286,7 @@ export default function FileViewerApp() {
               <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
-          {!versionsOpen && total > 1 && index >= 0 && (
+          {total > 1 && index >= 0 && (
             <>
               <button
                 type="button"
@@ -335,11 +335,11 @@ export default function FileViewerApp() {
       )}
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <Suspense fallback={<div className="px-3.5 py-3"><LoadingRows /></div>}>
-          {versionsOpen ? (
+          {versionsOpen && total <= 1 ? (
             <FileVersionsPanel
-              key={`${state.root}|${state.path}`}
+              key={`${state.root}|project`}
               root={state.root}
-              path={state.path}
+              initialPath={state.path}
               onClose={() => setVersionsOpen(false)}
             />
           ) : (
@@ -359,27 +359,37 @@ export default function FileViewerApp() {
                 </aside>
               )}
               <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                <ProjectFilePreview
-                  key={state.path}
-                  path={state.path}
-                  root={state.root}
-                  hideFileName
-                  revealLine={state.line ?? null}
-                  revealNonce={state.nonce}
-                  onOpenFile={(absPath) => {
-                    const name = absPath.split(/[\\/]/).pop() ?? absPath;
-                    const dir = absPath.replace(/[\\/][^\\/]*$/, "") || absPath;
-                    const nextRoot = pathWithin(absPath, state.root, IS_WINDOWS)
-                      ? state.root
-                      : pathWithin(absPath, state.projectRoot, IS_WINDOWS)
-                        ? state.projectRoot
-                        : dir;
-                    void switchFile({ path: absPath, name, root: nextRoot });
-                  }}
-                  onDirtyChange={(d) => {
-                    dirtyRef.current = d;
-                  }}
-                />
+                {versionsOpen ? (
+                  <FileVersionsPanel
+                    key={`${state.root}|${state.path}`}
+                    root={state.root}
+                    path={state.path}
+                    onClose={() => setVersionsOpen(false)}
+                  />
+                ) : (
+                  <ProjectFilePreview
+                    key={state.path}
+                    path={state.path}
+                    root={state.root}
+                    hideFileName
+                    revealLine={state.line ?? null}
+                    revealNonce={state.nonce}
+                    onOpenVersions={() => setVersionsOpen(true)}
+                    onOpenFile={(absPath) => {
+                      const name = absPath.split(/[\\/]/).pop() ?? absPath;
+                      const dir = absPath.replace(/[\\/][^\\/]*$/, "") || absPath;
+                      const nextRoot = pathWithin(absPath, state.root, IS_WINDOWS)
+                        ? state.root
+                        : pathWithin(absPath, state.projectRoot, IS_WINDOWS)
+                          ? state.projectRoot
+                          : dir;
+                      void switchFile({ path: absPath, name, root: nextRoot });
+                    }}
+                    onDirtyChange={(d) => {
+                      dirtyRef.current = d;
+                    }}
+                  />
+                )}
               </div>
             </div>
           )}

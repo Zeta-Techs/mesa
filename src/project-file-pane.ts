@@ -30,6 +30,8 @@ export interface ProjectFilePaneReq extends ProjectFilePaneFile {
   /** 栏头「问 AI」（资料列表接线）：按此刻看的文件路径开商量对话；不给就不显示 */
   askAi?: (path: string) => void;
   versions?: { root: string; workspaceId?: string };
+  /** 从「文件版本」点「返回文件」后保留的版本范围（如步骤 workspaceId），再切回「文件版本」不丢文件树 */
+  versionsScope?: { root: string; workspaceId?: string };
   nonce: number;
 }
 

@@ -28,6 +28,8 @@ import ContextMenu, { type ContextMenuItem } from "./ContextMenu";
 import {
   AppWindow,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   Copy,
   ExternalLink,
   FolderOpen,
@@ -268,14 +270,52 @@ export default function ProjectFilePaneHost() {
   // 标题栏只保留高频导航与拆窗图标，次级操作收进 ⋯ 更多菜单，给左侧两行文件名与路径留足宽度
   const iconAction = `${ghostActionClass} w-7 px-0`;
   const stepAction = `${ghostActionClass} w-6 px-0`;
-  const moreItems: ContextMenuItem[] = !pane.versions
+  // 当有清单且非步骤级版本树时，由宿主统一提供文件树与上下切换（预览态与版本态共用，切到文件版本不丢文件树）；
+  // 否则（步骤级版本或单文件）由 FileVersionsPanel 内置文件树接管并默认定位到当前文件
+  const useHostTree = total > 1 && !pane.versions?.workspaceId;
+  const openVersionsMode = () => {
+    const scope = pane.versionsScope ?? { root: pane.root };
+    void showProjectFile({
+      projectRoot: pane.projectRoot,
+      root: pane.root,
+      path: pane.path,
+      list: pane.list,
+      versions: scope,
+      versionsScope: scope,
+      from: pane.from,
+      askAi: pane.askAi,
+    });
+  };
+  const closeVersionsMode = (currentPath?: string, filePaths?: string[]) => {
+    const targetPath = currentPath ?? pane.path;
+    const nextList: ProjectFilePaneFile[] | undefined =
+      pane.list && pane.list.length > 0
+        ? pane.list
+        : filePaths && filePaths.length > 1
+          ? filePaths.map((p) => ({
+              path: p,
+              name: p.split(/[\\/]/).pop() ?? p,
+              root: pane.root,
+            }))
+          : undefined;
+    void showProjectFile({
+      projectRoot: pane.projectRoot,
+      root: pane.root,
+      path: targetPath,
+      list: nextList,
+      versionsScope: pane.versions ?? pane.versionsScope,
+      from: pane.from === "文件版本" ? undefined : pane.from,
+      askAi: pane.askAi,
+    });
+  };
+  const moreItems: ContextMenuItem[] = !pane.versions?.workspaceId
     ? [
         {
           label: "在新窗口打开",
           icon: AppWindow,
           onSelect: () => void popOutToWindow(),
         },
-        ...(pane.askAi
+        ...(!pane.versions && pane.askAi
           ? [
               {
                 label: "问 AI",
@@ -284,7 +324,7 @@ export default function ProjectFilePaneHost() {
               },
             ]
           : []),
-        ...(supportsImmersiveReader(pane.name)
+        ...(!pane.versions && supportsImmersiveReader(pane.name)
           ? [
               {
                 label: "沉浸阅读",
@@ -294,17 +334,9 @@ export default function ProjectFilePaneHost() {
             ]
           : []),
         {
-          label: "文件版本",
+          label: pane.versions ? "返回文件预览" : "文件版本",
           icon: History,
-          onSelect: () =>
-            void showProjectFile({
-              projectRoot: pane.projectRoot,
-              root: pane.root,
-              path: pane.path,
-              list: pane.list,
-              versions: { root: pane.root },
-              from: "文件版本",
-            }),
+          onSelect: () => (pane.versions ? closeVersionsMode() : openVersionsMode()),
         },
         ...(inProject
           ? [
@@ -336,7 +368,7 @@ export default function ProjectFilePaneHost() {
 
   const actions = (
     <div className="flex shrink-0 items-center gap-0.5">
-      {!pane.versions && total > 1 && (
+      {useHostTree && (
         <button
           type="button"
           aria-expanded={listOpen}
@@ -348,7 +380,7 @@ export default function ProjectFilePaneHost() {
           <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
         </button>
       )}
-      {!pane.versions && total > 1 && index >= 0 && (
+      {useHostTree && index >= 0 && (
         <>
           <button
             type="button"
@@ -358,7 +390,7 @@ export default function ProjectFilePaneHost() {
             title="上一个文件"
             aria-label="上一个文件"
           >
-            ↑
+            <ChevronUp size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -368,7 +400,7 @@ export default function ProjectFilePaneHost() {
             title="下一个文件"
             aria-label="下一个文件"
           >
-            ↓
+            <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
           <span className="px-0.5 text-micro tabular-nums text-l4">
             {index + 1}/{total}
@@ -388,7 +420,7 @@ export default function ProjectFilePaneHost() {
       >
         <AppWindow size={14} strokeWidth={1.8} aria-hidden="true" />
       </button>
-      {!pane.versions && (
+      {!pane.versions?.workspaceId && (
         <button
           ref={moreBtnRef}
           type="button"
@@ -413,8 +445,8 @@ export default function ProjectFilePaneHost() {
     <SettingsDrawerShell
       open={docked ? true : visible}
       onClose={() => void close()}
-      title={pane.versions ? "文件版本" : pane.name}
-      subtitle={pane.versions ? undefined : pane.from ? `${pane.from} · ${rel}` : rel}
+      title={pane.versions?.workspaceId ? "文件版本" : pane.name}
+      subtitle={pane.versions?.workspaceId ? undefined : pane.from ? `${pane.from} · ${rel}` : rel}
       headerExtra={actions}
       fillBody
       docked={
@@ -437,18 +469,18 @@ export default function ProjectFilePaneHost() {
         <p className="shrink-0 break-words border-b border-hairline px-3.5 py-1.5 text-micro text-err-text">{error}</p>
       )}
       <Suspense fallback={<div className="px-3.5 py-3"><LoadingRows /></div>}>
-      {pane.versions ? <FileVersionsPanel
-        key={`${pane.versions.root}|${pane.versions.workspaceId ?? pane.path}`}
+      {pane.versions && !useHostTree ? <FileVersionsPanel
+        key={`${pane.versions.root}|${pane.versions.workspaceId ?? "project"}`}
         root={pane.versions.root}
-        path={pane.versions.workspaceId ? undefined : pane.path}
+        initialPath={pane.path}
         workspaceId={pane.versions.workspaceId}
-        onClose={(currentPath) => void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: currentPath ?? pane.path, list: pane.list })}
+        onClose={closeVersionsMode}
         onChosenChange={(currentPath) => {
           versionsPathRef.current = currentPath;
         }}
       /> : (
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          {listOpen && total > 1 && (
+          {listOpen && useHostTree && (
             <aside className="flex min-h-0 w-44 shrink-0 flex-col border-r border-hairline px-1 py-1">
               <FileSelectionTree
                 paths={treePaths}
@@ -471,22 +503,43 @@ export default function ProjectFilePaneHost() {
             </aside>
           )}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <ProjectFilePreview
-              key={pane.path}
-              path={pane.path}
-              root={pane.root}
-              hideFileName
-              revealLine={pane.line ?? null}
-              revealNonce={pane.nonce}
-              onOpenFile={(p) =>
-                void showProjectFile({ projectRoot: pane.projectRoot, root: pane.root, path: p, list: pane.list, from: pane.from })
-              }
-              onOpenReader={supportsImmersiveReader(pane.name) ? () => void openImmersive() : undefined}
-              onDirtyChange={(d) => {
-                setProjectFilePaneDirty(d);
-                if (d !== dirty) setDirty(d);
-              }}
-            />
+            {pane.versions ? (
+              <FileVersionsPanel
+                key={`${pane.versions.root}|${pane.path}`}
+                root={pane.versions.root}
+                path={pane.path}
+                onClose={closeVersionsMode}
+                onChosenChange={(currentPath) => {
+                  versionsPathRef.current = currentPath;
+                }}
+              />
+            ) : (
+              <ProjectFilePreview
+                key={pane.path}
+                path={pane.path}
+                root={pane.root}
+                hideFileName
+                revealLine={pane.line ?? null}
+                revealNonce={pane.nonce}
+                onOpenVersions={openVersionsMode}
+                onOpenFile={(p) =>
+                  void showProjectFile({
+                    projectRoot: pane.projectRoot,
+                    root: pane.root,
+                    path: p,
+                    list: pane.list,
+                    versionsScope: pane.versionsScope,
+                    from: pane.from,
+                    askAi: pane.askAi,
+                  })
+                }
+                onOpenReader={supportsImmersiveReader(pane.name) ? () => void openImmersive() : undefined}
+                onDirtyChange={(d) => {
+                  setProjectFilePaneDirty(d);
+                  if (d !== dirty) setDirty(d);
+                }}
+              />
+            )}
           </div>
         </div>
       )}

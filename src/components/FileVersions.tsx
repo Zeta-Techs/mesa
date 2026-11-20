@@ -20,6 +20,14 @@ const TOOLBAR_BTN =
 const TOOLBAR_CHIP =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-canvas px-2 text-xs font-medium text-l1 transition-colors hover:bg-hover disabled:opacity-40";
 const absolute = (root: string, path: string) => `${root.replace(/[/\\]+$/, "")}/${path}`;
+const relativeToRoot = (base: string, target: string): string => {
+  const normBase = base.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normTarget = target.replace(/\\/g, "/");
+  if (normBase && normTarget.toLowerCase().startsWith(`${normBase.toLowerCase()}/`)) {
+    return normTarget.slice(normBase.length + 1);
+  }
+  return normTarget.replace(/^\/+/, "");
+};
 
 export function FileVersionsButton({
   root,
@@ -71,11 +79,14 @@ export function FileVersionsButton({
   </span>;
 }
 
-export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenChange }: {
+export function FileVersionsPanel({ root, path, initialPath, workspaceId, onClose, onChosenChange }: {
   root: string;
+  /** 传入则锁定为单文件视图（不画内置文件树，由外层宿主提供文件树）；留空则启用内置「文件树」 */
   path?: string;
+  /** 未锁定 path 时的默认选中文件路径（绝对路径或相对路径），打开版本树时直接定位到该文件 */
+  initialPath?: string;
   workspaceId?: string;
-  onClose?: (currentPath?: string) => void;
+  onClose?: (currentPath?: string, filePaths?: string[]) => void;
   /** 当前选中文件的绝对路径（右侧文件栏拆到新窗口时用） */
   onChosenChange?: (currentPath: string) => void;
 }) {
@@ -101,7 +112,17 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenCh
   versionIdRef.current = versionId;
   const compareIdRef = useRef(compareId);
   compareIdRef.current = compareId;
-  const paths = useMemo(() => data?.files.map((file) => file.path) ?? [], [data]);
+  const initialRel = useMemo(
+    () => (!path && initialPath ? relativeToRoot(data?.root ?? root, initialPath) : ""),
+    [path, initialPath, data?.root, root],
+  );
+  const paths = useMemo(() => {
+    const list = data?.files.map((item) => item.path) ?? [];
+    if (initialRel && !list.includes(initialRel)) {
+      return [...list, initialRel].sort();
+    }
+    return list;
+  }, [data, initialRel]);
   const version = file?.versions.find((candidate) => candidate.id === versionId);
   const compared = file?.versions.find((candidate) => candidate.id === compareId);
   const kind = projectFilePreviewKind(chosen);
@@ -111,18 +132,26 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenCh
   const onChosenChangeRef = useRef(onChosenChange);
   onChosenChangeRef.current = onChosenChange;
   useEffect(() => {
-    if (chosen) onChosenChangeRef.current?.(path ?? absolute(root, chosen));
-  }, [chosen, path, root]);
+    if (chosen) onChosenChangeRef.current?.(path ?? absolute(data?.root ?? root, chosen));
+  }, [chosen, path, data?.root, root]);
   useEffect(() => {
     let stale = false;
     setData(null); setFile(null); setError(null);
     invoke<FileVersionsDto>("file_versions", { root, path: path ?? null, workspaceId: workspaceId ?? null }).then((next) => {
       if (stale) return;
       setData(next);
-      setChosen((current) => next.files.some((file) => file.path === current) ? current : (next.files.find((file) => file.exists || file.versions.length) ?? next.files[0])?.path ?? "");
+      const preferred = !path && initialPath ? relativeToRoot(next.root || root, initialPath) : "";
+      const allPaths = preferred && !next.files.some((f) => f.path === preferred)
+        ? [...next.files.map((f) => f.path), preferred]
+        : next.files.map((f) => f.path);
+      setChosen((current) => {
+        if (current && allPaths.includes(current)) return current;
+        if (preferred && allPaths.includes(preferred)) return preferred;
+        return (next.files.find((f) => f.exists || f.versions.length) ?? next.files[0])?.path ?? preferred;
+      });
     }).catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [root, path, workspaceId, revision]);
+  }, [root, path, initialPath, workspaceId, revision]);
   useEffect(() => {
     let stale = false;
     const targetKey = `${root}\n${workspaceId ?? ""}\n${chosen}`;
@@ -239,7 +268,12 @@ export function FileVersionsPanel({ root, path, workspaceId, onClose, onChosenCh
           type="button"
           className={`${TOOLBAR_CHIP} ml-auto`}
           title="回到当前文件的预览 / 编辑"
-          onClick={() => onClose(path ?? absolute(root, chosen))}
+          onClick={() => {
+            const base = data?.root ?? root;
+            const current = path ?? (chosen ? absolute(base, chosen) : undefined);
+            const all = paths.length > 0 ? paths.map((p) => absolute(base, p)) : undefined;
+            onClose(current, all);
+          }}
         >
           <ArrowLeft size={13} strokeWidth={1.8} aria-hidden="true" />
           返回文件

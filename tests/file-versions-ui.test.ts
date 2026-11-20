@@ -285,3 +285,27 @@ test("单文件版本面板传入 onClose 时在顶部次工具条原地展示�
     assert.deepEqual(closed, ["/project/outline.md"]);
   } finally { await mounted.cleanup(); }
 });
+
+test("传入 initialPath 时保留内置文件树并默认定位到当前文件，返回文件附带文件清单", async () => {
+  const mounted = await mount();
+  const closed: Array<{ path?: string; files?: string[] }> = [];
+  try {
+    await mounted.act(async () =>
+      mounted.root.render(
+        mounted.createElement(mounted.FileVersionsPanel, {
+          root: "/project",
+          initialPath: "/project/artifacts/pdf-page-1.png",
+          onClose: (p?: string, all?: string[]) => closed.push({ path: p, files: all }),
+        }),
+      ),
+    );
+    assert.ok(mounted.button("文件树"), "未锁定单文件时保留文件树开关");
+    assert.ok(mounted.document.querySelector('[role="tree"]'), "默认展开左侧文件树");
+    assert.match(mounted.body(), /pdf-page-1\.png/);
+    await mounted.act(async () => mounted.button("返回文件").click());
+    assert.equal(closed.length, 1);
+    assert.equal(closed[0].path, "/project/artifacts/pdf-page-1.png");
+    assert.ok(closed[0].files?.includes("/project/artifacts/pdf-page-1.png"));
+    assert.ok(closed[0].files?.includes("/project/outline.md"));
+  } finally { await mounted.cleanup(); }
+});
