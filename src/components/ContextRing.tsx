@@ -16,7 +16,7 @@ import {
 /**
  * 上下文用量圆环（docs/design-chat-layer.md §4.4）：上一轮输入占模型上下文窗口的比例，≥80% 变 warn。
  * 聊天输入框（模型芯片左边）与终端底栏右区共用；终端底栏走 xterm 调色板，所以颜色可传进来。
- * 悬停是一句话的说明；点一下弹出浮层（2026-10-20 用户要 Claude 客户端那样的上下文面板）：总量、三段横条、
+ * 悬停只写比例与用量（2026-11-20 用户：其余收进点开的浮层）；点一下弹出浮层（2026-10-20 用户要 Claude 客户端那样的上下文面板）：总量、三段横条、
  * 分类列表（Claude Code / Qwen Code 在后台跑它自己的 /context 得来）、离自动压缩还有多少、「压缩上下文」。
  * 浮层都挂到 body 上按圆环位置定位（底栏右区是 overflow-hidden；原生 title 在桌面窗口里不可靠）。
  */
@@ -97,7 +97,7 @@ export default function ContextRing({
   warnColor?: string;
   trackColor?: string;
   className?: string;
-  /** 悬停里多写的几行（2026-10-23 底栏收字：本段用了多少 token、经哪条连接不再单写在底栏上） */
+  /** 浮层里多写的几行（2026-10-23 底栏收字：本段用了多少 token、经哪条连接不再单写在底栏上；2026-11-20 从悬停挪进浮层） */
   extra?: string[];
   /** 聊天层直接显示比例，圆环与原有输入控件的位置不变。 */
   showPercent?: boolean;
@@ -226,17 +226,6 @@ export default function ContextRing({
               <div className="mt-0.5 tabular-nums text-l3">
                 {contextFmtTokens(used)} / {contextFmtTokens(win)} tokens
               </div>
-              {extra.map((line) => (
-                <div key={line} className="mt-0.5 tabular-nums text-l3">
-                  {line}
-                </div>
-              ))}
-              {heavy && (
-                <div className={`mt-1 leading-[18px] ${heavy.level === "stuck" ? "text-err-text" : "text-warn-text"}`}>{heavy.text}</div>
-              )}
-              {/* 只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-              <div className="mt-1 leading-[18px] text-l4">首轮的用量已包含 {label} 的系统提示、技能清单和工具定义</div>
-              <div className="mt-0.5 leading-[18px] text-l4">点一下看分类{onCompact ? "，也能在里面压缩" : ""}</div>
             </div>
           </div>,
           document.body,
@@ -319,7 +308,16 @@ export default function ContextRing({
               {longContextHint(used) && (
                 <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
               )}
-              <div className="mt-2 leading-[18px] text-l4">
+              {extra.length > 0 && (
+                <div className="mt-2.5 space-y-0.5 border-t border-hairline pt-2.5 tabular-nums text-l3">
+                  {extra.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                </div>
+              )}
+              {/* 只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+              <div className="mt-2 leading-[18px] text-l4">首轮的用量已包含 {label} 的系统提示、技能清单和工具定义。</div>
+              <div className="mt-1 leading-[18px] text-l4">
                 {note}
                 {detail.state === "error" && (
                   <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>

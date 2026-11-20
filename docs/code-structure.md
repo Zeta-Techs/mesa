@@ -912,7 +912,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
   switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
                              # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
-  components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画）与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；悬停可加 extra 行（本段 token · 经连接）；点开是上下文浮层；imageBytes（Codex 会话里存的图）到 8MB 变橙、13MB 红字说明（context-breakdown imageWeightNote）
+  components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画）与终端底栏右区共用（终端底栏传 xterm 调色板颜色）；悬停只写比例与用量；点开是上下文浮层，底部可加 extra 行（本段 token · 经连接）与首轮说明；imageBytes（Codex 会话里存的图）到 8MB 变橙、13MB 红字说明（context-breakdown imageWeightNote）
                              # （总量 + 分类色横条 + 分类列表 + 离自动压缩还有多少 + 压缩上下文），同一轮的分类明细模块级缓存
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、；imageWeightNote（Codex 会话图片 8MB 变慢 / 13MB 可能卡住，借 ClawChat 实测）
                              # 分类中文名、行与横条（contextView：四大类各一色、小类同灰、顺序固定；配色 SERIES 经 dataviz 校验器验过，改色先重验）；

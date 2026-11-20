@@ -390,7 +390,7 @@ export default function TerminalStatusBar({
     running && onTuiCommand && status && slashCommandsFor(status.agentId).some((c) => c.cmd === "/compact")
       ? () => onTuiCommand("/compact")
       : null;
-  // 底栏不再单写的两件事收进圆环悬停（2026-10-23）：这段对话累计多少、经哪条连接
+  // 底栏不再单写的两件事收进圆环点开的浮层（2026-10-23 进悬停，2026-11-20 挪进浮层）：这段对话累计多少、经哪条连接
   const ringExtra = [
     ...(usage && usageTotal(usage) > 0 ? [`这段对话累计 ${fmtTokensZh(usageTotal(usage))} token`] : []),
     ...(profileName ? [`经「${profileName}」`] : []),
@@ -1122,7 +1122,7 @@ export default function TerminalStatusBar({
         ))}
 
       {/* 右区：时长 · token（等宽小字）。聊天变体（2026-10-23 照 Claude 客户端收字）：上下文圆环 + 模型 · 思考芯片（聊天层挂进来）；
-          这段对话用了多少、经哪条连接收进圆环的悬停。窗口大小不知道的家（如 Grok）没有圆环，照旧写 token 数 */}
+          这段对话用了多少、经哪条连接收进圆环点开的浮层。窗口大小不知道的家（如 Grok）没有圆环，照旧写 token 数 */}
       {chat ? (
         <span className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-l4">
           {!ownHidden && ring ? (
