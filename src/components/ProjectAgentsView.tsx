@@ -1806,10 +1806,11 @@ function SlotBindingPopover({
               />
             </div>
           )}
+          {/* 弹层自身限高可滚：列表不 shrink-0 会被 flex 压成 0 高，模型一行都看不见 */}
           <ul
             role="listbox"
             aria-label={`${activeProfile?.name ?? activeAgentLabel} 的模型`}
-            className="max-h-36 overflow-y-auto overscroll-contain px-0.5"
+            className="max-h-36 shrink-0 overflow-y-auto overscroll-contain px-0.5"
           >
             {filteredModels.length === 0 ? (
               <li className="px-2 py-2 text-micro text-l4">没有匹配的模型</li>
