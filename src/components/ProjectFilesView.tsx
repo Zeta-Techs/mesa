@@ -84,6 +84,14 @@ import { Modal } from "./Modal";
 import { armDraftHandoff } from "../file-draft-handoff";
 import { openFileInWindow, popOutFileToWindow } from "../file-window-open";
 import { organizePdfExcerpt } from "../pdf-organize";
+import {
+  clampFileTreeWidth,
+  FILE_TREE_DEFAULT_REM,
+  FILE_TREE_MIN_REM,
+  FILE_TREE_PREVIEW_MIN_REM,
+  FILE_TREE_WIDTH_KEY,
+  parseFileTreeWidth,
+} from "../file-tree-width";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
 import {
@@ -297,6 +305,51 @@ export default function ProjectFilesView({
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+  // 分栏时文件树的宽度（file-tree-width.ts）：拖分隔条改、双击回默认，记本机
+  const hostRef = useRef<HTMLDivElement>(null);
+  const rootRem = () => parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 14;
+  const [treeWidth, setTreeWidth] = useState(() => {
+    try {
+      return parseFileTreeWidth(localStorage.getItem(FILE_TREE_WIDTH_KEY), rootRem());
+    } catch {
+      return FILE_TREE_DEFAULT_REM * rootRem();
+    }
+  });
+  function startTreeResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = (handle.parentElement?.getBoundingClientRect().width ?? 0) || treeWidth;
+    const hostW = hostRef.current?.getBoundingClientRect().width || Number.POSITIVE_INFINITY;
+    let last = startW;
+    const move = (ev: PointerEvent) => {
+      last = clampFileTreeWidth(startW + ev.clientX - startX, rootRem(), hostW);
+      setTreeWidth(last);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      try {
+        localStorage.setItem(FILE_TREE_WIDTH_KEY, String(last));
+      } catch {
+        /* 存不下只影响下次打开 */
+      }
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+  function resetTreeWidth() {
+    setTreeWidth(FILE_TREE_DEFAULT_REM * rootRem());
+    try {
+      localStorage.removeItem(FILE_TREE_WIDTH_KEY);
+    } catch {
+      /* 同上 */
+    }
+  }
 
   /** quiet=true 给监听器的后台重载用：失败不弹错（目录多半已被 Agent 删/改名），
    *  并把该目录从展开集合与缓存里收掉——否则每轮 fs 事件都重拉死路径、反复报错 */
@@ -1750,17 +1803,37 @@ export default function ProjectFilesView({
     );
   }
 
-  const hasSplitHost =
-    Boolean(preview) || (!loading && (filtering ? filteredFiles.length > 0 : Boolean(cache[projectPath]?.length)));
+  // 只有宽屏开着预览才分栏；没选文件时文件树铺满整行（2026-11-20 用户：想宽屏看所有文件）
+  const split = Boolean(preview) && !windowed && wide;
 
   return (
     <>
-      <div className="flex h-full min-h-0 overflow-hidden">
+      <div ref={hostRef} className="flex h-full min-h-0 overflow-hidden">
         <section
-          className={`flex h-full min-h-0 shrink-0 flex-col ${
-            hasSplitHost ? "w-full lg:w-[22rem] lg:pr-5" : "w-full"
-          }`}
+          className={`relative flex h-full min-h-0 shrink-0 flex-col ${split ? "pr-5" : "w-full"}`}
+          style={
+            split
+              ? {
+                  width: treeWidth,
+                  minWidth: `${FILE_TREE_MIN_REM}rem`,
+                  maxWidth: `calc(100% - ${FILE_TREE_PREVIEW_MIN_REM}rem)`,
+                }
+              : undefined
+          }
         >
+          {split && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="拖动改文件列表宽度，双击回默认"
+              title="拖动改文件列表宽度，双击回默认"
+              onPointerDown={startTreeResize}
+              onDoubleClick={resetTreeWidth}
+              className="group absolute inset-y-0 right-1 z-10 flex w-3 cursor-col-resize justify-center"
+            >
+              <span className="h-full w-px transition-colors group-hover:bg-hairline" />
+            </div>
+          )}
           <div className="mb-2 flex shrink-0 flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <input
@@ -1974,54 +2047,6 @@ export default function ProjectFilesView({
               />
             </div>
           </section>
-        )}
-        {!preview && !windowed && wide && hasSplitHost && (
-          <div
-            aria-hidden={officeDocs.length === 0 ? "true" : undefined}
-            className={`ml-0 hidden h-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center px-6 text-center lg:flex ${projectWellClass}`}
-          >
-            <p className="text-xs font-medium text-l2">点选左侧文件查看或编辑</p>
-            <p className="mt-1.5 text-micro text-l4">
-              支持 ↑ / ↓ 连续翻看、{IS_MAC ? "⌘" : "Ctrl"} 点多选、拖入外部文件导入
-            </p>
-            {officeDocs.length > 0 && (
-              <div className="mt-5 w-full max-w-md text-left">
-                <p className="mb-1.5 px-2 text-micro font-medium text-l4">近期改动</p>
-                <ul className="space-y-0.5 rounded-xl bg-canvas/45 p-1">
-                  {officeDocs.slice(0, 5).map((doc) => {
-                    const parentRel =
-                      doc.rel && doc.rel !== doc.name
-                        ? doc.rel.slice(0, Math.max(0, doc.rel.length - doc.name.length - 1))
-                        : "";
-                    const mod = modifiedLabel(doc.modified);
-                    return (
-                      <li key={doc.path}>
-                        <button
-                          type="button"
-                          onClick={() => void pickFile(asFileEntry(doc))}
-                          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover/70"
-                          title={doc.rel || doc.name}
-                        >
-                          <FileTypeMark path={doc.path} />
-                          <span className="min-w-0 truncate text-xs text-l1">{doc.name}</span>
-                          {parentRel && (
-                            <span className="min-w-0 truncate font-mono text-micro text-l4">
-                              {parentRel}
-                            </span>
-                          )}
-                          {mod && (
-                            <span className="ml-auto shrink-0 text-micro tabular-nums text-l4">
-                              {mod}
-                            </span>
-                          )}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
-          </div>
         )}
       </div>
       {preview && !windowed && !wide && (
