@@ -9,6 +9,8 @@
 --    xelatex 印成空方块（2026-11-12 HER 初稿实证：全文 294 处）。正文与引文库题名都换，PDF / Word 同一口径。
 -- 6. 表格排版（PDF 与 Word）：宽表按内容分列宽（不再五至七列等宽把 Source 和长文字平分）；
 --    PDF 单元格开头及长斜杠词（如 XRD/XPS/TEM/Raman）允许断词并用小一号字；Word 宽表默认列改左对齐。
+-- 7. 引文库里的 HTML 富文本标记（Zotero 导出的题名原样带 NbB<sub>2</sub>、<i>in situ</i>）换成 LaTeX 命令，
+--    否则 Pandoc 读 BibTeX 当普通文字，PDF 与 Word 文献表印出「NbB<sub>2</sub>」（2026-11-23 硼化物定稿实证：5 条）。
 
 local PLACEHOLDERS = { ["待补"] = true, ["待核"] = true, ["无期号"] = true }
 
@@ -182,6 +184,26 @@ local function tex_scripts(text)
   return table.concat(parts)
 end
 
+local HTML_MARKUP = {
+  { "<sub>(.-)</sub>", "\\textsubscript{%1}" },
+  { "<sup>(.-)</sup>", "\\textsuperscript{%1}" },
+  { "<i>(.-)</i>", "\\emph{%1}" },
+  { "<em>(.-)</em>", "\\emph{%1}" },
+  { "<b>(.-)</b>", "\\textbf{%1}" },
+  { "<strong>(.-)</strong>", "\\textbf{%1}" },
+  { "<sc>(.-)</sc>", "\\textsc{%1}" },
+  { '<span style="font%-variant:%s*small%-caps;?">(.-)</span>', "\\textsc{%1}" },
+  { '<span class="nocase">(.-)</span>', "{%1}" },
+}
+
+local function tex_markup(text)
+  if not text:find("<", 1, true) then return text end
+  for _, rule in ipairs(HTML_MARKUP) do
+    text = text:gsub(rule[1], rule[2])
+  end
+  return text
+end
+
 -- ---------- 表格（PDF 与 Word 宽表列宽） ----------
 local function cell_text(cell)
   return pandoc.utils.stringify(pandoc.Div(cell.contents))
@@ -318,7 +340,7 @@ function Pandoc(doc)
     local found = locate(path)
     -- 读不到或不是 .bib：不动，交回 citeproc 照常处理
     if not found or not found:lower():match("%.bib$") then return doc end
-    local parsed = pandoc.read(tex_scripts(protect(read_file(found))), "bibtex")
+    local parsed = pandoc.read(tex_scripts(tex_markup(protect(read_file(found)))), "bibtex")
     for _, r in ipairs(parsed.meta.references or {}) do refs:insert(r) end
   end
   if #paths > 0 then

@@ -295,6 +295,27 @@ test("参考文献过滤器：Unicode 上下标换成真上下标（正文与引
   }
 });
 
+// 2026-11-23 硼化物定稿：Zotero 导出的题名带 NbB<sub>2</sub>，PDF 与 Word 文献表原样印出标签
+test("参考文献过滤器：引文库题名里的 HTML 富文本标记换成真上下标与斜体", { skip: !quartoWorks() }, () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-refs-html-"));
+  try {
+    writeFileSync(
+      join(root, "refs.bib"),
+      "@article{a,\n  title = {Tailoring NbB<sub>2</sub> Nanorods for <i>in situ</i> H<sup>+</sup> Studies},\n  author = {Burse, S},\n  year = {2026},\n  journal = {Adv. Sci.},\n}\n",
+    );
+    writeFileSync(join(root, "doc.md"), "---\nbibliography: refs.bib\n---\n\nText [@a].\n");
+    const r = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "--citeproc", "-t", "native"], { cwd: root, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const out = r.stdout;
+    assert.match(out, /Str "NbB"\s*, Subscript \[ Str "2" \]/);
+    assert.match(out, /Superscript \[ Str "\+" \]/);
+    assert.match(out, /Emph \[ Str "in" , Space , Str "situ" \]/);
+    assert.doesNotMatch(out, /<\/?(sub|sup|i)>/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("参考文献过滤器：PDF 与 Word 宽表均按内容分列宽；PDF 补斜杠断词与小一号字；窄表不动", { skip: !quartoWorks() }, () => {
   const root = mkdtempSync(join(tmpdir(), "mesa-refs-table-"));
   try {
