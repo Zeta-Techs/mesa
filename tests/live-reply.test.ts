@@ -1263,3 +1263,71 @@ test("CodeBuddy 2.185：虽不逐字流式正文，但转圈行的 ↓ N tokens 
   assert.equal(claudeOutputTokens(["✹ Waking… (2s · streaming · ↓ 10 tokens)"]), 10);
   assert.equal(claudeOutputTokens(["✹ Notifying… (7s · streaming · ↓ 1.2k tokens)"]), 1200);
 });
+
+test("Antigravity CLI 1.5.14：工具行下面重绘留下的提问残影不当这一轮的回显", () => {
+  // 2026-11-23 用户截图：长提问发出去后，「⣿ 思考」行下面又留了一份同样的提问（多行草稿那一帧），
+  // 夹着边框碎片和计时「3m 9s」；原先从这份残影读起，后几段提问连同「3m 9s」画进了聊天层
+  const ask1 = "> 画一个鹈鹕骑自行车相关主题的 30s 动画，具体风格和内容自拟，输出目录自拟";
+  const ask2 = "  展示你是一位多么出色的动态设计师，就像是你简历上的作品集一样，使用任何你认为能产出最佳效果的工具或技术。anyway, this project is";
+  const ask3 = " own! You are the owner!";
+  const ask4 = " 你拥有完全的创作自由，优先追求卓越的视觉设计、大胆的艺术指导、引人注目的构图和富有力量的动态表现，让每一秒都有价值。全力以赴。";
+  const ask5 = "  Tips: 当前工作区是一个混合工作区，下面可能已经有多个历史测试案例，不要尝试参考任何已有的历史项目或者直接查看参考答案试图作弊。";
+  const ask6 = "  独立在一个新的随机自拟命名目录完成，目录名带上 gemini-4-neon";
+  const asked = [ask1.slice(2), "", ask2 + ask3 + ask4, "", ask5, "", ask6].join("\n");
+  const ghost = (tail: string[]) => [
+    RULE,
+    ask1, "", ask2, ask3, ask4, "", ask5, "", ask6, "",
+    "○ Thought for 9.8s (Initial plan: Create a 30-second animation of a pelican riding a bicycle...)",
+    "● Ran (mkdir -p /Users/x/ccode/scratch/pelican-velodrome-gemini-4-neon && which ffmpeg ffprobe pyt...) (ctrl+o to expand)",
+    "⣿  Identified `matplotlib` as potentially relevant. Considering a motion design approach...",
+    ask1,
+    RULE,
+    ask2,
+    "─".repeat(56) + "追求卓越的视觉设计、大胆的艺术指导、引人注目的构图和富有力量的动态表现，让每一",
+    ask4, "", ask5, "", ask6, "",
+    "             3m 9s",
+    "",
+    "● Edited 6 files (math.js, palette.js, bike_pelican.js, +3) (ctrl+o to expand)",
+    ...tail,
+    "└ Tip: Use /help to see all commands.",
+    RULE,
+    "> Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+    RULE,
+  ];
+  const working = extractLiveReply(ghost(["⣿  Now, working on the next steps... Creating a bespoke audio soundtrack..."]), "agy");
+  assert.equal(working?.echo, ask1);
+  assert.deepEqual(dropAskedEcho(working?.lines ?? [], asked), []);
+  const replied = extractLiveReply(ghost(["  动画已经渲染好了，打开 index.html 就能看。"]), "agy");
+  assert.deepEqual(dropAskedEcho(replied?.lines ?? [], asked), ["动画已经渲染好了，打开 index.html 就能看。"]);
+
+  // 同一句真发了两次：上一轮回过话，后一条照常是这一轮的回显
+  const resent = [
+    RULE,
+    "> 继续",
+    "",
+    "○ Thought for 3s (Checking the outline...)",
+    "  第一轮的回复。",
+    "> 继续",
+    "",
+    "  第二轮的回复。",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(resent, "agy")?.lines, ["第二轮的回复。"]);
+  // 上一轮只在工具之前说了一句就被打断，后一条下面又不是提问里的字：也不算残影
+  const interrupted = [
+    RULE,
+    "> 继续",
+    "",
+    "  好的，我接着改。",
+    "● Edit a.md (Update outline)",
+    "> 继续",
+    "",
+    "  第二轮开头。",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(interrupted, "agy")?.lines, ["第二轮开头。"]);
+});

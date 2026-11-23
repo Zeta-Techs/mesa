@@ -88,6 +88,11 @@ interface Layout {
    * （2026-11-09 用户截图：这句挂在聊天层生成提示上）
    */
   footNote?: number;
+  /**
+   * 界面重绘没擦干净时，屏上会在这一轮的工具 / 思考行下面再留一份同样的提问（agy 1.5.14），
+   * 读屏不拿它当这一轮的起点，见 {@link dropGhostEchoes}
+   */
+  ghostEcho?: boolean;
 }
 
 // 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
@@ -231,6 +236,7 @@ const LAYOUTS: Record<string, Layout> = {
           : -1,
       ),
     echo: /^>\s+\S/,
+    ghostEcho: true,
     lead: null,
     tool: /^\s*[●○]\s/,
     skip: /^─{8,}$|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)|^\s*└\s*Tip:/,
@@ -461,6 +467,7 @@ export function extractLiveReply(
       break;
     }
   }
+  if (layout.ghostEcho && echoAt > 0) echoAt = dropGhostEchoes(layout, region, echoAt);
   // 屏幕第一行的回显可能是钉住的提问（下面接的是回复中段，2026-10-19 用户：Codex 第 22 行起预览卡住、
   // 或者只剩下半截）。真回显下面先是续行、再空行、再是「•」开头的一段；对不上这个形状的一定是钉住的
   if (layout.pinnedEcho && echoAt === 0 && region.length > 1) {
@@ -511,6 +518,49 @@ function dropNoticeBoxes(region: readonly string[]): string[] {
     }
   }
   return out;
+}
+
+// 残影里夹着的边框碎片（只剩框线、块字符）与计时（「3m 9s」「45s」）
+const GHOST_RULE = /^[─-▟]+$/;
+const GHOST_TIMER = /^\s*(?:\d+h\s*)?(?:\d+m\s*)?\d+(?:\.\d+)?s$/;
+
+/**
+ * 提问残影（Layout.ghostEcho）：agy 1.5.14 跑长任务时界面重绘没擦干净，这一轮的工具 / 思考行下面又留了一份同样的提问，
+ * 夹着边框碎片「──── 追求卓越…」和计时「3m 9s」。读屏把它当成这一轮的回显，后面几段提问连同计时画成了回复
+ * （2026-11-23 用户截图）。
+ * 最后一条回显与上一条回显一字不差，上一条从第一行工具 / 思考 / 状态行起到这条之前没有回复正文，这条就是残影：
+ * 起点退回上一条，残影这一块（空行、框线碎片、提问里有的字、计时）换成空行，行号不变。
+ * 同一句真发了两次、上一轮又没回话时，这样读与按后一条读结果相同；上一轮在工具之前回过话、
+ * 后一条下面又不是这句提问的字时不算残影。返回这一轮回显所在的行
+ */
+function dropGhostEchoes(layout: Layout, region: string[], echoAt: number): number {
+  const turnRow = (l: string) =>
+    layout.tool.test(l) || SPINNER.test(l) || Boolean(layout.thinkBlock?.test(l)) || layout.skip.test(l);
+  let at = echoAt;
+  for (let round = 0; round < 4; round++) {
+    let prev = at - 1;
+    while (prev >= 0 && !layout.echo.test(region[prev])) prev--;
+    if (prev < 0 || region[prev].trim() !== region[at].trim()) break;
+    let turnAt = prev + 1;
+    while (turnAt < at && !turnRow(region[turnAt])) turnAt++;
+    if (turnAt >= at || readReply(layout, region.slice(0, at), turnAt, false)) break;
+    const asked = norm(region.slice(prev, turnAt).join("\n"));
+    const askedBody = region.slice(prev + 1, turnAt).some((l) => norm(l));
+    let end = at + 1;
+    let echoed = false;
+    for (; end < region.length; end++) {
+      const l = region[end];
+      const t = l.trim();
+      if (!t || GHOST_RULE.test(t) || GHOST_TIMER.test(l)) continue;
+      const n = norm(l);
+      if (!n || !asked.includes(n)) break;
+      echoed = true;
+    }
+    if (askedBody && !echoed) break;
+    region.fill("", at, end);
+    at = prev;
+  }
+  return at;
 }
 
 /** 多行提问的回显：「› 第一行」之后的续行（缩进）也是用户的话，到第一个空行或助手行首为止都跳过
