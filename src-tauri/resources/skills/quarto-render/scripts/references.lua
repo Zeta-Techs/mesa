@@ -277,13 +277,25 @@ function Table(tbl)
       sum = sum + w
     end
     local scale = is_latex and 0.98 or 1.0
+    local ratios = {}
+    for j = 1, cols do ratios[j] = weights[j] / sum end
+    -- 防止短列（如 Source / Yes）被压到 5%–6% 导致表头单词在 Word 里断成 Sour/ce：设最小列宽底线
+    local min_ratio = math.min(0.085, 0.7 / cols)
+    for _ = 1, 2 do
+      local rsum = 0
+      for j = 1, cols do
+        if ratios[j] < min_ratio then ratios[j] = min_ratio end
+        rsum = rsum + ratios[j]
+      end
+      for j = 1, cols do ratios[j] = ratios[j] / rsum end
+    end
     for j = 1, cols do
       local align = tbl.colspecs[j][1]
       -- Word 宽表默认列对齐在 Quarto 交叉引用表里会被居中，改左对齐避免多行文字锯齿错乱
       if is_docx and align == pandoc.AlignDefault then
         align = pandoc.AlignLeft
       end
-      tbl.colspecs[j] = { align, scale * weights[j] / sum }
+      tbl.colspecs[j] = { align, scale * ratios[j] }
     end
   end
   if is_docx then

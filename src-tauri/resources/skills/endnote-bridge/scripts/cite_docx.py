@@ -938,11 +938,12 @@ def _table_col_widths(rows: list[list[str]], cols: int, total_width: int) -> lis
         for j in range(cols)
     ]
     wsum = sum(weights) or float(cols)
-    raw = [max(720, int(total_width * w / wsum)) for w in weights]
+    min_w = min(780, total_width // cols)
+    raw = [max(min_w, int(total_width * w / wsum)) for w in weights]
     diff = total_width - sum(raw)
     if diff != 0:
         best = max(range(cols), key=lambda j: raw[j])
-        raw[best] = max(720, raw[best] + diff)
+        raw[best] = max(min_w, raw[best] + diff)
     return raw
 
 

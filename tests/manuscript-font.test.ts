@@ -324,6 +324,8 @@ test("参考文献过滤器：PDF 与 Word 宽表均按内容分列宽；PDF 补
     const cols = [...firstGrid.matchAll(/w:w="(\d+)"/g)].map((m) => Number(m[1]));
     assert.equal(cols.length, 5);
     assert.ok(cols[1] > cols[4], `Word 宽表应按内容分列宽而非等宽：${cols.join(", ")}`);
+    const total = cols.reduce((a, b) => a + b, 0);
+    assert.ok(Math.min(...cols) / total >= 0.08, `短列不得被压得过窄：${cols.join(", ")}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
