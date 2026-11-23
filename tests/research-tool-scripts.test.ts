@@ -666,17 +666,27 @@ test("Zotero 域稿写出 ADDIN ZOTERO_ITEM，缺键不交 docx", () => {
     assert.match(braceZip.stdout, /tbl-benchmark/);
     assert.doesNotMatch(braceZip.stdout, /\{#/);
     assert.match(readFileSync(join(root, "report.md"), "utf8"), /未匹配：0/);
-    // 只在图注里引的文献 Refresh 后进不了文献表：照常出稿，报告点名
-    writeFileSync(md, "See [@Doe2020].\n\n![Panel from [@Lee2021].](dot.png){#fig-1}\n");
+    // 图注和表题里的 [@键] 同样写出真实引文域（EndNote/Zotero 换编号样式时同步变成 [1]，不再停在静态作者-年），
+    // 且首句加粗只作用在 <w:t> run，不污染 fldChar / instrText 域控制 run
+    writeFileSync(
+      md,
+      "See [@Doe2020].\n\n![Lead [@Lee2021]. Summarized from [@Doe2020; @Lee2021].](dot.png){#fig-1}\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n\n: Table note [@Lee2021]. {#tbl-1}\n",
+    );
     writeFileSync(join(root, "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64"));
     const captioned = join(root, "captioned.docx");
     result = run(script, ["--input", md, "--bib", bib, "--output", captioned, "--report", join(root, "cap.md")]);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stderr, /cited only in captions.*Lee2021/);
-    // Windows 上报告是 CRLF；本机装了 Zotero 时报告后面还有「库绑定」一节，按空行切不开就会把它算进来
-    const capWarn = readFileSync(join(root, "cap.md"), "utf8").replace(/\r\n/g, "\n").split("只在图注或表题里引用")[1]?.split("\n\n")[0] ?? "";
-    assert.match(capWarn, /`Lee2021`/);
-    assert.doesNotMatch(capWarn, /`Doe2020`/);
+    const capZoXml = zipXml(captioned).stdout;
+    assert.equal((capZoXml.match(/ADDIN ZOTERO_ITEM CSL_CITATION/g) ?? []).length, 4);
+    assert.doesNotMatch(capZoXml, /<w:b \/><\/w:rPr><w:(?:fldChar|instrText)/);
+    assert.doesNotMatch(result.stderr, /cited only in captions/);
+    const enCaptioned = join(root, "en-captioned.docx");
+    const enCapRes = run(citeDocx, ["--input", md, "--bib", bib, "--output", enCaptioned, "--report", join(root, "en-cap.md")]);
+    assert.equal(enCapRes.status, 0, enCapRes.stderr);
+    const capEnXml = zipXml(enCaptioned).stdout;
+    assert.equal((capEnXml.match(/ADDIN EN\.CITE\.DATA/g) ?? []).length, 4);
+    assert.doesNotMatch(capEnXml, /<w:b \/><\/w:rPr><w:(?:fldChar|instrText)/);
+    assert.match(fldData(enCaptioned).stdout, /<Author>Lee<\/Author>/);
     writeFileSync(md, "See [@Missing].\n");
     const bad = join(root, "bad.docx");
     result = run(script, ["--input", md, "--bib", bib, "--output", bad, "--report", join(root, "bad.md")]);
@@ -1153,6 +1163,93 @@ test("两份域稿复用已有 References 标题与 ::: {#refs} 槽位，不出�
     assert.doesNotMatch(appXml, /:::/);
     assert.ok(appXml.indexOf("ADDIN EN.REFLIST") > appXml.indexOf(">References</w:t>"));
     assert.ok(appXml.indexOf("ADDIN EN.REFLIST") < appXml.indexOf(">Appendix</w:t>"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Zotero 多课题共用个人库：同 DOI 跨分类重复按最新课题分类唯一消歧，同分类内重复仍不猜（2026-11-23 实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-zo-col-"));
+  const zoteroDocx = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
+  try {
+    const project = join(root, "硼化物析氢");
+    mkdirSync(project, { recursive: true });
+    const zdb = join(root, "zotero.sqlite");
+    const seed = `
+import sqlite3, sys
+z = sqlite3.connect(sys.argv[1])
+z.execute("CREATE TABLE settings(setting TEXT, key TEXT, value TEXT)")
+z.execute("INSERT INTO settings VALUES ('account', 'userID', '123456')")
+z.execute("CREATE TABLE libraries(libraryID INTEGER PRIMARY KEY, type TEXT)")
+z.execute("INSERT INTO libraries VALUES (1, 'user')")
+z.execute("CREATE TABLE items(itemID INTEGER PRIMARY KEY, libraryID INTEGER, key TEXT)")
+z.execute("CREATE TABLE fields(fieldID INTEGER PRIMARY KEY, fieldName TEXT)")
+z.execute("CREATE TABLE itemDataValues(valueID INTEGER PRIMARY KEY, value TEXT)")
+z.execute("CREATE TABLE itemData(itemID INTEGER, fieldID INTEGER, valueID INTEGER)")
+z.execute("CREATE TABLE deletedItems(itemID INTEGER)")
+z.execute("CREATE TABLE collections(collectionID INTEGER PRIMARY KEY, collectionName TEXT, libraryID INTEGER)")
+z.execute("CREATE TABLE collectionItems(collectionID INTEGER, itemID INTEGER)")
+z.execute("INSERT INTO fields VALUES (1, 'DOI')")
+# 旧课题 HER催化综述 里的副本 + 本课题第一次同步 + 本课题最新带时间戳同步
+z.execute("INSERT INTO collections VALUES (9, 'HER催化综述', 1)")
+z.execute("INSERT INTO collections VALUES (14, '硼化物析氢', 1)")
+z.execute("INSERT INTO collections VALUES (15, '硼化物析氢 2026/11/23 14:10:15', 1)")
+z.execute("INSERT INTO items VALUES (1, 1, 'OLDHER01')")
+z.execute("INSERT INTO items VALUES (2, 1, 'BORIDE14')")
+z.execute("INSERT INTO items VALUES (3, 1, 'BORIDE15')")
+z.execute("INSERT INTO items VALUES (4, 1, 'DUPCOL1A')")
+z.execute("INSERT INTO items VALUES (5, 1, 'DUPCOL1B')")
+z.execute("INSERT INTO itemDataValues VALUES (1, '10.1002/adfm.201906481')")
+z.execute("INSERT INTO itemDataValues VALUES (2, '10.1000/same-col-dup')")
+for iid in (1, 2, 3):
+    z.execute("INSERT INTO itemData VALUES (?, 1, 1)", (iid,))
+for iid in (4, 5):
+    z.execute("INSERT INTO itemData VALUES (?, 1, 2)", (iid,))
+z.execute("INSERT INTO collectionItems VALUES (9, 1)")
+z.execute("INSERT INTO collectionItems VALUES (14, 2)")
+z.execute("INSERT INTO collectionItems VALUES (15, 3)")
+z.execute("INSERT INTO collectionItems VALUES (15, 4)")
+z.execute("INSERT INTO collectionItems VALUES (15, 5)")
+z.commit()
+z.close()
+`;
+    assert.equal(spawnSync(python, ["-c", seed, zdb], { encoding: "utf8" }).status, 0);
+    const md = join(project, "review-final.md");
+    const bib = join(project, "references.bib");
+    writeFileSync(md, "See [@Gupta2020] and [@Twice2025].\n");
+    writeFileSync(
+      bib,
+      [
+        "@article{Gupta2020, title={Metal Boride Review}, author={Gupta, Suraj}, year={2020}, doi={10.1002/adfm.201906481}}",
+        "@article{Twice2025, title={Same Col Dup}, author={Roe, Ann}, year={2025}, doi={10.1000/same-col-dup}}",
+        "",
+      ].join("\n"),
+    );
+    const out = join(project, "zotero.docx");
+    const rep = join(project, "report.md");
+    const res = run(zoteroDocx, [
+      "--input",
+      md,
+      "--bib",
+      bib,
+      "--output",
+      out,
+      "--report",
+      rep,
+      "--zotero-db",
+      zdb,
+      "--project-root",
+      project,
+    ]);
+    assert.equal(res.status, 0, res.stderr);
+    const xml = zipXml(out).stdout;
+    assert.match(xml, /users\/123456\/items\/BORIDE15/);
+    assert.doesNotMatch(xml, /OLDHER01|BORIDE14|DUPCOL1A|DUPCOL1B/);
+    assert.match(xml, /embed000/);
+    const repText = readFileSync(rep, "utf8");
+    assert.match(repText, /已绑定 1 条/);
+    assert.match(repText, /已按课题分类「硼化物析氢 2026\/11\/23 14:10:15」精确对应/);
+    assert.match(repText, /Twice2025.*2 条，未绑定/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

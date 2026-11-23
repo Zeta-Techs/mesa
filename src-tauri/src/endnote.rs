@@ -1612,10 +1612,9 @@ fn rebuild_field_docx(
         .arg(&docx_tmp)
         .arg("--report")
         .arg(&report_tmp)
+        .arg("--project-root")
+        .arg(project_root)
         .current_dir(doc_root);
-    if kind == "endnote" {
-        cmd.arg("--project-root").arg(project_root);
-    }
     let out = crate::process::capture_command(&mut cmd, std::time::Duration::from_secs(120), 1024 * 1024);
     let _ = std::fs::remove_dir_all(&tmp_dir);
     let Ok(out) = out else {
@@ -1705,9 +1704,11 @@ pub fn refresh_field_docx_if_stale(docx_path: &Path, context_root: &Path) {
         let empty_cites = doc_xml.contains("\"citationItems\":[]")
             || doc_xml.contains("\"citationItems\": []");
         let zotero_db = crate::dirs::home_dir().map(|h| h.join("Zotero").join("zotero.sqlite"));
+        let zotero_wal = crate::dirs::home_dir().map(|h| h.join("Zotero").join("zotero.sqlite-wal"));
         let db_updated_with_unbound = (report_text.contains("已绑定：0")
+            || report_text.contains("已绑定 0 条")
             || report_text.contains("未写入条目地址"))
-            && zotero_db.as_deref().is_some_and(newer);
+            && (zotero_db.as_deref().is_some_and(newer) || zotero_wal.as_deref().is_some_and(newer));
         has_literal_refs_div
             || empty_cites
             || newer(&bib_path)

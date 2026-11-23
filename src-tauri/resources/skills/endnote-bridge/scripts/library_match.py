@@ -610,7 +610,77 @@ def zotero_title_index(path: Path, owner: str) -> dict[tuple[str, str], list[str
     return index
 
 
-def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | None) -> list[str]:
+_ZOTERO_TS_SUFFIX_RE = re.compile(
+    r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?$"
+)
+
+
+def zotero_project_collection_uris(
+    path: Path, owner: str, project_root: Path | None
+) -> tuple[str, set[str] | None]:
+    """Zotero 用户库里与当前课题同名（或 Zotero 重导时自动追加时间戳后缀如 `<课题名> 2026/11/23 14:10:15`）
+    的最新非空分类条目 URI 集合。多课题共用同一 Zotero 库时用于确定性消歧；分类内仍重复或无匹配分类时仍不猜。"""
+    if project_root is None or not owner or not path.is_file():
+        return "", None
+    raw_name = project_root.name.strip()
+    targets = {n for n in (raw_name, _sanitize_group_name(raw_name)) if n}
+    if not targets:
+        return "", None
+    try:
+        conn, copied = open_library_copy(path)
+    except (OSError, sqlite3.Error):
+        return "", None
+    try:
+        cols = conn.execute(
+            "SELECT c.collectionID, c.collectionName FROM collections c "
+            "JOIN libraries lib ON lib.libraryID = c.libraryID AND lib.type = 'user'"
+        ).fetchall()
+        matched: list[tuple[int, str]] = []
+        for cid, cname in cols:
+            name = str(cname or "").strip()
+            if not name:
+                continue
+            hit = name in targets
+            if not hit:
+                for target in targets:
+                    prefix = target + " "
+                    if name.startswith(prefix) and _ZOTERO_TS_SUFFIX_RE.fullmatch(name[len(prefix) :].strip()):
+                        hit = True
+                        break
+            if hit:
+                matched.append((int(cid), name))
+        if not matched:
+            return "", None
+        # 按 collectionID 降序取最新导入且非空的那个分类（Zotero 每次导入建新分类，ID 单调递增）
+        matched.sort(key=lambda item: item[0], reverse=True)
+        for cid, cname in matched:
+            rows = conn.execute(
+                "SELECT i.key FROM collectionItems ci "
+                "JOIN items i ON i.itemID = ci.itemID "
+                "WHERE ci.collectionID = ? AND i.itemID NOT IN (SELECT itemID FROM deletedItems)",
+                (cid,),
+            ).fetchall()
+            uris = {
+                f"http://zotero.org/{owner}/items/{k}"
+                for (k,) in rows
+                if re.fullmatch(r"[A-Z0-9]{8}", str(k))
+            }
+            if uris:
+                return cname, uris
+        return "", None
+    except sqlite3.Error:
+        return "", None
+    finally:
+        conn.close()
+        copied.close()
+
+
+def bind_zotero(
+    records: dict[str, dict],
+    cited: list[str],
+    database: Path | None,
+    project_root: Path | None = None,
+) -> list[str]:
     if database is None:
         database = zotero_db_path()
         if database is None:
@@ -622,7 +692,22 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
         lines.append("条目地址未写入域，没有编造占位 URI。")
         return lines
     titles: dict[tuple[str, str], list[str]] | None = None
+    col_loaded = False
+    col_name = ""
+    col_uris: set[str] | None = None
+
+    def narrow_by_collection(hits: list[str]) -> str | None:
+        nonlocal col_loaded, col_name, col_uris
+        if not col_loaded:
+            col_name, col_uris = zotero_project_collection_uris(database, owner, project_root)
+            col_loaded = True
+        if not col_uris:
+            return None
+        in_col = [u for u in hits if u in col_uris]
+        return in_col[0] if len(in_col) == 1 else None
+
     bound = 0
+    col_bound = 0
     dup_count = 0
     for key in cited:
         rec = records.get(key)
@@ -638,8 +723,15 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
                 bound += 1
                 lines.append(f"- `{key}` 没有 DOI，按题名与年份对上条目 `{hits[0]}`")
             elif len(hits) > 1:
-                dup_count += 1
-                lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
+                picked = narrow_by_collection(hits)
+                if picked is not None:
+                    rec["_zotero_uri"] = picked
+                    bound += 1
+                    col_bound += 1
+                    lines.append(f"- `{key}` 没有 DOI，按题名与课题分类「{col_name}」对上条目 `{picked}`")
+                else:
+                    dup_count += 1
+                    lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
             else:
                 lines.append(f"- `{key}` 没有可用 DOI，库里也没有同题名同年份的条目，未绑定")
             continue
@@ -648,11 +740,19 @@ def bind_zotero(records: dict[str, dict], cited: list[str], database: Path | Non
             rec["_zotero_uri"] = hits[0]
             bound += 1
         elif len(hits) > 1:
-            dup_count += 1
-            lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
+            picked = narrow_by_collection(hits)
+            if picked is not None:
+                rec["_zotero_uri"] = picked
+                bound += 1
+                col_bound += 1
+            else:
+                dup_count += 1
+                lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
         else:
             lines.append(f"- `{key}` DOI `{doi}` 库里没有，未绑定")
     lines.insert(1, f"已绑定 {bound} 条")
+    if col_bound:
+        lines.insert(2, f"其中 {col_bound} 条在库里有多个副本，已按课题分类「{col_name}」精确对应。")
     if dup_count:
         lines.append(
             f"提示：有 {dup_count} 篇在 Zotero 库里存在重复条目（多次导入常见），为防绑错未写条目 URI；"

@@ -221,7 +221,7 @@ def write_report(path: Path, payload: dict):
             lines.append("⚠ 下面这些文献只在图注或表题里引用。图注只写作者-年、不写引用域，Refresh 后它们进不了参考文献表。在正文里至少引用一次再重新生成：")
             lines.extend(f"- `{key}`" for key in payload["caption_only"])
             lines.append("")
-        lines.append("打开 `output/zotero.docx` → Zotero 工具栏点 **Refresh**（**先确认 Zotero 应用已在运行再开文档**：首次打开若插件无响应，是宿主未就绪——等 Zotero 加载完，或关掉文档重开一次，文档本身没坏。首次会弹引用样式选择框，属正常，选一次即可）→ **光标点进 References 标题下面那个空行**（⚠ 必须是空行本身：点在标题行上会把参考文献表插到标题上方、还继承标题的大字号）→ 点 **Add/Edit Bibliography** 插入参考文献表 → 换样式用 Document Preferences。插错位置就 Ctrl+Z 撤销，光标点对再点一次。不要改源稿里的 `[@键]`。")
+        lines.append("打开 `output/zotero.docx` → Zotero 工具栏点 **Refresh**（**先确认 Zotero 应用已在运行再开文档**：首次打开若插件无响应，是宿主未就绪——等 Zotero 加载完，或关掉文档重开一次，文档本身没坏。首次会弹引用样式选择框，属正常，选一次即可；macOS 版 Word 经 AppleScript 逐条更新域，几百处引用叠加高清插图首次刷新常需 1–3 分钟，刷新前切到 Word「视图 → 草稿」可显著提速，后续逐处微调可在 Document Preferences 里先取消勾选「自动更新引文」）→ **光标点进 References 标题下面那个空行**（⚠ 必须是空行本身：点在标题行上会把参考文献表插到标题上方、还继承标题的大字号）→ 点 **Add/Edit Bibliography** 插入参考文献表 → 换样式用 Document Preferences。插错位置就 Ctrl+Z 撤销，光标点对再点一次。不要改源稿里的 `[@键]`。")
     binding = payload.get("binding") or []
     if binding:
         lines.append("")
@@ -276,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
             rec_nums[key] = len(rec_nums) + 1
     match = load_library_match()
     chosen = Path(args.zotero_db) if args.zotero_db else None
-    binding = match.bind_zotero(records, list(rec_nums), chosen)
+    root = Path(args.project_root) if args.project_root else None
+    binding = match.bind_zotero(records, list(rec_nums), chosen, root)
     # 库体检：旧版 Mesa 导出的脏记录会让重新导入的去重认不出、旧数据残留，
     # 参考文献表就会继续显示旧格式。只读检查；检出就给「先删再导」的处方。
     stale, stale_note = match.zotero_stale_items(chosen)

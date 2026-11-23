@@ -1002,10 +1002,15 @@ def append_content(
                 cap_props.append(w_el("ind", **{"firstLine": "0", "firstLineChars": "0"}))
                 cap.append(cap_props)
                 cap.append(run_text(f"{figure_word} {figure_state[0]}. ", bold=True))
-                lead, rest = split_lead_sentence(plain_citations(caption_text, bib))
+                # 图注本身是正文流里的普通 <w:p>（不是 Word 浮动文本框），EndNote 与 Zotero 均可直接刷新其中的真实引文域，
+                # 避免换编号样式后正文变成 [1] 而图注里的 Summarized from / Adapted from 停留在静态 (Author, Year) 文本。
+                lead, rest = split_lead_sentence(caption_text)
                 before_runs = len(list(cap))
                 append_inline(cap, lead, bib, rec_nums, cited, missing, False)
                 for run in list(cap)[before_runs:]:
+                    # 只给可见文字 run 加粗，不污染 fldChar / fldData / instrText 域控制 run
+                    if run.find(W + "t") is None:
+                        continue
                     props = run.find(W + "rPr")
                     if props is None:
                         props = w_el("rPr")
@@ -1105,7 +1110,7 @@ def build_body(
             props.append(w_el("jc", **{"val": "both"}))
             props.append(w_el("ind", **{"firstLine": "0", "firstLineChars": "0"}))
             cap.append(props)
-            append_inline(cap, f"{table_word} {table_no}. {plain_citations(content, bib)}", bib, rec_nums, cited, missing, False)
+            append_inline(cap, f"{table_word} {table_no}. {content}", bib, rec_nums, cited, missing, False)
             body.append(cap)
             continue
         if kind == "title":
