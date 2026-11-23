@@ -49,7 +49,7 @@ function OpenExternalHandle({ path, root, onError }: { path: string; root: strin
 }
 
 /** 行内拖出手柄：mousedown 即起系统拖拽；阻止冒泡避免触发行点击预览 */
-function DragOutHandle({ path }: { path: string }) {
+export function DragOutHandle({ path }: { path: string }) {
   return (
     <span
       role="button"

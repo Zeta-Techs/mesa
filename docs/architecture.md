@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-23 · 步骤工作区归回当前步骤、「流程之外」仅放目标与独立工作区，定稿后由「完结文件」统一去重
+
+用户截图科研项目页定稿完成态（上方「完结文件」展开 4 张最终稿卡片与 5 个分类胶囊，下方「流程之外 · 目标 0 · 工作区 5」里紧贴目标空态条又塞着展开的「润色与定稿 · 本步文件」及另一套 4 张成稿交付卡片与过程文件清单），反馈「这一块看着有点乱」，并拍板按推荐方案理顺位置归属与去重：① **步骤工作区移出「流程之外」**（`workspace-visibility.ts` `filterFocusedStepWorkspaces` / `filterOutsideFlowWorkspaces`）：研究流程步骤绑定的工作区归属流程内当前步骤，紧跟 `TaskCardsSection` 当前步骤卡下方渲染；「流程之外」只统计和展示流程外「目标」与未绑定任何步骤的手动独立工作区（无独立工作区时标题仅显示 `目标 N`，不再把 5 个流程步骤工作区算作流程之外）；② **定稿后「完结文件」与定稿步「本步文件」去重**（`isStepWorkspaceSupersededByCloseout`、`CloseoutPack.tsx`）：整条流程已保存进项目且聚焦在定稿步时，「完结文件」默认展开、4 张最终稿卡片补齐 OS 拖出手柄（`DragOutHandle`），并在栏头右侧承接定稿工作区的「继续 / ⋯」入口，不再在下方重复渲染第二套「润色与定稿 · 本步文件」卡片（切回检索、精读等前序步骤时，前序步骤各自的本步工作区与本步文件入口照常保留）。
+
 ### 2026-11-23 · 提交验证改为按改动范围跑定向测试 + 增量 tsc，修复沙箱 Matplotlib 重复扫字体
 
 用户质疑「为什么每改一个小毛病都要跑这么长时间测试」。排查实证三处耗时根源：① `tests/check-scripts.test.ts` 的 `fig_lint` 在沙箱里因 `~/.matplotlib` 只读不可写，导致每个 Python 子进程每次新建随机临时目录并重扫 macOS 全系统字体（单文件耗 143 秒，并发还易撞 120s 超时重跑）；② `tsc` 未开 `incremental`，每次冷检 27 秒；③ 局部小改也被要求跑全量 143 个测试文件 + `vite build` 生产打包（50 秒）。用户拍板三项提速方案：① `AGENTS.md` 改为按改动范围分层验证——局部 UI / 文案 / 单模块小改动只跑相关测试文件 + `npm run typecheck`（Rust 跑 `cargo test <模块>`），仅跨模块公共契约、构建/依赖改动或发版前跑全量；② `tsconfig.json` 开启 `incremental: true`（缓存至 `node_modules/.tmp/tsconfig.app.tsbuildinfo`）并新增 `npm run typecheck`；③ `tests/check-scripts.test.ts` 固定 `MPLCONFIGDIR` 到 `/tmp/mesa-mpl-cache` 并从 `~/.matplotlib` 预拷 `fontlist-*.json`（`check-scripts.test.ts` 从 145 秒降至 6.5 秒）。

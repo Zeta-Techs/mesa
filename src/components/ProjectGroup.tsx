@@ -21,7 +21,12 @@ import HistoryOverlay from "./HistoryOverlay";
 
 import TemplatePicker, { type TemplatePickItem } from "./TemplatePicker";
 import CloseoutPack from "./CloseoutPack";
-import { closeoutPackVisible, closeoutScanEntries } from "../closeout-pack";
+import {
+  closeoutPackVisible,
+  closeoutScanEntries,
+  isCloseoutStep,
+} from "../closeout-pack";
+import { filterOutsideFlowWorkspaces } from "../workspace-visibility";
 import ArtifactChecklist, {
   absoluteResourcePath,
   formatSize,
@@ -404,12 +409,16 @@ export default function ProjectGroup({
     opts?: { autoStart?: boolean; launch?: KickoffLaunch },
   ) => void;
   onError: (msg: string) => void;
-  /** 工作区列表渲染（render prop）：回传聚焦视图上下文，父级按步骤过滤列表 */
+  /** 工作区列表渲染（render prop）：回传聚焦视图上下文，父级按步骤/流程外分区过滤列表 */
   children: (wsView: {
     /** 聚焦步骤名（null = 项目无研究步骤：显示项目全量工作区） */
     focusStepName: string | null;
     /** 项目步骤表（归属判定用；未注册/未加载 = 空表） */
     steps: ProjectStepDto[];
+    /** 渲染分区：step = 聚焦步骤自身工作区；outside = 流程外独立工作区；closeout-actions = 完结文件接管的定稿步操作；all = 无流程全量 */
+    scope?: "all" | "step" | "outside" | "closeout-actions";
+    /** 项目级完结文件是否已展示（用于定稿步本步文件卡去重） */
+    closeoutVisible?: boolean;
   }) => ReactNode;
   /** 外部一次性聚焦请求（收件箱「去核验」：目标工作区被聚焦过滤藏掉时，先切到它的步骤）；
    *  传工作区名，步骤名按 steps[].workspaceName 在本组件内解析（父级没有 cfg）；
@@ -652,6 +661,7 @@ export default function ProjectGroup({
         ? cfg.steps[focusStepReq.stepIndex]
         : cfg.steps.find((s) => s.workspaceName === focusStepReq.wsName);
     if (step) setFocusStepKey(step.name);
+    else if (focusStepReq.wsName && cfg.steps.length > 0) setOutsideOpen(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusStepReq, cfg]);
   // 人工事项派生状态原本只喂步骤 ⋯ 菜单的「N 件待做」计数，该菜单项已随 v3.86 精简删除
@@ -1404,6 +1414,10 @@ export default function ProjectGroup({
   const [urgentGoals, setUrgentGoals] = useState(false);
   const outsideShown = outsideOpen ?? urgentGoals;
   const activeWorkspaces = workspaces.filter((w) => w.status === "active");
+  const outsideActiveWorkspaces = useMemo(
+    () => filterOutsideFlowWorkspaces(activeWorkspaces, cfg?.steps ?? []),
+    [activeWorkspaces, cfg?.steps],
+  );
   useEffect(() => {
     if (liteResearch) void loadTaskCards(projectPath);
   }, [liteResearch, projectPath, loadTaskCards]);
@@ -1521,6 +1535,9 @@ export default function ProjectGroup({
   const artMerged = artSt?.key === "done";
   // 每步完成态（带级虚线链按列区间着色）+ 末端菱形：全部步骤完成才点亮（与完成圆同一 done 绿）
   const stepDoneFlags = stepStatuses.map((st) => st.key === "done");
+  const closeoutVisible = Boolean(
+    cfg && closeoutPackVisible(cfg.steps, stepDoneFlags),
+  );
   // 补料单（.ccode/rework/）：步进器写「等补料」、卡底写补料链走到哪；步骤状态一变（保存、开轮）就重读
   const [reworks, setReworks] = useState<ReworkDto[]>([]);
   const reworkSig = stepStatuses.map((st) => `${st.key}:${st.ws?.mergedAt ?? ""}`).join(",");
@@ -2372,8 +2389,11 @@ export default function ProjectGroup({
 
       {/* 人工事项清单已并入聚焦视图（TaskCardsSection 聚焦步骤时顶部渲染）；原 ⋯ 手风琴面板删除 */}
 
-      {/* 产物核验手风琴（步骤 ⋯ 菜单触发）：strip 下方就地展开（单开）；root 口径同任务行——已合并读项目根，其余读工作树 */}
-      {artStep && artWs && (
+      {/* 产物核验手风琴（步骤 ⋯ 菜单触发）：strip 下方就地展开（单开）；root 口径同任务行——已合并读项目根，其余读工作树。
+          定稿步已保存且「完结文件」已出现时，不再在上方重复展开第二套成稿清单 */}
+      {artStep &&
+        artWs &&
+        !(closeoutVisible && isCloseoutStep(artStep) && artMerged) && (
         <div className="mb-4">
           <ArtifactChecklist
             projectPath={projectPath}
@@ -2447,19 +2467,48 @@ export default function ProjectGroup({
         />
       )}
 
-      {/* 完结文件紧跟在当前步骤卡之后：步进器 → 聚焦步骤卡直接相连不被隔断，项目级最终交付物在下方收口 */}
-      {cfg && closeoutPackVisible(cfg.steps, stepDoneFlags) && (
+      {/* 当前聚焦步骤的工作区与本步文件（归属流程内当前步骤，不塞进下方「流程之外」；
+          定稿步已保存且「完结文件」出现后，由完结文件统一承载，避免上下重复两套四份成稿卡片） */}
+      {!liteResearch &&
+        flowFold &&
+        cfg &&
+        children({
+          focusStepName,
+          steps: cfg.steps,
+          scope: "step",
+          closeoutVisible,
+        })}
+
+      {/* 完结文件紧跟在当前步骤卡之后：步进器 → 聚焦步骤卡直接相连不被隔断，项目级最终交付物在下方收口；
+          聚焦在定稿步时默认展开，并承接该步已保存工作区的「继续 / ⋯」 */}
+      {cfg && closeoutVisible && (
         <CloseoutPack
           projectRoot={projectPath}
           worktrees={workspaces
             .filter((workspace) => workspace.status === "active")
             .map((workspace) => workspace.worktreePath)}
           entries={closeoutScanEntries(cfg.steps)}
+          defaultOpen={Boolean(focusDesc && isCloseoutStep(focusDesc.step))}
+          workspaceId={
+            focusDesc && isCloseoutStep(focusDesc.step)
+              ? focusDesc.st.ws?.id
+              : undefined
+          }
+          headerActions={
+            !liteResearch && focusDesc && isCloseoutStep(focusDesc.step)
+              ? children({
+                  focusStepName,
+                  steps: cfg.steps,
+                  scope: "closeout-actions",
+                  closeoutVisible,
+                })
+              : undefined
+          }
         />
       )}
 
-      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事，连同工作区列表：
-          有流程时折进「流程之外」一行（2026-11-11 项目页减法），工作区卡的「可评审」与步骤卡「去评审」是同一件事。
+      {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事，连同未绑定步骤的独立工作区：
+          有流程时折进「流程之外」一行（2026-11-11 项目页减法；步骤自身工作区已归回上方当前步骤，不与目标混放）。
           折起时照样挂着（hidden），目标条数、要不要自动展开才读得到 */}
       {flowFold && project && cfg && (
         <section className="mt-3" aria-label="流程之外">
@@ -2468,12 +2517,15 @@ export default function ProjectGroup({
             className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
             aria-expanded={outsideShown}
             onClick={() => setOutsideOpen(!outsideShown)}
-            title="流程步骤之外的事（目标）与各步骤的工作区"
+            title="流程步骤之外的事（目标与未绑定步骤的独立工作区）"
           >
             <FoldMark open={outsideShown} />
             <span className="font-medium text-l2">流程之外</span>
             <span className="text-micro text-l4">
-              目标 {goalCount ?? "…"} · 工作区 {activeWorkspaces.length}
+              目标 {goalCount ?? "…"}
+              {outsideActiveWorkspaces.length > 0
+                ? ` · 工作区 ${outsideActiveWorkspaces.length}`
+                : ""}
             </span>
             {urgentGoals && (
               <span className="inline-flex items-center gap-1 rounded-full bg-warn px-2 py-0.5 text-micro text-warn-text">
@@ -2496,6 +2548,8 @@ export default function ProjectGroup({
               children({
                 focusStepName,
                 steps: cfg.steps,
+                scope: "outside",
+                closeoutVisible,
               })}
           </div>
         </section>
@@ -2506,6 +2560,7 @@ export default function ProjectGroup({
         children({
           focusStepName,
           steps: cfg?.steps ?? [],
+          scope: "all",
         })}
       </div>
       </div>

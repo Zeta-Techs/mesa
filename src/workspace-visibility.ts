@@ -1,3 +1,5 @@
+import { isCloseoutStep } from "./closeout-pack.ts";
+
 /**
  * 工作区列表的聚焦步骤可见性规则（纯逻辑，供 WorkspacesPage 工作区列表过滤）。
  *
@@ -19,3 +21,50 @@ export function filterWorkspacesByFocus<T extends { name: string }>(
   );
   return list.filter((w) => w.name === focusWsName || !bound.has(w.name));
 }
+
+/**
+ * 仅筛出当前聚焦研究步骤绑定的工作区（归属流程内当前步骤，不进「流程之外」）。
+ */
+export function filterFocusedStepWorkspaces<T extends { name: string }>(
+  list: readonly T[],
+  steps: readonly { name: string; workspaceName: string }[],
+  focusStepName: string | null,
+): T[] {
+  if (!focusStepName || steps.length === 0) return [];
+  const focusWsName = steps.find((s) => s.name === focusStepName)
+    ?.workspaceName;
+  if (!focusWsName) return [];
+  return list.filter((w) => w.name === focusWsName);
+}
+
+/**
+ * 仅筛出未绑定任何研究步骤的独立工作区（真正属于「流程之外」的工作区）。
+ * 无研究步骤（steps 为空）时返回全量。
+ */
+export function filterOutsideFlowWorkspaces<T extends { name: string }>(
+  list: readonly T[],
+  steps: readonly { name: string; workspaceName: string }[],
+): T[] {
+  if (steps.length === 0) return [...list];
+  const bound = new Set(
+    steps.map((s) => s.workspaceName).filter((n) => n !== ""),
+  );
+  return list.filter((w) => !bound.has(w.name));
+}
+
+/**
+ * 定稿步已保存进项目且项目级「完结文件」已出现时，定稿步的「本步文件」工作区卡由「完结文件」统一承载，
+ * 不再在下方重复渲染第二套四份成稿与过程文件清单（其「继续 / ⋯」收进完结文件栏头）。
+ */
+export function isStepWorkspaceSupersededByCloseout(opts: {
+  closeoutVisible: boolean;
+  boundStep: {
+    workspaceName?: string | null;
+    expectedArtifacts?: readonly string[] | null;
+  } | null;
+  merged: boolean;
+}): boolean {
+  if (!opts.closeoutVisible || !opts.merged || !opts.boundStep) return false;
+  return isCloseoutStep(opts.boundStep);
+}
+

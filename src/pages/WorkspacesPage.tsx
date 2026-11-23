@@ -64,7 +64,12 @@ import ProjectSettingsDrawer from "../components/ProjectSettingsDrawer";
 import TemplatePickModal from "../components/TemplatePickModal";
 import { Modal } from "../components/Modal";
 import { cloudSyncHint, loadNewProjectParent, saveNewProjectParent } from "../new-project-parent";
-import { filterWorkspacesByFocus } from "../workspace-visibility";
+import {
+  filterFocusedStepWorkspaces,
+  filterOutsideFlowWorkspaces,
+  filterWorkspacesByFocus,
+  isStepWorkspaceSupersededByCloseout,
+} from "../workspace-visibility";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
 import {
   EmptyState,
@@ -2475,15 +2480,108 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             }
           >
             {(wsView) => {
-            // 聚焦步骤可见性（纯逻辑 src/workspace-visibility.ts）：聚焦 = 绑定该步骤的工作区
-            // + 不匹配任何步骤的手动工作区（手动建的任何东西都不能被默认视图藏掉）
+            // 步骤工作区与「流程之外」严格分离（纯逻辑 src/workspace-visibility.ts）：
+            // - scope="step"：仅当前聚焦步骤绑定的工作区（归属流程内当前步骤，紧跟步骤卡下方；
+            //   定稿步已保存且完结文件已出现时，由完结文件接管，避免上下重复两套四份成稿卡片）
+            // - scope="closeout-actions"：完结文件接管定稿步后，栏头右侧承接该工作区的「继续 / ⋯」
+            // - scope="outside"：仅未绑定任何研究步骤的手动独立工作区（放进「流程之外」）
+            // - scope="all"：无研究步骤项目的全量工作区
             const focusStepName = wsView.focusStepName;
-            const wsList = sortWorkspacesByAttention(
-              filterWorkspacesByFocus(
+            const scope = wsView.scope ?? "all";
+            const closeoutVisible = Boolean(wsView.closeoutVisible);
+            if (scope === "closeout-actions") {
+              const stepWorkspaces = filterFocusedStepWorkspaces(
                 selectedGroup.list,
                 wsView.steps,
                 focusStepName,
-              ),
+              );
+              const closeoutWs = stepWorkspaces.find((workspace) => {
+                const boundStep =
+                  wsView.steps.find((s) => s.workspaceName === workspace.name) ??
+                  null;
+                const merged = isMerged(workspace, health[workspace.id]);
+                return (
+                  workspace.status === "active" &&
+                  isStepWorkspaceSupersededByCloseout({
+                    closeoutVisible,
+                    boundStep,
+                    merged,
+                  })
+                );
+              });
+              if (!closeoutWs) return null;
+              const workspaceDrift = drift[closeoutWs.id];
+              const isDriftFailed = !!driftFailed[closeoutWs.id];
+              const canResolveConflict =
+                closeoutWs.status === "active" &&
+                workspaceDrift?.canResolveMerge === true;
+              const canOpenWorkspace =
+                closeoutWs.status === "active" &&
+                (workspaceDrift?.healthy === true ||
+                  canResolveConflict ||
+                  isDriftFailed);
+              return (
+                <>
+                  {canOpenWorkspace && (
+                    <button
+                      type="button"
+                      onClick={() => void openInTerminal(closeoutWs)}
+                      className={rowActionClass}
+                      title="在这一步的工作区开会话继续修改；有新改动后可再次评审合并"
+                    >
+                      继续
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      const rect =
+                        event.currentTarget.getBoundingClientRect();
+                      setWorkspaceMenu({
+                        x: rect.right,
+                        y: rect.bottom + 4,
+                        ws: closeoutWs,
+                      });
+                    }}
+                    title="更多操作"
+                    aria-label={`更多操作：${closeoutWs.name}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-l3 hover:bg-hover hover:text-l1"
+                  >
+                    ⋯
+                  </button>
+                </>
+              );
+            }
+            const rawList =
+              scope === "step"
+                ? filterFocusedStepWorkspaces(
+                    selectedGroup.list,
+                    wsView.steps,
+                    focusStepName,
+                  ).filter((workspace) => {
+                    const boundStep =
+                      wsView.steps.find(
+                        (s) => s.workspaceName === workspace.name,
+                      ) ?? null;
+                    const merged = isMerged(workspace, health[workspace.id]);
+                    return !isStepWorkspaceSupersededByCloseout({
+                      closeoutVisible,
+                      boundStep,
+                      merged,
+                    });
+                  })
+                : scope === "outside"
+                  ? filterOutsideFlowWorkspaces(
+                      selectedGroup.list,
+                      wsView.steps,
+                    )
+                  : filterWorkspacesByFocus(
+                      selectedGroup.list,
+                      wsView.steps,
+                      focusStepName,
+                    );
+            const wsList = sortWorkspacesByAttention(
+              rawList,
               (workspace) => ({
                 ahead: health[workspace.id]?.ahead,
                 conflict: health[workspace.id]?.conflict,
@@ -2491,17 +2589,22 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 readyToMerge: health[workspace.id]?.readyToMerge,
               }),
             );
+            if ((scope === "step" || scope === "outside") && wsList.length === 0) {
+              return null;
+            }
             return (
-            <>
+            <div className={scope === "step" ? "mt-3" : undefined}>
             {/* 聚焦步骤且刚好已有 1 个绑定工作区时，收掉冗余的外层标题行（另建工作区在卡片 ⋯ 菜单里），
                 彻底消除「外层工作区标题 + 工作区卡头 + 内层本步文件头」三层套娃；
-                无步骤项目、多工作区并列或空列表时照常显示头部行。 */}
-            {!(focusStepName && wsList.length === 1) && (
+                无步骤项目、多工作区并列或流程外独立工作区列表时照常显示头部行。 */}
+            {!(scope === "step" && wsList.length === 1) && (
               <div className="flex items-center gap-2 pt-1 text-xs">
                 <span className="font-medium text-l3">
-                  {focusStepName
-                    ? `${focusStepName} · 工作区（${wsList.length}）`
-                    : `工作区（${wsList.length}）`}
+                  {scope === "outside"
+                    ? `流程外工作区（${wsList.length}）`
+                    : focusStepName
+                      ? `${focusStepName} · 工作区（${wsList.length}）`
+                      : `工作区（${wsList.length}）`}
                 </span>
                 <div className="ml-auto flex items-center gap-1">
                   {wsList.length > 0 && (
@@ -2509,7 +2612,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                       type="button"
                       onClick={() => setNewWsRepoPath(selectedGroup.repoPath)}
                       className={
-                        focusStepName
+                        focusStepName || scope === "outside"
                           ? "shrink-0 rounded-md px-2 py-1 text-xs text-l4 transition-colors hover:bg-hover hover:text-l2"
                           : `${actionBtn} shrink-0`
                       }
@@ -2810,7 +2913,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               })}
             </ul>
             )}
-            </>
+            </div>
             );
             }}
           </ProjectGroup>

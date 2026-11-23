@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { IS_WINDOWS } from "../hotkeys";
 import { pathWithin } from "../path-utils";
 import { readResearchFile } from "../research-report-load";
-import { loadArtifactRows } from "./ArtifactChecklist";
+import { DragOutHandle, loadArtifactRows } from "./ArtifactChecklist";
 import FileTypeMark from "./FileTypeMark";
 import { FoldMark } from "./PageFrame";
 import type { DirEntryDto } from "./FileTree";
@@ -55,21 +55,34 @@ export default function CloseoutPack({
   projectRoot,
   worktrees,
   entries,
+  defaultOpen = false,
+  headerActions,
+  workspaceId,
+  flash = false,
 }: {
   projectRoot: string;
   worktrees: readonly string[];
   entries: readonly string[];
+  defaultOpen?: boolean;
+  headerActions?: React.ReactNode;
+  workspaceId?: string;
+  flash?: boolean;
 }) {
   const [files, setFiles] = useState<CloseoutFile[] | null>(null);
   const [index, setIndex] = useState<CloseoutNoteIndex[]>([]);
   const [pdfs, setPdfs] = useState<CloseoutFile[]>([]);
   const [sources, setSources] = useState<CloseoutNoteSource[]>([]);
   const [activeTab, setActiveTab] = useState<CloseoutGroupId | "figures" | "notes" | null>(null);
-  const [packOpen, setPackOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const packOpen = manualOpen ?? defaultOpen;
   const [query, setQuery] = useState("");
   const [openError, setOpenError] = useState<string | null>(null);
   const entryKey = entries.join("\n");
   const rootKey = [projectRoot, ...worktrees].join("\n");
+
+  useEffect(() => {
+    if (flash) setManualOpen(true);
+  }, [flash]);
 
   useEffect(() => {
     let stale = false;
@@ -192,19 +205,29 @@ export default function CloseoutPack({
   ];
 
   return (
-    <div className="ccode-well mt-3 rounded-lg px-4 py-3">
-      <button
-        type="button"
-        aria-expanded={packOpen}
-        onClick={() => setPackOpen((cur) => !cur)}
-        className="flex w-full items-center gap-1.5 text-left text-xs text-l2 hover:text-l1"
-      >
-        <FoldMark open={packOpen} />
-        <span className="font-medium text-l1">完结文件</span>
-        <span className="text-micro tabular-nums text-l4">
-          {finals.length > 0 ? `${finals.length} 份最终稿 · 共 ${fileCount} 份` : `${fileCount} 份`}
-        </span>
-      </button>
+    <div
+      data-ws-row={workspaceId}
+      className={`ccode-well mt-3 rounded-lg px-4 py-3 ${flash ? "ring-2 ring-cta" : ""}`}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          aria-expanded={packOpen}
+          onClick={() => setManualOpen(!packOpen)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-xs text-l2 hover:text-l1"
+        >
+          <FoldMark open={packOpen} />
+          <span className="font-medium text-l1">完结文件</span>
+          <span className="text-micro tabular-nums text-l4">
+            {finals.length > 0 ? `${finals.length} 份最终稿 · 共 ${fileCount} 份` : `${fileCount} 份`}
+          </span>
+        </button>
+        {headerActions && (
+          <div className="flex shrink-0 items-center gap-1">
+            {headerActions}
+          </div>
+        )}
+      </div>
       {packOpen && (
         <div className="mt-3 space-y-3 border-t border-hairline/60 pt-3">
           {finals.length > 0 && (
@@ -232,17 +255,20 @@ export default function CloseoutPack({
                           )}
                         </span>
                       </button>
-                      {!fieldDoc && (
-                        <button
-                          type="button"
-                          onClick={() => openExternal(file)}
-                          title="用系统默认应用打开（PDF 阅读器、Word）"
-                          aria-label={`用系统应用打开 ${file.label}`}
-                          className="mr-1.5 flex size-6 shrink-0 items-center justify-center rounded-sm text-l4 opacity-0 transition-opacity hover:bg-hover hover:text-l2 focus:opacity-100 group-hover:opacity-100"
-                        >
-                          <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
-                        </button>
-                      )}
+                      <span className="mr-1.5 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                        {!fieldDoc && (
+                          <button
+                            type="button"
+                            onClick={() => openExternal(file)}
+                            title="用系统默认应用打开（PDF 阅读器、Word）"
+                            aria-label={`用系统应用打开 ${file.label}`}
+                            className="flex size-5 shrink-0 items-center justify-center rounded-sm text-l4 hover:bg-hover hover:text-l2"
+                          >
+                            <ExternalLink size={12} strokeWidth={1.8} aria-hidden="true" />
+                          </button>
+                        )}
+                        <DragOutHandle path={file.abs} />
+                      </span>
                     </div>
                   );
                 })}
