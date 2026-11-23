@@ -74,6 +74,7 @@
 
 ## 三、测试、CI 与发版细则
 
+- **分层测试基线、增量 `tsc` 与沙箱 Matplotlib 字体缓存（2026-11-23 用户拍板）**：日常改局部 UI、文案或单一模块小问题时，前端只跑相关测试文件 + `npm run typecheck`（`tsconfig.json` 开启 `incremental: true` 写 `node_modules/.tmp/tsconfig.app.tsbuildinfo`，省去每次 `vite build` 打包 Monaco/Mermaid 的 50 秒耗时），Rust 只跑对应模块 `cargo test <模块>`；仅跨模块契约、双端镜像、构建/依赖改动或发版前跑全量 `npm test` + `npm run build` + `cargo test`。`tests/check-scripts.test.ts` 固定 `MPLCONFIGDIR` 到 `/tmp/mesa-mpl-cache` 并从 `~/.matplotlib` 预拷 `fontlist-*.json`，避免沙箱下 `~/.matplotlib` 只读导致每个 Python 子进程新建随机临时目录重扫 macOS 全系统字体（将 `fig_lint` 测试耗时从 143 秒降至 5 秒内）。
 - **CI 矩阵与平台依赖（2026-09-22 修订）**：push 到 `main` 即触发 test job（`npm test` + `cargo test` + `npm run build`；当前矩阵 macOS + Windows——Linux 本版本未开发，移出测试与发版矩阵，恢复时把 `ubuntu-latest` 加回 `build.yml`）；`[skip ci]` 只用于纯文档等不可能影响构建的提交；平台专属 crate（如 `objc2`、`windows-sys`）必须放 `[target.'cfg(...)'.dependencies]` 段。
 - **UI 组件测试打包口径（2026-09-22）**：tests 用 esbuild 内联打包 `.tsx` 组件（`research-*-ui.test.ts` 模式）时，组件图拉进 monaco css、Vite `?worker`/`?url`/`?raw`（如 `AgentIcon` 厂商 svg）、pdfjs 时按桩处理：`.css` 配 empty loader，query 后缀路径桩成惰性 `data:` URL **字符串**（pdfjs 校验 `workerSrc` 必须是字符串），JSDOM globals 补空壳 `DOMMatrix`。新组件测试照抄口径。
 - **CI 测试防坑**：禁墙钟时序硬断言；JSDOM 节点进断言由 `npm test` 预加载的 `tests/dom-safe-assert.ts` 兜住（只管 equal/strictEqual/notEqual/notStrictEqual，节点**禁进 `deepEqual`**，先 map 成字符串；`package.json` 的 `--import` 不得删，`dom-safe-assert.test.ts` 守着）；组件在下一帧（rAF）挪焦点/滚动的，断言前先等那一帧；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`；**测试禁触系统 UI/回收站**（`trash` 等走 Finder AppleScript 的调用在测试态必须经隔离缝直删）。

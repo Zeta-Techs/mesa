@@ -5,7 +5,7 @@
 
 ## 一、核心协作与省力原则
 
-- **省力原则（2026-10-26）**：每次会话只需读本文件，其余文档**按需 Grep 检索、不通读**。`docs/architecture.md`、`docs/code-structure.md`、`docs/conventions/*.md` 只读命中的小节；architecture §10 是新在前的日志，按关键词搜、同一主题以最新一条为准。按改动范围决定读什么、跑什么、改哪些文档；开发中用最小验证，提交前按「git 提交」跑该跑的全量基线。
+- **省力原则（2026-10-26）**：每次会话只需读本文件，其余文档**按需 Grep 检索、不通读**。`docs/architecture.md`、`docs/code-structure.md`、`docs/conventions/*.md` 只读命中的小节；architecture §10 是新在前的日志，按关键词搜、同一主题以最新一条为准。按改动范围决定读什么、跑什么、改哪些文档；日常局部改动按「分层测试基线」跑定向测试与增量类型检查，跨模块公共契约或发版前跑全量基线。
 - **规则沉淀**：重大拍板/取舍/否决记入 `docs/conventions/product-decisions.md`（或对应领域 `conventions/*.md`）与 `docs/architecture.md` §10；**不记操作流水账**。纯修 bug、重构、补测试只写提交信息，不进 §10。
 - **边走边改（2026-09-22）**：用户走科研流程时的提问和反馈，默认是要改他正在用的那条流程（课题档案卡 + 模板/任务书/界面），不是要一段说明；先核对实际落盘和界面再改，改到能接着用并写清改了什么、在哪能看见。
 - **动真实数据先干跑 + 未发布不养闲机器（2026-10-13）**：写用户真实项目数据的功能（迁移/清理/批量改写），交用户点前必须在干跑环境或真实项目副本上完整跑通；只服务假想老用户的迁移界面不留（细则见 `product-decisions.md` §四）。
@@ -18,11 +18,12 @@
 
 - **不攒不拖**：一个问题 / 一处改动做完、验过，**当场**按下方「文档同步」表更新受影响文档、跑对应侧基线、**立即自己提交**，不要停着等用户回头说「提交」（用户明确说先别提交的除外）。
 - **一个主题一个提交**：禁止攒多主题「一系列修复」大杂烩提交。
-- **按改动侧跑全量基线**：
+- **按改动范围分层跑测试基线（2026-11-23 用户拍板）**：
   - 只改文档：不跑测试；
-  - 只改 Rust：`cd src-tauri && cargo test`（全量，不能只跑单个模块）；
-  - 只改前端：`npm test` + `npm run build`（`node --test` 只剥类型不检查类型，必须跑 `npm run build` 让 tsc 把关）；
-  - 两侧都改或动了共用契约（`tests/fixtures/`、Tauri 命令名/参数、DTO 字段、双端镜像逻辑）：三样全跑；拿不准就全跑。
+  - **局部改动（单一组件 / 页面 / 文案 / 单个模块修小问题）**：
+    - 只改前端：跑**受影响的定向测试文件**（`node --experimental-strip-types --import ./tests/dom-safe-assert.ts --test tests/<相关>.test.ts`）+ **`npm run typecheck`**（走增量 `tsc --noEmit`，无需每次跑 `vite build` 全量生产打包）；
+    - 只改 Rust：跑**受影响模块的定向测试**（`cd src-tauri && cargo test <模块名或用例名>`）；
+  - **跨模块 / 共用契约 / 构建或依赖改动 / 发版前**（动了 `tests/fixtures/`、Tauri 命令签名、共用 DTO 字段、双端镜像逻辑、`package.json` / `Cargo.toml` / `vite.config.ts`）：跑对应侧或三样全量基线（`npm test`、`npm run build`、`cd src-tauri && cargo test`）。
   - **测试基线必须全绿**：存量失败不修会淹没新问题；CI 在 macOS + Windows 三样全跑兜底，红了当次处理（纯文档提交可加 `[skip ci]`）。
 
 ### 2. 只提交本会话自己的改动（2026-11-13 用户拍板）
@@ -65,8 +66,9 @@
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"   # Rust 不在默认 PATH，新 shell 先 export
 npm run tauri:dev                      # 热更新开发窗口（Mesa Dev - 热更新，端口 17575）
-npm run build                          # 前端构建（tsc + vite）
-npm test                               # 前端测试（node --test）
+npm run typecheck                      # 前端增量类型检查（tsc --noEmit，局部改动必跑）
+npm run build                          # 前端完整构建（tsc + vite 生产打包）
+npm test                               # 前端全量测试（node --test）
 cd src-tauri && cargo build / cargo test
 npm run tauri build                    # 打包
 ```

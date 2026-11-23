@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-23 · 提交验证改为按改动范围跑定向测试 + 增量 tsc，修复沙箱 Matplotlib 重复扫字体
+
+用户质疑「为什么每改一个小毛病都要跑这么长时间测试」。排查实证三处耗时根源：① `tests/check-scripts.test.ts` 的 `fig_lint` 在沙箱里因 `~/.matplotlib` 只读不可写，导致每个 Python 子进程每次新建随机临时目录并重扫 macOS 全系统字体（单文件耗 143 秒，并发还易撞 120s 超时重跑）；② `tsc` 未开 `incremental`，每次冷检 27 秒；③ 局部小改也被要求跑全量 143 个测试文件 + `vite build` 生产打包（50 秒）。用户拍板三项提速方案：① `AGENTS.md` 改为按改动范围分层验证——局部 UI / 文案 / 单模块小改动只跑相关测试文件 + `npm run typecheck`（Rust 跑 `cargo test <模块>`），仅跨模块公共契约、构建/依赖改动或发版前跑全量；② `tsconfig.json` 开启 `incremental: true`（缓存至 `node_modules/.tmp/tsconfig.app.tsbuildinfo`）并新增 `npm run typecheck`；③ `tests/check-scripts.test.ts` 固定 `MPLCONFIGDIR` 到 `/tmp/mesa-mpl-cache` 并从 `~/.matplotlib` 预拷 `fontlist-*.json`（`check-scripts.test.ts` 从 145 秒降至 6.5 秒）。
+
 ### 2026-11-23 · 移除流程步进器「角色提示」图例、圆点与步骤卡「你来 / 一起」标签
 
 用户反馈流程步进器上的「角色提示 · 你主要负责 · 你和 AI 一起定」以及步骤卡头部的「你来 / 一起」标签没有实际用途，拍板移除。定下：撤掉 `ProjectGroup.tsx` 步进器顶部的角色提示图例与步骤名旁的小圆点/悬停括号，撤掉 `TaskCardsSection.tsx` 与 `PageFrame.tsx` 的 `RoleBadge`（「你来 / 一起」）组件；底层 `step.role` 字段仅保留用于内部判断该步骤是否显示「请几家 AI 研讨」入口。

@@ -1,16 +1,33 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 
 // 第二期核验脚本（2026-11-02）：数字追溯 num_check、统计自洽 stat_check、图重建 fig_check。
 // 三档状态与 cite_check 同口径；共用 src-tauri/resources/mesa_checks.py。
 const python = process.platform === "win32" ? "python" : "python3";
 const skill = (name: string, file: string) => resolve(`src-tauri/resources/skills/${name}/scripts/${file}`);
+// 沙箱内 ~/.matplotlib 只读不可写时，matplotlib 默认会为每个子进程新建随机临时目录并重扫系统全部字体（每次 ~30s）。
+// 固定到可写的 /tmp/mesa-mpl-cache 并预拷已有 fontlist 缓存，子进程复用同一份字体索引（143s → ~1.5s）。
+const mplCacheDir = join(tmpdir(), "mesa-mpl-cache");
+try {
+  mkdirSync(mplCacheDir, { recursive: true });
+  const homeMpl = join(homedir(), ".matplotlib");
+  if (existsSync(homeMpl)) {
+    for (const name of readdirSync(homeMpl)) {
+      if (name.startsWith("fontlist-") && name.endsWith(".json") && !existsSync(join(mplCacheDir, name))) {
+        copyFileSync(join(homeMpl, name), join(mplCacheDir, name));
+      }
+    }
+  }
+} catch {
+  // 忽略缓存预热异常，退回 matplotlib 默认行为
+}
+const pyEnv = { ...process.env, MPLCONFIGDIR: mplCacheDir };
 const run = (script: string, args: string[], cwd: string) =>
-  spawnSync(python, [script, ...args], { cwd, encoding: "utf8", timeout: 120_000 });
+  spawnSync(python, [script, ...args], { cwd, encoding: "utf8", timeout: 120_000, env: pyEnv });
 
 interface Item {
   id: string;
@@ -225,7 +242,7 @@ test("stat_check / num_check：--files 指定 manuscript/ 之外的报告（数�
   }
 });
 
-const hasMatplotlib = spawnSync(python, ["-c", "import matplotlib"], { encoding: "utf8" }).status === 0;
+const hasMatplotlib = spawnSync(python, ["-c", "import matplotlib"], { encoding: "utf8", env: pyEnv }).status === 0;
 
 test("fig_lint：对数轴次刻度重叠直接提示 NullFormatter；tight_layout 贴边 1–2 px 不误拦，真出画布仍拦下", { skip: !hasMatplotlib }, () => {
   const root = tmp();

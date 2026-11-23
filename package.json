@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite --config vite.config.ts",
     "build": "tsc && vite build --config vite.config.ts",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview --config vite.config.ts",
     "test": "node --experimental-strip-types --import ./tests/dom-safe-assert.ts --test \"tests/**/*.test.ts\"",
     "tauri": "tauri",
