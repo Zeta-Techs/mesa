@@ -1,0 +1,13 @@
+{
+  "citations": {
+    "bib": "@article{Lu2024,\n  title = {Self-Reconstructed Amorphous CoOx/NiCoB},\n  author = {Lu, A.},\n  year = {2024}\n}\n@article{zotero1m4yah8b3,\n  title = {Amorphous Ni/MoO2},\n  author = {Chen, B.},\n  year = {2024}\n}\n",
+    "markdown": "# Review Draft\n\nRecent studies on WB₂@WS₂, Co(OH)₂@NiB, (Co,Ni)@NF, and [CoB]@NF report η@100 = 42 mV [@Lu2024; @zotero1m4yah8b3].\nInline code like `@FakeKey2025` must not be parsed as a citation.\nOnly a truly missing key [@MissingKey2026] should be flagged.\n",
+    "expectedMissing": ["MissingKey2026"]
+  },
+  "toFetch": {
+    "markdown": "# 待获取全文\n\n已纳入、还没有全文的 5 篇。\n\n1. ✓ Done One — 10.1000/one\n2. [已补 2026-09-24] Done Two — 10.1000/two\n3. [仅摘要] Mega Review — 10.1021/acs.chemrev.3c00005\n4. [跳过] Huge OER — 10.1000/four\n5. Real Missing — 10.1002/smll.202408571\n\n---\n\n## 待跟进引用线索\n- Trailing Clue — 10.1000/clue\n",
+    "expectedCount": 5,
+    "expectedDoneFlags": [true, true, false, false, false],
+    "expectedMissingWithoutExtraSkips": 1
+  }
+}

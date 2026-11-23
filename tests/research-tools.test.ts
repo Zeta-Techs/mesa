@@ -125,6 +125,10 @@ test("Zotero 同步技能跟 lit_source，不跟已废除的 literature 设置",
   const notes = template("research-paper").steps.find((s) => s.skills.includes("lit-notes"))!;
   assert.ok(!notes.skills.includes("zotero-sync"));
   assert.ok(withResearchTools(notes, DEFAULT_RESEARCH_TOOLS, "artifacts", "zotero").skills.includes("zotero-sync"));
+  assert.ok(
+    !withResearchTools(notes, DEFAULT_RESEARCH_TOOLS, "artifacts", "zotero").requiredSkills?.includes("zotero-sync"),
+    "精读步不执行 Zotero 同步，zotero-sync 仅作可选背景技能不设为必需",
+  );
   assert.ok(!withResearchTools(notes, DEFAULT_RESEARCH_TOOLS, "artifacts", "folder").skills.includes("zotero-sync"));
   assert.ok(!withResearchTools(search, DEFAULT_RESEARCH_TOOLS, "artifacts", "search").requiredSkills?.includes("zotero-sync"));
   assert.ok(withResearchTools(search, DEFAULT_RESEARCH_TOOLS, "artifacts", "zotero").requiredSkills?.includes("zotero-sync"));

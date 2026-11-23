@@ -114,7 +114,13 @@ test("任务书减重不靠删阶段/门禁：共用摘要一次，格式适配�
   // 2026-11-16 英文综述前三步卡点与全流程衔接：工作区步骤加「不直接改 .ccode/project.toml」防呆句（六模板同涨）；
   // 综述检索加预填已定方向与确定性 bibKey、精读速读表加代表图/表与抽取表说明、大纲加预填定框架记录 + 第 5 问暂定拟引用 + 补读限有全文 + 停工门识别。
   // 实测 review 37056、论文 45005、数据 18015、学位 43945、投稿 11631、LaTeX 18228。
-  const before: Record<string, number> = { review: 37200, "research-paper": 45150, "data-processing": 18150, thesis: 44100, "submission-rebuttal": 11750, "latex-paper": 18350 };
+  // 2026-11-22：全模板收尾新增 `.ccode/next-actions.json` 导航卡合同（每步约 +460 字，六模板同涨）；
+  // 精读步补仅题录综述不建占位笔记、Zotero/项目根 PDF 题录核对与 SI 排除口径；检索/精读步「本机 Python」加 `$MESA_LIT_RECORDS` 脚本路径一行。
+  // 实测 review 41043、论文 49987、数据 20299、学位 48927、投稿 12773、LaTeX 20512。
+  // 2026-11-23：初稿跨平台宋体映射明文化、综述初稿加可选技能 blender-research 与交稿自检、
+  // 补齐 figures/README.md 预览图嵌入、style-sheet 同步覆盖、内部策划词隔离、定稿清理非核心仅摘要出口及 TOC 明示文件名。
+  // 实测 review 42522、论文 50737。
+  const before: Record<string, number> = { review: 42700, "research-paper": 51000, "data-processing": 20800, thesis: 49900, "submission-rebuttal": 13300, "latex-paper": 21000 };
   for (const t of PIPELINE_TEMPLATES) {
     const tasks = md(t.id);
     const total = tasks.reduce((n, s) => n+s.length, 0);

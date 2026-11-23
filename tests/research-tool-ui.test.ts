@@ -74,17 +74,35 @@ test("英文综述设定屏只填全局设定，不问稿件载体或 Blender", 
     assert.doesNotMatch(text, /按需补齐交付/);
     assert.doesNotMatch(text, /结构 \/ 装置示意/);
     assert.doesNotMatch(text, /文献库交付/);
-    // 选择题是点选；选「投期刊」才追问目标期刊
-    const btn = (label: string) => [...ui.host.querySelectorAll("button")].find((b: { textContent: string }) => b.textContent === label) as HTMLButtonElement;
+    // 0 项已填时主按钮是「暂不填写，直接应用模板」，避免误丢已选设定
+    const btn = (label: string) => [...ui.host.querySelectorAll("button")].find((b: { textContent: string }) => b.textContent === label) as HTMLButtonElement | undefined;
+    assert.ok(btn("暂不填写，直接应用模板"), "未选任何项时显示直接应用");
+    assert.equal(btn("暂不填写，稍后补充"), undefined, "不留会丢弃已选项的独立跳过按钮");
     assert.ok([...ui.host.querySelectorAll("button")].some((b: { textContent: string }) => b.textContent.startsWith("严格检索档")), "综述深度应是点选");
     assert.doesNotMatch(ui.host.textContent ?? "", /目标期刊（可选）/);
-    await ui.act(async () => btn("投期刊").click());
-    assert.equal(btn("投期刊").getAttribute("aria-pressed"), "true");
+    await ui.act(async () => btn("投期刊")!.click());
+    assert.equal(btn("投期刊")!.getAttribute("aria-pressed"), "true");
     assert.match(ui.host.textContent ?? "", /目标期刊（可选）/);
-    // 综述深度只能二选一（检索步按原文认「严格检索档」），不给「其他…」
+    assert.ok(btn("保存设定并应用模板"), "已选至少一项后切为主保存按钮");
+    assert.match(ui.host.textContent ?? "", /已选 1\/6，其余稍后可补/);
+    // 选「聚焦某个子问题」追问具体聚焦什么
+    assert.doesNotMatch(ui.host.textContent ?? "", /具体聚焦什么（可选）/);
+    await ui.act(async () => btn("聚焦某个子问题")!.click());
+    assert.match(ui.host.textContent ?? "", /具体聚焦什么（可选）/);
+    // 选了「按期刊要求」后改去向为「课程作业」，隐藏并清空「按期刊要求」
+    await ui.act(async () => btn("按期刊要求")!.click());
+    assert.match(ui.host.textContent ?? "", /已选 3\/6，其余稍后可补/);
+    await ui.act(async () => btn("课程作业")!.click());
+    assert.equal(btn("按期刊要求"), undefined, "非期刊去向应隐藏按期刊要求");
+    assert.match(ui.host.textContent ?? "", /已选 2\/6，其余稍后可补/);
+    // 综述深度只能二选一（检索步按原文认「严格检索档」），不给「其他…」；文献数据抽取表用专属通栏「自己指定列…」
     const others = [...ui.host.querySelectorAll("button")].filter((b: { textContent: string }) => b.textContent === "其他…");
-    // 文献数据抽取表可点「其他…」自己写列（2026-11-07）
-    assert.equal(others.length, 5);
+    assert.equal(others.length, 4);
+    const customCols = [...ui.host.querySelectorAll("button")].find((b: { textContent: string }) => b.textContent.startsWith("自己指定列…")) as HTMLButtonElement;
+    assert.ok(customCols, "文献数据抽取表应展示「自己指定列…」通栏卡片");
+    assert.match(customCols.className, /col-span-2/);
+    await ui.act(async () => customCols.click());
+    assert.ok([...ui.host.querySelectorAll("input")].some((el: HTMLInputElement) => el.placeholder.includes("催化剂")));
     assert.ok([...ui.host.querySelectorAll("button")].some((b: { textContent: string }) => b.textContent.startsWith("让 AI 提议列")));
     assert.doesNotMatch(ui.host.textContent ?? "", /读者预期|系统综述/);
   } finally { await ui.close(); }

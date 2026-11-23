@@ -57,12 +57,26 @@ export default function ResearchToolPreflight({ projectRoot, stepName, skills, a
     if (ready.length === 0 && notes.length === 0) return null;
     return (
       <div className="mt-1 space-y-0.5 text-micro text-l4">
-        {ready.length > 0 && (
-          <p title={ready.map((c) => `${c.name}：${c.detail}`).join("\n")}>已启用到 {agentLabel}</p>
-        )}
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5">
+          {ready.length > 0 && (
+            <span title={ready.map((c) => `${c.name}：${c.detail}`).join("\n")}>已启用到 {agentLabel}</span>
+          )}
+          {unready.length > 0 && (
+            <button
+              type="button"
+              className={inlineActionClass}
+              disabled={installing}
+              title={`把 ${unready.join("、")} 启用给 ${agentLabel}（放进它的技能目录）`}
+              onClick={() => void installNow()}
+            >
+              {installing ? "正在启用…" : `一键启用缺失技能（${unready.length}）`}
+            </button>
+          )}
+        </div>
         {notes.map((c) => (
           <p key={c.name} className="text-l3">{c.name}：{c.detail}</p>
         ))}
+        {installError && <p className="text-err-text">{installError}</p>}
       </div>
     );
   }

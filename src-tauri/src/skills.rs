@@ -498,6 +498,16 @@ static BUILTIN_SUPPORT: &[(&str, &str, &str)] = &[
         include_str!("../resources/skills/blender-research/scripts/build_scene.py"),
     ),
     (
+        "blender-research",
+        "scripts/scene_illus.py",
+        include_str!("../resources/skills/blender-research/scripts/scene_illus.py"),
+    ),
+    (
+        "blender-research",
+        "scripts/apparatus_kit.py",
+        include_str!("../resources/skills/blender-research/scripts/apparatus_kit.py"),
+    ),
+    (
         "review-figures",
         "scripts/extract_figure.py",
         include_str!("../resources/skills/review-figures/scripts/extract_figure.py"),
@@ -1132,6 +1142,21 @@ fn deleted_builtin_has_backup(store: &SkillStore, name: &str) -> bool {
                 .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
         })
         .unwrap_or(false)
+}
+
+/// 供 Agent 直接定位 `lit_records.py` 的环境变量名（免去在各家软链接技能目录里 `find`）
+pub const LIT_RECORDS_ENV: &str = "MESA_LIT_RECORDS";
+
+/// 返回 Mesa 技能库里真实的 `lit_records.py` 绝对路径（非软链接）：优先 `lit-notes`，缺失再取 `lit-search`。
+pub(crate) fn lit_records_script_path() -> Option<PathBuf> {
+    let store = SkillStore::default_paths().ok()?;
+    for name in ["lit-notes", "lit-search"] {
+        let path = store.skill_dir(name).join("scripts").join("lit_records.py");
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// 启动时播种内置技能（幂等）：只补库里没有的，同名技能（含用户自建/改过的）一律跳过，

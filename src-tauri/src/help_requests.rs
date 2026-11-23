@@ -760,7 +760,7 @@ fn take_delivery_at(run: &crate::runs::RunDto) -> Result<Option<(String, String)
     delivery.state = "sending".into();
     delivery.claim_run = Some(run.id.clone());
     let lines = delivery.items.iter().map(|item| answer_line(&item.question, &item.answer, item.remembered.as_deref())).collect::<Vec<_>>().join("\n");
-    let result = (delivery.id.clone(), format!("我在 Mesa 里答了 .ccode/help-wanted.md 的问题：\n{lines}\n按回答继续：先把这些答案写进 TASK.md「已定口径」或本步报告，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样。接着做剩下的事，不重做已完成的业务，不扩大原有授权，做完照常交给我评审。"));
+    let result = (delivery.id.clone(), format!("我在 Mesa 里答了 .ccode/help-wanted.md 的问题：\n{lines}\n按回答继续：先把这些答案记进本步报告（如大纲的「定框架记录」/ 验收摘要）或任务书「已定方向」，确认写进去了，再把答过的这几条从 help-wanted.md 删掉；没答的保持原样。接着做剩下的事，不重做已完成的业务，不扩大原有授权，做完照常交给我评审。"));
     write_deliveries(&deliveries)?;
     Ok(Some(result))
 }

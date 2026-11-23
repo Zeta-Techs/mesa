@@ -35,7 +35,24 @@ provides: [lit-notes]
 
 项目资源里、路径不在项目根 `papers/` 的 PDF（如 Zotero 附件）按绝对路径直读，来源锚点可记该绝对路径；只读，不复制、不重命名、不修改个人库附件。先查这些资源再补下载。
 
-项目根 `papers/` 里的 PDF（人工补投的、已登记成项目资源的）**一律不改名、不移动**：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。**`papers/` 下的清单归检索那一步，精读只读不改**：`included.json`、`included.md`、`to-fetch.md`、`to-fetch.ris`、`endnote-import.ris` 都不写，也不跑 `lit_records.py write`（精读一改，补文献时两步在同几份文件上冲突）。精读开工先跑 `python3 <技能目录>/scripts/lit_records.py pdfs --root <项目根>`（Windows 上用 `python`；只读），它按 DOI、标题认出每篇已有的 PDF（文件名随意），列出认出的和没有全文的。脚本没认出、按内容能确定归属的，写进那篇笔记头的「来源 PDF」行；**拿不准归属的不写，在报告里列出**。不要求用户按规范命名。已有笔记先查证据版本、问题范围和全文状态，未变则复用；全文补到/更正撤稿/范围变化时标出受影响部分，保留人写内容并更新或交人处理，不因已有文件就认定有效。
+项目根 `papers/` 里的 PDF（人工补投的、已登记成项目资源的）**一律不改名、不移动**：Mesa 的资源登记、沉浸阅读的标注和笔记都按路径认文件，改了名就对不上。**`papers/` 下的清单归检索那一步，精读只读不改**：`included.json`、`included.md`、`to-fetch.md`、`to-fetch.ris`、`endnote-import.ris` 都不写，也不跑 `lit_records.py write`（精读一改，补文献时两步在同几份文件上冲突）。
+
+在工作副本（worktree）里，PDF 实际位于**项目根 `papers/`**（环境变量 `$MESA_PROJECT_ROOT` / `$MESA_PAPERS_DIR`；`lit_records.py` 不传 `--root` 时也会自动经 `$MESA_PROJECT_ROOT` / `TASK.md` / git worktree 主仓根定位）。Mesa 已把脚本真实绝对路径注入 `$MESA_LIT_RECORDS`（优先直接用 `"$MESA_PYTHON" "$MESA_LIT_RECORDS"`，Windows PowerShell 用 `& $env:MESA_PYTHON $env:MESA_LIT_RECORDS`，不用 `find` 翻软链接目录；变量为空时再退回 `<技能目录>/scripts/lit_records.py`）：
+
+- **认全文（只读）**：`"$MESA_PYTHON" "$MESA_LIT_RECORDS" pdfs` — 按 DOI、标题认出每篇已有的正文 PDF（含 Zotero 只读附件与项目根 `papers/`），并将仅匹配到 Supporting Information（含 `*_si_001`、`*-mmc1`、`*_MOESM1_ESM` 等出版商后缀）的篇单列进 `supportingOnly`；stdout 为纯 JSON，中文摘要写 stderr（加 `--json-only` 可静默 stderr）。
+- **抽文本并自动防雷**：`"$MESA_PYTHON" "$MESA_LIT_RECORDS" extract-text --keys <bibKeys...> --out-dir .ccode/local/pdf-texts --manifest .ccode/local/manifest.json` — `--keys` 支持空格或逗号传多个键；自动跨 worktree 定位 PDF、用 PyMuPDF 抽文本并**清除 NUL 与控制字符**、扫描前两页报 `SI_ONLY`（返回 `supportingInfoFile`）、**扫描 RSC/Elsevier 等 PDF 的 Symbol 字体 `μ→m` 单位乱码并打 `UNIT_FONT_WARNING`（标出页码并写入抽取文件首行，凡命中必用 PyMuPDF 渲染对应页图像目视核对单位，防 1000 倍数量级错误）**；大批量加 `--manifest` 落盘清单避免 stdout 截断。临时抽取文件放 `.ccode/local/`（自动不进 git）。
+- **读写、移出或导出大宽表**：`"$MESA_PYTHON" "$MESA_LIT_RECORDS" table --file notes/skim.md --get <bibKeys...>`、`--upsert <patch.json>`、`--remove <bibKeys...>` 或 `--to-csv notes/extraction.csv` — `--get` / `--remove` 均支持空格或逗号传多个键，按 `@bibKey` 精确读、改、删 `notes/skim.md` / `notes/extraction.md`，幂等转义单元格 `|` 防拆列；项目维护 `notes/extraction.md` 时，收尾顺手跑一次 `table --file notes/extraction.md --to-csv notes/extraction.csv` 确定性生成同源 CSV 副件，供下游大纲重绘规划与 `figure-forge` 绘图脚本直接读数（不手工另维护两份）。
+- **批量更新索引**：`"$MESA_PYTHON" "$MESA_LIT_RECORDS" index-update --index notes/index.json --patch <patch.json>` — 按 `bibKey`/`id` 批量更新 `reviewStatus` / `notePath` / `forSections` / `pdfPath` 等字段（`reviewStatus=reviewed` 自动清除 `skimmed`），免手写一次性脚本。
+- **一键只读验收**：`"$MESA_PYTHON" "$MESA_LIT_RECORDS" validate` — 一次性核对 `included.json` vs `notes/index.json`（兼容 `year` 字符串/整数；已配对全文的条目推荐同步记 `pdfPath`，项目根 `papers/...` 写相对路径、Zotero 外链写绝对路径，方便下游大纲/拼图直接定位）、`notePath` 与 `> 来源 PDF：`（自动对照项目根 `papers/` 与 Zotero 路径）、宽表列数与键覆盖（且无已排除篇残留）、`references.bib` 基本语法（缺逗号、括号闭合）与条目闭环、`notes/handoff.md` 与 `notes/angles.md` 引用键闭环（自动忽略 `WB₂@WS₂`、`CoB@NC` 等化学负载写法），无需手写校验脚本。
+
+脚本没认出、按内容能确定归属的，写进那篇笔记头的「来源 PDF」行；**拿不准归属的不写，在报告里列出**。不要求用户按规范命名。已有笔记先查证据版本、问题范围和全文状态，未变则复用；全文补到/更正撤稿/范围变化时标出受影响部分，保留人写内容并更新或交人处理，不因已有文件就认定有效。
+
+### 1b. 补读粒度、SI-only 口径与批量补读（>5 篇）防爆规范
+
+- **补读粒度（避免状态双轨）**：仅对**综述（`kind=review`）、已有单篇笔记（`notePath` 非空）、或大纲/用户明确点名的核心研究论文**写或续写单篇八段笔记；其余初轮仅速读的研究论文（`skimmed: true` 且 `notePath` 为空）补到全文后，只更新 `notes/skim.md`（把「全文」改为「有」并补关键发现与代表图/表）、`notes/extraction.md`（补定量指标与全文页码）与 `notes/index.json`（改 `fulltextStatus: "fulltext"`，保持 `skimmed: true`、`notePath: ""`），不强行新建单篇八段笔记。**点名补读同步纠错**：被点名补读成单篇精读笔记的篇目，若经全文核实发现其原有 `notes/skim.md`、`notes/extraction.md` 或 `notes/handoff.md` 行存在数值/单位/事实错漏，**必须同步纠错该行**（未点名篇目的速读行仍一字不动）。
+- **Zotero 导入标题中的 HTML `<sub>`/`<sup>` 标签**：Zotero 导出的 `<sub>`/`<sup>` 属原始导入格式，不算「人手工改过的标题」；可保留原样或统一转为 Unicode 上下标，保持库内风格一致即可（只修明显缺词、拼写或空格错误，不因 HTML 标签反复犹豫）。
+- **仅有 Supporting Information（`SI_ONLY`）口径**：`pdfs` / `extract-text` 判为 `supportingOnly` / `SI_ONLY` 时，正文仍缺失——**不得**将 `fulltextStatus` 改为 `fulltext`（保持 `abstract-only` 或 `unavailable`，并在 `notes/index.json` 对应条同时写 `"supportingInfoOnly": true` 与 `"supportingInfoFile": "<脚本返回的 supportingInfoFile>"`，防止后续拿同一份 SI 反复派发补读）；如确需把 SI 内的实测数值写入 `notes/extraction.md` / `notes/skim.md`，必须在出处列明确标注「见 SI（正文仍缺）」，并在报告中提示用户补正文。
+- **批量补读（>5 篇）上下文防爆**：一次补读超过 5 篇时，必须**分批处理（每批 4–5 篇读完即落盘更新表格/笔记与索引）**，不要攒齐 10+ 篇长文本在主上下文里消化；若委派子 agent 读 PDF，明确限定每篇只返回 **≤400 字的结构化抽取卡片**（含关键数值、测试条件、代表图号与页码），严禁把整篇全文原文回传主上下文。
 
 ### 1a. 已有笔记：在原笔记上续写，不另起一份
 
@@ -88,11 +105,11 @@ provides: [lit-notes]
 3. **方法**：概述之后附「可复现细节」（电解液配方/电极/loading/电流/表征，一句话级，每条带页码——写作阶段做方法对比表全靠它）。
 4. **主要结果**：区分「观察结果及其支持范围」与「作者推测」，不混写；每条注明页码 + 表/图。电流密度、单位和前后数字写在同一句里。**每个关键数字带上测试条件**：样本或体系、用量 / 负载 / 剂量、速率或电流、温度、时间点或循环次数、对照（电池类写面载量、电解液用量 E/S、电流或倍率、圈数；生物医学写样本量、剂量、时间点）；原文没写的写「原文未报告」，不补猜。写作阶段的对比表按这些条件列，条件不全的数放不进去。看不清的数字写「原文未核清」，不要用「约 ?」混进可引用数字。后一步回核发现与原文不符时，改这一节和可引用点，不让旧数字留在笔记里。
 5. **局限**：拆两半——「作者自述的局限」与「本笔记识别的局限」，分开列，不把读者判断伪装成作者自述。
-6. **可引用点**：每条 = 可核验论断（叙述用中文）+ 页码/图表。需要直接引述时再附原文短句。禁止只贴图表题录或摘要原句充数。有全文时本节末另列 **可引用图**（大纲/初稿拼图只认这里），**细到子图、一行一块**：`Fig. 2c｜这一块画了什么（条件、对比对象）｜可拼或仅引用`。子图内容按题注里 (a)(b)… 的描述写；整张本身就是一幅示意图 / 照片时才按整张登记，多联图不要整张一行带过（综述拼图按论点从几篇里各取一块，2026-10-23）。可拼 = 改绘后能进综述组合图；仅引用 = 太复杂/版权或信息密度只适合「见 [@键] Fig. n」。仅摘要、题录、看不清的图写「无可引用图」，禁止凭摘要臆造图号。
-7. **与本课题的关系**：这篇在综述里支撑哪条论点；不要只写「核心/背景：××分类」。
+6. **可引用点**：每条 = 可核验论断（叙述用中文）+ 页码/图表。需要直接引述时再附原文短句。禁止只贴图表题录或摘要原句充数。有全文时本节末另列 **可引用图**（大纲/初稿拼图只认这里），**必须拆到单个子图字母、一行一块**：`Fig. 6a｜80 °C AEMWE 极化曲线（至 1 A cm⁻²）｜可拼`、`Fig. 6d｜230 h 耐久曲线｜可拼`。子图内容按题注里 (a)(b)… 的描述逐块写，最多仅当紧邻 2 个子图同属一条论点时才合并成 `Fig. 4b–c`；**禁止把 6–11 联多子图整图写成 `Fig. 6a–k｜…｜可拼` 一行带过**（整张本身是单幅示意图 / 照片时才按整张登记；多联图不拆子图会逼下游大纲重开 PDF 回查图注，2026-10-23 / 2026-11-22）。可拼 = 改绘后能进综述组合图；仅引用 = 太复杂/版权或信息密度只适合「见 [@键] Fig. n」。仅摘要、题录、看不清的图写「无可引用图」，禁止凭摘要臆造图号。
+7. **与本课题的关系**：这篇在综述里支撑哪条论点；不要只写「核心/背景：××分类」。**Agent 自己的「本项目判断 / 保留意见 / 证据等级评注」固定写在这一节**（方法与证据缺陷写进「局限」的「本笔记识别的局限」，未核清事项写进「疑问与待跟进」），**严禁写入「我的想法」**；若任务书「已定方向」约定了证据等级分级标准（如高 / 中 / 低），逐篇按该标准标注，严禁越级（不得把未在工作态验证的推断或纯计算标为高等级）。
 8. **疑问与待跟进**：只写还没核清、或还要去读的下一篇/字段，不重复局限里已经下的判断；待跟进文献写在这一节（题名 + DOI），不改 `papers/` 下的清单；值得补进文献库的在报告里列出，由人用「补充文献…」交给检索。
 
-**综述卡**（`included.json` 里 `kind=review` 的篇）：小节标题照上面八段原样写（阅读区、抽查都按这八个标题认），内容按综述的读法填，并在「主要结果」之后多两节：
+**综述卡**（`included.json` 里 `kind=review` 的篇）：有全文或有摘要的综述才写单篇综述卡；**既无全文又无摘要（`fulltextStatus=unavailable`）的仅题录综述不建占位笔记文件**，只在 `notes/index.json` 记 `reviewStatus=pending`、`fulltextStatus=unavailable`、`notePath` 留空，并在 `notes/handoff.md` 与验收摘要里点名「仅题录综述·待全文」（避免触发阅读区把空占位卡误判成已读）。小节标题照上面八段原样写（阅读区、抽查都按这八个标题认），内容按综述的读法填，并在「主要结果」之后多两节：
 
 ```
 ## 覆盖范围与时效
@@ -125,11 +142,23 @@ provides: [lit-notes]
 | @Li2023 | 2023 | 原位表征 | 失活是否来自表面重构 | operando XAS + DFT | 重构发生在 0.3 V 以下 | 综述截止后第一份原位证据 | Fig. 2c 原位 XANES 价态演化；Fig. 4b 自由能台阶 | 有 |
 ```
 
+若任务书「已定方向」约定了额外速读字段（例如机制主张、证据类型、可信度线索等），在「主要结论」之后固定追加对应列并保持整张表列数一致，不改或省略上面原有的 9 列。**分批或并行写表时的统一格式（`notes/skim.md` 与 `notes/extraction.md` 通用）**：键列只写纯 `@bibKey`（不加反引号），年份取 `included.json` 4 位数字（不附 online 括号），证据等级写纯文本（不加粗），提示符统一用「注意：」或单色 `⚠︎`（`\u26A0\uFE0E`），避免合并后二次清洗。
+
 主要看 `included.json` 里的摘要，有全文的再扫引言、结论和图注；每格一句，不编摘要里没有的数字。「新在哪」对照综述卡写：相对已有综述补了什么、推翻了什么，说不出就写「同类工作」。「代表图/表」有全文的顺带记关键图号与画了什么（供大纲挑哪几篇值得「补读」及初步规划用图），无全文写「—」。速读不是精读：后面写进正文的篇，要等大纲点名后精读；当后续补读或补检把某篇写成完整精读笔记时，在 `notes/index.json` 填 `reviewStatus=reviewed`、`notePath`、去掉 `skimmed`、按补料单节号填 `forSections`（如 `["3.3"]`），若项目启用了 `notes/extraction.md` 且该篇含定量指标则同步补入 `notes/extraction.md`。
 
 ### 可写点清单（TASK.md 要求时）
 
-综述卡和速读表都写完后跑 `python3 <技能目录>/scripts/lit_records.py angles-facts --json papers/included.json --index notes/index.json`，输出原样贴进 `notes/angles.md` 的「## 时效对照（脚本算）」——截至年份、之后又纳入了几篇研究论文都由脚本数，不自己数。再写候选角度，一条一个（「之后的新工作」从速读表写它们各说了什么、分成哪几个方向）：
+综述卡和速读表都写完后跑 `"$MESA_PYTHON" "$MESA_LIT_RECORDS" angles-facts --json papers/included.json --index notes/index.json`，输出原样贴进 `notes/angles.md` 的「## 时效对照（脚本算）」——截至年份、之后又纳入了几篇研究论文都由脚本数，不自己数。紧接着放一张 4 列短表「## 综述骨架速览」（直接摘自各篇综述卡的「结构骨架」，每篇一行，供大纲商量期读一份 `angles.md` 即能讨论骨架取舍，不必再逐篇翻综述卡）：
+
+```markdown
+## 综述骨架速览
+
+| 综述 | 截至年份 | 结构逻辑与论证顺序 | 详略重心 |
+|---|---|---|---|
+| [@键A] | 2024 | 合成→OER→HER→展望（按反应分块） | 重合成与 OER，HER 机理不足 1 页 |
+```
+
+再写候选角度，一条一个（「之后的新工作」从速读表写它们各说了什么、分成哪几个方向）：
 
 ```markdown
 ## 角度 3：原位表征揭示的失活路径
@@ -151,7 +180,7 @@ provides: [lit-notes]
 python3 <技能目录>/scripts/lit_records.py bib --json papers/included.json --bib references.bib
 ```
 
-它按 DOI（其次标题）匹配已有条目：已有的**不改键、不覆盖已有值**，只补空着的或写着「待补」的字段；没有的按「第一作者姓 + 年份」起键追加（重名加 a、b）。输出的 `keys` 是 included.json 的 id → bib 键，照着写进 `notes/index.json` 的 `bibKey`。待确认的默认不进引文库（人纳入后再跑一次）。检索那一步排除了的篇（`decision=excluded`）它会从引文库移出，输出的 `removed` 是移出的键；`citedBy` 点名大纲、`manuscript/`、`chapters/` 里还在引它们的文件——精读不改这些稿件，写进本步验收摘要交人处理；`notes/handoff.md` 写作约束、`notes/angles.md` 里提到它们的条目一并删掉或改写，`notes/index.json` 删掉那几行，笔记文件留着。included.json 里没有、只能从别处补的篇（精读中发现的待跟进引用），才按下面的口径手写一条，有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。脚本写出的条目带这些字段：
+它按 DOI（其次标题）匹配已有条目：已有的**不改键、不覆盖已有值**，只补空着的或写着「待补」的字段；没有的按「第一作者姓 + 年份」起键追加（重名加 a、b）。输出的 `keys` 是 included.json 的 id → bib 键，照着写进 `notes/index.json` 的 `bibKey`。待确认的默认不进引文库（人纳入后再跑一次）。检索那一步排除了的篇（`decision=excluded`）它会从引文库移出，输出的 `removed` 是移出的键；`citedBy` 点名大纲、`manuscript/`、`chapters/` 里还在引它们的文件——精读不改这些稿件，写进本步验收摘要交人处理；`notes/index.json`、`notes/skim.md` 与 `notes/extraction.md`（若存在，可用 `lit_records.py table --file <表> --remove <bibKeys>`）删掉对应行，`notes/handoff.md` 写作约束、`notes/angles.md` 里提到它们的条目一并删掉或改写，单篇笔记文件留着。included.json 里没有、只能从别处补的篇（精读中发现的待跟进引用），才按下面的口径手写一条，有 DOI 时先向 Crossref 取正式发表版（不用 preprint 顶替）。期刊缩写用 ISO 4、每个缩写词后加句点，按期刊全称查；一词刊名不缩。不要用 NLM 的 ISSN 缩写，不要自己编。脚本写出的条目带这些字段：
 
 - `author`：全名，`and` 分隔；「名 姓」翻成 `姓, 名`；被截成前三人或同一人重复的名单，改用 Crossref 完整名单
 - `year`、`title`、`journal`、`doi`
@@ -164,7 +193,7 @@ python3 <技能目录>/scripts/lit_records.py bib --json papers/included.json --
 
 ### 用已下载 PDF 核对题录
 
-项目根 `papers/` 里已经对上 DOI 的 PDF，读首页和摘要页。PDF 里的标题、化学式上下标、摘要与 Crossref 纯文本不一致时，以 PDF 正文为准改 `references.bib` 的 `title` 和 `abstract`。抽不出字、对不上 DOI、或首页标题和 DOI 不是同一篇的，保持原字段，在笔记里记一行「题录未按 PDF 改」。不改作者键，不改人改过的作者和标题。
+所有已配对的正文 PDF（含 Zotero 只读附件与项目根 `papers/`，`lit_records.py pdfs` 标为 `supportingOnly` 的 Supporting Information 跳过），读首页和摘要页。PDF 里的标题、化学式上下标、摘要与 Crossref 纯文本不一致或原摘要为「待补」时，以 PDF 正文为准补全或更新 `references.bib` 的 `title` 和 `abstract`。抽不出字、对不上 DOI、或首页标题和 DOI 不是同一篇的，保持原字段，在笔记里记一行「题录未按 PDF 改」。不改作者键，不改人改过的作者和标题。
 
 这一步不重写 RIS。人点「同步到文献库」时，Mesa 按这份 `references.bib` 生成导入文件。没有 PDF 的篇目保持检索步留下的题录。
 

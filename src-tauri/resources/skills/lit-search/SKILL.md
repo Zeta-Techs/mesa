@@ -46,7 +46,7 @@ provides: [lit-search]
 
 可先试检评估范围与成本；正式纳排标准由研究问题决定，不因结果方向或凑篇数而改变。记录试检与正式检索的区别、标准版本及人确认依据。
 
-**先写核心问题与边界**：`papers/screening.md` 里写「## 核心问题与边界」——要回答的问题、读者读完该带走的判断、要与不要的范围。TASK.md「已定方向」或用户已经说清的照抄；课题主题只是一个领域名（如「HER催化综述」）或没写时，按综述角度提出 2–3 个候选核心问题等人确认，不默认替人定题（可先试检估算范围，未确认前不锁定问题、不冻结标准）。
+**先写核心问题与边界**：`papers/screening.md` 里写「## 核心问题与边界」——要回答的问题、读者读完该带走的判断、要与不要的范围。TASK.md「已定方向」、用户已经说清的、或项目全局设定「综述角度」已写明具体聚焦问题（如「聚焦某个子问题（具体：…）」或自定义角度）的直接照用；课题主题只是一个领域名（如「HER催化综述」）且上面都没定具体问题时，按综述角度提出 2–3 个候选核心问题等用户确认，不默认替人定题（可先试检估算范围，未确认前不锁定问题、不冻结标准）。
 
 再围绕核心问题制定纳入/排除标准，写进 `papers/screening.md`。四个维度都要给**建议值**，人没说时按下面的默认提：
 
@@ -57,7 +57,7 @@ provides: [lit-search]
 
 **建议纳入规模**：按目标篇幅与综述角度给一个篇数并说理由（参考：期刊综述每千词约引 10–20 篇，领域全景取上沿、聚焦子问题取下沿）。在流水线里要按模板区分下游读法——英文综述模板第一轮是「综述精读 + 研究论文全部速读（大纲再按章节点名精读）」，科研论文与学位论文模板是「有全文的每篇都精读」，篇数直接决定后续步骤的时间和花费。人定了规模后按相关性取舍到这个量级，不为凑数放宽标准。
 
-**怎么问**：在流水线里，候选核心问题、纳入标准、纳入规模**各写一条**进 `.ccode/help-wanted.md`（字段按 TASK.md「决策暂停策略」：建议、2–4 个选项及后果、不回时、类别、依据；同轮未决请求不超过 3 条），依据写粗检命中数；Mesa 把每条做成可点选的卡片，三件事挤在一条里人没法点。TASK.md（「已定方向」「上游已定方向」「项目知识」）或项目全局设定里已经写明的不再问（若粗检命中量与预定量级差距悬殊，才报数请人确认是否调整）。
+**怎么问**：在流水线里，候选核心问题、纳入标准、纳入规模**各写一条**进 `.ccode/help-wanted.md`（字段按 TASK.md「决策暂停策略」：建议、2–4 个选项及后果、不回时、类别、依据；同轮未决请求不超过 3 条），依据写粗检命中数；Mesa 把每条做成可点选的卡片，三件事挤在一条里人没法点。TASK.md（「已定方向」「上游已定方向」「项目知识」）或项目全局设定里已经写明的不再问（若粗检命中量与目标纳入规模差距悬殊——如窄到盖不住目标规模或宽到难以筛选——才报数请人确认是否调整；若 TASK.md 有「文献来源」段，先盘清已有导入条目与主题缺口，再只针对缺口方向粗检报数，不拿全领域宽检命中数直接对比库存篇数）。
 
 ### 2. 问题概念化与检索词
 
@@ -78,7 +78,7 @@ provides: [lit-search]
 - **字段由随技能脚本补，不手写**（见下「4b. 题录固定脚本」）。下面是脚本实现的口径，脚本跑不了时才按它手工补：**有 DOI 就用 Crossref 把上面这些字段补全再写入筛选记录和 RIS**（`https://api.crossref.org/works/<DOI>`，礼貌 User-Agent）。标题用 Crossref 的 `title`，不要改用 OpenAlex 的 `display_name`。`title` 里的 `<sub>` `<sup>` 先收成 Unicode 下标和上标再写入 `included.json` 与两份 RIS；OpenAlex 的空格标题会把 `Mo<sub>2</sub>` 收成 `Mo 2`。Crossref 纯文本把 `Zr1-xTMxB2` 收成 `Zr1-TMB2` 时，按出版商这种残缺形状写回 `Zr₁₋ₓTMₓB₂`，不要再删字母。Crossref 没有摘要时再用 OpenAlex。期刊缩写用 **ISO 4，每个缩写词后面加句点**（`Adv. Mater.`，不是 `Adv Mater`）。按期刊全称查 JabRef 的 ACS / mechanical / geology_physics / general / lifescience 表（`https://abbrv.jabref.org/journals/`），或期刊官网、CASSI。不要用 NLM Catalog 的 ISSN 结果：它不带句点，还会把 *Advanced Materials* 对成 `Adv Eng Mater`。Crossref 的 short-container-title 经常就是全称，不能当缩写。表里没有、现有值等于全称、缺句点、或对不上这本期刊全称的，先写「待补」，再按官网或 ISO 4 补上。一词刊名（*Nature*、*Science*、*Small*）不缩，写全称。不要自己编。没有期、没有独立网络出版日也标「待补」，不把卷、页或创建日期挪去填。作者以 Crossref 的 `family`/`given` 为准，写成 `姓, 名`，一人一行；来源名单被截成「前三人, et al.」或同一人重复出现时，用 Crossref 的完整名单替换，不沿用截断名单。
 
 - **用户积累进料（双台账口径，2026-10-13；2026-11-05 收紧）**：流水线里只认工作区 `.ccode/handoff-lit-intake.md`——开工那一刻从项目根 `papers/reading-list.md` 定格的积累清单；开工后再加入积累的留到下一轮，不去读项目根的活文件（只有快照不存在时才只读一次积累清单）。积累里的每一篇都是人挑过的，与 `papers/included.md` 存量、`papers/imports/` 导入、本轮检索候选统一去重后**全部写进 included.json**，不套年份等过滤、Agent 不排除：不合适的标 pending、理由写「建议排除：…」由人定；项目根 `notes/` 里已有这篇笔记的在 reason 注明「已有笔记」，精读步在原笔记上续写。这两份积累文件只读——不回写、不删改，产出契约不变。
-- **用户自己的库不由 Agent 排除（2026-10-23）**：从 Zotero / EndNote 导进来的、`papers/imports/` 里人放的导出，都是人已经挑过的文献。**每条都写进 `papers/included.json`**；检索用的年份窗口、文章类型、来源级别等过滤不套到它们身上；看着不合适的（年份早、主题偏）标 `pending`，`reason` 写「建议排除：……」，由人在 Mesa 的文献清单里定。只写在 `screening.md`、不进 json 的，人在 Mesa 里看不到、也改不回（当日实证：9 篇按检索年份窗口被排掉）。Zotero 导入登记的正文 PDF（`papers/imports/zotero-*.json` 的 `pdfPath`，留在 Zotero 库里）就是全文：`lit_records.py write` 自动记进 `pdf`、不进待获取；`check` 点名没进 json 的导入条目和被 Agent 排除的导入条目。
+- **用户自己的库不由 Agent 排除（2026-10-23）**：从 Zotero / EndNote 导进来的、`papers/imports/` 里人放的导出，都是人已经挑过的文献。**每条都写进 `papers/included.json`**；检索用的年份窗口、文章类型、来源级别等过滤不套到它们身上；TASK.md「已定方向」里的纳入/排除边界决定同样只控制补充检索方向与筛选建议，不回溯剔除人工导入条目——看着不合适或撞边界的（年份早、主题偏等）标 `pending`，`reason` 写「建议排除：……」，由人在 Mesa 的文献清单里定。只写在 `screening.md`、不进 json 的，人在 Mesa 里看不到、也改不回（当日实证：9 篇按检索年份窗口被排掉）。Zotero 导入登记的正文 PDF（`papers/imports/zotero-*.json` 的 `pdfPath`，留在 Zotero 库里）就是全文：`lit_records.py write` 自动记进 `pdf`、不进待获取；`check` 点名没进 json 的导入条目和被 Agent 排除的导入条目。
 
 #### 外部 AI 检索站导出导入（人肉中转）
 
@@ -99,12 +99,13 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 
 - 系统综述按方案分别记录标题摘要和全文判定，不因候选少跳过全文；普通调研可按规模合并操作，但保留逐条证据和判定；
 - 每篇给出纳入/排除及理由；排除理由从固定枚举里选：**年份不符 / 语言不符 / 来源级别不符 / 主题无关 / 重复 / 非实证研究**，都不沾边才写自由理由；
-- **拿不准相关性的一律保留候选，并标注「待确认」**——不允许自行裁掉，也不能冒充最终纳入；「多源命中」不等于证据更强。全文未得的判定及其对覆盖的影响单列。
+- **拿不准相关性的一律保留候选，并标注「待确认」**——不允许自行裁掉，也不能冒充最终纳入；「多源命中」不等于证据更强。全文未得的判定及其对覆盖的影响单列。**仅摘要 / 题录防拼接**：不把同一摘要中分别出现的测试体系、表征技术或反应条件默认拼成同一次实验的联合证据；未明确交代对应关系的一律标待确认或降级标注，留待看全文核对。
+- **正式筛选可重跑**：正式检索与筛选脚本放 `scripts/`、可复现的逐条判定表留在 `papers/`（进 git），不要把正式审计表或关键筛选脚本只留在被忽略的 `artifacts/`。
 - **开头那句篇数从 included.json 现数来。** 「终判纳入 N 篇」「另有待确认 M 篇」必须等于 json 里 `decision=included` / `pending` 的条数。后来改了判定，先改这句再交。不要留检索当时的旧数字。
 - **`papers/to-fetch.md` 不删、不手写**：它记着人下载全文的进度（编号、✓），重跑 `lit_records.py write` 会保留上一版编号、给已有全文的打 ✓、新篇接在后面编号并在开头写「某天新加：第 x–y 篇」。**禁止先删掉它再重生成**（2026-11-10 HER：删了以后人下好的 23 篇的 ✓ 和编号全没了、新增的认不出来）。编号看着乱也照留。
-- **按影响因子 / 分区筛（人提了 IF 门槛，或标准里有这一条）**：先跑 `python3 <技能目录>/scripts/lit_records.py impact`（Windows 上用 `python`），它按 Mesa 的期刊指标表（JCR 2025 影响因子、中科院大类分区，与 Mesa 评审清单上显示的是同一份）给每条写 `impactFactor` / `casQuartile` / `casTop`。**影响因子只认这一列，不凭记忆估、不从网页抄**。写「表中无此刊」的既不算达标、也不当不达标排除：放进待确认，理由写「表中无此刊，影响因子待人核」。命令报「没有 MESA_JOURNAL_TOOL」或「期刊指标表还没下载」时不按影响因子筛，写一条人工请求说明原因。新补进的篇写进 json 后再跑一次；screening.md 的门槛写明「影响因子按 Mesa 期刊指标表（JCR 2025）」。
+- **按影响因子 / 分区筛（人提了 IF 门槛，或标准里有这一条）**：先跑 `python3 <技能目录>/scripts/lit_records.py impact`（Windows 上用 `python`），它按 Mesa 的期刊指标表（自动同步的最新年度 JCR 影响因子与中科院大类分区，与 Mesa 评审清单上显示的是同一份）给每条写 `impactFactor` / `casQuartile` / `casTop`。**影响因子只认这一列，不凭记忆估、不从网页抄**。写「表中无此刊」的既不算达标、也不当不达标排除：放进待确认，理由写「表中无此刊，影响因子待人核」。命令报「没有 MESA_JOURNAL_TOOL」或「期刊指标表还没就绪」时不按影响因子筛，写一条人工请求说明原因。新补进的篇写进 json 后再跑一次；screening.md 的门槛写明「影响因子按 Mesa 期刊指标表」。
 - **「待确认」不是题录没查全。** `decision=pending` 只表示相关性等人拍板。期刊全称、ISSN、`doi`、`url` 与已纳入同一套：有 DOI 就必须先向 Crossref 取 `container-title` 写入 `venue`，没有再问 OpenAlex。书章没有期刊才把 `venue` 写成「待补」。禁止因为这篇还没拍板，就把 `venue`/`doi`/`url` 整列写成「待补」或留空。
-- **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时写入 `.ccode/help-wanted.md` 请人逐篇纳入或排除（未回复则不把 pending 当已纳入）；人改成 included 后才允许补进 to-fetch。
+- **先拍 pending，再下载全文**：`to-fetch.md` 与开放获取下载都只针对 `decision=included`。禁止把 pending 写入待获取或先下其全文。有 pending 时留在 `papers/included.json` 与 `papers/included.md` 的「待确认清单」里（写清理由），由人在本步收尾的 Mesa「核对待确认篇目」界面逐篇点纳入或排除，**不要把待确认篇目清单塞进 `.ccode/help-wanted.md`**（`help-wanted.md` 只问检索中需拍板的全局标准或范围分歧）；人改成 included 后才允许补进 to-fetch。
 - **开放获取失败就停**：只下载接口已经给出的 PDF 直链。连续 3 次 HTTP 403 即停止其余下载，未下到的写入 `to-fetch.md`，不要换链重试。
 - **付费墙全文交给人**：`to-fetch.md` 写好就收尾，由人在 Mesa 的待获取清单里逐篇点「官网」用学校账号下；人放进项目根 `papers/` 的 PDF，下一步精读开工时按 DOI、标题认出来。**不要自己用 curl、脚本或浏览器去出版商网站下付费墙全文**（会被出版商拦，连累人的访问），也不要换别的办法绕。
 - **开放获取取哪个版本**：先取正式发表版（出版商页面、PMC、开放获取期刊），其次是机构库里作者的已录用稿。预印本服务器（arXiv、Research Square、bioRxiv、ChemRxiv、SSRN 等）上的版本只在来源级别允许预印本时才下；不允许时这篇写入 `to-fetch.md`。接口把 Research Square 标成 acceptedVersion 也照样算预印本——看托管处，不只看版本标签。
@@ -112,13 +113,13 @@ Elicit / Undermind / X-MOL / Google Scholar 等闭源站点无法程序化检索
 
 ### 4b. 题录固定脚本（补字段 → 开放获取 → 清单与 RIS → 校验）
 
-补字段、下开放获取全文、出 `included.md` / `to-fetch.md` / 两份 RIS 是确定性的活，**一律用技能目录里的 `scripts/lit_records.py`**，不要自己写脚本、不要手写这几份文件（2026-10-22 实证：手写一套脚本修格式整条链重跑 26 次）。脚本在技能目录里直接调用，不要复制进工作区。命令里的 `python3` 在 Windows 上换成 `python`。
+补字段、下开放获取全文、出 `included.md` / `to-fetch.md` / 两份 RIS 是确定性的活，**一律用 Mesa 随包的 `lit_records.py`**，不要自己写脚本、不要手写这几份文件（2026-10-22 实证：手写一套脚本修格式整条链重跑 26 次）。Mesa 已把脚本真实绝对路径注入 `$MESA_LIT_RECORDS`，优先直接跑 `"$MESA_PYTHON" "$MESA_LIT_RECORDS" <子命令>`（Windows PowerShell 用 `& $env:MESA_PYTHON $env:MESA_LIT_RECORDS`；变量为空时再退回技能目录里的 `scripts/lit_records.py`），不要复制进工作区。
 
 1. 筛选判定写进 `papers/included.json`：每条至少 `id`、`title`、`decision`（included / pending / excluded）、`reason`，加上 `doi`（没有 DOI 就给 `url`）。其余字段可以先不填。
 2. `python3 <技能目录>/scripts/lit_records.py enrich`：纳入与待确认一次补齐（Crossref 为准，OpenAlex 补摘要和论文关键词，ISO 4 缩写查 JabRef 表与 Mesa 兜底表），排除的不补。输出里点名的「期刊缩写待补」按期刊官网或 ISO 4 手填进 json 的 `journalAbbreviation`（每个缩写词后加句点）；其余「待补」是登记库里真没有，保持待补，不编。
-3. `python3 <技能目录>/scripts/lit_records.py fetch --root <项目根>`：只给已纳入篇目下开放获取全文到项目根 `papers/`，按上面的版本规则选链接（来源级别允许预印本时加 `--allow-preprint`），连续 3 次 403 自动停，下到的在 json 里记 `pdf`。
+3. `python3 <技能目录>/scripts/lit_records.py fetch --root <项目根>`：只给已纳入篇目下开放获取全文到项目根 `papers/`，每篇只试第 1 条符合版本规则的直链、失败不换链重试（来源级别允许预印本时加 `--allow-preprint`），连续 3 次实际 HTTP 403 自动停，分别输出「无合规直链 / 下载失败 / 停止后未尝试」，下到的在 json 里记 `pdf`。
 4. `python3 <技能目录>/scripts/lit_records.py write --root <项目根>`：从 json 生成 `papers/included.md`、`papers/to-fetch.md`、`papers/to-fetch.ris`、`papers/endnote-import.ris`。要改清单先改 json，再重跑 write；不要手改这四份。
-5. `python3 <技能目录>/scripts/lit_records.py check --root <项目根>`：校验 json、清单与两份 RIS 是否一致（篇数、同序、CRLF、没有待确认混进待获取、没有「待补」进标签）。**不通过不算完成**，按提示重跑。
+5. `python3 <技能目录>/scripts/lit_records.py check --root <项目根>`：校验 json、清单与两份 RIS 是否一致（篇数、同序、CRLF、没有待确认混进待获取、没有「待补」进标签）。**不通过不算完成**，按提示重跑。RIS 规范要求 `ER  - ` 带尾随空格与 CRLF，格式校验以 `lit_records.py check` 为准，不要用 `git diff --check` 拦 `*.ris`。
 
 改了判定或补了缩写，重跑 write 与 check 即可（不联网，几秒）。enrich 的接口结果缓存在系统临时目录，重跑不重复联网。`papers/screening.md` 仍由你写。Python 跑不起来时如实记进覆盖缺口，再按「产出格式」手工写。
 

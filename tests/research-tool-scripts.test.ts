@@ -879,6 +879,40 @@ test("Blender validates provenance and dimensions without executing Blender; Ori
     let result = run(script,["--params",file,"--validate"]);assert.equal(result.status,0,result.stderr);
     data.objects[0].scale[0]=-1;writeFileSync(file,JSON.stringify(data));
     result = run(script,["--params",file,"--validate"]);assert.notEqual(result.status,0);
+    // 2026-11-23：illustration 管线 + 高频科研构件 + 多图批量 assets 校验 + scene_illus 成图裁边/线宽换算自检
+    const batchFile = join(root, "batch.json");
+    writeFileSync(batchFile, JSON.stringify({
+      kind: "schematic",
+      units: "NONE",
+      style: "illustration",
+      fig_width_mm: 183,
+      provenance: "unit test",
+      limitations: "not to scale",
+      assets: [
+        { name: "cell", objects: [{ name: "c1", shape: "three_electrode_cell" }], anchors: { custom: [0, 0, 1] } },
+        { name: "lat", objects: [{ name: "l1", shape: "crystal_lattice", options: { nx: 2, ny: 2, nz: 2 } }] },
+      ],
+    }));
+    result = run(script, ["--params", batchFile, "--validate"]);
+    assert.equal(result.status, 0, result.stderr);
+    const illusCheck = spawnSync(python, ["-c", [
+      "import sys, json, pathlib",
+      "sys.path.insert(0, sys.argv[1])",
+      "import scene_illus as SI",
+      "px = SI.compute_freestyle_px(1800, 183.0, 0.75)",
+      "assert 2.0 <= px <= 3.2, px",
+      "from PIL import Image, ImageDraw",
+      "d = pathlib.Path(sys.argv[2])",
+      "im_empty = Image.new('RGBA', (200, 200), (0, 0, 0, 0)); p_empty = d / 'empty.png'; im_empty.save(p_empty)",
+      "r_empty = SI.check_render_image(p_empty)",
+      "assert any('empty_render' in w for w in r_empty['warnings']), r_empty",
+      "im_clip = Image.new('RGBA', (200, 200), (0, 0, 0, 0)); ImageDraw.Draw(im_clip).rectangle([0, 40, 150, 160], fill=(30, 80, 130, 255)); p_clip = d / 'clip.png'; im_clip.save(p_clip)",
+      "r_clip = SI.check_render_image(p_clip)",
+      "assert any('edge_clipped(left)' in w for w in r_clip['warnings']), r_clip",
+      "sc = SI.write_anchor_sidecar(p_clip, {'we_tip': [0.5, 0.4]}, (200, 200), 183.0)",
+      "assert json.loads(sc.read_text())['anchors']['we_tip'] == [0.5, 0.4]",
+    ].join("\n"), resolve("src-tauri/resources/skills/blender-research/scripts"), root], { encoding: "utf8" });
+    assert.equal(illusCheck.status, 0, illusCheck.stderr);
     result=run(resolve("src-tauri/resources/skills/origin-plot/scripts/plot_origin.py"),["--probe"]);
     assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).readyToExecute,false);
   } finally { rmSync(root,{recursive:true,force:true}); }

@@ -679,3 +679,755 @@ test("write 持久化 bibKey 并与 bib/angles-facts 对齐；摘要含单边花
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("fetch：每篇只试第 1 条直链不换链，连续 3 次 HTTP 403 即停，区分无合规直链 / 下载失败 / 停止后未尝试", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-lit-fetch-"));
+  try {
+    mkdirSync(join(root, "papers"), { recursive: true });
+    const mk = (id: string, title: string, doi: string) => ({
+      id, title, decision: "included", reason: "纳入", doi,
+      authors: ["Li, Na"], year: "2025", venue: "Nano Energy", url: `https://doi.org/${doi}`,
+    });
+    const rows = [
+      mk("p0", "No Link Paper", "10.1000/nolink"),
+      mk("p1", "Forbidden One", "10.1000/f1"),
+      mk("p2", "Forbidden Two", "10.1000/f2"),
+      mk("p3", "Forbidden Three", "10.1000/f3"),
+      mk("p4", "Skipped After Stop", "10.1000/after"),
+    ];
+    writeFileSync(join(root, "papers", "included.json"), JSON.stringify(rows, null, 2));
+    const code = `
+import sys, types
+sys.path.insert(0, sys.argv[1])
+import lit_records as m
+tried = []
+def fake_candidates(doi, allow_preprint=False):
+    if doi == "10.1000/nolink": return []
+    return [f"https://a.test/{doi}.pdf", f"https://b.test/{doi}.pdf"]
+def fake_download(url, dest):
+    tried.append(url)
+    raise m.Forbidden()
+m.oa_candidates = fake_candidates
+m.download_pdf = fake_download
+m.cmd_fetch(types.SimpleNamespace(json=sys.argv[2], root=sys.argv[3], allow_preprint=False))
+print("TRIED=" + ",".join(tried))
+`;
+    const r = spawnSync(
+      python,
+      ["-c", code, resolve("src-tauri/resources/skills/lit-search/scripts"), join(root, "papers", "included.json"), root],
+      { encoding: "utf8" },
+    );
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.match(r.stdout, /无合规直链：10\.1000\/nolink/);
+    assert.doesNotMatch(r.stdout, /付费墙：/);
+    assert.match(r.stdout, /停止后未尝试：Skipped After Stop/);
+    assert.match(r.stdout, /连续 3 次 403，已停止其余下载/);
+    // 每篇只试第 1 条链（a.test），绝不换链试 b.test，且停手后不再请求 after
+    assert.match(r.stdout, /TRIED=https:\/\/a\.test\/10\.1000\/f1\.pdf,https:\/\/a\.test\/10\.1000\/f2\.pdf,https:\/\/a\.test\/10\.1000\/f3\.pdf$/m);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("check：来源表认可的同名或无句点刊名缩写不误报，仍拦未缩写的错误全称", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    const path = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(path, "utf8"));
+    rows[0].venue = "Nano Energy";
+    rows[0].journalAbbreviation = "Nano Energy";
+    rows[1].venue = "Sustainable Energy & Fuels";
+    rows[1].journalAbbreviation = "Sustainable Energy Fuels";
+    writeFileSync(path, JSON.stringify(rows, null, 2));
+    assert.equal(run(["write", "--root", proj], ws).status, 0);
+    const ok = run(["check", "--root", proj], ws);
+    assert.equal(ok.status, 0, ok.stdout);
+    assert.doesNotMatch(ok.stdout, /不像 ISO 4/);
+
+    rows[0].venue = "Advanced Materials";
+    rows[0].journalAbbreviation = "Advanced Materials";
+    writeFileSync(path, JSON.stringify(rows, null, 2));
+    assert.equal(run(["write", "--root", proj], ws).status, 0);
+    const warned = run(["check", "--root", proj], ws);
+    assert.equal(warned.status, 0, warned.stdout);
+    assert.match(warned.stdout, /期刊缩写「Advanced Materials」不像 ISO 4/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("write：pending 的 Zotero 导入条目也记下 pdf，后续纳入不误进待获取", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    const zPdf = join(root, "zotero-pending.pdf");
+    writeFileSync(zPdf, "%PDF-1.4 zotero");
+    mkdirSync(join(proj, "papers/imports"), { recursive: true });
+    writeFileSync(
+      join(proj, "papers/imports/zotero-test.json"),
+      JSON.stringify([{ id: "1:PENDPDF1", bibKey: "zotero1pendpdf1", title: "Pending Zotero Paper", doi: "10.1000/pendpdf", pdfPath: zPdf }]),
+    );
+    const path = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(path, "utf8"));
+    rows.push({
+      id: "zotero1pendpdf1",
+      title: "Pending Zotero Paper",
+      decision: "pending",
+      reason: "待确认",
+      doi: "10.1000/pendpdf",
+      authors: ["Li, Na"],
+      year: "2024",
+      venue: "Nano Energy",
+      journalAbbreviation: "Nano Energy",
+      url: "https://doi.org/10.1000/pendpdf",
+    });
+    writeFileSync(path, JSON.stringify(rows, null, 2));
+    assert.equal(run(["write", "--root", proj], ws).status, 0);
+    const updated = JSON.parse(readFileSync(path, "utf8"));
+    const item = updated.find((x: { id: string }) => x.id === "zotero1pendpdf1");
+    assert.equal(item.pdf, zPdf.replace(/\\/g, "/"), "pending 条目也必须落盘 Zotero pdf 路径");
+
+    // 模拟之前误把已有 PDF 的条目写进待获取清单（且尚未手工勾选 ✓），重跑 write 应自动清出待获取
+    item.decision = "included";
+    writeFileSync(path, JSON.stringify(updated, null, 2));
+    writeFileSync(
+      join(ws, "papers/to-fetch.md"),
+      "# 待获取全文\n\n1. Pending Zotero Paper — 10.1000/pendpdf\n",
+    );
+    assert.equal(run(["write", "--root", proj], ws).status, 0);
+    assert.doesNotMatch(readFileSync(join(ws, "papers/to-fetch.md"), "utf8"), /Pending Zotero Paper/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pdfs：识别 Supporting Information 不误当正文全文，同时输出统一 absPath 与 source", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    // 给 W1 放一个带 Supporting Information 文件名的 SI 文件，给 W2 放 Zotero 绝对路径正文 PDF
+    mkdirSync(join(proj, "papers"), { recursive: true });
+    writeFileSync(join(proj, "papers/Wang2023-Supporting-Information.pdf"), "%PDF-1.4 si");
+    const zPdf = join(root, "Zotero", "storage", "Z1", "Bai2021.pdf");
+    mkdirSync(join(root, "Zotero", "storage", "Z1"), { recursive: true });
+    writeFileSync(zPdf, "%PDF-1.4 main");
+    mkdirSync(join(proj, "papers/imports"), { recursive: true });
+    writeFileSync(
+      join(proj, "papers/imports/zotero-si.json"),
+      JSON.stringify([{ id: "1:Z1", bibKey: "W2", title: "MXenes", doi: "10.1038/s41699-021-00259-4", pdfPath: zPdf }]),
+    );
+    const path = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(path, "utf8"));
+    rows.find((x: { id: string }) => x.id === "W1").title = "Wang 2023 Supporting Information Test";
+    writeFileSync(path, JSON.stringify(rows, null, 2));
+    const r = run(["pdfs", "--root", proj], ws);
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    const w2 = out.found.find((x: { id: string }) => x.id === "W2");
+    assert.ok(w2, "W2 Zotero 正文 PDF 应被认出");
+    assert.equal(w2.source, "zotero");
+    assert.ok(w2.absPath.endsWith("/Bai2021.pdf"));
+    assert.equal(out.found.some((x: { id: string }) => x.id === "W1"), false, "SI 文件不得进 found");
+    assert.ok(out.missing.some((x: { id: string }) => x.id === "W1"), "只有 SI 的条目应留在 missing");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pdfs：识别出版商 SI 后缀（sc4c04490_si_001）且 --json-only 静默 stderr", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    mkdirSync(join(proj, "papers"), { recursive: true });
+    writeFileSync(join(proj, "papers/10.1021_acssuschemeng.4c04490_si_001.pdf"), "%PDF-1.4 acs si");
+    const path = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(path, "utf8"));
+    rows.find((x: { id: string }) => x.id === "W1").doi = "10.1021/acssuschemeng.4c04490";
+    writeFileSync(path, JSON.stringify(rows, null, 2));
+    const r = run(["pdfs", "--root", proj, "--json-only"], ws);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr.trim(), "", "--json-only 应静默 stderr 中文摘要");
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.found.some((x: { id: string }) => x.id === "W1"), false, "ACS _si_001 不得当正文");
+    assert.ok(out.supportingOnly?.some((x: { id: string }) => x.id === "W1"), "ACS _si_001 应标进 supportingOnly");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("table：--get / --upsert 幂等转义 | 防拆列 + --remove 移出已排除行", () => {
+  const { root, ws } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    const skim = join(ws, "notes/skim.md");
+    writeFileSync(
+      skim,
+      [
+        "# 速读表",
+        "",
+        "| 键 | 年份 | 主要结论 | 全文 |",
+        "|---|---|---|---|",
+        "| @Wang2023 | 2023 | 旧结论 | 无 |",
+        "| @Dropped2022 | 2022 | 待删行 | 有 |",
+        "",
+      ].join("\n"),
+    );
+    const patch = join(ws, "patch.json");
+    writeFileSync(
+      patch,
+      JSON.stringify([
+        { bibKey: "Wang2023", columns: { 主要结论: "半电池 |ΔG_H|=0.249 eV，双电极 A||B 稳定", 全文: "有" } },
+        { bibKey: "Bai2021", columns: { 年份: "2021", 主要结论: "已转义 \\|ΔG_H\\|=0.12 eV 不重复转义", 全文: "有" } },
+      ]),
+    );
+    const up = run(["table", "--file", skim, "--upsert", patch], ws);
+    assert.equal(up.status, 0, up.stderr);
+    const upOut = JSON.parse(up.stdout);
+    assert.deepEqual(upOut.updated, ["Wang2023"]);
+    assert.deepEqual(upOut.appended, ["Bai2021"]);
+
+    const textAfterUp = readFileSync(skim, "utf8");
+    assert.match(textAfterUp, /\\\|ΔG_H\\\|=0\.249 eV，双电极 A\\\|\\\|B 稳定/);
+    assert.doesNotMatch(textAfterUp, /\\\\\|/, "已转义 \\| 不得被双转义成 \\\\|");
+
+    const rm = run(["table", "--file", skim, "--remove", "Dropped2022,MissingKey"], ws);
+    assert.equal(rm.status, 0, rm.stderr);
+    const rmOut = JSON.parse(rm.stdout);
+    assert.deepEqual(rmOut.removed, ["Dropped2022"]);
+    assert.deepEqual(rmOut.notFound, ["MissingKey"]);
+    assert.doesNotMatch(readFileSync(skim, "utf8"), /@Dropped2022/);
+
+    const got = run(["table", "--file", skim, "--get", "Wang2023,Bai2021"], ws);
+    assert.equal(got.status, 0, got.stderr);
+    const gotOut = JSON.parse(got.stdout);
+    assert.equal(gotOut.rows.length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("validate：查 BibTeX 缺逗号/宽表排除残留/handoff&angles 键闭环，且忽略 WB₂@WS₂ 化学负载写法", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    // included: W1 (Wang2023), W2 (Bai2021); excluded: W4 (Dropped2022)
+    const incPath = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(incPath, "utf8")).filter(
+      (x: { id: string }) => x.id === "W1" || x.id === "W2",
+    );
+    rows.find((x: { id: string }) => x.id === "W1").bibKey = "Wang2023";
+    rows.find((x: { id: string }) => x.id === "W2").bibKey = "Bai2021";
+    rows.push({
+      id: "W4",
+      bibKey: "Dropped2022",
+      title: "Excluded Boride Paper",
+      authors: ["Dropped, Alice"],
+      year: 2022,
+      doi: "10.1000/dropped.2022",
+      decision: "excluded",
+      reason: "不在范围",
+    });
+    writeFileSync(incPath, JSON.stringify(rows, null, 2));
+    writeFileSync(
+      join(ws, "notes/index.json"),
+      JSON.stringify([
+        { id: "W1", bibKey: "Wang2023", fulltextStatus: "abstract-only", reviewStatus: "pending", skimmed: true, notePath: "" },
+        { id: "W2", bibKey: "Bai2021", fulltextStatus: "abstract-only", reviewStatus: "pending", skimmed: true, notePath: "" },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "notes/skim.md"),
+      [
+        "| 键 | 年份 | 结论 |",
+        "|---|---|---|",
+        "| @Wang2023 | 2023 | ok |",
+        "| @Bai2021 | 2021 | ok |",
+        "| @Dropped2022 | 2022 | stale |",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(ws, "references.bib"),
+      [
+        "@article{Wang2023,",
+        "  title = {W1},",
+        "  articletype = {Journal Article}",
+        "  year = {2023},",
+        "  doi = {10.1038/s41560-023-01234-5},",
+        "}",
+        "",
+        "@article{Bai2021,",
+        "  title = {W2},",
+        "  year = {2021},",
+        "  doi = {10.1038/s41699-021-00259-4},",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(ws, "notes/handoff.md"),
+      "## 写作约束\n- 催化剂 WB₂@WS₂ 与 CoB@NC 及 Ni(OH)₂@C 性能见 [@Wang2023; @Bai2021]（示例 `@bibKey` 忽略）。\n- 误留排除篇 @Dropped2022 和错键 @Ghost2099。\n",
+    );
+    const bad = run(["validate", "--root", proj, "--json-out"], ws);
+    assert.equal(bad.status, 1, "存在多处错误应返回退出码 1");
+    const badOut = JSON.parse(bad.stdout);
+    const joined = badOut.errors.join("\n");
+    assert.match(joined, /articletype.*缺少逗号/, "应检出 BibTeX 字段缺逗号");
+    assert.match(joined, /skim\.md.*残留.*dropped2022/i, "应检出宽表残留已排除篇");
+    assert.match(joined, /handoff\.md.*已排除键.*@Dropped2022/, "应检出 handoff 引用已排除键");
+    assert.match(joined, /handoff\.md.*找不到的引用键.*@Ghost2099/, "应检出 handoff 未知键");
+    assert.doesNotMatch(joined, /WS₂|NC|Ni\(OH\)|bibKey/, "不得把 WB₂@WS₂ / CoB@NC / 行内代码误判为引用键");
+
+    // 修复全部错误后再验一次，应通过且仍包含 WB₂@WS₂ 化学式
+    writeFileSync(
+      join(ws, "notes/skim.md"),
+      "| 键 | 年份 | 结论 |\n|---|---|---|\n| @Wang2023 | 2023 | ok |\n| @Bai2021 | 2021 | ok |\n",
+    );
+    writeFileSync(
+      join(ws, "references.bib"),
+      [
+        "@article{Wang2023,",
+        "  title = {W1},",
+        "  articletype = {Journal Article},",
+        "  year = {2023},",
+        "  doi = {10.1038/s41560-023-01234-5},",
+        "}",
+        "",
+        "@article{Bai2021,",
+        "  title = {W2},",
+        "  year = {2021},",
+        "  doi = {10.1038/s41699-021-00259-4},",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(ws, "notes/handoff.md"),
+      "## 写作约束\n- 催化剂 WB₂@WS₂ 与 CoB@NC 及 Ni(OH)₂@C 性能见 [@Wang2023; @Bai2021]，联系 test@uni.edu。\n",
+    );
+    const ok = run(["validate", "--root", proj, "--json-out"], ws);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    assert.equal(JSON.parse(ok.stdout).ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("table + validate：支持 extraction.md 的「来源 [@键]」非首列键、同篇多行与反引号包裹 `@Key`", () => {
+  const { root, ws, proj } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    const incPath = join(ws, "papers/included.json");
+    const rows = JSON.parse(readFileSync(incPath, "utf8")).filter(
+      (x: { id: string }) => x.id === "W1" || x.id === "W2",
+    );
+    rows.find((x: { id: string }) => x.id === "W1").bibKey = "Wang2023";
+    rows.find((x: { id: string }) => x.id === "W2").bibKey = "Bai2021";
+    rows.push({
+      id: "W4",
+      bibKey: "Dropped2022",
+      title: "Excluded Paper",
+      authors: ["Dropped, Alice"],
+      year: 2022,
+      doi: "10.1000/dropped.2022",
+      decision: "excluded",
+      reason: "不在范围",
+    });
+    writeFileSync(incPath, JSON.stringify(rows, null, 2));
+    writeFileSync(
+      join(ws, "notes/index.json"),
+      JSON.stringify([
+        { id: "W1", bibKey: "Wang2023", fulltextStatus: "fulltext", reviewStatus: "pending", skimmed: true, notePath: "" },
+        { id: "W2", bibKey: "Bai2021", fulltextStatus: "fulltext", reviewStatus: "pending", skimmed: true, notePath: "" },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "notes/skim.md"),
+      "| 键 | 年份 | 结论 |\n|---|---|---|\n| @Wang2023 | 2023 | ok |\n| @Bai2021 | 2021 | ok |\n",
+    );
+    const ext = join(ws, "notes/extraction.md");
+    writeFileSync(
+      ext,
+      [
+        "| 材料／组成 | 测试条件 | 指标 | 来源 [@键] | 页码／图表 |",
+        "|---|---|---|---|---|",
+        "| Co/FeMoB | HER 1 M KOH | η100=54 mV | [@Wang2023] | p.4 |",
+        "| Co/FeMoB | OER 1 M KOH | η100=257 mV | [@Wang2023] | p.5 |",
+        "| OldMat | HER | — | [@Dropped2022] | p.1 |",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(ws, "references.bib"),
+      "@article{Wang2023,\n  title = {W1},\n  year = {2023},\n  doi = {10.1038/s41560-023-01234-5},\n}\n\n@article{Bai2021,\n  title = {W2},\n  year = {2021},\n  doi = {10.1038/s41699-021-00259-4},\n}\n",
+    );
+    writeFileSync(
+      join(ws, "notes/handoff.md"),
+      "## 写作约束\n- 化学式 `PtCu_AC@Cu-Mo₄/₃B₂T_z` 与 `NiCoFeB@NiNC` 忽略，但反引号里的 `@Dropped2022` 必须被检出。\n",
+    );
+
+    // 1. validate 应检出 extraction.md（非首列）里的 Dropped2022 以及 handoff.md 反引号里的 `@Dropped2022`
+    const v1 = run(["validate", "--root", proj, "--json-out"], ws);
+    assert.equal(v1.status, 1);
+    const errs = JSON.parse(v1.stdout).errors.join("\n");
+    assert.match(errs, /extraction\.md.*残留.*dropped2022/i);
+    assert.match(errs, /handoff\.md.*已排除键.*@Dropped2022/);
+    assert.doesNotMatch(errs, /Cu-Mo|NiNC/);
+
+    // 2. table --get 应按「来源 [@键]」返回 Wang2023 的全部 2 行
+    const g = run(["table", "--file", ext, "--get", "Wang2023"], ws);
+    assert.equal(g.status, 0, g.stderr);
+    const gOut = JSON.parse(g.stdout);
+    assert.equal(gOut.keyColumn, "来源 [@键]");
+    assert.equal(gOut.rows.length, 2, "同篇 HER/OER 两行应全部返回");
+
+    // 3. table --upsert 支持 match 精准改多行中的某一行 + 追加新行把 [@Bai2021] 放进「来源 [@键]」列而非第 0 列
+    const patch = join(ws, "ext-patch.json");
+    writeFileSync(
+      patch,
+      JSON.stringify([
+        { bibKey: "Wang2023", match: { 测试条件: "OER" }, columns: { 指标: "η100=250 mV (核实)" } },
+        { bibKey: "Bai2021", columns: { "材料／组成": "PtCu_AC@Cu-Mo4/3B2Tz", 测试条件: "HER 1 M KOH", 指标: "1.34 |e|", "页码／图表": "p.9" } },
+      ]),
+    );
+    const up = run(["table", "--file", ext, "--upsert", patch], ws);
+    assert.equal(up.status, 0, up.stderr);
+    const extText = readFileSync(ext, "utf8");
+    assert.match(extText, /\| Co\/FeMoB \| OER 1 M KOH \| η100=250 mV \(核实\) \| \[@Wang2023\] \| p\.5 \|/);
+    assert.match(extText, /\| PtCu_AC@Cu-Mo4\/3B2Tz \| HER 1 M KOH \| 1\.34 \\\|e\\\| \| \[@Bai2021\] \| p\.9 \|/);
+
+    // 4. table --remove 移出 extraction.md 里的 Dropped2022，再跑 validate 通过
+    const rm = run(["table", "--file", ext, "--remove", "Dropped2022"], ws);
+    assert.equal(rm.status, 0, rm.stderr);
+    assert.deepEqual(JSON.parse(rm.stdout).removed, ["Dropped2022"]);
+    writeFileSync(
+      join(ws, "notes/handoff.md"),
+      "## 写作约束\n- 化学式 `PtCu_AC@Cu-Mo₄/₃B₂T_z` 与 `NiCoFeB@NiNC` 对应 `@Wang2023` 与 `@Bai2021`。\n",
+    );
+    const v2 = run(["validate", "--root", proj, "--json-out"], ws);
+    assert.equal(v2.status, 0, v2.stdout + v2.stderr);
+    assert.equal(JSON.parse(v2.stdout).ok, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("outline-check：复算覆盖检查并拆分研究/综述卡、严避化学式 A@B 误报、拦截缺全文补读与排除键", () => {
+  const { root, ws } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    writeFileSync(
+      join(ws, "papers/included.json"),
+      JSON.stringify([
+        { id: "R1", bibKey: "Rev2025", kind: "review", decision: "included", year: 2025 },
+        { id: "P1", bibKey: "Wang2023", kind: "research", decision: "included", year: 2023 },
+        { id: "P2", bibKey: "Skim2024", kind: "research", decision: "included", year: 2024 },
+        { id: "P3", bibKey: "NoPdf2022", kind: "research", decision: "included", year: 2022 },
+        { id: "X1", bibKey: "Drop2021", kind: "research", decision: "excluded", year: 2021 },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "notes/index.json"),
+      JSON.stringify([
+        { id: "R1", bibKey: "Rev2025", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/01.md" },
+        { id: "P1", bibKey: "Wang2023", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/02.md" },
+        { id: "P2", bibKey: "Skim2024", reviewStatus: "pending", skimmed: true, fulltextStatus: "fulltext", notePath: "" },
+        { id: "P3", bibKey: "NoPdf2022", reviewStatus: "pending", skimmed: true, fulltextStatus: "abstract-only", notePath: "" },
+        { id: "X1", bibKey: "Drop2021", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/x.md" },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "references.bib"),
+      [
+        "@article{Rev2025, year = {2025}}",
+        "@article{Wang2023, year = {2023}}",
+        "@article{Skim2024, year = {2024}}",
+        "@article{NoPdf2022, year = {2022}}",
+      ].join("\n"),
+    );
+
+    // 1. 干净通过态：含大量化学负载写法 WB₂@WS₂ / Co-B@CoO / NiCoFeB@NiNC / PtCu_AC@Cu-Mo₄/₃B₂T_z
+    writeFileSync(
+      join(ws, "outline.md"),
+      [
+        "# 综述大纲",
+        "",
+        "## 1. 引言与非晶硼化物",
+        "- 要点：对比 WB₂@WS₂、Co-B@CoO、NiCoFeB@NiNC、Ru₂B₃@BNC、etched-NiPB@MS 与 `PtCu_AC@Cu-Mo₄/₃B₂T_z`。",
+        "- **拟引用（可写）**：[@Rev2025] [@Wang2023]",
+        "- **拟引用（线索）**：[@Skim2024] [@NoPdf2022]",
+        "",
+        "## 覆盖检查",
+        "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+        "|---|---:|---:|---:|---|---|",
+        "| 1. 引言与非晶硼化物 | 2 | 2 | 2025 | 薄（一手研究仅 1 篇） | 补读：[@Skim2024] |",
+        "",
+      ].join("\n"),
+    );
+    const ok = run(["outline-check", "--outline", "outline.md", "--json-out"], ws);
+    assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+    const okJson = JSON.parse(ok.stdout);
+    assert.equal(okJson.ok, true);
+    assert.equal(okJson.coverage[0].computed.writable, 2);
+    assert.equal(okJson.coverage[0].computed.writableResearch, 1);
+    assert.equal(okJson.coverage[0].computed.writableReview, 1);
+    assert.equal(okJson.coverage[0].computed.hint, 2);
+    assert.equal(okJson.coverage[0].computed.latest, 2025);
+
+    // 2. 报错态：覆盖篇数错 + 补读缺全文 NoPdf2022 + 误引排除键 Drop2021 + 把仅速读塞进可写
+    writeFileSync(
+      join(ws, "outline.md"),
+      [
+        "# 综述大纲",
+        "## 1. 引言",
+        "- 拟引用（可写）：[@Rev2025] [@Skim2024] [@Drop2021]",
+        "- 拟引用（线索）：[@NoPdf2022]",
+        "## 覆盖检查",
+        "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+        "|---|---:|---:|---:|---|---|",
+        "| 1. 引言 | 9 | 1 | 2025 | 薄 | 补读：[@NoPdf2022] |",
+      ].join("\n"),
+    );
+    const bad = run(["outline-check", "--outline", "outline.md", "--json-out"], ws);
+    assert.equal(bad.status, 1);
+    const badErrs = JSON.parse(bad.stdout).errors.join("\n");
+    assert.match(badErrs, /已排除文献.*@Drop2021/);
+    assert.match(badErrs, /@Skim2024.*非全文精读/);
+    assert.match(badErrs, /篇数对不上/);
+    assert.match(badErrs, /@NoPdf2022.*缺少全文 PDF/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("table 多键空格参数 + index-update 批量更新 + Symbol 字体 μ→m 单位告警", () => {
+  const { root, ws } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    // 1. table --get / --remove 均支持空格分隔多键（不再报 unrecognized arguments）
+    const skim = join(ws, "notes/skim.md");
+    writeFileSync(
+      skim,
+      [
+        "| 键 | 年份 | 结论 |",
+        "|---|---|---|",
+        "| @Du2025 | 2025 | A |",
+        "| @Zhao2025 | 2025 | B |",
+        "| @Lu2024 | 2024 | C |",
+        "",
+      ].join("\n"),
+    );
+    const g = run(["table", "--file", skim, "--get", "Du2025", "Zhao2025"], ws);
+    assert.equal(g.status, 0, g.stderr);
+    assert.equal(JSON.parse(g.stdout).rows.length, 2);
+
+    const rm = run(["table", "--file", skim, "--remove", "Du2025", "Zhao2025"], ws);
+    assert.equal(rm.status, 0, rm.stderr);
+    assert.deepEqual(JSON.parse(rm.stdout).removed, ["Du2025", "Zhao2025"]);
+    assert.match(readFileSync(skim, "utf8"), /@Lu2024/);
+    assert.doesNotMatch(readFileSync(skim, "utf8"), /@Du2025|@Zhao2025/);
+
+    // 2. index-update 批量更新 reviewStatus / notePath / forSections 并自动清 skimmed
+    const idxPath = join(ws, "notes/index.json");
+    writeFileSync(
+      idxPath,
+      JSON.stringify([
+        { id: "W1", bibKey: "Du2025", reviewStatus: "pending", skimmed: true, fulltextStatus: "fulltext", notePath: "" },
+        { id: "W2", bibKey: "Saad2021", reviewStatus: "pending", skimmed: true, fulltextStatus: "fulltext", notePath: "", forSections: ["2"] },
+      ]),
+    );
+    const patchPath = join(ws, "idx-patch.json");
+    writeFileSync(
+      patchPath,
+      JSON.stringify([
+        { bibKey: "Du2025", reviewStatus: "reviewed", notePath: "notes/17-Du2025.md", forSections: ["2"] },
+        { bibKey: "Saad2021", reviewStatus: "reviewed", notePath: "notes/24-Saad2021.md", forSections: ["3"] },
+        { bibKey: "Missing2099", reviewStatus: "reviewed" },
+      ]),
+    );
+    const upd = run(["index-update", "--index", idxPath, "--patch", patchPath], ws);
+    assert.equal(upd.status, 0, upd.stderr);
+    const updOut = JSON.parse(upd.stdout);
+    assert.deepEqual(updOut.updated, ["Du2025", "Saad2021"]);
+    assert.deepEqual(updOut.notFound, ["Missing2099"]);
+    const updatedIdx = JSON.parse(readFileSync(idxPath, "utf8"));
+    assert.equal(updatedIdx[0].reviewStatus, "reviewed");
+    assert.equal("skimmed" in updatedIdx[0], false, "reviewed 后应自动移除 skimmed");
+    assert.deepEqual(updatedIdx[1].forSections, ["2", "3"], "默认合并已有 forSections 并去重");
+
+    // 3. _detect_symbol_unit_pages 精准检出 RSC/Elsevier Symbol 字体 μ→m 污染页
+    const symCode = `
+import sys
+sys.path.insert(0, sys.argv[1])
+import lit_records as m
+class FakePage:
+    def __init__(self, d, raw=""):
+        self._d, self._raw = d, raw
+    def get_text(self, mode=None):
+        return self._d if mode == "dict" else self._raw
+doc = [
+    FakePage({"blocks": [{"type": 0, "lines": [{"spans": [{"font": "TimesNewRoman", "text": "Normal 10 mg L-1"}]}]}]}),
+    FakePage({"blocks": [{"type": 0, "lines": [{"spans": [
+        {"font": "AdvOTce3d9a73", "text": "B leaching is 425.7 "},
+        {"font": "SymbolMT", "text": "m"},
+        {"font": "AdvOTce3d9a73", "text": "g L-1 after 100 h"},
+    ]}]}]}),
+]
+print(",".join(map(str, m._detect_symbol_unit_pages(doc, 2))))
+`;
+    const sr = spawnSync(python, ["-c", symCode, resolve("src-tauri/resources/skills/lit-search/scripts")], { encoding: "utf8" });
+    assert.equal(sr.status, 0, sr.stderr);
+    assert.equal(sr.stdout.trim(), "2", "应只标出第 2 页 Symbol 字体 μ→m 污染，不误报第 1 页正常 mg L-1");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("table --to-csv 与 outline-check 扩展五项红线（拼图去重禁综述/证据表覆盖/C1..Cn 闭集/sections.json/禁彩色 emoji）", () => {
+  const { root, ws } = fixture();
+  try {
+    mkdirSync(join(ws, "notes"), { recursive: true });
+    mkdirSync(join(ws, "manuscript"), { recursive: true });
+    // 1. table --to-csv 确定性导出且还原转义竖线
+    const extMd = join(ws, "notes/extraction.md");
+    const extCsv = join(ws, "notes/extraction.csv");
+    writeFileSync(
+      extMd,
+      [
+        "| 材料 | 条件 | 来源 [@键] |",
+        "|---|---|---|",
+        "| WB₂@WS₂ | 1 M KOH \\| 10 mA cm⁻² | @Wang2023 |",
+        "| Co₂B | 1 M KOH | @Bai2021 |",
+        "",
+      ].join("\n"),
+    );
+    const csvRes = run(["table", "--file", extMd, "--to-csv", extCsv], ws);
+    assert.equal(csvRes.status, 0, csvRes.stderr);
+    assert.equal(JSON.parse(csvRes.stdout).totalRows, 2);
+    const csvText = readFileSync(extCsv, "utf8");
+    assert.match(csvText, /1 M KOH \| 10 mA cm⁻²/, "导出 CSV 应还原转义的竖线");
+
+    // 2. outline-check 五项红线检出
+    writeFileSync(
+      join(ws, "papers/included.json"),
+      JSON.stringify([
+        { id: "W1", bibKey: "Wang2023", title: "Study 1", year: 2023, decision: "included" },
+        { id: "W2", bibKey: "Bai2021", title: "Study 2", year: 2021, decision: "included" },
+        { id: "R1", bibKey: "Rev2024", title: "Review 1", year: 2024, kind: "review", decision: "included" },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "notes/index.json"),
+      JSON.stringify([
+        { id: "W1", bibKey: "Wang2023", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/01.md" },
+        { id: "W2", bibKey: "Bai2021", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/02.md" },
+        { id: "R1", bibKey: "Rev2024", kind: "review", reviewStatus: "reviewed", fulltextStatus: "fulltext", notePath: "notes/03.md" },
+      ]),
+    );
+    writeFileSync(
+      join(ws, "references.bib"),
+      [
+        "@article{Wang2023, title={S1}, year={2023}}",
+        "@article{Bai2021, title={S2}, year={2021}}",
+        "@article{Rev2024, title={R1}, year={2024}}",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(ws, "manuscript/sections.json"),
+      JSON.stringify([{ id: "S1", title: "主体一" }, { id: "S2", title: "多出一节" }]),
+    );
+    writeFileSync(
+      join(ws, "outline.md"),
+      [
+        "# 综述大纲",
+        "",
+        "## 覆盖检查",
+        "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+        "|---|---|---|---|---|---|",
+        "| 1. 引言 | 1 | 0 | 2024 | 够 | |",
+        "| 2. 机理 | 2 | 0 | 2023 | 够 | |",
+        "| 3. 结论 | 1 | 0 | 2023 | 够 | |",
+        "",
+        "## 1. 引言",
+        "- 拟引用（可写）：[@Rev2024]",
+        "",
+        "## 2. 机理",
+        "### 2.1 界面演化",
+        "- 拟引用（可写）：[@Wang2023] [@Bai2021]",
+        "- 用图：拼 图1（论点）= (a) [@Wang2023] Fig.2c + (b) [@Rev2024] Fig.1a",
+        "- 用图：拼 图2（重复且单篇）= (a) [@Wang2023] Fig.2c",
+        "- 注意：这里误放了彩色 emoji ✅",
+        "",
+        "## 3. 结论",
+        "- 拟引用（可写）：[@Wang2023]",
+        "",
+        "## 证据综合表",
+        "| 键 | 论断 | 结论 |",
+        "|---|---|---|",
+        "| @Wang2023 | 支持 C1、C2 | 有效 |",
+        "",
+        "- **C1**：仅定义了 C1",
+        "",
+      ].join("\n"),
+    );
+    const bad = run(["outline-check", "--outline", "outline.md", "--json-out"], ws);
+    assert.equal(bad.status, 1, "违背五项红线应返回退出码 1");
+    const badJson = JSON.parse(bad.stdout);
+    const errText = badJson.errors.join("\n");
+    assert.match(errText, /同一块子图进了两张拼图.*@Wang2023.*2c/, "应检出跨拼图重复子图");
+    assert.match(errText, /拼图 1 混入了综述图.*@Rev2024/, "应检出拼图混入综述");
+    assert.match(errText, /拼图 2 仅来自 1 篇研究论文/, "应检出拼图研究论文不足 2 篇");
+    assert.match(errText, /证据综合表遗漏.*@Bai2021/, "应检出证据综合表遗漏可写一手研究");
+    assert.match(errText, /未定义的论断编号.*C2/, "应检出未定义论断 C2");
+    assert.match(errText, /sections\.json 定义了 2 节.*1 章/, "应检出 sections.json 章数不一致");
+    assert.match(errText, /彩色 emoji/, "应检出彩色 emoji");
+
+    // 3. 全部修复后（含保留单色 ⚠︎ 与科研符号）应 0 错 0 警通过
+    writeFileSync(join(ws, "manuscript/sections.json"), JSON.stringify([{ id: "S1", title: "机理" }]));
+    writeFileSync(
+      join(ws, "outline.md"),
+      [
+        "# 综述大纲",
+        "",
+        "## 覆盖检查",
+        "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+        "|---|---|---|---|---|---|",
+        "| 1. 引言 | 1 | 0 | 2024 | 够 | |",
+        "| 2. 机理 | 2 | 0 | 2023 | 够 | |",
+        "| 3. 结论 | 1 | 0 | 2023 | 够 | |",
+        "",
+        "## 1. 引言",
+        "- 拟引用（可写）：[@Rev2024]",
+        "",
+        "## 2. 机理",
+        "### 2.1 界面演化",
+        "- 拟引用（可写）：[@Wang2023] [@Bai2021]",
+        "- 用图：拼 图1（论点）= (a) [@Wang2023] Fig.2c + (b) [@Bai2021] Fig.4a",
+        "- ⚠︎ 注意：单色警示与 ✓、°、μ、WB₂@WS₂ 均合法",
+        "",
+        "## 3. 结论",
+        "- 拟引用（可写）：[@Wang2023]",
+        "",
+        "## 证据综合表",
+        "| 键 | 论断 | 结论 |",
+        "|---|---|---|",
+        "| @Wang2023 | 支持 C1 | 有效 |",
+        "| @Bai2021 | 支持 C2 | 有效 |",
+        "| @Rev2024 | 综述脉络 | 综述 |",
+        "",
+        "- **C1**：论断一",
+        "- **C2**：论断二",
+        "",
+      ].join("\n"),
+    );
+    const good = run(["outline-check", "--outline", "outline.md", "--json-out"], ws);
+    assert.equal(good.status, 0, good.stdout + good.stderr);
+    const goodJson = JSON.parse(good.stdout);
+    assert.equal(goodJson.ok, true);
+    assert.deepEqual(goodJson.errors, []);
+    assert.deepEqual(goodJson.warnings, []);
+    assert.equal(goodJson.composites, 1);
+    assert.equal(goodJson.evidenceKeys, 3);
+    assert.deepEqual(goodJson.sections, { count: 1, outlineBodyChapters: 1 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

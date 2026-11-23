@@ -165,9 +165,16 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
   }
   const added: Added = { skills: [], required: [], artifacts: [], human: [] };
   const notes: string[] = [];
-  const mount = (skill: string, artifacts: string[], note: string, human?: string, optional = false) => {
+  const mount = (
+    skill: string,
+    artifacts: string[],
+    note: string,
+    human?: string,
+    optional = false,
+    required = true,
+  ) => {
     if (!step.skills.includes(skill)) { step.skills.push(skill); added.skills.push(skill); }
-    if (!step.requiredSkills.includes(skill)) { step.requiredSkills.push(skill); added.required.push(skill); }
+    if (required && !step.requiredSkills.includes(skill)) { step.requiredSkills.push(skill); added.required.push(skill); }
     for (const path of artifacts) if (!step.expectedArtifacts.includes(path)) { step.expectedArtifacts.push(path); added.artifacts.push(path); }
     if (human && !step.humanTasks.some((h) => h.title === human)) {
       step.humanTasks.push({ title: human, guidance: note, target: "", timing: "after", completion: "manual", optional: optional || undefined });
@@ -186,7 +193,10 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       zoteroReadingOutputs(step, providesByName),
       ownsSync
         ? "Zotero：导入用「从 Zotero 导入」（只读，不 POST）。用户若把 PDF 拖进 Zotero，它会检索元数据并生成条目，拖完再导入。未使用 Zotero 的项目不要走这条，题录直接写入 references.bib。同步用待获取清单「同步到 Zotero」或拖 to-fetch.ris，通道说明写 papers/zotero-sync.md。已有主 bib 键不改。定稿同时交 output/endnote.docx 与 output/zotero.docx。"
-        : "Zotero：精读步只读 papers/、不写 papers/zotero-sync.md；只按已对上 DOI 的 PDF 更新 references.bib 标题与摘要。初稿保存后人点「同步到文献库」时，Mesa 按引文库与笔记统一导入 Zotero。",
+        : "Zotero：精读步只读 papers/、不写 papers/zotero-sync.md、不执行 Zotero 同步（此技能仅作背景参考）；只按所有已配对正文 PDF（含 Zotero 只读附件与项目根 papers/）更新 references.bib 标题与摘要。初稿保存后人点「同步到文献库」时，Mesa 按引文库与笔记统一导入 Zotero。",
+      undefined,
+      false,
+      ownsSync,
     );
   }
   if (reading && (lit === "endnote" || tools.libraryExport === "endnote")) {
@@ -196,7 +206,10 @@ export function withResearchTools(source: ProjectStepDto, tools: ResearchTools, 
       endnoteReadingOutputs(step, providesByName),
       ownsImport
         ? "EndNote：papers/endnote-import.ris 只在检索步生成（纳入篇题录）。初稿保存后人点「同步到文献库」时，Mesa 按引文库另写 papers/endnote-library.ris 交给 EndNote，不改这一份。已有记录不覆盖。"
-        : "EndNote：精读只按已对上 DOI 的 PDF 改 references.bib 的标题和摘要，不写 RIS。初稿保存后人点「同步到文献库」，Mesa 按这份 bib 生成导入文件，可以连 PDF 和笔记一起带上。",
+        : "EndNote：精读只按所有已配对正文 PDF 更新 references.bib 的标题和摘要，不写 RIS、不执行 EndNote 同步（此技能仅作背景参考）。初稿保存后人点「同步到文献库」，Mesa 按这份 bib 生成导入文件，可以连 PDF 和笔记一起带上。",
+      undefined,
+      false,
+      ownsImport,
     );
   }
   const outputRoot = artifactDir.replace(/\\/g, "/").replace(/\/+$/, "") || "artifacts";

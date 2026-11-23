@@ -2108,6 +2108,77 @@ pub(crate) fn match_papers_pdfs_readonly(root: &Path, items: &[ToFetchProbe]) ->
     match_papers_pdfs(root, items, &crate::download_inbox::catch_idents(), false)
 }
 
+/// 文件名级别识别 Supporting Information / Supplementary Material（与 lit_records.py `_SI_NAME_RE` 同口径）：
+/// 只认明确词样或各出版商 SI 编号后缀（ACS `*_si_001`、Elsevier `*-mmc1`、Springer `*_MOESM1_ESM`、
+/// Wiley `*-sup-0001`、RSC `*_esi`），绝不把化学元素 `Si` / `MoSi2` / `SiO2` / `Si_100` 误判为 SI。
+fn is_si_pdf_stem(stem: &str) -> bool {
+    let lower = stem.trim().to_ascii_lowercase();
+    if lower.contains("supporting information")
+        || lower.contains("supporting-information")
+        || lower.contains("supporting_information")
+        || lower.contains("supportinginformation")
+        || lower.contains("supplementary")
+        || lower.contains("supplemental")
+        || lower.contains("supinfo")
+        || lower.ends_with("_si")
+        || lower.ends_with("-si")
+    {
+        return true;
+    }
+    // 出版商常见 SI 后缀（必须带分隔符 _ 或 -）：
+    // 1. ACS: sc4c04490_si_001 / ja2024-si-01 / ja2024_si001（数字以 0 开头，避开 Si_100 晶面名）
+    for sep in ["_si_", "-si-", "_si", "-si"] {
+        if let Some(pos) = lower.rfind(sep) {
+            let tail = &lower[pos + sep.len()..];
+            if tail.starts_with('0') && tail.len() >= 2 && tail.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    // 2. Elsevier: *-mmc1 / *_mmc2
+    for sep in ["-mmc", "_mmc"] {
+        if let Some(pos) = lower.rfind(sep) {
+            let tail = &lower[pos + sep.len()..];
+            if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    // 3. Springer Nature: *_moesm1_esm / *_moesm2
+    for sep in ["_moesm", "-moesm"] {
+        if let Some(pos) = lower.rfind(sep) {
+            let tail = &lower[pos + sep.len()..];
+            let digits_end = tail.bytes().take_while(|b| b.is_ascii_digit()).count();
+            let rest = &tail[digits_end..];
+            if digits_end > 0 && (rest.is_empty() || rest == "_esm" || rest == "-esm") {
+                return true;
+            }
+        }
+    }
+    // 4. Wiley: *-sup-0001 / *_sup_0001
+    for sep in ["-sup-", "_sup_", "-sup_", "_sup-"] {
+        if let Some(pos) = lower.rfind(sep) {
+            let tail = &lower[pos + sep.len()..];
+            let digits_end = tail.bytes().take_while(|b| b.is_ascii_digit()).count();
+            let rest = &tail[digits_end..];
+            if digits_end > 0 && (rest.is_empty() || rest.starts_with('-') || rest.starts_with('_')) {
+                return true;
+            }
+        }
+    }
+    // 5. RSC: *_esi / *-esi / *_esi_1
+    for sep in ["_esi", "-esi"] {
+        if let Some(pos) = lower.rfind(sep) {
+            let tail = &lower[pos + sep.len()..];
+            let tail = tail.strip_prefix('_').or_else(|| tail.strip_prefix('-')).unwrap_or(tail);
+            if tail.is_empty() || tail.bytes().all(|b| b.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// apply = true 时命中的通用文件名按标题改名并登记资源（清单刷新）；false 只报文件名
 fn match_papers_pdfs(
     root: &Path,
@@ -2133,6 +2204,9 @@ fn match_papers_pdfs(
                         return None;
                     }
                     let stem = name.trim_end_matches(".pdf").trim_end_matches(".PDF");
+                    if is_si_pdf_stem(stem) {
+                        return None;
+                    }
                     let rel = format!("papers/{name}");
                     let mut aliases = vec![name.clone(), stem.to_string()];
                     if let Some(r) = cfg.resources.iter().find(|r| r.path == rel) {
@@ -3156,6 +3230,34 @@ mod tests {
         assert!(got[0].is_none());
         assert_eq!(got[1].as_deref(), Some("cs2c00851.pdf"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_si_pdf_stem_recognizes_publisher_si_and_preserves_silicon() {
+        for si in [
+            "sc4c04490_si_001",
+            "ja2024_si_01",
+            "ja2024-si-002",
+            "cs4c01234_si001",
+            "Liu2024_si",
+            "1-s2.0-S0926337324001234-mmc1",
+            "41467_2024_51234_MOESM1_ESM",
+            "adma202401234-sup-0001-SupInfo",
+            "d4ta01234a_esi",
+            "Supporting Information for MoB2",
+        ] {
+            assert!(super::is_si_pdf_stem(si), "should detect SI: {si}");
+        }
+        for main in [
+            "MoSi2-HER-2024",
+            "SiO2-supported-boride",
+            "Ti-Si-C-MAX-2024",
+            "boride_on_Si_100",
+            "sc4c04490",
+            "cs2c00851",
+        ] {
+            assert!(!super::is_si_pdf_stem(main), "should not misclassify main PDF as SI: {main}");
+        }
     }
 
     #[test]

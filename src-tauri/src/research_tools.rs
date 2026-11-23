@@ -93,14 +93,19 @@ pub async fn research_tool_preflight(
         let available = skill
             .is_some_and(|s| s.apps.get(&agent) == Some(&true) && !s.stale_copies.contains(&agent))
             && crate::skills::snapshot_named_skills(&[name.clone()], &agent).is_ok();
+        let detail = if available {
+            "已启用到所选 Agent；实际调用仍以运行结果为准"
+        } else if skill.is_none() {
+            "技能未安装；请到技能页安装"
+        } else if skill.is_some_and(|s| s.stale_copies.contains(&agent)) {
+            "分发给所选 Agent 的副本已过期；点击一键启用同步"
+        } else {
+            "已安装但未启用到所选 Agent；点击一键启用"
+        };
         out.push(check(
             name,
             if available { "available" } else { "missing" },
-            if available {
-                "已启用到所选 Agent；实际调用仍以运行结果为准"
-            } else {
-                "技能未安装、未启用到所选 Agent 或副本过期；到技能页检查分发"
-            },
+            detail,
             required && !available,
         ));
     }

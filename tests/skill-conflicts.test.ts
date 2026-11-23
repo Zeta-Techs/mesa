@@ -66,6 +66,19 @@ test("skillOutputConflicts：多对冲突逐对列出", () => {
   ]);
 });
 
+test("skillOutputConflicts：步骤简报已点名两个技能分工（名称或 {skill:锚名}）时不误报黄字", () => {
+  const lib = [
+    { name: "review-figures", outputs: ["figures/"], provides: ["review-figures"] } as SkillDto,
+    { name: "schematic-forge", outputs: ["figures/"], provides: ["schematic-forge"] } as SkillDto,
+    { name: "figure-forge", outputs: ["figures/"], provides: ["figure-forge"] } as SkillDto,
+  ];
+  const brief = "拼图按 {skill:review-figures}，自绘按 {skill:schematic-forge}，重绘按 {skill:figure-forge}。";
+  assert.deepEqual(skillOutputConflicts(["review-figures", "schematic-forge", "figure-forge"], lib, brief), []);
+  // 简报只提了其中一个时，仍提醒未分工的那对
+  const partial = "拼图按 {skill:review-figures}。";
+  assert.equal(skillOutputConflicts(["review-figures", "schematic-forge"], lib, partial).length, 1);
+});
+
 test("内置互补技能不报：目录 vs 其中的报告文件；多阶段技能对上本步产物即可", () => {
   const lib = [
     skill("lit-search", ["papers/"]),

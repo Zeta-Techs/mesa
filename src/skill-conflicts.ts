@@ -31,27 +31,49 @@ function outputsClash(x: string, y: string): boolean {
   return b.startsWith(a) || a.startsWith(b);
 }
 
+function skillMentionedInBrief(name: string, provides: readonly string[] | null | undefined, brief: string): boolean {
+  const tokens = [name, ...(provides ?? [])].filter(Boolean);
+  for (const tok of tokens) {
+    if (brief.includes(`{skill:${tok}}`)) return true;
+    const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(?<![A-Za-z0-9_-])${escaped}(?![A-Za-z0-9_-])`).test(brief)) return true;
+  }
+  return false;
+}
+
 /** 两两比对该步骤已挂载技能的 outputs，返回产物路径相交的技能对。
- *  同一对技能多处相交只报一次（取第一对相交路径）；技能不在库中或 outputs 为空 → 不参与。 */
+ *  同一对技能多处相交只报一次（取第一对相交路径）；技能不在库中或 outputs 为空 → 不参与。
+ *  若给了 brief 且两个技能（名称或 {skill:锚名}）均已在步骤简报中显式点名，说明简报已写明分工，不再误报黄字。 */
 export function skillOutputConflicts(
   stepSkillNames: string[],
   lib: SkillDto[],
+  brief?: string,
 ): SkillOutputConflict[] {
+  const byName = new Map(lib.map((s) => [s.name, s]));
   const outputsOf = new Map(lib.map((s) => [s.name, s.outputs ?? []]));
   const out: SkillOutputConflict[] = [];
   for (let i = 0; i < stepSkillNames.length; i++) {
-    const outsA = outputsOf.get(stepSkillNames[i]);
+    const aName = stepSkillNames[i];
+    const outsA = outputsOf.get(aName);
     if (!outsA?.length) continue;
     for (let j = i + 1; j < stepSkillNames.length; j++) {
-      const outsB = outputsOf.get(stepSkillNames[j]);
+      const bName = stepSkillNames[j];
+      const outsB = outputsOf.get(bName);
       if (!outsB?.length) continue;
       const hit = outsA.find((oa) =>
         outsB.some((ob) => outputsClash(oa, ob)),
       );
       if (hit) {
+        if (
+          brief &&
+          skillMentionedInBrief(aName, byName.get(aName)?.provides, brief) &&
+          skillMentionedInBrief(bName, byName.get(bName)?.provides, brief)
+        ) {
+          continue;
+        }
         out.push({
-          a: stepSkillNames[i],
-          b: stepSkillNames[j],
+          a: aName,
+          b: bName,
           output: normalizeOutput(hit),
         });
       }
