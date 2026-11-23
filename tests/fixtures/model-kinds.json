@@ -13,6 +13,7 @@
 
   { "id": "gpt-image-2.5", "kind": "image", "gen": true },
   { "id": "gpt-image-1-mini", "kind": "image", "gen": true },
+  { "id": "chatgpt-image-latest", "kind": "image", "gen": true },
   { "id": "dall-e-3", "kind": "image", "gen": true },
   { "id": "gemini-3-pro-image", "kind": "image", "gen": true },
   { "id": "gemini-2.5-flash-image-preview", "kind": "image", "gen": true },
@@ -30,6 +31,8 @@
   { "id": "midjourney", "kind": "image", "gen": true },
   { "id": "hunyuan-image-3", "kind": "image", "gen": true },
   { "id": "qwen-image-edit-plus", "kind": "image", "gen": false },
+  { "id": "wan2.6-image", "kind": "image", "gen": false },
+  { "id": "wan2.5-image", "kind": "image", "gen": false },
   { "id": "wanx2.1-imageedit", "kind": "image", "gen": false },
   { "id": "qwen-mt-image", "kind": "image", "gen": false },
   { "id": "wan2.5-i2i-preview", "kind": "image", "gen": false },

@@ -44,7 +44,8 @@ export function modelKind(id: string): ModelKind {
 export function isImageGenModel(id: string): boolean {
   if (modelKind(id) !== "image") return false;
   const t = tokens(id);
-  return !(anyExact(t, ["edit", "imageedit", "i2i", "mt"]) || anyPrefix(t, ["seededit"]));
+  const wanEditOnly = anyPrefix(t, ["wan"]) && anyExact(t, ["image"]) && !anyExact(t, ["t2i"]);
+  return !(wanEditOnly || anyExact(t, ["edit", "imageedit", "i2i", "mt"]) || anyPrefix(t, ["seededit"]));
 }
 
 const KIND_LABEL: Record<Exclude<ModelKind, "chat">, string> = {

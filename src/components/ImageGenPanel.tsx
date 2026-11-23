@@ -87,6 +87,7 @@ export default function ImageGenPanel({
   // undefined = 还没读回来；上次读到的先拿来用，切回这一节不再从「没读」起步
   const [skill, setSkill] = useState<SkillDto | null | undefined>(skillCache);
   const [enabling, setEnabling] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(() => readJson<boolean>(LS_COLLAPSED, false));
@@ -102,22 +103,51 @@ export default function ImageGenPanel({
   const changeRef = useRef<HTMLButtonElement>(null);
   const addRef = useRef<HTMLButtonElement>(null);
 
+  const loadCandidates = useCallback(async () => {
+    await invoke<ImageGenGateway[]>("image_gen_candidates").then(
+      (r) => setGroups(Array.isArray(r) ? r : []),
+      () => setGroups([]),
+    );
+  }, []);
+
   async function loadSkill() {
     const lib = await invoke<SkillDto[]>("list_skills").catch(() => null);
     skillCache = Array.isArray(lib) ? (lib.find((s) => s.name === "image-gen") ?? null) : null;
     setSkill(skillCache);
   }
   useEffect(() => {
-    void invoke<ImageGenGateway[]>("image_gen_candidates").then(
-      (r) => setGroups(Array.isArray(r) ? r : []),
-      () => setGroups([]),
-    );
     void invoke<{ helperReady: boolean }>("image_gen_status").then(
       (r) => setHelperReady(Boolean(r?.helperReady)),
       () => setHelperReady(false),
     );
     void loadSkill();
   }, []);
+  // 网关库增删改或点过「获取模型」后，store.gateways 变化，出图候选目录当场跟着同步
+  useEffect(() => {
+    void loadCandidates();
+  }, [gateways, loadCandidates]);
+
+  async function refreshCatalogs() {
+    if (refreshing || gateways.length === 0) return;
+    setRefreshing(true);
+    try {
+      const results = await Promise.allSettled(
+        gateways.map((g) => invoke("fetch_gateway_catalog", { gatewayId: g.id, preferSlot: null })),
+      );
+      const ok = results.filter((r) => r.status === "fulfilled").length;
+      const fail = results.length - ok;
+      await useAppStore.getState().loadGateways();
+      await loadCandidates();
+      if (fail > 0 && ok === 0) {
+        const firstErr = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+        toast(`刷新模型失败：${String(firstErr?.reason ?? "网关无响应")}`);
+      } else if (fail > 0) {
+        toast(`已刷新 ${ok} 个网关，${fail} 个刷新失败`, "warning");
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const items: ImageModelItem[] = useMemo(
     () => (groups ?? []).flatMap((g) => g.models.map((model) => ({ gatewayId: g.gatewayId, gatewayName: g.gatewayName, model }))),
@@ -262,6 +292,17 @@ export default function ImageGenPanel({
         <h2 className="text-base font-semibold text-l1">出图模型</h2>
         <span className="min-w-0 truncate text-xs text-l3">Agent 画图用，和对话用的连接分开配</span>
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          {gateways.length > 0 && (
+            <button
+              type="button"
+              className={ghostActionClass}
+              disabled={refreshing}
+              title="向已配置的网关重新拉取最新模型目录"
+              onClick={() => void refreshCatalogs()}
+            >
+              {refreshing ? "刷新中…" : "刷新模型"}
+            </button>
+          )}
           {pendingAgents.length > 0 && skill && (
             <button
               type="button"
@@ -497,6 +538,11 @@ export default function ImageGenPanel({
                             )
                           )}
                         </div>
+                        {run.status === "done" && run.note && (
+                          <p className="line-clamp-2 border-t border-hairline px-2.5 py-1 text-micro leading-4 text-warn-text" title={run.note}>
+                            {run.note}
+                          </p>
+                        )}
                       </div>
                     );
                   })}
@@ -516,6 +562,8 @@ export default function ImageGenPanel({
         multi={pickOpen === "multi"}
         maxSelected={MAX_COMPARE}
         onPick={(it) => (pickOpen === "multi" ? toggleCompare(it) : choose(it))}
+        onRefresh={gateways.length > 0 ? () => void refreshCatalogs() : undefined}
+        refreshing={refreshing}
       />
       {zoom && (
         <Modal open title={zoom.title} onClose={() => setZoom(null)} size="xl">

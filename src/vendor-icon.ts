@@ -127,6 +127,7 @@ export function vendorForSlots(slots: Partial<Record<keyof ProtocolSlots, string
 export function vendorForPlanProvider(provider: string): VendorId | null {
   if (provider === "claude") return "anthropic";
   if (provider === "codex") return "openai";
+  if (provider === "grok") return "xai";
   return provider === "zhipu" || provider === "kimi" || provider === "minimax" ? provider : null;
 }
 

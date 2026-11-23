@@ -15,7 +15,7 @@ export interface ImageFamily {
 
 /** 家族：展示顺序即常用度（大致按各家出图模型的使用面排），认不出的归「其他」放最后 */
 const FAMILIES: { key: string; label: string; match: RegExp; seconds: number }[] = [
-  { key: "gpt-image", label: "OpenAI GPT Image", match: /gpt-image|dall-?e/, seconds: 90 },
+  { key: "gpt-image", label: "OpenAI GPT Image", match: /(?:chat)?gpt-image|dall-?e/, seconds: 90 },
   { key: "gemini", label: "Google Gemini / Imagen", match: /gemini|imagen|banana/, seconds: 60 },
   { key: "seedream", label: "豆包 Seedream", match: /seedream|seededit|doubao/, seconds: 25 },
   { key: "grok", label: "xAI Grok Imagine", match: /grok|imagine/, seconds: 25 },

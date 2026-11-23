@@ -3,7 +3,7 @@
 // single = 选一个就关；multi = 勾选多个（对比用），点外面或 Esc 关。
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { Check } from "lucide-react";
+import { Check, RefreshCw } from "lucide-react";
 import { FoldMark, searchFieldClass } from "./PageFrame";
 import { useDownMenu } from "./LaunchMenu";
 import {
@@ -23,6 +23,8 @@ export default function ImageModelPicker({
   multi = false,
   maxSelected,
   onPick,
+  onRefresh,
+  refreshing = false,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   open: boolean;
@@ -36,6 +38,9 @@ export default function ImageModelPicker({
   /** multi 时最多选几个；到上限后未选的项置灰 */
   maxSelected?: number;
   onPick: (item: ImageModelItem) => void;
+  /** 从已配置网关重新拉取最新模型目录 */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
   const { box, exiting, closeNow } = useDownMenu(open, anchorRef, 380);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -134,13 +139,27 @@ export default function ImageModelPicker({
       className={`ccode-float-surface fixed z-50 flex flex-col overflow-hidden rounded-md border border-field${exiting ? " ccode-exiting" : ""}`}
     >
       <div className="shrink-0 p-1.5">
-        <input
-          autoFocus
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="搜模型、网关或厂商（如 万相、grok）"
-          className={`${searchFieldClass} w-full`}
-        />
+        <div className="flex items-center gap-1">
+          <input
+            autoFocus
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="搜模型、网关或厂商（如 万相、grok）"
+            className={`${searchFieldClass} min-w-0 flex-1`}
+          />
+          {onRefresh && (
+            <button
+              type="button"
+              disabled={refreshing}
+              onClick={onRefresh}
+              aria-label="刷新网关模型目录"
+              title={refreshing ? "正在拉取各网关最新模型目录…" : "重新拉取各网关最新模型目录"}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+            >
+              <RefreshCw size={13} strokeWidth={1.8} aria-hidden="true" className={refreshing ? "animate-spin" : ""} />
+            </button>
+          )}
+        </div>
         {multi && maxSelected !== undefined && (
           <p className="px-1 pt-1 text-micro text-l3">
             已选 {selected.length} / {maxSelected}，一起出图对比

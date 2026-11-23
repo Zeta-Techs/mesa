@@ -101,7 +101,11 @@ pub fn is_image_gen_model(id: &str) -> bool {
         return false;
     }
     let t = tokens(id);
-    !(any_exact(&t, &["edit", "imageedit", "i2i", "mt"]) || any_prefix(&t, &["seededit"]))
+    let wan_edit_only =
+        any_prefix(&t, &["wan"]) && any_exact(&t, &["image"]) && !any_exact(&t, &["t2i"]);
+    !(wan_edit_only
+        || any_exact(&t, &["edit", "imageedit", "i2i", "mt"])
+        || any_prefix(&t, &["seededit"]))
 }
 
 /// 启动 Agent 前的闸（agents::validate_launch_compatibility）：非对话模型给出白话原因
@@ -110,7 +114,7 @@ pub fn non_chat_launch_error(model: &str) -> Option<String> {
         ModelKind::Chat => return None,
         ModelKind::Image => {
             return Some(format!(
-                "{model} 是出图模型，不能用来和 Agent 对话。换一个对话模型启动；要出图，到连接页最下方「出图模型」选它，Agent 就能调用它出图"
+                "{model} 是出图模型，不能用来和 Agent 对话。换一个对话模型启动；要出图，到连接页左栏「出图模型」选它，Agent 就能调用它出图"
             ))
         }
         ModelKind::Video => "视频模型",
@@ -150,10 +154,10 @@ pub fn protocol_for(model: &str) -> Protocol {
     }
 }
 
-/// OpenAI 风格资源地址：base 已带版本段（/v1、/api/v3、/api/paas/v4）直接挂，否则补 /v1
+/// OpenAI 风格资源地址：base 已带版本段（/v1、/api/v3、/api/paas/v4）或 /openai（Gemini 兼容入口）直接挂，否则补 /v1
 fn openai_url(base: &str, resource: &str) -> String {
     let base = base.trim().trim_end_matches('/');
-    if crate::models::ends_with_version_segment(base) {
+    if crate::models::ends_with_version_segment(base) || base.ends_with("/openai") {
         format!("{base}/{resource}")
     } else {
         format!("{base}/v1/{resource}")
@@ -271,7 +275,7 @@ impl Resolution {
 /// 出图参数口径分家：同是 OpenAI 出图接口，各家认的选项字段不一样
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Family {
-    /// gpt-image 系：quality low/medium/high、background transparent
+    /// gpt-image / chatgpt-image 系：quality low/medium/high、background transparent
     GptImage,
     /// dall-e-3 / CogView：quality standard/hd
     StandardHd,
@@ -282,7 +286,9 @@ enum Family {
 
 fn family(model: &str) -> Family {
     let t = tokens(model);
-    if t.first().is_some_and(|f| f == "gpt") && t.get(1).is_some_and(|s| s == "image") {
+    if t.first().is_some_and(|f| f == "gpt" || f == "chatgpt")
+        && t.get(1).is_some_and(|s| s == "image")
+    {
         Family::GptImage
     } else if any_prefix(&t, &["dall", "cogview"]) {
         Family::StandardHd
@@ -293,52 +299,107 @@ fn family(model: &str) -> Family {
     }
 }
 
-/// 落到 OpenAI 出图接口的字段。`asked` = 用户要了且这次带上的选项：网关不认时去掉重出一次，note 里点名
+/// gpt-image-1 / 1.5 / 1-mini 仅支持最大 1536（1024x1024 / 1536x1024 / 1024x1536），
+/// 给 --resolution 2k/4k 硬算 2048x1360 只会吃 400 并误伤 --quality / --transparent
+fn is_gpt_image_1(model: &str) -> bool {
+    let t = tokens(model);
+    t.first().is_some_and(|f| f == "gpt")
+        && t.get(1).is_some_and(|s| s == "image")
+        && t.get(2).is_some_and(|v| v == "1" || v.starts_with("1."))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DropOption {
+    Resolution,
+    Quality,
+    Transparent,
+    Size,
+    SingleN,
+}
+
+impl DropOption {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Resolution => "分辨率",
+            Self::Quality => "画质",
+            Self::Transparent => "透明背景",
+            Self::Size => "画幅",
+            Self::SingleN => "批量出图（已拆成逐张并发）",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OpenAiFlags {
+    resolution: bool,
+    quality: bool,
+    transparent: bool,
+    size: bool,
+    /// 网关只认 n=1 时拆成多路单张并发
+    single_n: bool,
+}
+
+impl OpenAiFlags {
+    fn all() -> Self {
+        Self { resolution: true, quality: true, transparent: true, size: true, single_n: false }
+    }
+    #[cfg(test)]
+    fn none() -> Self {
+        Self { resolution: false, quality: false, transparent: false, size: true, single_n: false }
+    }
+}
+
+/// 落到 OpenAI 出图接口的字段。`active` = 本次实际发出的可降级选项：网关不认时按报错提示逐项退让，不误删其余有效选项
 struct OpenAiOptions {
     size: Option<String>,
     fields: Vec<(&'static str, serde_json::Value)>,
-    asked: Vec<&'static str>,
+    active: Vec<DropOption>,
     notes: Vec<String>,
 }
 
-fn openai_options(model: &str, req: &GenRequest, with_asked: bool) -> OpenAiOptions {
+fn openai_options(model: &str, req: &GenRequest, flags: OpenAiFlags) -> OpenAiOptions {
     let fam = family(model);
+    let raw_size = req.size.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     let mut o = OpenAiOptions {
-        size: req.size.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string),
+        size: if flags.size { raw_size } else { None },
         fields: Vec::new(),
-        asked: Vec::new(),
+        active: Vec::new(),
         notes: Vec::new(),
     };
     if fam == Family::Seedream {
         o.fields.push(("watermark", serde_json::json!(false)));
     }
-    if !with_asked {
-        return o;
-    }
-    if let Some(res) = req.resolution {
-        o.size = Some(match (&o.size, fam) {
-            (None, Family::Seedream) => res.label().to_string(),
-            (size, _) => scaled_size(size.as_deref(), res.long_edge()),
-        });
-        o.asked.push("分辨率");
-    }
-    match (req.quality, fam) {
-        (None, _) => {}
-        (Some(q), Family::GptImage) => {
-            o.fields.push(("quality", serde_json::json!(q.as_str())));
-            o.asked.push("画质");
+    if let Some(res) = req.resolution.filter(|_| flags.resolution) {
+        if !(is_gpt_image_1(model) && matches!(res, Resolution::K2 | Resolution::K4)) {
+            o.size = Some(match (&o.size, fam) {
+                (None, Family::Seedream) => res.label().to_string(),
+                (size, _) => scaled_size(size.as_deref(), res.long_edge()),
+            });
+            o.active.push(DropOption::Resolution);
         }
-        (Some(q), Family::StandardHd) => {
-            o.fields.push(("quality", serde_json::json!(if q == Quality::High { "hd" } else { "standard" })));
-            o.asked.push("画质");
-        }
-        (Some(_), _) => o.notes.push(format!("{model} 没有画质档位，--quality 没生效")),
     }
-    if req.transparent {
+    if o.size.is_some() && !o.active.contains(&DropOption::Resolution) {
+        o.active.push(DropOption::Size);
+    }
+    if flags.quality {
+        match (req.quality, fam) {
+            (None, _) => {}
+            (Some(q), Family::GptImage) => {
+                o.fields.push(("quality", serde_json::json!(q.as_str())));
+                o.active.push(DropOption::Quality);
+            }
+            (Some(q), Family::StandardHd) => {
+                o.fields.push(("quality", serde_json::json!(if q == Quality::High { "hd" } else { "standard" })));
+                o.active.push(DropOption::Quality);
+            }
+            (Some(_), _) => o.notes.push(format!("{model} 没有画质档位，--quality 没生效")),
+        }
+    }
+    if flags.transparent && req.transparent {
         if fam == Family::GptImage {
             o.fields.push(("background", serde_json::json!("transparent")));
             o.fields.push(("output_format", serde_json::json!("png")));
-            o.asked.push("透明背景");
+            o.active.push(DropOption::Transparent);
         } else {
             o.notes.push(format!("{model} 不支持透明背景，出的是普通底色；要透明底请换 gpt-image 系模型"));
         }
@@ -346,9 +407,70 @@ fn openai_options(model: &str, req: &GenRequest, with_asked: bool) -> OpenAiOpti
     o
 }
 
-/// 网关明确拒了这次请求（参数不认之类），去掉可选参数值得再试；认证、限流、超时不算
-fn rejected_request(err: &str) -> bool {
+/// 网关报 4xx 参数不认时选出最该先撤掉的那一项：优先按报错关键字定向撤，认不出再按优先级逐项退
+fn next_drop_option(opts: &OpenAiOptions, flags: &OpenAiFlags, err: &str, n: u32) -> Option<DropOption> {
+    let has = |d: DropOption| opts.active.contains(&d);
+    let can_split_n = n > 1 && !flags.single_n;
+    let low = err.to_ascii_lowercase();
+    if (low.contains("background") || low.contains("transparent") || low.contains("output_format"))
+        && has(DropOption::Transparent)
+    {
+        return Some(DropOption::Transparent);
+    }
+    if low.contains("quality") && has(DropOption::Quality) {
+        return Some(DropOption::Quality);
+    }
+    if low.contains("size")
+        || low.contains("resolution")
+        || low.contains("dimension")
+        || low.contains("width")
+        || low.contains("height")
+    {
+        if has(DropOption::Resolution) {
+            return Some(DropOption::Resolution);
+        }
+        if has(DropOption::Size) {
+            return Some(DropOption::Size);
+        }
+    }
+    if can_split_n
+        && (low.contains("n=1")
+            || low.contains("n must be 1")
+            || low.contains("only 1")
+            || low.contains("batch")
+            || low.contains("parameter 'n'")
+            || low.contains("parameter \"n\"")
+            || low.contains("invalid n"))
+    {
+        return Some(DropOption::SingleN);
+    }
+    for d in [DropOption::Resolution, DropOption::Quality, DropOption::Transparent, DropOption::Size] {
+        if has(d) {
+            return Some(d);
+        }
+    }
+    can_split_n.then_some(DropOption::SingleN)
+}
+
+/// 单条 HTTP 错误是否为请求参数/端点被拒（4xx 且非认证/权限/限流）
+fn is_http_4xx_rejection(err: &str) -> bool {
     err.starts_with("HTTP 4") && !["HTTP 401", "HTTP 403", "HTTP 429"].iter().any(|p| err.starts_with(p))
+}
+
+/// 网关明确拒了这次请求（参数不认之类），去掉可选参数值得再试；认证、限流、审核拒绝、超时不算。
+/// 改图双接口合并报错（`改图接口：…；出图接口带图：…`）时，两段都属于 4xx 拒收才允许继续退参数
+fn rejected_request(err: &str) -> bool {
+    if let Some(rest) = err.strip_prefix("改图接口：") {
+        if let Some((a, b)) = rest.split_once("；出图接口带图：") {
+            return (is_http_4xx_rejection(a) || a.starts_with("HTTP 501")) && is_http_4xx_rejection(b);
+        }
+    }
+    is_http_4xx_rejection(err)
+}
+
+/// `/images/edits` 失败后是否值得改走 `POST /images/generations` 带图（仅端点/方法/参数不认，认证/限流/审核/超时不盲目重发）
+fn should_try_gen_edit_fallback(err: &str) -> bool {
+    is_http_4xx_rejection(err) || err.starts_with("HTTP 501")
 }
 
 // ===== 解析各家返回 =====
@@ -395,12 +517,16 @@ fn parse_openai_images(v: &serde_json::Value) -> Vec<Piece> {
         .collect()
 }
 
-/// Gemini 原生：candidates[].content.parts[].inlineData{data}（兼容 snake 写法）
+/// Gemini 原生：candidates[].content.parts[].inlineData{data}（兼容 snake 写法）；
+/// 跳过带 `thought: true` 的思考过程部件，避免把中间草图当正图落盘
 fn parse_gemini(v: &serde_json::Value) -> Vec<Piece> {
     let mut out = Vec::new();
     for cand in v.get("candidates").and_then(|c| c.as_array()).into_iter().flatten() {
         let parts = cand.pointer("/content/parts").and_then(|p| p.as_array());
         for part in parts.into_iter().flatten() {
+            if part.get("thought").and_then(|b| b.as_bool()) == Some(true) {
+                continue;
+            }
             let inline = part.get("inlineData").or_else(|| part.get("inline_data"));
             if let Some(data) = inline.and_then(|i| i.get("data")).and_then(|d| d.as_str()) {
                 if let Some(bytes) = decode_b64(data) {
@@ -412,8 +538,62 @@ fn parse_gemini(v: &serde_json::Value) -> Vec<Piece> {
     out
 }
 
+/// Gemini 原生 HTTP 200 但没出图时的原因：返回 `(人话说明, 是否安全审核明确拒画)`。
+/// 明确拒画时不再浪费一次 `/chat/completions` 退路，直接把真实拒因告诉用户
+fn gemini_refusal(v: &serde_json::Value) -> Option<(String, bool)> {
+    const BLOCK_REASONS: &[&str] = &[
+        "SAFETY",
+        "IMAGE_SAFETY",
+        "PROHIBITED_CONTENT",
+        "IMAGE_PROHIBITED_CONTENT",
+        "BLOCKLIST",
+        "RECITATION",
+        "SPII",
+    ];
+    if let Some(reason) = v
+        .pointer("/promptFeedback/blockReason")
+        .or_else(|| v.pointer("/prompt_feedback/block_reason"))
+        .and_then(|r| r.as_str())
+        .filter(|r| !r.is_empty() && *r != "BLOCK_REASON_UNSPECIFIED")
+    {
+        return Some((
+            format!("描述没过模型的内容安全审核（{reason}），被拒了。换个说法、去掉可能被误判的词再试"),
+            true,
+        ));
+    }
+    let mut texts = Vec::new();
+    for cand in v.get("candidates").and_then(|c| c.as_array()).into_iter().flatten() {
+        if let Some(fr) = cand
+            .get("finishReason")
+            .or_else(|| cand.get("finish_reason"))
+            .and_then(|r| r.as_str())
+        {
+            if BLOCK_REASONS.iter().any(|b| fr.eq_ignore_ascii_case(b)) {
+                return Some((
+                    format!("生成结果没过模型的内容安全审核（{fr}），被拒了。换个说法再试"),
+                    true,
+                ));
+            }
+        }
+        let parts = cand.pointer("/content/parts").and_then(|p| p.as_array());
+        for part in parts.into_iter().flatten() {
+            if part.get("thought").and_then(|b| b.as_bool()) == Some(true) {
+                continue;
+            }
+            if let Some(t) = part.get("text").and_then(|t| t.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+                texts.push(t);
+            }
+        }
+    }
+    if !texts.is_empty() {
+        return Some((format!("模型没出图，回复：{}", preview(&texts.join(" "))), false));
+    }
+    None
+}
+
 /// 对话接口里带回的图：message.images[].image_url.url（OpenRouter 形状）或正文里的
-/// markdown 图片 `![..](data:… / https://…)`（New API 转 Gemini 的形状，2026-10-23 实测）
+/// markdown 图片 `![..](data:… / https://…)`（New API 转 Gemini 的形状，2026-10-23 实测）；
+/// 严格只匹配 `![...](...)`，避免误抓普通超链接 `[说明](https://...)` 导致下载 HTML 报错
 fn parse_chat_images(v: &serde_json::Value) -> Vec<Piece> {
     let mut out = Vec::new();
     let Some(msg) = v.pointer("/choices/0/message") else {
@@ -446,13 +626,21 @@ fn parse_chat_images(v: &serde_json::Value) -> Vec<Piece> {
         _ => String::new(),
     };
     let mut rest = content.as_str();
-    while let Some(i) = rest.find("](") {
-        let after = &rest[i + 2..];
-        let end = after.find(')').unwrap_or(after.len());
-        if let Some(p) = piece_from_ref(&after[..end]) {
-            out.push(p);
+    while let Some(bang) = rest.find("![") {
+        let after_bang = &rest[bang + 2..];
+        let Some(close_bracket) = after_bang.find(']') else {
+            break;
+        };
+        let after_bracket = &after_bang[close_bracket + 1..];
+        if let Some(after_paren) = after_bracket.strip_prefix('(') {
+            let end = after_paren.find(')').unwrap_or(after_paren.len());
+            if let Some(p) = piece_from_ref(&after_paren[..end]) {
+                out.push(p);
+            }
+            rest = &after_paren[end..];
+        } else {
+            rest = after_bracket;
         }
-        rest = &after[end..];
     }
     out
 }
@@ -598,11 +786,18 @@ fn target_from_gateway(gw: &crate::profiles::Gateway, model: &str) -> Target {
             .find_map(|s| slot_url(&gw.slots, *s))
             .map(str::to_string)
     };
+    let openai_base = pick(&[Slot::Openai, Slot::Responses, Slot::Anthropic]).or_else(|| {
+        // 仅填了 Gemini 槽（如官方 Google API）且要调 Imagen 时，退用 Gemini OpenAI 兼容端点
+        slot_url(&gw.slots, Slot::Gemini).map(|g| {
+            let root = crate::models::strip_trailing_version_segment(g.trim().trim_end_matches('/'));
+            format!("{}/v1beta/openai", root.trim_end_matches('/'))
+        })
+    });
     Target {
         gateway_id: gw.id.clone(),
         gateway_name: gw.name.clone(),
         no_auth: gw.no_auth,
-        openai_base: pick(&[Slot::Openai, Slot::Responses, Slot::Anthropic]),
+        openai_base,
         gemini_base: pick(&[Slot::Gemini, Slot::Openai, Slot::Responses]),
         // Header 值 = Mesa 进程环境变量（网关只存变量名，同 agents.rs apply_request_policy_env）
         headers: gw
@@ -649,15 +844,15 @@ fn resolve_target_in(
         return Ok(target_from_gateway(gw, model));
     }
     if default_gateway.is_some() {
-        return Err("设置里选的出图网关已经不在了：到 Mesa 连接页最下方「出图模型」重新选一个".into());
+        return Err("设置里选的出图网关已经不在了：到 Mesa 连接页左栏「出图模型」重新选一个".into());
     }
     Err(format!(
-        "没有哪个网关的模型目录里有 {model}：到 Mesa 连接页最下方「出图模型」选一个网关"
+        "没有哪个网关的模型目录里有 {model}：到 Mesa 连接页左栏「出图模型」选一个网关"
     ))
 }
 
 const NOT_CONFIGURED: &str =
-    "还没配置出图模型：到 Mesa 连接页最下方「出图模型」选一个（各家网关目录里的出图模型都能选）";
+    "还没配置出图模型：到 Mesa 连接页左栏「出图模型」选一个（各家网关目录里的出图模型都能选）";
 
 pub fn resolve_target(model_override: Option<&str>) -> Result<Target, String> {
     let s = crate::settings::read_current();
@@ -802,6 +997,31 @@ fn error_text(status: reqwest::StatusCode, body: &str) -> String {
     }
 }
 
+fn outbound_proxy_url() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    let s = crate::settings::read_current();
+    s.outbound_proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && crate::settings::validate_outbound_proxy(p).is_ok())
+        .map(str::to_string)
+}
+
+fn proxy_client(timeout_secs: u64) -> Result<Option<reqwest::Client>, String> {
+    let Some(proxy) = outbound_proxy_url() else {
+        return Ok(None);
+    };
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(&proxy).map_err(|e| format!("出网代理不可用：{e}"))?)
+        .timeout(Duration::from_secs(timeout_secs))
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+    Ok(Some(client))
+}
+
 async fn post_json(
     client: &reqwest::Client,
     url: &str,
@@ -809,8 +1029,9 @@ async fn post_json(
     key: Option<&str>,
     body: &serde_json::Value,
     gemini: bool,
+    wait_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    send(client.post(url).json(body), target, key, gemini).await
+    send_with_proxy(client, wait_secs, target, key, gemini, |c| c.post(url).json(body)).await
 }
 
 async fn post_multipart(
@@ -819,33 +1040,65 @@ async fn post_multipart(
     target: &Target,
     key: Option<&str>,
     (content_type, body): (String, Vec<u8>),
+    wait_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let req = client.post(url).header(reqwest::header::CONTENT_TYPE, content_type).body(body);
-    send(req, target, key, false).await
+    send_with_proxy(client, wait_secs, target, key, false, |c| {
+        c.post(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type.as_str())
+            .body(body.clone())
+    })
+    .await
 }
 
-async fn send(
-    mut req: reqwest::RequestBuilder,
+/// 发请求并解析 JSON：直连在建连阶段失败或建连超时（< 20 秒）且设置里配了出网代理时，自动经代理重试一次；
+/// 长时间出图等待超时（5 / 10 分钟）不经代理重发，避免白等两轮
+async fn send_with_proxy<F>(
+    client: &reqwest::Client,
+    wait_secs: u64,
     target: &Target,
     key: Option<&str>,
     gemini: bool,
-) -> Result<serde_json::Value, String> {
-    if let Some(k) = key {
-        req = req.bearer_auth(k);
-        if gemini {
-            req = req.header("x-goog-api-key", k);
+    build: F,
+) -> Result<serde_json::Value, String>
+where
+    F: Fn(&reqwest::Client) -> reqwest::RequestBuilder,
+{
+    let apply = |mut req: reqwest::RequestBuilder| {
+        if let Some(k) = key {
+            req = req.bearer_auth(k);
+            if gemini {
+                req = req.header("x-goog-api-key", k);
+            }
         }
-    }
-    for (h, v) in &target.headers {
-        req = req.header(h.as_str(), v.as_str());
-    }
-    let resp = req.send().await.map_err(|e| {
-        if e.is_timeout() {
-            "等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）".to_string()
-        } else {
-            format!("连不上网关：{}", preview(&e.to_string()))
+        for (h, v) in &target.headers {
+            req = req.header(h.as_str(), v.as_str());
         }
-    })?;
+        req
+    };
+    let started = Instant::now();
+    let resp = match apply(build(client)).send().await {
+        Ok(r) => r,
+        Err(e) if e.is_connect() || (e.is_timeout() && started.elapsed() < Duration::from_secs(20)) => {
+            if let Some(via) = proxy_client(wait_secs)? {
+                apply(build(&via)).send().await.map_err(|e2| {
+                    if e2.is_timeout() {
+                        "经出网代理等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）".to_string()
+                    } else {
+                        format!("连不上网关（直连和出网代理都不通）：{}", preview(&e2.to_string()))
+                    }
+                })?
+            } else {
+                return Err(format!(
+                    "连不上网关：{}（若需走代理，请到 Mesa 设置 → 网络 填出网代理）",
+                    preview(&e.to_string())
+                ));
+            }
+        }
+        Err(e) if e.is_timeout() => {
+            return Err("等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）".to_string());
+        }
+        Err(e) => return Err(format!("连不上网关：{}", preview(&e.to_string()))),
+    };
     let status = resp.status();
     let bytes = crate::storage::response_bytes(resp, 64 * 1024 * 1024).await?;
     let text = String::from_utf8_lossy(&bytes);
@@ -866,23 +1119,12 @@ async fn download(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String
     let resp = match direct {
         Ok(r) => r,
         Err(e) if e.is_connect() || e.is_timeout() => {
-            let s = crate::settings::read_current();
-            let proxy = s
-                .outbound_proxy
-                .as_deref()
-                .map(str::trim)
-                .filter(|p| !p.is_empty() && crate::settings::validate_outbound_proxy(p).is_ok());
-            let Some(proxy) = proxy else {
+            let Some(via) = proxy_client(90)? else {
                 return Err(format!(
                     "下载图片失败（连不上 {}；要走代理的话到 Mesa 设置 → 网络 填出网代理）",
                     host_of(url)
                 ));
             };
-            let via = reqwest::Client::builder()
-                .proxy(reqwest::Proxy::all(proxy).map_err(|e| format!("出网代理不可用：{e}"))?)
-                .timeout(Duration::from_secs(90))
-                .build()
-                .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
             via.get(url)
                 .send()
                 .await
@@ -935,7 +1177,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
     let wait = if req.resolution == Some(Resolution::K4) { 600 } else { 300 };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(wait))
-        // 连接阶段单独限时：图片存储直连不通时尽快改走出网代理（download）
+        // 连接阶段单独限时：直连不通时尽快改走出网代理
         .connect_timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
@@ -947,29 +1189,103 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                 .openai_base
                 .as_deref()
                 .ok_or_else(|| format!("网关「{}」没填 OpenAI 地址", target.gateway_name))?;
-            let first = openai_options(&target.model, req, true);
+            let mut flags = OpenAiFlags::all();
+            let first = openai_options(&target.model, req, flags);
             let mut notes = first.notes.clone();
-            if !first.asked.contains(&"透明背景") {
+            if !first.active.contains(&DropOption::Transparent) {
                 want.transparent = false; // 不支持的已在 note 里说过
             }
-            let v = match openai_request(&client, target, key.as_deref(), req, base, &first).await {
-                Ok(v) => v,
-                Err(e) if !first.asked.is_empty() && rejected_request(&e) => {
-                    let plain = openai_options(&target.model, req, false);
-                    let v = openai_request(&client, target, key.as_deref(), req, base, &plain)
-                        .await
-                        .map_err(|e2| format!("带{}：{e}；去掉后：{e2}", first.asked.join("、")))?;
-                    notes.push(format!("网关不认{}参数（{e}），已去掉按模型默认出图", first.asked.join("、")));
-                    want.resolution = None;
-                    want.transparent = false;
-                    v
+            let mut opts = first;
+            let mut dropped_notes: Vec<String> = Vec::new();
+            let mut first_err: Option<(String, &'static str)> = None;
+            let images = loop {
+                let res = if flags.single_n && n > 1 {
+                    let results = join_all(
+                        (0..n)
+                            .map(|_| {
+                                Box::pin(openai_request(&client, target, key.as_deref(), req, base, &opts, 1, wait))
+                                    as BoxFut<'_, Result<serde_json::Value, String>>
+                            })
+                            .collect(),
+                    )
+                    .await;
+                    let mut all = Vec::new();
+                    let mut partial_err = None;
+                    for r in results {
+                        match r {
+                            Ok(v) => all.extend(materialize(&client, parse_openai_images(&v)).await?),
+                            Err(e) => {
+                                partial_err.get_or_insert(e);
+                            }
+                        }
+                    }
+                    if all.is_empty() {
+                        Err(partial_err.unwrap_or_else(|| "网关回话里没有图片".into()))
+                    } else {
+                        if let (true, Some(e)) = ((all.len() as u32) < n, &partial_err) {
+                            notes.push(format!("要 {n} 张只出了 {} 张，其余失败：{e}", all.len()));
+                        }
+                        Ok(all)
+                    }
+                } else {
+                    match openai_request(&client, target, key.as_deref(), req, base, &opts, n, wait).await {
+                        Ok(v) => {
+                            let imgs = materialize(&client, parse_openai_images(&v)).await?;
+                            if imgs.is_empty() {
+                                Err(format!("网关回话里没有图片：{}", preview(&v.to_string())))
+                            } else {
+                                Ok(imgs)
+                            }
+                        }
+                        Err(e) => Err(e),
+                    }
+                };
+                match res {
+                    Ok(imgs) => break imgs,
+                    Err(e) if rejected_request(&e) && dropped_notes.len() < 4 => {
+                        let Some(drop_opt) = next_drop_option(&opts, &flags, &e, n) else {
+                            return Err(match first_err {
+                                Some((e0, label)) => format!("带{label}：{e0}；退让后：{e}"),
+                                None => e,
+                            });
+                        };
+                        first_err.get_or_insert((e.clone(), drop_opt.label()));
+                        match drop_opt {
+                            DropOption::Resolution => {
+                                flags.resolution = false;
+                                want.resolution = None;
+                                dropped_notes.push(format!("网关不认分辨率参数（{e}），已按原画幅/默认分辨率出图"));
+                            }
+                            DropOption::Quality => {
+                                flags.quality = false;
+                                dropped_notes.push(format!("网关不认画质参数（{e}），已去掉画质参数重试"));
+                            }
+                            DropOption::Transparent => {
+                                flags.transparent = false;
+                                want.transparent = false;
+                                dropped_notes.push(format!("网关不认透明背景参数（{e}），已按普通底色重试"));
+                            }
+                            DropOption::Size => {
+                                flags.size = false;
+                                want.size = None;
+                                dropped_notes.push(format!("网关不认画幅参数（{e}），已按模型默认画幅重试"));
+                            }
+                            DropOption::SingleN => {
+                                flags.single_n = true;
+                                dropped_notes.push("网关不支持一次出多张，已拆成逐张并发出图".into());
+                            }
+                        }
+                        opts = openai_options(&target.model, req, flags);
+                    }
+                    Err(e) => {
+                        return Err(match first_err {
+                            Some((e0, label)) => format!("带{label}：{e0}；退让后：{e}"),
+                            None => e,
+                        });
+                    }
                 }
-                Err(e) => return Err(e),
             };
-            let images = materialize(&client, parse_openai_images(&v)).await?;
-            if images.is_empty() {
-                return Err(format!("网关回话里没有图片：{}", preview(&v.to_string())));
-            }
+            notes.extend(dropped_notes);
             notes.extend(check_images(&images, &want));
             Ok(GenOutcome { images, protocol, note: join_notes(notes) })
         }
@@ -984,6 +1300,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             }
             let mut images = Vec::new();
             let mut native_err = None;
+            let mut blocked_by_safety = false;
             if let Some(base) = target.gemini_base.as_deref() {
                 // 原生接口一次一张：要几张就同时发几次；带分辨率被拒时去掉重发被拒的那几张（老模型不认 imageSize）
                 let url = gemini_url(base, &target.model);
@@ -993,7 +1310,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                     let body = gemini_body(prompt, req, sized);
                     let results = join_all(
                         (0..pending)
-                            .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &body, true)) as BoxFut<'_, Result<serde_json::Value, String>>)
+                            .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &body, true, wait)) as BoxFut<'_, Result<serde_json::Value, String>>)
                             .collect(),
                     )
                     .await;
@@ -1001,12 +1318,27 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                     pending = 0;
                     for r in results {
                         match r {
-                            Ok(v) => images.extend(materialize(&client, parse_gemini(&v)).await?),
+                            Ok(v) => {
+                                let pieces = parse_gemini(&v);
+                                if pieces.is_empty() {
+                                    if let Some((reason, is_safety)) = gemini_refusal(&v) {
+                                        if is_safety {
+                                            blocked_by_safety = true;
+                                        }
+                                        native_err.get_or_insert(reason);
+                                    }
+                                } else {
+                                    images.extend(materialize(&client, pieces).await?);
+                                }
+                            }
                             Err(e) if sized && rejected_request(&e) => {
                                 pending += 1;
                                 rejected.get_or_insert(e);
                             }
                             Err(e) => {
+                                if e.starts_with("描述没过模型的内容安全审核") {
+                                    blocked_by_safety = true;
+                                }
                                 native_err.get_or_insert(e);
                             }
                         }
@@ -1028,6 +1360,9 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
                 notes.extend(check_images(&images, &want));
                 return Ok(GenOutcome { images, protocol, note: join_notes(notes) });
             }
+            if blocked_by_safety {
+                return Err(native_err.unwrap_or_else(|| "描述没过模型的内容安全审核，被拒了".into()));
+            }
             // 退路：OpenAI 兼容的对话接口（多数中转把 Gemini 出图挂在这里）
             let Some(base) = target.openai_base.as_deref() else {
                 return Err(native_err.unwrap_or_else(|| "Gemini 原生接口没回图片".into()));
@@ -1048,7 +1383,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             let url = openai_url(base, "chat/completions");
             let results = join_all(
                 (0..n)
-                    .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &chat, false)) as BoxFut<'_, Result<serde_json::Value, String>>)
+                    .map(|_| Box::pin(post_json(&client, &url, target, key.as_deref(), &chat, false, wait)) as BoxFut<'_, Result<serde_json::Value, String>>)
                     .collect(),
             )
             .await;
@@ -1065,6 +1400,7 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
             if fallback.is_empty() {
                 return Err(match (native_err, chat_err) {
                     (Some(a), Some(b)) => format!("Gemini 原生接口：{a}；对话接口：{b}"),
+                    (Some(a), None) => a,
                     (None, Some(b)) => b,
                     _ => "Gemini 原生接口和对话接口都没回图片（这个模型可能不出图）".into(),
                 });
@@ -1109,8 +1445,9 @@ fn join_notes(notes: Vec<String>) -> Option<String> {
     (!notes.is_empty()).then(|| notes.join("；"))
 }
 
-/// OpenAI 出图接口一次请求：文生图走 generations；改图走 edits（multipart），网关不认再试 generations 带 image 字段；
+/// OpenAI 出图接口一次请求：文生图走 generations；改图走 edits（multipart），仅在端点/方法/参数被拒时退回 generations 带 image 字段；
 /// 豆包是 generations 带 image（火山方舟口径）
+#[allow(clippy::too_many_arguments)]
 async fn openai_request(
     client: &reqwest::Client,
     target: &Target,
@@ -1118,8 +1455,10 @@ async fn openai_request(
     req: &GenRequest,
     base: &str,
     opts: &OpenAiOptions,
+    count: u32,
+    wait_secs: u64,
 ) -> Result<serde_json::Value, String> {
-    let n = req.n.clamp(1, 4);
+    let n = count.clamp(1, 4);
     let prompt = req.prompt.trim();
     let mut body = serde_json::json!({ "model": target.model, "prompt": prompt, "n": n });
     if let Some(size) = &opts.size {
@@ -1136,10 +1475,10 @@ async fn openai_request(
     };
     let gen_url = openai_url(base, "images/generations");
     if req.images.is_empty() {
-        return post_json(client, &gen_url, target, key, &body, false).await;
+        return post_json(client, &gen_url, target, key, &body, false, wait_secs).await;
     }
     if edits_via_generations(&target.model) {
-        return post_json(client, &gen_url, target, key, &with_images(body), false).await;
+        return post_json(client, &gen_url, target, key, &with_images(body), false, wait_secs).await;
     }
     let mut fields = vec![("model", target.model.clone()), ("prompt", prompt.to_string()), ("n", n.to_string())];
     if let Some(size) = &opts.size {
@@ -1151,11 +1490,14 @@ async fn openai_request(
     let name = if req.images.len() == 1 { "image" } else { "image[]" };
     let files: Vec<(&str, &InputImage)> = req.images.iter().map(|i| (name, i)).collect();
     let edits_url = openai_url(base, "images/edits");
-    match post_multipart(client, &edits_url, target, key, multipart_body(&fields, &files)).await {
+    match post_multipart(client, &edits_url, target, key, multipart_body(&fields, &files), wait_secs).await {
         Ok(v) => Ok(v),
-        Err(edit_err) => post_json(client, &gen_url, target, key, &with_images(body), false)
-            .await
-            .map_err(|e| format!("改图接口：{edit_err}；出图接口带图：{e}")),
+        Err(edit_err) if should_try_gen_edit_fallback(&edit_err) => {
+            post_json(client, &gen_url, target, key, &with_images(body), false, wait_secs)
+                .await
+                .map_err(|e| format!("改图接口：{edit_err}；出图接口带图：{e}"))
+        }
+        Err(edit_err) => Err(edit_err),
     }
 }
 
@@ -1346,21 +1688,36 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     Ok(a)
 }
 
-fn list_text() -> String {
-    let s = crate::settings::read_current();
-    let gateways = crate::gateway_store::load_gateways().unwrap_or_default();
+fn list_text_for(
+    gateways: &[crate::profiles::Gateway],
+    default_model: Option<&str>,
+    default_gateway: Option<&str>,
+) -> String {
     let mut lines = Vec::new();
-    match (s.image_gen_model.as_deref(), s.image_gen_gateway_id.as_deref()) {
+    match (default_model, default_gateway) {
         (Some(m), Some(g)) => {
             let name = gateways.iter().find(|x| x.id == g).map(|x| x.name.as_str()).unwrap_or("（已删除的网关）");
             lines.push(format!("默认出图模型：{m}（网关「{name}」）"));
         }
         _ => lines.push(NOT_CONFIGURED.into()),
     }
-    for c in candidates_from(&gateways) {
+    for c in candidates_from(gateways) {
         lines.push(format!("网关「{}」可用：{}", c.gateway_name, c.models.join("、")));
     }
+    for c in edit_only_models_from(gateways) {
+        lines.push(format!(
+            "网关「{}」仅改图可用（须带 --image）：{}",
+            c.gateway_name,
+            c.models.join("、")
+        ));
+    }
     lines.join("\n")
+}
+
+fn list_text() -> String {
+    let s = crate::settings::read_current();
+    let gateways = crate::gateway_store::load_gateways().unwrap_or_default();
+    list_text_for(&gateways, s.image_gen_model.as_deref(), s.image_gen_gateway_id.as_deref())
 }
 
 /// `mesa_helper image …` 的实现；返回进程退出码。成功时每张图一行 `saved: 绝对路径`
@@ -1476,6 +1833,32 @@ fn candidates_from(gateways: &[crate::profiles::Gateway]) -> Vec<ImageGenGateway
                 .models
                 .iter()
                 .filter(|m| m.status != "stale" && is_image_gen_model(&m.id))
+                .map(|m| m.id.clone())
+                .collect();
+            models.sort();
+            models.dedup();
+            (!models.is_empty()).then(|| ImageGenGatewayDto {
+                gateway_id: g.id.clone(),
+                gateway_name: g.name.clone(),
+                models,
+            })
+        })
+        .collect()
+}
+
+/// 仅支持改图 / 图生图的模型（`mesa_helper image --list` 另行列出，方便改图时挑模型；不进默认文生图选择器）
+fn edit_only_models_from(gateways: &[crate::profiles::Gateway]) -> Vec<ImageGenGatewayDto> {
+    gateways
+        .iter()
+        .filter_map(|g| {
+            let mut models: Vec<String> = g
+                .models
+                .iter()
+                .filter(|m| {
+                    m.status != "stale"
+                        && model_kind(&m.id) == ModelKind::Image
+                        && !is_image_gen_model(&m.id)
+                })
                 .map(|m| m.id.clone())
                 .collect();
             models.sort();
@@ -1814,30 +2197,63 @@ mod tests {
             ..Default::default()
         };
         let field = |o: &OpenAiOptions, k: &str| o.fields.iter().find(|(f, _)| *f == k).map(|(_, v)| v.clone());
-        // gpt-image：画质原样、透明底 = background + png；分辨率按画幅放长边
+        // gpt-image-2.5 / chatgpt-image-latest：画质原样、透明底 = background + png；分辨率按画幅放长边
         let r = req(Some(Quality::High), Some(Resolution::K2), true, Some("1536x1024"));
-        let o = openai_options("gpt-image-2.5", &r, true);
+        let o = openai_options("gpt-image-2.5", &r, OpenAiFlags::all());
         assert_eq!(field(&o, "quality"), Some(serde_json::json!("high")));
         assert_eq!(field(&o, "background"), Some(serde_json::json!("transparent")));
         assert_eq!(o.size.as_deref(), Some("2048x1360"));
-        assert_eq!(o.asked, ["分辨率", "画质", "透明背景"]);
+        assert_eq!(o.active, [DropOption::Resolution, DropOption::Quality, DropOption::Transparent]);
         assert!(o.notes.is_empty());
+        let o_chat = openai_options("chatgpt-image-latest", &r, OpenAiFlags::all());
+        assert_eq!(field(&o_chat, "background"), Some(serde_json::json!("transparent")));
+        assert_eq!(field(&o_chat, "quality"), Some(serde_json::json!("high")));
+        // gpt-image-1.5：不把 2k 硬放大成 2048x1360 撞 400，保留 --quality 和 --transparent
+        let o15 = openai_options("gpt-image-1.5", &r, OpenAiFlags::all());
+        assert_eq!(o15.size.as_deref(), Some("1536x1024"));
+        assert_eq!(field(&o15, "quality"), Some(serde_json::json!("high")));
+        assert_eq!(field(&o15, "background"), Some(serde_json::json!("transparent")));
+        assert!(!o15.active.contains(&DropOption::Resolution));
         // 去掉可选参数重出：回到原尺寸、只剩必带字段
-        let plain = openai_options("gpt-image-2.5", &r, false);
+        let plain = openai_options("gpt-image-2.5", &r, OpenAiFlags::none());
         assert_eq!((plain.size.as_deref(), plain.fields.len()), (Some("1536x1024"), 0));
         // 豆包：永远关水印（重出也关）；只给分辨率时写 2K；不支持的选项记 note
-        let o = openai_options("doubao-seedream-4-0-250828", &r, true);
+        let o = openai_options("doubao-seedream-4-0-250828", &r, OpenAiFlags::all());
         assert_eq!(field(&o, "watermark"), Some(serde_json::json!(false)));
         assert_eq!(o.notes.len(), 2);
         let only_res = req(None, Some(Resolution::K4), false, None);
-        assert_eq!(openai_options("doubao-seedream-4-0-250828", &only_res, true).size.as_deref(), Some("4K"));
-        assert_eq!(field(&openai_options("doubao-seedream-4-0-250828", &only_res, false), "watermark"), Some(serde_json::json!(false)));
+        assert_eq!(openai_options("doubao-seedream-4-0-250828", &only_res, OpenAiFlags::all()).size.as_deref(), Some("4K"));
+        assert_eq!(field(&openai_options("doubao-seedream-4-0-250828", &only_res, OpenAiFlags::none()), "watermark"), Some(serde_json::json!(false)));
         // dall-e-3 / CogView：standard / hd
-        let o = openai_options("cogview-4-250304", &req(Some(Quality::High), None, false, None), true);
+        let o = openai_options("cogview-4-250304", &req(Some(Quality::High), None, false, None), OpenAiFlags::all());
         assert_eq!(field(&o, "quality"), Some(serde_json::json!("hd")));
         // 竖图放长边
         assert_eq!(scaled_size(Some("1024x1536"), 4096), "2736x4096");
         assert_eq!(scaled_size(None, 1024), "1024x1024");
+    }
+
+    #[test]
+    fn progressive_drop_targets_rejected_field_and_preserves_others() {
+        let req = GenRequest {
+            prompt: "x".into(),
+            size: Some("1536x1024".into()),
+            n: 2,
+            quality: Some(Quality::High),
+            resolution: Some(Resolution::K2),
+            transparent: true,
+            ..Default::default()
+        };
+        let mut flags = OpenAiFlags::all();
+        let opts = openai_options("gpt-image-2.5", &req, flags);
+        assert_eq!(next_drop_option(&opts, &flags, "HTTP 400：unknown parameter background", 2), Some(DropOption::Transparent));
+        assert_eq!(next_drop_option(&opts, &flags, "HTTP 400：invalid size 2048x1360", 2), Some(DropOption::Resolution));
+        assert_eq!(next_drop_option(&opts, &flags, "HTTP 400：only 1 image supported (n=1)", 2), Some(DropOption::SingleN));
+        // 仅撤 resolution 后，quality 和 transparent 仍在
+        flags.resolution = false;
+        let opts2 = openai_options("gpt-image-2.5", &req, flags);
+        assert_eq!(opts2.size.as_deref(), Some("1536x1024"));
+        assert!(opts2.active.contains(&DropOption::Quality));
+        assert!(opts2.active.contains(&DropOption::Transparent));
     }
 
     #[test]
@@ -1891,9 +2307,65 @@ mod tests {
     #[test]
     fn retry_only_on_request_rejections() {
         assert!(rejected_request("HTTP 400：unknown parameter background"));
+        assert!(rejected_request("改图接口：HTTP 404：not found；出图接口带图：HTTP 400：bad size"));
+        assert!(rejected_request("改图接口：HTTP 501：not implemented；出图接口带图：HTTP 400：bad quality"));
+        assert!(!rejected_request("改图接口：HTTP 400：bad；出图接口带图：HTTP 429：rate limited"));
         assert!(!rejected_request("HTTP 401：invalid key"));
         assert!(!rejected_request("HTTP 429：rate limited"));
         assert!(!rejected_request("等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）"));
+        assert!(should_try_gen_edit_fallback("HTTP 404：not found"));
+        assert!(should_try_gen_edit_fallback("HTTP 501：not implemented"));
+        assert!(!should_try_gen_edit_fallback("HTTP 401：invalid key"));
+        assert!(!should_try_gen_edit_fallback("HTTP 429：rate limited"));
+        assert!(!should_try_gen_edit_fallback("描述没过模型的内容安全审核，被拒了"));
+        assert!(!should_try_gen_edit_fallback("等到超时网关还没出图，已放弃（4K 最多等 10 分钟，其余 5 分钟）"));
+    }
+
+    #[test]
+    fn gemini_skips_thought_images_and_surfaces_refusal() {
+        let g = serde_json::json!({"candidates": [{"content": {"parts": [
+            {"thought": true, "inlineData": {"mimeType": "image/png", "data": PNG_1PX}},
+            {"inlineData": {"mimeType": "image/png", "data": PNG_1PX}}
+        ]}}]});
+        assert_eq!(parse_gemini(&g).len(), 1);
+        let blocked = serde_json::json!({"promptFeedback": {"blockReason": "SAFETY"}});
+        let (msg, is_safety) = gemini_refusal(&blocked).unwrap();
+        assert!(is_safety && msg.contains("SAFETY"));
+        let fin = serde_json::json!({"candidates": [{"finishReason": "IMAGE_SAFETY"}]});
+        let (msg2, is_safety2) = gemini_refusal(&fin).unwrap();
+        assert!(is_safety2 && msg2.contains("IMAGE_SAFETY"));
+        let txt = serde_json::json!({"candidates": [{"finishReason": "STOP", "content": {"parts": [
+            {"thought": true, "text": "internal thought"},
+            {"text": "I cannot generate that image."}
+        ]}}]});
+        let (msg3, is_safety3) = gemini_refusal(&txt).unwrap();
+        assert!(!is_safety3 && msg3.contains("I cannot generate that image."));
+    }
+
+    #[test]
+    fn chat_image_parser_ignores_plain_markdown_links() {
+        let c = serde_json::json!({"choices": [{"message": {"content": format!(
+            "说明见 [文档](https://example.com/doc) 以及 ![结果](data:image/png;base64,{PNG_1PX})"
+        )}}]});
+        let pieces = parse_chat_images(&c);
+        assert_eq!(pieces.len(), 1);
+        assert!(matches!(&pieces[0], Piece::Bytes(_)));
+    }
+
+    #[test]
+    fn list_includes_edit_only_models_and_gemini_only_gateway_derives_openai_compat() {
+        let mut g = gw("gem", &[("gemini-3-pro-image", "available"), ("wan2.6-image", "available"), ("qwen-image-edit-plus", "available")]);
+        g.slots.openai = None;
+        g.slots.gemini = Some("https://generativelanguage.googleapis.com".into());
+        let t = target_from_gateway(&g, "imagen-4.0-generate-001");
+        assert_eq!(t.openai_base.as_deref(), Some("https://generativelanguage.googleapis.com/v1beta/openai"));
+        assert_eq!(
+            openai_url(t.openai_base.as_deref().unwrap(), "images/generations"),
+            "https://generativelanguage.googleapis.com/v1beta/openai/images/generations"
+        );
+        let txt = list_text_for(&[g], Some("gemini-3-pro-image"), Some("gem"));
+        assert!(txt.contains("网关「网关gem」可用：gemini-3-pro-image"));
+        assert!(txt.contains("仅改图可用（须带 --image）：qwen-image-edit-plus、wan2.6-image"));
     }
 
     #[test]

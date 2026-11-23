@@ -1,30 +1,35 @@
 ---
 name: image-gen
-description: 用 Mesa 连接页里配好的出图模型生成图片或在已有图上改（gpt-image、Gemini、Grok、豆包 Seedream、通义万相、CogView 等各家都可）。用户要插图、示意图、封面、配图、海报、图标草图等「按描述画一张图」，或发来一张图要求「在这张图上改」（换颜色、去背景、加减东西、换风格）时使用；数据图表、统计图不用它（交给 figure-forge / data-eda 用脚本画），不生成冒充实验结果的图像。
+description: 用 Mesa 连接页里配好的出图模型生成图片或在已有图上改（gpt-image、Gemini、Grok、豆包 Seedream、通义万相、CogView 等各家都可）。用户要插图、封面、配图、海报、图标素材、或给 schematic-forge 画无字主视觉底图/局部图标等「按描述画一张图」，或发来一张图要求「在这张图上改」（换颜色、去背景、加减东西、换风格）时使用；带文字标注的科研机理图、流程图、图形摘要（TOC）交给 schematic-forge 渲成可编辑 PPTX + SVG（本技能只为其产出无字底图或图标）；数据图表、统计图交给 figure-forge / data-eda 用脚本画，不生成冒充实验结果的图像。
 outputs: [figures/]
+provides: [image-gen]
 ---
 
 # 出图（Mesa 出图模型）
 
-Mesa 启动你时在环境变量 `MESA_IMAGE_TOOL` 里放了出图工具的路径。它用用户在 Mesa 连接页最下方「出图模型」选的网关和模型，密钥由工具自己取——**你看不到也不需要密钥，不要去找、不要打印任何密钥**。
+Mesa 启动你时在环境变量 `MESA_IMAGE_TOOL` 里放了出图工具的路径。它用用户在 Mesa 连接页左栏「出图模型」选的网关和模型，密钥由工具自己取——**你看不到也不需要密钥，不要去找、不要打印任何密钥**。
 
 ## 先确认能用
 
-macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& $env:MESA_IMAGE_TOOL image --list`。输出第一行是默认出图模型，后面是各网关目录里能出图的模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到 Mesa 连接页最下方「出图模型」里选一个，或者用户指定了模型时加 `--model`。
+macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& $env:MESA_IMAGE_TOOL image --list`。输出第一行是默认出图模型，后面列出各网关能直接文生图的模型，以及「仅改图可用（须带 `--image`）」的专用改图模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的、当前无头任务未授权联网，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到 Mesa 连接页左栏「出图模型」里选一个，或者用户指定了模型时加 `--model`。
 
 ## 动笔前先定三件事
 
-1. **用途**：草图 / 看方向、正文示意图、图形摘要（TOC graphic）、封面、图标。用途决定画幅、分辨率和风格，用户没说就按下表取默认，交付时说明取了什么。
-2. **画幅**：`--size` 写宽高，比如方图 `1024x1024`、横版 `1536x1024`、竖版封面 `1024x1536`。期刊对图形摘要有尺寸要求时按期刊要求的比例写。
+> **先判分工与期刊 AI 红线**：
+> - **科研机理图、实验流程图、技术路线图、图形摘要（TOC）**：交给 **schematic-forge** 出可编辑 PPTX + SVG，不要绕过它直接交带字死图 PNG。
+> - **独立对话里如果用户要放进正式期刊正文**（尤其是 Springer Nature / EER / Elsevier / ACS / RSC / Wiley 等明确限制或禁止生成式 AI 图像进科研正文的期刊）：**先提醒合规风险并问一句走哪条路**——推荐零 AI 像素路线（有 Blender 走 `blender-research` 3D 插画 + `schematic-forge` 矢量叠层，没装 Blender 走 `schematic-forge` 纯矢量极简风）；只有用户确认目标期刊允许，或用于**封面艺术图 / 组会 PPT / 海报 / 概念配图 / 构思草图 / 已有图改图**时，才用本技能（`$MESA_IMAGE_TOOL`）生成图像。
+
+1. **用途**：草图 / 看方向、schematic-forge 无字主视觉底图、封面、海报/概念配图、图标。用途决定画幅、分辨率和风格，用户没说就按下表取默认，交付时说明取了什么。
+2. **画幅**：`--size` 写宽高，比如方图 `1024x1024`、横版 `1536x1024`、竖版封面 `1024x1536`。期刊对封面或配图有尺寸要求时按要求比例写。
 3. **清晰度**：看方向用默认就行；要放进稿件、要打印的才加 `--resolution` / `--quality`（见下文），它们更慢、更贵。
 
 | 用途 | 画幅 | 清晰度 | 风格默认 |
 |---|---|---|---|
 | 草图、看方向 | 默认 | 默认，可加 `--n 2` 多出几张让用户挑 | 按用户说的 |
-| 正文示意图 | 按版面，常用横版 | `--resolution 2k` | 扁平矢量风、白底、线条清楚、少装饰 |
-| 图形摘要 | 按期刊要求 | `--resolution 2k` | 同上，一眼看懂一个主要信息 |
-| 封面 | 竖版 | `--resolution 2k` 或 `4k` | 可以写实或艺术化，留出放标题的空白 |
-| 图标、贴纸 | 方图 | `--transparent` | 简单图形、粗轮廓、透明底 |
+| 示意图无字主视觉底图（配 schematic-forge） | 按面板比例，常用横版 `1536x1024` | `--resolution 2k` | 2.5D 科研渲染或扁平矢量风、纯白底、绝对无字、少装饰 |
+| 概念配图、海报 | 按版面或期刊要求 | `--resolution 2k` | 主题明确、留白干净，一眼看懂一个主要信息 |
+| 封面 | 竖版 `1024x1536` | `--resolution 2k` 或 `4k` | 可以写实或艺术化，留出放标题的空白 |
+| 图标、贴纸 | 方图 `1024x1024` | `--transparent` | 简单图形、粗轮廓、透明底 |
 
 ## 描述怎么写
 
@@ -36,7 +41,7 @@ macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& 
 4. **配色与光线**：给两三个具体颜色或色系（「muted blue and orange palette」），写实图再写光线。
 5. **不要什么**：「no text, no watermark, no extra objects」——这样写比单独列一串负面词更管用。
 
-科研示意图的写法示例：
+科研无字插画 / `schematic-forge` 主视觉底图的写法示例：
 
 ```text
 A clean flat vector diagram of a lipid nanoparticle delivering mRNA into a cell:
@@ -51,7 +56,7 @@ thin dark outlines, muted blue and coral palette, no text, no labels.
 
 出图模型写短标题多数能写对，但仍会重字、漏字、拼错，还会自己编出没要的小字；字越多越长越容易错。
 
-- **默认不让模型画文字**：描述里写 `no text, no labels`。标注、图例、标题交给后面一步：示意图、图形摘要按 schematic-forge 技能写图纸、文字是真文字（出图模型只画图标）。
+- **默认不让模型画文字**：描述里写 `no text, no labels`。标注、图例、标题交给后面一步：示意图、图形摘要按 schematic-forge 技能写图纸、文字是真文字（出图模型只画无字 2.5D 主视觉底图或局部图标）。
 - 用户确实要图里带字（海报标题、标牌）：字越少越好，原文写进引号，比如 `a title that reads "OPEN LAB"`、`标题写着“开放日”`。2026-10-30 用一中一英两个短标题实测：gpt-image-1.5 / 2.5、gemini-3-pro-image、qwen-image-2.0-pro、wan2.6-t2i 都写对了；豆包 seedream-4 把「细胞信号实验室」写成了「细胞信号实验验室」；gemini-3.1-flash-image 标题对，却自己编了日期、地点等小字。要字时优先用写对的那几家，描述里加 `no other text`。
 - 长句、小字、公式、图例，任何模型都不可靠，不要让模型画。
 - 画完必须逐字核对（见「画完自检」），错一个字就不能当成品交。
@@ -90,8 +95,8 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 
 | 模型 | 按 `--size` 出画幅 | 能到多大 | `--quality` | `--transparent` |
 |---|---|---|---|---|
-| gpt-image-1.5、gpt-image-1-mini | 只有 1024×1024、1536×1024、1024×1536 三种 | 1536 | 有效 | 有效 |
-| gpt-image-2、gpt-image-2.5 | **不按**：画幅由模型自己定（10-30 实测出近方形约 1250 像素见方；11-05 要 1536x1024 实测出 1774x887） | 约 1250–1800 | 网关接受 | 有效 |
+| gpt-image-1.5、gpt-image-1-mini | 只有 1024×1024、1536×1024、1024×1536 三种 | 1536（工具保留画幅不强拉 2K，并在 `note:` 说明） | 有效 | 有效 |
+| gpt-image-2、gpt-image-2.5、chatgpt-image-* | **不按**：gpt-image-2 / 2.5 画幅常由模型自定（10-30 实测近方形约 1250 见方；11-05 要 1536x1024 出 1774x887） | 约 1250–1800 | 网关接受 | 有效 |
 | gemini-3-pro-image、gemini-3.1-flash-image、gemini-nano-banana-2.1 | 按（取最接近的宽高比） | 2K、4K | 不支持 | 不支持 |
 | gemini-3.1-flash-lite-image、gemini-2.5-flash-image | 按 | 只出 1K | 不支持 | 不支持 |
 | 豆包 doubao-seedream-4-0 | 按 | 4K | 不支持 | 不支持 |
@@ -99,8 +104,8 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 
 所以：要横版、竖版别用 gpt-image-2 / 2.5，换 gpt-image-1.5、Gemini 或豆包；要 2K / 4K 换 gemini-3-pro-image 或豆包 seedream-4；要透明底用 gpt-image 系。默认模型做不到时，告诉用户换哪个、为什么，用户同意了再加 `--model`。
 
-- `wan2.6-image` 这类只能改图，文生图要用 `wan2.6-t2i`；豆包默认的右下角「AI生成」水印工具已经替你关了。
-- Grok 的图要从 x.ai 下载，国内直连常下不动，工具会报「连不上 imgen.x.ai」，请用户到 Mesa 设置 → 网络填出网代理。
+- `wan2.6-image`、`qwen-image-edit-*`、`doubao-seededit-*` 只能改图（`--list` 会另列在「仅改图可用」下），文生图要用 `wan2.6-t2i` 等；豆包默认的右下角「AI生成」水印工具已经替你关了。
+- 境外官方网关或图片地址（如 x.ai 的 `imgen.x.ai`）直连不通时，工具会自动尝试走 Mesa「设置 → 网络」里填的出网代理；没填代理时请用户去那里补上。
 
 ## 画完自检
 
@@ -136,7 +141,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 - 期刊一般要求按成品尺寸 300 dpi：单栏宽约 8.5 cm，约 1000 像素；双栏宽约 17.5 cm，约 2100 像素。要进稿件的图至少 `--resolution 2k`，出不到就照实告诉用户这张只够当草图或预览。
 - 出图模型不会把小图「变清晰」：不要拿放大、插值冒充高分辨率。
 - 尺寸、字体、配色的期刊规格归 figure-forge 管；出图模型只出插画部分，规格对齐和叠字在后面一步做。
-- 交付时提醒用户：AI 生成的示意图投稿时多数期刊要求在图注或方法里注明，并查目标期刊对 AI 生成图像的政策。
+- **期刊 AI 图像政策前置核对**：Springer Nature（含 *Nature* 系列 / *EER*）、Elsevier（含 *Cell* / *Joule*）等主流出版商严格限制或禁止生成式 AI 图像进入正式科研正文图（封面艺术图或概念草图除外）。用户说明要放进正式论文正文时，先提醒该红线并确认是否改走零 AI 像素管线（`blender-research` / `schematic-forge` 纯矢量）；确已核实允许再出图，交付时提醒在图注或方法里如实披露模型名。
 
 ## 放哪、怎么交代
 
