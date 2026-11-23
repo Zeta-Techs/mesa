@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowLeft, FolderTree, History } from "lucide-react";
+import { ArrowLeft, BookmarkPlus, Check, FolderTree, History } from "lucide-react";
 import { confirmDialog } from "./ConfirmDialog";
 import { fieldClass, InlineNotice, secondaryActionClass } from "./PageFrame";
 import { projectFilePreviewKind } from "../project-files";
@@ -29,6 +29,8 @@ const relativeToRoot = (base: string, target: string): string => {
   return normTarget.replace(/^\/+/, "");
 };
 
+const fileVersionsButtonCache = new Map<string, FileVersionsDto>();
+
 export function FileVersionsButton({
   root,
   path,
@@ -49,16 +51,24 @@ export function FileVersionsButton({
   className?: string;
   variant?: "link" | "toolbar";
 }) {
-  const [data, setData] = useState<FileVersionsDto | null>(null);
+  const cacheKey = `${root}\n${path ?? ""}\n${workspaceId ?? ""}`;
+  const [data, setData] = useState<FileVersionsDto | null>(() => fileVersionsButtonCache.get(cacheKey) ?? null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
-    setData(null);
+    const hit = fileVersionsButtonCache.get(cacheKey) ?? null;
+    setData((cur) => (cur === hit ? cur : hit));
     invoke<FileVersionsDto>("file_versions", { root, path: path ?? null, workspaceId: workspaceId ?? null })
-      .then((value) => { if (!stale) { setData(value); setError(null); } })
+      .then((value) => {
+        fileVersionsButtonCache.set(cacheKey, value);
+        if (!stale) {
+          setData((cur) => (JSON.stringify(cur) === JSON.stringify(value) ? cur : value));
+          setError(null);
+        }
+      })
       .catch((reason) => { if (!stale) setError(String(reason)); });
     return () => { stale = true; };
-  }, [root, path, workspaceId, refreshKey]);
+  }, [cacheKey, root, path, workspaceId, refreshKey]);
   if (!data?.files?.length && !workspaceId) return lead ? <>{lead}</> : null;
   if (!data?.files?.length && !error) return lead ? <>{lead}</> : null;
   async function open() {
@@ -292,16 +302,88 @@ export function FileVersionsPanel({ root, path, initialPath, workspaceId, onClos
             {file.exists && <option value="">当前文件</option>}
             {file.versions.map((item) => <option key={item.id} value={item.id}>{item.note || roundTime(item.savedAt)} · {item.source}</option>)}
           </select>
+          <button
+            type="button"
+            disabled={busy || (!file.exists && !file.tracked)}
+            aria-pressed={file.tracked}
+            onClick={() => void update(file.tracked ? "untrack" : "track")}
+            title={file.tracked ? "已开启：后续评审保存内容变化时自动留版（点击关闭，不删已有留存）" : "未开启自动留版（点击开启：后续评审保存内容变化时自动留版）"}
+            className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs transition-colors disabled:opacity-40 ${
+              file.tracked
+                ? "border-cta-bd bg-canvas font-medium text-l1 hover:bg-hover"
+                : "border-hairline text-l3 hover:bg-hover hover:text-l1"
+            }`}
+          >
+            {file.tracked && <Check size={12} strokeWidth={2} aria-hidden="true" />}
+            {file.tracked ? "自动留版：开" : "自动留版：关"}
+          </button>
+          {!version && file.exists && (
+            <button
+              type="button"
+              className={`${TOOLBAR_CHIP} h-7`}
+              disabled={busy}
+              onClick={() => openForm("snapshot")}
+              title="立刻为当前文件留存一版快照（可写备注）"
+            >
+              <BookmarkPlus size={13} strokeWidth={1.8} aria-hidden="true" />
+              留存当前版
+            </button>
+          )}
           {version && <button type="button" className={`${TOOLBAR_CHIP} h-7`} disabled={busy} onClick={() => void exportVersion()}>另存为副本…</button>}
           <button ref={menuButton} type="button" className={`${TOOLBAR_BTN} h-7 border border-hairline`} aria-haspopup="menu" aria-expanded={!!menu} disabled={busy} onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             setMenu((current) => current ? null : { x: rect.right, y: rect.bottom + 4 });
           }}>更多</button>
         </div>
+        {file.versions.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 text-micro" aria-label="版本时间线">
+            {file.exists && (
+              <button
+                type="button"
+                onClick={() => { setVersionId(""); setCompareId(""); setForm(null); }}
+                className={`shrink-0 rounded-md border px-2 py-1 text-left transition-colors ${
+                  !versionId ? "border-cta-bd bg-canvas font-medium text-l1" : "border-hairline bg-inset/50 text-l3 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                当前文件
+              </button>
+            )}
+            {file.versions.map((item) => {
+              const active = item.id === versionId;
+              const isManual = !item.id.startsWith("git:");
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setVersionId(item.id);
+                    setCompareId((cur) => (cur === item.id ? "" : cur));
+                    setForm(null);
+                  }}
+                  title={[item.note, roundTime(item.savedAt), item.source, item.round ? `第 ${item.round} 轮` : "", item.cause ? roundCauseLabel(item.cause) : ""].filter(Boolean).join(" · ")}
+                  className={`inline-flex max-w-[14rem] shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-left transition-colors ${
+                    active ? "border-cta-bd bg-canvas font-medium text-l1" : "border-hairline bg-inset/50 text-l2 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  <span className="truncate">{item.note || roundTime(item.savedAt)}</span>
+                  <span className="shrink-0 rounded-sm bg-inset px-1 py-px text-micro text-l4">
+                    {isManual ? "留存" : "Git"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 text-micro text-l3">
-          <span title={versionId ? "历史版本只读；要修改请另存为副本" : "当前文件仅预览；返回文件后继续编辑"}>
-            {version ? `${version.source}${version.round ? ` · 第 ${version.round} 轮` : ""}${version.cause ? ` · ${roundCauseLabel(version.cause)}` : ""} · 只读` : "仅预览"}
-          </span>
+          {version ? (
+            <span title="历史版本只读；要修改请另存为副本">
+              {[version.source, version.round ? `第 ${version.round} 轮` : "", version.cause ? roundCauseLabel(version.cause) : "", "只读"].filter(Boolean).join(" · ")}
+            </span>
+          ) : file.exists && file.versions.length === 0 ? (
+            <span className="text-l4">暂无历史版本 — 点「留存当前版」或开启「自动留版」即可记录后续改动</span>
+          ) : (
+            <span title="当前文件仅预览；返回文件后继续编辑">共 {file.versions.length} 个历史版本</span>
+          )}
           {version && (kind === "text" || kind === "image") && <>
             {file.exists && !compareId && <button type="button" className="rounded-md px-1.5 py-0.5 text-micro font-medium text-l2 transition-colors hover:bg-hover hover:text-l1" onClick={() => setCompareId("current")}>和现稿比较</button>}
             {(compareId || file.versions.length > 1) && <select aria-label="比较的版本" className={`${fieldClass} h-6 min-w-0 max-w-full text-micro`} value={compareId} onChange={(event) => setCompareId(event.target.value)}>

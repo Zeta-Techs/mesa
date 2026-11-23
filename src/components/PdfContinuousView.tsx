@@ -107,10 +107,10 @@ interface IndexedPage {
 
 /** 首页尺寸实测前的占位估算（A4 scale=1）；实测后逐页缓存修正 */
 const FALLBACK_PAGE = { w: 595, h: 842 };
-/** 离窗页的预渲染带宽：可视窗口上下各扩展的页数 */
-const RENDER_MARGIN = 2;
-/** 已画好的页滚出 ±RENDER_MARGIN 后先留着，出了 ±KEEP_MARGIN 才卸载：来回滚不重画（2026-11-05 用户：滚动卡） */
-const KEEP_MARGIN = 5;
+/** 离窗页的预渲染带宽：可视窗口上下各扩展的页数（高分辨率插图 PDF 每页解码可达 40+ MB，±1 兼顾顺滑与内存） */
+const RENDER_MARGIN = 1;
+/** 已画好的页滚出 ±RENDER_MARGIN 后先留着，出了 ±KEEP_MARGIN 才卸载并释放画布/解码缓存 */
+const KEEP_MARGIN = 3;
 /** 适配宽度重算的停稳阈值：容器宽度连续变化（侧栏收起动画/分隔条拖拽）期间
  *  RO 逐帧连发，等停稳这么多毫秒才重算换挡（与 use-pdf-zoom 的 120ms 位图
  *  去抖同量级，衔接成「布局停稳 → 位图追平」两段收口） */
@@ -527,8 +527,14 @@ function PdfContinuousView({
     sendTranslate(text, page);
   }
 
+  /** 连续滚动活跃截止时间戳（performance.now()）：滚动期跳过 mouseover 命中查询与离屏预取入闸 */
+  const scrollingUntilRef = useRef(0);
+  /** 当前视口中心页（稳定 ref 传给 PdfPageView，不破坏 memo） */
+  const centerPageRef = useRef(1);
+
   /** 术语悬停释义：事件代理命中 .ccode-gloss（HoverTip 横向钳制同 useHoverTip 口径） */
   function onContentMouseOver(e: React.MouseEvent<HTMLDivElement>) {
+    if (performance.now() < scrollingUntilRef.current) return;
     const link = (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-pdf-link") ?? null;
     const fig =
       (e.target as HTMLElement).closest?.<HTMLElement>(".ccode-figref") ??
@@ -767,18 +773,26 @@ function PdfContinuousView({
           return;
         }
         setSeenPages((prev) => {
+          let changed = false;
           const next = new Set(prev);
           for (const e of entries) {
             const n = Number((e.target as HTMLElement).dataset.pageSlot);
             if (!n) continue;
-            if (e.isIntersecting) next.add(n);
-            else next.delete(n);
+            if (e.isIntersecting) {
+              if (!next.has(n)) {
+                next.add(n);
+                changed = true;
+              }
+            } else if (next.has(n)) {
+              next.delete(n);
+              changed = true;
+            }
           }
-          return next;
+          return changed ? next : prev;
         });
       },
-      // 上下各半屏预取带：滚动快时渲染窗口来得及跟上
-      { root: rootEl, rootMargin: "50% 0px" },
+      // 上下各四分之一屏预取带：配合 RENDER_MARGIN=1 覆盖视口 ±1 页，避免一次拉入 7+ 页插图把渲染闸堵死
+      { root: rootEl, rootMargin: "25% 0px" },
     );
     rootEl
       .querySelectorAll("[data-page-slot]")
@@ -786,11 +800,20 @@ function PdfContinuousView({
     return () => io.disconnect();
   }, [doc, pageCount]);
 
-  /** 当前页指示：可视带内最靠上的一页（缩放浮控的页码与进度记忆同源） */
+  /** 当前页指示：可视带内最靠上的一页（缩放浮控的页码与进度记忆同源）；同步更新视口中心页供渲染闸排序 */
   const currentPage = (() => {
     let min = Infinity;
-    for (const n of seenPages) min = Math.min(min, n);
-    return min === Infinity ? 1 : min;
+    let max = -Infinity;
+    for (const n of seenPages) {
+      if (n < min) min = n;
+      if (n > max) max = n;
+    }
+    if (min === Infinity) {
+      centerPageRef.current = 1;
+      return 1;
+    }
+    centerPageRef.current = Math.round((min + max) / 2);
+    return min;
   })();
 
   // 进度记忆：当前页稳定 2s 才落盘（滚动中不写；恢复完成前的初始页不写）
@@ -2087,7 +2110,8 @@ function PdfContinuousView({
             ref={scrollRef}
             onScroll={() => {
               if (liveZoomingRef.current) return;
-              setGlossTip(null);
+              scrollingUntilRef.current = performance.now() + 140;
+              setGlossTip((prev) => (prev ? null : prev));
               if (figHoverRef.current.el) onFigRefHover(null);
               if (linkHoverRef.current.el) onLinkHover(null);
               const sc = scrollRef.current;
@@ -2165,6 +2189,8 @@ function PdfContinuousView({
                         marks={marksByPage.get(n) ?? NO_PAGE_MARKS}
                         scrollTo={scrollMark?.page === n ? scrollMark : null}
                         onScrolledTo={markScrolled}
+                        priorityCenterRef={centerPageRef}
+                        scrollingUntilRef={scrollingUntilRef}
                       />
                     ) : null}
                   </div>

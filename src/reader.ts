@@ -453,17 +453,29 @@ export function rewriteMdImageHtml(html: string): string {
   });
 }
 
-/** file:///Users/x.png 或 file:///C:/x.png → 本地路径；不是 file: 返回 null */
+/** file:///Users/x.png 或 file:///C:/x.png#L10-L20 → 本地路径（剥掉 ?query/#fragment）；不是 file: 返回 null */
 export function fileUrlToPath(src: string): string | null {
   const t = src.trim();
   if (!/^file:/i.test(t)) return null;
+  const raw = t.split(/[?#]/, 1)[0].replace(/^file:\/\/(localhost)?/i, "");
+  let p = raw;
   try {
-    let p = decodeURIComponent(t.replace(/^file:\/\/(localhost)?/i, ""));
-    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
-    return p || null;
+    p = decodeURIComponent(raw);
   } catch {
-    return null;
+    /* 路径本身含裸 % 时保留原串 */
   }
+  if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
+  return p || null;
+}
+
+/** 从链接末尾的 `#L10` / `#L10-L20` 提取起始行号；没有返回 null */
+export function mdHrefLine(href: string): number | null {
+  const hash = href.indexOf("#");
+  if (hash < 0) return null;
+  const m = href.slice(hash + 1).match(/^L(\d+)(?:-L?\d+)?$/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 1 ? n : null;
 }
 
 /** md 图片 src → 本地绝对路径；http(s) 返回 null（由调用方决定是否直链显示） */
@@ -479,7 +491,7 @@ export function classifyMdHref(href: string): MdHrefKind {
   const t = href.trim();
   if (t.startsWith("#")) return "anchor";
   if (/^https?:\/\//i.test(t) || t.startsWith("//")) return "external";
-  if (/^[a-z][a-z0-9+.-]*:/i.test(t)) return "other";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(t) && !/^[A-Za-z]:[\\/]/.test(t)) return "other";
   return "local";
 }
 

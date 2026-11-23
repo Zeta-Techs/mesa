@@ -37,6 +37,8 @@ import {
 import * as monaco from "monaco-editor";
 import editorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import SelectionFloatBar, { FloatBarOverflow, useDistillSkill, FLOAT_BTN, FLOAT_BTN_PRIMARY } from "./SelectionFloatBar";
+import ChatImageViewer from "./ChatImageViewer";
+import { saveImgSrcToTemp } from "../clipboard-image";
 import { confirmDialog } from "./ConfirmDialog";
 import { compactPrimaryActionClass } from "./PageFrame";
 import { useAppStore } from "../store";
@@ -44,6 +46,8 @@ import { useNotePaired } from "../note-pdf-pair";
 import {
   bytesToBase64,
   classifyMdHref,
+  fileUrlToPath,
+  mdHrefLine,
   relMdLinkPath,
   resolveMdPath,
   rewriteMdImageHtml,
@@ -205,6 +209,7 @@ function MarkdownView({
   root,
   onDiscuss,
   onAnnotate,
+  onEditImageInChat,
   onOpenFile,
   onJumpToSource,
   compact,
@@ -254,6 +259,8 @@ function MarkdownView({
   ) => string | null | Promise<string | null>;
   /** 审阅划选：把选段和批注收进意见框。返回字符串为提示；返回 null 表示已追加 */
   onAnnotate?: ReviewAnnotate;
+  /** 对话页右栏预览：点正文内嵌图片看大图灯箱后可一键送进左侧聊天标注台 */
+  onEditImageInChat?: (absPath: string, leadText?: string) => void;
   /** 相对链接的打开去向（阅读区笔记栏原地打开）；缺省走 store previewReq 终端页预览 */
   onOpenFile?: (absPath: string) => void;
   /** 双击段落：切编辑态并定位到该块源码行（null=定位失败，只切模式）；只读/截断时宿主不传 */
@@ -528,6 +535,7 @@ function MarkdownView({
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [annotateComment, setAnnotateComment] = useState("");
   const [imageMark, setImageMark] = useState<{ url: string; name: string } | null>(null);
+  const [viewingImg, setViewingImg] = useState<string | null>(null);
   const pendingExcerptRef = useRef("");
   const pendingRangeRef = useRef<Range | null>(null);
   const annotateImeRef = useRef(createImeLock());
@@ -728,22 +736,44 @@ function MarkdownView({
       onPdfRef!(ref);
       return;
     }
-    // 审阅里点一张图 = 在图上框出问题位置加意见（期刊拼图出错这类问题，划不了字）
-    const img = onAnnotate && !(e.target as HTMLElement).closest("a")
+    // 点正文内嵌图片：审阅里走框选加意见；非审阅（对话页右栏 / 文件阅读）默认开大图灯箱，灯箱顶栏可一键进左侧聊天标注台
+    const img = !(e.target as HTMLElement).closest("a")
       ? (e.target as HTMLElement).closest("img")
       : null;
     if (img) {
-      e.preventDefault();
-      setImageMark({
-        url: img.src,
-        name: img.dataset.ccodePath || img.getAttribute("alt") || "",
-      });
-      return;
+      if (onAnnotate) {
+        e.preventDefault();
+        setImageMark({
+          url: img.src,
+          name: img.dataset.ccodePath || img.getAttribute("alt") || "",
+        });
+        return;
+      }
+      if (img.dataset.ccodePath) {
+        e.preventDefault();
+        setViewingImg(img.dataset.ccodePath);
+        return;
+      }
+      if (img.src && (img.src.startsWith("data:") || img.src.startsWith("blob:"))) {
+        e.preventDefault();
+        void saveImgSrcToTemp(img.src)
+          .then((saved) => setViewingImg(saved))
+          .catch(() => {});
+        return;
+      }
     }
     const a = (e.target as HTMLElement).closest("a");
     if (!a) return;
     const href = a.getAttribute("href") ?? "";
     if (!href) return;
+    const line = mdHrefLine(href);
+    const fromFileUrl = fileUrlToPath(href);
+    if (fromFileUrl) {
+      e.preventDefault();
+      if (onOpenFile) onOpenFile(fromFileUrl);
+      else setPreviewReq({ path: fromFileUrl, name: fromFileUrl.split(/[\\/]/).pop() ?? fromFileUrl, root, line });
+      return;
+    }
     const kind = classifyMdHref(href);
     if (kind === "anchor") {
       // 页内锚点（脚注 ↔ 正文、手写目录）只在这份预览里找：同屏几份预览 id 会重名，交给 WebView
@@ -763,7 +793,7 @@ function MarkdownView({
     }
     const abs = resolveMdPath(filePath, href);
     if (onOpenFile) onOpenFile(abs);
-    else setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root });
+    else setPreviewReq({ path: abs, name: abs.split(/[\\/]/).pop() ?? abs, root, line });
   }
 
   /** 双击段落跳源码行（2026-10-14 拍板）：双击时惰性配对当前 DOM 顶层块 ↔ 块 token
@@ -997,6 +1027,14 @@ function MarkdownView({
           onClose={() => setImageMark(null)}
         />
       )}
+      {viewingImg && !onAnnotate && (
+        <ChatImageViewer
+          path={viewingImg}
+          cwdHint={root}
+          onClose={() => setViewingImg(null)}
+          onEdit={onEditImageInChat ? () => onEditImageInChat(viewingImg) : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -1016,6 +1054,7 @@ function TextFilePreviewEditor({
   revealNonce,
   onDiscuss,
   onAnnotate,
+  onEditImageInChat,
   annotateCopy,
   readOnly,
   hideReadOnlyToolbar,
@@ -1057,6 +1096,8 @@ function TextFilePreviewEditor({
   ) => string | null | Promise<string | null>;
   /** 审阅划选「加进意见」：选段和批注追加到意见框 */
   onAnnotate?: ReviewAnnotate;
+  /** 对话页右栏预览：点正文内嵌图或图片文件后一键送进左侧聊天标注台 */
+  onEditImageInChat?: (absPath: string, leadText?: string) => void;
   annotateCopy?: AnnotateCopy;
   /** 宿主要求只读（阅读区抽查：笔记还在工作区里等评审）：值是工具条上给人看的原因 */
   readOnly?: string;
@@ -2353,6 +2394,7 @@ function TextFilePreviewEditor({
             root={root}
             onDiscuss={onDiscuss}
             onAnnotate={onAnnotate}
+            onEditImageInChat={onEditImageInChat}
             annotateCopy={annotateCopy}
             onOpenFile={onOpenFile}
             onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
@@ -2436,6 +2478,7 @@ function TextFilePreviewEditor({
                 root={root}
                 onDiscuss={onDiscuss}
                 onAnnotate={onAnnotate}
+                onEditImageInChat={onEditImageInChat}
                 annotateCopy={annotateCopy}
                 onOpenFile={onOpenFile}
                 onJumpToSource={isMd && !truncated && !readOnlyReason ? jumpToSource : undefined}
@@ -2480,7 +2523,13 @@ function FilePreviewEditor(
   props: ComponentProps<typeof TextFilePreviewEditor>,
 ) {
   if (isPreviewableImagePath(props.path)) {
-    return <ImagePreview path={props.path} cwdHint={props.root} />;
+    return (
+      <ImagePreview
+        path={props.path}
+        cwdHint={props.root}
+        onEditInChat={props.onEditImageInChat ? () => props.onEditImageInChat!(props.path) : undefined}
+      />
+    );
   }
   // 宿主没先分流的 Office 文件（运行页右栏等走到这里）：幻灯给大纲，旧版 Office 给可转 PDF 的说明
   const kind = projectFilePreviewKind(props.path);

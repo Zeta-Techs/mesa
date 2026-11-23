@@ -12,6 +12,7 @@ import {
   clampReaderPct,
   classifyMdHref,
   fileUrlToPath,
+  mdHrefLine,
   mdImageAbsPath,
   escapeGlossaryCell,
   findGlossaryMatches,
@@ -375,10 +376,19 @@ test("rewriteMdImageHtml 把待加载图换成占位 span，避免 WebView 拉�
   );
 });
 
-test("fileUrlToPath / mdImageAbsPath", () => {
+test("fileUrlToPath / mdHrefLine / mdImageAbsPath", () => {
   assert.equal(fileUrlToPath("file:///Users/a/x.png"), "/Users/a/x.png");
   assert.equal(fileUrlToPath("file:///C:/a/x.png"), "C:/a/x.png");
+  assert.equal(
+    fileUrlToPath("file:///Users/a/%E7%A1%BC%E5%8C%96%E7%89%A9/36.md#L10-L20"),
+    "/Users/a/硼化物/36.md",
+  );
+  assert.equal(fileUrlToPath("file:///Users/a/100%.md#L5"), "/Users/a/100%.md");
   assert.equal(fileUrlToPath("https://a/x.png"), null);
+  assert.equal(mdHrefLine("file:///Users/a/36.md#L10-L20"), 10);
+  assert.equal(mdHrefLine("notes/index.json#L42"), 42);
+  assert.equal(mdHrefLine("notes/index.json#section"), null);
+  assert.equal(mdHrefLine("notes/index.json"), null);
   assert.equal(
     mdImageAbsPath("./demo.gif", "/proj/readme.md"),
     "/proj/demo.gif",
@@ -401,6 +411,7 @@ test("classifyMdHref 锚点/外链/其它协议/本地路径", () => {
   assert.equal(classifyMdHref("assets/x.png"), "local");
   assert.equal(classifyMdHref("../papers/a.md"), "local");
   assert.equal(classifyMdHref("/abs/path/x.png"), "local");
+  assert.equal(classifyMdHref("C:/abs/path/x.md"), "local");
 });
 
 test("stripMdHrefSuffix 去 query/fragment 并 URI 解码", () => {

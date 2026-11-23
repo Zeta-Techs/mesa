@@ -10,6 +10,8 @@ import {
 const OfficePdfView = lazy(() => import("./OfficePdfView"));
 import { invoke } from "@tauri-apps/api/core";
 import PreviewErrorState from "./PreviewErrorState";
+import ChatImageViewer from "./ChatImageViewer";
+import { saveImgSrcToTemp } from "../clipboard-image";
 import { useFileVersion } from "../file-watch";
 // mammoth 无 ESM 默认导出（export =），本项目 tsconfig 未开 esModuleInterop，用命名空间导入
 import * as mammoth from "mammoth";
@@ -45,10 +47,13 @@ function basename(p: string): string {
 function DocxPreview({
   path,
   cwdHint,
+  onEditImageInChat,
 }: {
   path: string;
   /** 终端标签 cwd / 文件树根：后端白名单的第四类来源 */
   cwdHint: string | null;
+  /** 对话页右栏预览：点 docx 内嵌图后可一键送进左侧聊天标注台 */
+  onEditImageInChat?: (absPath: string, leadText?: string) => void;
 }) {
   const [html, setHtml] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +64,8 @@ function DocxPreview({
   const [canConvert, setCanConvert] = useState(false);
   /** 看原样：经 LibreOffice 转成 PDF 显示 */
   const [asPdf, setAsPdf] = useState(false);
+  /** 点击 docx 内嵌图片 → 落临时文件并打开大图灯箱（支持 5%–800% 缩放与一键进聊天标注台） */
+  const [viewingImg, setViewingImg] = useState<string | null>(null);
   useEffect(() => {
     void officeConverterAvailable().then(setCanConvert);
   }, []);
@@ -160,9 +167,31 @@ function DocxPreview({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div
             className="md-body px-5 py-4"
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (target.closest("a")) return;
+              const img = target.closest("img");
+              if (!img?.src) return;
+              e.preventDefault();
+              void saveImgSrcToTemp(img.src)
+                .then((saved) => setViewingImg(saved))
+                .catch(() => {});
+            }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
         </div>
+      )}
+      {viewingImg && (
+        <ChatImageViewer
+          path={viewingImg}
+          cwdHint={cwdHint}
+          onClose={() => setViewingImg(null)}
+          onEdit={
+            onEditImageInChat
+              ? () => onEditImageInChat(viewingImg, `（取自《${basename(path)}》的图片）\n`)
+              : undefined
+          }
+        />
       )}
     </div>
   );

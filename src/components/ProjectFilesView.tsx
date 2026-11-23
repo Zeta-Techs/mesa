@@ -22,6 +22,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  FolderSymlink,
   Locate,
   Maximize2,
   MessageSquare,
@@ -55,7 +56,10 @@ import { absTime, relTime } from "../rel-time";
 import {
   ancestorDirsToReveal,
   batchAskPrompt,
+  externalGroupLabel,
+  extractExternalLinkedFiles,
   fileMatchesProjectFilter,
+  filterExternalLinkedFiles,
   flattenVisibleFiles,
   folderCountLabel,
   inTypingContext,
@@ -63,13 +67,14 @@ import {
   projectFilePreviewKind,
   rangeSelect,
   supportsImmersiveReader,
+  type ExternalLinkedFile,
   type ProjectFileFilter,
 } from "../project-files";
 import { displayFileTitle, LIT_STATE_LABELS, pdfLitState, type LitReadState } from "../lit-list";
 import type { PaperNoteLink } from "../lit-watch";
 import { toast } from "../toast";
 import { officeKindCounts } from "../project-status";
-import type { OfficeDocDto, RunDto, TaskDto, TaskReviewDto } from "../types";
+import type { OfficeDocDto, ProjectConfigReadDto, RunDto, TaskDto, TaskReviewDto } from "../types";
 import {
   declaredTaskKindsForMode,
   markForProjectFile,
@@ -245,6 +250,9 @@ export default function ProjectFilesView({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ProjectFileFilter>("all");
   const [officeDocs, setOfficeDocs] = useState<OfficeDocDto[]>([]);
+  /** 项目外只读关联文件（如 Zotero 导入登记在 project.toml 的 PDF，不复制到项目目录） */
+  const [externalFiles, setExternalFiles] = useState<ExternalLinkedFile[]>([]);
+  const [externalOpen, setExternalOpen] = useState(false);
   const [searchHits, setSearchHits] = useState<SearchResultDto[] | null>(null);
   const [goalMarks, setGoalMarks] = useState<
     { relative: string; goalName: string; pending: boolean }[]
@@ -413,6 +421,15 @@ export default function ProjectFilesView({
     );
   }, []);
 
+  /** 项目外只读关联资源（如从 Zotero 导入的 PDF，本体留在原库、登记在 project.toml resources） */
+  const reloadExternal = useCallback((root: string) => {
+    void invoke<ProjectConfigReadDto>("read_project_config", { path: root })
+      .then((res) =>
+        setExternalFiles(extractExternalLinkedFiles(res?.config?.resources ?? [], root, IS_WINDOWS)),
+      )
+      .catch(() => setExternalFiles([]));
+  }, []);
+
   useEffect(() => {
     setCache({});
     setExpanded(new Set());
@@ -420,6 +437,9 @@ export default function ProjectFilesView({
     pickAnchorRef.current = null;
     setLitFacts(NO_LIT_FACTS);
     reloadLitFacts(projectPath);
+    setExternalFiles([]);
+    setExternalOpen(false);
+    reloadExternal(projectPath);
     setPreview(null);
     setCompare(null);
     compareDirtyRef.current = false;
@@ -475,7 +495,7 @@ export default function ProjectFilesView({
         })
         .catch(() => setGoalMarks([]));
     }
-  }, [load, projectPath, reloadOffice, reloadLitFacts, workMode]);
+  }, [load, projectPath, reloadOffice, reloadLitFacts, reloadExternal, workMode]);
 
   const cacheRef = useRef(cache);
   cacheRef.current = cache;
@@ -504,7 +524,10 @@ export default function ProjectFilesView({
             void load(p, true);
           reloadOffice(projectPath);
           window.clearTimeout(litTimer);
-          litTimer = window.setTimeout(() => reloadLitFacts(projectPath), 1500);
+          litTimer = window.setTimeout(() => {
+            reloadLitFacts(projectPath);
+            reloadExternal(projectPath);
+          }, 1500);
         });
       } catch {
         // 目录不可读等：静默退回手动刷新
@@ -516,13 +539,14 @@ export default function ProjectFilesView({
       unlisten?.();
       if (watchId) invoke("unwatch_dir", { id: watchId }).catch(() => {});
     };
-  }, [projectPath, load, reloadOffice, reloadLitFacts]);
+  }, [projectPath, load, reloadOffice, reloadLitFacts, reloadExternal]);
 
   /** 刷新 = 根目录 + 已展开目录全部重拉（旧实现只重载根，子目录永远停在第一次展开） */
   function refresh() {
     for (const p of [projectPath, ...expandedRef.current]) void load(p);
     reloadOffice(projectPath);
     reloadLitFacts(projectPath);
+    reloadExternal(projectPath);
   }
 
   useEffect(() => {
@@ -531,6 +555,22 @@ export default function ProjectFilesView({
     void (async () => {
       // 当前预览有未保存编辑且用户拒绝丢弃：不替换预览，深链照常消费掉
       if (!(await confirmLoseDirty())) {
+        onFocusHandledRef.current?.();
+        return;
+      }
+      if (!pathWithin(focusPath, projectPath, IS_WINDOWS)) {
+        const focusName = focusPath.split(/[\\/]/).pop() ?? focusPath;
+        setExternalOpen(true);
+        setPreview(asFileEntry({ path: focusPath, name: focusName }));
+        setFilter("all");
+        setQuery("");
+        setWindowed(false);
+        requestAnimationFrame(() => {
+          const el = listRef.current?.querySelector(
+            `[data-file-path="${CSS.escape(focusPath)}"]`,
+          );
+          el?.scrollIntoView({ block: "nearest" });
+        });
         onFocusHandledRef.current?.();
         return;
       }
@@ -619,21 +659,60 @@ export default function ProjectFilesView({
     return () => window.clearTimeout(timer);
   }, [projectPath, query]);
 
+  const externalByPath = useMemo(
+    () => new Map(externalFiles.map((file) => [file.path, file])),
+    [externalFiles],
+  );
+  const isExternalPath = useCallback(
+    (p: string) => !pathWithin(p, projectPath, IS_WINDOWS),
+    [projectPath],
+  );
+  const fileRootFor = useCallback(
+    (p: string) => (isExternalPath(p) ? (parentDir(p) ?? projectPath) : projectPath),
+    [isExternalPath, projectPath],
+  );
+  const externalReadOnlyNote = useCallback(
+    (p: string) =>
+      isExternalPath(p)
+        ? `${externalByPath.get(p)?.isZotero ? "Zotero 库" : "项目外"}只读引用（文件仍在原位置，不在此处修改）`
+        : undefined,
+    [externalByPath, isExternalPath],
+  );
+
   const filtering = filter !== "all" || !!query.trim();
   const kindCounts = useMemo(
-    () => officeKindCounts(officeDocs.map((doc) => doc.path)),
-    [officeDocs],
+    () =>
+      officeKindCounts([
+        ...officeDocs.map((doc) => doc.path),
+        ...externalFiles.map((file) => file.path),
+      ]),
+    [officeDocs, externalFiles],
   );
 
   const filteredFiles = useMemo(() => {
+    const extMatches = filterExternalLinkedFiles(externalFiles, filter, query).map((file) => ({
+      path: file.path,
+      name: file.name,
+      rel: file.rel,
+      modified: null as string | null,
+    }));
+    const appendExt = (
+      base: { path: string; name: string; rel?: string; modified?: string | null }[],
+    ) => {
+      if (extMatches.length === 0) return base;
+      const seen = new Set(base.map((item) => item.path));
+      return [...base, ...extMatches.filter((item) => !seen.has(item.path))];
+    };
     if (searchHits) {
-      return searchHits.filter(
-        (hit) => !hit.isDir && fileMatchesProjectFilter(hit.path, filter),
+      return appendExt(
+        searchHits.filter(
+          (hit) => !hit.isDir && fileMatchesProjectFilter(hit.path, filter),
+        ),
       );
     }
-    if (filter === "all") return [];
+    if (filter === "all" && !query.trim()) return [];
     const q = query.trim().toLowerCase();
-    return officeDocs.filter((doc) => {
+    const localMatches = officeDocs.filter((doc) => {
       if (filter !== "recent" && !fileMatchesProjectFilter(doc.path, filter))
         return false;
       if (!q) return true;
@@ -641,14 +720,17 @@ export default function ProjectFilesView({
         doc.name.toLowerCase().includes(q) || doc.rel.toLowerCase().includes(q)
       );
     });
-  }, [filter, officeDocs, query, searchHits]);
+    return appendExt(localMatches);
+  }, [externalFiles, filter, officeDocs, query, searchHits]);
 
   const visibleFiles = useMemo(() => {
     if (filtering) {
       return filteredFiles.map((file) => asFileEntry(file));
     }
-    return flattenVisibleFiles(cache, projectPath, expanded);
-  }, [cache, expanded, filteredFiles, filtering, projectPath]);
+    const local = flattenVisibleFiles(cache, projectPath, expanded);
+    if (!externalOpen || externalFiles.length === 0) return local;
+    return [...local, ...externalFiles.map((file) => asFileEntry(file))];
+  }, [cache, expanded, externalFiles, externalOpen, filteredFiles, filtering, projectPath]);
 
   const prevFile = neighborFile(visibleFiles, preview?.path, -1);
   const nextFile = neighborFile(visibleFiles, preview?.path, 1);
@@ -760,6 +842,7 @@ export default function ProjectFilesView({
   pickedRef.current = picked;
   const pickedList = useMemo(() => [...picked], [picked]);
   const pickedPdfs = pickedList.filter((p) => /\.pdf$/i.test(p));
+  const pickedHasExternal = pickedList.some((p) => isExternalPath(p));
 
   function clearPicked() {
     setPicked(new Set());
@@ -861,7 +944,7 @@ export default function ProjectFilesView({
   }
 
   async function movePicked() {
-    const paths = pickedList;
+    const paths = pickedList.filter((p) => !isExternalPath(p));
     if (paths.length === 0) return;
     const touchesPreview =
       preview && paths.some((p) => samePath(preview.path, p, IS_WINDOWS));
@@ -891,7 +974,7 @@ export default function ProjectFilesView({
   }
 
   async function deletePicked() {
-    const paths = pickedList;
+    const paths = pickedList.filter((p) => !isExternalPath(p));
     if (paths.length === 0) return;
     const names = paths.map(baseName);
     const shown = names.slice(0, 5).join("、") + (names.length > 5 ? ` 等 ${names.length} 个` : "");
@@ -988,6 +1071,18 @@ export default function ProjectFilesView({
   /** 搜索/筛选平铺里丢掉了目录上下文：定位 = 展开父链、退回树视图、滚到这一行。
    *  预览不换文件，未保存编辑不受影响 */
   async function locateInTree(absPath: string) {
+    if (isExternalPath(absPath)) {
+      setExternalOpen(true);
+      setFilter("all");
+      setQuery("");
+      requestAnimationFrame(() => {
+        const el = listRef.current?.querySelector(
+          `[data-file-path="${CSS.escape(absPath)}"]`,
+        );
+        el?.scrollIntoView({ block: "nearest" });
+      });
+      return;
+    }
     const dirs = ancestorDirsToReveal(projectPath, absPath, IS_WINDOWS);
     let listing = cacheRef.current[projectPath] ?? [];
     for (const dir of dirs) {
@@ -1436,6 +1531,126 @@ export default function ProjectFilesView({
     });
   }
 
+  function renderExternalGroup() {
+    if (externalFiles.length === 0) return null;
+    const label = externalGroupLabel(externalFiles);
+    return (
+      <li key="__external-linked-files__" className="mt-1">
+        <div
+          className="group relative flex min-h-9 items-center gap-2 rounded-md px-2 transition-colors hover:bg-hover"
+          style={{ paddingLeft: 8 }}
+        >
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2"
+            onClick={() => setExternalOpen((v) => !v)}
+            aria-expanded={externalOpen}
+            title="只读引用：PDF 本体仍留在原目录（如 Zotero 库），不复制到项目文件夹，也不随项目删除"
+          >
+            <ChevronRight
+              size={13}
+              className={`shrink-0 transition-transform ${externalOpen ? "rotate-90" : ""}`}
+              aria-hidden="true"
+            />
+            <FolderSymlink size={14} className="shrink-0 text-folder" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+            <span className="shrink-0 rounded bg-inset px-1.5 py-px text-micro text-l4">
+              只读
+            </span>
+            {!externalOpen && <FolderCount count={externalFiles.length} />}
+          </button>
+        </div>
+        {externalOpen && (
+          <ul className="mt-0.5 space-y-0.5">
+            {externalFiles.map((file) => {
+              const entry = asFileEntry(file);
+              const selected = preview?.path === file.path;
+              const isPicked = picked.has(file.path);
+              return (
+                <li key={file.path}>
+                  <div
+                    className={`group relative flex min-h-9 items-center gap-2 rounded-md px-2 transition-colors ${
+                      isPicked
+                        ? "bg-seg-sel text-l1"
+                        : selected
+                          ? "bg-seg-sel/80 font-medium text-l1 before:absolute before:left-0.5 before:top-2 before:bottom-2 before:w-0.5 before:rounded-full before:bg-cta"
+                          : "hover:bg-hover"
+                    }`}
+                    style={{ paddingLeft: 24 }}
+                    data-drop-dir={projectPath}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        path: file.path,
+                        isDir: false,
+                      });
+                    }}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute top-0 bottom-0 w-px bg-hairline/70"
+                      style={{ left: 14 }}
+                    />
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs text-l2 outline-none focus:outline-none focus-visible:outline-none"
+                      data-file-path={file.path}
+                      aria-pressed={isPicked || undefined}
+                      onClick={(event) => clickFile(event, entry)}
+                      title={`${file.title}\n${file.path}`}
+                    >
+                      <span className="w-[13px] shrink-0" />
+                      <FileTypeMark path={file.path} />
+                      <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                      <LitPill state={litStateOf(file.path)} />
+                    </button>
+                    <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+                      <button
+                        type="button"
+                        className={iconActionClass}
+                        title="问 AI：带着这份文件开一段对话，问内容、让它改（问进度和出错找工作台的项目助手）"
+                        aria-label="问 AI"
+                        onClick={() => askAi(entry)}
+                      >
+                        <MessageSquare size={13} strokeWidth={1.8} />
+                      </button>
+                      {rowHasReader(file.path, file.name) && (
+                        <button
+                          type="button"
+                          className={iconActionClass}
+                          title="沉浸阅读"
+                          aria-label="沉浸阅读"
+                          onClick={() => openImmersive(entry)}
+                        >
+                          <BookOpen size={13} strokeWidth={1.8} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={iconActionClass}
+                        title="显示"
+                        aria-label="显示"
+                        onClick={() =>
+                          void revealItemInDir(file.path).catch((reason) =>
+                            onError(`无法定位文件：${String(reason)}`),
+                          )
+                        }
+                      >
+                        <FolderOpen size={13} strokeWidth={1.8} />
+                      </button>
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </li>
+    );
+  }
+
   function renderFlat(
     files: { path: string; name: string; rel?: string; modified?: string | null }[],
   ) {
@@ -1544,8 +1759,9 @@ export default function ProjectFilesView({
     const list = visibleFilesRef.current.map((f) => ({
       path: f.path,
       name: f.name,
-      root: projectPath,
+      root: fileRootFor(f.path),
     }));
+    const entryRoot = fileRootFor(entry.path);
     if (closeInline) {
       const dirty =
         preview !== null && samePath(preview.path, entry.path, IS_WINDOWS) && dirtyRef.current;
@@ -1553,7 +1769,7 @@ export default function ProjectFilesView({
       void popOutFileToWindow({
         path: entry.path,
         name: entry.name,
-        root: projectPath,
+        root: entryRoot,
         projectRoot: projectPath,
         list,
         dirty,
@@ -1567,7 +1783,7 @@ export default function ProjectFilesView({
     void openFileInWindow({
       path: entry.path,
       name: entry.name,
-      root: projectPath,
+      root: entryRoot,
       projectRoot: projectPath,
       list,
     });
@@ -1601,8 +1817,10 @@ export default function ProjectFilesView({
           <ProjectFilePreview
             key={`cmp:${compare.path}`}
             path={compare.path}
-            root={projectPath}
+            root={fileRootFor(compare.path)}
             hideFileName
+            readOnly={externalReadOnlyNote(compare.path)}
+            hideVersions={isExternalPath(compare.path)}
             onOrganize={organizeFor(compare.path)}
             onDirtyChange={(d) => {
               compareDirtyRef.current = d;
@@ -1616,7 +1834,10 @@ export default function ProjectFilesView({
   function previewChrome() {
     if (!preview) return null;
     const rel = relativeProjectPath(projectPath, preview.path);
-    const parentRel = rel && rel !== preview.name ? rel.slice(0, Math.max(0, rel.length - preview.name.length - 1)) : "";
+    const parentRel =
+      rel && rel !== preview.name
+        ? rel.slice(0, Math.max(0, rel.length - preview.name.length - 1))
+        : (externalByPath.get(preview.path)?.rel ?? (isExternalPath(preview.path) ? "外链 · 只读" : ""));
     return (
       <div className="mb-2 flex shrink-0 items-center gap-2">
         <FileTypeMark path={preview.path} />
@@ -1934,22 +2155,26 @@ export default function ProjectFilesView({
                     加入积累
                   </button>
                 )}
-                <button
-                  type="button"
-                  className={`${inlineActionClass} gap-1`}
-                  onClick={() => void movePicked()}
-                >
-                  <FolderInput size={12} strokeWidth={1.8} aria-hidden="true" />
-                  移动到…
-                </button>
-                <button
-                  type="button"
-                  className={`${inlineActionClass} gap-1 hover:text-err-text`}
-                  onClick={() => void deletePicked()}
-                >
-                  <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
-                  删除
-                </button>
+                {!pickedHasExternal && (
+                  <>
+                    <button
+                      type="button"
+                      className={`${inlineActionClass} gap-1`}
+                      onClick={() => void movePicked()}
+                    >
+                      <FolderInput size={12} strokeWidth={1.8} aria-hidden="true" />
+                      移动到…
+                    </button>
+                    <button
+                      type="button"
+                      className={`${inlineActionClass} gap-1 hover:text-err-text`}
+                      onClick={() => void deletePicked()}
+                    >
+                      <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                      删除
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   className={iconActionClass}
@@ -2014,8 +2239,11 @@ export default function ProjectFilesView({
               <p className="px-2 py-3 text-xs text-l4">读取文件…</p>
             ) : filtering ? (
               renderFlat(filteredFiles)
-            ) : cache[projectPath]?.length ? (
-              <ul className="space-y-0.5">{renderEntries(projectPath, 0)}</ul>
+            ) : cache[projectPath]?.length || externalFiles.length > 0 ? (
+              <ul className="space-y-0.5">
+                {renderEntries(projectPath, 0)}
+                {renderExternalGroup()}
+              </ul>
             ) : (
               <p className="px-2 py-3 text-xs text-l4">项目目录为空</p>
             )}
@@ -2032,8 +2260,10 @@ export default function ProjectFilesView({
               <ProjectFilePreview
                 key={preview.path}
                 path={preview.path}
-                root={projectPath}
+                root={fileRootFor(preview.path)}
                 hideFileName
+                readOnly={externalReadOnlyNote(preview.path)}
+                hideVersions={isExternalPath(preview.path)}
                 onOpenFile={(p) => void openPath(p)}
                 onOpenReader={
                   supportsImmersiveReader(preview.name)
@@ -2059,8 +2289,10 @@ export default function ProjectFilesView({
             <ProjectFilePreview
               key={preview.path}
               path={preview.path}
-              root={projectPath}
+              root={fileRootFor(preview.path)}
               hideFileName
+              readOnly={externalReadOnlyNote(preview.path)}
+              hideVersions={isExternalPath(preview.path)}
               onOpenFile={(p) => void openPath(p)}
               onOpenReader={
                 supportsImmersiveReader(preview.name)
@@ -2137,8 +2369,10 @@ export default function ProjectFilesView({
           <ProjectFilePreview
             key={preview.path}
             path={preview.path}
-            root={projectPath}
+            root={fileRootFor(preview.path)}
             hideFileName
+            readOnly={externalReadOnlyNote(preview.path)}
+            hideVersions={isExternalPath(preview.path)}
             onOpenFile={(p) => void openPath(p)}
             onOpenReader={
               supportsImmersiveReader(preview.name)
@@ -2173,15 +2407,21 @@ export default function ProjectFilesView({
                   },
                 ]
               : []),
-            { label: "移动到…", icon: FolderInput, onSelect: () => void movePicked() },
+            ...(!pickedHasExternal
+              ? [{ label: "移动到…", icon: FolderInput, onSelect: () => void movePicked() }]
+              : []),
             { label: "取消选择", icon: X, onSelect: clearPicked },
-            { separator: true },
-            {
-              icon: Trash2,
-              label: `删除 ${picked.size} 个文件`,
-              danger: true,
-              onSelect: () => void deletePicked(),
-            },
+            ...(!pickedHasExternal
+              ? [
+                  { separator: true as const },
+                  {
+                    icon: Trash2,
+                    label: `删除 ${picked.size} 个文件`,
+                    danger: true,
+                    onSelect: () => void deletePicked(),
+                  },
+                ]
+              : []),
           ]}
         />
       )}
@@ -2208,7 +2448,7 @@ export default function ProjectFilesView({
                     icon: FolderPlus,
                     onSelect: () => startNameDraft({ kind: "folder", dir: menu.path, value: "" }),
                   },
-                  { separator: true },
+                  { separator: true as const },
                 ]
               : [
                   {
@@ -2217,10 +2457,38 @@ export default function ProjectFilesView({
                     onSelect: () =>
                       popOutEntryToWindow({ path: menu.path, name: baseName(menu.path) }, false),
                   },
-                  { separator: true },
+                  ...(isExternalPath(menu.path)
+                    ? [
+                        {
+                          label: "问 AI",
+                          icon: MessageSquare,
+                          onSelect: () => askAi(asFileEntry({ path: menu.path, name: baseName(menu.path) })),
+                        },
+                        ...(supportsImmersiveReader(baseName(menu.path))
+                          ? [
+                              {
+                                label: "沉浸阅读",
+                                icon: BookOpen,
+                                onSelect: () =>
+                                  openImmersive(asFileEntry({ path: menu.path, name: baseName(menu.path) })),
+                              },
+                            ]
+                          : []),
+                      ]
+                    : []),
+                  { separator: true as const },
                 ]),
-            ...(samePath(menu.path, projectPath, IS_WINDOWS)
-              ? []
+            ...(samePath(menu.path, projectPath, IS_WINDOWS) || isExternalPath(menu.path)
+              ? !menu.isDir && isExternalPath(menu.path)
+                ? [
+                    {
+                      label: `选择（${IS_MAC ? "⌘" : "Ctrl"} 点加选）`,
+                      icon: SquareCheck,
+                      onSelect: () => addToPicked(menu.path),
+                    },
+                    { separator: true as const },
+                  ]
+                : []
               : [
                   {
                     label: "重命名",
@@ -2249,7 +2517,7 @@ export default function ProjectFilesView({
                           onSelect: () => addToPicked(menu.path),
                         },
                       ]),
-                  { separator: true },
+                  { separator: true as const },
                 ]),
             {
               label: revealFolderLabel(IS_MAC, IS_WINDOWS),
@@ -2269,7 +2537,7 @@ export default function ProjectFilesView({
                   .catch(() => onError("复制路径失败"));
               },
             },
-            ...(samePath(menu.path, projectPath, IS_WINDOWS)
+            ...(samePath(menu.path, projectPath, IS_WINDOWS) || isExternalPath(menu.path)
               ? []
               : [
                   {

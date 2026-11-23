@@ -102,3 +102,7 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.zstd-sys]
 opt-level = 3
+# 交付物快照 / 合并校验 / 产物登记都要逐文件算 SHA-256；dev 下 -O0 吞吐仅 ~20 MB/s，
+# 92 MB 综述初稿一次保存要算 10+ 秒，给 sha2 开 -O3 后回到硬件级速率（~700+ MB/s）。
+[profile.dev.package.sha2]
+opt-level = 3

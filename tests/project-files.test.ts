@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import {
   ancestorDirsToReveal,
   batchAskPrompt,
+  externalGroupLabel,
+  extractExternalLinkedFiles,
   fileMatchesProjectFilter,
+  filterExternalLinkedFiles,
   flattenVisibleFiles,
   folderCountLabel,
   inTypingContext,
@@ -128,4 +131,40 @@ test("多选问 AI 的开场白：一份一行，带空格的路径加引号", (
     batchAskPrompt(["/p/a.pdf", "/p/my paper.pdf"]),
     '请看这几份文件：\n- /p/a.pdf\n- "/p/my paper.pdf"',
   );
+});
+
+test("外链资源提取与筛选：只收项目外绝对路径、去重、识别 Zotero、支持 PDF 筛选与搜索", () => {
+  const files = extractExternalLinkedFiles(
+    [
+      { name: "本地论文", path: "/proj/papers/local.pdf", note: null },
+      { name: "相对路径", path: "papers/rel.pdf", note: null },
+      {
+        name: "Co<sub>2</sub>B HER",
+        path: "/Users/me/Zotero/storage/ABCD/Co2B.pdf",
+        note: "Zotero 1:ABCD",
+      },
+      {
+        name: "重复路径",
+        path: "/Users/me/Zotero/storage/ABCD/Co2B.pdf",
+        note: "Zotero 1:ABCD",
+      },
+      {
+        name: "Boride Review",
+        path: "/Users/me/Zotero/storage/EFGH/Boride.pdf",
+        note: "Zotero 1:EFGH",
+      },
+    ],
+    "/proj",
+  );
+  assert.equal(files.length, 2);
+  assert.equal(files[0].name, "Boride.pdf");
+  assert.equal(files[1].title, "Co2B HER");
+  assert.equal(files[1].isZotero, true);
+  assert.equal(files[1].rel, "Zotero · 只读");
+  assert.equal(externalGroupLabel(files), "关联的 Zotero 文献");
+
+  assert.equal(filterExternalLinkedFiles(files, "pdf", "").length, 2);
+  assert.equal(filterExternalLinkedFiles(files, "recent", "").length, 0);
+  assert.equal(filterExternalLinkedFiles(files, "all", "co2b").length, 1);
+  assert.equal(filterExternalLinkedFiles(files, "pdf", "boride")[0]?.name, "Boride.pdf");
 });

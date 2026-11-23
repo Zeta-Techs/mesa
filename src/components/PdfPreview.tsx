@@ -62,7 +62,15 @@ export interface PdfBytesDto {
  *  （transfer，原数组被 neuter），同一 Uint8Array 第二次打开同文件时已是
  *  失效对象，再传会抛 DataCloneError（The object can not be cloned） */
 const PDF_BYTES_CACHE_MAX = 8;
+/** 字节缓存总预算（64 MB）：带大量高分辨率插图的综述 PDF 动辄 20–30 MB，仅限份数会让多版/多篇常驻数百 MB */
+const PDF_BYTES_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const pdfBytesCache = new Map<string, { bytes: Uint8Array; stamp: string | null }>();
+
+function pdfBytesCacheTotal(): number {
+  let sum = 0;
+  for (const v of pdfBytesCache.values()) sum += v.bytes.byteLength;
+  return sum;
+}
 
 /** 读 PDF 字节：先查缓存，miss 走 read_pdf_bytes 白名单，命中后把键挪到队尾。
  *  缓存带磁盘版本戳（大小 + 修改时间，file_stamp）：quarto 重新渲染出同名 PDF 后再打开，
@@ -84,7 +92,10 @@ export async function loadPdfBytes(
   const bytes = base64ToBytes(dto.data);
   pdfBytesCache.delete(key);
   pdfBytesCache.set(key, { bytes, stamp });
-  while (pdfBytesCache.size > PDF_BYTES_CACHE_MAX) {
+  while (
+    pdfBytesCache.size > PDF_BYTES_CACHE_MAX ||
+    (pdfBytesCache.size > 1 && pdfBytesCacheTotal() > PDF_BYTES_CACHE_MAX_BYTES)
+  ) {
     const oldest = pdfBytesCache.keys().next().value;
     if (oldest === undefined) break;
     pdfBytesCache.delete(oldest);
@@ -249,6 +260,8 @@ export const PdfPageView = memo(function PdfPageView({
   marks = NO_MARKS,
   scrollTo,
   onScrolledTo,
+  priorityCenterRef,
+  scrollingUntilRef,
 }: {
   doc: pdfjs.PDFDocumentProxy;
   pageNum: number;
@@ -272,10 +285,18 @@ export const PdfPageView = memo(function PdfPageView({
   scrollTo?: { id: string; nonce: number } | null;
   /** 滚过去了：上层据此清掉这次跳转——否则页离窗卸载、再滚回来重挂时会又被拽一次 */
   onScrolledTo?: (nonce: number) => void;
+  /** 连续滚动当前视口中心页（稳定 ref，不触发重渲）：渲染闸按距中心页远近动态优先 */
+  priorityCenterRef?: { current: number };
+  /** 连续滚动活跃截止时间戳（performance.now()）：快速滑动期延后离屏预取页入闸 */
+  scrollingUntilRef?: { current: number };
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  /** 该页是否已有可见位图：首次挂载直接画到可见 canvas（省一半显存与拷屏），缩放重渲才走离屏双缓冲防闪白 */
+  const paintedRef = useRef(false);
+  /** 持有当前页代理引用，切页/离窗卸载时调 page.cleanup() 释放 pdf.js 解码出的高分辨率插图缓存 */
+  const renderedPageRef = useRef<pdfjs.PDFPageProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** textLayer 渲染完成信号（计数器）：术语高亮等它落地后再跑 */
   const [textRendered, setTextRendered] = useState(0);
@@ -287,6 +308,31 @@ export const PdfPageView = memo(function PdfPageView({
   const [markBoxes, setMarkBoxes] = useState<MarkBox[]>([]);
   const marksKey = JSON.stringify(marks);
   const scrolledNonceRef = useRef(0);
+
+  // 切文档或换页/离窗卸载时释放该页 pdf.js 解码缓存（高分辨率插图单页可达 40+ MB RGBA）
+  useEffect(() => {
+    paintedRef.current = false;
+    return () => {
+      try {
+        renderedPageRef.current?.cleanup();
+      } catch {
+        /* 文档已销毁时忽略 */
+      }
+      renderedPageRef.current = null;
+    };
+  }, [doc, pageNum]);
+
+  // 组件卸载时立刻把可见 canvas 缩回 0×0，促使 WebKit/CoreGraphics 即时回收 GPU/IOSurface 纹理
+  useEffect(() => {
+    return () => {
+      const c = canvasRef.current;
+      if (c) {
+        c.width = 0;
+        c.height = 0;
+      }
+      paintedRef.current = false;
+    };
+  }, []);
 
   // 页盒尺寸立即跟随布局倍率（不等 canvas 重绘，缩放手感的跟手性来自这里）
   useLayoutEffect(() => {
@@ -334,15 +380,38 @@ export const PdfPageView = memo(function PdfPageView({
     let renderTask: pdfjs.RenderTask | null = null;
     let textLayer: pdfjs.TextLayer | null = null;
     let drawLayer: pdfjs.DrawLayer | null = null;
+    let deferTimer: ReturnType<typeof setTimeout> | null = null;
+    let rafId = 0;
+    const gateAbort = new AbortController();
     void (async () => {
       let releaseSlot: (() => void) | null = null;
+      let offCanvas: HTMLCanvasElement | null = null;
       try {
         // 换挡重渲从排队起先藏 textLayer：旧坐标错位叠在新拉伸位图上更脏，
         // 等闸会拉长这个窗口；本页重建完成后由 textRendered 触发既有可见性效果恢复
         if (textRef.current) textRef.current.style.visibility = "hidden";
+        // 快速滑动期：非视口中心页等滚动略微停稳再排队，优先把渲染槽让给用户正看着的那一页
+        if (priorityCenterRef && scrollingUntilRef) {
+          const waitMs = scrollingUntilRef.current - performance.now();
+          if (waitMs > 0 && Math.abs(pageNum - priorityCenterRef.current) > 0) {
+            await new Promise<void>((resolve) => {
+              deferTimer = setTimeout(() => {
+                deferTimer = null;
+                resolve();
+              }, Math.min(140, Math.ceil(waitMs)));
+            });
+            if (cancelled) return;
+          }
+        }
         const page = await doc.getPage(pageNum);
         if (cancelled) return;
-        releaseSlot = await pageRenderGate.acquire();
+        renderedPageRef.current = page;
+        releaseSlot = await pageRenderGate.acquire(
+          priorityCenterRef
+            ? () => Math.abs(pageNum - priorityCenterRef.current)
+            : undefined,
+          gateAbort.signal,
+        );
         if (cancelled) return;
         const viewport = page.getViewport({ scale: rs });
         const baseVp = page.getViewport({ scale: 1 });
@@ -350,37 +419,56 @@ export const PdfPageView = memo(function PdfPageView({
         const cssW = Math.floor(viewport.width);
         const cssH = Math.floor(viewport.height);
         const out = pdfCanvasOutputScale(cssW, cssH, dpr);
-        // 离屏画完再换上：一改可见 canvas.width 会立刻清空当前帧，缩放提交时闪/抖。
-        // 不设 willReadFrequently（2026-11-05 修滚动 / 缩放卡）：WebKit 会因此把画布放 CPU、不进合成层，
-        // 这里从不读回像素（截图走 drawImage）；alpha:true 仍要先绑（Windows 白屏，见 AGENTS 环境档案）
-        const off = document.createElement("canvas");
-        off.width = Math.max(1, Math.floor(cssW * out.sx));
-        off.height = Math.max(1, Math.floor(cssH * out.sy));
-        const offCtx = off.getContext("2d", {
-          alpha: true,
-        });
-        if (!offCtx) throw new Error("无法创建画布");
+        const targetW = Math.max(1, Math.floor(cssW * out.sx));
+        const targetH = Math.max(1, Math.floor(cssH * out.sy));
         const needScale =
           Math.abs(out.sx - 1) > 1e-6 || Math.abs(out.sy - 1) > 1e-6;
-        renderTask = page.render({
-          canvas: off,
-          viewport,
-          transform: needScale ? [out.sx, 0, 0, out.sy, 0, 0] : undefined,
-        });
-        await renderTask.promise;
-        if (cancelled) return;
         const canvas = canvasRef.current;
         const host = hostRef.current;
         if (!canvas || !host) return;
-        const visCtx = canvas.getContext("2d", {
-          alpha: true,
-        });
-        if (!visCtx) throw new Error("无法创建画布");
-        canvas.width = off.width;
-        canvas.height = off.height;
-        canvas.style.width = "100%";
-        canvas.style.height = "100%";
-        visCtx.drawImage(off, 0, 0);
+        // 不设 willReadFrequently（2026-11-05 修滚动 / 缩放卡）：WebKit 会因此把画布放 CPU、不进合成层，
+        // 这里从不读回像素（截图走 drawImage）；alpha:true 仍要先绑（Windows 白屏，见 AGENTS 环境档案）。
+        // 首次挂载直接绘入可见 canvas，省一半峰值显存和主线程整帧 drawImage 拷屏；
+        // 缩放/换挡重渲走离屏双缓冲防闪白，拷完立刻置 0×0 回收离屏纹理。
+        if (paintedRef.current) {
+          offCanvas = document.createElement("canvas");
+          offCanvas.width = targetW;
+          offCanvas.height = targetH;
+          const offCtx = offCanvas.getContext("2d", { alpha: true });
+          if (!offCtx) throw new Error("无法创建画布");
+          renderTask = page.render({
+            canvas: offCanvas,
+            viewport,
+            transform: needScale ? [out.sx, 0, 0, out.sy, 0, 0] : undefined,
+          });
+          await renderTask.promise;
+          if (cancelled) return;
+          const visCtx = canvas.getContext("2d", { alpha: true });
+          if (!visCtx) throw new Error("无法创建画布");
+          canvas.width = offCanvas.width;
+          canvas.height = offCanvas.height;
+          canvas.style.width = "100%";
+          canvas.style.height = "100%";
+          visCtx.drawImage(offCanvas, 0, 0);
+          offCanvas.width = 0;
+          offCanvas.height = 0;
+          offCanvas = null;
+        } else {
+          const visCtx = canvas.getContext("2d", { alpha: true });
+          if (!visCtx) throw new Error("无法创建画布");
+          canvas.width = targetW;
+          canvas.height = targetH;
+          canvas.style.width = "100%";
+          canvas.style.height = "100%";
+          renderTask = page.render({
+            canvas,
+            viewport,
+            transform: needScale ? [out.sx, 0, 0, out.sy, 0, 0] : undefined,
+          });
+          await renderTask.promise;
+          if (cancelled) return;
+        }
+        paintedRef.current = true;
         // 页盒尺寸由 layout effect 按布局倍率即时维护；这里只兜底首量前的情况
         if (fillParent) {
           host.style.width = "100%";
@@ -389,6 +477,17 @@ export const PdfPageView = memo(function PdfPageView({
           host.style.width = `${Math.floor(baseVp.width * scale)}px`;
           host.style.height = `${Math.floor(baseVp.height * scale)}px`;
         }
+        // 位图已上屏：立刻释放渲染闸，让下一页位图并行解码，不阻塞在 DOM 文本层构建上
+        releaseSlot?.();
+        releaseSlot = null;
+        // 让出 1 帧给浏览器合成位图与滚动动画，再建 textLayer / DrawLayer
+        await new Promise<void>((resolve) => {
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            resolve();
+          });
+        });
+        if (cancelled) return;
         // textLayer 字号按 --total-scale-factor 换算（pdf_viewer.css 变量约定 =
         // 名义倍率 × userUnit，即 viewport.scale × viewport.userUnit）
         host.style.setProperty(
@@ -441,16 +540,27 @@ export const PdfPageView = memo(function PdfPageView({
           setTextRendered((c) => c + 1);
         }
       } catch (e) {
-        // 取消渲染不算错误（翻页/缩放打断上一帧）
-        if (!cancelled && !(e instanceof pdfjs.RenderingCancelledException)) {
+        // 取消渲染或排队中止不算错误（翻页/缩放打断上一帧）
+        if (
+          !cancelled &&
+          !(e instanceof pdfjs.RenderingCancelledException) &&
+          !(e instanceof DOMException && e.name === "AbortError")
+        ) {
           setError(String(e));
         }
       } finally {
+        if (offCanvas) {
+          offCanvas.width = 0;
+          offCanvas.height = 0;
+        }
         releaseSlot?.();
       }
     })();
     return () => {
       cancelled = true;
+      if (deferTimer !== null) clearTimeout(deferTimer);
+      if (rafId) cancelAnimationFrame(rafId);
+      gateAbort.abort();
       renderTask?.cancel();
       textLayer?.cancel();
       drawLayer?.destroy();

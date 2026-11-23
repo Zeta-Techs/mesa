@@ -65,3 +65,44 @@ test("RenderGate 排队者中途放弃（拿到槽立即归还）：槽位继续
   assert.equal(got3, true);
   (await p3)();
 });
+
+test("RenderGate 动态优先级：释放槽位时优先唤醒距当前视口最近的等待者，同分保 FIFO", async () => {
+  const gate = new RenderGate(1);
+  const r1 = await gate.acquire();
+  const order: string[] = [];
+  let center = 20;
+  const pFar = gate.acquire(() => Math.abs(10 - center)).then((r) => {
+    order.push("p10");
+    return r;
+  });
+  const pNear = gate.acquire(() => Math.abs(20 - center)).then((r) => {
+    order.push("p20");
+    return r;
+  });
+  const pMid = gate.acquire(() => Math.abs(18 - center)).then((r) => {
+    order.push("p18");
+    return r;
+  });
+  r1();
+  (await pNear)();
+  (await pMid)();
+  (await pFar)();
+  assert.deepEqual(order, ["p20", "p18", "p10"]);
+});
+
+test("RenderGate 排队期间 AbortSignal 中止：立刻移出队列，不抢占后续槽位", async () => {
+  const gate = new RenderGate(1);
+  const r1 = await gate.acquire();
+  const ac = new AbortController();
+  const pAborted = gate.acquire(() => 0, ac.signal);
+  let gotNext = false;
+  const pNext = gate.acquire(() => 5).then((r) => {
+    gotNext = true;
+    return r;
+  });
+  ac.abort();
+  await assert.rejects(pAborted, /aborted/i);
+  r1();
+  (await pNext)();
+  assert.equal(gotNext, true);
+});

@@ -1,6 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { PenLine } from "lucide-react";
 import { pdfWheelShouldZoom, pdfWheelZoomFactor } from "../reader";
+import { imageEditActionLabel } from "../chat-image";
 import PreviewErrorState from "./PreviewErrorState";
 import { useFileVersion } from "../file-watch";
 import type { ReviewAnnotate } from "../draft-review";
@@ -26,11 +28,17 @@ function ImagePreview({
   path,
   cwdHint,
   onAnnotate,
+  onEditInChat,
+  hideName = false,
 }: {
   path: string;
   cwdHint: string | null;
   /** 审阅：在图上框出问题位置并加一条意见（带红框的图随意见交出去） */
   onAnnotate?: ReviewAnnotate;
+  /** 对话页右栏预览：把当前图送进左侧聊天标注台，红框圈出位置直接发给 AI */
+  onEditInChat?: () => void;
+  /** 外层弹窗标题已显示文件名时隐藏工具条里的重复文件名 */
+  hideName?: boolean;
 }) {
   const [annotating, setAnnotating] = useState(false);
   const [annotateMsg, setAnnotateMsg] = useState<string | null>(null);
@@ -128,13 +136,15 @@ function ImagePreview({
     (natural.w * scale > box.w + 1 || natural.h * scale > box.h + 1);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col bg-canvas">
       <div className="flex shrink-0 items-center gap-2 bg-strip px-3 py-1.5 text-xs">
-        <span className="truncate text-l3" title={path}>
-          {basename(path)}
-        </span>
+        {!hideName && (
+          <span className="truncate text-l3" title={path}>
+            {basename(path)}
+          </span>
+        )}
         {natural && (
-          <span className="shrink-0 tabular-nums text-l4">
+          <span className="shrink-0 tabular-nums text-l4" title={hideName ? path : undefined}>
             {natural.w} × {natural.h}
             {bytes ? ` · ${formatBytes(bytes)}` : ""}
           </span>
@@ -152,6 +162,17 @@ function ImagePreview({
                 title="在图上拖出红框指出问题（如拼图错误），写一句意见"
               >
                 框选加意见
+              </button>
+            )}
+            {onEditInChat && !onAnnotate && (
+              <button
+                type="button"
+                className="mr-1 inline-flex items-center gap-1 rounded-sm border border-field bg-canvas px-1.5 py-0.5 text-l1 transition-colors hover:bg-hover"
+                onClick={onEditInChat}
+                title="把这张图打开到左侧聊天标注台，红框圈出位置直接发给 AI"
+              >
+                <PenLine size={11} strokeWidth={1.8} aria-hidden="true" />
+                {imageEditActionLabel(path)}
               </button>
             )}
             <button

@@ -192,6 +192,22 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
           return [];
         }
         if (command === "list_office_docs") return officeDocs;
+        if (command === "read_project_config") {
+          return {
+            config: {
+              resources: [
+                {
+                  name: "Amorphous Cobalt Boride",
+                  path: "/Users/tester/Zotero/storage/E9I6GU6N/Co2B-HER.pdf",
+                  kind: "paper",
+                  readonly: true,
+                  note: "Zotero 1:E9I6GU6N",
+                },
+              ],
+            },
+            warnings: [],
+          };
+        }
         if (command === "list_paper_notes") return [];
         if (command === "list_included_entries")
           return [{ title: "Boride catalysts for hydrogen evolution" }];
@@ -449,6 +465,35 @@ export const languages={register(){},setMonarchTokensProvider(){},getLanguages()
     );
   });
   assert.ok(body.textContent!.includes("papers/c.md"));
+
+  // 退回「最近」查看目录树中的「关联的 Zotero 文献（只读）」虚拟分组，右键菜单不给删除 / 重命名
+  await act(async () => {
+    recentBtn.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  const zoteroGroupBtn = [...body.querySelectorAll("button")].find((b) =>
+    b.textContent!.includes("关联的 Zotero 文献"),
+  );
+  assert.ok(zoteroGroupBtn, "目录树应展示关联的 Zotero 文献虚拟分组");
+  await act(async () => {
+    zoteroGroupBtn!.dispatchEvent(
+      new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+  });
+  const zoteroRow = body.querySelector<HTMLButtonElement>(
+    '[data-file-path="/Users/tester/Zotero/storage/E9I6GU6N/Co2B-HER.pdf"]',
+  );
+  assert.ok(zoteroRow, "展开分组后应显示 Zotero PDF 行");
+  await act(async () => {
+    zoteroRow!.dispatchEvent(
+      new dom.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+    );
+  });
+  assert.ok(body.textContent!.includes("在新窗口打开"));
+  assert.ok(body.textContent!.includes("沉浸阅读"));
+  assert.ok(!body.textContent!.includes("删除文件"), "外链只读 Zotero 文件右键不得出现删除");
+  assert.ok(!body.textContent!.includes("重命名"), "外链只读 Zotero 文件右键不得出现重命名");
 
   await act(async () => {
     root.unmount();

@@ -176,3 +176,74 @@ export function batchAskPrompt(paths: readonly string[]): string {
   const lines = paths.map((p) => `- ${/\s/.test(p) ? `"${p}"` : p}`);
   return `请看这几份文件：\n${lines.join("\n")}`;
 }
+
+/** 项目外只读关联的文件（例如从 Zotero 导入、本体留在 Zotero 库的 PDF） */
+export interface ExternalLinkedFile {
+  path: string;
+  name: string;
+  title: string;
+  isZotero: boolean;
+  rel: string;
+}
+
+const ABS_PATH_RE = /^(?:[a-zA-Z]:[\\/]|\/)/;
+
+export function extractExternalLinkedFiles(
+  resources: readonly { name?: string | null; path: string; note?: string | null }[],
+  projectPath: string,
+  isWindows = false,
+): ExternalLinkedFile[] {
+  const seen = new Set<string>();
+  const out: ExternalLinkedFile[] = [];
+  for (const res of resources) {
+    const rawPath = res.path?.trim();
+    if (!rawPath || !ABS_PATH_RE.test(rawPath)) continue;
+    if (pathWithin(rawPath, projectPath, isWindows)) continue;
+    const norm = isWindows ? rawPath.replace(/\\/g, "/").toLowerCase() : rawPath;
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    const name = rawPath.split(/[\\/]/).filter(Boolean).pop() ?? rawPath;
+    const cleanTitle = (res.name ?? "").replace(/<[^>]+>/g, "").trim() || name;
+    const isZotero =
+      /^zotero\b/i.test(res.note?.trim() ?? "") ||
+      /(?:^|[\\/])zotero(?:[\\/]|$)/i.test(rawPath);
+    out.push({
+      path: rawPath,
+      name,
+      title: cleanTitle,
+      isZotero,
+      rel: isZotero ? "Zotero · 只读" : "外链 · 只读",
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  return out;
+}
+
+export function externalGroupLabel(files: readonly ExternalLinkedFile[]): string {
+  if (files.length === 0) return "关联的外部文件";
+  const zoteroCount = files.filter((f) => f.isZotero).length;
+  if (zoteroCount === files.length) return "关联的 Zotero 文献";
+  if (zoteroCount > 0) return "关联文献与外部文件";
+  return "关联的外部文件";
+}
+
+export function filterExternalLinkedFiles(
+  files: readonly ExternalLinkedFile[],
+  filter: ProjectFileFilter,
+  query: string,
+): ExternalLinkedFile[] {
+  const q = query.trim().toLowerCase();
+  if (filter === "recent" && !q) return [];
+  return files.filter((file) => {
+    if (filter !== "recent" && !fileMatchesProjectFilter(file.path, filter)) {
+      return false;
+    }
+    if (!q) return true;
+    return (
+      file.name.toLowerCase().includes(q) ||
+      file.title.toLowerCase().includes(q) ||
+      file.rel.toLowerCase().includes(q) ||
+      file.path.toLowerCase().includes(q)
+    );
+  });
+}
