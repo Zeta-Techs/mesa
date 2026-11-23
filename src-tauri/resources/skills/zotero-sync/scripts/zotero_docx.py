@@ -301,12 +301,10 @@ def main(argv: list[str] | None = None) -> int:
     body_el, images, missing_images = cite.build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )
-    children = list(body_el)
-    insert_at = next((i for i, child in enumerate(children) if child.tag == cite.W + "sectPr"), len(children))
-    body_el.insert(insert_at, cite.heading_paragraph("References"))
     # 不预置空的 ZOTERO_BIBL 域：Refresh 会把它删掉（2026-10-10 集成日志实证 removeCode）。
-    # 留一个空段做插入锚点，人 Refresh 后点 Add/Edit Bibliography 让 Zotero 自己插域。
-    body_el.insert(insert_at + 1, cite.w_el("p"))
+    # 留一个空段做插入锚点，人 Refresh 后点 Add/Edit Bibliography 让 Zotero 自己插域；
+    # 稿件已有 References 标题与 ::: {#refs} 时复用原位，不再补出第二个 References。
+    cite.place_reflist(body_el, cite.w_el("p"))
     uniq_missing = sorted(set(missing))
     visible = cite.visible_text(body_el)
     unmatched_braces = sorted({m.group(0) for m in cite.RAW_HASH_BRACE.finditer(visible)})

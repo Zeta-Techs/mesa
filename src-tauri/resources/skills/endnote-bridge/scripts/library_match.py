@@ -12,9 +12,11 @@ import os
 import re
 import shutil
 import sqlite3
+import struct
 import sys
 import tempfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 
 # 上下标/全角数字折回 ASCII：库里有 DOI 被化学美化成 D₂EE₀₄₁₂₁A 的记录，折叠后仍能整段相等。
@@ -153,12 +155,12 @@ def endnote_index(path: Path) -> tuple[dict[str, list[int]], dict[int, int], str
     for rec_id, trash, doi, added in rows:
         if trash:
             continue
+        # 外键上的 timestamp 用库里的入库时间，与 EndNote 自己插引文时写的一致（无 DOI 按题名绑定的条目也复用）。
+        if isinstance(added, int) and added > 0:
+            stamps[int(rec_id)] = added
         key = norm_doi(str(doi))
         if doi_ok(key):
             index.setdefault(key, []).append(int(rec_id))
-            # 外键上的 timestamp 用库里的入库时间，与 EndNote 自己插引文时写的一致。
-            if isinstance(added, int) and added > 0:
-                stamps[int(rec_id)] = added
     if not db_id:
         return index, stamps, "", "EndNote 库读不到库编号，记录号不写入域。"
     return index, stamps, db_id, ""
@@ -268,6 +270,71 @@ def endnote_title_index(path: Path) -> dict[tuple[str, str], list[int]]:
     return index
 
 
+_FS_ILLEGAL_RE = re.compile(r'[\x00-\x1f<>:"/\\|?*]')
+_FS_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
+
+def _sanitize_group_name(raw: str) -> str:
+    """与后端 endnote_project_group_name / paths::sanitize_fs_name 同口径，匹配 Mesa 建出的课题群组名。"""
+    cleaned = _FS_ILLEGAL_RE.sub("-", (raw or "").strip()).strip(". \t\r\n")
+    if not cleaned:
+        return ""
+    stem = cleaned.split(".", 1)[0].lower()
+    return f"{cleaned}-" if stem in _FS_RESERVED else cleaned
+
+
+def endnote_project_group_members(path: Path, project_root: Path | None) -> tuple[str, set[int] | None]:
+    """EndNote 20/21/2025 SQLite `groups` 表里与当前课题同名的唯一自定义群组（TYPE;3）成员记录号集合。
+    多课题共用一个个人图书馆时，跨课题重复文献靠本课题群组做确定性消歧；群组不存在、同名不止一个或格式不符时返回 None（不猜）。"""
+    if project_root is None or path.suffix.lower() == ".xml" or not path.is_file():
+        return "", None
+    raw_name = project_root.name.strip()
+    targets = {n for n in (raw_name, _sanitize_group_name(raw_name)) if n}
+    if not targets:
+        return "", None
+    try:
+        conn, copied = open_library_copy(_endnote_sqlite_path(path))
+    except (OSError, sqlite3.Error):
+        return "", None
+    try:
+        rows = conn.execute("SELECT spec, members FROM groups").fetchall()
+    except sqlite3.Error:
+        return "", None
+    finally:
+        conn.close()
+        copied.close()
+    matched: list[tuple[str, set[int]]] = []
+    for spec, members in rows:
+        if not spec or not isinstance(members, (bytes, bytearray, memoryview)):
+            continue
+        blob = bytes(members)
+        if len(blob) < 8:
+            continue
+        spec_text = spec.decode("utf-8", "replace") if isinstance(spec, bytes) else str(spec)
+        try:
+            root = ET.fromstring(spec_text)
+        except ET.ParseError:
+            continue
+        rule = (root.findtext(".//rule") or "").strip()
+        if rule != "TYPE;3":
+            continue
+        name = (root.findtext(".//name") or "").strip()
+        if name not in targets:
+            continue
+        cnt = struct.unpack("<I", blob[4:8])[0]
+        if len(blob) != 8 + 4 * cnt:
+            continue
+        ids = set(struct.unpack(f"<{cnt}I", blob[8:])) if cnt else set()
+        matched.append((name, ids))
+    if len(matched) != 1:
+        return "", None
+    return matched[0]
+
+
 def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | None, project_root: Path | None = None) -> list[str]:
     if library is None:
         library = endnote_pointer(project_root)
@@ -281,24 +348,53 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
         lines.append(note)
         return lines
     titles: dict[tuple[str, str], list[int]] | None = None
+    group_loaded = False
+    group_name = ""
+    group_members: set[int] | None = None
+
+    def narrow_by_group(hits: list[int]) -> int | None:
+        nonlocal group_loaded, group_name, group_members
+        if not group_loaded:
+            group_name, group_members = endnote_project_group_members(library, project_root)
+            group_loaded = True
+        if not group_members:
+            return None
+        in_group = [h for h in hits if h in group_members]
+        return in_group[0] if len(in_group) == 1 else None
+
     bound = 0
+    group_bound = 0
+    dup_unbound = 0
     for key in cited:
         rec = records.get(key)
         if not rec:
             continue
         doi = norm_doi(rec.get("doi") or "")
         if not doi_ok(doi):
-            # 没有 DOI：题名（去标点大小写）+ 年份在库里恰好一条才绑，否则照旧不猜
+            # 没有 DOI：题名（去标点大小写）+ 年份在库里恰好一条才绑；库里多条时尝试按本课题群组唯一消歧，否则照旧不猜
             if titles is None:
                 titles = endnote_title_index(library)
             hits = titles.get((norm_title(rec.get("title") or ""), str(rec.get("year") or "").strip()[:4])) or []
             if len(hits) == 1:
                 rec["_en_rec"] = hits[0]
                 rec["_en_db"] = db_id
+                if hits[0] in stamps:
+                    rec["_en_ts"] = stamps[hits[0]]
                 bound += 1
                 lines.append(f"- `{key}` 没有 DOI，按题名与年份对上记录 {hits[0]}")
             elif len(hits) > 1:
-                lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
+                picked = narrow_by_group(hits)
+                if picked is not None:
+                    rec["_en_rec"] = picked
+                    rec["_en_db"] = db_id
+                    if picked in stamps:
+                        rec["_en_ts"] = stamps[picked]
+                    bound += 1
+                    group_bound += 1
+                    lines.append(f"- `{key}` 没有 DOI，按题名与课题群组「{group_name}」对上记录 {picked}")
+                else:
+                    dup_unbound += 1
+                    lines.append(f"- `{key}` 没有 DOI，同题名同年份在库里有 {len(hits)} 条，未绑定")
             else:
                 lines.append(f"- `{key}` 没有可用 DOI，库里也没有同题名同年份的记录，未绑定")
             continue
@@ -310,10 +406,27 @@ def bind_endnote(records: dict[str, dict], cited: list[str], library: Path | Non
                 rec["_en_ts"] = stamps[hits[0]]
             bound += 1
         elif len(hits) > 1:
-            lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
+            picked = narrow_by_group(hits)
+            if picked is not None:
+                rec["_en_rec"] = picked
+                rec["_en_db"] = db_id
+                if picked in stamps:
+                    rec["_en_ts"] = stamps[picked]
+                bound += 1
+                group_bound += 1
+            else:
+                dup_unbound += 1
+                lines.append(f"- `{key}` DOI `{doi}` 在库里有 {len(hits)} 条，未绑定")
         else:
             lines.append(f"- `{key}` DOI `{doi}` 库里没有，未绑定")
     lines.insert(1, f"已绑定 {bound} 条")
+    if group_bound:
+        lines.insert(2, f"其中 {group_bound} 条在库里有多个副本，已按课题群组「{group_name}」精确对应。")
+    if dup_unbound:
+        lines.append(
+            f"提示：有 {dup_unbound} 篇在 EndNote 库里存在多条重复记录且无法按课题群组唯一区分，为防绑错未写记录号（Update 时会落进「漫游个人图书馆」）。"
+            "可在 EndNote 点「参考文献 → 查找重复项」（References → Find Duplicates）去重，或归入与课题同名的群组后重开 `output/endnote.docx` 自动重绑。"
+        )
     return lines
 
 

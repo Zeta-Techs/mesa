@@ -973,6 +973,7 @@ struct DirectEndnoteImport {
     count: usize,
     library_name: String,
     grouped: bool,
+    library_path: Option<String>,
 }
 
 fn parse_direct_endnote_import_output(stdout: &str) -> Option<DirectEndnoteImport> {
@@ -984,11 +985,51 @@ fn parse_direct_endnote_import_output(stdout: &str) -> Option<DirectEndnoteImpor
     }
     let library_name = parts.next()?.trim().to_string();
     let grouped = parts.next().is_some_and(|s| s.trim() == "1");
+    let library_path = parts
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
     Some(DirectEndnoteImport {
         count,
         library_name,
         grouped,
+        library_path,
     })
+}
+
+/// macOS 一键直导 EndNote 库成功后，自动把刚导入的 `.enl` 路径写进 `papers/endnote-library.path`（gitignored）：
+/// 避免人已经点过「同步到 EndNote」并看到「已直接导入」提示，定稿生成 `output/endnote.docx` 时却因没另点「选这个 EndNote 库」而整篇落进漫游个人图书馆。
+/// 若指针已指向同一路径则不重复改写。返回是否新写入/更新了指针。
+fn persist_endnote_library_pointer(project_root: &Path, lib_path: &Path) -> bool {
+    if !lib_path.is_file()
+        || !lib_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("enl"))
+        || is_legacy_library(lib_path)
+    {
+        return false;
+    }
+    let target_str = crate::paths::strip_verbatim(lib_path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    if let Some(existing) = endnote_library_pointer(project_root) {
+        if crate::paths::same_path(&existing.to_string_lossy(), &target_str) {
+            return false;
+        }
+    }
+    let papers = project_root.join("papers");
+    if std::fs::create_dir_all(&papers).is_err() {
+        return false;
+    }
+    let pointer = papers.join("endnote-library.path");
+    let payload = format!("{target_str}\n");
+    if crate::storage::atomic_write(&pointer, payload.as_bytes(), true).is_err() {
+        return false;
+    }
+    crate::projects::exclude_in_git(project_root, "/papers/endnote-library.path");
+    true
 }
 
 /// macOS 上直接经 EndNote 原生 AppleScript `import`（`ENImportCommand`，接收 RSXML）把整份 XML 静默导入目标库：
@@ -1084,7 +1125,11 @@ on run argv
                 show records in newIds in targetWin
             end try
         end if
-        return ((count of newIds) as text) & "\t" & docName & "\t" & grouped
+        set docPath to ""
+        try
+            set docPath to POSIX path of (file of targetDoc as alias)
+        end try
+        return ((count of newIds) as text) & "\t" & docName & "\t" & grouped & "\t" & docPath
     end tell
 end run
 
@@ -1134,6 +1179,8 @@ pub struct EndnoteSyncDto {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub xml_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub library_path: Option<String>,
 }
 
 #[tauri::command]
@@ -1158,18 +1205,38 @@ pub async fn endnote_export_xml(
                 if let Ok(imported) =
                     import_xml_into_endnote_macos(&xml, enl.as_deref(), &group_name)
                 {
-                    // 新记录刚进 .enl 库：若定稿 output/endnote.docx 已写出且尚未在 Word 里保存改过，顺手按最新记录号静默重绑
-                    refresh_field_docx_if_stale(&root_path.join("output/endnote.docx"), root_path);
+                    let linked_path = imported
+                        .library_path
+                        .as_deref()
+                        .map(PathBuf::from)
+                        .filter(|p| {
+                            p.is_file()
+                                && p.extension()
+                                    .and_then(|e| e.to_str())
+                                    .is_some_and(|e| e.eq_ignore_ascii_case("enl"))
+                                && !is_legacy_library(p)
+                        });
+                    let auto_linked = linked_path
+                        .as_deref()
+                        .is_some_and(|p| persist_endnote_library_pointer(root_path, p));
+                    // 新记录刚进 .enl 库（并已自动写好库指针）：若主仓或活动工作区里的 output/endnote.docx 尚未在 Word 里保存改过，顺手按最新记录号静默重绑
+                    refresh_project_endnote_docs(root_path);
                     let group_note = if imported.grouped && !group_name.is_empty() {
                         format!("，已归入「{group_name}」群组")
                     } else {
                         String::new()
                     };
+                    let link_note = if auto_linked {
+                        "，已自动关联该库（定稿 Word 点 Update 可直连个人图书馆）"
+                    } else {
+                        ""
+                    };
                     let mut lines = vec![format!(
-                        "已直接导入 EndNote 库「{}」（共 {} 条{}，保留上下标格式）。{}",
+                        "已直接导入 EndNote 库「{}」（共 {} 条{}，保留上下标格式{}）。{}",
                         imported.library_name,
                         imported.count,
                         group_note,
+                        link_note,
                         if mode == crate::library_attach::AttachMode::Items {
                             "全文可点「打开 papers」拖入条目。"
                         } else {
@@ -1186,6 +1253,7 @@ pub async fn endnote_export_xml(
                     return Ok(EndnoteSyncDto {
                         message: lines.join("\n"),
                         xml_path: None,
+                        library_path: linked_path.map(|p| p.to_string_lossy().into_owned()),
                     });
                 }
             }
@@ -1251,6 +1319,7 @@ pub async fn endnote_export_xml(
                         Ok(EndnoteSyncDto {
                             message: lines.join("\n"),
                             xml_path,
+                            library_path: None,
                         })
                     }
                     Err(e) => Ok(EndnoteSyncDto {
@@ -1258,6 +1327,7 @@ pub async fn endnote_export_xml(
                             "{where_note}。打开 EndNote 后{import_steps}。{e}{health_note}"
                         ),
                         xml_path,
+                        library_path: None,
                     }),
                 };
             }
@@ -1288,6 +1358,7 @@ pub async fn endnote_export_xml(
                     Ok(EndnoteSyncDto {
                         message: lines.join("\n"),
                         xml_path: None,
+                        library_path: None,
                     })
                 }
                 Err(e) => Ok(EndnoteSyncDto {
@@ -1295,6 +1366,7 @@ pub async fn endnote_export_xml(
                         "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}{health_note}"
                     ),
                     xml_path: None,
+                    library_path: None,
                 }),
             };
         }
@@ -1314,12 +1386,14 @@ pub async fn endnote_export_xml(
                 message: "已交给 EndNote（导进当前库的 Imported References，可整批拖入分组）。\n若此前已导过，请用 References → Find Duplicates 去重。"
                     .to_string(),
                 xml_path: None,
+                library_path: None,
             }),
             Err(e) => Ok(EndnoteSyncDto {
                 message: format!(
                     "文件在 {shown}。把它拖到 EndNote 图标上（不要拖进窗口）。{e}"
                 ),
                 xml_path: None,
+                library_path: None,
             }),
         }
     })
@@ -1609,13 +1683,20 @@ pub fn refresh_field_docx_if_stale(docx_path: &Path, context_root: &Path) {
     let docx_mtime = file_mtime(docx_path);
     let newer = |p: &Path| matches!((file_mtime(p), docx_mtime), (Some(pm), Some(dm)) if pm > dm);
     let report_text = std::fs::read_to_string(&report_path).unwrap_or_default();
+    let has_literal_refs_div =
+        doc_xml.contains("::: </w:t>") && doc_xml.contains(">refs</w:t>");
     let stale = if kind == "endnote" {
         let enl = endnote_library_pointer(&project_root).or_else(|| endnote_library_pointer(doc_root));
         let sdb = enl.as_ref().map(|p| p.with_extension("Data").join("sdb").join("sdb.eni"));
-        newer(&project_root.join("papers/endnote-library.path"))
+        let sdb_wal = enl
+            .as_ref()
+            .map(|p| p.with_extension("Data").join("sdb").join("sdb.eni-wal"));
+        has_literal_refs_div
+            || newer(&project_root.join("papers/endnote-library.path"))
             || newer(&doc_root.join("papers/endnote-library.path"))
             || enl.as_deref().is_some_and(newer)
             || sdb.as_deref().is_some_and(newer)
+            || sdb_wal.as_deref().is_some_and(newer)
             || newer(&bib_path)
             || newer(&md_path)
             || (enl.as_deref().is_some_and(|p| p.exists())
@@ -1627,7 +1708,11 @@ pub fn refresh_field_docx_if_stale(docx_path: &Path, context_root: &Path) {
         let db_updated_with_unbound = (report_text.contains("已绑定：0")
             || report_text.contains("未写入条目地址"))
             && zotero_db.as_deref().is_some_and(newer);
-        empty_cites || newer(&bib_path) || newer(&md_path) || db_updated_with_unbound
+        has_literal_refs_div
+            || empty_cites
+            || newer(&bib_path)
+            || newer(&md_path)
+            || db_updated_with_unbound
     };
     if stale {
         let _ = rebuild_field_docx(
@@ -2147,6 +2232,33 @@ mod tests {
             s
         };
         assert!(after_xml.contains("USER_EDIT_MARKER"), "Word 保存过的 docx 绝不能被覆盖");
+
+        // 旧版未编辑域稿残留字面 `::: refs :::` 与双 References 时，打开前自动重绑自愈
+        std::fs::write(&md, "Boride catalyst [@Masa2016].\n\n## References {.unnumbered}\n\n::: {#refs}\n:::\n").unwrap();
+        let legacy_docx = dir.join("output/endnote.docx");
+        {
+            use std::io::Write;
+            let f = std::fs::File::create(&legacy_docx).unwrap();
+            let mut zout = zip::ZipWriter::new(f);
+            let opts = zip::write::SimpleFileOptions::default();
+            zout.start_file("word/document.xml", opts).unwrap();
+            zout.write_all(
+                br#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:instrText> ADDIN EN.CITE </w:instrText></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>References</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">::: </w:t></w:r><w:r><w:t>refs</w:t></w:r><w:r><w:t xml:space="preserve"> :::</w:t></w:r></w:p><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>References</w:t></w:r></w:p></w:body></w:document>"#,
+            )
+            .unwrap();
+            zout.finish().unwrap();
+        }
+        refresh_field_docx_if_stale(&legacy_docx, &dir);
+        let healed_xml = {
+            use std::io::Read;
+            let f = std::fs::File::open(&legacy_docx).unwrap();
+            let mut zin = zip::ZipArchive::new(f).unwrap();
+            let mut s = String::new();
+            zin.by_name("word/document.xml").unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(!healed_xml.contains(":::"), "自愈后不得残留 ::: refs :::");
+        assert_eq!(healed_xml.matches(">References</w:t>").count(), 1, "自愈后只能有一个 References 标题");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2190,14 +2302,54 @@ mod tests {
     #[test]
     fn parses_direct_endnote_import_output() {
         assert_eq!(
+            parse_direct_endnote_import_output(
+                "33\t我的 EndNote 个人图书馆.enl\t1\t/Users/me/Documents/我的 EndNote 个人图书馆.enl\n"
+            ),
+            Some(DirectEndnoteImport {
+                count: 33,
+                library_name: "我的 EndNote 个人图书馆.enl".to_string(),
+                grouped: true,
+                library_path: Some("/Users/me/Documents/我的 EndNote 个人图书馆.enl".to_string()),
+            })
+        );
+        assert_eq!(
             parse_direct_endnote_import_output("33\t我的 EndNote 个人图书馆.enl\t1\n"),
             Some(DirectEndnoteImport {
                 count: 33,
                 library_name: "我的 EndNote 个人图书馆.enl".to_string(),
                 grouped: true,
+                library_path: None,
             })
         );
         assert_eq!(parse_direct_endnote_import_output("0\tTest.enl\t0"), None);
+    }
+
+    #[test]
+    fn persist_endnote_library_pointer_writes_once_and_skips_legacy() {
+        let dir = std::env::temp_dir().join(format!("ccode-enl-ptr-{}", uuid::Uuid::new_v4()));
+        let proj = dir.join("硼化物析氢");
+        std::fs::create_dir_all(&proj).unwrap();
+        let enl = dir.join("我的 EndNote 个人图书馆.enl");
+        std::fs::write(&enl, b"sqlite").unwrap();
+
+        assert!(persist_endnote_library_pointer(&proj, &enl));
+        assert_eq!(
+            std::fs::read_to_string(proj.join("papers/endnote-library.path")).unwrap().trim(),
+            enl.to_string_lossy()
+        );
+        // 已指向同一库时不重复写
+        assert!(!persist_endnote_library_pointer(&proj, &enl));
+
+        // X9 老库（含 .Data/rdb）不写入指针
+        let legacy = dir.join("x9.enl");
+        std::fs::write(&legacy, b"shell").unwrap();
+        std::fs::create_dir_all(dir.join("x9.Data").join("rdb")).unwrap();
+        assert!(!persist_endnote_library_pointer(&proj, &legacy));
+        assert_eq!(
+            std::fs::read_to_string(proj.join("papers/endnote-library.path")).unwrap().trim(),
+            enl.to_string_lossy()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

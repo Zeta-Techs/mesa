@@ -1174,7 +1174,7 @@ def main():
         if a.attach:
             attach_records(records, load_attach_plan(a.attach), html_notes=False, multiline_notes=(a.output.suffix.lower() == '.xml'))
         if a.journal_terms:
-            a.journal_terms.write_text(journal_terms(records), encoding='utf-8', newline='')
+            a.journal_terms.write_bytes(journal_terms(records).encode('utf-8'))
         for dest in (a.output,a.report):
             if dest.exists() or dest.is_symlink(): raise ValueError('Output exists; choose a new proposal path')
         if a.output.resolve()==a.report.resolve(): raise ValueError('Report and proposal paths must differ')

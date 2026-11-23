@@ -2447,7 +2447,7 @@ export default function StepFlow({
     setEndnoteSyncResult({ line: "正在生成并打开 EndNote…" });
     try {
       const res = await invoke<
-        string | { message: string; xmlPath?: string | null }
+        string | { message: string; xmlPath?: string | null; libraryPath?: string | null }
       >("endnote_export_xml", {
         projectRoot: projectPath,
         attach: syncAttach,
@@ -2459,6 +2459,11 @@ export default function StepFlow({
           line: res.message,
           xmlPath: res.xmlPath ?? undefined,
         });
+        if (res.libraryPath) {
+          const next = await loadEndnoteLibSnapshot(projectPath);
+          setEndnoteLib(next);
+          setEndnoteChoices(null);
+        }
       }
     } catch (e) {
       setEndnoteSyncResult({ line: String(e) });

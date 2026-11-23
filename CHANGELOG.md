@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 修复：EndNote 域稿更新引文时落回「漫游个人图书馆」及文末出现两个 `References` 标题与字面 `::: refs :::` 的问题——① **macOS 一键直导自动关联个人图书馆**：点击 **同步到 EndNote** 经原生 AppleScript 将题录导入 EndNote 后，现自动读取目标库的 `.enl` 路径并写入 `papers/endnote-library.path`（同步刷新界面显示与主仓/活动工作区未编辑过的 `output/endnote.docx`），不再因未另点「选这个 EndNote 库」导致整篇落入漫游库；② **多课题共用一个 EndNote 库按群组消歧**：同一 DOI 在个人库跨课题群组存在多条副本时，`library_match.py` 优先按与当前课题同名的唯一自定义群组（`groups` 表 `TYPE;3`）精确绑定本课题记录号（同群组内重复仍坚持不猜、维持 fail-closed）；③ **复用稿件原有 `References` 标题与 `::: {#refs}` 槽位**：`cite_docx.py` 与 `zotero_docx.py` 现识别 Quarto/Pandoc 的 `::: {#refs}` 围栏并原地替换为参考文献域（稿件已有 `References` / `参考文献` 标题时不再补出第二个），同步修正 `Heading2`–`Heading6` 继承正文首行缩进的问题，并在打开未手工保存改过的旧域稿时自动重绑自愈。
 - 修复：Windows 上 Agent 调用 Mesa 画图技能（`mesa_helper image`）报「出图失败：打开文件锁失败：拒绝访问。(os error 5)」、一张图都出不来的问题——出图取密钥此前要先在 Mesa 配置目录开配置锁文件，而 helper 跑在 Agent 沙箱里（如 Codex 沙箱只许写工作区）无权写那里；现改为与 Codex 渠道取钥同一口径，只读 `keys.json`、不拿锁也不碰钥匙串。
 - 改进：移除科研流程步进器顶部的 **角色提示（你主要负责 / 你和 AI 一起定）** 图例、步骤名旁的角色小圆点及步骤卡标题行的 **你来 / 一起** 标签，减少界面视觉噪音。
 - 改进：移除设置「诊断」页中的 **聊天层转到终端** 统计模块及对应后台计数。

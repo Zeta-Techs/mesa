@@ -1011,3 +1011,149 @@ test("两份域稿支持 {#sec-}/@sec- 章节交叉引用、ΔG~H\\*~ 下标与 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("EndNote 多课题共用个人库：同 DOI 跨群组重复按本课题群组唯一消歧，同群组内重复仍不猜（2026-11-23 实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-en-group-"));
+  try {
+    const project = join(root, "硼化物析氢");
+    mkdirSync(join(project, "papers"), { recursive: true });
+    const enl = join(root, "我的 EndNote 个人图书馆.enl");
+    const seed = `
+import sqlite3, struct, sys
+enl = sys.argv[1]
+c = sqlite3.connect(enl)
+c.execute("CREATE TABLE misc(code INTEGER, subcode INTEGER, value BLOB, PRIMARY KEY(code, subcode))")
+c.execute("INSERT INTO misc VALUES (14, 0, ?)", (b"groupdbid0001",))
+c.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, trash_state INTEGER NOT NULL DEFAULT 0, electronic_resource_number TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', year TEXT NOT NULL DEFAULT '', added_to_library INTEGER)")
+# 跨课题重复：1496 在旧课题 HER催化综述，1544 在本课题 硼化物析氢
+c.execute("INSERT INTO refs VALUES (1496, 0, '10.1002/adfm.201906481', 'Metal Boride Review', '2019', 1794763156)")
+c.execute("INSERT INTO refs VALUES (1544, 0, '10.1002/adfm.201906481', 'Metal Boride Review', '2020', 1795414244)")
+# 同一课题群组里也重复了两条：必须仍保持未绑定（不猜）
+c.execute("INSERT INTO refs VALUES (1550, 0, '10.1000/same-group-dup', 'Twice In Group', '2025', 1795414245)")
+c.execute("INSERT INTO refs VALUES (1551, 0, '10.1000/same-group-dup', 'Twice In Group', '2025', 1795414246)")
+c.execute("CREATE TABLE groups(group_id INTEGER PRIMARY KEY, recs_stamp INTEGER, spec BLOB, members BLOB)")
+def pack_members(ids):
+    return b"\\x00\\x00\\x00\\x02" + struct.pack("<I", len(ids)) + (struct.pack(f"<{len(ids)}I", *ids) if ids else b"")
+c.execute("INSERT INTO groups VALUES (7, 0, ?, ?)", (
+    '<?xml version="1.0" encoding="UTF-8"?><group version="1"><ids><name>HER催化综述</name></ids><rules><rule>TYPE;3</rule></rules></group>'.encode("utf-8"),
+    pack_members([1496]),
+))
+c.execute("INSERT INTO groups VALUES (8, 0, ?, ?)", (
+    '<?xml version="1.0" encoding="UTF-8"?><group version="1"><ids><name>硼化物析氢</name></ids><rules><rule>TYPE;3</rule></rules></group>'.encode("utf-8"),
+    pack_members([1544, 1550, 1551]),
+))
+c.commit()
+c.close()
+`;
+    const seeded = spawnSync(python, ["-c", seed, enl], { encoding: "utf8" });
+    assert.equal(seeded.status, 0, seeded.stderr);
+    writeFileSync(join(project, "papers", "endnote-library.path"), `${enl}\n`);
+    const md = join(project, "review-final.md");
+    const bib = join(project, "references.bib");
+    writeFileSync(md, "See [@Gupta2020] and [@Twice2025].\n");
+    writeFileSync(
+      bib,
+      [
+        "@article{Gupta2020, title={Metal Boride Review}, author={Gupta, Suraj}, year={2020}, doi={10.1002/adfm.201906481}}",
+        "@article{Twice2025, title={Twice In Group}, author={Roe, Ann}, year={2025}, doi={10.1000/same-group-dup}}",
+        "",
+      ].join("\n"),
+    );
+    const docx = join(project, "endnote.docx");
+    const report = join(project, "report.md");
+    const res = run(citeDocx, [
+      "--input",
+      md,
+      "--bib",
+      bib,
+      "--output",
+      docx,
+      "--report",
+      report,
+      "--project-root",
+      project,
+    ]);
+    assert.equal(res.status, 0, res.stderr);
+    const fld = fldData(docx).stdout;
+    assert.match(
+      fld,
+      /<rec-number>1544<\/rec-number><foreign-keys><key app="EN" db-id="groupdbid0001" timestamp="1795414244">1544<\/key>/,
+    );
+    assert.doesNotMatch(fld, /<rec-number>1496<\/rec-number>|<rec-number>1550<\/rec-number>|<rec-number>1551<\/rec-number>/);
+    const reportText = readFileSync(report, "utf8");
+    assert.match(reportText, /已绑定 1 条/);
+    assert.match(reportText, /已按课题群组「硼化物析氢」精确对应/);
+    assert.match(reportText, /Twice2025.*2 条，未绑定/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("两份域稿复用已有 References 标题与 ::: {#refs} 槽位，不出双 References 和字面 ::: refs :::（2026-11-23 实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-refs-div-"));
+  const zoteroDocx = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Doe2025,\n title={Boride catalysts}, author={Doe, Jane}, year={2025}, journal={J. Catal.}, doi={10.1000/boride}\n}\n",
+    );
+    const md = join(root, "review-final.md");
+    writeFileSync(
+      md,
+      [
+        "## Introduction",
+        "",
+        "Borides catalyze HER [@Doe2025].",
+        "",
+        "## References {.unnumbered}",
+        "",
+        "::: {#refs}",
+        ":::",
+      ].join("\n") + "\n",
+    );
+    const enOut = join(root, "endnote.docx");
+    const zoOut = join(root, "zotero.docx");
+    assert.equal(run(citeDocx, ["--input", md, "--bib", bib, "--output", enOut, "--report", join(root, "en.md")]).status, 0);
+    assert.equal(run(zoteroDocx, ["--input", md, "--bib", bib, "--output", zoOut, "--report", join(root, "zo.md")]).status, 0);
+
+    for (const [label, docx] of [["endnote", enOut], ["zotero", zoOut]] as const) {
+      const xml = zipXml(docx, ["word/document.xml", "word/styles.xml"]).stdout;
+      const refMatches = xml.match(/>References<\/w:t>/g) ?? [];
+      assert.equal(refMatches.length, 1, `${label} 不得出现两个 References 标题`);
+      assert.doesNotMatch(xml, /:::/, `${label} 不得残留字面 ::: refs :::`);
+      // Heading2 也必须左对齐且首行缩进归零（不继承正文 2 字符缩进）
+      assert.match(xml, /w:styleId="Heading2"[\s\S]*?<w:ind w:firstLine="0" w:firstLineChars="0"\/>/);
+    }
+    assert.match(zipXml(enOut).stdout, /ADDIN EN\.REFLIST/);
+
+    // ::: {#refs} 后紧跟 Appendix 时，参考文献域留在原位（References 与 Appendix 之间）
+    const mdApp = join(root, "with-appendix.md");
+    writeFileSync(
+      mdApp,
+      [
+        "## Intro",
+        "",
+        "See [@Doe2025].",
+        "",
+        "## References {.unnumbered}",
+        "",
+        "::: {#refs}",
+        ":::",
+        "",
+        "## Appendix {.unnumbered}",
+        "",
+        "Extra table.",
+      ].join("\n") + "\n",
+    );
+    const enApp = join(root, "en-app.docx");
+    assert.equal(run(citeDocx, ["--input", mdApp, "--bib", bib, "--output", enApp, "--report", join(root, "en-app.md")]).status, 0);
+    const appXml = zipXml(enApp).stdout;
+    assert.equal((appXml.match(/>References<\/w:t>/g) ?? []).length, 1);
+    assert.doesNotMatch(appXml, /:::/);
+    assert.ok(appXml.indexOf("ADDIN EN.REFLIST") > appXml.indexOf(">References</w:t>"));
+    assert.ok(appXml.indexOf("ADDIN EN.REFLIST") < appXml.indexOf(">Appendix</w:t>"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

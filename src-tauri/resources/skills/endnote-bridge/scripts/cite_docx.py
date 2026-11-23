@@ -53,6 +53,16 @@ CURLY_TEMP = re.compile(r"\{[^{}]{1,80},\s*[^{}]{1,20}\}")
 CURLY_KEY = re.compile(r"\{#(?!fig-|tbl-|sec-)([A-Za-z0-9_.:-]+)\}")
 RAW_HASH_BRACE = re.compile(r"\{#[A-Za-z0-9_.:-]+\}")
 PROSE_BRACE = re.compile(r"\{[^{}\r\n]{1,40}\}")
+# Quarto / Pandoc 参考文献占位围栏（::: {#refs}\n:::）与已有的 References / 参考文献 标题
+REFS_DIV_OPEN_RE = re.compile(
+    r"^\s*:{3,}\s*\{[^{}]*#refs(?=\s|[.}])[^{}]*\}\s*(?:::{3,}\s*)?$"
+)
+REFS_DIV_CLOSE_RE = re.compile(r"^\s*:{3,}\s*$")
+REF_HEADING_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*\.?\s+)?(?:references|bibliography|works\s+cited|参考文献)$",
+    re.I,
+)
+_REFS_SLOT_TAG = "__mesa_refs_slot__"
 
 
 def load_library_match():
@@ -501,6 +511,20 @@ def split_blocks(text: str) -> list[tuple[str, str]]:
                 buf = []
             blocks.append(("hr", ""))
             i += 1
+            continue
+        if REFS_DIV_OPEN_RE.match(line):
+            if buf:
+                blocks.append(("p", "\n".join(buf)))
+                buf = []
+            blocks.append(("refs", ""))
+            has_inline_close = bool(re.search(r"\}\s*:{3,}\s*$", line))
+            i += 1
+            if not has_inline_close:
+                j = i
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                if j < len(lines) and REFS_DIV_CLOSE_RE.match(lines[j]):
+                    i = j + 1
             continue
         if line.lstrip().startswith("|") and "|" in line[1:]:
             if buf:
@@ -1068,6 +1092,9 @@ def build_body(
             p.append(props)
             body.append(p)
             continue
+        if kind == "refs":
+            body.append(ET.Element(_REFS_SLOT_TAG))
+            continue
         if kind == "table":
             table_no += 1
             append_table(body, content, bib, rec_nums, cited, missing)
@@ -1206,17 +1233,17 @@ def write_docx(
 <w:pPr><w:keepNext/><w:outlineLvl w:val="0"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/><w:spacing w:before="360" w:after="120"/></w:pPr>
 <w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/>
-<w:pPr><w:keepNext/><w:outlineLvl w:val="1"/><w:spacing w:before="280" w:after="80"/></w:pPr>
+<w:pPr><w:keepNext/><w:outlineLvl w:val="1"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/><w:spacing w:before="280" w:after="80"/></w:pPr>
 <w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:basedOn w:val="Normal"/>
-<w:pPr><w:keepNext/><w:outlineLvl w:val="2"/><w:spacing w:before="200" w:after="60"/></w:pPr>
+<w:pPr><w:keepNext/><w:outlineLvl w:val="2"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/><w:spacing w:before="200" w:after="60"/></w:pPr>
 <w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/><w:basedOn w:val="Normal"/>
-<w:pPr><w:keepNext/><w:outlineLvl w:val="3"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>
+<w:pPr><w:keepNext/><w:outlineLvl w:val="3"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading5"><w:name w:val="heading 5"/><w:basedOn w:val="Normal"/>
-<w:pPr><w:keepNext/><w:outlineLvl w:val="4"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
+<w:pPr><w:keepNext/><w:outlineLvl w:val="4"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/>
-<w:pPr><w:keepNext/><w:outlineLvl w:val="5"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
+<w:pPr><w:keepNext/><w:outlineLvl w:val="5"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
 </w:styles>
 """
     latin_font, cjk_font = fonts or ("Times New Roman", default_cjk_font())
@@ -1255,6 +1282,44 @@ def write_docx(
         for img in images:
             zf.writestr(f"word/media/{img['name']}", img["data"])
     tmp.replace(path)
+
+
+def _is_ref_heading(el: ET.Element) -> bool:
+    if el.tag != W + "p":
+        return False
+    ppr = el.find(W + "pPr")
+    pstyle = ppr.find(W + "pStyle") if ppr is not None else None
+    val = (pstyle.get(W + "val") or "") if pstyle is not None else ""
+    if not val.startswith("Heading"):
+        return False
+    text = "".join(t.text or "" for t in el.iter(W + "t")).strip()
+    return bool(REF_HEADING_RE.fullmatch(text))
+
+
+def place_reflist(body_el: ET.Element, reflist_para: ET.Element) -> None:
+    """在稿件的 ::: {#refs} 槽位或文末放参考文献域。
+    稿件已有 References / 参考文献 标题时不重复补第二个标题，避免出现双 References 和字面 ::: refs :::。"""
+    slots = [i for i, child in enumerate(body_el) if child.tag == _REFS_SLOT_TAG]
+    if slots:
+        first = slots[0]
+        for extra in reversed(slots[1:]):
+            body_el.remove(body_el[extra])
+        has_heading = first > 0 and _is_ref_heading(body_el[first - 1])
+        body_el.remove(body_el[first])
+        if not has_heading:
+            body_el.insert(first, heading_paragraph("References"))
+            first += 1
+        body_el.insert(first, reflist_para)
+        return
+    children = list(body_el)
+    insert_at = next(
+        (i for i, child in enumerate(children) if child.tag == W + "sectPr"),
+        len(children),
+    )
+    if not (insert_at > 0 and _is_ref_heading(body_el[insert_at - 1])):
+        body_el.insert(insert_at, heading_paragraph("References"))
+        insert_at += 1
+    body_el.insert(insert_at, reflist_para)
 
 
 def write_report(path: Path, payload: dict):
@@ -1411,15 +1476,12 @@ def main(argv: list[str] | None = None) -> int:
     body_el, images, missing_images = build_body(
         blocks, source.parent, records, rec_nums, cited, missing
     )
-    children = list(body_el)
-    insert_at = next((i for i, child in enumerate(children) if child.tag == W + "sectPr"), len(children))
-    body_el.insert(insert_at, heading_paragraph("References"))
     reflist = w_el("p")
     # 实稿的 REFLIST 带一个空 fldData；Update 往这里填参考文献表
     reflist.extend(
         field_runs(" ADDIN EN.REFLIST ", " ", with_data=True)
     )
-    body_el.insert(insert_at + 1, reflist)
+    place_reflist(body_el, reflist)
     uniq_missing = sorted(set(missing))
     visible = visible_text(body_el)
     unmatched_braces = sorted(

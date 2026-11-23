@@ -329,7 +329,7 @@ def write_library_xml(
             put("language", rec["language"])
     dest.parent.mkdir(parents=True, exist_ok=True)
     xml_str = ET.tostring(root, encoding="unicode", xml_declaration=True) + "\n"
-    dest.write_text(xml_str, encoding="utf-8", newline="\n")
+    dest.write_bytes(xml_str.replace("\r\n", "\n").encode("utf-8"))
     return len(records)
 
 
