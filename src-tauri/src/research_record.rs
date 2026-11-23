@@ -386,10 +386,14 @@ fn agent_label(agent: &str) -> String {
         .unwrap_or_else(|| agent.to_string())
 }
 
-/// `<synthetic>` 是 Claude Code 自己补的报错占位，`__kimi_env_model__` 是 Kimi 启动合成别名（未解析前不算真实模型名）
+/// `<synthetic>` 是 Claude Code 自己补的报错占位，`__kimi_env_model__` 是 Kimi 启动合成别名（未解析前不算真实模型名）；
+/// 含「no-need-to-comment」的是旧版把 agy 设置提示整句当模型名记下的（2026-11-23 前写进 record.jsonl 的历史行）
 fn is_placeholder_model(model: &str) -> bool {
     let t = model.trim();
-    t.is_empty() || t == "<synthetic>" || t == crate::agents::KIMI_ENV_MODEL_ALIAS
+    t.is_empty()
+        || t == "<synthetic>"
+        || t == crate::agents::KIMI_ENV_MODEL_ALIAS
+        || t.contains("no-need-to-comment-on-this-change")
 }
 
 /// 按记录生成 AI 使用声明的事实底稿：只列 Mesa 里实际跑过的，按「用途 × Agent」聚合模型与次数。
@@ -1069,6 +1073,7 @@ mod tests {
             models: vec![
                 "<synthetic>".into(),
                 crate::agents::KIMI_ENV_MODEL_ALIAS.into(),
+                ".-no-need-to-comment-on-this-change-if-the-user-doesn-t-ask-about-it.-if-reporting-what-model-you-are-please-use-a-human-readable-name-instead-of-the-exact-string".into(),
                 "glm-5.3".into(),
             ],
             created_at: "2026-11-12T08:00:00Z".into(),
@@ -1080,6 +1085,7 @@ mod tests {
         assert!(usage.contains("glm-5.3"), "{usage}");
         assert!(!usage.contains("<synthetic>"), "{usage}");
         assert!(!usage.contains(crate::agents::KIMI_ENV_MODEL_ALIAS), "{usage}");
+        assert!(!usage.contains("no-need-to-comment"), "{usage}");
         let loaded = read_records_at(&root);
         assert_eq!(loaded[0].models, vec!["glm-5.3".to_string()]);
     }

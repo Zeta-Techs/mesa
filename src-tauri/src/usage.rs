@@ -32,7 +32,8 @@ const LIST_CAP: usize = 20;
 // 只清 Claude Code 能从会话文件重抽的行和它的 seen 标记；文件已被 CLI 清掉的旧行重抽不回来，保持原数。
 // v13（2026-11-13）：Kimi 2.6 不再写 llm.request，Mesa 开的会话用量记成合成别名；改按启动记下的模型换。只清 Kimi 能重抽的行
 // v14（2026-11-14）：接入 Antigravity CLI（agy）用量提取（按 step_index 去重、input_tokens 已去缓存读、模型取 Model Selection 或启动记录）
-const USAGE_SCHEMA_VERSION: &str = "14";
+// v15（2026-11-23）：agy 的 Model Selection 行尾那句「No need to comment …」曾被当成模型名，只清 agy 能重抽的行
+const USAGE_SCHEMA_VERSION: &str = "15";
 const SOURCE_CLI: &str = "cli";
 const SOURCE_CCODE_AI: &str = "ccode-ai";
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -593,8 +594,11 @@ fn agy_extract_model_change(content: &str) -> Option<String> {
     let rest = &content[idx + MARKER.len()..];
     let to_idx = rest.find(" to ")?;
     let after = &rest[to_idx + 4..];
-    let end = after.find(['\n', '<']).unwrap_or(after.len());
-    Some(agy_normalize_model_selection(&after[..end]))
+    let line = &after[..after.find(['\n', '<']).unwrap_or(after.len())];
+    // 同一行后面还跟着「 No need to comment on this change …」：只取到第一个「. 」，
+    // 否则自定义模型（`to .`）会把这句提示整句当模型名入账（2026-11-23 AI 使用记录实证）
+    let end = line.find(". ").map_or(line.len(), |i| i + 1);
+    Some(agy_normalize_model_selection(&line[..end]))
 }
 
 /// Antigravity CLI：同一步从 RUNNING 变 DONE 会再写一行同 `step_index`，先按 `step_index` 合并去重；
@@ -1130,11 +1134,11 @@ fn ensure_usage_schema(conn: &Connection) -> Result<(), String> {
         .ok();
     if current.as_deref() != Some(USAGE_SCHEMA_VERSION) {
         // 旧索引没有可靠来源，清空后由会话源重新生成，避免把历史猜测伪装成权威分类。
-        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名，v11→v12 只是 Claude Code 分出 1 小时缓存写，v12→v13 只是 Kimi 按启动模型换别名：只清这几家能从会话文件重抽的行
+        // v7→v8 只是 Grok 提取口径变了，v8→v9 只是 Codex / Gemini / Qwen 拆缓存，v9→v10 只是 Claude Code 按回复去重，v10→v11 只是 Kimi 模型别名换真名，v11→v12 只是 Claude Code 分出 1 小时缓存写，v12→v13 只是 Kimi 按启动模型换别名，v14→v15 只是 agy 模型名去掉行尾提示：只清这几家能从会话文件重抽的行
         // （有 seen 标记）和它们的 seen 标记，其它 agent 已建好的日行留着，避免整库重解析；文件已不在的行重抽不回来，
         // 留着（用量历史永久保留）
         let partial: Option<&[&str]> = match current.as_deref() {
-            Some("13") => Some(&["agy"]),
+            Some("14") | Some("13") => Some(&["agy"]),
             Some("12") => Some(&["kimi", "agy"]),
             Some("11") => Some(&["claude-code", "kimi", "agy"]),
             Some("10") => Some(&["claude-code", "kimi", "agy"]),
@@ -4050,6 +4054,23 @@ mod agy_usage_tests {
         assert_eq!(custom[0].model, "");
         fill_agy_launch_model(&mut custom, Some(&"mesa/gemini-2.5-flash".to_string()));
         assert_eq!(custom[0].model, "gemini-2.5-flash");
+
+        // 真实 agy 在同一行接着写一句提示：自定义模型不得把这句当模型名，内置模型只取展示名
+        let tail = " No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.";
+        let change = |to: &str| {
+            format!(
+                "<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from None to {to}.{tail}\n</USER_SETTINGS_CHANGE>"
+            )
+        };
+        assert_eq!(agy_extract_model_change(&change("")).as_deref(), Some(""));
+        assert_eq!(
+            agy_extract_model_change(&change("Gemini 4 Neon (High)")).as_deref(),
+            Some("gemini-4-neon-high")
+        );
+        assert_eq!(
+            agy_extract_model_change(&change("Gemini 3.8 Flash (High)")).as_deref(),
+            Some("gemini-3.8-flash-high")
+        );
 
         // 1.5.9 起步上的 `model` 是内部枚举名，自定义模型恒为 BYOM 占位：不当模型名，照旧回填启动记录
         let byom_lines = [
