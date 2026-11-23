@@ -1,80 +1,314 @@
 /**
- * 项目助手「小桌」精灵图的行表（纯逻辑，配 tests/buddy-sprite.test.ts；图在 src/assets/buddy/xiaozhuo.webp）。
- * 2026-11-09 用户拍板改成出图模型孵的逐帧精灵图（借 Codex hatch-pet 的流程，见 MesaBuddy.tsx 文首）。
- * 每格 224px、8 列 × 11 行，人站在格子底部（基线 y≈214），行顺序与帧数必须和图一致——重孵后改这里。
+ * 项目助手与桌宠形象的纯数据与时序规则（配 tests/buddy-sprite.test.ts）。
+ * 2026-11-20 用户拍板替换旧卡通贴纸「小桌」（xiaozhuo.webp 已移除），提供两套纯矢量形象在设置页切换：
+ * - cat（默认）：13×10 极简双色像素黑猫（单色猫身 + 品牌琥珀眼），极简可爱、无白贴纸边；
+ * - monolith：无底座精工仪（OLED 黑屏 + 琥珀光标眼神，干活态仅底槽单轨扫描不晃眼）。
  */
-/** wait / walkRight / walkLeft 是桌宠用的（2026-11-09）：有事等你回、被拖着往右 / 往左走 */
+
+export type BuddyStyle = "cat" | "monolith";
+export const DEFAULT_BUDDY_STYLE: BuddyStyle = "cat";
+
+export function normalizeBuddyStyle(value?: string | null): BuddyStyle {
+  return value === "monolith" ? "monolith" : DEFAULT_BUDDY_STYLE;
+}
+
+/** wait / walkRight / walkLeft 是桌宠用的：有事等你回、被拖着往右 / 往左走 */
 export type BuddyPose = "idle" | "wave" | "think" | "happy" | "oops" | "sleep" | "wait" | "walkRight" | "walkLeft";
-/** 桌上多放的一样东西，跟着时间换（buddy-time.ts）：早上一杯冒热气的咖啡，傍晚一盏小台灯 */
+/** 保留时段道具类型签名以兼容 buddy-time.ts / desk-pet.ts（像素黑猫与 Monolith 不堆砌桌面杂物） */
 export type BuddyProp = "coffee" | "lamp" | null;
 
-export const BUDDY_CELL = 224;
-export const BUDDY_COLS = 8;
-export const BUDDY_ROWS = 11;
+export const CAT_COLS = 13;
+export const CAT_ROWS = 10;
 
 export interface BuddyRow {
-  /** 图里第几行 */
-  index: number;
   /** 每帧停多久（毫秒），长度即帧数 */
   durations: number[];
   /** 放几遍；null = 一直循环 */
   repeat: number | null;
-  /** 放完之后：rest = 回到平常站着的样子，hold = 停在 hold 帧不动 */
+  /** 放完之后：rest = 回到平常待机，hold = 停在 hold 帧不动 */
   after: "rest" | "hold";
   hold: number;
-  /** 安静档（桌宠默认，2026-11-09 用户「一直在动，有没有安静一点的」）放一遍后停在哪一帧：选最能说明状态的那帧（在想 = 托腮、等你 = 抬手） */
+  /** 安静档（桌宠默认）放一遍后停在哪一帧 */
   calmHold: number;
 }
 
-/** 动作档：lively = 一直循环（项目助手面板、桌宠「活泼」）；calm = 换状态时放一遍、停在说明状态的那帧，隔一阵眨一下；still = 不动，停在那帧 */
+/** 动作档：lively = 一直循环（项目助手面板、桌宠「活泼」）；calm = 换状态时放一遍停在 calmHold，隔 35–50 秒再动一下；still = 不动 */
 export type BuddyMotion = "lively" | "calm" | "still";
 
-/** 安静档隔多久再动一下（毫秒）：35–50 秒之间随机，几只小桌不会同时眨眼 */
+/** 安静档隔多久再动一下（毫秒）：35–50 秒之间随机 */
 export function calmPause(rand: number): number {
   return 35_000 + Math.round(Math.max(0, Math.min(1, rand)) * 15_000);
 }
 
-// 平常站着：第一帧停久一点，眨眼和轻晃隔一会儿才来一次，不抢眼
-const IDLE = [1800, 160, 160, 120, 160, 260];
+const WALK_RIGHT_FRAMES: readonly (readonly string[])[] = [
+  [
+    ".............",
+    ".....M...M...",
+    ".....MM.MM...",
+    ".....MMMMM...",
+    ".....MMAMA...",
+    ".M...MMMMM...",
+    "..MMMMMMMM...",
+    "...MMMMMMM...",
+    "..MM....MM...",
+    ".............",
+  ],
+  [
+    ".............",
+    ".....M...M...",
+    ".....MM.MM...",
+    ".....MMMMM...",
+    ".....MMAMA...",
+    "..M..MMMMM...",
+    "..MMMMMMMM...",
+    "...MMMMMMM...",
+    "....MM.MM....",
+    ".............",
+  ],
+];
 
-const ROWS: Record<BuddyPose, BuddyRow> = {
-  idle: { index: 0, durations: IDLE, repeat: null, after: "rest", hold: 0, calmHold: 0 },
-  // 打招呼挥两遍，然后站着
-  wave: { index: 1, durations: [160, 160, 160, 320], repeat: 2, after: "rest", hold: 0, calmHold: 0 },
-  // 在想：托腮、抬眼，问着就一直想
-  think: { index: 2, durations: [220, 200, 200, 260, 200, 320], repeat: null, after: "rest", hold: 0, calmHold: 3 },
-  // 答完蹦一下
-  happy: { index: 3, durations: [120, 130, 160, 130, 260], repeat: 1, after: "rest", hold: 0, calmHold: 0 },
-  // 出错：垂头丧气一遍，停在最后那帧（皱眉）
-  oops: { index: 4, durations: [140, 140, 140, 160, 220, 160, 140, 240], repeat: 1, after: "hold", hold: 7, calmHold: 7 },
-  // 夜深盘腿睡：慢慢一起一伏，z 一个比一个大
-  sleep: { index: 5, durations: [520, 420, 420, 420, 420, 620], repeat: null, after: "rest", hold: 0, calmHold: 0 },
-  // 有事等你：歪头、手抬到肩，问一句「轮到你了？」，等着就一直这样；第一帧停久一点免得一直晃
-  wait: { index: 8, durations: [1200, 150, 150, 150, 150, 260], repeat: null, after: "rest", hold: 0, calmHold: 3 },
-  // 被拖着走：左走是右走的镜像
-  walkRight: { index: 9, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0, calmHold: 0 },
-  walkLeft: { index: 10, durations: [110, 110, 110, 110, 110, 110, 110, 110], repeat: null, after: "rest", hold: 0, calmHold: 0 },
-};
-const COFFEE: BuddyRow = { ...ROWS.idle, index: 6 };
-const LAMP: BuddyRow = { ...ROWS.idle, index: 7 };
-
-/** 姿势 + 桌上道具 → 放哪一行。道具只有站着时画（问着 / 出错 / 睡着都不带） */
-export function buddyRow(pose: BuddyPose, prop: BuddyProp): BuddyRow {
-  if (pose === "idle" && prop === "coffee") return COFFEE;
-  if (pose === "idle" && prop === "lamp") return LAMP;
-  return ROWS[pose];
+function mirrorGrid(grid: readonly string[]): string[] {
+  return grid.map((row) => [...row].reverse().join(""));
 }
 
 /**
- * 画在页面上取格子的哪一块：大图取整格；≤40px（顶栏头像）只裁掉格子四周的空白、整个人都在
- * （2026-11-09 用户截图：原先只取半身，盘腿睡时人坐得低，脸被切掉一半）。x/y/w/h 是精灵图像素，width/height 是页面像素。
+ * 13×10 极简像素黑猫逐帧矩阵（M=猫身, A=琥珀眼, H=高光琥珀/星点, B=闭眼微暗琥珀, E=出错低饱和红眼, .=透明）。
+ * 纯双色剪影，深浅主题和沉浸黑下均无需描边即可清晰立住。
  */
-export function buddyClip(size: number): { x: number; y: number; w: number; h: number; width: number; height: number } {
-  if (size > 40) return { x: 0, y: 0, w: BUDDY_CELL, h: BUDDY_CELL, width: size, height: size };
-  // 所有帧合起来的范围是 x 15–216、y 8–216（跳到最高、台灯、热气都算上），四周各留一两像素
-  const x = 12;
-  const y = 6;
-  const w = 206;
-  const h = 212;
-  return { x, y, w, h, width: Math.round((size * w) / h), height: size };
+export const CAT_FRAMES: Record<BuddyPose, readonly (readonly string[])[]> = {
+  idle: [
+    // 0: 端坐 + 竖尾
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MAMMAM.....",
+      "..MMMMMM...M.",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+    // 1: 轻晃尾巴
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MAMMAM.....",
+      "..MMMMMM..M..",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+    // 2: 柔和眨眼
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MBMMBM.....",
+      "..MMMMMM...M.",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+    // 3: 回到轻晃尾
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MAMMAM.....",
+      "..MMMMMM..M..",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+  ],
+  wave: [
+    // 抬起一只小前爪打招呼
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MHMMHM.....",
+      "..MMMMMM...M.",
+      ".M.MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "........MM...",
+      ".............",
+    ],
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MAMMAM.....",
+      ".M.MMMMM..M..",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "........MM...",
+      ".............",
+    ],
+  ],
+  think: [
+    // 干活中：盯住身旁跳动的琥珀小光标
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM..H..",
+      "..MAMMAM.....",
+      "..MMMMMM..M..",
+      "...MMMMMM.M..",
+      "..MMMMMMMMM..",
+      "..MMMMMMMM...",
+      "..MM....MM...",
+      ".............",
+    ],
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM...H.",
+      "..MAMMAM.....",
+      "..MMMMMM...M.",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+  ],
+  wait: [
+    // 等你拍板：眼睛亮起 + 头顶小琥珀星
+    [
+      "..M....M..H..",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MHMMHM.....",
+      "..MMMMMM...M.",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MHMMHM.....",
+      "..MMMMMM..M..",
+      "...MMMMMM.M..",
+      "..MMMMMMMMM..",
+      "..MMMMMMMM...",
+      "..MM....MM...",
+      ".............",
+    ],
+  ],
+  happy: [
+    // 完成：开心轻蹦 1px
+    [
+      ".............",
+      "..M....M..H..",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MHMMHM...M.",
+      "..MMMMMM..M..",
+      "...MMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+      ".............",
+    ],
+    [
+      "..M....M.....",
+      "..MM..MM.....",
+      "..MMMMMM.....",
+      "..MHMMHM.....",
+      "..MMMMMM...M.",
+      "...MMMMMM..M.",
+      "..MMMMMMMM.M.",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+  ],
+  oops: [
+    // 出错：双色飞机耳压平 + 低饱和红眼
+    [
+      ".............",
+      ".MM....MM....",
+      "..MMMMMM.....",
+      "..MEMMEM.....",
+      "..MMMMMM.....",
+      "...MMMMMM....",
+      "..MMMMMMMM...",
+      "..MMMMMMMMMM.",
+      "..MM....MM...",
+      ".............",
+    ],
+    [
+      ".............",
+      ".MM....MM....",
+      "..MMMMMM.....",
+      "..MEMMEM.....",
+      "..MMMMMM.....",
+      "...MMMMMM....",
+      "..MMMMMMMM...",
+      "..MMMMMMMMM..",
+      "..MM....MM...",
+      ".............",
+    ],
+  ],
+  sleep: [
+    // 深夜：蜷成一小团安静睡觉
+    [
+      ".............",
+      ".............",
+      ".............",
+      ".............",
+      "..M..M.......",
+      ".MMMMMMMMM...",
+      ".MBMMBMMMMM..",
+      ".MMMMMMMMMM..",
+      "..MMMMMMMM...",
+      ".............",
+    ],
+    [
+      ".............",
+      ".........H...",
+      ".............",
+      ".............",
+      "..M..M.......",
+      ".MMMMMMMMM...",
+      ".MBMMBMMMMM..",
+      ".MMMMMMMMMM..",
+      "..MMMMMMMM...",
+      ".............",
+    ],
+  ],
+  walkRight: WALK_RIGHT_FRAMES,
+  walkLeft: WALK_RIGHT_FRAMES.map(mirrorGrid),
+};
+
+const ROWS: Record<BuddyPose, BuddyRow> = {
+  idle: { durations: [2200, 460, 170, 460], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  wave: { durations: [220, 240], repeat: 2, after: "rest", hold: 0, calmHold: 0 },
+  think: { durations: [480, 480], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  happy: { durations: [220, 260], repeat: 2, after: "rest", hold: 0, calmHold: 0 },
+  oops: { durations: [220, 320], repeat: 1, after: "hold", hold: 1, calmHold: 1 },
+  sleep: { durations: [950, 950], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  wait: { durations: [1100, 360], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  walkRight: { durations: [160, 160], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+  walkLeft: { durations: [160, 160], repeat: null, after: "rest", hold: 0, calmHold: 0 },
+};
+
+/** 姿势 → 帧时序与安静档停帧规则（保留 _prop 参数以兼容既有调用方） */
+export function buddyRow(pose: BuddyPose, _prop: BuddyProp = null): BuddyRow {
+  return ROWS[pose];
 }

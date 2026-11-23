@@ -997,7 +997,7 @@ export default function ProjectAssistantPanel({
       onClose={onClose}
       title="项目助手"
       subtitle={hideProjectName ? undefined : projectName}
-      titleIcon={empty ? <></> : <MesaBuddy size={40} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
+      titleIcon={empty ? <></> : <MesaBuddy size={28} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
       docked={docked}
       headerExtra={dockSwitch}
@@ -1006,7 +1006,7 @@ export default function ProjectAssistantPanel({
       {projectPath && <AssistantDesk projectPath={projectPath} />}
       {empty ? (
         <div className="px-1 pt-8">
-          <MesaBuddy size={112} pose={mood.greetPose} prop={mood.prop} />
+          <MesaBuddy size={72} pose={mood.greetPose} prop={mood.prop} />
           <h3 className="mt-5 text-lg font-semibold text-l1">{mood.greeting}</h3>
           <p
             className="mt-2 text-sm leading-6 text-l3"

@@ -71,7 +71,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
     aliases: [
       "启动", "启动行为", "开机自启", "默认页面", "启动时进入", "导航形态", "侧栏", "导航",
       "顶部岛", "灵动岛", "岛", "自动收起", "通知", "系统通知", "播报",
-      "桌宠", "宠物", "小桌", "桌面助手", "悬浮", "置顶",
+      "桌宠", "宠物", "小桌", "桌面助手", "助手形象", "黑猫", "桌角黑猫", "monolith", "悬浮", "置顶",
       "general", "startup", "launch", "nav", "notification", "pet",
     ],
   },

@@ -278,6 +278,8 @@ pub struct AppSettingsDto {
     pub desk_pet_size: Option<String>,
     /// 小桌怎么动（2026-11-09 用户「一直在动，有没有安静一点的」）：calm（默认：换状态时动一下就停住，Mesa 在前台时不动）| lively（一直动、跟着鼠标侧身）
     pub desk_pet_motion: Option<String>,
+    /// 项目助手与桌宠形象（2026-11-20 用户拍板）：cat（默认：桌角黑猫 13×10 像素）| monolith（无底座精工仪）
+    pub buddy_style: Option<String>,
     /// 小窗上次放的位置（左上角，逻辑像素）。不走 update_settings patch，只由 set_desk_pet_position 写
     pub desk_pet_x: Option<f64>,
     pub desk_pet_y: Option<f64>,
@@ -983,6 +985,11 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
                 .filter(|v| v == "calm" || v == "lively")
                 .unwrap_or_else(|| "calm".into()),
         ),
+        buddy_style: Some(
+            s.buddy_style
+                .filter(|v| v == "cat" || v == "monolith")
+                .unwrap_or_else(|| "cat".into()),
+        ),
         desk_pet_x: s.desk_pet_x.filter(|v| v.is_finite()),
         desk_pet_y: s.desk_pet_y.filter(|v| v.is_finite()),
         image_gen_gateway_id: s.image_gen_gateway_id.filter(|v| !v.trim().is_empty()),
@@ -1165,6 +1172,9 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.desk_pet_motion.is_some() {
         cur.desk_pet_motion = patch.desk_pet_motion;
+    }
+    if patch.buddy_style.is_some() {
+        cur.buddy_style = patch.buddy_style;
     }
     // 出图模型：网关与模型同进退，任一传空串 = 两个一起清空
     if patch.image_gen_gateway_id.is_some() || patch.image_gen_model.is_some() {
@@ -1715,7 +1725,7 @@ pub async fn update_settings(
 ) -> Result<AppSettingsDto, String> {
     let zoom_changed = patch.ui_zoom.is_some();
     let pet_changed = patch.desk_pet_enabled.is_some() || patch.desk_pet_size.is_some() || patch.desk_pet_say.is_some()
-        || patch.desk_pet_motion.is_some();
+        || patch.desk_pet_motion.is_some() || patch.buddy_style.is_some();
     let out = {
         // 与 profiles 共用同一把读-改-写锁，防并发 patch 互相覆盖；
         // 本函数持锁期间不再获取其他锁，与全局写入（GLOBAL_CONFIG_MUTEX 内不调 profiles）锁序一致

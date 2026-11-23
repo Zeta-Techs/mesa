@@ -1,18 +1,26 @@
+import { normalizeBuddyStyle, type BuddyStyle } from "../buddy-sprite";
+import { useAppStore } from "../store";
+
 /**
- * 「小桌」的线条小图标（项目助手入口按钮用，2026-11-04 用户：救生圈换掉 →「只留脸」）：和 Lucide 图标同一种笔触（24 格、圆头、currentColor），
- * 只有桌裙那张脸（圆角框 + 两点眼 + 一道笑），按钮里不挤。可当 LucideIcon 传（size / strokeWidth / className）
+ * 项目助手入口线条小图标（顶栏按钮用）：和 Lucide 同笔触（24 格、圆头、currentColor），
+ * 去掉早期卡通腮红笑脸，随设置里的助手形象（桌角黑猫 / Monolith）同步切换。
  */
 export default function MesaBuddyIcon({
   size = 14,
   strokeWidth = 1.8,
   className = "",
+  buddyStyle,
   ...rest
 }: {
   size?: number | string;
   strokeWidth?: number | string;
   className?: string;
+  buddyStyle?: BuddyStyle;
   "aria-hidden"?: boolean | "true" | "false";
 }) {
+  const storeStyle = useAppStore((s) => s.settings?.buddyStyle);
+  const style = normalizeBuddyStyle(buddyStyle ?? storeStyle);
+
   return (
     <svg
       viewBox="0 0 24 24"
@@ -26,20 +34,19 @@ export default function MesaBuddyIcon({
       className={className}
       {...rest}
     >
-      {/* 2026-11-05 用户：「图标还是有点简陋」——改成会说话的笑脸气泡（右上缺口里一颗琥珀星，示意 AI），两颊琥珀；
-          线条跟文字色走，琥珀用品牌色 --color-mesa-amber，深浅主题都成立。14px 下实测能认出是张脸 */}
-      <path d="M15 5.2H8.4a4.8 4.8 0 0 0-4.8 4.8v3.4a4.8 4.8 0 0 0 4.8 4.8h.9v2.6l3.4-2.6h2.9a4.8 4.8 0 0 0 4.8-4.8v-1.6" />
-      <path
-        d="M19.4 2.2l.55 1.45 1.45.55-1.45.55-.55 1.45-.55-1.45-1.45-.55 1.45-.55z"
-        fill="var(--color-mesa-amber)"
-        stroke="var(--color-mesa-amber)"
-        strokeWidth={1}
-      />
-      <ellipse cx="9.3" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none" />
-      <ellipse cx="14.5" cy="11.3" rx="1.05" ry="1.35" fill="currentColor" stroke="none" />
-      <circle cx="7.2" cy="13.9" r="1" fill="var(--color-mesa-amber)" stroke="none" />
-      <circle cx="16.6" cy="13.9" r="1" fill="var(--color-mesa-amber)" stroke="none" />
-      <path d="M10.5 14.3c.8.7 2 .7 2.8 0" />
+      {style === "monolith" ? (
+        <>
+          <rect x="3" y="4.5" width="18" height="15" rx="4.5" />
+          <rect x="7.2" y="11" width="3.4" height="1.9" rx="0.8" fill="var(--color-mesa-amber)" stroke="none" />
+          <rect x="13.4" y="11" width="3.4" height="1.9" rx="0.8" fill="var(--color-mesa-amber)" stroke="none" />
+        </>
+      ) : (
+        <>
+          <path d="M5 5.5 L8.2 8.2 H15.8 L19 5.5 V14 C19 17.6 16 20 12 20 C8 20 5 17.6 5 14 V5.5 Z" />
+          <rect x="8.2" y="12.2" width="2.4" height="1.8" rx="0.6" fill="var(--color-mesa-amber)" stroke="none" />
+          <rect x="13.4" y="12.2" width="2.4" height="1.8" rx="0.6" fill="var(--color-mesa-amber)" stroke="none" />
+        </>
+      )}
     </svg>
   );
 }

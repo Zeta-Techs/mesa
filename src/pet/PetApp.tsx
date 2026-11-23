@@ -11,7 +11,8 @@ import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { Menu } from "@tauri-apps/api/menu";
 import { ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react";
-import MesaBuddy, { type BuddyMotion } from "../components/MesaBuddy";
+import MesaBuddy, { type BuddyMotion, type BuddyStyle } from "../components/MesaBuddy";
+import { normalizeBuddyStyle } from "../buddy-sprite";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import { isLightTheme } from "../themes";
 import {
@@ -24,7 +25,6 @@ import {
   petPose,
   pickBubble,
   waitingCount,
-  petLean,
   petMotion,
   readPetDnd,
   defaultAskProject,
@@ -36,7 +36,7 @@ import {
 } from "../desk-pet";
 
 type Size = "small" | "normal" | "large";
-const PET_PX: Record<Size, number> = { small: 80, normal: 112, large: 144 };
+const PET_PX: Record<Size, number> = { small: 52, normal: 78, large: 104 };
 const PAD = 12;
 const PANEL_W = 340;
 const BUBBLE_H = 112;
@@ -49,6 +49,7 @@ interface PetSettings {
   deskPetSay?: PetSay;
   deskPetSize?: Size;
   deskPetMotion?: "calm" | "lively";
+  buddyStyle?: BuddyStyle;
 }
 
 type Panel = { kind: "bubble"; item: PetItem; count: number } | { kind: "list" } | null;
@@ -266,30 +267,7 @@ export default function PetApp() {
     await menu.popup();
   }
 
-  // 朝鼠标倾身：只在面板收着、站着 / 等你 / 在想时，约每 150ms 看一次鼠标；减弱动态效果时不动
-  const [lean, setLean] = useState({ rotate: 0, x: 0, y: 0 });
   const lively = settings.deskPetMotion === "lively";
-  // 倾身是一直在动的：只在「活泼」档
-  const leanable = lively && !panel && !drag && !reaction;
-  useEffect(() => {
-    if (!leanable || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      setLean({ rotate: 0, x: 0, y: 0 });
-      return;
-    }
-    let stop = false;
-    const tick = async () => {
-      const at = await invoke<[number, number] | null>("desk_pet_cursor").catch(() => null);
-      const h = home.current;
-      if (stop) return;
-      setLean(at && h ? petLean(at[0] - (h.x + compact / 2), at[1] - (h.y + compact / 2)) : { rotate: 0, x: 0, y: 0 });
-    };
-    const timer = window.setInterval(() => void tick(), 150);
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, [leanable, compact]);
-
   const mood = buddyMood(buddyDayPart(hour));
   const waiting = waitingCount(feed.items);
   const { pose, prop } = petPose({
@@ -320,15 +298,14 @@ export default function PetApp() {
       onContextMenu={onContextMenu}
       title={title}
     >
-      <div
-        className="pet-lean"
-        style={{
-          // 睡着不转身
-          transform: pose === "sleep" ? undefined : `translate(${lean.x}px, ${lean.y}px) rotate(${lean.rotate}deg)`,
-        }}
-      >
-        <MesaBuddy size={pet} pose={pose} prop={prop} motion={motion} pokeable={false} />
-      </div>
+      <MesaBuddy
+        size={pet}
+        pose={pose}
+        prop={prop}
+        motion={motion}
+        pokeable={false}
+        buddyStyle={normalizeBuddyStyle(settings.buddyStyle)}
+      />
       {waiting > 0 && !dnd && <span className="pet-badge">{waiting > 9 ? "9+" : waiting}</span>}
     </div>
   );

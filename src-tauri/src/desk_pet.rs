@@ -20,9 +20,9 @@ fn compact_size(pet: f64) -> (f64, f64) {
 
 pub(crate) fn pet_px(size: &str) -> f64 {
     match size {
-        "small" => 80.0,
-        "large" => 144.0,
-        _ => 112.0,
+        "small" => 52.0,
+        "large" => 104.0,
+        _ => 78.0,
     }
 }
 
