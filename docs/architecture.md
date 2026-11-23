@@ -462,9 +462,43 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 用户发现 Antigravity 每次做完任务不会按约定自动提交，排查实证根因是 `AGENTS.md` 涨到 56.5 KB，撞上 Antigravity 单规则文件 24,000 字节（24 KB）硬截断上限，第 138 行往后的提交纪律、私有暂存区流程与关键约定全部在注入上下文前被裁掉。拍板采取「瘦身 `AGENTS.md`」方案：① `AGENTS.md` 总大小严控 **22 KB 以内**（本批压缩至约 14.7 KB），只保留每会话必守的通用硬约束、Git 提交与私有暂存区流程、文档同步表、构建/验收锚点与主题索引，且把提交纪律与文档同步表置顶靠前；② 原「已确认的产品决策」全文、各子系统实现细则、测试/CI/发版细则与说明书写法细则原样拆入 `docs/conventions/product-decisions.md` 按需 Grep 检索，一条不丢；③ 以后新拍板的单一领域规则不再往 `AGENTS.md` 堆长段，只落 `docs/conventions/` 并在 `AGENTS.md` 留指针。
 
+### 2026-11-23 · 重启恢复的普通聊天标签沿用按连接记住的「完全访问」
+
+用户反馈会话因重启断开后原本的「完全访问」回落成「自动改文件」，拍板 **跟着恢复完全访问**。定下：`TerminalView` 按连接校准 `rememberedFullAccess` 的三处不再用 `!restored` 拦掉重启恢复出的普通聊天标签（仍严格限定 `chatPermissionMemoryApplies(reuseKey)`，流程步骤、沉浸阅读、商量任务书等非普通聊天入口不受影响；`permissionMode` 本身仍不进标签持久化白名单，在该连接上换回别的档即同步失效）。细则 `docs/conventions/safety.md`「本机原生权限档」与 `src/chat-permission.ts`。
+
+### 2026-11-22 · 模态弹窗卡片升级为「84% 烟熏玻璃 + 内部精雕层阶」
+
+用户反馈新建项目、检查更新等弹窗卡片样式缺少质感；经 A（精雕实底层阶）/ B（通透烟熏玻璃）/ C（头身脚分舱底盘）三套交互对照后拍板采用 **克制版 B（84% 烟熏玻璃壳）+ A 内部精雕层阶**。定下：① 弹窗材质与顶栏导航岛（58%）→ 右键菜单（64%）→ 模态弹窗（84% 深 / 88% 浅）拉出连续玻璃厚度阶梯，配 `blur(32px)`、光学边线、顶部 `1px` 高光与深空/纸面投影，遮罩补 `blur(3px)` 柔化背后文字，Windows 与降低透明度模式回退近实底防糊字；② 严格同心曲率（外壳 `16px` → 内卡 `10px` → 控件 `8px`），并反向消除「灰壳挖黑洞」——弹窗内 `.ccode-well` 改为雾面微亮层、次按钮改为微抬雾面、输入框改为柔和微凹配圆角强调光晕、分段器走 `.ccode-modal-seg`、页脚左侧低调按钮负边距对齐正文左缘；③ `Modal`、`ConfirmDialog`、`DoctorDialog`、`KickoffConfirmDialog`、`CommandPalette` 全部统一挂 `.ccode-modal-backdrop` / `.ccode-modal-panel`。细则 `docs/conventions/design-system.md`「主题令牌」浮层段。
+
+### 2026-11-22 · 应用更新入口迁至侧栏底部最右，撤出收件箱
+
+用户要求在侧栏底部图标栏最右侧放可更新快捷按钮，并确认有了这个按钮后不再需要收件箱里的更新提醒（2026-09-04 旧口径作废）。定下：① 检测到新版本时在侧栏底部最右侧（图标态沉底）显示 **更新** 按钮，点击原地弹出 `HelpUpdateDialog` 直接下载安装，下载 / 安装 / 重启状态经 `app-update-install.ts` 模块级共享、与弹窗和设置页实时同步；悬停抽屉限定在左侧图标组内，窄栏展开抽屉时收成纯图标、最窄或拖拽中让位；② 移出收件箱与工作台「等你拍板」队列中的 `update:` 类别（`inbox.ts` / `store.ts` / `WorkspacesPage.tsx`），避免软件维护提示与项目待办混排，完全隐藏侧栏时仍由顶栏帮助按钮绿点与 `⌘K` 承接；③ 仅开发版（`import.meta.env.DEV`）提供完整「可更新预览」开关（`⌘K` / 帮助 → 检查更新 / 设置 → 更新），可安全演示侧栏按钮与三段下载安装动画。细则 `docs/conventions/design-system.md`「侧栏底部一排」与 `docs/conventions/terminal.md`。
+
+### 2026-11-21 · 同工作副本续跑继承权限 + `agy` 内置 `gemini-4-neon` + 精读补读工具链加固
+
+用户实跑 12 篇补读复盘后拍板同步修齐三块根因：① **步骤内续跑完整透传与工作副本级权限记忆**——`launchContinuation`（`TaskCardsSection.tsx`）与 `launchRound`（`step-round.ts`）改为整包透传 `buildWorkspaceTerminalRequest` 结果（不再手工列字段漏掉 `permission`/`permissionMode`/`effort`/`railStep`）；新增 `ccode.wsPerm.<worktreePath>` 仅记录同一已开工工作副本的确认权限（含完全访问），同工作副本内补读/跟进/退回修改/继续/导入批注自动沿用，跨步骤新开工仍遵守「完全访问须重新确认」的安全口径；② **`agy` 内置家族改为动态读 `agy-display.json` 优先 + 静态兜底**——从本机 `agy models` 缓存自动按 `-low/-medium/-high/-xhigh/-max` 归纳多档内置家族与显示名（反向排除 API 模式会改写成 `-preview` 的 `gemini-3.1-pro`，单档/无档模型如 `gemini-pro-orchestrator-*` / `gpt-oss-120b-medium` 不误发 `--effort`，启动遇未知型号带 60 秒冷却自动刷新缓存），彻底解决 `agy` 升级发新模型（如 1.5.14 新增 `gemini-4-neon`）被包成 `mesa/` 自定义模型压成保守小窗口提早压缩的问题；③ **精读补读粒度、防爆与 `lit_records.py` 工具链**——补读提示词与 `lit-notes` 技能明确「初轮仅速读的研究论文补全文后只更新 `skim.md`/`extraction.md`/`index.json`，不强建单篇八段笔记」、明确 `SI_ONLY` 口径与 >5 篇分批（每批 4–5 篇、子 agent 只回 ≤400 字卡片）规范；worktree 统一注入只读 `MESA_PROJECT_ROOT` / `MESA_PAPERS_DIR`（跨平台零符号链接）；`lit_records.py` 支持 `git-common-dir` 自动找项目根并新增 `extract-text`（清控制字符 + SI 检测）、`table`（按 `@bibKey` 精确读写大宽表并自动转义 `|`）与 `validate`（一键只读校验闭环）。
+
+### 2026-11-21 · Mesa 过程文件与台账 git 豁免收口为单一真源 + `.git/info/exclude` + `.ccode/local/`
+
+用户实测点击「补读新到 12 篇」时因 `.ccode/next-actions.json` 前后端口径不一致触发「没有需要提交的改动」，追问此类问题能否根治，拍板落地四步根因收口：① **单一真源**——抽出 `src/mesa-git-exemptions.json`（分 `workspaceTransient` / `ledgerAnyState` / `ledgerUntrackedOnly` / `gitExcludeLines`），Rust 编译期 `include_str!`（`src-tauri/src/git_exemptions.rs`）、前端 `src/git-status-groups.ts` 直接 `import`，`git_info`、`workspaces`、`review_contract`、`projects` 与前端全部从同一份派生，消灭 7 处手抄名单；② **统一同步 `.git/info/exclude`**——`git_exemptions::sync_git_exclude` 在开步/同步/落盘时批量写入仓库共享 `<git_common_dir>/info/exclude`，主仓与所有已存在 worktree 立即生效且不脏 `.gitignore`；③ **新过程文件一律落 `.ccode/local/`**——该目录已预置在单一真源、`.gitignore` 模板与 `.git/info/exclude` 中，以后新增运行期/界面过程文件无需再改 git 豁免规则（老路径留在清单里兼容）；④ **提交前检查容错**——`commitLeftovers` 收到后端「没有需要提交的改动」时按工作树已干净放行，不打断并入主流程。
+
+### 2026-11-21 · 步进器「已完成」改称「已保存」，已保存步骤的收尾建议卡默认收成一行
+
+用户在检索步（已合并保存进项目）的截图上反馈：上方步进器写着「已完成」，下方收尾卡片却还在列「下一步建议」，语义打架。拍板：① 流程步进器与步骤状态文案的 `done` 统一改称 **已保存**（表示本步产物已评审保存进项目，后续仍可补 PDF、退回补料或跟进更新，不再暗示彻底封口）；② 已保存步骤（`runStatus === "done"`）上的收尾导航卡默认收起成一行（左侧温和 **已保存** 徽标 + 过去时摘要、右侧主行动按钮与 **展开 N 项可选**），待评审态才默认展开，且已保存态兜底文案一律切换过去时（不再出现「可直接评审保存」「可先评审」）。
+
+### 2026-11-21 · 多官方账号、用量卡多号展示筛选与满额无缝换号接力
+
+用户询问用量页各家显示卡能否绑定不同账号，以及不同会话能否分别用不同官方账号并在额度用完时无缝换号继续，拍板完整落地设计方案（`docs/design-multi-official-accounts.md`）并扩展到全部可隔离的 CLI。取舍与规则：① **账号归连接页统一管理，用量卡映射展示**——放开 6 家原生目录隔离 Agent（Claude Code `CLAUDE_CONFIG_DIR`、Codex `CODEX_HOME`、Grok Build `GROK_HOME`、Kimi Code `KIMI_CODE_HOME` + `KIMI_SHARE_DIR`、Gemini CLI `GEMINI_CLI_HOME`、CodeBuddy `CODEBUDDY_CONFIG_DIR`）与 Antigravity CLI 多条 `BindingKind::Official`（`OfficialAccountRef` 区分本机 `Default`、隔离目录 `IsolatedDir` 与托管快照 `ManagedSnapshot`），老数据零迁移；Qwen OAuth 已停用、Cursor 写死 `~/.cursor`、OpenCode 无官方账号，均不开放多余官方多号入口；② **按 CLI 底层真实机制隔离**——6 家目录隔离 Agent 原生支持多会话真并发，均坚持凭据绝对只读不回写，同步扩展 `SessionRoots` 扫描与删除白名单、Codex 重置卡按行 ID 定向消费，并补齐 Grok Build（SuperGrok）与 Kimi Code 官方 OAuth 订阅额度卡（均只读不刷新）；Antigravity CLI 因写死全局单条系统钥匙串，不支持多官方号并发，改为 `0600` 本地凭证快照库（`official-accounts/agy-accounts.json`）+ 切号前必收回 + 副本刷新直查 `daily-cloudcode-pa`（仍只映射自家 Gemini 桶）+ 进程内单活并发防串号护栏（详见 `safety.md` 当日例外条）；③ **跨官方号无缝续聊统一走接力简报**——`relay_prepare` 增加显式 `allow_same_agent` 支持同厂跨官方号接力，避免跨目录或跨账号强接原 session 触发上游 400/403，对话内检测限额报错或用量卡 100% 时给出轻提示条，一键换同厂未满号重发上一句或挂接力待发；④ **用量卡维持收起态简洁滑动**，展开态在多账号时新增轻量本机筛选与排序偏好。细则 `docs/conventions/profiles.md`、`docs/conventions/safety.md`、`docs/design-multi-official-accounts.md`。
+
 ### 2026-11-20 · 上下文圆环悬停只写比例与用量
 
 用户在四个方向里选了「只留占用比例和用量」。定下：悬停只两行；对话累计 token、经哪条连接、首轮说明、Codex 存图提醒都只在点开的上下文卡里；卡底说明一律短句（用户：这类说明保持简洁），累计与连接并一行，连接名等于 Agent 名时不写；卡正文 text-sm、卡底 text-micro（Mac 上 xs 与 micro 只差半像素，正文不升一档看不出小）；卡底左累计与连接、右压缩钮，说明整行在下；「离自动压缩还有」与「剩余」同数，不再写。细则 design-system.md「输入框三芯片」第三版段。
+
+### 2026-11-20 · 评审验收后「给下一步留备注」去掉 AI 起草，改纯手写一步直达
+
+用户评审完验收后反馈「带到下一步」展开区文案偏内部机制、动线断裂，并拍板去掉此处的 **AI 起草**。
+理由：`ai_distill_review` 只读截断产物和审阅意见，拿不到人机对话里真正拍板的细节，容易产出空结果或冗余废话；下游本就会直接读取已验收产物，真要借助 AI 规划下一步应去下一步用「跟 AI 商量一下」。
+定下：顶栏改称 **给下一步留备注**（展开态高亮可收起），只留简洁手写框，提供 **保存并去下一步**（`⌘/Ctrl+Enter`）与 **仅保存**；点顶栏 **去下一步** 时若框里有未保存内容，先可靠落盘再跳转（写入失败不静默丢稿）。
 
 ### 2026-11-20 · 模型芯片不挂「CLI 比核对过的新」小点
 
@@ -488,6 +522,15 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 前提已核实：Tauri 2.11 的 IPC 脚本与调用密钥只注入主框架，不带密钥的调用直接丢弃。定下：预览页经专用协议 `mesa-html`
 出自己的 CSP（不透明源沙箱、禁 fetch 联网、只放内联与 https 静态资源），HTML 预览消毒器撤掉；主窗口 `frame-src` 只放该协议；
 以后不得给任何脚本开「注入所有框架」。细则 safety.md「本地 HTML 预览」。
+
+### 2026-11-20 · 期刊指标表：拿来就用（后台自动同步 + 跨年自适应 + 多镜像）
+
+用户明确要求期刊影响因子/分区指标表做到「拿来就用」，不要求用户自己注册第三方 API Key 或手工导表。
+定下：继续坚持受版权保护的 JCR / 中科院分区 CSV **不随安装包分发**，但解除 `JCR2025` / `FQBJCR2025` 年份硬编码，
+改为启动后后台静默下载与每 14 天按需自动更新（与 `model_registry::spawn_auto_refresh` 同口径），远端按可选指针
+`sources.json` → jsDelivr 文件列表 API → Gitee / GitHub Contents API 自动发现最新年份文件，下载走多镜像
+（jsDelivr / Fastly / Gitee / GitHub raw）并挂载出网代理、落盘前校验有效期刊数，完成后广播 `journal-metrics-updated`
+自动刷新前端徽章；同时补本地 CSV 导入命令作断网/自备表兜底。细则见 `docs/conventions/pipeline.md`「期刊指标徽章」。
 
 ### 2026-11-19 · 双语对照：打开文献就在后台翻全文
 

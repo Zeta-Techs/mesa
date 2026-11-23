@@ -11,8 +11,7 @@
 - **权限诚实性（2026-09-08）**：新建与恢复都执行 discuss 参数约束；无只读/计划模式参数的 Agent 拒绝 discuss，不仅靠提示词。不把 CLI 计划模式称作 OS 级沙箱。定时任务显式连接失效时停下报错，不在无人确认时更换供应商；无头缺密钥拒绝启动。
 - **本机原生权限档（2026-10-17；同日收成四档）**：聊天权限菜单的「请求批准 ask / 帮我批准 auto / 完全访问 full」只经 `pty_spawn.permissionMode` 加在本次命令行
   （`agent_specs.permission_args`，`agents::permission_launch_args`），不写任何 CLI 配置；这家没有该档 → 拒绝启动、不静默退回本机默认。
-  Run 的权限政策仍只有 discuss / write_tree。运行中换权限一律「停下再按原会话恢复」，不在进程里偷切；确认框必须写明会重开。**完全访问必须二次确认**（confirmDialog danger），且不进标签持久化白名单——重启后
-  恢复的标签不得自动带着完全访问再起。Claude Code 的 `/model`、`/effort` 会自己写 `~/.claude/settings.json` 的 model / effortLevel
+  Run 的权限政策仍只有 discuss / write_tree。运行中换权限一律「停下再按原会话恢复」，不在进程里偷切；确认框必须写明会重开。**完全访问必须二次确认**（confirmDialog danger），且不进标签持久化白名单；**2026-11-23 用户拍板**：若用户在聊天中已为该连接亲手记住完全访问（`rememberedFullAccess`），应用重启后恢复出的**普通聊天标签**（`chatPermissionMemoryApplies`，不含步骤/阅读/商量）也跟着恢复完全访问，在该连接上换回其他档位即停止带上。Claude Code 的 `/model`、`/effort` 会自己写 `~/.claude/settings.json` 的 model / effortLevel
   （CLI 行为，非 Mesa 写入）：聊天芯片弹层必须明说，不得暗中替用户改回。本机设置探查（`cli_permission.rs`）只报**实际生效**的：
   Mesa 启动 Codex 一律带 `-s workspace-write`，本机 `sandbox_mode` 被盖掉，不得据它报「完全访问」（只看 `approval_policy`）。
   **沉浸阅读会话固定请求批准（2026-10-18）**：阅读区自动开的会话带 `permissionMode: "ask"`（这家没有 ask 档才按本机设置，
@@ -72,8 +71,8 @@
   `auth.json`（若 `auth.json` 因第三方直连切换被 `cc-switch` 移走，则只读回落 `~/.cc-switch/codex-login-stash.json` 的 `logins[last]`；真登出时 `last` 为空不复活）取登录令牌，只拿去问官方用量接口（api.anthropic.com/api/oauth/usage、chatgpt.com/backend-api/wham/usage）；Antigravity CLI 先探
   `~/.gemini/antigravity-cli/antigravity-oauth-token` 是否在盘（不读令牌内容、不触发钥匙串），在盘时以净空 `GEMINI_API_KEY` / `GOOGLE_GEMINI_BASE_URL` +
   `official_outbound_env` 调 `agy --print /usage --output-format json` 取自家 Gemini 额度窗口（0 token、不建会话，过滤掉 `3p-*` 第三方模型桶）。
-  **只读、绝不刷新、绝不回写**（刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；Claude Code 因 `invalid_grant` 把 `claudeAiOauth` 令牌清空但保留登录痕迹时，保留官方行并文字提示到连接页重登而非静默隐藏；令牌不进 DTO / 日志 / 诊断包；
-  钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）同用卡纪律：显式命令 + 前端确认，
+  **Claude Code / Codex 严格只读、绝不刷新、绝不回写**（含隔离目录多官方账号，刷新会轮换令牌＝改 CLI 登录存储），过期只提示用户用一次 CLI；Claude Code 因 `invalid_grant` 把 `claudeAiOauth` 令牌清空但保留登录痕迹时，保留官方行并文字提示到连接页重登而非静默隐藏；**Antigravity 多号托管例外（2026-11-21 拍板，docs/design-multi-official-accounts.md）**：仅针对用户主动收录的 `agy` 托管官方账号，允许保存 `0600` 本地快照 `official-accounts/agy-accounts.json`（不进导出与诊断包），在用户触发切号时经 `security -i` 写回系统钥匙串（写入前必收回当前钥匙串防丢号，且经单活护栏拦下运行中的异号 `agy` 会话），查非激活号余量时仅在本地副本刷新 Google access token、不回写钥匙串；令牌不进 DTO / 日志 / 诊断包；
+  钥匙串经 `/usr/bin/security` 带 3 秒超时读，在阻塞线程上跑。Codex 重置卡消费（`use_codex_reset_card`）按行 ID 定向到对应账号的 `CODEX_HOME`，同用卡纪律：显式命令 + 前端确认，
   先重查「此刻能用几张」，为 0 不发请求；`redeem_request_id` 每次新生成，不自动重试。
 - **授权范围（2026-11-08，grant.rs；设计 docs/design-autonomy-roadmap.md §4）**：定时任务按授权跑，不再一律全权限（取代 2026-11-01 定时任务 Claude 加
   `bypassPermissions` 的做法——当时 acceptEdits 跑不了 curl，现在由沙箱解决）。`plan_for` 是各家「能落实到哪」的唯一出处，界面预览（`grant_preview`）与真正启动同源。

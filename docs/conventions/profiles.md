@@ -91,7 +91,7 @@ Binding
 
 **自拼版本段的槽位地址归一（2026-10-19 定）**：gemini CLI 对 `GOOGLE_GEMINI_BASE_URL` 无条件追加 `/v1beta/models/<模型>:…`、Claude Code 对 `ANTHROPIC_BASE_URL` 自拼 `/v1/messages`（当日本机探针实测：base 带 `/v1` 分别拼出 `/v1/v1beta/…`、`/v1/v1/messages?beta=true`，中转 404，gemini 报「Model … not found or is invalid」）。用户把 OpenAI 风格 `/v1` 地址填进这两槽是常态——网关保存把主地址折进全部槽，同址网关必然如此。所以 `gateway_store::materialize` 对 **gemini / claude-code** 绑定剥掉槽位末尾版本段（`models::strip_trailing_version_segment`），启动注入 / 设为全局 / 验证拉目录拿到的都是 CLI 真正要的 base；gemini 拉目录候选链（`models::model_list_candidates`）同口径。**仅限已实证的两家**——qwen / kimi 的 anthropic 协议通道未实证自拼行为，不剥，等实测后再收；openai 系（codex / grok / opencode / qwen / kimi 的 openai 协议）版本段是约定的一部分，原样保留。
 
-显示名：绑定无独立名字，列表用网关名（一对一）。官方绑定固定叫「官方账号」。
+显示名：绑定无独立名字时列表回退网关名（一对一）。默认官方绑定缺省叫「官方账号」；Claude Code / Codex / Antigravity 支持多条官方账号绑定（`official_ref` 区分 `Default` / `IsolatedDir` / `ManagedSnapshot`，2026-11-21，设计稿 `docs/design-multi-official-accounts.md`），每条可自定义备注名；隔离目录官方号仅在 Mesa 进程内生效，不写入外部 CLI 全局默认。
 
 「复制到其他 agent」改为：**把该网关绑到目标 Agent**。缺槽当场补 URL，不复制密钥。
 

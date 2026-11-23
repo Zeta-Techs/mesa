@@ -1441,16 +1441,23 @@ agent 之前，未交代来源时它就是当前节点。**通则：凡是开工
     判定），纯派生不建状态机；「开读」有已下载 PDF 走 previewReq 预览，没有则主按钮变「↓ 全文」先下载。
   - **期刊指标徽章（journal_metrics.rs）**：条目徽章（IF / 中科院大类分区 / TOP）在 `list_watch_entries` 出口按
     期刊名（journal 优先、source 回落）查表 enrichment，**展示时现算、不落 inbox.md**——技能规范与收件箱格式不变，
-    旧条目装表后同样生效。指标表 = 用户本机 `config_dir/ccode/journal-metrics/` 下两份 CSV（JCR2025-UTF8.csv +
-    FQBJCR2025-UTF8.csv，来源 github.com/hitfyd/ShowJCR，版权数据**只支持用户本机下载/放置，绝不内置分发**；
-    下载命令 jsDelivr 优先、raw 回落，.tmp 原子落盘后清进程内缓存）。匹配 = normalize_title 规范化精确匹配 +
-    末尾出版商括号尾巴剥除重试（来源常写成「Advanced Functional Materials (Wiley)」，前端 sourceDisplayName 同口径），
-    miss / 未装表一律 None 不虚构；合并表 HashMap 进程内 RwLock 缓存（7MB 不能每次 list 重解析）。
+    旧条目装表后同样生效。指标表 = 用户本机 `config_dir/ccode/journal-metrics/` 下的 JCR 与中科院分区 CSV
+    （默认来源社区开源项目 `hitfyd/ShowJCR`，版权数据**绝不随安装包内置分发**，支持本机 `sources.json` /
+    `MESA_JOURNAL_MANIFEST_URL` 指针覆盖及 `import_journal_metrics_csv` 本地导入兜底）。**2026-11-20 拍板升级为
+    「拿来就用」**：不再硬编码 `2025` 年份文件名，本地按目录自动选最新年份 `JCR{YYYY}*.csv` / `FQBJCR{YYYY}*.csv`
+    （兼表头嗅探自定义 CSV、剥 UTF-8 BOM）；远端按 `sources.json` → jsDelivr 文件列表 API（无 60次/h 限流）→
+    Gitee Contents API → GitHub Contents API 动态发现最新年份，下载走 jsDelivr / Fastly / Gitee / GitHub raw 多镜像并
+    挂载 `settings.outbound_proxy`，落盘前必须校验有效期刊条数（防错误页污染），成功落盘后清理旧年份托管文件并广播
+    `journal-metrics-updated` 事件。匹配 = normalize_title 规范化精确匹配 + 末尾出版商括号尾巴剥除重试（来源常写成
+    「Advanced Functional Materials (Wiley)」，前端 sourceDisplayName 同口径），miss / 未装表一律 None 不虚构；
+    合并表 HashMap 进程内 RwLock 缓存。
     **条目行版式（2026-10-03；行尾按钮 2026-10-13 随双台账改名）**：固定两行。第一行只有标题（截断；点开才换行）。第二行左侧是中文一句话 · 期刊，右侧依次是推荐/IF/分区/TOP、巡检相对时间、加入积累。解读、打开来源、⋯ 在第二行悬停或展开才出现。英文摘要与解读只在点开后出现。
     不在标题行插操作（2026-10-03 实测：悬停图标插进标题和徽章之间，把两行摘要行高撑乱）。禁止每条常驻铺英文摘要；也禁止标题被期刊名+徽章压成窄列（2026-08-25 否决仍有效）。
-    **更新发现（v3.99+）**：status 带 downloadedAt（两份 CSV 取较新 mtime，不另记 meta）；check_journal_metrics_update
-    用 GitHub commits API 按数据目录查最近 commit，与本地 mtime 严比（解析失败/未装表 = 无新版，不虚构提醒），
-    前端卡头按钮有新版时标「（有新表）」、tooltip 显示下载于何时——只提示不自动下载，下载动作恒由用户发起。
+    **后台自动同步与更新发现（2026-11-20 修订）**：与 `model_registry::spawn_auto_refresh` 同口径，启动延迟 3 秒后台检查——
+    未装表自动静默下载，已装表距上次检查超 14 天才轻查一次，确认有新年度表或上游更新时静默拉新并广播
+    `journal-metrics-updated`（前端雷达、检索清单、付费墙列表自动刷新徽章）；页面常规调用 `check_journal_metrics_update`
+    自带 24 小时 `sync-meta.json` 冷却避免限流；下载用单飞原子锁防并发，`status` 暴露 `jcrYear` / `fqbYear` / `downloading`，
+    卡头与检索清单照旧保留手动刷新入口。
   - **雷达筛选（2026-08-25 立，2026-10-13 语义修订，project.toml `litWatchFilter`）**：三条可选条件（minIf / maxCasQuartile / topOnly，
     全空归一 None 不留空段），update_lit_watch_filter 读-改-原子写；**两处生效、同一口径**——新命中列表展示
     （前端 entryPassesFilter）与定时巡检 newEntries 计数（scheduler 前后各数一次过滤后条目取差，收件箱胶囊/通知

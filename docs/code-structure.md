@@ -115,9 +115,10 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
 components/SessionImportModal.tsx  # 会话导入向导弹层（SessionsPage 唯一挂载）：选 .ccode-sessions.zip → import_sessions_inspect 预览（逐条目标目录预填、按注册项目认 cwd、可逐条 EntryDecision）→ import_sessions_apply；Codex 内联 provider 会话顺带写客户端 provider 定义块（有密钥的绑定预选）；状态文案在 session-transfer.ts
                              #   展开为动作行（点行看差异 / 命令输出 / 思考），异常可直达输出；引用追问保留来源，搜索展开过程并钉住虚拟窗口；working 由聊天层传（进行中不收起）；
                              #   AI 回复不截断、用户长消息 UserText 量行收起；字号走聊天阶梯类（design-system「聊天正文排版」）
-  components/ChatMarkdown.tsx # AI 回复 Markdown（独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
+  components/ChatMarkdown.tsx # AI 回复 Markdown（共用 chat-markdown-html 的独立 Marked 实例、原始 HTML 转义）：长回复分节小标题按级别排、ChatCodeBlock（用户气泡里的
                              #   围栏代码同一套）、上屏后 useChatDecorations 跑表格壳 / 代码高亮 / 公式 / 引用胶囊 / 文件链接，音频播放条、视频卡（ChatVideoCard：同 MediaPreview 经 grant_media_url 放行后 asset 流式播放，读不到不出卡）、图片卡
                              #   （图片卡点击：聊天层经 ChatImageEditContext 进输入框标注台接着改；只读视图有工作目录走右栏预览，随手聊弹 ChatImageViewer）
+  components/ChatLivePreview.tsx # 聊天流式预览渲染：StreamingMarkdown（结构化旁路 Codex / Qwen / OpenCode 原始 Markdown 分块冻结 + 末尾未闭合语法补全 + 行内 MesaCaret）与 LiveScreenPreview（读屏来源按 xterm 单元格还原标题 / 粗体 / 斜体 / 行内代码 / 代码块 / 等宽表格，按 useRevealedText 字符数精准裁切；tests/chat-live-preview-ui.test.ts）
   components/MergeConflictView.tsx # 保存撞车的对比合并：Monaco diff 左磁盘只读、右我的可改，保存右边以磁盘版本为基线，再撞车刷新左边
 components/HistoryOverlay.tsx  # 「保存历史」全宽只读覆盖层（ProjectGroup）：project_history 的 first-parent 主线 git log 翻成白话时间线（翻译层 history-view.ts），merge commit 的「保存进项目」按工作区名换步骤名；工作区分支过程提交不单列、成果经「✓ 保存进项目」体现；Esc 关，缺 Git 就地 GitInstallOffer 装好重读
   components/SlidesPreview.tsx # PowerPoint 逐页大纲（标题 / 要点 / 第一张图 / 备注 / 首页缩略图）+ 看原样（PDF）
@@ -190,6 +191,7 @@ types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文�
 components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（SettingsPage 唯一挂载）：active_background_runs 2 秒轮询列 Mesa 替你跑的无头 Agent（定时任务、起名摘要等），run_cancel 停单条——给无头任务一个人能停的出口，不用干等超时（tests/background-tasks-panel.test.ts）
   components/ChatBetaBadge.tsx # 聊天层「测试版」说明（useChatBeta + ChatBetaNotes）：2026-10-23 起在模型菜单底部一行的二级页，说这一家的档与要回终端的事，CLI 比核对过的新时菜单里那一行带点并提醒（芯片上不挂点）
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
+  components/InboxPopover.tsx # 顶栏「待处理」胶囊（macOS / Windows）与页内条（Linux）共用的收件箱下拉列表：统一 ccode-menu-surface 菜单材质、粘性表头与带字「已读 N 条通知」、两行可读不强截断、整行点击、紧迫/通知分层、悬停 Lucide 忽略钮、↑/↓/Home/End 键盘导航，含开发版预览开关
   components/ThirdPartyNotices.tsx # 「开源许可与致谢」内容区（帮助→关于、设置→关于共用）：致谢与数据来源（Markdown 阅读版式，许可全文收进 details，链接交系统浏览器）/ 组件许可（可搜索）两页签；清单读一次进程内缓存
   third-party-notices.ts     # 随包许可清单解析纯逻辑：依赖表拆组拆行（跳过代码块里的 ##、丢弃文件头生成说明）+ 按名字/许可搜索（tests/third-party-notices.test.ts 含真文件格式守卫）
   components/MesaMark.tsx    # Mesa 光标标志的字标版（去底板，M 跟文字色、光标品牌琥珀 + 深色底余辉，viewBox 裁到图形、底边即基线）；聊天空态问候在用。
@@ -288,6 +290,7 @@ components/TemplateUpgradePanel.tsx # 研究流程编辑器里的「内置模板
   components/PendingConfirmList.tsx # 检索步文献清单：待确认纳入/排除、已纳入移出、已排除恢复；行上现查 IF/分区/TOP；
                              #   综述回路三期：清单里有人标过类型时，作者行后加类型小标签（点一下综述→研究论文→其他），只改 included.json 的 kind（patchIncludedKind）
 components/ScreeningReviewPanel.tsx  # 检索步评审面板（WorkspaceReviewView 检索步）：included.json 计数与清单、待获取计数、检索日志摘录（screening-review.ts），pane=list/process 两栏；待确认清空经 onPendingCleared 供步骤卡自动勾「核对待确认篇目」（tests/screening-review-ui.test.ts）
+components/ReviewNotesSidebar.tsx  # 评审页右侧「批注与验改」栏（WorkspaceReviewView）：二审/三审展示上一轮逐条验改清单（已核勾选、直跳改动 Diff、未改好一键退回），本轮批注支持结构化卡片清单与纯文本切换、行内编辑/删除、点击跳回原文，底部凸显「换一家模型干净改」
                              #   指标表状态与排序跟在「纳入所选 / 排除所选」右侧，没有待确认时单独靠右
   components/ProjectFilesView.tsx # 项目面「文件」页：左目录树右预览（v3.231 三态合一）。watch_dir/fs-changed 自动跟上
 components/FileKindFilters.tsx  # 文件页类型筛选胶囊（ProjectFilesView 唯一消费者）：全/文档/表格/幻灯/PDF/图片/其他带计数（OFFICE_FILTERS 在 work-mode.ts），「最近修改」是与类型筛选互斥的单选；只写字不画图标（2026-10-26 用户拍板：类型图标行与页面图标同形、一排里图标和字混着认不准）
@@ -373,8 +376,8 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/ReworkOrderCard.tsx # 项目助手起草的补料单卡片（2026-11-06 流程贯通 §4）：退回到 / 因为 / 要补 / 为什么 / 线索 / 规模，「看一看，退回去补…」打开步骤卡同一个 ReworkDialog（initial 预填），
                              #   发走 step-round.ts sendReworkRound，发过记 dispatched（mode=resume）并每 10 秒看进度；退回大纲 / 初稿叫修改单
   components/WorkOrderCard.tsx # 项目助手起草的派活单卡片：交给谁 / 标题 / 要做 / 怎样算做完，v2 可省栏（依据材料、交付物、假设、要停下来问的、按任务、技能）有才显示，可「改一改」（依据材料一行一个，存回走 parseOrderPaths），「派出去」交页面执行；派过显示结果、不再派
-  components/MesaBuddy.tsx   # 项目助手的卡通形象「小桌」（活过来的小工作台，原创）：2026-11-09 起是逐帧精灵图（assets/buddy/xiaozhuo.webp，出图模型孵、scripts/buddy-sprite/ 可重孵），
-                             # 按 buddy-sprite.ts 的帧时长换背景位置；motion 三档 lively（面板）/ calm（桌宠安静档：放一遍停 calmHold、隔 35–50 秒再动）/ still（Mesa 在前台）；挥手 / 蹦放完回站着，出错停最后一帧；站着时点大图蹦一下；≤40px 头像裁掉四周空白、整个人都在；减弱动态效果时停第一帧；只给项目助手面板用
+  components/MesaBuddy.tsx   # 项目助手与桌宠的双纯矢量形象（2026-11-20 替换旧贴纸 xiaozhuo.webp）：cat（默认，13×10 极简双色像素黑猫）与 monolith（无底座 OLED 精工仪，干活态仅底槽单轨扫描），
+                             # 随 settings.buddyStyle（或外部显式 prop）切换；motion 三档 lively / calm / still，支持点击互动与减弱动态效果；项目助手面板与独立桌宠窗共用
   pet/PetApp.tsx             # 桌宠小窗（pet/index.html 入口 pet/main.tsx + pet/pet.css，desk_pet.rs 建窗）：小桌 + 琥珀角标 + 冒一句 + 「要你看一眼」小卡片 + 右键系统菜单；
                              # 清单收主窗口的 desk-pet:feed，点的事发 desk-pet:act 回主窗口办，「去看看」走 desk_pet_open；平时窗口只有小桌大，展开时往屏幕里侧长、小桌不动；
                              # 小桌的「家」只在第一次与拖完时记（收起面板时读位置会读到展开窗口的左上角）；卡片底部问项目助手；约 150ms 取鼠标位置（desk_pet_cursor）朝它倾身；
@@ -571,6 +574,7 @@ project-sessions-layout.ts # 项目页右侧「这个项目的对话」栏：开
   draft-review.ts            # 写作步评审机械红线（摘要待核实/G编号/待绘制/叠号）、划选批注追加（含图的标注图路径）与退回提示词
   review-marks.ts            # 审阅「已加过意见的段落」高亮（2026-11-13）：意见栏引文（reviewNoteQuotes 解析）→ 正文 Range 反查（空白折叠、跨块补空格），CSS 自定义高亮标出、不改正文 DOM（tests/review-marks.test.ts）
   review-notes.ts            # 评审退回意见的本机存放（按工作副本）；研讨页「加进退回意见」追加后发事件让开着的评审页读回
+  review-checklist.ts        # 评审退回意见的结构化解析（划字/框图/机检/手动批注）、行内修改/删除与上一轮逐条验改勾选持久化（tests/review-checklist.test.ts）
   manuscript-files.ts        # 正文 vs 写作配套文件（2026-11-11）：MANUSCRIPT_HELPER_NAMES（与 mesa_checks.py / cite_check.py 同一份，fixture manuscript-helpers.json 比对）、isManuscriptHelper / isManuscriptBody、manuscriptSourcePath（按主稿名挑，不按顺序；没有正文退回 outline.md）
   md-path.ts                 # 阅读版式覆盖的 md 族（md/markdown/mdx/qmd）与 html 判定
   md-toc.ts                  # md 浮动目录：≥3 标题才出、slug/展开 details
@@ -600,6 +604,7 @@ document-html.ts           # DOMPurify 文档清洗：sanitizeDocumentHtml（md 
                              # 「＋ 话题」占位按当前步骤给例子（ideaTopicPlaceholder，综述大纲不写对照实验）
                              # （tests/task-cards.test.ts）
   step-flow.ts               # 步骤内协同流程线纯逻辑：种子→before→agent→during→after→评审节点链
+  step-next-actions.ts       # 步骤收尾「下一步建议」导航卡纯逻辑（.ccode/next-actions.json 解析、主线动作随状态切换、优先补全文匹配）
 citation-style-choice.ts   # 流程线「更换引用样式」纯逻辑（StepFlow 唯一消费）：样式族闭集（编号方括号/编号上标/作者-年）与各形 ask 文案、按期刊重排指令（先读作者须知再对照 references.bib 里该刊近作，不一致停下来问不猜）、styleFamilyOf 按 csl 判定核对换的样式落没落、target-journal.md 读写与「沿用已定」唯一来源 parseTargetJournal、topJournals、citationCarryAsk 定稿开工问一次；旧任务名「填写引用样式」照认（isCitationStyleTask，step-node-actions 也用）。格式只在定稿步定，起草步固定编号制（tests/citation-style-choice.test.ts）
 step-node-actions.ts       # 步骤节点行的动作选择纯逻辑（StepFlow 消费；从组件里 190 行 switch 抽出——「给不给入口」是行为不是版式，改错用户只看到按钮消失不报错，付费墙/EndNote 入口都这么坏过）：stepNodeAction 按节点 kind 走有序判据——去笔记夹、资料库同步刻意排在就绪门之前（未就绪按钮在但灰着占位，普通 after 事项未就绪干脆不出现，重排会抹掉这层语义）；stepNodeReady/stepNodeWaiting 同一就绪口径三处共用（给入口/压暗/说明文字），分叉会出现压暗行里躺着可点按钮；文献类交付（落点 papers/）统一引到「文献与数据」按来源高亮进料口；行内点选与域稿不交文件、AI 写好人来填的给「打开/交给 AI」（2026-10-24）（tests/step-node-actions.test.ts）
                              # （v3.97 起 after 档一律进主干，可选项带徽标但不抢当前节点；
@@ -667,7 +672,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   desk-pet.ts                # 桌宠报信纯逻辑：等你的事 / 现在的情况 → 桌宠条目（键、能点什么、去看看去哪）、新来的比对、冒哪一句、反应与样子先后；
                              # 第二期：petSpeaksInstead（桌宠开着时等确认 / 人工请求不另弹系统通知，勿扰键主窗口与小窗共用）、petLean 朝鼠标倾身、defaultAskProject、deskOnlyNotes（tests/desk-pet.test.ts）
   desk-pet-host.ts           # 桌宠的主窗口一侧（ProjectAssistantHost 挂）：每 20 秒跨项目（最多 8 个）拼清单发给小窗，按「等你的事」原路办小窗点的事，收 desk-pet:open 跳过去；问小桌（desk-pet:ask）交给那个项目的项目助手，边想边回 ask-progress，答完 ask-done
-  buddy-sprite.ts            # 小桌精灵图的行表：姿势 + 道具 → 第几行、每帧时长、放几遍、放完回站着还是停住、安静档停哪帧（calmHold）；buddyClip 头像位取半身（tests/buddy-sprite.test.ts 核对图尺寸）
+  buddy-sprite.ts            # 项目助手与桌宠形象纯数据：BuddyStyle（cat / monolith，默认 cat）、13×10 桌角黑猫 9 态逐帧矩阵（左走由右走镜像生成）与帧时序/安静档停帧规则（tests/buddy-sprite.test.ts）
   buddy-time.ts              # 小桌跟着时间换样子：buddyDayPart（早上 6–11 / 白天 / 傍晚 18–22 / 夜深 22–6）、buddyMood（大图姿势、头像姿势、桌上道具、开场白）（tests/buddy-time.test.ts）
   project-blockers.ts        # 工作台卡点一行：出错的步骤 / 失败目标 / Mesa 近一天出错 / 等你拍板，按这个顺序（tests/project-blockers.test.ts）
   run-failure.ts             # 运行出错白话：runFailureReason（退出码白话 + 关闭原因）、latestRunFailure（某目录最近一次运行出错才算；「应用上次异常退出」不算这一步的）（tests/run-failure.test.ts）
@@ -734,7 +739,8 @@ __conv-harness.tsx         # 本地截图 harness（非产品代码，.gitignore
                              #   注意：通知插件桌面端无动作按钮/正文点击回调（App.tsx registerActionTypes/onAction 仅移动端生效，
                              #   2026-09-15 核对插件源码）——桌面点通知只激活窗口，「待确认」跳转由 App.tsx 窗口获焦时的
                              #   右下角提醒条补位（点「去处理」直达终端标签，按待确认集合去重）
-  git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；userDirtyFiles（剔台账，评审提交面板用）/
+  mesa-git-exemptions.json   # Mesa 不进 git 的过程文件与台账路径单一真源（workspaceTransient/ledgerAnyState/ledgerUntrackedOnly/gitExcludeLines），前后端共用（Rust include_str!、前端直接 import）；新过程文件统一放 .ccode/local/
+  git-status-groups.ts       # 改动列表状态分组/白话双层纯逻辑（含冲突 unmerged 组）；isWorkspaceTransientPath/commitWorthyFiles/userDirtyFiles（全部读自 mesa-git-exemptions.json）/
 path-utils.ts              # 前端路径方言层（AGENTS「路径比较」条的前端口径，与后端 paths.rs path_key/path_within 同规则）：normSep/stripVerbatim（存量库里仍有 \\?\ verbatim 记录，显示与比较前都要过一道）/pathKey（Windows 折叠大小写，只用于比较不回写）/samePath/pathWithin（段边界含根自身）、normalizeStatusKeys＋hasChangedInside（git 装饰表键归一与文件夹变更点）、parentDir（Windows 盘符根保留）、abbrevHome（~ 折叠显示）、relativeUnder（写进 agent 指令的正斜杠相对路径）、revealFolderLabel 平台叫法；isWindows/isMac 显式传参禁模块内读平台（跨页广泛消费；tests/path-utils.test.ts）
                              #   userWorkDirtyFiles（再剔 Mesa 自有档案 .ccode/·.gitignore，项目页提醒与开工弹层用）
                              #   userDirtyFiles 与后端 is_untracked_ledger_file 共读 tests/fixtures/ledger-exemptions.json（两边不一致 = 评审顶上与提交面板说法打架）
@@ -925,8 +931,10 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   route-watch.ts             # 线路体检副作用层：useRouteWatch（App 挂载，官方会话在跑时 5 分钟复查、写 store.routeAlerts）、findRouteFix / applyRouteFix（换代理或打开代理软件后重测）
   conn-issue.ts              # 认终端画面里的连接错误（额度 / 限流 / 钥匙 / 服务 / 网络不通 / 模型）：七家实录形态的 detectConnIssues、按次数判新错误的 newestConnIssue、给人看的 connIssueText
   terminal-quote.ts          # 终端选中文字交给对话 / 存笔记的排版：quoteForChat（每行「> 」）、askAboutText、clipNoteEntry（notes/clips.md 小节）
-  live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi，第三期抓屏定的）抽出这一轮正在写的段落
-                             # （extractLiveReply）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply，不要求尾巴逐字相同）+ 剔掉会话文件已有的行（unsyncedTail）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho）+ 屏上有没有输入框（terminalHasInputBox）+ Claude 转圈行已生成 token 数（claudeOutputTokens，聊天层「正在回复」后显示）+ Claude 这一轮还在跑（claudeTurnActiveOnScreen，「esc to interrupt」）+ 正在想的那一框（extractLiveThinking，现只有 Grok，去掉竖线与 Thinking 头后在正文出来前显示在实时预览的位置）；
+  chat-markdown-html.ts      # 聊天正文共享 Marked 实例与安全 HTML 转换（renderChatMarkdownHtml：原始 HTML 转义、http(s) 图片占位防外泄、反引号中文短语去代码框、公式扩展），ChatMarkdown 与 ChatLivePreview 共用
+  live-markdown.ts           # 结构化旁路流式 Markdown 纯逻辑（tests/live-markdown.test.ts）：splitStreamingMarkdownBlocks（顶层分块不切围栏/块公式）、completeStreamingMarkdown（末尾未闭合围栏 / 粗体 / 斜体 / 删除线 / 行内代码 / 半截链接图片稳态补全）、unsyncedMarkdownTail
+  live-reply.ts              # 聊天实时预览：按每家画面布局（LAYOUTS：Claude / Codex / Qwen / Gemini / Grok / Kimi / Antigravity，抓屏定的）抽出这一轮正在写的段落
+                             # （extractLiveReply，传入 rowCells 时同步抽出 LiveStyledLine 单元格样式）+ 长回复滚出屏后按屏顶位置接到上一次后面（mergeLiveReply / mergeLiveReplyStyled，不要求尾巴逐字相同）+ 按匀速显示字符上限裁切样式行（sliceStyledLines）+ 剔掉会话文件已有的行（unsyncedTail / unsyncedTailOffset）+ 剔掉开头被读成回复的分段提问回显（dropAskedEcho / dropAskedEchoOffset）+ 屏上有没有输入框（terminalHasInputBox）+ Claude/CodeBuddy 转圈行已生成 token 数（claudeOutputTokens）+ Claude 这一轮还在跑（claudeTurnActiveOnScreen，「esc to interrupt」）+ 正在想的那一框（extractLiveThinking）；
                              # CodeBuddy / OpenCode / Cursor 返回 null。新增一家先抓屏、样本进测试
   menu-key-nav.ts            # 聊天输入框小弹层的键盘操作（useMenuKeyNav：打开聚焦当前项、↑↓/Home/End、关闭还焦点）
 tab-keys.ts                # 标签栏/分段控件键盘导航三件（tabNavDelta 方向键位移、nextTabIndex 环形回卷且无选中从 0 起步、tabStopIndex 游标 tabindex 整排只停一次）：PageFrame SegTabs 与 ProjectSurfaceTabs 共用，调用方只决定「按键即切」还是「按键后等 Enter」
@@ -968,7 +976,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # （claudeFirstRunStep、claudeThemeTarget：Mac 选 Auto，Windows 按主题明暗）；一启动就退出的最后几行与原因（exitTail /
                              # launchFailureHint）；Gemini 存密钥屏 / Cursor 登录屏（specialScreenOf）、Gemini 认证方式被拦（launchBlockOf，GEMINI_AUTH_MARK 与 agents.rs 同字）。卡片画在 ChatDecisionCard ScreenCard，扫屏与替人按键在 TerminalPage（tests/terminal-wait.test.ts，样本 tests/fixtures/terminal-wait/）
   sidebar-chats.ts           # 侧栏项目树挂对话纯逻辑（2026-10-23）：每个文件夹列哪几段（projectChats / scratchChats：按最近活动，
-                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列；精读对话默认不列，项目菜单「显示精读对话」按课题打开：READER_CHATS_SHOWN_KEY / hasReaderChats，2026-11-06；模板对话（stepName 非空）同口径：STEP_CHATS_SHOWN_KEY / hasStepChats，2026-11-13）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
+                             # 归档 / 内部 / 源文件不在的 / 没起名也没说过话的空对话不列；精读对话默认不列，项目菜单「显示精读对话」按课题打开：READER_CHATS_SHOWN_KEY / hasReaderChats，2026-11-06；模板对话（stepName 非空）默认显示，项目菜单「隐藏模板对话 / 显示模板对话」按课题收起或恢复：STEP_CHATS_HIDDEN_KEY / hasStepChats，2026-11-20）、随手聊多少天没动的（staleScratchChats，节头 ⋯ 一键归档）、对话与文件夹的运行状态（chatDot / folderDot / scratchDot：run-caret 三态，文件夹取最要紧的）、
                              # 正在看的标签归哪个文件夹（currentFolderKey，工作树归主仓）、展开默认（folderOpen）、短标题去「MMDD|类型|」、挂在课题下再去开头重复的课题名
                              # （sidebarChatTitle）、各文件夹列几段（chatQuotas / chatSlots：至少 5 段、按侧栏空位补满；expandedExtra：
                              # 「显示更多」在眼下段数上多 10 段）、开着但列表里还没有的标签挂到哪（openTabRows，10-24）、
@@ -1041,6 +1049,10 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   跟手位移 / 滑进 / 弹回直接写 areaRef 的 style（不进 React 状态，免整页每帧重渲染），减弱动态效果时只切不动
   plan-quota.ts              # 订阅余量卡纯逻辑（用量页，与 gateway-balance.ts 并排的第二张卡）：
                              #   供应商显示名/切换标签/窗口名/重置倒计时/重置卡；
+                             #   含本机轻量筛选与排序偏好（QuotaDisplayPrefs / applyQuotaDisplayPrefs / toggleQuotaHidden / moveQuotaOrder，全部隐藏时防呆保留）；
+  official-accounts.ts       # 多官方账号前端纯逻辑（2026-11-21，tests/official-accounts.test.ts）：supportsMultiOfficial（Claude/Codex/Antigravity）、
+                             #   needsRelayOnSameAgentSwitch（跨官方号或跨隔离目录必须走接力简报而非原 session_id 直连）、
+                             #   isQuotaExhaustedError / isPlanRowExhausted / pickAlternateAccountForLimit（满额轻提示条自动推荐同厂剩余最多未满账号）
                              #   **双窗同构**（2026-09-21）：最紧的窗口走大数字 + 通栏粗条，另一窗收成一行
                              #   （名称 + 随行拉长的条 + 百分比贴条尾 + 绝对值 + 倒计时；条与密钥行共用，见 StatsPage SecondaryUsageTrack），
                              #   最紧的窗口排第一（planWindowsByTightness / planPrimaryWindowIndex，并列取靠前者）——
@@ -1678,14 +1690,15 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   标 fromCache；无后台轮询；不注出网代理；
                              #   复用 reqwest Client（连接池，勿退回每请求新建 Client = 每次重新握手）；
                              #   plan_quota_overview 多网关并发（spawn 全部再按序收），等待 ≈ 最慢一家不是相加
-  official_quota.rs          # 订阅余量卡的官方账号行（2026-10-31）：Claude（钥匙串 Claude Code-credentials 先带账户名再不带查，
-                             #   设 CLAUDE_CONFIG_DIR 时服务名加目录 sha256 前 8 位；非 macOS 读 .credentials.json）→ GET api.anthropic.com/api/oauth/usage
-                             #   （five_hour / seven_day）；Codex（{CODEX_HOME}/auth.json tokens.access_token）→ GET chatgpt.com/backend-api/wham/usage
-                             #   （主 / 副窗按 limit_window_seconds 归 5 小时 / 周 / 月）。只读凭证、**绝不刷新回写**，过期提示用一次 CLI；
-                             #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）；参照 .reference/paseo 两个 usage 插件；
-                             #   Codex 重置卡：GET wham/rate-limit-reset-credits 列卡（只数 available 且未过期，先过期的排前）、
-                             #   wham/usage 的 applicable_available_count = 此刻能用几张；use_codex_reset_card 先重查能不能用（0 就不发请求）
-                             #   再 POST …/consume {credit_id, redeem_request_id}；DTO 走 PlanResetCardsDto.general*
+  official_accounts.rs       # 多官方账号管理（2026-11-21，docs/design-multi-official-accounts.md）：OfficialAccountMode（Default / IsolatedDir / ManagedSnapshot）
+                             #   与 OfficialAccountRef；Claude Code（CLAUDE_CONFIG_DIR）与 Codex（CODEX_HOME）独立隔离目录创建/探测/删除与会话根枚举；
+                             #   Antigravity（agy）0600 本地凭证快照库（official-accounts/agy-accounts.json，绝不进导出/诊断包）、macOS security -i 钥匙串切换
+                             #   （切前必收回当前登录防丢号）、非激活副本刷新查余量、以及进程内单活并发护栏（official_agy_check_conflicts / register / unregister）
+  official_quota.rs          # 订阅余量卡的官方账号行（2026-10-31，2026-11-21 升级多官方号并发查询）：Claude（默认 + 全部隔离 CLAUDE_CONFIG_DIR）、
+                             #   Codex（默认 + 全部隔离 CODEX_HOME，重置卡 use_codex_reset_card 按行 ID 定向消费对应目录 auth.json）、
+                             #   Antigravity（默认走 `agy --print /usage`，收录托管多号时走 daily-cloudcode-pa 仅映射自家 Gemini 桶过滤 3p-*）；
+                             #   Claude/Codex 严格只读凭证绝不刷新回写；Antigravity 非激活副本仅在本地副本刷新 access_token 不回写钥匙串；
+                             #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）
   gateway_balance.rs         # 网关余额查询（用量页「网关余额」卡，与订阅余量并列，2026-09-20）：
                              #   New API 兼容预付钱包，出卡零配置（槽 URL 主机命中 zetatechs.com 即出；加站点 = WALLET_HOSTS 加一条）；
                              #   公开 GET {origin}/api/status 取 quota_display_type / quota_per_unit；
@@ -2079,6 +2092,7 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # （skipped.json 按 SHA-256 记，归档守卫对勾掉的同一版放行，见 pipeline.md）
   portwatch.rs               # 端口监控：LISTEN 列表、归属标注（cwd 最长前缀，回落 CCODE_PORT 段）、校验后 SIGTERM
   ws_settings.rs             # .ccode/settings.toml 三层合并（用户→仓库→local）；开步自动写 quarto 渲染脚本
+  git_exemptions.rs          # Mesa 过程文件与台账 git 豁免单一真源（编译期读 src/mesa-git-exemptions.json）：is_workspace_transient / is_accumulation_ledger / is_untracked_only_ledger 与 sync_git_exclude（批量写 <git_common_dir>/info/exclude，主仓与全部 worktree 生效）
   git_info.rs                # git 状态/累计 diff/逐 hunk/勾选提交临时索引；
                              # MERGE_HEAD → merging + git_abort_merge；porcelain 冲突码归 U
   fs_tree.rs                 # 文件树与文件操作（删除走系统回收站 trash；重要路径删除保护，canonicalize 双校验；
