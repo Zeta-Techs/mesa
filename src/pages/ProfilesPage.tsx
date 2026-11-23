@@ -41,7 +41,20 @@ import {
 import { useAppStore } from "../store";
 import { NAV_ICONS } from "../navigation-icons";
 import { openChatWithProfile } from "../quick-chat-launch";
-import { AGENTS, AGENT_PROTOCOLS, type ScheduleDto } from "../types";
+import {
+  AGENTS,
+  AGENT_PROTOCOLS,
+  type AgyActiveSessionDto,
+  type CreateOfficialAccountResult,
+  type OfficialBindingStatusDto,
+  type ScheduleDto,
+} from "../types";
+import {
+  hasOfficialQuotaCard,
+  isolatedEnvVarOf,
+  officialAccountModeOf,
+  supportsMultiOfficial,
+} from "../official-accounts";
 import { presetsForAgent, NO_PRESET_REASON, type ProviderPreset } from "../presets";
 import {
   extraBindTargets,
@@ -3220,6 +3233,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   const [officialStatus, setOfficialStatus] = useState<
     Record<string, OfficialAccountStatusDto>
   >({});
+  /** 每家 Agent 全部官方绑定的逐条状态（含独立隔离号与 Antigravity 托管快照） */
+  const [officialBindings, setOfficialBindings] = useState<
+    Record<string, OfficialBindingStatusDto[]>
+  >({});
+  /** 「＋ 添加官方号」弹层（Claude / Codex / Antigravity） */
+  const [addOfficialModal, setAddOfficialModal] = useState<string | null>(null);
+  const [addOfficialName, setAddOfficialName] = useState("");
+  const [addOfficialBusy, setAddOfficialBusy] = useState(false);
+  const [agyActivatingId, setAgyActivatingId] = useState<string | null>(null);
   // 冲突提醒的显式忽略（同收件箱 v3.88 口径）：按「冲突清单签名」记录，⟳ 重检后
   // 残留项有增减（签名变化）提醒自动复现；只隐藏提醒，官方账号启动拦截仍在后端生效
   const [conflictDismissed, setConflictDismissed] = useState<Record<string, string>>(
@@ -3255,14 +3277,17 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       .catch(() => {});
   }
 
-  /** 重新检测某个 Agent 的官方账号连接状态（只读 auth 文件，失败不影响页面） */
+  /** 重新检测某个 Agent 的官方账号连接状态（含默认号与附加隔离/托管号） */
   async function refreshOfficial(agentId: string) {
     try {
-      const st = await invoke<OfficialAccountStatusDto>(
-        "official_account_status",
-        { agentId },
-      );
+      const [st, list] = await Promise.all([
+        invoke<OfficialAccountStatusDto>("official_account_status", { agentId }),
+        invoke<OfficialBindingStatusDto[]>("official_bindings_status", { agentId }).catch(
+          () => [] as OfficialBindingStatusDto[],
+        ),
+      ]);
       setOfficialStatus((prev) => ({ ...prev, [agentId]: st }));
+      setOfficialBindings((prev) => ({ ...prev, [agentId]: list }));
       if (agentId === "claude-code" || agentId === "gemini") {
         // 实测在后台跑：现在先读一次，稍后再读一次拿刚测出来的
         loadOfficialAliases();
@@ -3270,6 +3295,114 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       }
     } catch {
       toast(`无法读取 ${labelOf(agentId)} 官方账号状态`, "warning");
+    }
+  }
+
+  /** 为某条具体官方账号绑定打开内嵌登录终端（隔离目录号带专属 CLAUDE_CONFIG_DIR / CODEX_HOME） */
+  function loginOfficialBinding(profile: Profile, st: OfficialBindingStatusDto | null) {
+    const cmd = st?.loginCommand ?? officialStatus[profile.agent]?.loginCommand;
+    if (!cmd) {
+      toast(`${labelOf(profile.agent)} 暂不支持内置登录，请在终端自行登录`, "warning");
+      return;
+    }
+    const env = {
+      ...(st?.loginEnv ?? officialStatus[profile.agent]?.loginEnv ?? {}),
+      ...(profile.extraEnv ?? {}),
+    };
+    setPendingTerminal({
+      cwd: "~",
+      extraEnv: env,
+      title: `登录 ${labelOf(profile.agent)} · ${profile.name}`,
+      prefillCommand: cmd,
+      shellOnly: true,
+      reuseKey: `login:${profile.agent}:${profile.id}`,
+    });
+    setPage("terminal");
+  }
+
+  /** Claude / Codex：创建独立隔离目录官方账号，并在终端用该隔离目录发起登录 */
+  async function submitCreateIsolatedOfficial(agentId: string) {
+    const clean = addOfficialName.trim();
+    if (!clean) {
+      toast("请先填写账号备注名（如「团队 Max」「备用 Plus」）", "warning");
+      return;
+    }
+    setAddOfficialBusy(true);
+    try {
+      const res = await invoke<CreateOfficialAccountResult>("official_create_account", {
+        agent: agentId,
+        name: clean,
+      });
+      await loadAll();
+      await refreshOfficial(agentId);
+      setAddOfficialModal(null);
+      setAddOfficialName("");
+      if (res.loginCommand) {
+        setPendingTerminal({
+          cwd: "~",
+          extraEnv: { ...(res.loginEnv ?? {}) },
+          title: `登录 ${labelOf(agentId)} · ${res.profile.name}`,
+          prefillCommand: res.loginCommand,
+          shellOnly: true,
+          reuseKey: `login:${agentId}:${res.profile.id}`,
+        });
+        setPage("terminal");
+        toast(`已创建隔离官方号「${res.profile.name}」，在终端完成登录后即可独立使用`, "success");
+      } else {
+        toast(`已创建隔离官方号「${res.profile.name}」`, "success");
+      }
+    } catch (e) {
+      toast(`创建失败：${String(e)}`, "error");
+    } finally {
+      setAddOfficialBusy(false);
+    }
+  }
+
+  /** Antigravity：收录本机当前钥匙串里已登录的 Google 账号为托管多号之一 */
+  async function captureCurrentAgyOfficial() {
+    setAddOfficialBusy(true);
+    try {
+      const res = await invoke<CreateOfficialAccountResult>("official_capture_agy_current", {
+        name: addOfficialName.trim() || null,
+      });
+      await loadAll();
+      await refreshOfficial("agy");
+      setAddOfficialModal(null);
+      setAddOfficialName("");
+      toast(
+        `已收录 Antigravity 账号「${res.profile.name}」；用量页与对话页现已可见`,
+        "success",
+      );
+    } catch (e) {
+      toast(`收录失败：${String(e)}`, "error");
+    } finally {
+      setAddOfficialBusy(false);
+    }
+  }
+
+  /** Antigravity：将系统钥匙串切到指定托管官方号（先过单活并发护栏） */
+  async function activateAgyBinding(profile: Profile) {
+    setAgyActivatingId(profile.id);
+    try {
+      const conflicts = await invoke<AgyActiveSessionDto[]>("official_agy_check_conflicts", {
+        bindingId: profile.id,
+        excludeTabId: null,
+      });
+      if (conflicts.length > 0) {
+        const names = conflicts.map((c) => `「${c.label}」`).join("、");
+        toast(
+          `切换失败：还有 ${conflicts.length} 个 Antigravity 官方对话正在运行（${names}）。请先停掉它们再切号，避免串号`,
+          "warning",
+        );
+        return;
+      }
+      await invoke("official_agy_activate", { bindingId: profile.id, excludeTabId: null });
+      await refreshOfficial("agy");
+      toast(`已将 Antigravity 钥匙串切换到「${profile.name}」`, "success");
+    } catch (e) {
+      toast(`切换失败：${String(e)}`, "error");
+    } finally {
+      setAgyActivatingId(null);
     }
   }
 
@@ -4057,7 +4190,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
   /** 行内「设为全局」：能直接写的才给（官方账号只有能只改几行的 Agent 给，其余官方仍走 ⋯ 里的恢复初始） */
   function canQuickGlobal(p: Profile): boolean {
     if (p.noAuth || p.slotMissing) return false;
-    if (p.accountType === "official") return officialGlobalIsPatch(p.agent);
+    if (p.accountType === "official") {
+      // 独立隔离目录官方号（CLAUDE_CONFIG_DIR / CODEX_HOME）只在 Mesa 进程内生效，不写外部全局
+      if (officialAccountModeOf(p) === "isolatedDir") return false;
+      return officialGlobalIsPatch(p.agent);
+    }
     if (p.agent === "agy") return false;
     return caps[p.agent]?.setGlobal.supported === true;
   }
@@ -4731,11 +4868,12 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         ) : navState.kind === "uninstalled" ? (
                           "未安装"
                         ) : navState.kind === "outdated" ? (
-                          <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1">
                             <span
                               role="button"
-                              className="rounded-full bg-cta-pill px-1.5 py-px text-micro text-cta-pill-text hover:brightness-110"
+                              className="inline-flex size-[18px] items-center justify-center rounded-full bg-cta-pill text-cta-pill-text hover:brightness-110"
                               title={navState.title}
+                              aria-label={navState.title}
                               onPointerDown={(e) => e.stopPropagation()}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -4743,7 +4881,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                 void onUpdate(agent.id);
                               }}
                             >
-                              可升
+                              <ArrowUp size={11} strokeWidth={2.4} aria-hidden="true" />
                             </span>
                             <span className="min-w-[1rem] text-right tabular-nums">{count}</span>
                           </span>
@@ -4836,7 +4974,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     : st.kind === "done-ok" || st.kind === "done-err"
                       ? `${st.label} · ${count}`
                       : st.kind === "outdated"
-                        ? `可升 · ${count}`
+                        ? `↑ · ${count}`
                         : st.kind === "uninstalled"
                           ? "未安装"
                           : String(count);
@@ -5017,10 +5155,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       onConnect={() => connectOfficial(agent.id)}
                     />
                   )}
-                  {/* 还没有官方账号连接：一键加一条（不用开表单），加了就能在 Mesa 里用官方账号启动、一键切回官方 */}
+                  {/* 官方账号接入：还没有任何官方连接时一键加默认官方号；Claude/Codex/Antigravity 已有后继续提供「＋ 添加官方号」 */}
                   {officialStatus[agent.id]?.supported &&
                     det?.binaryPath &&
-                    !profiles.some((p) => p.agent === agent.id && p.accountType === "official") && (
+                    (!profiles.some((p) => p.agent === agent.id && p.accountType === "official") ? (
                       <button
                         type="button"
                         onClick={() => void addOfficialProfile(agent.id)}
@@ -5029,7 +5167,23 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       >
                         ＋ 官方账号
                       </button>
-                    )}
+                    ) : supportsMultiOfficial(agent.id) ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddOfficialName("");
+                          setAddOfficialModal(agent.id);
+                        }}
+                        title={
+                          agent.id === "agy"
+                            ? "收录更多 Antigravity 官方账号：用量卡并排看余量，对话满额时一键轮换切号"
+                            : `添加另一个 ${agent.label} 官方账号（独立隔离目录，支持多会话同时并发与满额换号接力）`
+                        }
+                        className={ghostActionClass}
+                      >
+                        ＋ 添加官方号
+                      </button>
+                    ) : null)}
                   <div className="ml-auto flex items-center gap-1">
                     <button
                       type="button"
@@ -5357,13 +5511,27 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                   gw?.models,
                                 );
                           const status = profileStatusCell({ ...profile, unsynced: goneModels });
-                          const officialSt =
-                            profile.accountType === "official" && officialStatus[profile.agent]?.connected
-                              ? officialStatus[profile.agent]
+                          const officialMode = officialAccountModeOf(profile);
+                          const officialBindSt =
+                            profile.accountType === "official"
+                              ? (officialBindings[profile.agent]?.find((x) => x.bindingId === profile.id) ?? null)
                               : null;
-                          const officialPlan = officialSt?.plan ?? null;
-                          // 邮箱不常驻，只在悬停时给（2026-10-28 用户）
-                          const officialEmail = officialSt?.email ?? null;
+                          const officialConnected =
+                            profile.accountType === "official"
+                              ? (officialBindSt ? officialBindSt.connected : Boolean(officialStatus[profile.agent]?.connected))
+                              : false;
+                          const officialPlan =
+                            officialBindSt?.plan ??
+                            (officialMode === "default" && officialStatus[profile.agent]?.connected
+                              ? (officialStatus[profile.agent]?.plan ?? null)
+                              : null);
+                          // 邮箱不常驻，只在悬停或独立多号提示时给
+                          const officialEmail =
+                            officialBindSt?.email ??
+                            profile.officialRef?.accountHint ??
+                            (officialMode === "default" && officialStatus[profile.agent]?.connected
+                              ? (officialStatus[profile.agent]?.email ?? null)
+                              : null);
                           const imageOnly =
                             profile.models.length > 0 && profile.models.every((m) => modelKind(m) !== "chat");
                           const imageGenPick = imageOnly ? (profile.models.find(isImageGenModel) ?? null) : null;
@@ -5486,9 +5654,21 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     }
                                   >
                                     {profile.accountType === "official"
-                                      ? officialPlan
-                                        ? `官方 · ${officialPlan}`
-                                        : "CLI 官方认证"
+                                      ? officialMode === "isolatedDir"
+                                        ? officialConnected
+                                          ? officialPlan
+                                            ? `独立官方 · ${officialPlan}`
+                                            : "独立官方 · 已登录"
+                                          : "独立官方 · 未登录"
+                                        : officialMode === "managedSnapshot"
+                                          ? officialBindSt?.isActiveSlot
+                                            ? "托管官方 · 当前激活"
+                                            : officialConnected
+                                              ? "托管官方 · 已收录"
+                                              : "托管官方 · 需重登"
+                                          : officialPlan
+                                            ? `官方 · ${officialPlan}`
+                                            : "CLI 官方认证"
                                       : profile.baseUrl
                                         ? displayHost(profile.baseUrl)
                                         : "默认端点"}
@@ -5680,16 +5860,44 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                                     {syncingCatalogId === profile.id ? "同步中…" : "同步目录"}
                                   </button>
                                 )}
-                              {/* 次要图标动作（测试 / 外部终端 / 设为全局）悬停展开且平时不占宽度 */}
-                              {(() => {
-                                if (imageOnly || rowProbe[profile.id]?.running) return null;
-                                const hasShownStatus =
-                                  profile.accountType === "official"
-                                    ? Boolean(rowProbe[profile.id] || status)
-                                    : Boolean(status || rowProbe[profile.id]);
-                                if (hasShownStatus) return null;
-                                const officialProbeable =
-                                  profile.accountType === "official" && !!officialStatus[profile.agent]?.connected;
+                                {/* 独立隔离官方号尚未登录时直接给「登录」钮；agy 未激活托管号给「设为当前」钮 */}
+                                {profile.accountType === "official" &&
+                                  officialMode === "isolatedDir" &&
+                                  !officialConnected && (
+                                    <button
+                                      type="button"
+                                      onClick={() => loginOfficialBinding(profile, officialBindSt)}
+                                      title="在终端里使用该账号专属隔离目录完成登录"
+                                      className={`${ghostActionClass} h-7 border border-field px-2 text-xs text-l2`}
+                                    >
+                                      去登录
+                                    </button>
+                                  )}
+                                {profile.accountType === "official" &&
+                                  profile.agent === "agy" &&
+                                  officialMode === "managedSnapshot" &&
+                                  officialConnected &&
+                                  officialBindSt?.isActiveSlot === false && (
+                                    <button
+                                      type="button"
+                                      disabled={agyActivatingId !== null}
+                                      onClick={() => void activateAgyBinding(profile)}
+                                      title="将系统 Antigravity 钥匙串切换到这个账号（切换前会自动收回当前账号）"
+                                      className={`${ghostActionClass} h-7 border border-field px-2 text-xs text-l2 disabled:opacity-50`}
+                                    >
+                                      {agyActivatingId === profile.id ? "切换中…" : "设为当前"}
+                                    </button>
+                                  )}
+                                {/* 次要图标动作（测试 / 外部终端 / 设为全局）悬停展开且平时不占宽度 */}
+                                {(() => {
+                                  if (imageOnly || rowProbe[profile.id]?.running) return null;
+                                  const hasShownStatus =
+                                    profile.accountType === "official"
+                                      ? Boolean(rowProbe[profile.id] || status)
+                                      : Boolean(status || rowProbe[profile.id]);
+                                  if (hasShownStatus) return null;
+                                  const officialProbeable =
+                                    profile.accountType === "official" && officialConnected;
                                 if (officialProbeable) {
                                   return (
                                     <button
@@ -6124,13 +6332,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 rowMenu.profile.noAuth ||
                 !!rowMenu.profile.slotMissing ||
                 (rowMenu.profile.accountType === "official"
-                  ? !officialGlobalIsPatch(rowMenu.profile.agent)
+                  ? officialAccountModeOf(rowMenu.profile) === "isolatedDir" ||
+                    !officialGlobalIsPatch(rowMenu.profile.agent)
                   : rowMenu.profile.agent === "agy" ||
                     (caps[rowMenu.profile.agent] !== undefined &&
                       !caps[rowMenu.profile.agent].setGlobal.supported)),
               title:
                 rowMenu.profile.accountType === "official"
-                  ? officialGlobalIsPatch(rowMenu.profile.agent)
+                  ? officialAccountModeOf(rowMenu.profile) === "isolatedDir"
+                    ? "独立隔离目录官方号仅在 Mesa 进程内生效，不写外部全局配置"
+                    : officialGlobalIsPatch(rowMenu.profile.agent)
                     ? "只撤掉会盖过官方登录的端点、密钥和中转模型名，交回 CLI 自己的官方登录；别的配置不动（先预览）"
                     : "这家 CLI 暂不支持从 Mesa 写入全局默认"
                   : rowMenu.profile.slotMissing
@@ -6143,6 +6354,33 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                       "修改外部 CLI 的配置文件（先备份、失败自动回滚）。不改 Mesa 启动栏预选，也不改项目默认。已打开的进程需要新开才会读到。"),
               onSelect: () => void onApplyGlobal(rowMenu.profile),
             },
+            ...(rowMenu.profile.accountType === "official" &&
+            officialAccountModeOf(rowMenu.profile) === "isolatedDir"
+              ? [
+                  {
+                    icon: LogIn,
+                    label: "登录 / 重登此官方账号",
+                    onSelect: () => {
+                      const st =
+                        officialBindings[rowMenu.profile.agent]?.find(
+                          (x) => x.bindingId === rowMenu.profile.id,
+                        ) ?? null;
+                      loginOfficialBinding(rowMenu.profile, st);
+                    },
+                  },
+                ]
+              : []),
+            ...(rowMenu.profile.accountType === "official" &&
+            rowMenu.profile.agent === "agy" &&
+            officialAccountModeOf(rowMenu.profile) === "managedSnapshot"
+              ? [
+                  {
+                    icon: Check,
+                    label: "设为当前 Antigravity 账号",
+                    onSelect: () => void activateAgyBinding(rowMenu.profile),
+                  },
+                ]
+              : []),
             { separator: true },
             {
               icon: Trash2,
@@ -6315,6 +6553,132 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             setApplyDialog(null);
           }}
         />
+      )}
+      {addOfficialModal && (
+        <div
+          className="fixed inset-0 z-70 flex items-center justify-center bg-black/45 p-6 ccode-fade"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`添加 ${labelOf(addOfficialModal)} 官方账号`}
+          onClick={() => {
+            if (!addOfficialBusy) setAddOfficialModal(null);
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-hairline ccode-float-surface p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base font-medium text-l1">
+                添加 {labelOf(addOfficialModal)} 官方账号
+              </h3>
+              <button
+                type="button"
+                disabled={addOfficialBusy}
+                onClick={() => setAddOfficialModal(null)}
+                className="flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1"
+                aria-label="关闭"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            {addOfficialModal === "agy" ? (
+              <div className="mt-3 space-y-3 text-xs text-l2">
+                <p className="leading-relaxed text-l3">
+                  Antigravity CLI 在本机共用一条系统钥匙串，不支持两个官方号同时并发运行，但可以收录多个 Google 账号：用量页并排看各号余量，额度用完时一键轮换切号接着聊（切号前会自动收回当前账号）。
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs text-l2">账号备注名（可留空，自动用邮箱前缀）</label>
+                  <input
+                    type="text"
+                    value={addOfficialName}
+                    onChange={(e) => setAddOfficialName(e.target.value)}
+                    placeholder="例如：主号 / 备用 Gmail"
+                    className="h-8 w-full rounded-md border border-field bg-inset px-2.5 text-sm text-l1 outline-none focus:border-cta"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={addOfficialBusy}
+                    onClick={() => {
+                      setAddOfficialModal(null);
+                      connectOfficial("agy");
+                    }}
+                    className="h-8 rounded-md border border-field px-3 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  >
+                    先去终端登录新号
+                  </button>
+                  <button
+                    type="button"
+                    disabled={addOfficialBusy}
+                    onClick={() => void captureCurrentAgyOfficial()}
+                    className="h-8 rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
+                  >
+                    {addOfficialBusy ? "收录中…" : "收录当前已登录账号"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-3 space-y-3 text-xs text-l2">
+                <p className="leading-relaxed text-l3">
+                  Mesa 会为这个账号分配独立的隔离配置目录（
+                  <code>{isolatedEnvVarOf(addOfficialModal)}</code>
+                  ），不改动你原本的默认登录；添加后可在不同会话同时并发使用
+                  {hasOfficialQuotaCard(addOfficialModal)
+                    ? "，也可在用量页并排查看各号余量、满额时一键换号接力。"
+                    : "，触发限额时也可一键换号接力。"}
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs text-l2">账号备注名</label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={addOfficialName}
+                    onChange={(e) => setAddOfficialName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !addOfficialBusy) {
+                        void submitCreateIsolatedOfficial(addOfficialModal);
+                      }
+                    }}
+                    placeholder={
+                      addOfficialModal === "claude-code"
+                        ? "例如：团队 Max / 个人 Pro"
+                        : addOfficialModal === "codex"
+                          ? "例如：工作 Plus / 备用 Pro"
+                          : addOfficialModal === "grok"
+                            ? "例如：SuperGrok 主号 / 备用号"
+                            : addOfficialModal === "kimi"
+                              ? "例如：个人 Allegretto / 备用号"
+                              : addOfficialModal === "gemini"
+                                ? "例如：个人 Google / 工作号"
+                                : "例如：中国站 / 国际站"
+                    }
+                    className="h-8 w-full rounded-md border border-field bg-inset px-2.5 text-sm text-l1 outline-none focus:border-cta"
+                  />
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={addOfficialBusy}
+                    onClick={() => setAddOfficialModal(null)}
+                    className="h-8 rounded-md border border-field px-3 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    disabled={addOfficialBusy || !addOfficialName.trim()}
+                    onClick={() => void submitCreateIsolatedOfficial(addOfficialModal)}
+                    className="h-8 rounded-md border border-cta-bd bg-cta px-3 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
+                  >
+                    {addOfficialBusy ? "创建中…" : "创建并去终端登录"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
       <ExternalTerminalDialog
         target={externalDialogTarget}

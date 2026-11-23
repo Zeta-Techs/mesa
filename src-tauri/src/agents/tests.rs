@@ -38,6 +38,7 @@ fn profile(agent: &str, base_url: Option<&str>) -> Profile {
         model_sync_status: String::new(),
         model_sync_note: None,
         provider_override: None,
+        official_ref: None,
     }
 }
 
@@ -4211,12 +4212,95 @@ fn agy_api_launch_merges_jsonc_custom_models_strips_v1beta_and_passes_effort() {
     let _ = std::fs::remove_file(&plan_c.args[sc_idx + 1]);
     assert_eq!(sc_val["model"], "Gemini 4 Carbon (High)", "carbon 不支持 xhigh，自动收窄到 high");
     assert!(sc_val["customModelsConfig"]["customModels"].as_object().unwrap().is_empty());
-    assert!(plan_c.args.ends_with(&["--model".into(), "gemini-4-carbon".into(), "--effort".into(), "high".into()]));
+    assert!(plan_c.args.ends_with(&["--model".into(), "gemini-4-carbon-high".into()]));
+    assert!(!plan_c.args.iter().any(|a| a == "--effort"));
 
     let plan_h = launch_plan(&p_builtin, Some("sk-agy-secret".into()), Some("gemini-4-hydrogen")).unwrap();
     let sh_idx = plan_h.args.iter().position(|a| a == "--settings").unwrap();
     let _ = std::fs::remove_file(&plan_h.args[sh_idx + 1]);
-    assert!(plan_h.args.ends_with(&["--model".into(), "gemini-4-hydrogen".into(), "--effort".into(), "xhigh".into()]));
+    assert!(plan_h.args.ends_with(&["--model".into(), "gemini-4-hydrogen-xhigh".into()]));
+    assert!(!plan_h.args.iter().any(|a| a == "--effort"));
+
+    // agy 1.5.14 新增 gemini-4-neon：走内置 Gemini 4 Neon（支持 xhigh），直传 `<base>-<effort>` 避免 1.5.14 `--effort` Warning
+    p_builtin.models.push("gemini-4-neon".into());
+    let plan_n = launch_plan(&p_builtin, Some("sk-agy-secret".into()), Some("gemini-4-neon")).unwrap();
+    let sn_idx = plan_n.args.iter().position(|a| a == "--settings").unwrap();
+    let sn_val: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan_n.args[sn_idx + 1]).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&plan_n.args[sn_idx + 1]);
+    assert_eq!(sn_val["model"], "Gemini 4 Neon (XHigh)");
+    assert!(sn_val["customModelsConfig"]["customModels"].as_object().unwrap().is_empty());
+    assert!(plan_n.args.ends_with(&["--model".into(), "gemini-4-neon-xhigh".into()]));
+    assert!(!plan_n.args.iter().any(|a| a == "--effort"));
+
+    // Orchestrator 无 effort 档的内置模型：不套 mesa/，顶层直接写显示名，且不乱传 --effort
+    p_builtin.models.push("gemini-pro-orchestrator-neon".into());
+    let plan_o = launch_plan(&p_builtin, Some("sk-agy-secret".into()), Some("gemini-pro-orchestrator-neon")).unwrap();
+    let so_idx = plan_o.args.iter().position(|a| a == "--settings").unwrap();
+    let so_val: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&plan_o.args[so_idx + 1]).unwrap()).unwrap();
+    let _ = std::fs::remove_file(&plan_o.args[so_idx + 1]);
+    assert_eq!(so_val["model"], "Orchestrator (Neon)");
+    assert!(so_val["customModelsConfig"]["customModels"].as_object().unwrap().is_empty());
+    assert!(plan_o.args.ends_with(&["--model".into(), "gemini-pro-orchestrator-neon".into()]));
+    assert!(!plan_o.args.iter().any(|a| a == "--effort"));
+}
+
+#[test]
+fn agy_dynamic_display_map_discovers_future_models_and_guards_single_tier() {
+    let map: std::collections::BTreeMap<String, String> = [
+        ("gemini-4-krypton-low", "Gemini 4 Krypton (Low)"),
+        ("gemini-4-krypton-medium", "Gemini 4 Krypton (Medium)"),
+        ("gemini-4-krypton-high", "Gemini 4 Krypton (High)"),
+        ("gemini-4-krypton-xhigh", "Gemini 4 Krypton (XHigh)"),
+        ("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"),
+        ("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"),
+        ("gemini-pro-orchestrator-neon", "Orchestrator (Neon)"),
+        ("claude-opus-5-5-low", "Claude Opus 5.5 (Low)"),
+        ("claude-opus-5-5-medium", "Claude Opus 5.5 (Medium)"),
+        ("claude-opus-5-5-high", "Claude Opus 5.5 (High)"),
+        ("claude-opus-6-low", "Claude Opus 6 (Low)"),
+        ("claude-opus-6-max", "Claude Opus 6 (Max)"),
+        ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+
+    // 1. 未来未写进静态表的新 Gemini 模型自动识别为原生内置家族（含 4 档）
+    let k = agy_builtin_gemini_family_with_map("gemini-4-krypton", &map).expect("future gemini");
+    assert_eq!(k.base, "gemini-4-krypton");
+    assert_eq!(k.display, "Gemini 4 Krypton");
+    assert_eq!(k.levels, vec!["low", "medium", "high", "xhigh"]);
+    assert_eq!(k.suffix_effort, None);
+    let k_suf = agy_builtin_gemini_family_with_map("gemini-4-krypton-xhigh", &map).unwrap();
+    assert_eq!(k_suf.suffix_effort, Some("xhigh"));
+
+    // 2. gemini-3.1-pro 在 API 模式仍被反向排除（继续走 mesa/ 保原名），但官方账号可切 low/high
+    assert!(agy_builtin_gemini_family_with_map("gemini-3.1-pro", &map).is_none());
+    let p31 = agy_official_effort_family_with_map("gemini-3.1-pro-high", &map).unwrap();
+    assert_eq!(p31.base, "gemini-3.1-pro");
+    assert_eq!(p31.levels, vec!["low", "high"]);
+    assert_eq!(p31.suffix_effort, Some("high"));
+
+    // 3. 无 effort 档的 Orchestrator 走内置模型、官方不开放 effort
+    let orch = agy_builtin_gemini_family_with_map("gemini-pro-orchestrator-neon", &map).unwrap();
+    assert_eq!(orch.display, "Orchestrator (Neon)");
+    assert!(orch.levels.is_empty());
+    assert!(agy_official_effort_family_with_map("gemini-pro-orchestrator-neon", &map).is_none());
+
+    // 4. 动态表里的 claude-opus-5-5 精确对齐本机 3 档（不虚增 max），未来 claude-opus-6 自动支持
+    let o55 = agy_official_effort_family_with_map("claude-opus-5-5", &map).unwrap();
+    assert_eq!(o55.levels, vec!["low", "medium", "high"]);
+    let o6 = agy_official_effort_family_with_map("claude-opus-6-max", &map).unwrap();
+    assert_eq!(o6.base, "claude-opus-6");
+    assert_eq!(o6.levels, vec!["low", "max"]);
+    assert_eq!(o6.suffix_effort, Some("max"));
+    assert!(agy_builtin_gemini_family_with_map("claude-opus-6", &map).is_none());
+
+    // 5. 单档模型 gpt-oss-120b-medium 不得被误判为支持 --effort
+    assert!(agy_official_effort_family_with_map("gpt-oss-120b-medium", &map).is_none());
+    assert!(agy_official_effort_family_with_map("gpt-oss-120b", &map).is_none());
 }
 
 #[test]
@@ -4233,10 +4317,11 @@ fn agy_official_launch_and_models_parser_and_conflict_cleanup() {
     let plan = launch_plan(&p, None, Some("gemini-3.8-flash-high")).unwrap();
     assert!(plan.env_remove.contains(&"GEMINI_API_KEY".into()));
     assert!(plan.env_remove.contains(&"GOOGLE_GEMINI_BASE_URL".into()));
-    assert_eq!(
-        plan.args,
-        vec!["--model", "gemini-3.8-flash", "--effort", "medium"]
-    );
+    assert_eq!(plan.args, vec!["--model", "gemini-3.8-flash-medium"]);
+
+    // agy 1.5.14 官方账号选 gemini-4-neon + effort：直传组合 slug，不传 --effort 以免触发 Warning 并丢失档位
+    let plan_neon = launch_plan(&p, None, Some("gemini-4-neon-high")).unwrap();
+    assert_eq!(plan_neon.args, vec!["--model", "gemini-4-neon-medium"]);
 
     // 官方非 Gemini 模型不支持 `--effort`（CLI 传了报 rc=1）：仅传 `--model`
     let plan_claude = launch_plan(&p, None, Some("claude-sonnet-4-6")).unwrap();

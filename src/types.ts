@@ -67,6 +67,46 @@ export interface Profile {
   /** 绑定模型相对网关目录的同步状态 */
   modelSyncStatus?: "synced" | "stale" | "missing" | "unknown" | string;
   modelSyncNote?: string | null;
+  /** 多官方账号元信息（缺省或 mode="default" = 本机默认 CLI 槽位） */
+  officialRef?: OfficialAccountRef | null;
+}
+
+export type OfficialAccountMode = "default" | "isolatedDir" | "managedSnapshot";
+
+export interface OfficialAccountRef {
+  mode: OfficialAccountMode;
+  localDirId?: string | null;
+  snapshotId?: string | null;
+  accountHint?: string | null;
+}
+
+export interface OfficialBindingStatusDto {
+  bindingId: string;
+  agent: string;
+  name: string;
+  mode: OfficialAccountMode;
+  connected: boolean;
+  detail: string | null;
+  email: string | null;
+  plan: string | null;
+  isActiveSlot: boolean | null;
+  loginCommand: string | null;
+  loginEnv: Record<string, string>;
+  isolatedDir: string | null;
+}
+
+export interface CreateOfficialAccountResult {
+  profile: Profile;
+  loginCommand: string | null;
+  loginEnv: Record<string, string>;
+  alreadyConnected: boolean;
+}
+
+export interface AgyActiveSessionDto {
+  tabId: string;
+  bindingId: string;
+  snapshotId: string | null;
+  label: string;
 }
 
 export type ProbeStatus = "never" | "passed" | "failed";
@@ -362,6 +402,12 @@ export interface PlanQuotaDto {
   fromCache: boolean;
   /** 「去控制台」地址：后端按供应商与站点（国内 / 国际）给，前端不自己拼 */
   consoleUrl: string;
+  /** 若该行对应连接页具体的官方账号绑定，返回 bindingId */
+  bindingId?: string | null;
+  /** 账号区分副标题（如邮箱/组织名） */
+  accountHint?: string | null;
+  /** 仅 Antigravity 托管账号：系统钥匙串当前是否正激活该号 */
+  isActiveSlot?: boolean | null;
 }
 
 /** 网关余额（用量页「网关余额」卡）：New API 预付钱包，与订阅余量并列 */

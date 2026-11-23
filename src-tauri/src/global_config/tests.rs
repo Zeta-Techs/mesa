@@ -71,6 +71,7 @@ fn profile(agent: &str) -> Profile {
         model_sync_status: String::new(),
         model_sync_note: None,
         provider_override: None,
+        official_ref: None,
     }
 }
 

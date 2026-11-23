@@ -1240,6 +1240,7 @@ pub async fn probe_gateway_slot(
         role_models: Default::default(),
         extra_env: Default::default(),
         last_used_at: None,
+        official_ref: None,
     };
     let mut profile = crate::gateway_store::materialize(&binding, Some(&gw), model.as_deref());
     profile.has_key = draft_key.is_some() || gw.key_hint.is_some();
@@ -1864,6 +1865,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         }
     }
 

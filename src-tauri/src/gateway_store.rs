@@ -424,6 +424,7 @@ pub fn restore_merged_bindings(
             role_models: Default::default(),
             extra_env: e.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         });
         restored += 1;
     }
@@ -445,8 +446,13 @@ pub fn materialize(
     };
     let (name, no_auth, key_hint, has_key, header_env, slot_url, slot_missing, models_policy) =
         if official {
+            let official_name = if binding.name.trim().is_empty() {
+                "官方账号".to_string()
+            } else {
+                binding.name.trim().to_string()
+            };
             (
-                "官方账号".to_string(),
+                official_name,
                 false,
                 None,
                 false,
@@ -552,6 +558,7 @@ pub fn materialize(
         model_sync_status,
         model_sync_note,
         provider_override: None,
+        official_ref: binding.official_ref.clone(),
     }
 }
 
@@ -760,6 +767,7 @@ pub fn migrate_from_profiles(
                 role_models: p.role_models,
                 extra_env: p.extra_env,
                 last_used_at: p.last_used_at,
+                official_ref: p.official_ref,
             });
         } else {
             api.push(p);
@@ -893,6 +901,7 @@ pub fn migrate_from_profiles(
                     role_models: kept.role_models.clone(),
                     extra_env: kept.extra_env.clone(),
                     last_used_at: kept.last_used_at.clone(),
+                    official_ref: None,
                 });
             }
 
@@ -982,6 +991,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         }
     }
 
@@ -1291,6 +1301,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            official_ref: None,
         }];
         let (n, copies) = restore_merged_bindings(&journal, &mut gateways, &mut bindings);
         assert_eq!(n, 1);
@@ -1351,6 +1362,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            official_ref: None,
         }];
         let (n, copies) = restore_merged_bindings(&journal, &mut gateways, &mut bindings);
         assert_eq!(n, 1);
@@ -1421,6 +1433,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            official_ref: None,
         };
         let first = materialize(&b, Some(&gw), None);
         assert_eq!(first.name, "test");
@@ -1476,6 +1489,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            official_ref: None,
         };
         assert_eq!(
             materialize(&mk("gemini"), Some(&gw), None).base_url.as_deref(),
@@ -1549,6 +1563,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: HashMap::new(),
             last_used_at: None,
+            official_ref: None,
         };
         let profile = materialize(&b, Some(&gw), None);
         assert!(profile.request_policy.reasoning_effort.is_none());
@@ -1753,6 +1768,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
+            official_ref: None,
         };
         assert_eq!(
             connection_state(&binding("model-a"), Some(&gw), false, true, false).0,

@@ -288,8 +288,9 @@ fn prepare_impl(
     target_agent: &str,
     resume_session: Option<&str>,
     with_words: bool,
+    allow_same_agent: bool,
 ) -> Result<RelayPrepareDto, String> {
-    if target_agent == source.agent && resume_session.is_none() {
+    if target_agent == source.agent && resume_session.is_none() && !allow_same_agent {
         return Err("接力要换一家 Agent；同一家另开请用「分叉成新对话」".into());
     }
     let through = sessions::conversation_impl(&source.agent, &source.file_path).len();
@@ -400,10 +401,18 @@ pub async fn relay_prepare(
     target_agent: String,
     resume_session: Option<String>,
     with_words: Option<bool>,
+    allow_same_agent: Option<bool>,
 ) -> Result<RelayPrepareDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = sessions::open_db()?;
-        prepare_impl(&conn, &source, &target_agent, resume_session.as_deref(), with_words.unwrap_or(true))
+        prepare_impl(
+            &conn,
+            &source,
+            &target_agent,
+            resume_session.as_deref(),
+            with_words.unwrap_or(true),
+            allow_same_agent.unwrap_or(false),
+        )
     })
     .await
     .map_err(|e| format!("生成交接简报失败: {e}"))?

@@ -7,6 +7,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   minimax: "MiniMax",
   claude: "Claude",
   codex: "Codex",
+  grok: "Grok",
   agy: "Antigravity",
 };
 
@@ -34,6 +35,7 @@ const PROVIDER_NAME_KEYWORDS: Record<string, string[]> = {
   minimax: ["minimax"],
   claude: ["claude", "anthropic"],
   codex: ["codex", "chatgpt", "openai"],
+  grok: ["grok", "supergrok", "xai"],
   agy: ["antigravity", "agy"],
 };
 
@@ -137,6 +139,7 @@ export function planWindowLabel(window: string): string {
   if (window === "five_hour") return "5 小时";
   if (window === "weekly") return "本周";
   if (window === "monthly") return "本月";
+  if (window === "credits") return "额度";
   if (window === "agy_argon_weekly") return "Argon 本周";
   return window;
 }
@@ -367,4 +370,93 @@ export function planQuotaDataAt(queriedAt: number, fromCache: boolean): string |
   const d = new Date(queriedAt);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `数据截至 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ===== 用量卡轻量筛选与排序偏好（仅存本机 localStorage） =====
+
+export interface QuotaDisplayPrefs {
+  hiddenIds: string[];
+  orderIds: string[];
+}
+
+export const EMPTY_QUOTA_PREFS: QuotaDisplayPrefs = {
+  hiddenIds: [],
+  orderIds: [],
+};
+
+export function loadQuotaDisplayPrefs(storageKey: string): QuotaDisplayPrefs {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return EMPTY_QUOTA_PREFS;
+    const parsed = JSON.parse(raw) as Partial<QuotaDisplayPrefs>;
+    return {
+      hiddenIds: Array.isArray(parsed.hiddenIds)
+        ? parsed.hiddenIds.filter((x): x is string => typeof x === "string")
+        : [],
+      orderIds: Array.isArray(parsed.orderIds)
+        ? parsed.orderIds.filter((x): x is string => typeof x === "string")
+        : [],
+    };
+  } catch {
+    return EMPTY_QUOTA_PREFS;
+  }
+}
+
+export function saveQuotaDisplayPrefs(storageKey: string, prefs: QuotaDisplayPrefs): void {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(prefs));
+  } catch {
+    // 忽略受限环境存储异常
+  }
+}
+
+/** 按用户自定义顺序重排并过滤隐藏项；若全部被隐藏则防呆保留全部，避免卡片空白 */
+export function applyQuotaDisplayPrefs<T>(
+  items: readonly T[],
+  getId: (item: T) => string,
+  prefs: QuotaDisplayPrefs,
+): T[] {
+  const rank = new Map<string, number>();
+  prefs.orderIds.forEach((id, i) => rank.set(id, i));
+  const sorted = [...items].sort((a, b) => {
+    const ra = rank.get(getId(a));
+    const rb = rank.get(getId(b));
+    if (ra != null && rb != null) return ra - rb;
+    if (ra != null) return -1;
+    if (rb != null) return 1;
+    return 0;
+  });
+  if (prefs.hiddenIds.length === 0) return sorted;
+  const hidden = new Set(prefs.hiddenIds);
+  const visible = sorted.filter((item) => !hidden.has(getId(item)));
+  return visible.length > 0 ? visible : sorted;
+}
+
+export function toggleQuotaHidden(prefs: QuotaDisplayPrefs, id: string): QuotaDisplayPrefs {
+  const exists = prefs.hiddenIds.includes(id);
+  return {
+    ...prefs,
+    hiddenIds: exists
+      ? prefs.hiddenIds.filter((x) => x !== id)
+      : [...prefs.hiddenIds, id],
+  };
+}
+
+export function moveQuotaOrder(
+  prefs: QuotaDisplayPrefs,
+  allIds: readonly string[],
+  id: string,
+  dir: -1 | 1,
+): QuotaDisplayPrefs {
+  const ordered = [
+    ...prefs.orderIds.filter((x) => allIds.includes(x)),
+    ...allIds.filter((x) => !prefs.orderIds.includes(x)),
+  ];
+  const idx = ordered.indexOf(id);
+  if (idx < 0) return prefs;
+  const nextIdx = idx + dir;
+  if (nextIdx < 0 || nextIdx >= ordered.length) return prefs;
+  const copy = [...ordered];
+  [copy[idx], copy[nextIdx]] = [copy[nextIdx], copy[idx]];
+  return { ...prefs, orderIds: copy };
 }

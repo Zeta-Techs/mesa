@@ -41,9 +41,25 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const AGY_USAGE_TIMEOUT: Duration = Duration::from_secs(15);
 
 const CLAUDE_ROW_ID: &str = "official:claude-code";
+const CLAUDE_ROW_PREFIX: &str = "official:claude-code:";
 pub(crate) const CODEX_ROW_ID: &str = "official:codex";
-const AGY_ROW_ID: &str = "official:agy";
+pub(crate) const CODEX_ROW_PREFIX: &str = "official:codex:";
+pub(crate) const AGY_ROW_ID: &str = "official:agy";
+const AGY_ROW_PREFIX: &str = "official:agy:";
+const AGY_CLOUDCODE_API_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 const AGY_CONSOLE_URL: &str = "https://antigravity.google";
+const GROK_ROW_ID: &str = "official:grok";
+const GROK_ROW_PREFIX: &str = "official:grok:";
+const GROK_BILLING_ENDPOINT: &str =
+    "https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig";
+const GROK_SETTINGS_ENDPOINT: &str = "https://cli-chat-proxy.grok.com/v1/settings";
+const GROK_CONSOLE_URL: &str = "https://grok.com";
+const KIMI_ROW_ID: &str = "official:kimi";
+const KIMI_ROW_PREFIX: &str = "official:kimi:";
+const KIMI_DEFAULT_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+const KIMI_CN_CONSOLE_URL: &str = "https://www.kimi.com/code/console";
+const KIMI_GLOBAL_CONSOLE_URL: &str = "https://www.kimi.ai/code/console";
+const WINDOW_CREDITS: &str = "credits";
 const ROW_NAME: &str = "官方账号";
 
 /// 未检测到 agy 官方登录时的负缓存截止毫秒（2 分钟，force 强刷时跳过），免得只用 API Key 的用户每次进页都拉起一次 agy
@@ -174,15 +190,23 @@ fn security_password(args: &[&str]) -> Option<String> {
     String::from_utf8(out.stdout).ok()
 }
 
-/// 读 Claude Code 的登录凭证（阻塞：macOS 要跑 security），读不到返回 None
-fn read_claude_creds() -> Option<ClaudeCreds> {
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+pub(crate) fn claude_keychain_service_for_dir(config_dir: Option<&str>) -> String {
+    claude_keychain_service(config_dir)
+}
+
+/// 读指定 Claude 配置目录的登录凭证（`config_dir == None` 走默认环境 + 家目录；`Some(dir)` 走该隔离目录）
+fn read_claude_creds_for_dir(config_dir: Option<&std::path::Path>) -> Option<ClaudeCreds> {
     if cfg!(test) {
         return None;
     }
     #[cfg(target_os = "macos")]
     {
-        let config_dir = std::env::var("CLAUDE_CONFIG_DIR").ok();
-        let service = claude_keychain_service(config_dir.as_deref());
+        let dir_str = match config_dir {
+            Some(d) => Some(d.to_string_lossy().into_owned()),
+            None => std::env::var("CLAUDE_CONFIG_DIR").ok(),
+        };
+        let service = claude_keychain_service(dir_str.as_deref());
         let account = claude_keychain_account(&std::env::var("USER").unwrap_or_default());
         let lookups: [Vec<&str>; 2] = [
             vec!["find-generic-password", "-a", &account, "-w", "-s", &service],
@@ -194,8 +218,23 @@ fn read_claude_creds() -> Option<ClaudeCreds> {
             }
         }
     }
-    let path = crate::agent_specs::agent_config_root("claude-code")?.join(".credentials.json");
+    let root = match config_dir {
+        Some(d) => d.to_path_buf(),
+        None => crate::agent_specs::agent_config_root("claude-code")?,
+    };
+    let path = root.join(".credentials.json");
     parse_claude_creds(&std::fs::read_to_string(path).ok()?)
+}
+
+/// 供 official_accounts 探测隔离 CLAUDE_CONFIG_DIR 是否已登录及套餐名（令牌绝不外泄）
+pub(crate) fn probe_claude_dir(dir: &std::path::Path) -> Option<(bool, Option<String>)> {
+    let creds = read_claude_creds_for_dir(Some(dir))?;
+    Some((!creds.token.is_empty(), creds.plan))
+}
+
+/// 读 Claude Code 默认登录凭证（阻塞：macOS 要跑 security），读不到返回 None
+fn read_claude_creds() -> Option<ClaudeCreds> {
+    read_claude_creds_for_dir(None)
 }
 
 fn parse_codex_creds_value(v: &serde_json::Value) -> Option<CodexCreds> {
@@ -232,9 +271,14 @@ fn parse_codex_stash(text: &str) -> Option<CodexCreds> {
     parse_codex_creds_value(v.get("logins")?.get(last)?)
 }
 
-fn read_codex_creds() -> Option<CodexCreds> {
+/// 读指定 Codex 目录的 auth.json（`codex_home == None` 走默认目录 + cc-switch stash 回落；隔离目录不回落 stash）
+fn read_codex_creds_for_dir(codex_home: Option<&std::path::Path>) -> Option<CodexCreds> {
     if cfg!(test) {
         return None;
+    }
+    if let Some(dir) = codex_home {
+        let text = std::fs::read_to_string(dir.join("auth.json")).ok()?;
+        return parse_codex_creds(&text);
     }
     if let Some(root) = crate::agent_specs::agent_config_root("codex") {
         if let Ok(text) = std::fs::read_to_string(root.join("auth.json")) {
@@ -245,6 +289,10 @@ fn read_codex_creds() -> Option<CodexCreds> {
     }
     let stash = crate::dirs::home_dir()?.join(".cc-switch/codex-login-stash.json");
     parse_codex_stash(&std::fs::read_to_string(stash).ok()?)
+}
+
+fn read_codex_creds() -> Option<CodexCreds> {
+    read_codex_creds_for_dir(None)
 }
 
 // ===== 响应解析（纯函数） =====
@@ -416,7 +464,30 @@ fn blank_row(id: &str, provider: &str, plan: Option<String>, console: &str) -> P
         queried_at: now_ms(),
         from_cache: false,
         console_url: console.into(),
+        binding_id: None,
+        account_hint: None,
+        is_active_slot: None,
     }
+}
+
+fn blank_official_row(
+    id: &str,
+    name: &str,
+    provider: &str,
+    plan: Option<String>,
+    console: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    is_active_slot: Option<bool>,
+) -> PlanQuotaDto {
+    let mut dto = blank_row(id, provider, plan, console);
+    if !name.trim().is_empty() {
+        dto.gateway_name = name.trim().to_string();
+    }
+    dto.binding_id = binding_id;
+    dto.account_hint = account_hint;
+    dto.is_active_slot = is_active_slot;
+    dto
 }
 
 async fn get_json(req: reqwest::RequestBuilder) -> Result<(u16, serde_json::Value), String> {
@@ -426,8 +497,23 @@ async fn get_json(req: reqwest::RequestBuilder) -> Result<(u16, serde_json::Valu
     Ok((status, serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)))
 }
 
-async fn query_claude(creds: ClaudeCreds) -> PlanQuotaDto {
-    let mut dto = blank_row(CLAUDE_ROW_ID, "claude", creds.plan.clone(), "https://claude.ai/settings/usage");
+async fn query_claude_named(
+    row_id: &str,
+    row_name: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    creds: ClaudeCreds,
+) -> PlanQuotaDto {
+    let mut dto = blank_official_row(
+        row_id,
+        row_name,
+        "claude",
+        creds.plan.clone(),
+        "https://claude.ai/settings/usage",
+        binding_id,
+        account_hint,
+        None,
+    );
     if creds.token.is_empty() {
         dto.error = Some(
             "Claude 官方登录令牌已被服务端作废（你未手动退出，多因续期冲突失效）：到连接页重新登录一次即可恢复".into(),
@@ -627,6 +713,169 @@ async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
     None
 }
 
+/// 解析 `daily-cloudcode-pa` `retrieveUserQuotaSummary` 的返回：仅映射自家 Gemini 桶（与 `parse_agy_usage` 同口径）
+fn parse_agy_cloudcode_summary(body: &serde_json::Value) -> Result<Vec<PlanQuotaWindowDto>, String> {
+    let groups = body
+        .get("groups")
+        .and_then(|g| g.as_array())
+        .ok_or_else(|| "Antigravity 额度接口缺少 groups 字段".to_string())?;
+    let mut ranked: Vec<(usize, PlanQuotaWindowDto)> = Vec::new();
+    for group in groups {
+        let Some(buckets) = group.get("buckets").and_then(|b| b.as_array()) else {
+            continue;
+        };
+        for bucket in buckets {
+            let Some(id) = bucket
+                .get("bucketId")
+                .or_else(|| bucket.get("id"))
+                .and_then(|x| x.as_str())
+            else {
+                continue;
+            };
+            let Some((kind, order)) = agy_window_kind(id) else {
+                continue;
+            };
+            let Some(rem) = bucket
+                .get("remainingFraction")
+                .or_else(|| bucket.get("remaining_fraction"))
+                .and_then(|x| x.as_f64())
+            else {
+                continue;
+            };
+            if ranked.iter().any(|(_, w)| w.window == kind) {
+                continue;
+            }
+            let used_pct = ((1.0 - rem.clamp(0.0, 1.0)) * 100.0).max(0.0);
+            let reset_val = bucket
+                .get("resetTime")
+                .or_else(|| bucket.get("reset_time"));
+            ranked.push((order, window_dto(kind, used_pct, iso_ms(reset_val))));
+        }
+    }
+    if ranked.is_empty() {
+        return Err("Antigravity 额度接口没有返回可识别的 Gemini 额度桶".into());
+    }
+    ranked.sort_by_key(|(order, _)| *order);
+    Ok(ranked.into_iter().map(|(_, w)| w).collect())
+}
+
+fn agy_cloudcode_plan_label(body: &serde_json::Value) -> Option<String> {
+    for key in ["paidTier", "currentTier"] {
+        let Some(tier) = body.get(key) else { continue };
+        let name = tier
+            .get("name")
+            .or_else(|| tier.get("id"))
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(n) = name {
+            return Some(n.to_string());
+        }
+    }
+    None
+}
+
+async fn query_agy_snapshot_api(
+    row_id: &str,
+    row_name: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    snapshot_id: &str,
+    is_active: bool,
+) -> PlanQuotaDto {
+    let mut dto = blank_official_row(
+        row_id,
+        row_name,
+        "agy",
+        None,
+        AGY_CONSOLE_URL,
+        binding_id,
+        account_hint,
+        Some(is_active),
+    );
+    let token = match crate::official_accounts::agy_access_token_for_quota(snapshot_id).await {
+        Ok(t) => t,
+        Err(e) => {
+            dto.error = Some(e);
+            return dto;
+        }
+    };
+    let ua = format!("mesa/{} (antigravity/cli/1.5.8)", env!("CARGO_PKG_VERSION"));
+    let client = official_client();
+    // 1) loadCodeAssist 取 project、套餐名与地区资格
+    let load_req = client
+        .post(format!("{AGY_CLOUDCODE_API_BASE}:loadCodeAssist"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("User-Agent", &ua)
+        .json(&serde_json::json!({"metadata": {"ideType": "ANTIGRAVITY"}}));
+    let mut project: Option<String> = None;
+    match get_json(load_req).await {
+        Ok((401, _)) => {
+            dto.error = Some("Antigravity 登录已失效（401），请切到该账号重新登录".into());
+            return dto;
+        }
+        Ok((status, body)) if (200..300).contains(&status) => {
+            let raw = body.to_string();
+            if agy_location_blocked(&raw) {
+                dto.error = Some(agy_failure_message(&raw, "").into());
+                return dto;
+            }
+            if let Some(reason) = body
+                .get("ineligibleTiers")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.iter().find_map(|x| x.get("reasonMessage").and_then(|m| m.as_str())))
+            {
+                dto.error = Some(if agy_location_blocked(reason) {
+                    agy_failure_message(reason, "").into()
+                } else {
+                    reason.to_string()
+                });
+                return dto;
+            }
+            dto.plan_level = agy_cloudcode_plan_label(&body);
+            project = body
+                .get("cloudaicompanionProject")
+                .and_then(|p| {
+                    p.as_str()
+                        .map(str::to_string)
+                        .or_else(|| p.get("id").and_then(|x| x.as_str()).map(str::to_string))
+                });
+        }
+        _ => {}
+    }
+    // 2) retrieveUserQuotaSummary 取 Gemini 桶
+    let req_body = match project {
+        Some(p) => serde_json::json!({ "project": p }),
+        None => serde_json::json!({}),
+    };
+    let quota_req = client
+        .post(format!("{AGY_CLOUDCODE_API_BASE}:retrieveUserQuotaSummary"))
+        .header("Authorization", format!("Bearer {token}"))
+        .header("User-Agent", &ua)
+        .json(&req_body);
+    match get_json(quota_req).await {
+        Ok((status, body)) if (200..300).contains(&status) => match parse_agy_cloudcode_summary(&body) {
+            Ok(windows) => {
+                dto.ok = true;
+                dto.windows = windows;
+            }
+            Err(e) => dto.error = Some(e),
+        },
+        Ok((401 | 403, body)) => {
+            let raw = body.to_string();
+            dto.error = Some(if agy_location_blocked(&raw) {
+                agy_failure_message(&raw, "").into()
+            } else {
+                "Antigravity 登录已失效或无权限，请切到该账号重新登录".into()
+            });
+        }
+        Ok((429, _)) => dto.error = Some("查询太频繁，Antigravity 暂时拒绝了，稍后再刷新".into()),
+        Ok((status, _)) => dto.error = Some(format!("Antigravity 额度接口返回 HTTP {status}")),
+        Err(e) => dto.error = Some(e),
+    }
+    dto
+}
+
 fn codex_request(method: reqwest::Method, url: &str, creds: &CodexCreds) -> reqwest::RequestBuilder {
     let mut req = official_client()
         .request(method, url)
@@ -648,8 +897,23 @@ async fn query_codex_cards(creds: &CodexCreds) -> Result<Vec<(String, Option<i64
     }
 }
 
-async fn query_codex(creds: CodexCreds) -> PlanQuotaDto {
-    let mut dto = blank_row(CODEX_ROW_ID, "codex", None, "https://chatgpt.com/codex/settings/usage");
+async fn query_codex_named(
+    row_id: &str,
+    row_name: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    creds: CodexCreds,
+) -> PlanQuotaDto {
+    let mut dto = blank_official_row(
+        row_id,
+        row_name,
+        "codex",
+        None,
+        "https://chatgpt.com/codex/settings/usage",
+        binding_id,
+        account_hint,
+        None,
+    );
     dto.reset_cards_supported = true;
     match get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await {
         Ok((status, body)) if (200..300).contains(&status) => match parse_codex_usage(&body, now_ms()) {
@@ -679,13 +943,62 @@ async fn query_codex(creds: CodexCreds) -> PlanQuotaDto {
     dto
 }
 
-/// 用一张 Codex 重置卡（消费性写操作，前端已确认）：此刻用不了就不发请求；挑最早过期的一张；成功后作废缓存重查
-pub async fn use_codex_reset_card() -> Result<PlanQuotaDto, String> {
-    let creds = tauri::async_runtime::spawn_blocking(read_codex_creds)
+/// 解析某个 Codex 官方行 ID 对应的 `(row_name, binding_id, account_hint, isolated_dir)`
+fn resolve_codex_row_target(
+    row_id: &str,
+) -> Result<(String, Option<String>, Option<String>, Option<std::path::PathBuf>), String> {
+    if row_id == CODEX_ROW_ID {
+        let bindings = crate::gateway_store::load_bindings().unwrap_or_default();
+        let default_b = bindings.into_iter().find(|b| {
+            b.agent == "codex"
+                && b.kind == crate::profiles::BindingKind::Official
+                && b.official_ref
+                    .as_ref()
+                    .map(|r| &r.mode)
+                    .unwrap_or(&crate::official_accounts::OfficialAccountMode::Default)
+                    == &crate::official_accounts::OfficialAccountMode::Default
+        });
+        let name = default_b
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = default_b.as_ref().map(|b| b.id.clone());
+        let hint = default_b.and_then(|b| b.official_ref).and_then(|r| r.account_hint);
+        return Ok((name, bid, hint, None));
+    }
+    let bid = row_id
+        .strip_prefix(CODEX_ROW_PREFIX)
+        .ok_or_else(|| "未知的 Codex 官方账号行标识".to_string())?;
+    let bindings = crate::gateway_store::load_bindings()?;
+    let b = bindings
+        .into_iter()
+        .find(|b| b.id == bid && b.agent == "codex" && b.kind == crate::profiles::BindingKind::Official)
+        .ok_or_else(|| "该 Codex 官方账号绑定不存在或已被删除".to_string())?;
+    let dir = b
+        .official_ref
+        .as_ref()
+        .and_then(|r| r.local_dir_id.as_deref())
+        .map(|id| crate::official_accounts::isolated_dir_path("codex", id))
+        .transpose()?;
+    let name = if b.name.trim().is_empty() {
+        ROW_NAME.to_string()
+    } else {
+        b.name.clone()
+    };
+    let hint = b.official_ref.and_then(|r| r.account_hint);
+    Ok((name, Some(b.id), hint, dir))
+}
+
+/// 用一张 Codex 重置卡（消费性写操作，前端已确认）：按行 ID 定位对应账号的 auth.json，此刻用不了就不发请求
+pub async fn use_codex_reset_card(row_id: &str) -> Result<PlanQuotaDto, String> {
+    let (row_name, binding_id, account_hint, iso_dir) = resolve_codex_row_target(row_id)?;
+    let dir_for_read = iso_dir.clone();
+    let creds = tauri::async_runtime::spawn_blocking(move || read_codex_creds_for_dir(dir_for_read.as_deref()))
         .await
         .ok()
         .flatten()
-        .ok_or_else(|| "读不到 Codex 的登录信息：先用 ChatGPT 账号登录 Codex".to_string())?;
+        .ok_or_else(|| "读不到该 Codex 账号的登录信息：请先用 ChatGPT 账号登录".to_string())?;
     // 先重查一遍「此刻能不能用」：界面上的数可能是 2 分钟前的
     let (status, usage) = get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await?;
     if !(200..300).contains(&status) {
@@ -714,33 +1027,1180 @@ pub async fn use_codex_reset_card() -> Result<PlanQuotaDto, String> {
             .unwrap_or_default();
         return Err(format!("用卡失败（HTTP {status}）{msg}"));
     }
-    crate::subscription_quota::cache_invalidate(CODEX_ROW_ID);
-    Ok(settle_fresh(query_codex(creds).await))
+    crate::subscription_quota::cache_invalidate(row_id);
+    Ok(settle_fresh(
+        query_codex_named(row_id, &row_name, binding_id, account_hint, creds).await,
+    ))
 }
 
-/// 三家官方账号的行（Claude Code / Codex / Antigravity CLI）：哪家本机登录了官方账号才出哪家；没登录不出行（不是错误）
-pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
-    let now = now_ms();
-    let agy_task = tauri::async_runtime::spawn(query_agy_row(force, now));
-    // 读钥匙串要跑 security 子进程：放阻塞线程，不占异步运行时
-    let (claude, codex) = tauri::async_runtime::spawn_blocking(|| (read_claude_creds(), read_codex_creds()))
+// ===== Grok Build（SuperGrok）官方订阅额度（只读，绝不刷新令牌） =====
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GrokTokenState {
+    Valid,
+    RefreshPending,
+    Expired,
+}
+
+#[derive(Debug, Clone)]
+struct GrokCreds {
+    token: String,
+    state: GrokTokenState,
+}
+
+fn is_iso_expired_at(iso: &str, now_secs: i64) -> bool {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(iso) {
+        dt.timestamp() < now_secs
+    } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(iso, "%Y-%m-%dT%H:%M:%S%.f") {
+        dt.and_utc().timestamp() < now_secs
+    } else {
+        false
+    }
+}
+
+/// 解析 `~/.grok/auth.json`（scope → entry 顶层 map）：优先 OIDC SuperGrok，回退 legacy sign-in；只读不刷新
+fn parse_grok_auth_json(content: &str, now_secs: i64) -> Option<GrokCreds> {
+    let parsed: serde_json::Value = serde_json::from_str(content).ok()?;
+    let root = parsed.as_object()?;
+    let mut oidc_candidate = None;
+    let mut legacy_candidate = None;
+    for (scope, value) in root {
+        let Some(entry) = value.as_object() else { continue };
+        let has_key = entry
+            .get("key")
+            .and_then(|v| v.as_str())
+            .is_some_and(|k| !k.trim().is_empty());
+        if !has_key {
+            continue;
+        }
+        if scope.starts_with("https://auth.x.ai::") {
+            oidc_candidate = Some(entry);
+        } else if scope == "https://accounts.x.ai/sign-in" || scope.contains("/sign-in") {
+            legacy_candidate = Some(entry);
+        }
+    }
+    let entry = oidc_candidate.or(legacy_candidate)?;
+    let token = entry.get("key")?.as_str()?.trim().to_string();
+    let state = match entry.get("expires_at").and_then(|v| v.as_str()) {
+        Some(iso) if is_iso_expired_at(iso, now_secs) => {
+            let has_refresh = entry
+                .get("refresh_token")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.trim().is_empty());
+            if has_refresh {
+                GrokTokenState::RefreshPending
+            } else {
+                GrokTokenState::Expired
+            }
+        }
+        _ => GrokTokenState::Valid,
+    };
+    Some(GrokCreds { token, state })
+}
+
+fn read_grok_creds_for_dir(config_dir: Option<&std::path::Path>) -> Option<GrokCreds> {
+    if cfg!(test) {
+        return None;
+    }
+    let root = match config_dir {
+        Some(d) => d.to_path_buf(),
+        None => crate::agent_specs::agent_config_root("grok")?,
+    };
+    let text = std::fs::read_to_string(root.join("auth.json")).ok()?;
+    parse_grok_auth_json(&text, chrono::Utc::now().timestamp())
+}
+
+#[derive(Default)]
+struct GrokProtobufScan {
+    fixed32_fields: Vec<(Vec<u64>, f32, usize)>,
+    varint_fields: Vec<(Vec<u64>, u64)>,
+}
+
+fn grok_read_varint(bytes: &[u8], index: &mut usize) -> Option<u64> {
+    let mut value: u64 = 0;
+    let mut shift: u32 = 0;
+    while *index < bytes.len() && shift < 64 {
+        let byte = bytes[*index];
+        *index += 1;
+        value |= u64::from(byte & 0x7F) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+        shift += 7;
+    }
+    None
+}
+
+fn grok_scan_protobuf(
+    bytes: &[u8],
+    depth: usize,
+    path: &[u64],
+    order: usize,
+    scan: &mut GrokProtobufScan,
+) -> usize {
+    let mut index = 0;
+    let mut next_order = order;
+    while index < bytes.len() {
+        let field_start = index;
+        let key = match grok_read_varint(bytes, &mut index) {
+            Some(k) if k != 0 => k,
+            _ => {
+                index = field_start + 1;
+                continue;
+            }
+        };
+        let field_number = key >> 3;
+        let wire_type = key & 0x07;
+        let mut field_path = path.to_vec();
+        field_path.push(field_number);
+        match wire_type {
+            0 => match grok_read_varint(bytes, &mut index) {
+                Some(v) => scan.varint_fields.push((field_path, v)),
+                None => index = field_start + 1,
+            },
+            1 => {
+                if index + 8 > bytes.len() {
+                    return next_order;
+                }
+                index += 8;
+            }
+            2 => {
+                let len = match grok_read_varint(bytes, &mut index) {
+                    Some(l) if l <= (bytes.len() - index) as u64 => l as usize,
+                    _ => {
+                        index = field_start + 1;
+                        continue;
+                    }
+                };
+                let end = index + len;
+                if depth < 4 {
+                    next_order =
+                        grok_scan_protobuf(&bytes[index..end], depth + 1, &field_path, next_order, scan);
+                }
+                index = end;
+            }
+            5 => {
+                if index + 4 > bytes.len() {
+                    return next_order;
+                }
+                let bits = u32::from_le_bytes([
+                    bytes[index],
+                    bytes[index + 1],
+                    bytes[index + 2],
+                    bytes[index + 3],
+                ]);
+                scan.fixed32_fields
+                    .push((field_path, f32::from_bits(bits), next_order));
+                next_order += 1;
+                index += 4;
+            }
+            _ => index = field_start + 1,
+        }
+    }
+    next_order
+}
+
+fn grok_grpc_data_frames(data: &[u8]) -> Vec<&[u8]> {
+    let mut frames = Vec::new();
+    let mut index = 0;
+    while index < data.len() {
+        if index + 5 > data.len() {
+            return Vec::new();
+        }
+        let flags = data[index];
+        let length = u32::from_be_bytes([
+            data[index + 1],
+            data[index + 2],
+            data[index + 3],
+            data[index + 4],
+        ]) as usize;
+        let start = index + 5;
+        let end = start + length;
+        if end > data.len() {
+            return Vec::new();
+        }
+        if flags & 0x80 == 0 {
+            frames.push(&data[start..end]);
+        }
+        index = end;
+    }
+    frames
+}
+
+fn grok_percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
+                if let Ok(b) = u8::from_str_radix(hex, 16) {
+                    out.push(b);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn grok_grpc_trailers(data: &[u8]) -> std::collections::HashMap<String, String> {
+    let mut fields = std::collections::HashMap::new();
+    let mut index = 0;
+    while index + 5 <= data.len() {
+        let flags = data[index];
+        let length = u32::from_be_bytes([
+            data[index + 1],
+            data[index + 2],
+            data[index + 3],
+            data[index + 4],
+        ]) as usize;
+        let start = index + 5;
+        let end = start + length;
+        if end > data.len() {
+            break;
+        }
+        if flags & 0x80 != 0 {
+            if let Ok(text) = std::str::from_utf8(&data[start..end]) {
+                for line in text.lines().filter(|l| !l.is_empty()) {
+                    if let Some((k, v)) = line.split_once(':') {
+                        fields.insert(k.trim().to_ascii_lowercase(), grok_percent_decode(v.trim()));
+                    }
+                }
+            }
+        }
+        index = end;
+    }
+    fields
+}
+
+fn grok_parse_billing_payload(data: &[u8], now_secs: i64) -> Result<(f64, Option<i64>), String> {
+    let mut payloads = grok_grpc_data_frames(data);
+    if payloads.is_empty() {
+        if let Some(&first) = data.first() {
+            if (first >> 3) > 0 && matches!(first & 0x07, 0 | 1 | 2 | 5) {
+                payloads = vec![data];
+            }
+        }
+    }
+    if payloads.is_empty() {
+        return Err("Grok 账单响应缺少有效数据".into());
+    }
+    let mut scan = GrokProtobufScan::default();
+    for payload in payloads {
+        grok_scan_protobuf(payload, 0, &[], 0, &mut scan);
+    }
+    let parsed_percent = scan
+        .fixed32_fields
+        .iter()
+        .filter(|(path, v, _)| path.last() == Some(&1) && v.is_finite() && *v >= 0.0 && *v <= 100.0)
+        .min_by_key(|(path, _, order)| (path.len(), *order))
+        .map(|(_, v, _)| f64::from(*v));
+
+    let reset_candidates: Vec<(&[u64], i64)> = scan
+        .varint_fields
+        .iter()
+        .filter(|(_, v)| (1_700_000_000..=2_100_000_000).contains(v))
+        .map(|(path, v)| (path.as_slice(), *v as i64))
+        .filter(|(_, ts)| *ts > now_secs)
+        .collect();
+    let reset = reset_candidates
+        .iter()
+        .filter(|(path, _)| *path == [1, 5, 1])
+        .map(|(_, ts)| *ts)
+        .min()
+        .or_else(|| reset_candidates.iter().map(|(_, ts)| *ts).min());
+
+    let has_usage_period = scan.varint_fields.iter().any(|(path, v)| {
+        path.starts_with(&[1, 6]) || (path.as_slice() == [1, 8, 1] && (*v == 1 || *v == 2))
+    });
+    let no_usage_yet = parsed_percent.is_none()
+        && scan.fixed32_fields.is_empty()
+        && reset.is_some()
+        && has_usage_period;
+
+    let used_percent = parsed_percent
+        .or(if no_usage_yet { Some(0.0) } else { None })
+        .ok_or_else(|| "未能从 Grok 账单响应解析出额度比例".to_string())?;
+    Ok((used_percent.clamp(0.0, 100.0), reset))
+}
+
+fn grok_parse_plan(body: &serde_json::Value) -> Option<String> {
+    let settings = body.get("settings").unwrap_or(body);
+    let text = |key: &str| {
+        settings
+            .get(key)
+            .or_else(|| body.get(key))?
+            .as_str()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    if let Some(display) = text("subscription_tier_display") {
+        return Some(display.to_string());
+    }
+    let raw = text("subscription_tier")?;
+    let letters: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    Some(match letters.as_str() {
+        "supergrokheavy" | "heavy" => "SuperGrok Heavy".to_string(),
+        "supergrok" => "SuperGrok".to_string(),
+        _ => raw.to_string(),
+    })
+}
+
+fn grok_window_for_reset(resets_at: Option<i64>, now_secs: i64) -> &'static str {
+    if let Some(ts) = resets_at {
+        let days = ((ts - now_secs) as f64 / 86400.0).round() as i64;
+        if (4..=12).contains(&days) {
+            return WINDOW_WEEKLY;
+        }
+        if (20..=45).contains(&days) {
+            return WINDOW_MONTHLY;
+        }
+    }
+    WINDOW_CREDITS
+}
+
+fn grok_grpc_error_message(status: i64, message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if status == 16
+        || (status == 7
+            && (lower.contains("bad-credentials")
+                || lower.contains("unauthenticated")
+                || lower.contains("invalid")
+                || lower.contains("expired")))
+    {
+        return "Grok 登录已过期或被拒绝：用一次 Grok 自动续期，仍不行就到连接页重新 `grok login`".into();
+    }
+    if status == 9 && matches!(lower.trim(), "no personal team" | "no personal team.") {
+        return "当前是 xAI 团队账号，账单接口暂未开放个人额度查询".into();
+    }
+    format!("Grok 账单接口返回错误（grpc-status {status}）：{message}")
+}
+
+async fn query_grok_plan(client: &reqwest::Client, access_token: &str) -> Option<String> {
+    let resp = client
+        .get(GROK_SETTINGS_ENDPOINT)
+        .bearer_auth(access_token)
+        .header("Accept", "application/json")
+        .header("User-Agent", format!("mesa/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(HTTP_TIMEOUT)
+        .send()
         .await
-        .unwrap_or((None, None));
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&resp.bytes().await.ok()?).ok()?;
+    grok_parse_plan(&body)
+}
+
+async fn query_grok_named(
+    row_id: &str,
+    row_name: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    creds: GrokCreds,
+) -> PlanQuotaDto {
+    let mut dto = blank_official_row(
+        row_id,
+        row_name,
+        "grok",
+        None,
+        GROK_CONSOLE_URL,
+        binding_id,
+        account_hint,
+        None,
+    );
+    match creds.state {
+        GrokTokenState::RefreshPending => {
+            dto.error = Some("Grok 登录令牌待刷新：用一次 Grok 后再刷新，CLI 会自动续期".into());
+            return dto;
+        }
+        GrokTokenState::Expired => {
+            dto.error = Some("Grok 登录已过期，请到连接页重新执行 `grok login`".into());
+            return dto;
+        }
+        GrokTokenState::Valid => {}
+    }
+    let client = official_client();
+    let plan_client = client.clone();
+    let plan_token = creds.token.clone();
+    let plan_task = tauri::async_runtime::spawn(async move {
+        query_grok_plan(&plan_client, &plan_token).await
+    });
+    let billing_res = client
+        .post(GROK_BILLING_ENDPOINT)
+        .header("Authorization", format!("Bearer {}", creds.token))
+        .header("Origin", "https://grok.com")
+        .header("Referer", "https://grok.com/?_s=usage")
+        .header("Accept", "*/*")
+        .header("Content-Type", "application/grpc-web+proto")
+        .header("x-grpc-web", "1")
+        .header("x-user-agent", "connect-es/2.1.1")
+        .header("User-Agent", format!("mesa/{}", env!("CARGO_PKG_VERSION")))
+        .body(vec![0u8; 5])
+        .timeout(HTTP_TIMEOUT)
+        .send()
+        .await;
+    dto.plan_level = plan_task.await.ok().flatten();
+
+    let resp = match billing_res {
+        Ok(r) => r,
+        Err(e) => {
+            dto.error = Some(format!("查询 Grok 额度失败（请检查出网代理）: {e}"));
+            return dto;
+        }
+    };
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        dto.error = Some("Grok 登录已过期或失效：用一次 Grok 自动续期，仍不行就重新 `grok login`".into());
+        return dto;
+    }
+    let header_status = resp
+        .headers()
+        .get("grpc-status")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<i64>().ok());
+    let header_msg = resp
+        .headers()
+        .get("grpc-message")
+        .and_then(|v| v.to_str().ok())
+        .map(grok_percent_decode)
+        .unwrap_or_default();
+    if !status.is_success() {
+        dto.error = Some(format!("Grok 额度接口返回 HTTP {}", status.as_u16()));
+        return dto;
+    }
+    if let Some(code) = header_status.filter(|c| *c != 0) {
+        dto.error = Some(grok_grpc_error_message(code, &header_msg));
+        return dto;
+    }
+    let raw = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            dto.error = Some(format!("读取 Grok 额度响应失败: {e}"));
+            return dto;
+        }
+    };
+    let trailers = grok_grpc_trailers(&raw);
+    if let Some(code) = trailers
+        .get("grpc-status")
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|c| *c != 0)
+    {
+        let msg = trailers.get("grpc-message").map(String::as_str).unwrap_or("");
+        dto.error = Some(grok_grpc_error_message(code, msg));
+        return dto;
+    }
+    let now_secs = chrono::Utc::now().timestamp();
+    match grok_parse_billing_payload(&raw, now_secs) {
+        Ok((used_percent, resets_at_secs)) => {
+            dto.ok = true;
+            dto.windows = vec![window_dto(
+                grok_window_for_reset(resets_at_secs, now_secs),
+                used_percent,
+                resets_at_secs.map(|s| s * 1000),
+            )];
+        }
+        Err(e) => dto.error = Some(e),
+    }
+    dto
+}
+
+// ===== Kimi Code 官方 OAuth 订阅额度（只读，绝不刷新令牌） =====
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum KimiTokenState {
+    Valid,
+    RefreshPending,
+    Expired,
+}
+
+#[derive(Debug, Clone)]
+struct KimiOfficialCreds {
+    token: String,
+    state: KimiTokenState,
+    base_url: String,
+    device_id: String,
+}
+
+fn parse_kimi_official_creds(
+    cred_json: &str,
+    base_url: String,
+    device_id: String,
+    now_secs: i64,
+) -> Option<KimiOfficialCreds> {
+    let v: serde_json::Value = serde_json::from_str(cred_json).ok()?;
+    let access = v
+        .get("access_token")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string();
+    let has_refresh = v
+        .get("refresh_token")
+        .and_then(|x| x.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let expires_at = v.get("expires_at").and_then(|x| x.as_i64());
+    if access.is_empty() && !has_refresh {
+        return Some(KimiOfficialCreds {
+            token: String::new(),
+            state: KimiTokenState::Expired,
+            base_url,
+            device_id,
+        });
+    }
+    let expired = access.is_empty() || expires_at.is_some_and(|exp| exp <= now_secs);
+    let state = if !expired {
+        KimiTokenState::Valid
+    } else if has_refresh {
+        KimiTokenState::RefreshPending
+    } else {
+        KimiTokenState::Expired
+    };
+    Some(KimiOfficialCreds {
+        token: access,
+        state,
+        base_url,
+        device_id,
+    })
+}
+
+fn read_kimi_creds_for_dir(config_dir: Option<&std::path::Path>) -> Option<KimiOfficialCreds> {
+    if cfg!(test) {
+        return None;
+    }
+    let root = match config_dir {
+        Some(d) => d.to_path_buf(),
+        None => crate::agent_specs::agent_config_root("kimi")?,
+    };
+    // 1) 从 config.toml 找 managed:kimi-code 或带 oauth 段的官方 provider 的 base_url 与凭据槽名
+    let mut base_url = KIMI_DEFAULT_BASE_URL.to_string();
+    let mut cred_name = "kimi-code".to_string();
+    if let Ok(cfg_text) = std::fs::read_to_string(root.join("config.toml")) {
+        if let Ok(doc) = toml::from_str::<toml::Value>(&cfg_text) {
+            if let Some(providers) = doc.get("providers").and_then(|v| v.as_table()) {
+                let target = providers.get("managed:kimi-code").or_else(|| {
+                    providers
+                        .values()
+                        .find(|p| p.get("oauth").and_then(|o| o.as_table()).is_some())
+                });
+                if let Some(p) = target {
+                    if let Some(u) = p
+                        .get("base_url")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        base_url = u.trim_end_matches('/').to_string();
+                    }
+                    if let Some(oauth) = p.get("oauth").and_then(|o| o.as_table()) {
+                        if oauth
+                            .get("storage")
+                            .and_then(|s| s.as_str())
+                            .is_some_and(|s| s != "file")
+                        {
+                            return None;
+                        }
+                        if let Some(key) = oauth.get("key").and_then(|k| k.as_str()) {
+                            let stripped = key.strip_prefix("oauth/").unwrap_or(key);
+                            if !stripped.is_empty()
+                                && stripped
+                                    .bytes()
+                                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                            {
+                                cred_name = stripped.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // 2) 只读 credentials/{cred_name}.json，找不到则扫 credentials/*.json 兜底
+    let creds_dir = root.join("credentials");
+    let primary = creds_dir.join(format!("{cred_name}.json"));
+    let cred_path = if primary.is_file() {
+        primary
+    } else {
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&creds_dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("json"))
+            .collect();
+        files.sort();
+        files.into_iter().next()?
+    };
+    let text = std::fs::read_to_string(&cred_path).ok()?;
+    let device_id = std::fs::read_to_string(root.join("device_id"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "mesa-readonly".to_string());
+    parse_kimi_official_creds(&text, base_url, device_id, chrono::Utc::now().timestamp())
+}
+
+fn parse_kimi_me(body: &serde_json::Value) -> (Option<String>, Option<String>) {
+    let pick = |key: &str| {
+        body.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    (pick("user_level_name"), pick("nickname"))
+}
+
+async fn query_kimi_me(
+    client: &reqwest::Client,
+    base_url: &str,
+    token: &str,
+    device_id: &str,
+) -> (Option<String>, Option<String>) {
+    let endpoint = format!("{}/me", base_url.trim_end_matches('/'));
+    let resp = client
+        .get(&endpoint)
+        .bearer_auth(token)
+        .header("Accept", "application/json")
+        .header("User-Agent", format!("mesa/{}", env!("CARGO_PKG_VERSION")))
+        .header("X-Msh-Platform", "kimi_code_cli")
+        .header("X-Msh-Version", env!("CARGO_PKG_VERSION"))
+        .header("X-Msh-Device-Id", device_id)
+        .header("X-Msh-Os-Version", std::env::consts::OS)
+        .timeout(HTTP_TIMEOUT)
+        .send()
+        .await;
+    let Ok(r) = resp else { return (None, None) };
+    if !r.status().is_success() {
+        return (None, None);
+    }
+    let Ok(body) = r.json::<serde_json::Value>().await else {
+        return (None, None);
+    };
+    parse_kimi_me(&body)
+}
+
+async fn query_kimi_official_named(
+    row_id: &str,
+    row_name: &str,
+    binding_id: Option<String>,
+    account_hint: Option<String>,
+    creds: KimiOfficialCreds,
+) -> PlanQuotaDto {
+    let console = if creds.base_url.contains("kimi.ai") {
+        KIMI_GLOBAL_CONSOLE_URL
+    } else {
+        KIMI_CN_CONSOLE_URL
+    };
+    let mut dto = blank_official_row(
+        row_id,
+        row_name,
+        "kimi",
+        None,
+        console,
+        binding_id,
+        account_hint,
+        None,
+    );
+    match creds.state {
+        KimiTokenState::RefreshPending => {
+            dto.error = Some("Kimi 登录令牌待刷新：用一次 Kimi Code 后再刷新，CLI 会自动续期".into());
+            return dto;
+        }
+        KimiTokenState::Expired => {
+            dto.error = Some("Kimi Code 登录已过期，请到连接页重新执行 `kimi login`".into());
+            return dto;
+        }
+        KimiTokenState::Valid => {}
+    }
+    let client = official_client();
+    let me_client = client.clone();
+    let me_base = creds.base_url.clone();
+    let me_token = creds.token.clone();
+    let me_device = creds.device_id.clone();
+    let me_task = tauri::async_runtime::spawn(async move {
+        query_kimi_me(&me_client, &me_base, &me_token, &me_device).await
+    });
+    let usages_url = format!("{}/usages", creds.base_url.trim_end_matches('/'));
+    let usage_req = client
+        .get(&usages_url)
+        .bearer_auth(&creds.token)
+        .header("Accept", "application/json")
+        .header("User-Agent", format!("mesa/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(HTTP_TIMEOUT);
+    let usage_res = get_json(usage_req).await;
+    let (plan, nickname) = me_task.await.unwrap_or((None, None));
+    if dto.plan_level.is_none() {
+        dto.plan_level = plan;
+    }
+    if dto.account_hint.is_none() {
+        dto.account_hint = nickname;
+    }
+    match usage_res {
+        Ok((status, body)) if (200..300).contains(&status) => {
+            match crate::subscription_quota::parse_kimi_quota_windows(&body) {
+                Ok(windows) => {
+                    dto.ok = true;
+                    dto.windows = windows;
+                }
+                Err(e) => dto.error = Some(e),
+            }
+        }
+        Ok((401 | 403, _)) => {
+            dto.error = Some("Kimi 登录已过期或失效：用一次 Kimi Code 自动续期，仍不行就重新 `kimi login`".into());
+        }
+        Ok((429, _)) => dto.error = Some("查询太频繁，Kimi 暂时拒绝了，稍后再刷新".into()),
+        Ok((status, _)) => dto.error = Some(format!("Kimi 额度接口返回 HTTP {status}")),
+        Err(e) => dto.error = Some(e),
+    }
+    dto
+}
+
+/// 五家官方账号的行（Claude Code / Codex / Grok Build / Kimi Code / Antigravity CLI）：
+/// 并发查询本机默认槽位 + 连接页里全部附加隔离账号 / 托管快照账号；没登录不出行（已显式加号的附加号除外，会在卡面提示未登录）
+pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    let now = now_ms();
+    let bindings = crate::gateway_store::load_bindings().unwrap_or_default();
+
+    // 整理五家带官方额度卡的官方绑定
+    let mut claude_default: Option<crate::profiles::Binding> = None;
+    let mut claude_isolated: Vec<crate::profiles::Binding> = Vec::new();
+    let mut codex_default: Option<crate::profiles::Binding> = None;
+    let mut codex_isolated: Vec<crate::profiles::Binding> = Vec::new();
+    let mut grok_default: Option<crate::profiles::Binding> = None;
+    let mut grok_isolated: Vec<crate::profiles::Binding> = Vec::new();
+    let mut kimi_default: Option<crate::profiles::Binding> = None;
+    let mut kimi_isolated: Vec<crate::profiles::Binding> = Vec::new();
+    let mut agy_managed: Vec<crate::profiles::Binding> = Vec::new();
+    let mut agy_default: Option<crate::profiles::Binding> = None;
+
+    for b in bindings {
+        if b.kind != crate::profiles::BindingKind::Official {
+            continue;
+        }
+        let mode = b
+            .official_ref
+            .as_ref()
+            .map(|r| &r.mode)
+            .unwrap_or(&crate::official_accounts::OfficialAccountMode::Default);
+        match (b.agent.as_str(), mode) {
+            ("claude-code", crate::official_accounts::OfficialAccountMode::Default) => {
+                if claude_default.is_none() {
+                    claude_default = Some(b);
+                }
+            }
+            ("claude-code", crate::official_accounts::OfficialAccountMode::IsolatedDir) => {
+                claude_isolated.push(b);
+            }
+            ("codex", crate::official_accounts::OfficialAccountMode::Default) => {
+                if codex_default.is_none() {
+                    codex_default = Some(b);
+                }
+            }
+            ("codex", crate::official_accounts::OfficialAccountMode::IsolatedDir) => {
+                codex_isolated.push(b);
+            }
+            ("grok", crate::official_accounts::OfficialAccountMode::Default) => {
+                if grok_default.is_none() {
+                    grok_default = Some(b);
+                }
+            }
+            ("grok", crate::official_accounts::OfficialAccountMode::IsolatedDir) => {
+                grok_isolated.push(b);
+            }
+            ("kimi", crate::official_accounts::OfficialAccountMode::Default) => {
+                if kimi_default.is_none() {
+                    kimi_default = Some(b);
+                }
+            }
+            ("kimi", crate::official_accounts::OfficialAccountMode::IsolatedDir) => {
+                kimi_isolated.push(b);
+            }
+            ("agy", crate::official_accounts::OfficialAccountMode::ManagedSnapshot) => {
+                agy_managed.push(b);
+            }
+            ("agy", crate::official_accounts::OfficialAccountMode::Default) => {
+                if agy_default.is_none() {
+                    agy_default = Some(b);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 1) Antigravity 任务集合
+    let agy_task = tauri::async_runtime::spawn(async move {
+        if agy_managed.is_empty() {
+            let mut row = query_agy_row(force, now).await?;
+            if let Some(b) = agy_default {
+                if !b.name.trim().is_empty() {
+                    row.gateway_name = b.name.clone();
+                }
+                row.binding_id = Some(b.id);
+                row.account_hint = b.official_ref.and_then(|r| r.account_hint);
+            }
+            return Some(vec![row]);
+        }
+        let active_sid = tauri::async_runtime::spawn_blocking(
+            crate::official_accounts::agy_active_snapshot_id,
+        )
+        .await
+        .ok()
+        .flatten();
+        let mut handles = Vec::new();
+        for b in agy_managed {
+            let row_id = format!("{AGY_ROW_PREFIX}{}", b.id);
+            let row_name = if b.name.trim().is_empty() {
+                ROW_NAME.to_string()
+            } else {
+                b.name.clone()
+            };
+            let sid = b
+                .official_ref
+                .as_ref()
+                .and_then(|r| r.snapshot_id.clone());
+            let hint = b
+                .official_ref
+                .as_ref()
+                .and_then(|r| r.account_hint.clone());
+            let is_active = sid.is_some() && active_sid == sid;
+            let bid = b.id.clone();
+            handles.push(tauri::async_runtime::spawn(async move {
+                if !force {
+                    if let Some(mut hit) = cache_get(&row_id, now) {
+                        hit.is_active_slot = Some(is_active);
+                        return hit;
+                    }
+                }
+                let Some(snapshot_id) = sid else {
+                    let mut dto = blank_official_row(
+                        &row_id,
+                        &row_name,
+                        "agy",
+                        None,
+                        AGY_CONSOLE_URL,
+                        Some(bid),
+                        hint,
+                        Some(false),
+                    );
+                    dto.error = Some("该 Antigravity 账号尚未收录凭证，请到连接页收录".into());
+                    return dto;
+                };
+                settle_fresh(
+                    query_agy_snapshot_api(&row_id, &row_name, Some(bid), hint, &snapshot_id, is_active)
+                        .await,
+                )
+            }));
+        }
+        let mut rows = Vec::new();
+        for h in handles {
+            if let Ok(r) = h.await {
+                rows.push(r);
+            }
+        }
+        Some(rows)
+    });
+
+    // 2) 阻塞读取 Claude / Codex 全部本地凭证（默认 + 隔离目录）
+    let claude_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
+        claude_isolated
+            .iter()
+            .map(|b| {
+                let dir = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.local_dir_id.as_deref())
+                    .and_then(|id| crate::official_accounts::isolated_dir_path("claude-code", id).ok());
+                let hint = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.account_hint.clone())
+                    .or_else(|| dir.as_deref().and_then(crate::official_accounts::read_claude_account_hint));
+                (b.id.clone(), b.name.clone(), hint, dir)
+            })
+            .collect();
+    let codex_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
+        codex_isolated
+            .iter()
+            .map(|b| {
+                let dir = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.local_dir_id.as_deref())
+                    .and_then(|id| crate::official_accounts::isolated_dir_path("codex", id).ok());
+                let hint = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.account_hint.clone())
+                    .or_else(|| {
+                        dir.as_deref()
+                            .and_then(|d| crate::official_accounts::probe_isolated_codex(d).1)
+                    });
+                (b.id.clone(), b.name.clone(), hint, dir)
+            })
+            .collect();
+
+    let grok_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
+        grok_isolated
+            .iter()
+            .map(|b| {
+                let dir = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.local_dir_id.as_deref())
+                    .and_then(|id| crate::official_accounts::isolated_dir_path("grok", id).ok());
+                let hint = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.account_hint.clone())
+                    .or_else(|| {
+                        dir.as_deref()
+                            .and_then(|d| crate::official_accounts::probe_isolated_grok(d).1)
+                    });
+                (b.id.clone(), b.name.clone(), hint, dir)
+            })
+            .collect();
+    let kimi_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
+        kimi_isolated
+            .iter()
+            .map(|b| {
+                let dir = b
+                    .official_ref
+                    .as_ref()
+                    .and_then(|r| r.local_dir_id.as_deref())
+                    .and_then(|id| crate::official_accounts::isolated_dir_path("kimi", id).ok());
+                let hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
+                (b.id.clone(), b.name.clone(), hint, dir)
+            })
+            .collect();
+
+    let claude_iso_dirs: Vec<Option<std::path::PathBuf>> =
+        claude_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
+    let codex_iso_dirs: Vec<Option<std::path::PathBuf>> =
+        codex_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
+    let grok_iso_dirs: Vec<Option<std::path::PathBuf>> =
+        grok_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
+    let kimi_iso_dirs: Vec<Option<std::path::PathBuf>> =
+        kimi_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
+
+    let (
+        claude_def_creds,
+        codex_def_creds,
+        grok_def_creds,
+        kimi_def_creds,
+        claude_iso_creds,
+        codex_iso_creds,
+        grok_iso_creds,
+        kimi_iso_creds,
+    ) = tauri::async_runtime::spawn_blocking(move || {
+        let cd = read_claude_creds();
+        let xd = read_codex_creds();
+        let gd = read_grok_creds_for_dir(None);
+        let kd = read_kimi_creds_for_dir(None);
+        let ci: Vec<Option<ClaudeCreds>> = claude_iso_dirs
+            .iter()
+            .map(|d| d.as_deref().and_then(|p| read_claude_creds_for_dir(Some(p))))
+            .collect();
+        let xi: Vec<Option<CodexCreds>> = codex_iso_dirs
+            .iter()
+            .map(|d| d.as_deref().and_then(|p| read_codex_creds_for_dir(Some(p))))
+            .collect();
+        let gi: Vec<Option<GrokCreds>> = grok_iso_dirs
+            .iter()
+            .map(|d| d.as_deref().and_then(|p| read_grok_creds_for_dir(Some(p))))
+            .collect();
+        let ki: Vec<Option<KimiOfficialCreds>> = kimi_iso_dirs
+            .iter()
+            .map(|d| d.as_deref().and_then(|p| read_kimi_creds_for_dir(Some(p))))
+            .collect();
+        (cd, xd, gd, kd, ci, xi, gi, ki)
+    })
+    .await
+    .unwrap_or((
+        None,
+        None,
+        None,
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    ));
+
+    // 3) 并发查询所有 Claude + Codex + Grok + Kimi 官方账号
+    let mut tasks: Vec<tauri::async_runtime::JoinHandle<PlanQuotaDto>> = Vec::new();
+
+    if let Some(creds) = claude_def_creds {
+        let name = claude_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = claude_default.as_ref().map(|b| b.id.clone());
+        let hint = claude_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(CLAUDE_ROW_ID, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_claude_named(CLAUDE_ROW_ID, &name, bid, hint, creds).await)
+        }));
+    }
+    for ((bid, bname, hint, _), creds_opt) in claude_iso_specs.into_iter().zip(claude_iso_creds) {
+        let Some(creds) = creds_opt else { continue };
+        let row_id = format!("{CLAUDE_ROW_PREFIX}{bid}");
+        let name = if bname.trim().is_empty() {
+            ROW_NAME.to_string()
+        } else {
+            bname
+        };
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_claude_named(&row_id, &name, Some(bid), hint, creds).await)
+        }));
+    }
+
+    if let Some(creds) = codex_def_creds {
+        let name = codex_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = codex_default.as_ref().map(|b| b.id.clone());
+        let hint = codex_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(CODEX_ROW_ID, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_codex_named(CODEX_ROW_ID, &name, bid, hint, creds).await)
+        }));
+    }
+    for ((bid, bname, hint, _), creds_opt) in codex_iso_specs.into_iter().zip(codex_iso_creds) {
+        let Some(creds) = creds_opt else { continue };
+        let row_id = format!("{CODEX_ROW_PREFIX}{bid}");
+        let name = if bname.trim().is_empty() {
+            ROW_NAME.to_string()
+        } else {
+            bname
+        };
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_codex_named(&row_id, &name, Some(bid), hint, creds).await)
+        }));
+    }
+
+    if let Some(creds) = grok_def_creds {
+        let name = grok_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = grok_default.as_ref().map(|b| b.id.clone());
+        let hint = grok_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(GROK_ROW_ID, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_grok_named(GROK_ROW_ID, &name, bid, hint, creds).await)
+        }));
+    }
+    for ((bid, bname, hint, _), creds_opt) in grok_iso_specs.into_iter().zip(grok_iso_creds) {
+        let Some(creds) = creds_opt else { continue };
+        let row_id = format!("{GROK_ROW_PREFIX}{bid}");
+        let name = if bname.trim().is_empty() {
+            ROW_NAME.to_string()
+        } else {
+            bname
+        };
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_grok_named(&row_id, &name, Some(bid), hint, creds).await)
+        }));
+    }
+
+    if let Some(creds) = kimi_def_creds {
+        let name = kimi_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = kimi_default.as_ref().map(|b| b.id.clone());
+        let hint = kimi_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(KIMI_ROW_ID, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_kimi_official_named(KIMI_ROW_ID, &name, bid, hint, creds).await)
+        }));
+    }
+    for ((bid, bname, hint, _), creds_opt) in kimi_iso_specs.into_iter().zip(kimi_iso_creds) {
+        let Some(creds) = creds_opt else { continue };
+        let row_id = format!("{KIMI_ROW_PREFIX}{bid}");
+        let name = if bname.trim().is_empty() {
+            ROW_NAME.to_string()
+        } else {
+            bname
+        };
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    return hit;
+                }
+            }
+            settle_fresh(query_kimi_official_named(&row_id, &name, Some(bid), hint, creds).await)
+        }));
+    }
+
     let mut out = Vec::new();
-    if let Some(creds) = claude {
-        out.push(match cache_get(CLAUDE_ROW_ID, now).filter(|_| !force) {
-            Some(hit) => hit,
-            None => settle_fresh(query_claude(creds).await),
-        });
+    for t in tasks {
+        if let Ok(dto) = t.await {
+            out.push(dto);
+        }
     }
-    if let Some(creds) = codex {
-        out.push(match cache_get(CODEX_ROW_ID, now).filter(|_| !force) {
-            Some(hit) => hit,
-            None => settle_fresh(query_codex(creds).await),
-        });
-    }
-    if let Ok(Some(agy)) = agy_task.await {
-        out.push(agy);
+    if let Ok(Some(agy_rows)) = agy_task.await {
+        out.extend(agy_rows);
     }
     out
 }
@@ -920,5 +2380,117 @@ mod tests {
         assert_eq!(w.iter().map(|x| x.window.as_str()).collect::<Vec<_>>(), ["five_hour", "weekly"]);
         assert_eq!(w[0].resets_at, Some(61_000));
         assert!(parse_codex_usage(&serde_json::json!({"plan_type": "plus"}), 0).is_err());
+    }
+
+    #[test]
+    fn grok_auth_prefers_oidc_and_distinguishes_refresh_pending_from_expired() {
+        let now = 1_800_000_000;
+        let json = r#"{
+            "https://accounts.x.ai/sign-in": {"key": "legacy-tok"},
+            "https://auth.x.ai::client": {
+                "key": "oidc-tok",
+                "refresh_token": "rt-1",
+                "expires_at": "2030-01-01T00:00:00Z"
+            }
+        }"#;
+        let c = parse_grok_auth_json(json, now).unwrap();
+        assert_eq!(c.token, "oidc-tok");
+        assert_eq!(c.state, GrokTokenState::Valid);
+
+        let pending_json = r#"{
+            "https://auth.x.ai::client": {
+                "key": "oidc-tok",
+                "refresh_token": "rt-1",
+                "expires_at": "2020-01-01T00:00:00Z"
+            }
+        }"#;
+        let p = parse_grok_auth_json(pending_json, now).unwrap();
+        assert_eq!(p.state, GrokTokenState::RefreshPending);
+
+        let expired_json = r#"{
+            "https://auth.x.ai::client": {
+                "key": "oidc-tok",
+                "expires_at": "2020-01-01T00:00:00Z"
+            }
+        }"#;
+        let e = parse_grok_auth_json(expired_json, now).unwrap();
+        assert_eq!(e.state, GrokTokenState::Expired);
+    }
+
+    #[test]
+    fn grok_billing_protobuf_and_plan_parsing() {
+        // 构造一个包含 field 1 = float 42.5 (wire 5: tag 0x0d) 与未来时间戳的 gRPC-web 帧
+        let mut msg = Vec::new();
+        msg.push((1 << 3) | 5);
+        msg.extend_from_slice(&42.5_f32.to_le_bytes());
+        // field 2 varint = 1_800_600_000 (约 7 天后)
+        msg.push((2 << 3) | 0);
+        let mut ts: u64 = 1_800_600_000;
+        loop {
+            let mut b = (ts & 0x7F) as u8;
+            ts >>= 7;
+            if ts != 0 {
+                b |= 0x80;
+            }
+            msg.push(b);
+            if ts == 0 {
+                break;
+            }
+        }
+        let mut frame = vec![0u8];
+        frame.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&msg);
+
+        let (pct, reset) = grok_parse_billing_payload(&frame, 1_800_000_000).unwrap();
+        assert!((pct - 42.5).abs() < 0.01);
+        assert_eq!(reset, Some(1_800_600_000));
+        assert_eq!(grok_window_for_reset(reset, 1_800_000_000), WINDOW_WEEKLY);
+
+        assert_eq!(
+            grok_parse_plan(&serde_json::json!({"subscription_tier_display": "SuperGrok Heavy"})).as_deref(),
+            Some("SuperGrok Heavy")
+        );
+        assert_eq!(
+            grok_parse_plan(&serde_json::json!({"settings": {"subscription_tier": "SUPERGROK"}})).as_deref(),
+            Some("SuperGrok")
+        );
+    }
+
+    #[test]
+    fn kimi_official_creds_readonly_states_and_me_parsing() {
+        let now = 1_800_000_000;
+        let valid = parse_kimi_official_creds(
+            r#"{"access_token":"at","refresh_token":"rt","expires_at":1800003600}"#,
+            KIMI_DEFAULT_BASE_URL.into(),
+            "dev1".into(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(valid.state, KimiTokenState::Valid);
+
+        let pending = parse_kimi_official_creds(
+            r#"{"access_token":"at","refresh_token":"rt","expires_at":1700000000}"#,
+            KIMI_DEFAULT_BASE_URL.into(),
+            "dev1".into(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(pending.state, KimiTokenState::RefreshPending);
+
+        let revoked = parse_kimi_official_creds(
+            r#"{"access_token":"","refresh_token":"","expires_at":0}"#,
+            KIMI_DEFAULT_BASE_URL.into(),
+            "dev1".into(),
+            now,
+        )
+        .unwrap();
+        assert_eq!(revoked.state, KimiTokenState::Expired);
+
+        let (plan, nick) = parse_kimi_me(&serde_json::json!({
+            "user_level_name": "Allegretto",
+            "nickname": "Alice"
+        }));
+        assert_eq!(plan.as_deref(), Some("Allegretto"));
+        assert_eq!(nick.as_deref(), Some("Alice"));
     }
 }

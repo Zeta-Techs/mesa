@@ -392,17 +392,21 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         .map(crate::agent_specs::reasoning_effort_levels)
         .unwrap_or_default();
     let is_official = profile.account_type == crate::profiles::AccountType::Official;
-    let agy_model_cap: Option<&'static [&'static str]> = if profile.agent == "agy" {
+    let agy_model_cap: Option<Vec<&'static str>> = if profile.agent == "agy" {
         if is_official {
             if model.is_empty() {
-                Some(&["low", "medium", "high"])
+                Some(vec!["low", "medium", "high"])
             } else {
-                crate::agents::agy_official_effort_family(model).map(|(_, lvs, _)| lvs)
+                crate::agents::agy_official_effort_family(model).map(|f| f.levels)
             }
-        } else if let Some((_, _, lvs, _)) = crate::agents::agy_builtin_gemini_family(model) {
-            Some(lvs)
+        } else if let Some(fam) = crate::agents::agy_builtin_gemini_family(model) {
+            if fam.levels.is_empty() {
+                None
+            } else {
+                Some(fam.levels)
+            }
         } else {
-            Some(&["low", "medium", "high"])
+            Some(vec!["low", "medium", "high"])
         }
     } else {
         None
@@ -427,7 +431,7 @@ pub fn surface_for_profile(profile: &Profile, model: Option<&str>) -> ComboSurfa
         ),
         _ => None,
     };
-    let effective_levels: Vec<String> = if let Some(cap) = agy_model_cap {
+    let effective_levels: Vec<String> = if let Some(ref cap) = agy_model_cap {
         if !raw_gw_levels.is_empty() {
             let filtered: Vec<String> = raw_gw_levels
                 .into_iter()
@@ -744,6 +748,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         }
     }
 

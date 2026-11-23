@@ -150,6 +150,7 @@ mod sheet_preview;
 mod skills;
 mod storage;
 mod subscription_quota;
+mod official_accounts;
 mod official_quota;
 mod task_review;
 mod tray;
@@ -633,6 +634,13 @@ pub fn run() {
             agents::preview_launch_plan,
             effect_preview::preview_effect,
             agents::official_account_status,
+            official_accounts::official_create_account,
+            official_accounts::official_capture_agy_current,
+            official_accounts::official_bindings_status,
+            official_accounts::official_agy_check_conflicts,
+            official_accounts::official_agy_activate,
+            official_accounts::official_agy_register_session,
+            official_accounts::official_agy_unregister_session,
             grok_login::grok_login_check,
             grok_login::grok_logout,
             agents::clear_account_conflicts,

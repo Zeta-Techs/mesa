@@ -702,11 +702,23 @@ fn refresh_live_flag(meta: &mut SessionMetaDto) {
         meta.live = false;
         return;
     }
-    let mut live = meta
+    let tail = if meta
         .updated_at
         .as_deref()
         .is_some_and(|t| iso_within_secs(t, 60))
-        && tail_state_impl(&meta.agent, &meta.file_path) != "settled";
+    {
+        Some(tail_state_impl(&meta.agent, &meta.file_path))
+    } else {
+        None
+    };
+    let mut live = match tail.as_deref() {
+        None | Some("settled") => false,
+        // agy 的后台服务（conversation_summaries.db / language_server）会在已结束会话上刷新时间，
+        // 且已完成的回复尾部返回 done / confirm（非 settled）；仅尾部仍在 working 才算真在运行，
+        // 避免 Mesa 里已结束的 agy 会话被误报成「可能正在别的终端里运行」（2026-11-23 用户截图）
+        Some(state) if meta.agent == "agy" => state == "working",
+        Some(_) => true,
+    };
     if !live && meta.agent == "qwen" {
         live = qwen_runtime_sidecar(Path::new(&meta.file_path)).is_some();
     }
@@ -1177,15 +1189,22 @@ pub fn scan_sessions() -> ScanResult {
         agy_meta_sig,
         agy_meta_map,
     } = &mut *cache;
-    // Gemini 的 slug → 项目路径映射在扫描与快照补全时都要用
+    // Gemini 的 slug → 项目路径映射在扫描与快照补全时都要用（含隔离官方号目录）
     let roots = SessionRoots::current();
-    let gemini_map = roots
+    let mut gemini_map = roots
         .as_ref()
         .map(|r| gemini_slug_map(&r.gemini.join("tmp")))
         .unwrap_or_default();
+    let gemini_iso_roots = crate::official_accounts::all_isolated_roots("gemini");
+    for (_, iso_root) in &gemini_iso_roots {
+        gemini_map.extend(gemini_slug_map(&iso_root.join(".gemini").join("tmp")));
+    }
     if let Some(roots) = &roots {
         let mut claude_files = Vec::new();
         collect_files(&roots.claude_projects(), 2, &mut claude_files);
+        for (_, iso_root) in crate::official_accounts::all_isolated_roots("claude-code") {
+            collect_files(&iso_root.join("projects"), 2, &mut claude_files);
+        }
         let mut claude_metas = cached_claude(claude_files, claude);
         // Mesa 分叉出来的那份不按接续并进原对话（见 SESSION_FORKS_DDL）
         for (m, lin) in claude_metas.iter_mut() {
@@ -1203,6 +1222,10 @@ pub fn scan_sessions() -> ScanResult {
         collect_files(&codex_active, 5, &mut active_files);
         let mut archived_files = Vec::new();
         collect_files(&codex_archived, 5, &mut archived_files);
+        for (_, iso_root) in crate::official_accounts::all_isolated_roots("codex") {
+            collect_files(&iso_root.join("sessions"), 5, &mut active_files);
+            collect_files(&iso_root.join("archived_sessions"), 5, &mut archived_files);
+        }
         active_files.extend(archived_files);
         // archived 标记不进缓存值：目录固定（sessions/ vs archived_sessions/），
         // 按路径直读即可，同一路径不会跨目录漂移
@@ -1224,6 +1247,9 @@ pub fn scan_sessions() -> ScanResult {
         // 旧版单 JSON .json 文件不匹配 .jsonl 后缀，自然跳过（如需兼容再单开解析器）
         let mut gemini_files = Vec::new();
         collect_files(&roots.gemini.join("tmp"), 3, &mut gemini_files);
+        for (_, iso_root) in &gemini_iso_roots {
+            collect_files(&iso_root.join(".gemini").join("tmp"), 3, &mut gemini_files);
+        }
         let gemini_metas = cached_plain(gemini_files, plain, |f| {
             gemini_file_meta(f, true, &gemini_map)
         });
@@ -1238,30 +1264,39 @@ pub fn scan_sessions() -> ScanResult {
                 .is_some_and(|n| n == "archive");
             qwen_file_meta(f, true, archived)
         }));
-        // Kimi 新版：session_index.jsonl 是枚举入口（workDir 即项目归属）。
+        // Kimi 新版：session_index.jsonl 是枚举入口（workDir 即项目归属，含隔离官方号目录）。
         // sid/wd 参与 meta 但不来自文件本身——键里带上 sid/wd，索引行改写即换键重解析
-        let index = roots.kimi_index();
-        if let Ok(text) = fs::read_to_string(&index) {
-            let mut entries = Vec::new();
-            for line in to_lines(&text) {
-                let Ok(v) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
-                let (Some(sid), Some(dir), Some(wd)) = (
-                    get_str(&v, "sessionId"),
-                    get_str(&v, "sessionDir"),
-                    get_str(&v, "workDir"),
-                ) else {
-                    continue;
-                };
-                let dir = PathBuf::from(dir);
-                let wire = dir.join("agents").join("main").join("wire.jsonl");
-                if !wire.exists() {
-                    continue;
+        let mut kimi_indexes = vec![roots.kimi_index()];
+        for (_, iso_root) in crate::official_accounts::all_isolated_roots("kimi") {
+            kimi_indexes.push(iso_root.join("session_index.jsonl"));
+        }
+        let mut kimi_entries = Vec::new();
+        let mut any_kimi_index = false;
+        for index in kimi_indexes {
+            if let Ok(text) = fs::read_to_string(&index) {
+                any_kimi_index = true;
+                for line in to_lines(&text) {
+                    let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    let (Some(sid), Some(dir), Some(wd)) = (
+                        get_str(&v, "sessionId"),
+                        get_str(&v, "sessionDir"),
+                        get_str(&v, "workDir"),
+                    ) else {
+                        continue;
+                    };
+                    let dir = PathBuf::from(dir);
+                    let wire = dir.join("agents").join("main").join("wire.jsonl");
+                    if !wire.exists() {
+                        continue;
+                    }
+                    kimi_entries.push((wire, sid.to_string(), wd.to_string()));
                 }
-                entries.push((wire, sid.to_string(), wd.to_string()));
             }
-            let keyed: Vec<(String, PathBuf, String, String)> = entries
+        }
+        if any_kimi_index {
+            let keyed: Vec<(String, PathBuf, String, String)> = kimi_entries
                 .into_iter()
                 .map(|(wire, sid, wd)| {
                     // 键只用可打印分隔符拼 sid/wd，wire 本身不进键（dir 已含在 sid 维度里）
@@ -1401,6 +1436,9 @@ pub fn scan_sessions() -> ScanResult {
         // CodeBuddy：projects/<slug>/<uuid>.jsonl（深度 2 恰好到文件）
         let mut codebuddy_files = Vec::new();
         collect_files(&roots.codebuddy.join("projects"), 2, &mut codebuddy_files);
+        for (_, iso_root) in crate::official_accounts::all_isolated_roots("codebuddy") {
+            collect_files(&iso_root.join("projects"), 2, &mut codebuddy_files);
+        }
         out.extend(cached_plain(codebuddy_files, plain, |f| {
             codebuddy_file_meta(f, true)
         }));
@@ -1421,6 +1459,9 @@ pub fn scan_sessions() -> ScanResult {
         // 折叠（如 XOR）在同长改动下会抵消成假命中。
         let mut grok_files = Vec::new();
         collect_files(&roots.grok.join("sessions"), 3, &mut grok_files);
+        for (_, iso_root) in crate::official_accounts::all_isolated_roots("grok") {
+            collect_files(&iso_root.join("sessions"), 3, &mut grok_files);
+        }
         grok_files.retain(|f| {
             f.file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -3179,11 +3220,11 @@ fn session_resume_config_at(
             if clean.is_empty() {
                 return None;
             }
-            if let Some((base, _, suf)) = crate::agents::agy_official_effort_family(clean) {
-                if let Some(eff) = suf {
+            if let Some(fam) = crate::agents::agy_official_effort_family(clean) {
+                if let Some(eff) = fam.suffix_effort {
                     agy_inferred_effort = Some(eff.to_string());
                 }
-                return Some(base.to_string());
+                return Some(fam.base);
             }
             if let Some(lm) = launch_model.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
                 let lm_clean = lm.strip_prefix("mesa/").unwrap_or(lm).trim();
@@ -5199,6 +5240,27 @@ pub(crate) fn session_data_dirs_at(roots: &SessionRoots) -> Vec<(PathBuf, bool)>
     // 的 brain 子目录（同根 settings.json 与 conversation_summaries.db 不许碰）
     for (agy_root, _) in agy_data_roots(&roots.agy) {
         dirs.push((agy_root.join("brain"), false));
+    }
+    // 多官方账号隔离目录：仅放行会话子目录，同根的凭证与配置绝不进删除白名单
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("claude-code") {
+        dirs.push((iso_root.join("projects"), false));
+    }
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("codex") {
+        dirs.push((iso_root.join("sessions"), false));
+        dirs.push((iso_root.join("archived_sessions"), false));
+    }
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("grok") {
+        dirs.push((iso_root.join("sessions"), false));
+    }
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("kimi") {
+        dirs.push((iso_root.join("sessions"), false));
+        dirs.push((iso_root.join("legacy").join("sessions"), false));
+    }
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("gemini") {
+        dirs.push((iso_root.join(".gemini").join("tmp"), false));
+    }
+    for (_, iso_root) in crate::official_accounts::all_isolated_roots("codebuddy") {
+        dirs.push((iso_root.join("projects"), false));
     }
     dirs
 }

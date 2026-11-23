@@ -1401,29 +1401,150 @@ fn agy_user_settings_text(profile: &Profile) -> Option<String> {
     }
 }
 
-/// Antigravity CLI 1.5.8 在 `modelProvider="gemini"` + `GEMINI_API_KEY` 下原样保真请求路径、
-/// 且在 TUI 内原生开放 `/effort` 时间轴选择器（`adjustable=true`）的内置 Gemini 模型族（2026-11-14 假网关实测）：
-/// - 这六族直接传 `--model <base>`（不加 `mesa/` 前缀），线上请求 `/v1beta/models/<base>:streamGenerateContent` 一字不改，
-///   且 `transcript.jsonl` 直接落盘 `"model": "<base>-<effort>"`；
-/// - `gemini-3.1-pro` 在 API 模式下线上会被改写为 `gemini-3.1-pro-preview`，故不入此表（API 连接仍走 `mesa/gemini-3.1-pro` 保原名）。
+/// Antigravity CLI 内置模型族匹配结果（动态读 `agy-display.json` 优先，静态表离线兜底）。
+/// - `levels` 为空表示该内置模型无 `--effort` 切档（如 `gemini-pro-orchestrator-neon`）；
+/// - `suffix_effort` 为调用方传入的别名尾部自带的档位（如 `gemini-4-neon-xhigh` → `Some("xhigh")`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgyFamilyMatch {
+    pub base: String,
+    pub display: String,
+    pub levels: Vec<&'static str>,
+    pub suffix_effort: Option<&'static str>,
+}
+
+/// 离线兜底表：仅在 `agy-display.json` 缓存不存在/未覆盖该模型时使用。
+/// 运行时优先动态解析本机 `agy models` 缓存（`agy-display.json`），新版本 CLI 新增模型无需改代码即可识别。
+/// - `gemini-3.1-pro` 在 API 模式下线上会被改写为 `gemini-3.1-pro-preview`，故被反向排除，API 连接仍走 `mesa/` 保原名。
 const AGY_BUILTIN_GEMINI_FAMILIES: &[(&str, &str, &[&str])] = &[
+    ("gemini-4-neon", "Gemini 4 Neon", &["low", "medium", "high", "xhigh"]),
     ("gemini-4-carbon", "Gemini 4 Carbon", &["low", "medium", "high"]),
     ("gemini-4-hydrogen", "Gemini 4 Hydrogen", &["low", "medium", "high", "xhigh"]),
     ("gemini-4-argon", "Gemini 4 Argon", &["low", "medium", "high"]),
+    ("gemini-pro-orchestrator-neon", "Orchestrator (Neon)", &[]),
+    ("gemini-pro-orchestrator-g1-pro", "Orchestrator (Argon)", &[]),
     ("gemini-3.8-flash", "Gemini 3.8 Flash", &["low", "medium", "high"]),
     ("gemini-3.7-flash", "Gemini 3.7 Flash", &["low", "medium", "high"]),
     ("gemini-3.6-flash", "Gemini 3.6 Flash", &["low", "medium", "high"]),
     ("gemini-3.5-flash", "Gemini 3.5 Flash", &["low", "medium", "high"]),
 ];
 
-fn match_agy_family_slug<'a>(
+const AGY_ALL_EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// API 模式下会被 `agy` CLI 改写线上请求路径的内置 Gemini 型号（反向排除表）：
+/// 这些型号在 API / 中转连接里必须继续包成 `mesa/<id>`，保证中转收到原样模型名。
+fn agy_api_passthrough_excluded(base: &str) -> bool {
+    base.eq_ignore_ascii_case("gemini-3.1-pro")
+}
+
+#[derive(Debug, Clone)]
+struct AgyDiscoveredFamily {
+    base: String,
+    display: String,
+    levels: Vec<&'static str>,
+}
+
+fn split_agy_effort_slug(slug: &str) -> Option<(&str, &'static str)> {
+    let trimmed = slug.trim();
+    for &lv in AGY_ALL_EFFORT_LEVELS {
+        if trimmed.len() > lv.len() + 1
+            && trimmed.as_bytes()[trimmed.len() - lv.len() - 1] == b'-'
+            && trimmed[trimmed.len() - lv.len()..].eq_ignore_ascii_case(lv)
+        {
+            return Some((&trimmed[..trimmed.len() - lv.len() - 1], lv));
+        }
+    }
+    None
+}
+
+fn strip_display_effort_suffix(display: &str, eff: &str) -> String {
+    let cap = agy_effort_display_cap(eff);
+    let suffix = format!(" ({cap})");
+    if display.len() > suffix.len()
+        && display[display.len() - suffix.len()..].eq_ignore_ascii_case(&suffix)
+    {
+        return display[..display.len() - suffix.len()].trim_end().to_string();
+    }
+    display.trim().to_string()
+}
+
+/// 从 `agy models` 缓存映射（`slug -> Display Name`）动态归纳出本机这版 `agy` 的所有内置模型家族：
+/// - 同基名下出现 ≥2 个 effort 后缀变体（如 `gemini-4-krypton-{low,medium,high,xhigh}`）合并为一个可切档家族；
+/// - 单一变体或无 effort 后缀（如 `gpt-oss-120b-medium`、`gemini-pro-orchestrator-neon`）保留为无切档内置模型（`levels = []`），
+///   防止对单档固定模型误传 `--effort` 报 `rc=1`。
+fn agy_families_from_display_map(
+    map: &std::collections::BTreeMap<String, String>,
+) -> Vec<AgyDiscoveredFamily> {
+    struct Acc {
+        base: String,
+        display: String,
+        entries: Vec<(String, String, &'static str)>,
+    }
+    let mut grouped: std::collections::BTreeMap<String, Acc> = std::collections::BTreeMap::new();
+    let mut plain: Vec<AgyDiscoveredFamily> = Vec::new();
+    for (slug, display) in map {
+        let slug_t = slug.trim();
+        let disp_t = display.trim();
+        if slug_t.is_empty() || slug_t.starts_with("mesa/") {
+            continue;
+        }
+        if let Some((base, eff)) = split_agy_effort_slug(slug_t) {
+            let cap = agy_effort_display_cap(eff);
+            let expected_suffix = format!(" ({cap})");
+            if disp_t.len() > expected_suffix.len()
+                && disp_t[disp_t.len() - expected_suffix.len()..].eq_ignore_ascii_case(&expected_suffix)
+            {
+                let key = base.to_ascii_lowercase();
+                let entry = grouped.entry(key).or_insert_with(|| Acc {
+                    base: base.to_string(),
+                    display: strip_display_effort_suffix(disp_t, eff),
+                    entries: Vec::new(),
+                });
+                entry.entries.push((slug_t.to_string(), disp_t.to_string(), eff));
+                continue;
+            }
+        }
+        plain.push(AgyDiscoveredFamily {
+            base: slug_t.to_string(),
+            display: if disp_t.is_empty() { slug_t.to_string() } else { disp_t.to_string() },
+            levels: Vec::new(),
+        });
+    }
+    let mut out = Vec::new();
+    for (_, acc) in grouped {
+        let mut levels: Vec<&'static str> = Vec::new();
+        for &lv in AGY_ALL_EFFORT_LEVELS {
+            if acc.entries.iter().any(|(_, _, e)| *e == lv) {
+                levels.push(lv);
+            }
+        }
+        if levels.len() >= 2 {
+            out.push(AgyDiscoveredFamily {
+                base: acc.base,
+                display: acc.display,
+                levels,
+            });
+        } else {
+            for (slug, disp, _) in acc.entries {
+                out.push(AgyDiscoveredFamily {
+                    base: slug,
+                    display: disp,
+                    levels: Vec::new(),
+                });
+            }
+        }
+    }
+    out.extend(plain);
+    out
+}
+
+fn match_agy_family_slug_dyn(
     model: &str,
-    base: &'static str,
-    levels: &'a [&'static str],
-) -> Option<(&'static str, &'a [&'static str], Option<&'static str>)> {
+    base: &str,
+    levels: &[&'static str],
+) -> Option<Option<&'static str>> {
     let trimmed = model.trim();
     if trimmed.eq_ignore_ascii_case(base) {
-        return Some((base, levels, None));
+        return Some(None);
     }
     for &lv in levels {
         if trimmed.len() == base.len() + 1 + lv.len()
@@ -1431,43 +1552,199 @@ fn match_agy_family_slug<'a>(
             && trimmed.as_bytes()[base.len()] == b'-'
             && trimmed[base.len() + 1..].eq_ignore_ascii_case(lv)
         {
-            return Some((base, levels, Some(lv)));
+            return Some(Some(lv));
         }
     }
     None
 }
 
-pub(crate) fn agy_builtin_gemini_family(
+#[cfg(not(test))]
+fn cached_agy_display_map() -> std::collections::BTreeMap<String, String> {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::SystemTime;
+    struct CacheState {
+        sig: Option<(SystemTime, u64)>,
+        map: std::collections::BTreeMap<String, String>,
+    }
+    static CACHE: OnceLock<Mutex<CacheState>> = OnceLock::new();
+    let Some(path) = agy_display_cache_path() else {
+        return std::collections::BTreeMap::new();
+    };
+    let sig = std::fs::metadata(&path)
+        .ok()
+        .and_then(|m| Some((m.modified().ok()?, m.len())));
+    let lock = CACHE.get_or_init(|| {
+        Mutex::new(CacheState {
+            sig: None,
+            map: std::collections::BTreeMap::new(),
+        })
+    });
+    if let Ok(mut guard) = lock.lock() {
+        if guard.sig == sig && sig.is_some() {
+            return guard.map.clone();
+        }
+        let fresh = read_agy_display_cache();
+        guard.sig = sig;
+        guard.map = fresh.clone();
+        return fresh;
+    }
+    read_agy_display_cache()
+}
+
+#[cfg(test)]
+fn cached_agy_display_map() -> std::collections::BTreeMap<String, String> {
+    std::collections::BTreeMap::new()
+}
+
+/// 启动遇到缓存与兜底表都未命中的候选模型时（如刚升级 `agy` 出现的新型号），
+/// 按需刷新一次 `agy models` 缓存（带 60 秒冷却，避免离线或无 `agy` 时反复拉起子进程）。
+#[cfg(not(test))]
+fn refresh_agy_display_cache_if_needed(model: &str) {
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{Duration, Instant};
+    let trimmed = model.trim();
+    if trimmed.is_empty() || trimmed.starts_with("mesa/") {
+        return;
+    }
+    let map = cached_agy_display_map();
+    if agy_builtin_gemini_family_with_map(trimmed, &map).is_some()
+        || agy_official_effort_family_with_map(trimmed, &map).is_some()
+    {
+        return;
+    }
+    static LAST_PROBE: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    let lock = LAST_PROBE.get_or_init(|| Mutex::new(None));
+    if let Ok(mut guard) = lock.lock() {
+        if guard.is_some_and(|t| t.elapsed() < Duration::from_secs(60)) {
+            return;
+        }
+        *guard = Some(Instant::now());
+    }
+    if let Some(path) = resolve_binary("agy") {
+        let envs = agy_models_probe_env();
+        if let Some(pairs) = cli_output_with_env(&path, &["models"], &envs, Duration::from_secs(8))
+            .map(|t| parse_agy_model_pairs(&t))
+            .filter(|p| !p.is_empty())
+        {
+            write_agy_display_cache(&pairs);
+        }
+    }
+}
+
+#[cfg(test)]
+fn refresh_agy_display_cache_if_needed(_model: &str) {}
+
+pub(crate) fn agy_builtin_gemini_family_with_map(
     model: &str,
-) -> Option<(&'static str, &'static str, &'static [&'static str], Option<&'static str>)> {
+    map: &std::collections::BTreeMap<String, String>,
+) -> Option<AgyFamilyMatch> {
     let trimmed = model.trim();
     if trimmed.is_empty() || trimmed.starts_with("mesa/") {
         return None;
     }
+    // 1) 优先从本机 `agy models` 缓存动态匹配任意 `gemini-*` 内置家族（反向排除会改写线路径的型号）
+    for fam in agy_families_from_display_map(map) {
+        if !fam.base.to_ascii_lowercase().starts_with("gemini-")
+            || agy_api_passthrough_excluded(&fam.base)
+        {
+            continue;
+        }
+        if let Some(suf) = match_agy_family_slug_dyn(trimmed, &fam.base, &fam.levels) {
+            return Some(AgyFamilyMatch {
+                base: fam.base,
+                display: fam.display,
+                levels: fam.levels,
+                suffix_effort: suf,
+            });
+        }
+    }
+    // 2) 离线或尚未探测缓存时回落静态兜底表
     for &(base, display, levels) in AGY_BUILTIN_GEMINI_FAMILIES {
-        if let Some((b, lvs, suf)) = match_agy_family_slug(trimmed, base, levels) {
-            return Some((b, display, lvs, suf));
+        if let Some(suf) = match_agy_family_slug_dyn(trimmed, base, levels) {
+            return Some(AgyFamilyMatch {
+                base: base.to_string(),
+                display: display.to_string(),
+                levels: levels.to_vec(),
+                suffix_effort: suf,
+            });
         }
     }
     None
 }
 
-pub(crate) fn agy_official_effort_family(
+pub(crate) fn agy_builtin_gemini_family(model: &str) -> Option<AgyFamilyMatch> {
+    let map = cached_agy_display_map();
+    agy_builtin_gemini_family_with_map(model, &map)
+}
+
+pub(crate) fn agy_official_effort_family_with_map(
     model: &str,
-) -> Option<(&'static str, &'static [&'static str], Option<&'static str>)> {
-    if let Some((base, _, levels, suf)) = agy_builtin_gemini_family(model) {
-        return Some((base, levels, suf));
+    map: &std::collections::BTreeMap<String, String>,
+) -> Option<AgyFamilyMatch> {
+    let trimmed = model.trim();
+    if trimmed.is_empty() || trimmed.starts_with("mesa/") {
+        return None;
     }
-    if let Some(m) = match_agy_family_slug(model, "gemini-3.1-pro", &["low", "high"]) {
-        return Some(m);
+    // 1) 优先从本机 `agy models` 缓存动态匹配所有具备 ≥2 个 effort 档位的官方内置家族（含 Gemini 与 Claude）
+    for fam in agy_families_from_display_map(map) {
+        if fam.levels.is_empty() {
+            continue;
+        }
+        if let Some(suf) = match_agy_family_slug_dyn(trimmed, &fam.base, &fam.levels) {
+            return Some(AgyFamilyMatch {
+                base: fam.base,
+                display: fam.display,
+                levels: fam.levels,
+                suffix_effort: suf,
+            });
+        }
     }
-    // agy 1.5.11 起官方账号内置 Claude Opus 5.5 / Sonnet 5.5 支持 low/medium/high/max 四档；4.6 仍无档位
-    for base in ["claude-opus-5-5", "claude-sonnet-5-5"] {
-        if let Some(m) = match_agy_family_slug(model, base, &["low", "medium", "high", "max"]) {
-            return Some(m);
+    // 2) 缓存里明确列出但无切档（如 `gemini-pro-orchestrator-neon`、`gpt-oss-120b-medium`）直接判不支持 effort
+    if map.keys().any(|k| k.eq_ignore_ascii_case(trimmed)) {
+        return None;
+    }
+    // 3) 静态兜底表
+    for &(base, display, levels) in AGY_BUILTIN_GEMINI_FAMILIES {
+        if levels.is_empty() {
+            continue;
+        }
+        if let Some(suf) = match_agy_family_slug_dyn(trimmed, base, levels) {
+            return Some(AgyFamilyMatch {
+                base: base.to_string(),
+                display: display.to_string(),
+                levels: levels.to_vec(),
+                suffix_effort: suf,
+            });
+        }
+    }
+    if let Some(suf) = match_agy_family_slug_dyn(trimmed, "gemini-3.1-pro", &["low", "high"]) {
+        return Some(AgyFamilyMatch {
+            base: "gemini-3.1-pro".to_string(),
+            display: "Gemini 3.1 Pro".to_string(),
+            levels: vec!["low", "high"],
+            suffix_effort: suf,
+        });
+    }
+    for (base, display) in [
+        ("claude-opus-5-5", "Claude Opus 5.5"),
+        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+    ] {
+        let fallback_levels = &["low", "medium", "high", "max"];
+        if let Some(suf) = match_agy_family_slug_dyn(trimmed, base, fallback_levels) {
+            return Some(AgyFamilyMatch {
+                base: base.to_string(),
+                display: display.to_string(),
+                levels: fallback_levels.to_vec(),
+                suffix_effort: suf,
+            });
         }
     }
     None
+}
+
+pub(crate) fn agy_official_effort_family(model: &str) -> Option<AgyFamilyMatch> {
+    let map = cached_agy_display_map();
+    agy_official_effort_family_with_map(model, &map)
 }
 
 fn agy_effort_display_cap(eff: &str) -> &'static str {
@@ -1567,9 +1844,15 @@ pub(crate) fn agy_session_settings_body(
             }
         }
     }
-    let top_model = if let Some((_, display, levels, suf)) = agy_builtin_gemini_family(picked) {
-        let eff = agy_effort_for_levels(raw_eff, levels).or(suf).unwrap_or("medium");
-        format!("{display} ({})", agy_effort_display_cap(eff))
+    let top_model = if let Some(fam) = agy_builtin_gemini_family(picked) {
+        if fam.levels.is_empty() {
+            fam.display
+        } else {
+            let eff = agy_effort_for_levels(raw_eff, &fam.levels)
+                .or(fam.suffix_effort)
+                .unwrap_or("medium");
+            format!("{} ({})", fam.display, agy_effort_display_cap(eff))
+        }
     } else {
         format!("mesa/{}", picked.trim())
     };
@@ -1761,8 +2044,11 @@ fn gemini_selected_auth_type(profile: &Profile) -> Option<String> {
     }
 }
 
-/// Gemini 读 settings.json 的目录：连接上的 GEMINI_CLI_HOME > 进程环境 > 家目录（只读判定与聊天卡写入同一处）
+/// Gemini 读 settings.json 的目录：隔离官方号目录 > 连接上的 GEMINI_CLI_HOME > 进程环境 > 家目录（只读判定与聊天卡写入同一处）
 pub(crate) fn gemini_home(profile: &Profile) -> Option<PathBuf> {
+    if let Some(iso) = profile.official_isolated_dir() {
+        return Some(iso);
+    }
     profile
         .extra_env
         .get("GEMINI_CLI_HOME")
@@ -1877,16 +2163,26 @@ pub fn launch_plan(
                         plan.env.retain(|(k, _)| k != "GOOGLE_GEMINI_BASE_URL");
                         plan.env_remove.push("GOOGLE_GEMINI_BASE_URL".into());
                     }
+                    refresh_agy_display_cache_if_needed(picked);
                     let settings_file = write_agy_session_settings(profile, picked)?;
                     plan.args.push("--settings".into());
                     plan.args.push(settings_file);
                     let raw_eff = profile.request_policy.reasoning_effort.as_deref();
-                    if let Some((base, _, levels, suf)) = agy_builtin_gemini_family(picked) {
+                    if let Some(fam) = agy_builtin_gemini_family(picked) {
                         plan.args.push("--model".into());
-                        plan.args.push(base.into());
-                        if let Some(eff) = agy_effort_for_levels(raw_eff, levels).or(suf) {
-                            plan.args.push("--effort".into());
-                            plan.args.push(eff.into());
+                        if !fam.levels.is_empty() {
+                            if let Some(eff) =
+                                agy_effort_for_levels(raw_eff, &fam.levels).or(fam.suffix_effort)
+                            {
+                                // agy 1.5.14 实测：对 gemini-4-neon 等内置族传 `--model <base> --effort <eff>` 会报
+                                // `⚠ Warning: --effort is not supported for model "gemini-4-neon". Ignoring the flag.`；
+                                // 所有多档内置家族均在目录里有原生 `<base>-<effort>` 完整 slug，直接传单参数无告警且档位生效
+                                plan.args.push(format!("{}-{eff}", fam.base));
+                            } else {
+                                plan.args.push(fam.base);
+                            }
+                        } else {
+                            plan.args.push(fam.base);
                         }
                     } else {
                         plan.args.push("--model".into());
@@ -2894,6 +3190,9 @@ fn kimi_config_text(profile: Option<&Profile>) -> Option<String> {
     }
     #[cfg(not(test))]
     {
+        if let Some(iso) = profile.and_then(|p| p.official_isolated_dir()) {
+            return std::fs::read_to_string(iso.join("config.toml")).ok();
+        }
         let home = crate::dirs::home_dir()?;
         let new_dir = profile
             .and_then(|p| p.extra_env.get("KIMI_CODE_HOME").cloned())
@@ -3372,6 +3671,25 @@ fn apply_official_inject(
             plan.env_remove.push((*var).into());
         }
     }
+    // 隔离目录多官方账号（6 家原生环境变量隔离）：直接按进程隔离认证与配置根
+    if let Some(iso_dir) = profile.official_isolated_dir() {
+        let dir_str = iso_dir.to_string_lossy().into_owned();
+        match profile.agent.as_str() {
+            "claude-code" => plan.env.push(("CLAUDE_CONFIG_DIR".into(), dir_str)),
+            "codex" => plan.env.push(("CODEX_HOME".into(), dir_str)),
+            "grok" => plan.env.push(("GROK_HOME".into(), dir_str)),
+            "kimi" => {
+                plan.env.push(("KIMI_CODE_HOME".into(), dir_str));
+                plan.env.push((
+                    "KIMI_SHARE_DIR".into(),
+                    iso_dir.join("legacy").to_string_lossy().into_owned(),
+                ));
+            }
+            "gemini" => plan.env.push(("GEMINI_CLI_HOME".into(), dir_str)),
+            "codebuddy" => plan.env.push(("CODEBUDDY_CONFIG_DIR".into(), dir_str)),
+            _ => {}
+        }
+    }
     match &spec.launch {
         LaunchSpec::Env(env) => {
             if let (Some(name), Some(m)) = (env.model, model) {
@@ -3413,15 +3731,16 @@ fn apply_official_inject(
                 let raw_eff = profile.request_policy.reasoning_effort.as_deref();
                 match model {
                     Some(m) => {
-                        // agy 1.5.8 实测：`--model gemini-3.8-flash-high --effort medium` 会报冲突 rc=1，
-                        // 必须剥成族基底 `--model gemini-3.8-flash --effort medium`；非 Gemini 官方模型
-                        //（如 `claude-sonnet-4-6`）传 `--effort` 会报 unsupported rc=1，仅注 `--model`。
-                        if let Some((base, levels, _)) = agy_official_effort_family(m) {
-                            if let Some(eff) = agy_effort_for_levels(raw_eff, levels) {
+                        refresh_agy_display_cache_if_needed(m);
+                        // agy 1.5.8 实测：`--model gemini-3.8-flash-high --effort medium` 会报冲突 rc=1；
+                        // agy 1.5.14 实测：`--model gemini-4-neon --effort medium` 会弹
+                        // `⚠ Warning: --effort is not supported for model "gemini-4-neon". Ignoring the flag.` 并丢掉所选档位。
+                        // 所有多档官方内置家族在 `agy models` 目录里均有原生 `<base>-<effort>` slug（如 `gemini-4-neon-high`、
+                        // `gemini-3.8-flash-medium`、`claude-opus-5-5-max`），直接传组合 slug 既不冲突也不触发告警
+                        if let Some(fam) = agy_official_effort_family(m) {
+                            if let Some(eff) = agy_effort_for_levels(raw_eff, &fam.levels) {
                                 plan.args.push("--model".into());
-                                plan.args.push(base.into());
-                                plan.args.push("--effort".into());
-                                plan.args.push(eff.into());
+                                plan.args.push(format!("{}-{eff}", fam.base));
                             } else {
                                 plan.args.push("--model".into());
                                 plan.args.push(m.into());
@@ -5096,6 +5415,10 @@ pub(crate) fn ensure_launch_credentials(
     key: Option<&str>,
 ) -> Result<(), String> {
     if profile.account_type == crate::profiles::AccountType::Official {
+        // 独立隔离目录官方账号（CLAUDE_CONFIG_DIR / CODEX_HOME）不读默认家目录残留配置，免受默认目录冲突误拦
+        if profile.official_isolated_dir().is_some() {
+            return Ok(());
+        }
         // 只读检测、命中即拒，不自动改用户配置文件：claude 等的配置文件 env 块会
         // 覆盖 shell env（matrix §1），env_remove 只清进程环境变量管不到磁盘配置——
         // 残留 ANTHROPIC_* 会让「官方账号」会话实际走 API 计费。
@@ -7891,6 +8214,55 @@ fn official_identity(agent_id: &str, home: &std::path::Path) -> (Option<String>,
     }
 }
 
+pub(crate) fn official_account_status_sync_pub(agent_id: &str) -> OfficialAccountStatusDto {
+    official_account_status_sync(agent_id)
+}
+
+/// 子进程探测型官方账号（agy / claude-code / cursor）的短期已登录缓存（60 秒）：
+/// 每次新开标签都会调 `official_account_status`，无缓存时每次跑 2–5 秒子进程（`agy models` / `claude auth status`），
+/// 导致点「与 AI 商量一下」跳到新对话页后白等几秒才发开场话。
+/// 只缓存 `connected == true`（未登录永不缓存，登完马上能认出）；切号 / 捕获账号时主动失效。
+static OFFICIAL_STATUS_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, OfficialAccountStatusDto)>>,
+> = std::sync::OnceLock::new();
+const OFFICIAL_STATUS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn cached_official_status(agent_id: &str) -> Option<OfficialAccountStatusDto> {
+    if cfg!(test) {
+        return None;
+    }
+    let guard = OFFICIAL_STATUS_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .ok()?;
+    let (at, st) = guard.get(agent_id)?;
+    if at.elapsed() < OFFICIAL_STATUS_CACHE_TTL && st.connected {
+        Some(st.clone())
+    } else {
+        None
+    }
+}
+
+fn store_official_status(agent_id: &str, st: &OfficialAccountStatusDto) {
+    if cfg!(test) || !st.connected {
+        return;
+    }
+    if let Ok(mut guard) = OFFICIAL_STATUS_CACHE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+    {
+        guard.insert(agent_id.to_string(), (std::time::Instant::now(), st.clone()));
+    }
+}
+
+pub(crate) fn invalidate_official_status_cache(agent_id: &str) {
+    if let Some(m) = OFFICIAL_STATUS_CACHE.get() {
+        if let Ok(mut guard) = m.lock() {
+            guard.remove(agent_id);
+        }
+    }
+}
+
 fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     // 登录凭证在文件里、下面的凭证检查会提前返回：先顺手缓存官方模型名单（单测不跑真 CLI、不写本机缓存）
     if agent_id == "grok" && !cfg!(test) {
@@ -7995,6 +8367,14 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
             None => {}
         }
     }
+    // 子进程探测分支（cursor / agy / claude-code）耗时 2–5 秒：
+    // 短期内已确认登录的直接命中缓存（冲突列表仍用上面刚扫的本地文件结果），避免每次开新标签白等几秒。
+    if matches!(agent_id, "cursor" | "agy" | "claude-code") {
+        if let Some(mut cached) = cached_official_status(agent_id) {
+            cached.conflicts = conflicts;
+            return cached;
+        }
+    }
     if agent_id == "cursor" {
         if let Some(path) = resolve_binary("cursor-agent") {
             let status = cli_output_with_timeout(&path, &["status"], std::time::Duration::from_secs(8));
@@ -8004,7 +8384,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                         .map(|t| parse_cursor_models(&t))
                         .unwrap_or_default()
                 });
-                return OfficialAccountStatusDto {
+                let dto = OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
                     detail: Some(format!("cursor-agent status：{}", line.trim().trim_start_matches('✓').trim())),
@@ -8016,6 +8396,8 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     plan: None,
                     email: cursor_email(line),
                 };
+                store_official_status(agent_id, &dto);
+                return dto;
             }
         }
     }
@@ -8030,7 +8412,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 let models: Vec<String> = pairs.into_iter().map(|(s, _)| s).collect();
                 let count = models.len();
                 refresh_official_models_cache("agy", || models);
-                return OfficialAccountStatusDto {
+                let dto = OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
                     detail: Some(format!("agy models：已登录 Google 账号（共 {count} 个可用模型）")),
@@ -8041,6 +8423,8 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     plan: None,
                     email: None,
                 };
+                store_official_status(agent_id, &dto);
+                return dto;
             }
         }
     }
@@ -8055,7 +8439,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                 if let Some(note) = login_expiry_note(expires_at, chrono::Utc::now().timestamp()) {
                     detail = format!("{detail}；{note}");
                 }
-                return OfficialAccountStatusDto {
+                let dto = OfficialAccountStatusDto {
                     supported: true,
                     connected: true,
                     detail: Some(detail),
@@ -8066,6 +8450,8 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
                     plan: None,
                     email: None,
                 };
+                store_official_status(agent_id, &dto);
+                return dto;
             }
         }
     }

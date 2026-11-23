@@ -111,6 +111,15 @@ pub struct PlanQuotaDto {
     pub from_cache: bool,
     /// 「去控制台」打开的地址：按这一行的供应商和站点（国内 / 国际）给，前端不自己拼
     pub console_url: String,
+    /// 若该行对应连接页里具体的官方账号绑定，给出 binding_id（供对话限额提示条一键切号）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<String>,
+    /// 账号副标题提示（如邮箱/组织名），用于同厂多账号区分
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_hint: Option<String>,
+    /// 仅对 Antigravity 托管官方号有意义：当前系统钥匙串是否激活该号
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_active_slot: Option<bool>,
 }
 
 // ===== 供应商识别（槽 URL 命中）与上下文 =====
@@ -428,6 +437,23 @@ fn parse_kimi_quota(body: &serde_json::Value) -> Result<Vec<PlanWindow>, String>
         return Err("Kimi 响应里没有可用的额度字段".into());
     }
     Ok(windows)
+}
+
+/// 供 `official_quota` 复用 Kimi `/usages` 解析口径，避免双份实现漂移
+pub(crate) fn parse_kimi_quota_windows(
+    body: &serde_json::Value,
+) -> Result<Vec<PlanQuotaWindowDto>, String> {
+    parse_kimi_quota(body).map(|ws| {
+        ws.into_iter()
+            .map(|w| PlanQuotaWindowDto {
+                window: w.window.to_string(),
+                used_percent: w.used_percent.clamp(0.0, 100.0),
+                resets_at: w.reset_ms,
+                used: w.used,
+                total: w.total,
+            })
+            .collect()
+    })
 }
 
 /// MiniMax：base_resp.status_code != 0 即业务错；model_remains[] 只取 general 条目，
@@ -903,6 +929,9 @@ async fn refresh_gateway(gateway: &Gateway, ctx: &PlanCtx) -> PlanQuotaDto {
         queried_at: now_ms(),
         from_cache: false,
         console_url: ctx.provider.console_url().into(),
+        binding_id: None,
+        account_hint: None,
+        is_active_slot: None,
     };
     // 1) 额度（按供应商分派端点与解析器）
     let quota = match &ctx.provider {
@@ -1080,6 +1109,9 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                     queried_at: now_ms(),
                     from_cache: false,
                     console_url: detected.as_ref().map(|p| p.console_url().to_string()).unwrap_or_default(),
+                    binding_id: None,
+                    account_hint: None,
+                    is_active_slot: None,
                 });
                 continue;
             }
@@ -1098,6 +1130,9 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                 queried_at: now_ms(),
                 from_cache: false,
                 console_url: ctx.provider.console_url().into(),
+                binding_id: None,
+                account_hint: None,
+                is_active_slot: None,
             });
             continue;
         }
@@ -1155,8 +1190,10 @@ pub async fn plan_use_reset_card(
     gateway_id: String,
     reset_type: String,
 ) -> Result<PlanQuotaDto, String> {
-    if gateway_id == crate::official_quota::CODEX_ROW_ID {
-        return crate::official_quota::use_codex_reset_card().await;
+    if gateway_id == crate::official_quota::CODEX_ROW_ID
+        || gateway_id.starts_with(crate::official_quota::CODEX_ROW_PREFIX)
+    {
+        return crate::official_quota::use_codex_reset_card(&gateway_id).await;
     }
     let api_type = match reset_type.as_str() {
         "five_hour" => "FIVE_HOUR",

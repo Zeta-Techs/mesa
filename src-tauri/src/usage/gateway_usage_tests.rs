@@ -34,6 +34,7 @@ fn bind(id: &str, agent: &str, gid: Option<&str>, kind: BindingKind) -> Binding 
         role_models: Default::default(),
         extra_env: Default::default(),
         last_used_at: None,
+        official_ref: None,
     }
 }
 

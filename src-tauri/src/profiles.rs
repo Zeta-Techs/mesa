@@ -141,9 +141,25 @@ pub struct Profile {
     /// 仅启动瞬间现算：按会话 meta.provider 对齐 rollout 名字，不落盘。
     #[serde(default, skip_serializing)]
     pub provider_override: Option<String>,
+    /// 多官方账号元信息（None 等价于 Default 本机默认槽位）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_ref: Option<crate::official_accounts::OfficialAccountRef>,
 }
 
 impl Profile {
+    /// 若该连接是隔离目录型官方账号（Claude CLAUDE_CONFIG_DIR / Codex CODEX_HOME），返回其隔离目录绝对路径
+    pub fn official_isolated_dir(&self) -> Option<std::path::PathBuf> {
+        if self.account_type != AccountType::Official {
+            return None;
+        }
+        let r = self.official_ref.as_ref()?;
+        if r.mode != crate::official_accounts::OfficialAccountMode::IsolatedDir {
+            return None;
+        }
+        let dir_id = r.local_dir_id.as_deref()?;
+        crate::official_accounts::isolated_dir_path(&self.agent, dir_id).ok()
+    }
+
     pub fn provider_name(&self) -> String {
         if let Some(p) = &self.provider_override {
             return p.clone();
@@ -343,6 +359,9 @@ pub struct Binding {
     pub extra_env: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub last_used_at: Option<String>,
+    /// 多官方账号元信息（None 等价于本机默认官方槽位）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_ref: Option<crate::official_accounts::OfficialAccountRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -757,16 +776,25 @@ impl ProfileStore {
         self.ensure_split_locked()?;
         if input.account_type == AccountType::Official {
             let mut bindings = crate::gateway_store::load_bindings()?;
-            if bindings
-                .iter()
-                .any(|b| b.agent == input.agent && b.kind == BindingKind::Official)
-            {
-                return Err("该 Agent 已有官方账号绑定".into());
+            if bindings.iter().any(|b| {
+                b.agent == input.agent
+                    && b.kind == BindingKind::Official
+                    && b.official_ref
+                        .as_ref()
+                        .map(|r| &r.mode)
+                        .unwrap_or(&crate::official_accounts::OfficialAccountMode::Default)
+                        == &crate::official_accounts::OfficialAccountMode::Default
+            }) {
+                return Err("该 Agent 已有默认官方账号绑定；如需添加更多账号请使用「添加官方账号」".into());
             }
             let binding = Binding {
                 id: uuid::Uuid::new_v4().to_string(),
                 agent: input.agent,
-                name: "官方账号".into(),
+                name: if input.name.trim().is_empty() {
+                    "官方账号".into()
+                } else {
+                    input.name.trim().to_string()
+                },
                 kind: BindingKind::Official,
                 gateway_id: None,
                 protocol: None,
@@ -775,6 +803,7 @@ impl ProfileStore {
                 role_models: input.role_models.clone().unwrap_or_default().normalized(),
                 extra_env: input.extra_env,
                 last_used_at: None,
+                official_ref: None,
             };
             let profile = crate::gateway_store::materialize(&binding, None, None);
             crate::profile_validation::validate_profile_fields(&profile)?;
@@ -835,6 +864,7 @@ impl ProfileStore {
             role_models: input.role_models.clone().unwrap_or_default().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         };
         let mut profile = crate::gateway_store::materialize(&binding, Some(&gateway), None);
         profile.has_key = gateway.key_hint.is_some();
@@ -905,6 +935,7 @@ impl ProfileStore {
             role_models: Default::default(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         };
         let mut copy = crate::gateway_store::materialize(&binding, Some(&gw), None);
         copy.has_key = pending_key.is_some();
@@ -971,6 +1002,7 @@ impl ProfileStore {
             role_models: src.role_models.clone(),
             extra_env: src.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         };
         if has_duplicate_binding(&bindings, None, &binding) {
             return Err("该 Agent 已经有相同模型选择的绑定".into());
@@ -1067,13 +1099,33 @@ impl ProfileStore {
         Ok(profile)
     }
 
-    /// 解绑。不删网关、不动密钥。
+    /// 解绑。不删网关、不动密钥；若为附加官方账号（隔离目录或 agy 托管快照），同步清理 Mesa 侧本地副本。
     pub fn delete(&self, id: &str) -> Result<(), String> {
         let _g = store_lock()?;
         self.ensure_split_locked()?;
         let mut bindings = crate::gateway_store::load_bindings()?;
+        let removed = bindings.iter().find(|b| b.id == id).cloned();
         bindings.retain(|b| b.id != id);
         crate::gateway_store::save_bindings(&bindings)?;
+        if let Some(b) = removed {
+            if b.kind == BindingKind::Official {
+                if let Some(r) = b.official_ref {
+                    match r.mode {
+                        crate::official_accounts::OfficialAccountMode::IsolatedDir => {
+                            if let Some(dir_id) = r.local_dir_id.as_deref() {
+                                let _ = crate::official_accounts::remove_isolated_dir(&b.agent, dir_id);
+                            }
+                        }
+                        crate::official_accounts::OfficialAccountMode::ManagedSnapshot => {
+                            if let Some(sid) = r.snapshot_id.as_deref() {
+                                let _ = crate::official_accounts::agy_delete_snapshot(sid);
+                            }
+                        }
+                        crate::official_accounts::OfficialAccountMode::Default => {}
+                    }
+                }
+            }
+        }
         // 外部 Codex 的 config.toml 还指着这份模型目录（这条连接曾设为全局）时留着：删了外部 codex 直接起不来
         //（`failed to load configuration`，2026-10-30 隔离 CODEX_HOME 实测）
         let catalog = crate::agents::codex_catalog_path(id);
@@ -1087,6 +1139,68 @@ impl ProfileStore {
         // 死引用由读侧标 missing + 执行侧留失败 Run，清了反而会静默换家）
         crate::runs::clear_task_profile_refs(id);
         Ok(())
+    }
+
+    /// 创建附加官方账号绑定（Claude/Codex 隔离目录，或 Antigravity 托管快照）
+    pub fn create_official_with_ref(
+        &self,
+        agent: &str,
+        name: &str,
+        official_ref: crate::official_accounts::OfficialAccountRef,
+    ) -> Result<Profile, String> {
+        let _g = store_lock()?;
+        self.ensure_split_locked()?;
+        let mut bindings = crate::gateway_store::load_bindings()?;
+        let clean_name = name.trim();
+        let binding = Binding {
+            id: uuid::Uuid::new_v4().to_string(),
+            agent: agent.to_string(),
+            name: if clean_name.is_empty() {
+                "官方账号".into()
+            } else {
+                clean_name.to_string()
+            },
+            kind: BindingKind::Official,
+            gateway_id: None,
+            protocol: None,
+            api_backend: None,
+            models: Vec::new(),
+            role_models: Default::default(),
+            extra_env: Default::default(),
+            last_used_at: None,
+            official_ref: Some(official_ref),
+        };
+        let profile = crate::gateway_store::materialize(&binding, None, None);
+        crate::profile_validation::validate_profile_fields(&profile)?;
+        bindings.push(binding);
+        crate::gateway_store::save_bindings(&bindings)?;
+        Ok(profile)
+    }
+
+    /// 更新官方账号绑定的展示名或账号提示（如登录后回填邮箱）
+    pub fn update_official_meta(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        account_hint: Option<&str>,
+    ) -> Result<Profile, String> {
+        let _g = store_lock()?;
+        self.ensure_split_locked()?;
+        let mut bindings = crate::gateway_store::load_bindings()?;
+        let b = bindings
+            .iter_mut()
+            .find(|b| b.id == id && b.kind == BindingKind::Official)
+            .ok_or_else(|| format!("官方账号绑定不存在: {id}"))?;
+        if let Some(n) = name.map(str::trim).filter(|s| !s.is_empty()) {
+            b.name = n.to_string();
+        }
+        if let Some(hint) = account_hint.map(str::trim).filter(|s| !s.is_empty()) {
+            let r = b.official_ref.get_or_insert_with(Default::default);
+            r.account_hint = Some(hint.to_string());
+        }
+        let profile = crate::gateway_store::materialize(b, None, None);
+        crate::gateway_store::save_bindings(&bindings)?;
+        Ok(profile)
     }
 
     pub fn clear_key(&self, id: &str) -> Result<(), String> {
@@ -1393,6 +1507,7 @@ impl ProfileStore {
             role_models: input.role_models.clone().normalized(),
             extra_env: input.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         };
         let mut bindings = crate::gateway_store::load_bindings()?;
         if has_duplicate_binding(&bindings, None, &binding) {
@@ -2419,6 +2534,7 @@ fn apply_import_v2(
             role_models: b.role_models.clone().normalized(),
             extra_env: b.extra_env.clone(),
             last_used_at: None,
+            official_ref: None,
         };
         if has_duplicate_binding(bindings, None, &binding) {
             skipped.push(format!(
@@ -2994,6 +3110,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         };
         // 同族可行：anthropic → qwen 取 anthropic；openai 源保留源协议取值
         assert_eq!(
@@ -3092,6 +3209,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         };
         assert_eq!(p.provider_name(), crate::provider_id::provider_id(gid));
         p.apply_session_provider(Some("ccode"));
@@ -3160,6 +3278,7 @@ mod tests {
             role_models: Default::default(),
             extra_env: Default::default(),
             last_used_at: None,
+            official_ref: None,
         }
     }
 

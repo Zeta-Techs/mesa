@@ -1866,6 +1866,9 @@ pub(crate) fn build_headless_command_granted(
     if let Some((key, value)) = crate::dep_check::agent_python_env() {
         cmd.env(key, value);
     }
+    if let Some(script) = crate::skills::lit_records_script_path() {
+        cmd.env(crate::skills::LIT_RECORDS_ENV, &script);
+    }
     let (lock_id, lock_args) = lock_headless_session(&profile.agent);
     let mut grant_plan = None;
     let headless = if write {
@@ -2089,11 +2092,22 @@ pub(crate) fn run_agent_task_granted(
     };
     crate::runs::claim_start(&run.id)?;
     // 看一眼（2026-11-04 补）：属于某个项目的无头运行（定时任务）也带上 helper 与这次的 Run，能只读看同项目在做什么、给别的工作留话；
-    // 与 PTY 同一对变量（pty.rs），helper 按 Run 找项目、把自己排除在同伴外
+    // 与 PTY 同一对变量（pty.rs），helper 按 Run 找项目、把自己排除在同伴外；
+    // 可写任务（sentinel）同时注入科研做图工具，且网络授权不限（Open / 无授权约束）时注入出图工具
     if project_root.is_some() {
         if let Some(tool) = crate::image_gen::helper_exe() {
             cmd.env(crate::peek::TOOL_ENV, &tool);
             cmd.env(crate::peek::RUN_ENV, &run.id);
+            let allow_image = sentinel
+                && grant.is_none_or(|g| g.network == crate::grant::Network::Open);
+            if allow_image {
+                cmd.env(crate::image_gen::TOOL_ENV, &tool);
+            }
+        }
+        if sentinel {
+            if let Some(tool) = crate::svg_render::helper_exe() {
+                cmd.env(crate::svg_render::TOOL_ENV, &tool);
+            }
         }
         if let Some(tool) = crate::journal_metrics::helper_exe() {
             cmd.env(crate::journal_metrics::TOOL_ENV, &tool);
@@ -3995,6 +4009,7 @@ mod tests {
             model_sync_status: String::new(),
             model_sync_note: None,
             provider_override: None,
+            official_ref: None,
         }
     }
 

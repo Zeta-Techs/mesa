@@ -101,7 +101,8 @@ const BUILTIN_CAPS: &[(&str, ModelCaps)] = &[
     ("claude-haiku-4", caps(true, None)),
     ("claude-3-7-sonnet", caps(true, None)),
     ("claude-3-5", caps(false, None)),
-    // Google（2.5 起全系 thinking）
+    // Google（2.5 起全系 thinking；gemini-pro-orchestrator 同步纳入）
+    ("gemini-pro-orchestrator", capsv(true, None, true)),
     ("gemini-4", capsv(true, None, true)),
     ("gemini-3", capsv(true, None, true)),
     ("gemini-2.5", capsv(true, None, true)),
