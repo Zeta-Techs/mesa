@@ -53,7 +53,7 @@ provides: [research-writing]
 定稿、要交给期刊或导师前，对最终稿（Markdown / Quarto / LaTeX，或人给的 Word）跑一次技能目录里的 `scripts/ms_check.py`（不复制进工作区；`python3` 在 Windows 上换成 `python`）：
 `python3 <技能目录>/scripts/ms_check.py [稿件 ...] --root <工作目录>`，不给稿件就扫 `manuscript/` 下的 md / qmd / tex，Word 稿要点名。
 
-- 查：作者名与邮箱拼写差一点（以邮箱为准）、开了 `number-sections` 又手写标题编号（拦下）、Word 里自动编号与手打编号混用、图注 / 表题编号重复或跳号（拦下）、图注写了 Adapted from 却没有出处、重复词与常见语病、同一单位几种写法、同一对符号连接号不一、英美拼写混用、有没有结论 / 展望节。结果写进 `.ccode/checks/ms-check.jsonl`。
+- 查：作者名与邮箱拼写差一点（以邮箱为准）、开了 `number-sections` 又手写标题编号（拦下）、Word 里自动编号与手打编号混用、图注 / 表题编号重复或跳号（拦下）、图注写了 Adapted from 却没有出处、重复词与常见语病、同一单位几种写法、同一对符号连接号不一、英美拼写混用、有没有结论 / 展望节、图表是否按正文首次引用顺序编号、摘要字数、缩写是否在首次出现处给全称、长句是否过密。结果写进 `.ccode/checks/ms-check.jsonl`。
 - 处理：拦下的改正再跑；待你判断的逐条看，期刊有规定的按期刊统一（单位、拼写、连接号），不确定的列进交付说明交人定。脚本只读，不改稿件。
 
 ## 交付自查

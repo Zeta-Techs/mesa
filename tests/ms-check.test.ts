@@ -352,3 +352,57 @@ test("投稿体例卫生与绝对路径泄露：检出零散加粗、破折号�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 2026-11-23 硼化物定稿复盘：图 12 先于图 11 被引、摘要 406 词、缩写没定义、平均句长 36 词，旧检查一条都没报
+test("读者顺序与可读性：图表首次引用顺序、摘要字数、缩写定义与长句都检出，写对了放行", () => {
+  const root = mkdtempSync(join(tmpdir(), "ms-check-order-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  const long = "The cathode, which was operated in 1.0 M KOH at 25 °C under constant current for 100 h with periodic sampling of the electrolyte, retained its lattice while the support, prepared by a two-step anneal at 600 °C in argon followed by acid etching, lost boron at a rate that the authors did not quantify by ICP.";
+  const abstract = Array.from({ length: 40 }, () => "Borides evolve under cathodic bias in alkaline media.").join(" ");
+  writeFileSync(
+    join(root, "manuscript/review-draft.md"),
+    [
+      "## Abstract {.unnumbered}",
+      "",
+      abstract,
+      "",
+      "*Keywords:* borides; HER",
+      "",
+      "## Introduction",
+      "",
+      "X-ray photoelectron spectroscopy (XPS) shows B loss (@fig-b). XPS also tracks LSV drift, and LSV curves shift (@fig-a). See @tbl-one. KOH and KSCN are reagents.",
+      "",
+      "![First figure](a.png){#fig-a}",
+      "",
+      "![Second figure](b.png){#fig-b}",
+      "",
+      ": Table caption {#tbl-one}",
+      "",
+      "| a | b |",
+      "|---|---|",
+      "| 1 | 2 |",
+      "",
+      Array.from({ length: 30 }, () => long).join(" "),
+      "",
+      "## Conclusions",
+      "",
+      "Done.",
+    ].join("\n"),
+  );
+  try {
+    run(["--root", root], root);
+    const list = items(root);
+    const order = find(list, "ORDER-Figure")[0];
+    assert.equal(order?.status, "needs_human", JSON.stringify(list));
+    assert.match(order?.evidence?.detail ?? "", /Figure 1 在 2 之后才首次被引/);
+    assert.equal(find(list, "ORDER-Table")[0]?.status, "passed");
+    assert.match(find(list, "ABSTRACT-LEN")[0]?.title ?? "", /摘要 320 词，超过/);
+    const acr = find(list, "ACRONYM-DEF")[0];
+    assert.equal(acr?.status, "needs_human");
+    assert.match(acr?.evidence?.detail ?? "", /LSV/);
+    assert.doesNotMatch(acr?.evidence?.detail ?? "", /XPS|KOH|KSCN/, "定义过的与化学式不报");
+    assert.equal(find(list, "PROSE-LONG-SENT")[0]?.status, "needs_human");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -15,6 +15,7 @@
   英美拼写          behavior / behaviour 一类混用 → 待你判断
   结论节            没有 Conclusion(s) / Summary / Outlook / 结论 一节 → 待你判断
   Pandoc 语法雷区   Markdown 中孤立/成对误配约等号 `~数字`、表格未转义 `|` 错列、列表前缺空行、漏方括号 `(@bibKey)` → 拦下 / 待你判断
+  读者顺序与可读性   图表没按正文首次引用顺序编号或没被引用、摘要超过 250 词（中文 400 字）、缩写没在首次出现处给全称、长句过密 → 待你判断
   投稿体例与路径卫生 正文段落零散加粗、长破折号过密、粗体导语清单偏多、内部策划/审计/判官腔用语、高频模板化修辞、未查 SI 时的绝对全称否定（待你判断），以及正文或 `figures/README.md` 残留本机工作区绝对路径（拦下）
 结果写进 <工作目录>/.ccode/checks/ms-check.jsonl（三档）。只读，不改稿件。
 退出码：0 没有拦下的；1 有拦下的；2 一份稿件都没读到。Windows 上把 python3 换成 python。
@@ -794,6 +795,166 @@ def check_editorial_hygiene(rel: str, path: Path, body_paras: list[Para], items:
         ))
 
 
+# ---------- 读者顺序与可读性（2026-11-23 硼化物定稿复盘：图 12 先于图 11 被引、摘要 406 词、
+# 几十个缩写没定义、平均句长 36 词，旧检查一条都没报）----------
+_XREF_DEF = re.compile(r"\{#((fig|tbl)-[\w-]+)[^}]*\}")
+_XREF_USE = re.compile(r"(?<![\w{#])@((fig|tbl)-[\w-]+)")
+_TEXT_REF = re.compile(r"\b(Fig(?:ure)?s?\.?|Tables?)\s+(\d+)\b")
+_CITE_GROUP = re.compile(r"\[[^\[\]]*@[^\[\]]*\]")
+_ACRONYM = re.compile(r"(?<![\w~^\\/-])([A-Z]{3,6})s?(?![\w~^])")
+# 全大写且每个字母都是单字母元素的多半是化学式（KOH、KSCN），不当缩写
+_ONE_LETTER_ELEMENTS = set("HBCNOFPSKVYIWU")
+_ACRONYM_COMMON = {"DOI", "URL", "PDF", "DNA", "RNA", "USA", "ORCID", "ISBN", "ISSN"}
+_ABBREV_DOT = re.compile(r"\b(?:et al|e\.g|i\.e|Figs?|Eqs?|Refs?|vs|ca|approx|No|Vol|cf)\.", re.I)
+ABSTRACT_WORD_LIMIT = 250
+
+
+def _sentences(text: str) -> list[str]:
+    text = _ABBREV_DOT.sub(lambda m: m.group(0).replace(".", ""), text)
+    return [s for s in re.split(r"(?<=[.?!])\s+(?=[A-Z(\[])", text) if s.strip()]
+
+
+def _order_findings(first_refs: list[int], total: int) -> tuple[list[str], list[int]]:
+    """首次引用顺序里比前面已引的号小的（先引了后面的图），以及从没被引用的号。"""
+    late, peak = [], 0
+    for n in first_refs:
+        if n < peak:
+            late.append(f"{n} 在 {peak} 之后才首次被引")
+        peak = max(peak, n)
+    return late, [n for n in range(1, total + 1) if n not in first_refs]
+
+
+def check_reader_order(rel: str, path: Path, front: str, body_paras: list[Para], items: list) -> None:
+    """图表按首次引用顺序编号、摘要字数、缩写首次出现处定义、长句密度。"""
+    is_md = path.suffix.lower() in (".md", ".qmd")
+    label = {"fig": "Figure", "tbl": "Table"}
+
+    # 1) 图表首次引用顺序：Quarto 交叉引用按图块出现的先后编号；没用交叉引用的按正文里的「Figure N」
+    defs: dict[str, list[str]] = {"fig": [], "tbl": []}
+    uses: dict[str, list[str]] = {"fig": [], "tbl": []}
+    for p in body_paras:
+        own = {m.group(1) for m in _XREF_DEF.finditer(p.text)}
+        for m in _XREF_DEF.finditer(p.text):
+            if m.group(1) not in defs[m.group(2)]:
+                defs[m.group(2)].append(m.group(1))
+        for m in _XREF_USE.finditer(p.text):
+            if m.group(1) not in own and m.group(1) not in uses[m.group(2)]:
+                uses[m.group(2)].append(m.group(1))
+    for kind in ("fig", "tbl"):
+        if defs[kind]:
+            num = {lab: i + 1 for i, lab in enumerate(defs[kind])}
+            first = [num[u] for u in uses[kind] if u in num]
+            total = len(defs[kind])
+        elif not is_md or not any(defs.values()):
+            first, seen = [], set()
+            for p in body_paras:
+                if p.heading or CAPTION.match(p.text):
+                    continue
+                for m in _TEXT_REF.finditer(p.text):
+                    if m.group(1).lower().startswith("tab") != (kind == "tbl"):
+                        continue
+                    n = int(m.group(2))
+                    if n not in seen:
+                        seen.add(n)
+                        first.append(n)
+            total = max(first, default=0)
+        else:
+            continue
+        if not total:
+            continue
+        late, never = _order_findings(first, total)
+        if late or never:
+            detail = []
+            if late:
+                detail.append("首次引用顺序：" + "；".join(f"{label[kind]} {x}" for x in late[:4]))
+            if never:
+                detail.append("正文没引用：" + "、".join(f"{label[kind]} {n}" for n in never))
+            items.append(item(f"ORDER-{label[kind]}", "reader-order", "needs_human",
+                              f"{label[kind]} 没有按正文首次引用的顺序编号" if late else f"有 {label[kind]} 正文没有引用", rel,
+                              detail="；".join(detail) + "。期刊要求图表按正文首次引用的先后编号、每张都在正文引到，调图块位置或引用处"))
+        else:
+            items.append(item(f"ORDER-{label[kind]}", "reader-order", "passed",
+                              f"{label[kind]} 1–{total} 按首次引用顺序编号且都在正文引到", rel))
+
+    # 2) 摘要字数：Markdown 的 ## Abstract 一节或 YAML abstract
+    abstract, line = "", None
+    for i, p in enumerate(body_paras):
+        if p.heading and re.match(r"^(?:abstract|摘\s*要)$", p.text.strip(), re.I):
+            line = p.line
+            for q in body_paras[i + 1:]:
+                if q.heading:
+                    break
+                if re.match(r"^\W*(?:key\s*words?|关键词)", q.text, re.I):
+                    continue
+                abstract += " " + q.text
+            break
+    if not abstract:
+        m = re.search(r"^abstract:\s*[|>]?-?\s*\n?((?:[ \t]+.*\n?)+|.+)", front, re.M)
+        abstract = m.group(1) if m else ""
+    if abstract.strip():
+        plain = _CITE_GROUP.sub("", abstract)
+        n_en = len(re.findall(r"[A-Za-z0-9][\w'’.-]*", plain))
+        n_cjk = len(re.findall(r"[\u4e00-\u9fff]", plain))
+        over = n_en > ABSTRACT_WORD_LIMIT if n_cjk < 50 else n_cjk > 400
+        size = f"{n_cjk} 字" if n_cjk >= 50 else f"{n_en} 词"
+        items.append(item("ABSTRACT-LEN", "reader-order", "needs_human" if over else "passed",
+                          f"摘要 {size}" + ("，超过多数期刊上限" if over else ""), rel, line,
+                          detail="英文期刊摘要多为 150–250 词、中文 200–400 字；按目标期刊作者须知核对，超出就压缩" if over else ""))
+
+    prose = [p for p in body_paras if not p.heading and not _is_table_or_caption(p.text) and not _LIST_ITEM_RE.match(p.text)]
+    if not prose:
+        return
+
+    # 3) 缩写：正文用了两次以上、全文找不到「(ABC)」式定义，或先用后定义
+    clean = [(p.line, _CITE_GROUP.sub("", _mask_code_math(p.text))) for p in prose]
+    full = "\n".join(_CITE_GROUP.sub("", p.text) for p in body_paras)
+    first_use: dict[str, int] = {}
+    counts: dict[str, int] = {}
+    for ln, text in clean:
+        for m in _ACRONYM.finditer(text):
+            a = m.group(1)
+            if a in _ACRONYM_COMMON or set(a) <= _ONE_LETTER_ELEMENTS or re.fullmatch(r"[IVXLC]+", a):
+                continue
+            counts[a] = counts.get(a, 0) + 1
+            first_use.setdefault(a, ln)
+    undefined, late = [], []
+    for a, ln in first_use.items():
+        if counts[a] < 2:
+            continue
+        # 「(LOM)」「[LOM]」「(LOM, supported by …)」「LOM (lattice oxygen …)」都算定义
+        defined = re.compile(rf"[(\[]{a}s?[)\],;]|\b{a}\s+\([a-z]")
+        if not defined.search(full):
+            undefined.append(a)
+        else:
+            def_line = next((p.line for p in body_paras if defined.search(_CITE_GROUP.sub("", p.text))), ln)
+            if def_line > ln:
+                late.append(f"{a}（L{ln} 先用，L{def_line} 才定义）")
+    if undefined or late:
+        detail = []
+        if undefined:
+            detail.append(f"没找到定义（{len(undefined)} 个）：" + "、".join(undefined[:20]))
+        if late:
+            detail.append("先用后定义：" + "；".join(late[:8]))
+        items.append(item("ACRONYM-DEF", "reader-order", "needs_human",
+                          f"{len(undefined) + len(late)} 个缩写没在首次出现处给全称", rel,
+                          min(first_use[a] for a in undefined) if undefined else None,
+                          detail="；".join(detail) + "。缩写在正文首次出现处写全称加括号，通用的（如 XRD、DFT）也按目标期刊要求核一遍"))
+    else:
+        items.append(item("ACRONYM-DEF", "reader-order", "passed", "正文缩写都在首次出现处给了全称", rel))
+
+    # 4) 长句密度
+    sents = [(ln, s) for ln, text in clean for s in _sentences(text)]
+    if len(sents) >= 30:
+        lens = [len(s.split()) for _, s in sents]
+        mean = sum(lens) / len(lens)
+        long_ = sorted(((n, ln, s) for (ln, s), n in zip(sents, lens) if n > 45), reverse=True)
+        if mean > 30 or len(long_) / len(sents) > 0.2:
+            samples = "；".join(f"L{ln}（{n} 词）「{s[:50]}…」" for n, ln, s in long_[:3])
+            items.append(item("PROSE-LONG-SENT", "style-hygiene", "needs_human",
+                              f"句子偏长：平均 {mean:.0f} 词，{len(long_)}/{len(sents)} 句超过 45 词", rel, long_[0][1] if long_ else None,
+                              detail=f"{samples}。英文学术正文平均 20–25 词较易读；把并列的条件、数值与限定拆成两三句"))
+
+
 def check_companion_paths(root: Path, items: list) -> None:
     """检查 figures/README.md 等配套交付清单是否残留本机工作区绝对路径。"""
     fig_readme = root / "figures" / "README.md"
@@ -839,6 +1000,7 @@ def check_file(path: Path, root: Path):
     check_conclusion(rel, paras, items)
     check_pandoc_markdown(rel, path, items)
     check_editorial_hygiene(rel, path, body_paras, items)
+    check_reader_order(rel, path, front, body_paras, items)
     # 多份稿件同名检查项不撞车
     for i in items:
         i["id"] = f"{i['id']}@{rel}"
