@@ -241,6 +241,7 @@ export default function ArtifactChecklist({
   rootLabel,
   embedded = false,
   frameless = false,
+  compactDeliverables = false,
   refreshNonce = 0,
   onMeta,
 }: {
@@ -256,6 +257,8 @@ export default function ArtifactChecklist({
   embedded?: boolean;
   /** 由外层工作区卡头统一承载标题、完成度胶囊与刷新按钮，彻底去双层套娃 */
   frameless?: boolean;
+  /** 同屏已展示项目级「完结文件」最终稿卡片时，本步文件不再重复渲染第二套大号成稿卡片，统一用紧凑文件行 */
+  compactDeliverables?: boolean;
   /** 外层卡头触发刷新的递增序号 */
   refreshNonce?: number;
   /** 回传已产出数 / 总数 / 加载态给外层卡头 */
@@ -391,10 +394,13 @@ export default function ArtifactChecklist({
           !!activePath && samePath(activePath, f.path, IS_WINDOWS);
         const fileTitle = (f: DirEntryDto) => `在右侧打开 ${f.path}`;
 
-        // 成稿交付物（单文件 .pdf / .docx / .pptx / .html）置顶卡片化；核验与引文检查在条目较多时归组折叠
-        const deliverableRows = rows.filter(
-          (r) => r.files.length === 1 && isFinalDeliverableFile(r.files[0].name),
-        );
+        // 成稿交付物（单文件 .pdf / .docx / .pptx / .html）置顶卡片化；
+        // 同屏已有「完结文件」展示 4 张最终稿卡片时（compactDeliverables），改为走紧凑文件行，避免上下摆两套 4 张大卡片
+        const deliverableRows = compactDeliverables
+          ? []
+          : rows.filter(
+              (r) => r.files.length === 1 && isFinalDeliverableFile(r.files[0].name),
+            );
         const deliverableEntries = new Set(deliverableRows.map((r) => r.entry));
         const restProduced = rows.filter(
           (r) => r.files.length > 0 && !deliverableEntries.has(r.entry),
@@ -546,9 +552,9 @@ export default function ArtifactChecklist({
             )}
             {mainRows.length > 0 && (
               <div>
-                {(deliverableRows.length > 0 || auditRows.length > 0) && (
+                {deliverableRows.length > 0 && (
                   <div className="mb-1 px-1 text-micro font-medium text-l4">
-                    {deliverableRows.length > 0 ? "源稿与投稿材料" : "核心清单与产物"}
+                    源稿与投稿材料
                   </div>
                 )}
                 <ul

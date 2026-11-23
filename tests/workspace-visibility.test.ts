@@ -4,7 +4,6 @@ import {
   filterFocusedStepWorkspaces,
   filterOutsideFlowWorkspaces,
   filterWorkspacesByFocus,
-  isStepWorkspaceSupersededByCloseout,
 } from "../src/workspace-visibility.ts";
 
 interface Ws {
@@ -84,54 +83,6 @@ test("步骤工作区与流程外工作区严格分离：步骤工作区不塞�
   assert.deepEqual(
     filterOutsideFlowWorkspaces([ws("lit-search"), ws("polish")], fullSteps),
     [],
-  );
-});
-
-test("定稿步已保存且完结文件可见时，本步工作区文件卡由完结文件接管去重", () => {
-  const polishStep = {
-    name: "润色与定稿",
-    workspaceName: "polish",
-    expectedArtifacts: ["output/review-final.pdf"],
-  };
-  const searchStep = {
-    name: "文献检索",
-    workspaceName: "lit-search",
-    expectedArtifacts: ["papers/included.md"],
-  };
-
-  assert.equal(
-    isStepWorkspaceSupersededByCloseout({
-      closeoutVisible: true,
-      boundStep: polishStep,
-      merged: true,
-    }),
-    true,
-  );
-  // 尚有未合并改动或完结文件未出现时，仍显示定稿步本步工作区卡
-  assert.equal(
-    isStepWorkspaceSupersededByCloseout({
-      closeoutVisible: true,
-      boundStep: polishStep,
-      merged: false,
-    }),
-    false,
-  );
-  assert.equal(
-    isStepWorkspaceSupersededByCloseout({
-      closeoutVisible: false,
-      boundStep: polishStep,
-      merged: true,
-    }),
-    false,
-  );
-  // 前序非定稿步骤回看时，保留该步自己的本步工作区/本步文件入口
-  assert.equal(
-    isStepWorkspaceSupersededByCloseout({
-      closeoutVisible: true,
-      boundStep: searchStep,
-      merged: true,
-    }),
-    false,
   );
 });
 

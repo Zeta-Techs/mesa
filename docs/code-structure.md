@@ -304,7 +304,7 @@ components/ProjectSurfaceTabs.tsx  # 项目面页签条（WorkspacesPage）：�
                              # 后端已按修改时间降序）、搜索/筛选态预览头「定位」退回树视图展开父链；2000/400 截断点名；
                              # 多选（只选文件，⌘/Ctrl 加减 + Shift 连选，批量条 问 AI / 加入积累 / 移动 / 删除，右键选中行出批量菜单）、
                              # PDF 行阅读状态（pdfLitState，三份清单 1.5s 防抖重读）、收起文件夹行尾数量（list_dir withCounts）
-  components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到右侧文件栏；定稿步聚焦时默认展开、最终稿带拖出手柄并承接定稿工作区「继续 / ⋯」
+  components/CloseoutPack.tsx # 项目卡「完结文件」：按脉络列出已写出的文件，点开到右侧文件栏；定稿步聚焦时默认展开、最终稿带拖出手柄
 components/GoalStorageModal.tsx  # 目标「释放副本空间」弹层（ProjectUserTasksView 目标详情）：task_storage_review 只有显式打开才扫磁盘（列表轮询不递归统计副本），task_cleanup 分工作副本/历史冻结两档、危险确认 focusCancel、中断的清理 pending 下次接着办（revision 守卫）；归档不等于清理的口径写在确认文案里（tests/goal-storage-ui.test.ts）
 components/ProjectUserTasksView.tsx  # 项目「目标」页（WorkspacesPage tasks 页签；没套流程的科研项目由 ProjectGroup embed 同一份，空态给「问项目助手」与「套一整套流程…」（onPickTemplate）；有流程的科研项目在步骤下 compactWhenEmpty 再挂一份，没记过目标时只留「新建目标」一行入口）：目标分桶时间线（进行中/待验收/已完成）、新建/编辑/启动/就地停止（2026-10-26：交互运行杀这条 Run 的终端进程、无头发取消，有成果照旧进待验收）、归档与恢复、goal-review-ready 事件即时刷新（否则 2.5s 轮询）；科研目标验收挂 ResearchAcceptancePanel、复现挂 ResearchReproductionPanel、「释放副本空间」进 GoalStorageModal（tests/project-user-tasks-ui.test.ts）
 components/ResourceListSection.tsx  # 项目卡资源面板（ProjectGroup，默认标题「文献」）：FolderGroupedList 按夹分组，文献行带精读状态胶囊（pdfLitState 同一套状态词）、笔记直连（noteLinkForPaper）与「已积累」标（lit-list / lit-watch 纯逻辑）；office 文件点开 OfficePreviewModal，问 AI / 沉浸阅读入口由调用方注入
@@ -752,9 +752,8 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              #   排序 compareSheetCells / sortedRowOrder、框选 normRange / rangeTsv（tests/sheet-sort.test.ts）
   editor-languages.ts        # monaco 语言注册（批次 E）：monaco-editor 0.56 ESM 不带 latex，
                              # 自带紧凑 Monarch 定义覆盖 .tex/.sty/.cls/.bib（tests/editor-languages.test.ts）
-  workspace-visibility.ts    # 步骤工作区与流程外工作区可见性过滤纯逻辑（filterFocusedStepWorkspaces / filterOutsideFlowWorkspaces /
-                             # isStepWorkspaceSupersededByCloseout，步骤工作区归当前步骤、不塞进流程之外，定稿后由完结文件接管去重；
-                             # tests/workspace-visibility.test.ts）
+  workspace-visibility.ts    # 步骤工作区与流程外工作区可见性过滤纯逻辑（filterFocusedStepWorkspaces / filterOutsideFlowWorkspaces，
+                             # 步骤工作区归当前步骤卡下方、不塞进流程之外；tests/workspace-visibility.test.ts）
   git-commit-message.ts      # 空提交信息的本地默认信息生成
   diff-intraline.ts          # 改动面板（GitPanel）diff 纯逻辑：块头白话「第 N 行 · 上下文」、每行行号（加行与上下文取新行号、删行取旧行号）、成对删加行的行内高亮区间（去同头同尾，整句重写不标）；评审页 diff 解析在 diff-view.ts
   main.tsx                   # 主窗口入口（index.html）：只懒加载 main-app.tsx 再调 boot()，不得静态 import 任何模块——否则与文件查看 / 桌宠窗口
