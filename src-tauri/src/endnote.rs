@@ -1628,13 +1628,46 @@ fn rebuild_field_docx(
         return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
     }
     crate::storage::replace(&docx_tmp, docx_path)?;
-    // 已纳入 Git 跟踪的报告（如可评审工作区或已合并主仓）不在后台打开 docx 时偷偷改脏，避免拦住合并
-    if report_tmp.is_file() && report_path.parent().is_some() && !is_git_tracked(doc_root, report_path) {
-        let _ = crate::storage::replace(&report_tmp, report_path);
-    } else {
-        let _ = std::fs::remove_file(&report_tmp);
+    // 已纳入 Git 跟踪的报告不在后台打开 docx 时偷偷改脏，避免拦住合并：可评审工作区里不动；
+    // 已合并的主仓里换成新报告并单独提交，否则报告一直写「未绑定」而域稿其实已绑好（2026-11-23 硼化物定稿实证）
+    if report_tmp.is_file() && report_path.parent().is_some() {
+        if !is_git_tracked(doc_root, report_path) {
+            let _ = crate::storage::replace(&report_tmp, report_path);
+        } else if crate::paths::same_path(
+            &doc_root.to_string_lossy(),
+            &project_root.to_string_lossy(),
+        ) {
+            commit_refreshed_report(doc_root, &report_tmp, report_path);
+        }
     }
+    let _ = std::fs::remove_file(&report_tmp);
     Ok(())
+}
+
+/// 主仓里已提交的域稿报告换成重绑后的新报告，pathspec 只提交它（人暂存的别的文件不动）。
+/// 报告有人没提交的改动时不碰；提交失败（如合并进行中）就还原成已提交版本，工作区保持干净。
+fn commit_refreshed_report(repo: &Path, report_tmp: &Path, report_path: &Path) {
+    const T: std::time::Duration = std::time::Duration::from_secs(30);
+    let Ok(rel) = report_path.strip_prefix(repo) else {
+        return;
+    };
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    let unchanged =
+        || crate::workspaces::run_git(repo, &["diff", "--quiet", "HEAD", "--", &rel], T).is_ok();
+    if !unchanged() {
+        return;
+    }
+    // 新旧报告一样就不用提交
+    if crate::storage::replace(report_tmp, report_path).is_err() || unchanged() {
+        return;
+    }
+    let ident = crate::git_info::commit_identity_args(repo);
+    let mut args: Vec<&str> = vec!["-c", "commit.gpgsign=false", "--literal-pathspecs"];
+    args.extend(ident.iter().map(String::as_str));
+    args.extend(["commit", "-m", "Mesa: 域稿重绑后刷新引文报告", "--", &rel]);
+    if crate::workspaces::run_git(repo, &args, T).is_err() {
+        let _ = crate::workspaces::run_git(repo, &["checkout", "HEAD", "--", &rel], T);
+    }
 }
 
 /// 打开 `output/endnote.docx` 或 `output/zotero.docx` 前（或刚选完 EndNote 库后），若该域稿还没被人在 Word 里保存改过，
@@ -2148,6 +2181,68 @@ mod tests {
         assert!(xml_text.contains("<alt-title>J Alloy Compd</alt-title>"), "{xml_text}");
         assert!(xml_text.contains("<volume>1010</volume>"), "{xml_text}");
         assert!(xml_text.contains("Sulfur rich spheres."), "{xml_text}");
+    }
+
+    #[test]
+    fn rebind_in_main_repo_refreshes_and_commits_tracked_report() {
+        let Ok(_) = python_bin() else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("ccode-rebind-git-{}", uuid::Uuid::new_v4()));
+        for sub in ["manuscript", "papers", "output"] {
+            std::fs::create_dir_all(dir.join(sub)).unwrap();
+        }
+        let md = dir.join("manuscript/review-final.md");
+        let bib = dir.join("references.bib");
+        let docx = dir.join("output/endnote.docx");
+        let report = dir.join("papers/endnote-cite-report.md");
+        std::fs::write(&md, "Boride catalyst [@Masa2016].\n").unwrap();
+        std::fs::write(
+            &bib,
+            "@article{Masa2016,\n  title = {Amorphous Co2B for HER},\n  author = {Masa, Justus},\n  year = {2016},\n  journal = {Adv. Energy Mater.},\n  doi = {10.1002/aenm.201502313},\n}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join(".gitignore"), "output/\n").unwrap();
+        rebuild_field_docx("endnote", &dir, &dir, &md, &bib, &docx, &report).expect("initial docx");
+        let git = |args: &[&str]| {
+            crate::workspaces::run_git(&dir, args, std::time::Duration::from_secs(30))
+        };
+        git(&["init", "-q"]).unwrap();
+        git(&["add", "-A"]).unwrap();
+        let ident = crate::git_info::commit_identity_args(&dir);
+        let mut commit: Vec<&str> = ident.iter().map(String::as_str).collect();
+        commit.extend(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"]);
+        git(&commit).unwrap();
+        assert!(std::fs::read_to_string(&report)
+            .unwrap()
+            .contains("未指定 EndNote 库"));
+
+        // 合并后人才选了库：打开前自动重绑，主仓里的已提交报告跟着换新并单独提交，工作区不留改动
+        let lib_xml = dir.join("my-lib.xml");
+        std::fs::write(
+            &lib_xml,
+            r#"<?xml version="1.0" encoding="utf-8"?><xml><records><record><rec-number>42</rec-number><foreign-keys><key app="EN" db-id="dbid0001" timestamp="1700000000">42</key></foreign-keys><ref-type name="Journal Article">17</ref-type><titles><title>Amorphous Co2B for HER</title></titles><electronic-resource-num>10.1002/aenm.201502313</electronic-resource-num></record></records></xml>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("papers/endnote-library.path"),
+            format!("{}\n", lib_xml.display()),
+        )
+        .unwrap();
+        git(&["add", "papers/endnote-library.path"]).unwrap();
+        let mut commit: Vec<&str> = ident.iter().map(String::as_str).collect();
+        commit.extend(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "pick"]);
+        git(&commit).unwrap();
+        refresh_field_docx_if_stale(&docx, &dir);
+        assert!(std::fs::read_to_string(&report)
+            .unwrap()
+            .contains("已绑定 1 条"));
+        assert_eq!(
+            git(&["log", "-1", "--format=%s"]).unwrap(),
+            "Mesa: 域稿重绑后刷新引文报告"
+        );
+        assert_eq!(git(&["status", "--porcelain", "--", "papers"]).unwrap(), "");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
