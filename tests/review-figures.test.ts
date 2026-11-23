@@ -310,6 +310,25 @@ test("转载许可清单：CC BY 的标无需申请，其余标待申请，图�
   }
 });
 
+// 2026-11-23 硼化物定稿：CC BY-NC 被写成「非商业 / 禁止演绎」，Zotero 题名里的 <sub>2</sub> 原样进清单
+test("转载许可清单：受限许可按实际条款写，题名的 HTML 上下标换成 Unicode", { skip: !ready }, () => {
+  const code = [
+    "import sys, importlib.util",
+    "spec = importlib.util.spec_from_file_location('fp', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "sys.stdout.reconfigure(encoding='utf-8')",
+    "for lic in ('CC BY-NC 3.0', 'CC BY-NC-ND 4.0', 'CC BY-SA 4.0'): print(m.decide(lic)[0])",
+    "print(m.cite({'author': 'Burse, S and Lee, K and Kim, J', 'year': '2026', 'journal': 'Adv. Sci.', 'title': 'NbB<sub>2</sub> and Mo<sub>4/3</sub>B<sub>2</sub>T<sub>z</sub> for <i>in situ</i> H<sup>+</sup> studies'}))",
+  ].join("\n");
+  const r = spawnSync(python, ["-c", code, permScript], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const [nc, ncnd, sa, cite] = r.stdout.trim().split("\n");
+  assert.match(nc, /CC BY-NC 3\.0 带限制（非商业）/);
+  assert.match(ncnd, /带限制（非商业 \/ 禁止演绎）/);
+  assert.match(sa, /带限制（相同方式共享）/);
+  assert.match(cite, /— NbB₂ and Mo4\/3B₂Tz for \*in situ\* H⁺ studies$/);
+  assert.doesNotMatch(cite, /<\/?(sub|sup|i)>/);
+});
+
 test("裁图也收期刊下载的原图图片：整张就是这张图，按它自己的像素裁", { skip: !ready }, () => {
   const dir = mkdtempSync(join(tmpdir(), "mesa-fig-img-"));
   try {

@@ -57,7 +57,9 @@ def decide(lic: str) -> tuple[str, str]:
     if lic in ("CC0",) or re.fullmatch(r"CC BY \d(?:\.\d)?", lic):
         return "不用申请：按许可在图注写出处与许可名", "无需申请"
     if lic.startswith("CC BY"):
-        return f"{lic} 带限制（非商业 / 禁止演绎）：改编或投商业期刊一般仍要申请，先看许可原文", "待申请"
+        terms = {"NC": "非商业", "ND": "禁止演绎", "SA": "相同方式共享"}
+        limits = " / ".join(terms[t] for t in re.findall(r"\b(NC|ND|SA)\b", lic)) or "附加条件"
+        return f"{lic} 带限制（{limits}）：改编或投商业期刊一般仍要申请，先看许可原文", "待申请"
     return "要申请：多数在文章页的 Request permissions / Rights and permissions（RightsLink）", "待申请"
 
 

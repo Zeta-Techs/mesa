@@ -19,6 +19,21 @@ from pathlib import Path
 
 TITLE_PREFIX = re.compile(r"^\s*(?:【\s*\d+\s*】|\[\s*\d+\s*\]|\d+\s*~\s*\.?)\s*")
 PLACEHOLDERS = {"待补", "待核", "无期号"}
+# Zotero 导出的题名带 HTML 富文本（NbB<sub>2</sub>），清单是给人看的纯文本：上下标换成 Unicode，换不了的去掉标签
+SUB = dict(zip("0123456789+-=()aehklmnopstx", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕₖₗₘₙₒₚₛₜₓ"))
+SUP = dict(zip("0123456789+-=()in", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁱⁿ"))
+
+
+def plain_markup(text: str) -> str:
+    def script(table: dict[str, str]):
+        def repl(m: re.Match) -> str:
+            inner = m.group(1).replace("−", "-")
+            return "".join(table[c] for c in inner) if inner and all(c in table for c in inner) else m.group(1)
+        return repl
+    text = re.sub(r"<sub>(.*?)</sub>", script(SUB), text)
+    text = re.sub(r"<sup>(.*?)</sup>", script(SUP), text)
+    text = re.sub(r"<(?:i|em)>(.*?)</(?:i|em)>", r"*\1*", text)
+    return re.sub(r"</?(?:b|strong|sc|span)\b[^>]*>", "", text)
 
 
 def bib_entries(text: str) -> dict[str, dict[str, str]]:
@@ -80,7 +95,7 @@ def cite(fields: dict[str, str]) -> str:
         pages = re.sub(r"(?<=\w)-{1,2}(?=\w)", "–", val("pages"))
         tail = ", ".join(x for x in (val("volume"), pages) if x)
         parts.append(f"*{venue}*" + (f" {tail}" if tail else ""))
-    title = TITLE_PREFIX.sub("", val("title"), count=1)
+    title = plain_markup(TITLE_PREFIX.sub("", val("title"), count=1))
     return ", ".join(p for p in parts if p) + (f" — {title}" if title else "")
 
 

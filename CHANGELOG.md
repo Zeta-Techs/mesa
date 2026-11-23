@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 修复：定稿步的转载许可清单（`submission/figure-permissions.md`）与拼图来源表（`figures/sources.md`）——① CC BY-NC 等受限许可按实际条款说明（BY-NC 只写「非商业」，不再一律写成「非商业 / 禁止演绎」）；② 题名里 Zotero 带来的 `NbB<sub>2</sub>` 换成 `NbB₂`，**换原图与申请转载许可** 面板里不再露出标签。
 - 修复：Antigravity CLI（`agy`）用自定义模型跑过的步骤，项目 `.ccode/ai-usage.md`（AI 使用记录）的模型一栏出现一长串「.-no-need-to-comment-on-this-change-…」——那是 agy 设置变更行尾的一句提示，被误当成模型名记下。现只取到句号为止，取不到真模型名时回落启动时记下的模型；已写进运行记录的旧行读取时直接滤掉，用量统计里 agy 的会话会自动重抽一遍。
 - 修复：PDF 与 Word 阅读稿（`review-final.pdf` / `review-final.docx`）的参考文献表把 Zotero 导出题名里的上下标原样印成 `NbB<sub>2</sub>`、`Ni/MoBT<sub>x</sub>` 的问题——`references.lua` 读引文库时把 `<sub>`、`<sup>`、`<i>`、`<b>`、`<sc>` 等富文本标记换成真正的上下标、斜体与粗体（引文库文件本身不改）。已渲过的稿子在 Mesa 里更新内置技能 **quarto-render** 后重渲即可。
 - 修复：Word 阅读稿（`review-final.docx` / `draft.docx`）、EndNote/Zotero 域稿（`endnote.docx` / `zotero.docx`）及 PDF 中多列表格严重变形、英文单词逐个腰斩与转义竖线拆裂列数的问题——① **修复 `reference.docx` 根样式缩进污染**：`manuscript_font.py` 不再把首行缩进 2 字符挂在根样式 `Normal`（此前导致所有表格单元格 `Compact`、标题、图注表题和参考文献全部继承 480 dxa 首行缩进，7 列表格首行被吃掉 1/3 宽度、单词断成 `Cath/ode`、`Sour/ce`），改为仅挂在 `BodyText`（节后第一段 `FirstParagraph` 继承它），显式归零 `Compact` / `Caption` / `Bibliography` / `Heading1–6` 缩进，为 `Table` 样式设 9pt 字号、紧凑边距（60 dxa）与三线表边框，并补齐 A4 1 英寸页边距（栏宽由 7920 扩至 9026 dxa）；② **Word 宽表同步按内容分列宽 + PDF 长斜杠词断行**：`references.lua` 现对 Word（`docx`）宽表同样按内容比例分配列宽并将默认对齐列设为左对齐，同时为 PDF 表格里不含空格的长斜杠词（如 `XRD/XPS/TEM/Raman`）在斜杠后补零宽断点防止撞进隔壁列；③ **域稿表格修复 `\|` 拆列与样式**：`cite_docx.py` 改按未转义竖线切分表格行（彻底消除 `Cathode \|\| Anode` 把 7 列表格拆成 9 列并残留 14 处反斜杠的问题），新增 `TableCell`（9pt/零缩进/左对齐/单倍行距）样式并按内容比例分配 A4 栏宽（9026 dxa）。
