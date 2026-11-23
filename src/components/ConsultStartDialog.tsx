@@ -36,6 +36,16 @@ import { AGENTS, type ProjectDto } from "../types";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 const LAST_KEY = (root: string) => `consultLast:${root}`;
+const QUICK_MATERIAL_CANDIDATES = [
+  "outline.md",
+  "notes/angles.md",
+  "notes/handoff.md",
+  "papers/screening.md",
+  "manuscript/draft.md",
+  "manuscript/style-sheet.md",
+  "manuscript/sections.json",
+  "design.md",
+];
 
 /**
  * 发起研讨（2026-11-11，docs/design-group-consult.md §4.1）：问题、材料、请谁、交叉几轮，一屏填完。
@@ -76,6 +86,7 @@ export default function ConsultStartDialog({
   const [error, setError] = useState<string | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [hits, setHits] = useState<SearchResultDto[]>([]);
+  const [quickFiles, setQuickFiles] = useState<string[]>([]);
   /** 粘贴 / 拖进来的图（二期）：先落 Mesa 的粘贴目录，开始研讨时后端拷进项目 attachments */
   const [images, setImages] = useState<{ path: string; url: string }[]>([]);
   const [imageNote, setImageNote] = useState<string | null>(null);
@@ -175,13 +186,34 @@ export default function ConsultStartDialog({
     return () => window.clearTimeout(t);
   }, [open, fileRoot, fileQuery]);
 
+  // 快捷材料：探测当前项目/工作副本中真实存在的核心文档，免得盲搜文件名
+  useEffect(() => {
+    if (!open || !fileRoot) {
+      setQuickFiles([]);
+      return;
+    }
+    let stale = false;
+    void invoke<string[]>("consult_existing_files", { root: fileRoot, paths: QUICK_MATERIAL_CANDIDATES })
+      .then((found) => {
+        if (!stale) setQuickFiles(found);
+      })
+      .catch(() => {
+        if (!stale) setQuickFiles([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [open, fileRoot]);
+
   const names = memberNames(picked);
   const dupFamilies = sameFamilies(picked);
   const est = estimateCost(picked, cross, costStats);
-  const estMoney =
+  const estMoneyShort = est.usd != null ? ` · 约 ${usdText(est.usd)}` : "";
+  const estMoneyFull =
     est.usd != null ? `，按以往研讨约 ${usdText(est.usd)}${est.guessed ? `（${est.guessed} 位没有记录，按平均估）` : ""}` : "";
   const canStart = !!root && question.trim().length > 0 && picked.length >= MIN_MEMBERS && !busy;
   const allSame = picked.length >= 2 && new Set(picked.map((p) => p.family ?? p.key)).size === 1;
+  const availQuickFiles = quickFiles.filter((p) => !materials.some((m) => m.path === p)).slice(0, 5);
 
   function addMaterial(path: string) {
     const rel = toProjectRel(path, fileRoot);
@@ -236,14 +268,21 @@ export default function ConsultStartDialog({
       open={open}
       onClose={onClose}
       size="lg"
-      title="研讨"
+      title="方案研讨"
       initialFocusRef={qRef}
-      description="同一个问题请几家一起看：先各答各的，再看别家的答案补充或反驳。它们只看不改，不跑命令。"
+      description="请几家不同模型独立作答再交叉补充，只看不改。"
       footer={
         <div className="flex w-full items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-micro text-l4">
+          <span
+            className="min-w-0 flex-1 truncate text-micro text-l4"
+            title={
+              picked.length >= MIN_MEMBERS
+                ? `大约 ${est.calls} 次调用（${picked.length} 位 × ${1 + cross} 轮）${estMoneyFull}，追问另算`
+                : undefined
+            }
+          >
             {picked.length >= MIN_MEMBERS
-              ? `大约 ${est.calls} 次调用（${picked.length} 位 × ${1 + cross} 轮）${estMoney}，追问另算`
+              ? `${picked.length} 位 × ${1 + cross} 轮（约 ${est.calls} 次调用${estMoneyShort}）`
               : `至少请 ${MIN_MEMBERS} 位`}
           </span>
           <button type="button" onClick={onClose} className={quietActionClass}>
@@ -302,7 +341,7 @@ export default function ConsultStartDialog({
           />
         </Field>
 
-        <Field label="材料" hint="项目里的文件，可以只写几行（12-40）或某一节（§2.4）；截图直接粘贴或拖进来">
+        <Field label="材料" hint="可选行号或节号，支持粘贴截图">
           <div className="space-y-1.5">
             {materials.map((m, i) => (
               <div key={m.path} className="flex items-center gap-2 rounded-lg border border-hairline bg-canvas px-2 py-1">
@@ -340,34 +379,56 @@ export default function ConsultStartDialog({
                     </button>
                   </span>
                 ))}
-                <span className="text-micro text-l4">只给能看项目、模型又能看图的成员看；其余成员会被告知有图但看不到</span>
+                <span className="text-micro text-l4">仅支持看图的成员可见</span>
               </div>
             )}
             {imageNote && <div className="text-micro text-warn-text">{imageNote}</div>}
             {materials.length < MAX_MATERIALS && (
-              <div className="relative">
-                <input
-                  value={fileQuery}
-                  onChange={(e) => setFileQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && hits[0]) {
-                      e.preventDefault();
-                      addMaterial(hits[0].path);
-                    }
-                  }}
-                  placeholder="＋ 搜项目里的文件加进来"
-                  className={`${compactFieldClass} w-full`}
-                />
-                {hits.length > 0 && (
-                  <div className="absolute inset-x-0 top-8 z-10 overflow-hidden rounded-lg border border-hairline bg-raised py-1 shadow-lg">
-                    {hits.map((h) => (
+              <div className="space-y-1.5">
+                <div className="relative">
+                  <input
+                    value={fileQuery}
+                    onChange={(e) => setFileQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && hits[0]) {
+                        e.preventDefault();
+                        addMaterial(hits[0].path);
+                      }
+                    }}
+                    placeholder="＋ 搜项目里的文件加进来"
+                    className={`${compactFieldClass} w-full`}
+                  />
+                  {hits.length > 0 && (
+                    <div className="absolute inset-x-0 top-8 z-10 overflow-hidden rounded-lg border border-hairline bg-raised py-1 shadow-lg">
+                      {hits.map((h) => (
+                        <button
+                          key={h.path}
+                          type="button"
+                          onClick={() => addMaterial(h.path)}
+                          className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
+                        >
+                          <span className="truncate font-mono text-xs">{h.rel}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {availQuickFiles.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-micro text-l4">常用：</span>
+                    {availQuickFiles.map((rel) => (
                       <button
-                        key={h.path}
+                        key={rel}
                         type="button"
-                        onClick={() => addMaterial(h.path)}
-                        className="flex w-full items-center gap-2 px-2.5 py-1 text-left text-xs text-l2 hover:bg-hover hover:text-l1"
+                        onClick={() =>
+                          setMaterials((ms) =>
+                            ms.some((m) => m.path === rel) || ms.length >= MAX_MATERIALS ? ms : [...ms, { path: rel, range: "" }],
+                          )
+                        }
+                        className="rounded-full border border-hairline bg-canvas/70 px-2 py-0.5 font-mono text-micro text-l2 transition-colors hover:bg-hover hover:text-l1"
+                        title={`加入材料：${rel}`}
                       >
-                        <span className="truncate font-mono text-xs">{h.rel}</span>
+                        ＋ {rel}
                       </button>
                     ))}
                   </div>
@@ -377,10 +438,10 @@ export default function ConsultStartDialog({
           </div>
         </Field>
 
-        <Field label="请谁" hint="二到四位，模型最好是不同的几家；「只看材料」的看不到项目，只看上面这几份的摘录">
+        <Field label="请谁" hint="建议 2–4 位不同模型">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {picked.map((o, i) => (
-              <div key={o.key} className="group relative rounded-lg border border-cta-bd bg-canvas p-2 ring-1 ring-inset ring-cta-bd/40">
+              <div key={o.key} className="relative rounded-lg border border-cta-bd bg-canvas p-2 pr-6 ring-1 ring-inset ring-cta-bd/40">
                 <div className="flex items-center gap-1.5">
                   <MemberAvatar member={{ family: o.family, name: names[i] }} size={20} />
                   <span className="min-w-0 truncate text-xs font-medium text-l1">{names[i]}</span>
@@ -388,13 +449,14 @@ export default function ConsultStartDialog({
                 <div className="mt-1 truncate text-micro text-l3" title={optionLabel(o)}>
                   {o.model || "默认模型"} · {agentLabel(o.agentId)}
                 </div>
-                <div className={`mt-1 text-micro ${o.canRead ? "text-l4" : "text-warn-text"}`}>{o.canRead ? "能看项目" : "只看材料"}</div>
-                {o.family && dupFamilies.has(o.family) && <div className="mt-0.5 text-micro text-warn-text">同一家模型，意见可能雷同</div>}
+                {!o.canRead && <div className="mt-0.5 text-micro text-warn-text">仅看材料</div>}
+                {o.family && dupFamilies.has(o.family) && <div className="mt-0.5 text-micro text-warn-text">同家模型</div>}
                 <button
                   type="button"
                   aria-label={`不请 ${names[i]}`}
+                  title={`移除 ${names[i]}`}
                   onClick={() => setPicked((ps) => ps.filter((p) => p.key !== o.key))}
-                  className="absolute right-1 top-1 rounded-md p-0.5 text-l4 opacity-0 hover:bg-hover hover:text-l1 group-hover:opacity-100"
+                  className="absolute right-1 top-1 rounded-md p-0.5 text-l4 transition-colors hover:bg-hover hover:text-l1"
                 >
                   <X size={12} strokeWidth={1.8} aria-hidden="true" />
                 </button>

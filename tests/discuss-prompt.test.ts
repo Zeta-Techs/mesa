@@ -56,3 +56,29 @@ test("已有项目规则传入商量开场：用户定下或推翻全局设定�
   assert.match(p, /## 本步补充要求/);
   assert.match(p, /记进项目知识/);
 });
+
+test("综述大纲商量开场：要求先读 angles.md / handoff.md，对齐定框架 ①–④ 问，并明确全权委托出口规则", () => {
+  const p = discussOpeningPrompt({
+    stepName: "综述大纲",
+    relPath: ".ccode/drafts/outline.md",
+    workspaceName: "outline",
+  });
+  assert.match(p, /notes\/angles\.md/);
+  assert.match(p, /notes\/handoff\.md/);
+  assert.match(p, /定框架第①、③问/);
+  assert.match(p, /对应第②问/);
+  assert.match(p, /对应第④问/);
+  assert.match(p, /第⑤、⑥问留待正式执行/);
+  assert.match(p, /明确全权委托/);
+  assert.match(p, /一次性把剩余核心决策按你的推荐写入/);
+});
+
+test("综述初稿商量开场：引导提前商定自绘示意图风格与路线（含无 Blender 回落）", () => {
+  const p = discussOpeningPrompt({
+    stepName: "综述初稿",
+    relPath: ".ccode/drafts/draft.md",
+    workspaceName: "draft",
+  });
+  assert.match(p, /自绘示意图风格与路线/);
+  assert.match(p, /没装自动回落纯矢量/);
+});

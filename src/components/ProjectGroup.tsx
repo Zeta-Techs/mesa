@@ -65,7 +65,7 @@ import { useSkillProvides } from "../skill-slots.ts";
 import { stepAttention } from "../run-overview";
 import { stepperStatusText } from "../stepper-status";
 import { failureSnippet, latestRunFailure } from "../run-failure";
-import { stepSessionTail } from "../session-tail";
+import { latestStepSessionRun, stepSessionTail } from "../session-tail";
 import { pathWithin } from "../path-utils";
 import { unsavedUpstreamSteps } from "../kickoff-inputs";
 import { beginAskAi } from "./AskAiModal";
@@ -292,7 +292,7 @@ const STEP_STATUS_LABEL: Record<StepStatusKey, string> = {
   active: "进行中",
   review: "待评审",
   blocked: "阻塞",
-  done: "已完成",
+  done: "已保存",
   checking: "检查中",
 };
 
@@ -340,9 +340,10 @@ function deriveStepStatus(
   // 有没提交的改动（保存后在面板里改了、AI 又写了文件）不算完成：落到下面「进行中」，评审入口重新出现，
   // 否则这些改动既看不到也进不了项目（2026-11-05 排查）
   const savedAndClean = ws.status === "active" && !!ws.mergedAt && h?.ahead === 0 && !h?.uncommitted;
-  // Agent 还在跑：即使已经有待合并提交，也还是进行中，不能提前「去评审」。
-  // 已保存的步骤只认真在出字 / 等确认，终端停在提示符上不把它打回进行中
-  if (stepHeldActiveByAgent(ws.worktreePath, savedAndClean, liveInputs, IS_WINDOWS)) {
+  // 已经有待评审提交（ahead > 0）或已保存干净时：只在 Agent 真在出字 / 等确认（busy）时按在「进行中」；
+  // CLI 说完提交后停在提示符上不算还在做，立刻进入「待评审」，不再把已完成补料卡死在「进行中 / 出错了」。
+  const canLeaveActive = savedAndClean || (h != null && h.ahead > 0);
+  if (stepHeldActiveByAgent(ws.worktreePath, canLeaveActive, liveInputs, IS_WINDOWS)) {
     return { key: "active", ws };
   }
   if (savedAndClean) return { key: "done", ws };
@@ -379,6 +380,7 @@ export default function ProjectGroup({
   onOverlayIdle,
   chromeReq,
   onOpenAgents,
+  onOpenSchedules,
   onChromeConsumed,
   onPickTemplate,
 }: {
@@ -421,8 +423,10 @@ export default function ProjectGroup({
   surfaceHidden?: boolean;
   onOverlayIdle?: () => void;
   chromeReq?: { action: string; token: number } | null;
-  /** 刚添加的项目还没设默认 Agent 时，欢迎条上的「设默认」切到 Agents 页 */
+  /** 刚添加的项目还没设默认 Agent 时，欢迎条/起步清单切到 Agent 分工页 */
   onOpenAgents?: () => void;
+  /** 无流程新科研项目的起步清单「新建定时文献推送」：切到定时任务页并聚焦文献雷达 */
+  onOpenSchedules?: () => void;
   /** 顶栏 ⋯ 的打开请求消费后清掉，避免切页/切页签后组件重挂又把编辑器打开。 */
   onChromeConsumed?: () => void;
   /** 无流程科研项目的目标空态「套一整套流程…」：打开页面层的选模板弹层（带全局设定屏） */
@@ -1129,7 +1133,7 @@ export default function ProjectGroup({
         const raw = cur?.text?.trim() ?? "";
         if (!raw || isTaskMdStub(raw)) continue;
         const nextText = upsertPendingSettingsSection(
-          upsertLitSourceSection(cur?.text ?? "", target),
+          upsertLitSourceSection(cur?.text ?? "", target, s.workspaceName),
           cfg.settings ?? [],
         );
         if (nextText !== cur?.text) {
@@ -1427,8 +1431,11 @@ export default function ProjectGroup({
     ];
   }
 
-  // 这个项目的运行记录：步进器「出错了」用（run-failure.ts）。终端开关时重拉，读不到就当没有
-  const runSig = terminalRunInputs.map((r) => `${r.tabId}:${r.running ? 1 : 0}`).join("|");
+  // 这个项目的运行记录：步进器「出错了」用（run-failure.ts）。终端开关或回合结束（attention 变化）时重拉，
+  // 确保新 Run 绑上 sessionId 或 AI 说完停下后立即拿到最新记录，不再停在旧 Run
+  const runSig = terminalRunInputs
+    .map((r) => `${r.tabId}:${r.running ? 1 : 0}:${r.attention ?? ""}`)
+    .join("|");
   const [projectRuns, setProjectRuns] = useState<RunDto[]>([]);
   useEffect(() => {
     let stale = false;
@@ -1440,23 +1447,26 @@ export default function ProjectGroup({
     return () => {
       stale = true;
     };
-  }, [projectPath, runSig]);
+  }, [projectPath, runSig, refreshToken]);
 
-  // 各步那段对话里 AI 最后说的话像不像在说出错（session-tail.ts，30 秒缓存）：只看开着工作副本的步骤，运行记录变了重读。
-  // 键 = 工作副本路径；值 = 挑出来的那一句、说话时间、那段对话的运行 id（问项目助手时带上）
+  // 各步那段对话里 AI 最后说的话像不像在说出错（session-tail.ts）：只看开着工作副本的步骤，
+  // 仅读取该工作副本真正最新一条 Run（绝不跨代回退读几天前的旧会话），回合结束或 sessionId 回填时强制刷新。
   const [stepTails, setStepTails] = useState<Record<string, { text: string; at: string | null; runId: string | null }>>({});
   const tailPaths = workspaces.filter((w) => w.status === "active").map((w) => w.worktreePath);
-  const tailSig = `${tailPaths.join("|")}#${projectRuns.length}:${projectRuns[0]?.id ?? ""}`;
+  const tailRunSummary = tailPaths
+    .map((p) => {
+      const latest = latestStepSessionRun(projectRuns, p, IS_WINDOWS);
+      const attn = terminalRunInputs.find((r) => pathWithin(r.cwd, p, IS_WINDOWS))?.attention ?? "";
+      return `${p}=${latest?.id ?? ""}:${latest?.sessionId ?? ""}:${attn}`;
+    })
+    .join("|");
   useEffect(() => {
     let stale = false;
     void Promise.all(
       tailPaths.map(async (path) => {
-        const tail = await stepSessionTail(projectRuns, path).catch(() => null);
+        const tail = await stepSessionTail(projectRuns, path, { fresh: true }).catch(() => null);
         if (!tail?.flagged) return null;
-        const run = projectRuns
-          .filter((r) => !r.internal && !!r.sessionId && pathWithin(r.isolationPath, path, IS_WINDOWS))
-          .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
-        return [path, { text: failureSnippet(tail.text), at: tail.at, runId: run?.id ?? null }] as const;
+        return [path, { text: failureSnippet(tail.text), at: tail.at, runId: tail.runId ?? null }] as const;
       }),
     ).then((entries) => {
       if (!stale) setStepTails(Object.fromEntries(entries.filter((e) => e !== null)));
@@ -1465,7 +1475,7 @@ export default function ProjectGroup({
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tailSig]);
+  }, [tailRunSummary]);
 
   // ===== 渲染 =====
   // 步骤状态表：每步算一次，下面各处派生共用同一份快照。
@@ -1533,6 +1543,22 @@ export default function ProjectGroup({
     return stepStatuses[i]?.ws?.mergedAt ?? null;
   };
   const awaitingRework = (cfg?.steps ?? []).map((st) => reworkWaiting(reworks, st.name, stepSavedAt));
+  // 步进器卡底展示的在途补文献 / 退回修改链（与上方 loopHint 共享，避免同一轮补料上下重复挂两条提示）
+  const activeReworkPaths = cfg
+    ? reworks
+        .map((r) => ({
+          r,
+          path: reworkPath(
+            r,
+            stepSavedAt,
+            (name) => stepStatuses[cfg.steps.findIndex((st) => st.name === name)]?.key,
+          ),
+        }))
+        .filter(
+          (x): x is { r: ReworkDto; path: NonNullable<ReturnType<typeof reworkPath>> } => !!x.path,
+        )
+        .slice(0, 2)
+    : [];
   // 圆下状态小字（2026-10-17 用户拍板）：圆只有颜色，待评审/进行中一眼分不清；
   // 进行中再按终端注意力细分「等你确认 / 等你查看」。待开始与检查中不写
   // 出错有两个来源：运行出错退出（运行库），或这一步的 AI 在对话里自己说失败了 / 报错了（交互对话不进运行记录，读会话尾巴）。
@@ -1623,7 +1649,7 @@ export default function ProjectGroup({
       case "done":
         return {
           ...base,
-          statusText: step.seedComplete && !st.ws ? "演示里已经筛完" : "已完成",
+          statusText: step.seedComplete && !st.ws ? "演示里已经筛完" : "已保存",
           actionLabel: null,
           action: null,
         };
@@ -1897,7 +1923,9 @@ export default function ProjectGroup({
           embed
           coexistsWithNewChat={pageVisible}
           onPickTemplate={onPickTemplate}
-          onSetDefaultAgent={projectNeedsDefaultAgent(project) ? onOpenAgents : undefined}
+          onOpenSchedules={onOpenSchedules}
+          onOpenAgents={onOpenAgents}
+          needsDefaultAgent={projectNeedsDefaultAgent(project)}
         />
       )}
 
@@ -1956,12 +1984,20 @@ export default function ProjectGroup({
       )}
 
       {registered && cfg && (() => {
-        // 回路进行中「下一步去哪」：前面在补一轮先指它，否则指第一个待跟进的步骤（step-loop.ts loopHint）
+        // 回路进行中「下一步去哪」：前面在补一轮先指它，否则指第一个待跟进的步骤（step-loop.ts loopHint）。
+        // 步进器底部已经有在途补料链覆盖这一步时，不再在上方重复挂一条黄色提示（且底部链准确反映自动跟进状态）
         const hint = loopHint(
           cfg.steps,
           stepStatuses.map((st) => ({ key: st.key, staleUpstream: st.key === "done" ? (st.ws?.staleUpstream ?? null) : null })),
         );
         if (!hint) return null;
+        const hintStepName = cfg.steps[hint.index]?.name;
+        if (
+          hintStepName &&
+          activeReworkPaths.some(({ path }) => path.steps.some((s) => s.name === hintStepName))
+        ) {
+          return null;
+        }
         return (
           <div className="ccode-well mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md px-3 py-1.5 text-xs text-warn-text" role="note">
             <span className="size-1.5 shrink-0 rounded-full bg-warn-text" aria-hidden="true" />
@@ -2293,13 +2329,11 @@ export default function ProjectGroup({
             </p>
           )}
           {/* 在途的补文献 / 退回修改走到哪（2026-11-11 用户拍板去掉资料全貌，只留它独有的这一件）：没有在途的不出 */}
-          {reworks
-            .map((r) => ({ r, path: reworkPath(r, stepSavedAt, (name) => stepStatuses[cfg.steps.findIndex((st) => st.name === name)]?.key) }))
-            .filter((x): x is { r: ReworkDto; path: NonNullable<ReturnType<typeof reworkPath>> } => !!x.path)
-            .slice(0, 2)
-            .map(({ r, path }) => {
+          {activeReworkPaths.map(({ r, path }) => {
               const target = cfg.steps.find((st) => st.name === r.toStep);
               const lit = !!target && ["search", "notes"].includes(stepKind(target, skillProvides));
+              const nowStep = path.steps.find((s) => s.state === "now");
+              const nowIndex = nowStep ? cfg.steps.findIndex((st) => st.name === nowStep.name) : -1;
               return (
                 <p
                   key={r.id}
@@ -2328,24 +2362,35 @@ export default function ProjectGroup({
                       </Fragment>
                     );
                   })}
-                  {path.chainActive && (
-                    <button
-                      type="button"
-                      className="ml-auto rounded-sm px-1.5 py-0.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
-                      title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进更新」"
-                      onClick={() => {
-                        void invoke("rework_chain_stop", { root: projectPath, reworkId: r.id })
-                          .then(() => {
-                            toast("这条链停了：补完的照旧在，后面的步骤到时自己点「跟进更新」。", "info");
-                            return invoke<ReworkDto[]>("rework_list", { root: projectPath });
-                          })
-                          .then((list) => setReworks(list))
-                          .catch((reason) => toast(`没停成：${String(reason)}`, "error"));
-                      }}
-                    >
-                      停掉这条链
-                    </button>
-                  )}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    {nowIndex >= 0 && focusIndex !== nowIndex && (
+                      <button
+                        type="button"
+                        className="rounded-md bg-raised px-2 py-0.5 text-micro text-l2 transition-colors hover:bg-seg-sel hover:text-l1"
+                        onClick={() => focusByIndex(nowIndex)}
+                      >
+                        去这一步
+                      </button>
+                    )}
+                    {path.chainActive && (
+                      <button
+                        type="button"
+                        className="rounded-sm px-1.5 py-0.5 text-l4 transition-colors hover:bg-hover hover:text-l2"
+                        title="只停自动往下：补料单和已经开的轮不动，后面的步骤到时自己点「跟进更新」"
+                        onClick={() => {
+                          void invoke("rework_chain_stop", { root: projectPath, reworkId: r.id })
+                            .then(() => {
+                              toast("这条链停了：补完的照旧在，后面的步骤到时自己点「跟进更新」。", "info");
+                              return invoke<ReworkDto[]>("rework_list", { root: projectPath });
+                            })
+                            .then((list) => setReworks(list))
+                            .catch((reason) => toast(`没停成：${String(reason)}`, "error"));
+                        }}
+                      >
+                        停掉这条链
+                      </button>
+                    )}
+                  </span>
                 </p>
               );
             })}
@@ -2381,6 +2426,7 @@ export default function ProjectGroup({
         <TaskCardsSection
           projectPath={projectPath}
           {...projectAgentPrefs(project)}
+          defaultPresets={project.defaultPresets ?? null}
           taskBindings={project.taskBindings ?? null}
           steps={cfg.steps}
           cfg={cfg}

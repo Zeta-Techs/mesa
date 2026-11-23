@@ -494,17 +494,67 @@ export function stepSlotKey(stepName: string): string {
 }
 
 /** 步骤启动三元组：step 槽绑定命中即用（显式绑定尊重停用项、模型不在名单回落
- *  名单第一）；未绑/失效回落传入的项目默认三元组（B4 后中间层会换成 discuss 感知）。 */
+ *  名单第一）；绑定里留空的思考强度 / 权限按项目默认预设补上；未绑/失效回落传入的项目默认三元组
+ *  （B4 后中间层会换成 discuss 感知）。 */
 export function resolveStepLaunch(
   profiles: readonly { id: string; agent: string; models?: readonly string[] }[],
   taskBindings: Record<string, ProjectAgentBinding> | null | undefined,
   stepName: string,
   projectDefaultLaunch: ResolvedTaskBindingLaunch | null,
+  defaultPresets?: ProjectDefaultPresets | null,
 ): ResolvedTaskBindingLaunch | null {
   return (
-    taskBindingLaunch(profiles, taskBindings?.[stepSlotKey(stepName)]) ??
-    projectDefaultLaunch
+    withProjectPreset(
+      taskBindingLaunch(profiles, taskBindings?.[stepSlotKey(stepName)]),
+      defaultPresets,
+    ) ?? projectDefaultLaunch
   );
+}
+
+/** 「商量任务书」需要改 `.ccode/drafts/<步骤>.md`（可写，commit ab71155a），
+ *  把已解析的启动配置（含项目默认预设或 discuss 槽绑定）转成 PendingTerminal 写入字段。
+ *  permissionTier 为 ask/auto/full 时显式带上 permission: "write_tree" + permissionMode；
+ *  discuss（只读）或未设时不覆盖，交给终端页既有口径。 */
+export function discussTerminalLaunchFields(
+  launch: ResolvedTaskBindingLaunch | null | undefined,
+): {
+  agentId?: string;
+  profileId?: string;
+  model?: string;
+  effort?: string;
+  permission?: "write_tree";
+  permissionMode?: "ask" | "auto" | "full";
+} {
+  if (!launch) return {};
+  const tier = launch.permissionTier;
+  return {
+    agentId: launch.agentId,
+    profileId: launch.profileId,
+    model: launch.model,
+    ...(launch.effort ? { effort: launch.effort } : {}),
+    ...(tier && tier !== "discuss"
+      ? { permission: "write_tree" as const, permissionMode: tier }
+      : {}),
+  };
+}
+
+/** 接回同一家 Agent 的任务书商量会话时，沿用商量槽 / 项目默认里设的思考强度与写树权限档（CLI `--resume` 仍需权限参数） */
+export function discussResumePresetFields(
+  launch: ResolvedTaskBindingLaunch | null | undefined,
+  resumeAgentId: string,
+): {
+  effort?: string;
+  permission?: "write_tree";
+  permissionMode?: "ask" | "auto" | "full";
+} {
+  if (!launch || launch.agentId !== resumeAgentId) return {};
+  const tier = launch.permissionTier;
+  return {
+    ...(launch.effort ? { effort: launch.effort } : {}),
+    ...(tier && tier !== "discuss"
+      ? { permission: "write_tree" as const, permissionMode: tier }
+      : {}),
+  };
 }
 
 /** 工作区终端的配置三链（buildWorkspaceTerminalRequest 抽出的纯链，供

@@ -716,3 +716,88 @@ test("项目默认预设：专属绑定没设的思考强度 / 权限跟随项�
   assert.deepEqual(projectDefaultPreset({ codex: { effort: " ", permissionTier: "bogus" } }, "codex"), {});
   assert.deepEqual(projectDefaultPreset(defaultPresets, null), {});
 });
+
+test("「全部跟随默认」后商量任务书与步骤槽完整继承项目默认预设（完全访问 + 思考强度）", async () => {
+  const {
+    discussResumePresetFields,
+    discussTerminalLaunchFields,
+    projectAgentLaunch,
+    resolveStepLaunch,
+    withProjectPreset,
+  } = await import("../src/project-agents.ts");
+  const profiles = [
+    { id: "agy-official", agent: "agy", models: ["gemini-4-neon-high"] },
+    { id: "cc1", agent: "claude-code", models: ["glm-5.3"] },
+  ];
+  const defaultPresets = { agy: { effort: "high", permissionTier: "full" } };
+  const projectLaunch = projectAgentLaunch(
+    profiles,
+    "agy",
+    { agy: "agy-official" },
+    { agy: "gemini-4-neon-high" },
+    defaultPresets,
+  );
+  assert.deepEqual(projectLaunch, {
+    agentId: "agy",
+    profileId: "agy-official",
+    model: "gemini-4-neon-high",
+    effort: "high",
+    permissionTier: "full",
+  });
+
+  // 商量任务书（新开）：permissionTier 映射成 permission: "write_tree" + permissionMode: "full"
+  assert.deepEqual(discussTerminalLaunchFields(projectLaunch), {
+    agentId: "agy",
+    profileId: "agy-official",
+    model: "gemini-4-neon-high",
+    effort: "high",
+    permission: "write_tree",
+    permissionMode: "full",
+  });
+
+  // 商量任务书（接回同家会话）：同样带回 effort 与 full 权限档，不同家不串过去
+  assert.deepEqual(discussResumePresetFields(projectLaunch, "agy"), {
+    effort: "high",
+    permission: "write_tree",
+    permissionMode: "full",
+  });
+  assert.deepEqual(discussResumePresetFields(projectLaunch, "claude-code"), {});
+
+  // 商量槽显式设为只读（discuss）时不强盖成 write_tree
+  assert.deepEqual(
+    discussTerminalLaunchFields({
+      agentId: "agy",
+      profileId: "agy-official",
+      model: "gemini-4-neon-high",
+      permissionTier: "discuss",
+    }),
+    {
+      agentId: "agy",
+      profileId: "agy-official",
+      model: "gemini-4-neon-high",
+    },
+  );
+
+  // 步骤槽绑了同家但未单设权限/思考档：经 resolveStepLaunch + defaultPresets 补齐项目默认
+  assert.deepEqual(
+    resolveStepLaunch(
+      profiles,
+      { "step:综述大纲": { profile: "agy-official", model: "gemini-4-neon-high" } },
+      "综述大纲",
+      projectLaunch,
+      defaultPresets,
+    ),
+    {
+      agentId: "agy",
+      profileId: "agy-official",
+      model: "gemini-4-neon-high",
+      effort: "high",
+      permissionTier: "full",
+    },
+  );
+
+  // 商量槽已清空（全部跟随默认）：withProjectPreset(null) 回落到带预设的 projectLaunch
+  const discussLaunch = withProjectPreset(null, defaultPresets) ?? projectLaunch;
+  assert.equal(discussLaunch?.permissionTier, "full");
+  assert.equal(discussLaunch?.effort, "high");
+});

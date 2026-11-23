@@ -18,6 +18,20 @@ export type StepRunStatus =
   | "review" // agent 做完了待评审（含阻塞——阻塞也走评审入口）
   | "done"; // 已保存进项目
 
+/** 某步骤台账/产物的唯一读源顺序（单一出处，消除 StepFlow / TaskCardsSection 分散判断）：
+ *  - 未保存且存在活跃工作副本时：工作副本优先，回落项目根；
+ *  - 已保存（done）或无活跃工作副本时：一律以项目根为准（不再误读旧工作副本）。 */
+export function stepDataRoots(
+  ws: { status?: string; worktreePath?: string } | undefined,
+  runStatus: StepRunStatus,
+  projectPath: string,
+): string[] {
+  if (runStatus !== "done" && ws?.status === "active" && ws.worktreePath) {
+    return ws.worktreePath === projectPath ? [projectPath] : [ws.worktreePath, projectPath];
+  }
+  return [projectPath];
+}
+
 /**
  * 「去评审」：待评审必给；进行中只在 Agent 正在出字/等确认时藏起来。
  * CLI 收完这一轮后进程还坐在提示符上，步骤仍是进行中——精读/大纲就是这样给入口的。
@@ -365,15 +379,15 @@ export function countToFetchEntries(text: string): number {
   return parseToFetchItems(text).length;
 }
 
-/** 还缺几篇：条目里去掉已勾 ✓ 的、去掉已对照上 papers/ 的（to_fetch_progress
- *  的行号 → 文件名映射；面板没开过时映射为空，只按 ✓ 算）。2026-09-17 审计：
- *  折叠按钮旧口径显示全部条目数，清单补了一大半后还写「缺 12 篇」，与展开
- *  面板的「已存 X/Y」自相矛盾 */
+/** 还缺几篇：条目里去掉已勾 ✓ 的、已对照上 papers/ 的，以及用户标记跳过/仅摘要的。 */
 export function missingToFetchCount(
   text: string,
   doneByLine: Record<number, string>,
+  skippedKeys?: ReadonlySet<string>,
 ): number {
-  return parseToFetchItems(text).filter((i) => !i.done && !doneByLine[i.line]).length;
+  return parseToFetchItems(text).filter(
+    (i) => !i.done && !doneByLine[i.line] && !isToFetchSkipped(i, skippedKeys),
+  ).length;
 }
 
 /** 已存篇数：清单勾 ✓ 或对照上 papers/ 的都算。 */
@@ -382,6 +396,62 @@ export function toFetchSavedCount(
   doneByLine: Record<number, string>,
 ): number {
   return items.filter((i) => i.done || Boolean(doneByLine[i.line])).length;
+}
+
+/** 已跳过（仅摘要即可）篇数：不含已补齐的（后来补到 PDF 时自动按已存算）。 */
+export function toFetchSkippedCount(
+  items: ToFetchItem[],
+  doneByLine: Record<number, string>,
+  skippedKeys?: ReadonlySet<string>,
+): number {
+  return items.filter(
+    (i) => !i.done && !doneByLine[i.line] && isToFetchSkipped(i, skippedKeys),
+  ).length;
+}
+
+/** 待获取条目的稳定身份键（优先规范 DOI，退化为去标点小写标题；行号重排后不丢失跳过状态）。 */
+export function toFetchItemKey(item: Pick<ToFetchItem, "title" | "url">): string {
+  const doi = item.url ? doiFromToFetchUrl(item.url) : null;
+  if (doi) return `doi:${doi}`;
+  const norm = item.title.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  return norm ? `title:${norm}` : "";
+}
+
+export function isToFetchSkipped(
+  item: ToFetchItem,
+  skippedKeys?: ReadonlySet<string>,
+): boolean {
+  if (item.skipped) return true;
+  if (!skippedKeys || skippedKeys.size === 0) return false;
+  const key = toFetchItemKey(item);
+  return Boolean(key && skippedKeys.has(key));
+}
+
+const TO_FETCH_SKIPPED_STORE_PREFIX = "ccode.toFetchSkipped.v1:";
+
+export function readToFetchSkipped(projectPath: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(`${TO_FETCH_SKIPPED_STORE_PREFIX}${projectPath}`);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function writeToFetchSkipped(
+  projectPath: string,
+  keys: ReadonlySet<string>,
+): void {
+  try {
+    localStorage.setItem(
+      `${TO_FETCH_SKIPPED_STORE_PREFIX}${projectPath}`,
+      JSON.stringify([...keys]),
+    );
+  } catch {
+    /* 隐私模式或空间满时静默退化 */
+  }
 }
 
 /** 已存条目对应的项目内相对路径。文件名来自 to_fetch_progress，只取末段。 */
@@ -466,6 +536,8 @@ export interface ToFetchItem {
   url: string;
   /** 已补齐（编号后有 ✓） */
   done: boolean;
+  /** 用户在清单里标了跳过 / 仅摘要即可（如 `[跳过]`、`[仅摘要]` 前缀） */
+  skipped?: boolean;
   /** 行里写出的期刊全称。DOI 后面再挂刊名、缩写时从这里取，不进 url。 */
   venue: string;
   /** 清单开头「YYYY-MM-DD 新加：第 x–y 篇」点到的篇：哪天新加的（lit_records.py added_notes，2026-11-10） */
@@ -524,6 +596,8 @@ export function venueFromSegment(segment: string, link: string): string {
  *  全空时调用方回落原文预览 */
 /** 精读步补齐后写在标题前的标记：`[已补 2026-09-24]`、`[已补·全文已在项目根 …]`、`【已补】` */
 const TO_FETCH_DONE_PREFIX = /^(?:\[|【)\s*已补[^\]】]*(?:\]|】)\s*/;
+/** 跳过 / 仅摘要标记：`[跳过]`、`[仅摘要]`、`【跳过 · 414页】` */
+const TO_FETCH_SKIPPED_PREFIX = /^(?:\[|【)\s*(?:跳过|仅摘要)[^\]】]*(?:\]|】)\s*/;
 
 export function parseToFetchItems(text: string): ToFetchItem[] {
   const out: ToFetchItem[] = [];
@@ -564,6 +638,12 @@ function parseToFetchLine(line: string, i: number): ToFetchItem | null {
     done = true;
     body = body.slice(donePrefix[0].length).trim();
   }
+  let skipped = false;
+  const skippedPrefix = TO_FETCH_SKIPPED_PREFIX.exec(body);
+  if (skippedPrefix) {
+    skipped = true;
+    body = body.slice(skippedPrefix[0].length).trim();
+  }
   if (!body) return null;
   const segs = body.split(/\s+—\s+|\s+--\s+/);
   let url = "";
@@ -584,11 +664,15 @@ function parseToFetchLine(line: string, i: number): ToFetchItem | null {
   if (linkAt < 1) {
     // 编号/列表行没链接也保留（url 空占位）；裸行必须带链接尾巴才算条目
     if (!numbered && !bulleted) return null;
-    return { line: i + 1, title: body, url: "", done, venue: "" };
+    return skipped
+      ? { line: i + 1, title: body, url: "", done, skipped: true, venue: "" }
+      : { line: i + 1, title: body, url: "", done, venue: "" };
   }
   // 标题 = 链接段之前的全部（标题内含「 — 」不丢字）
   const title = segs.slice(0, linkAt).join(" — ").trim();
-  return { line: i + 1, title, url, done, venue };
+  return skipped
+    ? { line: i + 1, title, url, done, skipped: true, venue }
+    : { line: i + 1, title, url, done, venue };
 }
 
 /** 本步上次商量会话：活着的优先，否则最近一条。归档 / 无头不计。 */

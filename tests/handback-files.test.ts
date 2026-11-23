@@ -4,6 +4,8 @@ import {
   parseDeclarations,
   parsePermissionRows,
   setPermissionStatus,
+  summarizeDeclarations,
+  summarizePermissions,
   writeDeclarations,
 } from "../src/handback-files.ts";
 
@@ -97,6 +99,15 @@ During the preparation of this work, the authors used AI-assisted tools.
   assert.match(parsed[0].hint, /作者列表.*通讯作者/);
   assert.equal(parsed[1].body, "");
   assert.match(parsed[3].body, /During the preparation/);
+  assert.deepEqual(summarizeDeclarations(real), { total: 4, filled: 1, pending: 3 });
+  assert.deepEqual(summarizePermissions(PERMS), {
+    paperCount: 2,
+    pending: 1,
+    applied: 0,
+    granted: 0,
+    exempt: 1,
+    selfDrawn: 0,
+  });
 });
 
 

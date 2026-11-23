@@ -3,6 +3,15 @@ import ResearchReproductionPanel from "./ResearchReproductionPanel";
 import ResearchAcceptancePanel from "./ResearchAcceptancePanel";
 import ScreeningReviewPanel from "./ScreeningReviewPanel";
 import { researchReportPatterns, reproductionEntrypoints } from "../research-report";
+import { readResearchFile } from "../research-report-load";
+import {
+  nextActionStepSlug,
+  parseStepNextActions,
+  readNextActionChecks,
+  stepAfterSaveLabels,
+  summarizePostSaveFollowup,
+  type PostSaveFollowupSummary,
+} from "../step-next-actions";
 import {
   blockerPrimaryText,
   groupReviewFiles,
@@ -43,6 +52,7 @@ import {
   AppWindow,
   Archive,
   ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -55,9 +65,11 @@ import {
   GitPullRequest,
   RefreshCw,
   Search,
+  StickyNote,
   CircleCheck,
   CircleX,
 } from "lucide-react";
+import { IS_MAC } from "../hotkeys";
 import ContextMenu from "./ContextMenu";
 import { confirmDialog } from "./ConfirmDialog";
 import { doctorGate } from "./DoctorDialog";
@@ -122,6 +134,8 @@ import { CHECK_BATCH_LEAD, checkBatchNote, checkChipText, checkConsultSeed, chec
 import ReviewAskAiMenu, { type ReviewAskAiItem } from "./ReviewAskAiMenu";
 import { ReviewQuotesContext, type ReviewQuote } from "../review-marks";
 import { readStoredNotes, REVIEW_NOTES_EVENT, storeNotes } from "../review-notes";
+import { parseReviewItems, readResolvedReviewKeys, type ReviewNoteItem } from "../review-checklist";
+import ReviewNotesSidebar from "./ReviewNotesSidebar";
 import { IS_WINDOWS } from "../hotkeys";
 import { samePath } from "../path-utils";
 import CoachTip from "./CoachTip";
@@ -1207,14 +1221,18 @@ function LiveWorkspaceReviewView({
     cfg: ProjectConfigDto;
     projectPath: string;
   } | null>(null);
-  // 「沉淀到下一步」：评审结论写进下一步步骤的任务书草稿（不存在则新建）
+  // 保存成功后检查本步尚未处理的「后续建议」与刚解锁的「保存后可做」，在保存条里直接给入口回到本步收尾
+  const [savedFollowup, setSavedFollowup] = useState<{
+    stepIndex: number;
+    projectPath: string;
+    summary: PostSaveFollowupSummary;
+  } | null>(null);
+  // 「给下一步留备注」：评审完顺手留几句嘱咐，追加进下一步任务书草稿（不存在则新建）
   const [distillOpen, setDistillOpen] = useState(false);
   const [distillText, setDistillText] = useState("");
   const [distillBusy, setDistillBusy] = useState(false);
   const [distillMsg, setDistillMsg] = useState<string | null>(null);
-  // 「◈ AI 起草」：ai_distill_review（功能键复用 digest）填初稿，人定稿后才落盘
-  const [distillDrafting, setDistillDrafting] = useState(false);
-  const [distillDraftError, setDistillDraftError] = useState<string | null>(null);
+  const [distillError, setDistillError] = useState<string | null>(null);
   // 可信度证据（进评审一次性读取，不轮询；失败静默降级为不显示）：
   // 引用健康（.md 引用键 vs references.bib）+ 产物核验摘要（复用 ArtifactChecklist 的定位机制）
   const [citations, setCitations] = useState<CitationHealthDto | null>(null);
@@ -1341,6 +1359,16 @@ function LiveWorkspaceReviewView({
   // 上次退回的意见（.ccode/review-notes.md）：只读显示一行，不再预填进意见框——AI 改完再进评审时，
   // 框里还是上次那段，像没发出去、又容易原样再发一遍（2026-11-10 HER）；要沿用点「沿用」
   const [lastNotes, setLastNotes] = useState("");
+  const [unresolvedLastNotes, setUnresolvedLastNotes] = useState(0);
+  useEffect(() => {
+    const items = parseReviewItems(lastNotes);
+    if (!items.length) {
+      setUnresolvedLastNotes(0);
+      return;
+    }
+    const resolved = new Set(readResolvedReviewKeys(worktreePath, lastNotes));
+    setUnresolvedLastNotes(items.filter((it) => !resolved.has(it.key)).length);
+  }, [worktreePath, lastNotes]);
   // 退回意见框默认收成一行（常开时每个页签都被它占掉一大块）；有字时自己展开
   const [notesOpen, setNotesOpen] = useState(false);
   const [returnBusy, setReturnBusy] = useState(false);
@@ -1435,7 +1463,7 @@ function LiveWorkspaceReviewView({
   const autoPickKindRef = useRef<string | null>(null);
 
   const refresh = useCallback(
-    async (quiet = false) => {
+    async (quiet = false, skipDeliveryFreeze = false) => {
       const seq = ++refreshSeqRef.current;
       if (!quiet) setRefreshing(true);
       try {
@@ -1454,7 +1482,7 @@ function LiveWorkspaceReviewView({
           setLoading(false);
         }
         const freezing =
-          !nextDiff.reviewOnly && (!quiet || !deliveryReviewRef.current)
+          !nextDiff.reviewOnly && !skipDeliveryFreeze && (!quiet || !deliveryReviewRef.current)
             ? invoke<WorkspaceDeliverableReviewDto>("workspace_review_deliverables", { id: nextDiff.workspaceId }).then(
                 (review) => {
                   if (seq !== refreshSeqRef.current) return;
@@ -1585,7 +1613,7 @@ function LiveWorkspaceReviewView({
     notesLoadedRef.current = true;
     setReviewNotes(readStoredNotes(worktreePath));
     setStaleUpstream(null);
-    setDistillDraftError(null);
+    setDistillError(null);
     setUnmerged(null);
     setConflictFiles([]);
     setConflictContents({});
@@ -1826,11 +1854,13 @@ function LiveWorkspaceReviewView({
     };
   }, [worktreePath]);
 
-  // 合并成功后定位流水线下一步：当前步 = 与本工作区同名的步骤；
-  // 下一步 = 其后第一个尚未开步的步骤（同仓库存在同名工作区 = 已开过，含已归档）。
-  // 项目未注册/无流水线/当前步未绑定/无下一步时入口不显示
+  // 合并成功后定位流水线下一步，同时检查本步是否有未处理的「后续建议」或刚解锁的「保存后可做」：
+  // 当前步 = 与本工作区同名的步骤；下一步 = 其后第一个尚未开步的步骤。
   useEffect(() => {
-    if (!mergeDone || !diff) return;
+    if (!mergeDone || !diff) {
+      setSavedFollowup(null);
+      return;
+    }
     let stale = false;
     void (async () => {
       try {
@@ -1853,99 +1883,126 @@ function LiveWorkspaceReviewView({
           index >= 0
             ? steps.slice(index + 1).find((s) => !taken.has(s.workspaceName))
             : undefined;
+        let followup: {
+          stepIndex: number;
+          projectPath: string;
+          summary: PostSaveFollowupSummary;
+        } | null = null;
+        if (index >= 0) {
+          const savedStep = steps[index];
+          const slug = nextActionStepSlug(savedStep.workspaceName || current.name || savedStep.name);
+          let parsed = null;
+          const candidates = [
+            ...(slug ? [{ root: current.repoPath, rel: `.ccode/step-next/${slug}.json` }] : []),
+            { root: current.worktreePath, rel: ".ccode/next-actions.json" },
+          ];
+          for (const c of candidates) {
+            try {
+              const res = await readResearchFile(c.root, c.rel);
+              parsed = parseStepNextActions(res.text);
+              if (parsed) break;
+            } catch {
+              /* 无此文件继续试下一路 */
+            }
+          }
+          const summary = summarizePostSaveFollowup({
+            stepName: savedStep.name,
+            nextActions: parsed,
+            doneIds: readNextActionChecks(current.repoPath, savedStep.name),
+            afterSaveLabels: stepAfterSaveLabels(savedStep, skillProvides),
+          });
+          if (summary) {
+            followup = { stepIndex: index, projectPath: current.repoPath, summary };
+          }
+        }
         if (!stale) {
           setNextStep(
             next
               ? { step: next, cfg: read.config, projectPath: current.repoPath }
               : null,
           );
+          setSavedFollowup(followup);
         }
       } catch {
-        if (!stale) setNextStep(null);
+        if (!stale) {
+          setNextStep(null);
+          setSavedFollowup(null);
+        }
       }
     })();
     return () => {
       stale = true;
     };
-  }, [mergeDone, diff]);
+  }, [mergeDone, diff, skillProvides]);
 
-  /** 「→ 去下一步」（v3.97 改向）：合并成功后**不直接开步**，而是把用户带到项目页——
-   *  聚焦自动落在第一个未完成步骤（即刚解锁的下一步），先看流程线/TASK.md/人工事项，
-   *  准备好了自己点「开始」。直接开步跳终端会把非编程用户扔进黑窗（用户拍板） */
-  async function goNextStep() {
-    if (!nextStep) return;
-    const heading = `上一步（${diff?.workspaceName ?? "未知步骤"}）评审沉淀`;
-    // 只有人在沉淀框里留下的字才写进下一步。空框表示没有新约束，不自动再起草。
+  /** 把手写备注附进下一步任务书草稿（.ccode/drafts/<步骤>.md，不存在则新建）。
+   *  写入失败时留在当前页并报错，不悄悄丢稿。 */
+  async function saveDistillNote(andGoNext: boolean) {
+    if (!nextStep || distillBusy) return;
     const content = distillText.trim();
-    if (content) {
-      try {
-        await invoke("append_step_draft", {
-          projectRoot: nextStep.projectPath,
-          stepName: nextStep.step.name,
-          heading,
-          content,
-        });
-      } catch {
-        /* 草稿写失败不挡去下一步 */
+    if (!content) {
+      if (andGoNext) {
+        setSelectProjectReq(nextStep.projectPath);
+        setPage("workspaces");
+        setNextStep(null);
       }
+      return;
+    }
+    setDistillBusy(true);
+    setDistillError(null);
+    try {
+      await invoke<string>("append_step_draft", {
+        projectRoot: nextStep.projectPath,
+        stepName: nextStep.step.name,
+        heading: `上一步（${diff?.workspaceName ?? "未知步骤"}）评审备注`,
+        content,
+      });
+      setDistillOpen(false);
+      setDistillText("");
+      if (andGoNext) {
+        setSelectProjectReq(nextStep.projectPath);
+        setPage("workspaces");
+        setNextStep(null);
+      } else {
+        setDistillMsg(`已附进「${nextStep.step.name}」的任务书`);
+      }
+    } catch (reason) {
+      setDistillError(`写入备注失败：${String(reason)}`);
+    } finally {
+      setDistillBusy(false);
+    }
+  }
+
+  /** 回到刚保存的那一步，直接查看已展开的「后续建议」与「保存后可做」（不被自动切到下一步藏掉） */
+  function goSavedStepFollowup() {
+    if (!savedFollowup) return;
+    useAppStore.getState().setProjectFocusReq({
+      projectRoot: savedFollowup.projectPath,
+      focus: "step",
+      stepIndex: savedFollowup.stepIndex,
+      token: Date.now(),
+    });
+    setSelectProjectReq(savedFollowup.projectPath);
+    setPage("workspaces");
+  }
+
+  /** 「去下一步」（v3.97 改向）：合并成功后**不直接开步**，而是把用户带到项目页——
+   *  聚焦自动落在第一个未完成步骤（即刚解锁的下一步），先看流程线/任务书/人工事项，
+   *  准备好了自己点「开始」。若备注框里有未保存内容，先可靠保存再跳转。 */
+  async function goNextStep() {
+    if (!nextStep || distillBusy) return;
+    if (distillText.trim()) {
+      await saveDistillNote(true);
+      return;
     }
     setSelectProjectReq(nextStep.projectPath);
     setPage("workspaces");
     setNextStep(null);
   }
 
-  /** 「◈ AI 起草」：对照下一步任务书和已验收产物，只起草还没有的约束。
-   *  模型判定没有新约束时返回空，留在框里提示，不写盘。 */
-  async function draftDistill() {
-    if (!diff || !nextStep || distillDrafting) return;
-    setDistillDrafting(true);
-    setDistillDraftError(null);
-    try {
-      const draft = await invoke<string>("ai_distill_review", {
-        id: diff.workspaceId,
-        stepName: nextStep.step.name,
-      });
-      const text = draft.trim();
-      if (!text) {
-        setDistillText("");
-        setDistillDraftError(
-          "没有下一步还缺的约束。这一步不必带到下一步，直接去下一步即可。",
-        );
-        return;
-      }
-      setDistillText(text);
-    } catch (reason) {
-      setDistillDraftError(`${reason}（检查设置页「AI 专用配置」是否可用）`);
-    } finally {
-      setDistillDrafting(false);
-    }
-  }
-
-  /** 「沉淀到下一步」（v3.72 起改落任务书草稿）：评审结论定稿追加进下一步步骤的
-   *  任务书草稿（.ccode/drafts/<步骤>.md，不存在则新建）——下一步开工弹层直接读到它，
-   *  不再经「简报钉卡 → 开工拼装」中间层 */
-  async function submitDistill(e: React.FormEvent) {
+  function submitDistill(e: React.FormEvent) {
     e.preventDefault();
-    if (!nextStep || distillBusy) return;
-    const content = distillText.trim();
-    if (!content) return;
-    setDistillBusy(true);
-    setDistillDraftError(null);
-    try {
-      const rel = await invoke<string>("append_step_draft", {
-        projectRoot: nextStep.projectPath,
-        stepName: nextStep.step.name,
-        heading: `上一步（${diff?.workspaceName ?? "未知步骤"}）评审沉淀`,
-        content,
-      });
-      setDistillOpen(false);
-      setDistillText("");
-      setDistillMsg(`已带到下一步 TASK.md：${rel}`);
-    } catch (reason) {
-      setDistillDraftError(String(reason));
-    } finally {
-      setDistillBusy(false);
-    }
+    void saveDistillNote(true);
   }
 
   /** 划选追加到意见框。不写盘，退回时才和手写意见一起落 review-notes。 */
@@ -2755,7 +2812,7 @@ function LiveWorkspaceReviewView({
         healthFail: (reasons) => reasons,
         committedHash: head,
       });
-      await refresh();
+      await refresh(false, true);
     } catch (reason) {
       const raw = String(reason);
       const prefix = resolvedCommitted
@@ -2930,7 +2987,7 @@ function LiveWorkspaceReviewView({
       } else {
         setResult("改动已提交，可继续审阅或稍后保存进项目");
       }
-      await refresh();
+      await refresh(false, shouldMerge);
     } catch (reason) {
       const raw = String(reason);
       const prefix =
@@ -3139,6 +3196,36 @@ function LiveWorkspaceReviewView({
     window.setTimeout(attempt, 50);
   }
 
+  /** 批注/上一轮验改清单点文件或摘录：diff=true 时直跳红绿改动视图，否则跳正文并滚到对应摘句 */
+  function locateReviewItem(item: ReviewNoteItem, opts?: { diff?: boolean }) {
+    const rawFile = item.file?.replace(/\\/g, "/");
+    if (!rawFile) return;
+    const normPaths = displayedPaths.map((p) => p.replace(/\\/g, "/"));
+    const matched =
+      normPaths.find((p) => p === rawFile) ??
+      normPaths.find((p) => p.endsWith(`/${rawFile}`)) ??
+      normPaths.find((p) => p.split("/").pop() === rawFile.split("/").pop()) ??
+      rawFile;
+    if (opts?.diff && normPaths.includes(matched)) {
+      if (paneTabs?.some((t) => t.id === "files")) setReviewPane("files");
+      userPickedRef.current = true;
+      setActivePath(matched);
+      return;
+    }
+    locateCheck({ target: { file: matched, line: item.line ?? undefined } });
+    if (item.excerpt && !/^图\s+/.test(item.excerpt)) {
+      const snippet = item.excerpt.split("…")[0].trim().slice(0, 60);
+      if (snippet) {
+        let tries = 0;
+        const attempt = () => {
+          if (revealSectionText(document.querySelector("[data-review-doc]"), snippet) || ++tries > 20) return;
+          window.setTimeout(attempt, 100);
+        };
+        window.setTimeout(attempt, 80);
+      }
+    }
+  }
+
 
   return (
     <div data-surface="canvas" className="absolute inset-0 z-30 flex min-h-0 flex-col bg-canvas">
@@ -3147,7 +3234,7 @@ function LiveWorkspaceReviewView({
           <button
             type="button"
             onClick={onClose}
-            title="返回"
+            title="返回对话 / 步骤页"
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
@@ -3194,12 +3281,17 @@ function LiveWorkspaceReviewView({
                   type="button"
                   aria-expanded={notesOpen}
                   onClick={() => setNotesOpen((v) => !v)}
-                  title="写下要改的地方交回给 AI：在正文里划一段、或在核验清单里点「加进意见」也会收到这里。不会保存进项目"
-                  className="flex h-8 items-center gap-1 rounded-sm border border-field px-2.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                  title="展开批注与验改栏：查看上一轮逐条验改清单、管理本轮划字/框图/核验批注，或换一家模型精准修改"
+                  className="flex h-8 items-center gap-1.5 rounded-sm border border-field px-2.5 text-xs text-l2 hover:bg-hover hover:text-l1"
                 >
                   退回修改…
                   {reviewNotes.trim() && (
-                    <span className="tabular-nums text-l4">{reviewNotes.trim().split("\n").filter((l) => l.trim()).length}</span>
+                    <span className="tabular-nums text-l4">{parseReviewItems(reviewNotes).length}</span>
+                  )}
+                  {unresolvedLastNotes > 0 && (
+                    <span className="rounded-full bg-warn px-1.5 py-px text-micro tabular-nums text-warn-text">
+                      待验改 {unresolvedLastNotes}
+                    </span>
                   )}
                 </button>
                 {coachStep === 2 && (
@@ -3858,96 +3950,137 @@ function LiveWorkspaceReviewView({
         </div>
       )}
       {result && !ledgerPending && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-l2">
-          <CircleCheck size={13} strokeWidth={1.9} className="shrink-0 text-ok-text" aria-hidden="true" />
-          <span
-            className="min-w-0 truncate"
-            title={mergeDone ? result : undefined}
-          >
-            {mergeDone
-              ? mergeAdmissionText({
-                  ledgerWritten: true,
-                  versionId: mergeVersionId,
-                })
-              : result}
-          </span>
-          {mergeDone && nextStep && (
-            <button
-              type="button"
-              onClick={() => void goNextStep()}
-              title={`到项目页看「${nextStep.step.name}」这一步：流程线、TASK.md、要补的东西都在那里，准备好了点「开始」`}
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md border border-cta-bd bg-cta px-2 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
+        <div className="shrink-0 border-b border-hairline bg-inset px-3 py-1.5 text-xs text-l2">
+          <div className="flex flex-wrap items-center gap-2">
+            <CircleCheck size={13} strokeWidth={1.9} className="shrink-0 text-ok-text" aria-hidden="true" />
+            <span
+              className="min-w-0 truncate"
+              title={mergeDone ? result : undefined}
             >
-              → 去下一步：{nextStep.step.name}
-            </button>
-          )}
-          {mergeDone && nextStep && (
-            <button
-              type="button"
-              onClick={() => setDistillOpen((v) => !v)}
-              title={`把本次评审结论写进「${nextStep.step.name}」的 TASK.md`}
-              className="inline-flex h-7 shrink-0 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
-            >
-              带到下一步
-            </button>
+              {mergeDone
+                ? mergeAdmissionText({
+                    ledgerWritten: true,
+                    versionId: mergeVersionId,
+                  })
+                : result}
+            </span>
+            {mergeDone && savedFollowup && (
+              <button
+                type="button"
+                onClick={goSavedStepFollowup}
+                title={`回到「${savedFollowup.summary.stepName}」查看：${savedFollowup.summary.summaryText}`}
+                className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border border-field bg-surface px-2.5 text-xs font-medium text-l1 transition-colors hover:bg-hover"
+              >
+                先看本步收尾（{savedFollowup.summary.totalCount}）
+              </button>
+            )}
+            {mergeDone && nextStep && (
+              <button
+                type="button"
+                disabled={distillBusy}
+                onClick={() => void goNextStep()}
+                title={`到项目页看「${nextStep.step.name}」这一步，准备好了点「开始」`}
+                className="inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
+              >
+                <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
+                {distillText.trim()
+                  ? `保存备注并去下一步：${nextStep.step.name}`
+                  : `去下一步：${nextStep.step.name}`}
+              </button>
+            )}
+            {mergeDone && nextStep && (
+              <button
+                type="button"
+                aria-expanded={distillOpen}
+                onClick={() => {
+                  setDistillError(null);
+                  setDistillOpen((v) => !v);
+                }}
+                title={`给「${nextStep.step.name}」留几句嘱咐（选填），会附进下一步任务书`}
+                className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border px-2.5 text-xs transition-colors ${
+                  distillOpen
+                    ? "border-field bg-seg-sel text-l1"
+                    : "border-transparent text-l2 hover:bg-hover hover:text-l1"
+                }`}
+              >
+                <StickyNote size={13} strokeWidth={1.8} aria-hidden="true" />
+                {distillOpen ? "收起备注" : distillMsg ? "再补一条备注" : "给下一步留备注"}
+              </button>
+            )}
+          </div>
+          {mergeDone && savedFollowup && (
+            <p className="mt-1 pl-[21px] text-micro text-l3">
+              「{savedFollowup.summary.stepName}」{savedFollowup.summary.summaryText}；即使先去下一步，顶部也会保留回看入口。
+            </p>
           )}
         </div>
       )}
       {distillOpen && mergeDone && nextStep && (
         <form
-          onSubmit={(e) => void submitDistill(e)}
-          className="shrink-0 border-b border-hairline bg-inset px-3 py-2"
+          onSubmit={submitDistill}
+          className="shrink-0 border-b border-hairline bg-inset px-3 py-2.5"
         >
-          {/* AI 初稿供人改，提交才写进任务书草稿（与 DigestPicker「写回简报文件」同一口径） */}
-          <div className="mb-1.5 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void draftDistill()}
-              disabled={distillDrafting || distillBusy}
-              title="对照下一步任务书和已验收产物，只起草下一步还没有的约束"
-              className="inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
-            >
-              {distillDrafting ? "◈ 起草中…模型还在写" : "◈ AI 起草"}
-            </button>
-            <span className="min-w-0 flex-1 truncate text-micro text-l4">
-              只写下一步任务书里还没有的约束。没有就留空，改完才写进「{nextStep.step.name}」的 TASK.md
-            </span>
-          </div>
-          {distillDraftError && (
-            <p className="mb-1.5 text-xs text-err-text">
-              ✗ {distillDraftError}
+          <div className="max-w-3xl rounded-lg border border-hairline bg-canvas/70 p-2.5">
+            <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-xs font-medium text-l1">
+                写给「{nextStep.step.name}」的备注（选填）
+              </span>
+              <span className="text-micro text-l4">
+                会附进下一步任务书；没有可直接去下一步
+              </span>
+            </div>
+            {distillError && (
+              <p role="alert" className="mb-1.5 flex items-center gap-1.5 text-xs text-err-text">
+                <CircleX size={13} strokeWidth={1.9} className="shrink-0" aria-hidden="true" />
+                <span>{distillError}</span>
+              </p>
+            )}
+            <textarea
+              className="w-full rounded-md border border-field bg-canvas px-2.5 py-2 text-xs leading-relaxed text-l1 outline-none placeholder:text-l4 focus:border-cta-bd"
+              rows={3}
+              placeholder="例如：优先精读哪几篇、哪些边缘文献仅作对照、需要注意的实验条件或口径…"
+              value={distillText}
+              onChange={(e) => {
+                setDistillText(e.target.value);
+                if (distillError) setDistillError(null);
+              }}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void saveDistillNote(true);
+                }
+              }}
+              autoFocus
+            />
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={distillBusy || !distillText.trim()}
+                className="inline-flex h-7 items-center justify-center gap-1 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text hover:brightness-110 disabled:opacity-50"
+              >
+                <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
+                {distillBusy ? "保存中…" : "保存并去下一步"}
+              </button>
               <button
                 type="button"
-                onClick={() => void draftDistill()}
-                className="ml-2 rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+                disabled={distillBusy || !distillText.trim()}
+                onClick={() => void saveDistillNote(false)}
+                className="inline-flex h-7 items-center justify-center rounded-md border border-field bg-surface px-2.5 text-xs text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
               >
-                重试
+                仅保存
               </button>
-            </p>
-          )}
-          <textarea
-            className="w-full rounded-md border border-field bg-canvas px-2 py-1.5 text-sm leading-relaxed text-l2 outline-none placeholder:text-l4 focus:border-l4"
-            rows={4}
-            placeholder={`只写「${nextStep.step.name}」照自己的任务会改错的决定，以及产物里还没由人确认的事项。没有就留空。`}
-            value={distillText}
-            onChange={(e) => setDistillText(e.target.value)}
-            autoFocus
-          />
-          <div className="mt-1.5 flex items-center gap-2">
-            <button
-              type="submit"
-              disabled={distillBusy || !distillText.trim()}
-              className="inline-flex h-7 items-center justify-center rounded-md border border-cta-bd bg-cta px-2 text-xs text-cta-text hover:brightness-110 disabled:opacity-50"
-            >
-              {distillBusy ? "写入中…" : "写进下一步 TASK.md"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setDistillOpen(false)}
-              className="inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
-            >
-              取消
-            </button>
+              <button
+                type="button"
+                disabled={distillBusy}
+                onClick={() => setDistillOpen(false)}
+                className="inline-flex h-7 items-center justify-center rounded-md px-2 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              >
+                取消
+              </button>
+              <span className="ml-auto hidden text-micro text-l4 sm:inline">
+                {IS_MAC ? "⌘" : "Ctrl"} + Enter 保存并去下一步
+              </span>
+            </div>
           </div>
         </form>
       )}
@@ -4325,92 +4458,22 @@ function LiveWorkspaceReviewView({
         </div>
         </div>
         {canReturn && notesOpen && (
-          // 意见栏（2026-11-11）：划选「加进意见」、核验清单「加进意见」都收到这里，也能直接写；
-          // 一条一行，改、删都在框里。按工作副本存在本机，关掉评审页再进来还在
-          <aside aria-label="退回意见" className="flex w-80 shrink-0 flex-col border-l border-hairline bg-strip">
-            <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline px-3 text-xs">
-              <span className="text-l2">退回意见</span>
-              <button
-                type="button"
-                onClick={() => setNotesOpen(false)}
-                title="收起意见栏，写的意见留着"
-                className="ml-auto rounded-sm px-1 text-micro text-l4 hover:bg-hover hover:text-l1"
-              >
-                收起
-              </button>
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-              <p className="text-micro leading-snug text-l4">
-                在正文里划一段、或在核验清单里点「加进意见」，都会加到这里；也可以直接写。一条一行。
-              </p>
-              {lastNotes && (
-                <p className="flex min-w-0 items-center gap-2 text-micro text-l4">
-                  <span className="min-w-0 truncate" title={lastNotes}>
-                    上次退回：{lastNotes.replace(/\s+/g, " ")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setReviewNotes((notes) => appendReviewLine(notes, lastNotes))}
-                    className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                    title="把上次退回的意见加进来，改一改再退回"
-                  >
-                    沿用
-                  </button>
-                </p>
-              )}
-              <textarea
-                value={reviewNotes}
-                onChange={(e) => setReviewNotes(e.target.value)}
-                autoFocus={!reviewNotes}
-                placeholder={"例如：\n- 5.3 覆盖检查里 @Lu2017 写了两次，换成漏掉的 @Masa2017\n- 拼图 9 换一块不重复的子图"}
-                className="min-h-0 w-full flex-1 resize-none rounded-sm border border-field bg-canvas px-2 py-1.5 text-xs leading-relaxed text-l2 outline-none placeholder:text-l4 focus:border-l4"
-              />
-              <p className="flex min-w-0 shrink-0 items-center gap-1.5 text-micro text-l3">
-                <span className="shrink-0">谁来改</span>
-                <AgentModelPicker
-                  options={reviewerChoices.map((o) => ({ ...o, key: reviewerOptionKey(o) }))}
-                  selectedKey={returnByKey || null}
-                  onPick={(o) => setReturnByKey(o.key)}
-                  title="谁来改"
-                  hint="选一家就新开一段对话，读任务书、意见和现稿，在现稿上改。原对话太长，或原模型做不了这件事（比如看不了图）时用。"
-                  ariaLabel="选谁来改"
-                  triggerTitle="默认接回原来那段对话；换一家就新开一段对话改"
-                  triggerClassName="min-w-0 truncate rounded-sm px-1 text-micro text-l2 hover:bg-hover hover:text-l1"
-                >
-                  {returnBy ? `${agentLabelOf(returnBy.agentId)} · ${returnBy.profileName} · ${returnBy.model || "默认模型"}（新开对话）` : "原来那段对话"}
-                </AgentModelPicker>
-                {returnBy && (
-                  <button
-                    type="button"
-                    onClick={() => setReturnByKey("")}
-                    className="shrink-0 text-l4 underline decoration-dotted underline-offset-2 hover:text-l1"
-                  >
-                    改回原对话
-                  </button>
-                )}
-              </p>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled={returnBusy || !wsRow}
-                  onClick={() => void returnToAgent(false)}
-                  title={returnBy ? "新开一段对话，按意见改现在这一版；不会保存进项目" : "接回原来那段对话，让 AI 按意见改现在这一版；不会保存进项目"}
-                  className="rounded-sm border border-field px-2.5 py-1 text-xs text-l1 hover:bg-hover disabled:opacity-50"
-                >
-                  {returnBusy ? "交接中…" : "退回修改"}
-                </button>
-                <button
-                  type="button"
-                  disabled={returnBusy || !wsRow}
-                  onClick={() => void returnToAgent(true)}
-                  title="新开一段对话，按大纲和笔记把这一步整份重写；改动大、现稿方向不对时用"
-                  className="rounded-sm px-1.5 py-1 text-xs text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                >
-                  按意见重写
-                </button>
-              </div>
-            </div>
-          </aside>
+          <ReviewNotesSidebar
+            worktreePath={worktreePath}
+            reviewNotes={reviewNotes}
+            onChangeNotes={setReviewNotes}
+            lastNotes={lastNotes}
+            reviewerChoices={reviewerChoices}
+            returnBy={returnBy}
+            returnByKey={returnByKey}
+            onChangeReturnByKey={setReturnByKey}
+            returnBusy={returnBusy}
+            canSubmit={Boolean(wsRow)}
+            onReturn={(rewrite) => void returnToAgent(rewrite)}
+            onClose={() => setNotesOpen(false)}
+            onLocateItem={locateReviewItem}
+            onUnresolvedCountChange={setUnresolvedLastNotes}
+          />
         )}
         </div>
       )}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Archive, Info, Play, Plus, RotateCw, Square, X } from "lucide-react";
+import { Archive, Bot, ChevronRight, Clock3, Info, ListChecks, Play, Plus, RotateCw, Square, X } from "lucide-react";
 import CoachTip from "./CoachTip";
 import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
 import { runInboxAction, selectHiddenProfiles, useAppStore } from "../store";
@@ -146,9 +146,11 @@ export default function ProjectUserTasksView({
   onUrgentGoals,
   onCount,
   onPickTemplate,
+  onOpenSchedules,
+  onOpenAgents,
+  needsDefaultAgent = false,
   compactWhenEmpty = false,
   coexistsWithNewChat = false,
-  onSetDefaultAgent,
 }: {
   project: ProjectDto;
   /** 嵌进无流程科研左栏：不重复项目名、不另开对话栏。 */
@@ -158,14 +160,18 @@ export default function ProjectUserTasksView({
   onUrgentGoals?: (urgent: boolean) => void;
   /** 读完后报目标条数（项目页「流程之外」那一行写「目标 N」，2026-11-11） */
   onCount?: (count: number) => void;
-  /** 无流程科研项目：空态给「套一整套流程…」（写整篇论文时才用，2026-11-08） */
+  /** 无流程科研项目：空态引导列表「添加研究流程模板」（写整篇论文时才用，2026-11-08） */
   onPickTemplate?: () => void;
+  /** 无流程科研项目：空态引导列表「新建定时文献推送」（切到定时任务页签并定位文献雷达） */
+  onOpenSchedules?: () => void;
+  /** 无流程科研项目：空态引导列表「配置 Agent 分工」（切到 Agent 分工页签） */
+  onOpenAgents?: () => void;
+  /** 项目尚未设置默认 Agent：在「配置 Agent 分工」行右侧给出轻提示 */
+  needsDefaultAgent?: boolean;
   /** 有流程的科研项目：接在步骤线下面；没记过目标时不铺空态，只留「新建目标」一行入口 */
   compactWhenEmpty?: boolean;
   /** 与右上角「＋ 新对话」同屏可见：首次弹出对比气泡，标题旁留 ⓘ 可随时再看 */
   coexistsWithNewChat?: boolean;
-  /** 项目还没定默认 Agent：空态最下一行小字「先定默认用哪家 AI…」，点了去 Agent 分工（2026-11-16 用户：页面简洁，但要提示能设） */
-  onSetDefaultAgent?: () => void;
 }) {
   const openAssistant = useAppStore((state) => state.openAssistant);
   const profiles = useAppStore((state) => state.profiles);
@@ -232,6 +238,11 @@ export default function ProjectUserTasksView({
       setLoaded(true);
     }
   }, [eligible, project.path, project.workMode]);
+
+  useEffect(() => {
+    setError(null);
+    setLoadError(null);
+  }, [project.path]);
 
   useEffect(() => {
     if (embed || !chromeReq) return;
@@ -753,46 +764,44 @@ export default function ProjectUserTasksView({
               新建目标
             </button>
           )}
-          <button
-            type="button"
-            className={iconActionClass}
-            onClick={() => void load()}
-            title="刷新目标"
-            aria-label="刷新目标"
-          >
-            <RotateCw size={14} aria-hidden="true" />
-          </button>
+          {(!loaded || tasks.length > 0 || archivedTasks.length > 0 || loadError || !freeResearch) && (
+            <button
+              type="button"
+              className={iconActionClass}
+              onClick={() => void load()}
+              title="刷新目标"
+              aria-label="刷新目标"
+            >
+              <RotateCw size={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
-        {loadError && <InlineNotice tone="err" className="mb-2">{loadError}</InlineNotice>}
-        {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
+        {loadError && <InlineNotice tone="err" className="mb-2" onDismiss={() => setLoadError(null)}>{loadError}</InlineNotice>}
+        {error && <InlineNotice tone="err" className="mb-2" onDismiss={() => setError(null)}>{error}</InlineNotice>}
         {!loaded ? (
           <p role="status" className={`${projectWellClass} text-xs text-l3`}>正在读取目标…</p>
         ) : tasks.length === 0 ? (
-          // 无流程科研项目整页只有这一块：放到页面上部视觉中心，不贴着标题行留下大半屏空白
-          !loadError && <div className={freeResearch ? "flex min-h-[55vh] flex-col justify-center" : undefined}><EmptyState
-            compact
-            title={archivedTasks.length ? "当前没有目标" : "这次想完成什么？"}
-            detail={
-              archivedTasks.length
-                ? "可以新建目标，或从已归档中恢复。"
-                : freeResearch
-                  ? <>整理一批数据、读几篇文献出对照表、准备组会、规划实验……<br />一件事一个目标，写清要交付的成果。</>
-                  : "写清要交付的成果，再选择资料和 Agent。"
-            }
-            action={
-              // text-xs 写在外层：全站 button { font: inherit } 会吞掉按钮自己的 text-xs，不给外层字号按钮就跟页面走成 14px、比标题还抢眼
-              // 主按钮一组、两条次要入口一组，组间拉开（2026-11-16 用户：四样堆在中间太挤）
-              <div className="flex flex-col items-center text-xs">
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    className={`${primaryActionClass} gap-1.5`}
-                    onClick={openCreateModal}
-                  >
-                    <Plus size={13} aria-hidden="true" />
-                    新建目标
-                  </button>
-                  {freeResearch && (
+          !loadError && (
+            freeResearch && archivedTasks.length === 0 ? (
+              // 无流程新科研项目空态：居中定宽，上主（直接开工）下辅（套模板 / 定时文献 / Agent 分工纵列列表）
+              <div className="flex min-h-[58vh] flex-col items-center justify-center px-4 py-8">
+                <div className="mx-auto flex w-full max-w-[460px] flex-col items-center">
+                  <p className="text-base font-semibold text-l1">这次想完成什么？</p>
+                  <p className="mt-2 text-center text-xs leading-6 text-l3">
+                    整理一批数据、读几篇文献出对照表、准备组会、规划实验……
+                    <br />
+                    一件事一个目标，写清要交付的成果。
+                  </p>
+                  {/* text-xs 写在外层：全站 button { font: inherit } 会吞掉按钮自己的 text-xs */}
+                  <div className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs">
+                    <button
+                      type="button"
+                      className={`${primaryActionClass} gap-1.5`}
+                      onClick={openCreateModal}
+                    >
+                      <Plus size={13} aria-hidden="true" />
+                      新建目标
+                    </button>
                     <button
                       type="button"
                       className={secondaryActionClass}
@@ -801,35 +810,134 @@ export default function ProjectUserTasksView({
                     >
                       问项目助手
                     </button>
+                  </div>
+                  {(onPickTemplate || onOpenSchedules || onOpenAgents) && (
+                    <div className="mt-8 w-full text-left">
+                      <p className="mb-2 px-1.5 text-xs text-l4">也可以先配好这个项目</p>
+                      <div
+                        className="ccode-well rounded-xl p-1.5"
+                        role="group"
+                        aria-label="项目起步配置"
+                      >
+                        {onPickTemplate && (
+                          <button
+                            type="button"
+                            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cta"
+                            title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
+                            onClick={onPickTemplate}
+                          >
+                            <ListChecks
+                              size={15}
+                              strokeWidth={1.75}
+                              className="shrink-0 text-l3 transition-colors group-hover:text-l1"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-sm text-l1">
+                              添加研究流程模板
+                            </span>
+                            <span className="hidden shrink-0 text-xs text-l4 transition-colors group-hover:text-l3 sm:inline">
+                              综述 / 论文按步推进
+                            </span>
+                            <ChevronRight
+                              size={14}
+                              className="shrink-0 text-l4 transition-transform group-hover:translate-x-0.5 group-hover:text-l2"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
+                        {onOpenSchedules && (
+                          <button
+                            type="button"
+                            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cta"
+                            title="去「定时任务」配置文献雷达，按关键词定时追踪新文献"
+                            onClick={onOpenSchedules}
+                          >
+                            <Clock3
+                              size={15}
+                              strokeWidth={1.75}
+                              className="shrink-0 text-l3 transition-colors group-hover:text-l1"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-sm text-l1">
+                              新建定时文献推送
+                            </span>
+                            <span className="hidden shrink-0 text-xs text-l4 transition-colors group-hover:text-l3 sm:inline">
+                              按关键词定期巡检
+                            </span>
+                            <ChevronRight
+                              size={14}
+                              className="shrink-0 text-l4 transition-transform group-hover:translate-x-0.5 group-hover:text-l2"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
+                        {onOpenAgents && (
+                          <button
+                            type="button"
+                            className="group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cta"
+                            title="为不同任务指定默认使用的 AI 与模型（不定也行，点「开始」时再选）"
+                            onClick={onOpenAgents}
+                          >
+                            <Bot
+                              size={15}
+                              strokeWidth={1.75}
+                              className="shrink-0 text-l3 transition-colors group-hover:text-l1"
+                              aria-hidden="true"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-sm text-l1">
+                              配置 Agent 分工
+                            </span>
+                            <span className="hidden shrink-0 text-xs text-l4 transition-colors group-hover:text-l3 sm:inline">
+                              {needsDefaultAgent ? "未设默认模型" : "为任务指定默认模型"}
+                            </span>
+                            <ChevronRight
+                              size={14}
+                              className="shrink-0 text-l4 transition-transform group-hover:translate-x-0.5 group-hover:text-l2"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
                 </div>
-                {((freeResearch && onPickTemplate) || onSetDefaultAgent) && (
-                  <div className="mt-8 flex flex-col items-center gap-3">
-                    {freeResearch && onPickTemplate && (
-                      <button
-                        type="button"
-                        className="rounded-full bg-inset/75 px-3 py-1 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
-                        title="检索→精读→大纲→初稿→定稿这类多步流程，每步你评审过再往下走"
-                        onClick={onPickTemplate}
-                      >
-                        要写整篇综述、论文或学位论文？套一整套流程…
-                      </button>
-                    )}
-                    {onSetDefaultAgent && (
-                      <button
-                        type="button"
-                        className="text-xs text-l4 underline decoration-dotted underline-offset-2 transition-colors hover:text-l2"
-                        title="不定也行，点「开始」时再选"
-                        onClick={onSetDefaultAgent}
-                      >
-                        先定默认用哪家 AI…
-                      </button>
-                    )}
-                  </div>
-                )}
               </div>
-            }
-          /></div>
+            ) : (
+              <div className={freeResearch ? "flex min-h-[55vh] flex-col justify-center" : undefined}>
+                <EmptyState
+                  compact
+                  title={archivedTasks.length ? "当前没有目标" : "这次想完成什么？"}
+                  detail={
+                    archivedTasks.length
+                      ? "可以新建目标，或从已归档中恢复。"
+                      : "写清要交付的成果，再选择资料和 Agent。"
+                  }
+                  action={
+                    <div className="flex flex-wrap items-center justify-center gap-2 text-xs">
+                      <button
+                        type="button"
+                        className={`${primaryActionClass} gap-1.5`}
+                        onClick={openCreateModal}
+                      >
+                        <Plus size={13} aria-hidden="true" />
+                        新建目标
+                      </button>
+                      {freeResearch && (
+                        <button
+                          type="button"
+                          className={secondaryActionClass}
+                          title="说一句想做什么，它帮你理清、起草派活单；你点了才开工"
+                          onClick={() => openAssistant(project.path)}
+                        >
+                          问项目助手
+                        </button>
+                      )}
+                    </div>
+                  }
+                />
+              </div>
+            )
+          )
         ) : (
           <div className="space-y-4">
             {visibleBuckets.map((bucket) => {
@@ -1952,7 +2060,7 @@ function TaskMaterialsPicker({
           ))}
         </div>
       )}
-      {error && <InlineNotice tone="err" size="micro" className="mb-1">{error}</InlineNotice>}
+      {error && <InlineNotice tone="err" size="micro" className="mb-1" onDismiss={() => setError(null)}>{error}</InlineNotice>}
       <div className="max-h-56 overflow-auto rounded-md border border-hairline bg-canvas py-1">
         {cache[projectPath] ? (
           <ul>{renderEntries(projectPath, 0)}</ul>

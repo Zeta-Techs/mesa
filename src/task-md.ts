@@ -105,9 +105,20 @@ export function renderTaskMd(
   if (topic) {
     lines.push("## 课题主题", topic, "");
   }
+  const extractionFixedInUpstream = (upstreamDecisions ?? []).some((g) =>
+    g.items.some((d) => /文献数据抽取表.*列/.test(d.q)),
+  );
+  const extractionFixedLocally = (decisions ?? []).some((d) =>
+    /文献数据抽取表.*列/.test(d.q),
+  );
   const globals = readableRuleLines(
     effectiveProjectRules(cfg.settings, cfg.workMode, cfg.rulesOwned),
-  );
+  ).map((line) => {
+    if (!/^文献数据抽取表[:：]\s*让\s*AI\s*提议列$/.test(line.trim())) return line;
+    if (extractionFixedLocally) return "文献数据抽取表：已在本步定好列（见下方「已定方向」）";
+    if (extractionFixedInUpstream) return "文献数据抽取表：已在上游定好列（见下方「上游已定方向」，并已落盘于 notes/extraction.md）";
+    return line;
+  });
   if (globals.length > 0) {
     lines.push("## 项目规则", ...globals.map((x) => `- ${x}`), "");
   }
@@ -122,7 +133,7 @@ export function renderTaskMd(
       "",
     );
   }
-  const litLines = litSourceSectionLines(cfg.litSource);
+  const litLines = litSourceSectionLines(cfg.litSource, step.workspaceName);
   if (litLines) {
     lines.push(...litLines, "");
   }
@@ -285,6 +296,13 @@ export function renderTaskMd(
         : "- 读 PDF 报 `pdftoppm is not installed`（没装 poppler）时改用 PyMuPDF：`page.get_text()` 抽字；看图先 `page.get_pixmap(dpi=150).save(\"artifacts/p5.png\")` 存成图片再读，不要只凭图注写图里的内容。",
     );
   }
+  if (step.skills.some((s) => s === "lit-search" || s === "lit-notes" || s === "review-framework")) {
+    lines.push(
+      isWindows
+        ? "- 文献脚本：用 `& $env:MESA_PYTHON $env:MESA_LIT_RECORDS <子命令>`（Git Bash 写 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\"`；空时用技能目录 `scripts/lit_records.py`）。"
+        : "- 文献脚本：直接跑 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" <子命令>`（不用 `find` 翻软链接；空时用技能目录 `scripts/lit_records.py`）。",
+    );
+  }
   if ((step.decisions?.length ?? 0) > 0) {
     lines.push(
       "",
@@ -358,7 +376,7 @@ export function renderTaskMd(
     // 写作红线只给写稿 / 出大纲 / 渲染的步骤（2026-11-05：检索、精读步每次都带着这一句，读了只会困惑）
     if (step.skills.some((name) => WRITING_SKILLS.has(name))) {
       lines.push(
-        "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 不准进稿件；摘要不准出现 [待核实]；摘要级来源必须在句中降级；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
+        "写作红线以写作/渲染技能为准，即使本文件简报写了相反的话：不凑字数；禁止把「待绘制」当图；G1 及内部策划/审计代号不准进稿件；摘要不准出现 [待核实]；保留的摘要级来源必须在句中降级（定稿步经人拍板可移出非核心仅摘要引用）；PDF 首页必须可读。不得把大纲或项目「目标篇幅」改写成必须凑到的词数，也不得把「文件非空」当成渲染通过。",
       );
     }
   }
@@ -441,6 +459,8 @@ export function renderTaskMd(
     // 2026-11-03 实证：Codex 沙箱写不到主仓 .git/objects、本机没配署名，agent 提交失败后报「2 步失败」吓到人
     "提交因权限或没配 git 署名失败时别重试、别改 git 配置，回复里说明即可，人会在评审页提交。",
     "派生产物只写本工作区产物目录（评审合并后自动进项目根对应目录）；文献 PDF 写项目根 papers/。绕开这两条（例如派生产物直写项目根）的产物属于未验收产物，不保证保留。",
+    // 2026-11-21 用户：对话结尾给了很多执行建议，回到任务面板不知下一步该点什么
+    "收尾提交前顺手在本工作区写一份 `.ccode/next-actions.json`（不进 git，供 Mesa 步骤卡展示「下一步建议」导航卡）：字段 `{ \"readiness\": \"ready\"|\"blocked\", \"summary\": \"一句话主线结论\", \"optional\": [{\"id\":\"...\",\"label\":\"一句话做什么\",\"detail\":\"可选补充\",\"action\":\"fetch_pdf\"|\"return_step\"|\"remember\"|\"open_file\"|\"spot_check\"|\"confirm_pending\"|\"continue_chat\",\"buttonText\":\"短按钮名\",\"targetStep\":\"退回目标步骤名\",\"topics\":\"预填退回/找新文献主题\",\"reads\":\"补文献时预填精读已有的篇目\",\"reason\":\"预填退回原因\",\"priorityDois\":[\"优先补全文的DOI\"],\"memoryText\":\"要记进项目知识的一句话\",\"file\":\"相对路径\"}], \"handedOff\": \"已写入交接文件、无需人现在操心的一句话\" }`（其中 `spot_check` 仅限精读步「抽查 3 篇笔记」面板；打开图表清单、核对报告等文件一律用 `open_file` 配 `file`）；没有顺手可做项时 `optional` 留空数组。",
   );
   return `${lines.join("\n")}\n`;
 }

@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   MessageCircle,
@@ -19,8 +20,8 @@ import {
   InlineNotice,
 } from "./PageFrame";
 import { Modal } from "./Modal";
-import StepEvidenceChip from "./StepEvidenceChip";
-import StepFlow from "./StepFlow";
+import StepEvidenceChip, { prefetchStepEvidence } from "./StepEvidenceChip";
+import StepFlow, { prefetchStepFlowCaches } from "./StepFlow";
 import CoachTip from "./CoachTip";
 import { coachTipSeen, markCoachTipSeen } from "../coach-tips";
 import FuseDraftModal from "./FuseDraftModal";
@@ -28,7 +29,19 @@ import { useAppStore } from "../store";
 import { MAX_MATERIALS as CONSULT_MAX_MATERIALS, stepConsultQuestion } from "../consult";
 import { stepAttention } from "../run-overview";
 import { toast } from "../toast";
+import { openProjectFileInWindow } from "../project-file-open";
 import { readResearchFile, readResearchLedger } from "../research-report-load";
+import {
+  nextActionStepSlug,
+  parseStepNextActions,
+  readNextActionChecks,
+  readPrevFollowupDismissed,
+  stepAfterSaveLabels,
+  summarizePostSaveFollowup,
+  writePrevFollowupDismissed,
+  type PostSaveFollowupSummary,
+} from "../step-next-actions";
+import { stepDataRoots } from "../step-flow";
 import { ReworkDialog, type ReworkFields } from "./StepLoop";
 import { FileVersionsButton } from "./FileVersions";
 import {
@@ -45,6 +58,10 @@ import {
   reworkTargets,
   withLatestNote,
   chainNext,
+  parseOutlineChaptersForRework,
+  parsePendingFulltextForRework,
+  type OutlineChapterChoice,
+  type PendingFulltextChoice,
   commentReworkDrafts,
   chainTurns,
   commentsPrompt,
@@ -94,7 +111,9 @@ import {
   resolveStepLaunch,
   stepSlotKey,
   taskBindingLaunch,
+  withProjectPreset,
   DISCUSS_BINDING_SLOT,
+  type ProjectDefaultPresets,
 } from "../project-agents";
 import type {
   GitCommitResultDto,
@@ -106,7 +125,7 @@ import type {
   WorkspaceDto,
 } from "../types";
 import { isSettingPlaceholder } from "../project-context";
-import { upsertPendingSettingsSection } from "../task-md-sections";
+import { ensureDiscussSections, upsertPendingSettingsSection } from "../task-md-sections";
 import { researchToolAskFieldsForStep, researchToolsFromSettings, type ResearchTools } from "../research-tools";
 import { stepFillsAnySlot, useSkillProvides } from "../skill-slots.ts";
 import { statusBadgeTitle, userWorkDirtyFiles } from "../git-status-groups";
@@ -145,6 +164,15 @@ function launchBarAgent(): string {
 // 回头组与「方案研讨」是文字链接，工具行只有进对话的「继续讨论」带描边（2026-11-13 步骤卡统一设计稿）
 const LOOP_TOOL = "shrink-0 text-xs text-l3 underline-offset-2 hover:text-l1 hover:underline disabled:opacity-50";
 const LOOP_PENDING = "shrink-0 text-xs font-medium text-l1 underline-offset-2 hover:underline disabled:opacity-50";
+
+/** 切步骤时不先清零再异步回填：记住每个项目精读步的新增未读篇数与上一步收尾提醒 */
+const unreadNewCache = new Map<string, number>();
+type PrevFollowupState = {
+  stepIdx: number;
+  stamp: string;
+  summary: PostSaveFollowupSummary;
+};
+const prevFollowupCache = new Map<string, PrevFollowupState | null>();
 
 function loopRow(items: ReactNode[]): ReactNode {
   const list = items.filter(Boolean);
@@ -189,6 +217,7 @@ export default function TaskCardsSection({
   preferredAgent,
   preferredProfile,
   preferredModel,
+  defaultPresets = null,
   taskBindings = null,
 }: {
   projectPath: string;
@@ -245,6 +274,8 @@ export default function TaskCardsSection({
   preferredAgent?: string | null;
   preferredProfile?: string | null;
   preferredModel?: string | null;
+  /** 项目默认的思考强度 / 权限预设（按 Agent 存）；步骤槽、商量槽「跟随默认」时按此补齐 */
+  defaultPresets?: ProjectDefaultPresets | null;
   /** 项目槽位专属绑定（B1 步骤槽）：聚焦步骤的商量/继续与卡片「继续」优先用 step:<名> */
   taskBindings?: Record<
     string,
@@ -266,23 +297,27 @@ export default function TaskCardsSection({
         preferredAgentTrimmed && preferredModelTrimmed
           ? { [preferredAgentTrimmed]: preferredModelTrimmed }
           : null,
+        defaultPresets,
       ),
-    [profiles, preferredAgentTrimmed, preferredProfileTrimmed, preferredModelTrimmed],
+    [profiles, preferredAgentTrimmed, preferredProfileTrimmed, preferredModelTrimmed, defaultPresets],
   );
   /** 商量层（B4）：discuss 槽 ?? 项目默认——聊想法/问 AI/任务书讨论/MCP 登录的
    *  统一偏好（2026-10-15 用户拍板：商量类不吃步骤绑定，全项目一致）。
-   *  绑定解析与失效回落收敛在 taskBindingLaunch（绑定失联→null→回落项目默认） */
+   *  绑定解析与失效回落收敛在 taskBindingLaunch（绑定失联→null→回落项目默认），
+   *  槽位里留空的思考强度 / 权限按项目默认预设补齐（2026-11-22） */
   const discussLaunch = useMemo(
     () =>
-      taskBindingLaunch(profiles, taskBindings?.[DISCUSS_BINDING_SLOT]) ??
-      projectLaunch,
-    [profiles, taskBindings, projectLaunch],
+      withProjectPreset(
+        taskBindingLaunch(profiles, taskBindings?.[DISCUSS_BINDING_SLOT]),
+        defaultPresets,
+      ) ?? projectLaunch,
+    [profiles, taskBindings, defaultPresets, projectLaunch],
   );
   /** 步骤启动三元组（B1）：按步骤名现解析——步骤槽 ?? **discussLaunch**（B4 后中间层
    *  是 discuss）。只喂**执行面**（卡片「继续」＝在工作树里继续做到完成标准） */
   function stepLaunchFor(stepName: string | null | undefined) {
     return stepName
-      ? resolveStepLaunch(profiles, taskBindings, stepName, discussLaunch)
+      ? resolveStepLaunch(profiles, taskBindings, stepName, discussLaunch, defaultPresets)
       : discussLaunch;
   }
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
@@ -335,7 +370,10 @@ export default function TaskCardsSection({
   // 覆盖检查里归不到退回目标的薄节：补料单上单列给人看
   const [reworkUnplaced, setReworkUnplaced] = useState<string[]>([]);
   // 整张预填（定稿前更新检索）：给了就按它开，不按覆盖检查换主题
-  const [reworkInitial, setReworkInitial] = useState<{ target: string; topics: string; reason: string; clues: string; scale: number | null } | null>(null);
+  const [reworkInitial, setReworkInitial] = useState<{ target: string; topics: string; reads?: string; reason: string; clues: string; scale: number | null } | null>(null);
+  const [reworkOutlineSections, setReworkOutlineSections] = useState<OutlineChapterChoice[]>([]);
+  const [reworkPendingPapers, setReworkPendingPapers] = useState<PendingFulltextChoice[]>([]);
+  const [reworkOutlineRoot, setReworkOutlineRoot] = useState<string | null>(null);
   const [followBusy, setFollowBusy] = useState(false);
   /** 继续时上次会话是另一家 Agent：问要不要带简报。取消 = 先不开。 */
   const [carryAsk, setCarryAsk] = useState<{
@@ -382,10 +420,18 @@ export default function TaskCardsSection({
   const [fusing, setFusing] = useState<TaskCardDto | null>(null);
 
   useEffect(() => {
+    setError(null);
+  }, [projectPath, focusStep]);
+
+  useEffect(() => {
     let stale = false;
-    loadTaskCards(projectPath).catch((e) => {
-      if (!stale) setError(String(e));
-    });
+    loadTaskCards(projectPath)
+      .then(() => {
+        if (!stale) setError(null);
+      })
+      .catch((e) => {
+        if (!stale) setError(String(e));
+      });
     return () => {
       stale = true;
     };
@@ -439,26 +485,112 @@ export default function TaskCardsSection({
   const focusIdx = focusStepDto
     ? steps.findIndex((s) => s.name === focusStepDto.name)
     : -1;
-  /** 补读（2026-11-10）：已保存的精读步里原来没有全文、papers/ 后来有了的篇。下载多在浏览器里做，回到窗口时再对一次 */
+  /** 补读（2026-11-10 / 2026-11-21 扩到待评审态与检索步跨步直达）：
+   *  精读步（已保存或待评审）里原来没有全文、papers/ 后来有了的篇。下载多在浏览器里做，回到窗口或拖入 PDF 时再对一次 */
   const [catchUp, setCatchUp] = useState<{ probe: CatchUpProbe; pdf: string }[]>([]);
   const [catchUpTick, setCatchUpTick] = useState(0);
-  const catchUpStep =
-    focusStepDto && focusRunStatus === "done" && stepFillsAnySlot(focusStepDto.skills, ["lit-notes"], skillProvides)
-      ? focusStepDto.name
-      : null;
+  /** 本机内置技能有新版脚本/规范时（2026-11-22 复盘：派单指令已用新子命令，但本机技能库未点更新导致脚本报错），
+   *  在步骤卡露出一键更新入口，并在跟进/补读前温和提示先备份更新（不静默覆盖，也不锁死自改技能）。 */
+  const [builtinUpdates, setBuiltinUpdates] = useState<string[]>([]);
+  const [skillUpdateBusy, setSkillUpdateBusy] = useState(false);
+  const skippedSkillUpdatesRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!catchUpStep) return;
+    let stale = false;
+    invoke<string[]>("check_builtin_skill_updates")
+      .then((list) => {
+        if (!stale) setBuiltinUpdates(list);
+      })
+      .catch(() => {
+        if (!stale) setBuiltinUpdates([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [projectPath, refreshToken, catchUpTick]);
+
+  async function applyStepBuiltinSkillUpdates(names: string[]): Promise<boolean> {
+    if (names.length === 0 || skillUpdateBusy) return false;
+    setSkillUpdateBusy(true);
+    const done: string[] = [];
+    const failed: string[] = [];
+    try {
+      for (const name of names) {
+        try {
+          const { revision } = await invoke<{ revision: string }>("preview_builtin_skill_update", { name });
+          await invoke<string[]>("apply_builtin_skill_update", { name, expectedRevision: revision });
+          done.push(name);
+        } catch (err) {
+          failed.push(`${name}（${String(err)}）`);
+        }
+      }
+      if (done.length > 0) {
+        setBuiltinUpdates((prev) => prev.filter((n) => !done.includes(n)));
+        for (const n of done) skippedSkillUpdatesRef.current.delete(n);
+        toast(`内置技能「${done.join("、")}」已备份并更新到最新版（已同步给各 Agent）`, "info");
+      }
+      if (failed.length > 0) {
+        toast(`内置技能更新失败：${failed.join("；")}`, "error");
+        return false;
+      }
+      return done.length > 0;
+    } finally {
+      setSkillUpdateBusy(false);
+    }
+  }
+
+  /** 启动跟进/补读前检查本步用到的内置技能是否有新版脚本或规范：
+   *  交互启动时问一次（点「备份并更新」同步后继续；点「暂不更新」本次会话记过并照旧继续）；自动链不弹窗只给温和提示。 */
+  async function maybeSyncStepBuiltinSkills(step: { skills: string[] }, auto: boolean): Promise<void> {
+    const latest = await invoke<string[]>("check_builtin_skill_updates").catch(() => builtinUpdates);
+    setBuiltinUpdates(latest);
+    const outdated = step.skills.filter((s) => latest.includes(s));
+    if (outdated.length === 0) return;
+    if (auto) {
+      toast(`提示：本步内置技能（${outdated.join("、")}）有新版脚本/规范，建议稍后在步骤卡或「技能」页更新。`, "info");
+      return;
+    }
+    const unskipped = outdated.filter((s) => !skippedSkillUpdatesRef.current.has(s));
+    if (unskipped.length === 0) return;
+    const ok = await confirmDialog(
+      `本步骤使用的内置技能有新版脚本或规范：${unskipped.join("、")}。\n\n` +
+        `不更新可能导致本轮指令里的脚本子命令与本机旧版对不上。\n` +
+        `点「备份并更新」会先自动备份原文件、更新并同步到各 Agent 后继续；点「暂不更新」则按本机旧版继续。`,
+      { confirmText: "备份并更新", cancelText: "暂不更新" },
+    );
+    if (ok) {
+      await applyStepBuiltinSkillUpdates(unskipped);
+    } else {
+      for (const s of unskipped) skippedSkillUpdatesRef.current.add(s);
+    }
+  }
+  const notesStepDto = useMemo(
+    () => steps.find((s) => stepFillsAnySlot(s.skills, ["lit-notes"], skillProvides)) ?? null,
+    [steps, skillProvides],
+  );
+  const notesStepWs = notesStepDto ? pickStepWorkspace(workspaces, projectPath, notesStepDto) : undefined;
+  const notesIndexRoot =
+    notesStepWs?.status === "active"
+      ? notesStepWs.worktreePath
+      : notesStepWs?.mergedAt
+        ? projectPath
+        : null;
+  useEffect(() => {
+    if (!notesStepDto || !notesIndexRoot) return;
     const onFocus = () => setCatchUpTick((n) => n + 1);
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [catchUpStep]);
+  }, [notesStepDto, notesIndexRoot]);
   useEffect(() => {
     setCatchUp([]);
-    if (!catchUpStep) return;
+    if (!notesStepDto || !notesIndexRoot) return;
     let stale = false;
     void (async () => {
       const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
-      const idx = await readResearchLedger(projectPath, "notes/index.json").catch(() => null);
+      const idx =
+        (await readResearchLedger(notesIndexRoot, "notes/index.json").catch(() => null)) ??
+        (notesIndexRoot !== projectPath
+          ? await readResearchLedger(projectPath, "notes/index.json").catch(() => null)
+          : null);
       if (!inc || inc.truncated || !idx || idx.truncated) return;
       const probes = catchUpProbes(inc.text, idx.text) ?? [];
       if (probes.length === 0) return;
@@ -467,24 +599,42 @@ export default function TaskCardsSection({
         items: probes.map((p) => ({ title: p.title, url: p.url })),
       }).catch(() => [] as (string | null)[]);
       if (stale) return;
-      setCatchUp(probes.flatMap((probe, i) => (names[i] ? [{ probe, pdf: names[i] as string }] : [])));
+      setCatchUp(
+        probes.flatMap((probe, i) => {
+          const hit = names[i];
+          if (!hit) return [];
+          if (probe.supportingInfoFile && hit.toLowerCase() === probe.supportingInfoFile.toLowerCase()) {
+            return [];
+          }
+          return [{ probe, pdf: hit }];
+        }),
+      );
     })();
     return () => {
       stale = true;
     };
-  }, [catchUpStep, projectPath, refreshToken, catchUpTick]);
+  }, [notesStepDto, notesIndexRoot, projectPath, refreshToken, catchUpTick]);
   /** 精读还没读的新纳入篇（项目里的纳入清单 vs 这一步工作副本的索引）。「待跟进」只看有没有并入：解冲突、「继续」并入后
    *  标记就消了，AI 却没读新篇（2026-11-10 HER：解完冲突「待跟进」没了，新加的 2 篇没人读）。有就照样给「跟进更新」 */
-  const [unreadNew, setUnreadNew] = useState(0);
   const unreadStep =
     focusStepDto && (focusRunStatus === "done" || focusRunStatus === "review") && stepFillsAnySlot(focusStepDto.skills, ["lit-notes"], skillProvides)
       ? focusStepDto
       : null;
   const unreadWorktree = unreadStep ? pickStepWorkspace(workspaces, projectPath, unreadStep) : undefined;
   const unreadRoot = unreadWorktree?.status === "active" ? unreadWorktree.worktreePath : null;
+  const unreadCacheKey = unreadStep ? `${projectPath}\n${unreadRoot ?? ""}` : null;
+  const [unreadState, setUnreadState] = useState<{ key: string | null; count: number }>(() => ({
+    key: unreadCacheKey,
+    count: unreadCacheKey ? (unreadNewCache.get(unreadCacheKey) ?? 0) : 0,
+  }));
+  const unreadNew =
+    unreadCacheKey == null
+      ? 0
+      : unreadState.key === unreadCacheKey
+        ? unreadState.count
+        : (unreadNewCache.get(unreadCacheKey) ?? 0);
   useEffect(() => {
-    setUnreadNew(0);
-    if (!unreadStep) return;
+    if (!unreadStep || !unreadCacheKey) return;
     let stale = false;
     void (async () => {
       const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
@@ -492,13 +642,90 @@ export default function TaskCardsSection({
         (unreadRoot ? await readResearchLedger(unreadRoot, "notes/index.json").catch(() => null) : null) ??
         (await readResearchLedger(projectPath, "notes/index.json").catch(() => null));
       // 没有索引（还没开读）不算：那是第一轮，不是跟进
-      if (stale || !inc || inc.truncated || !idx || idx.truncated) return;
-      setUnreadNew(notesFollowupIds(inc.text, idx.text)?.length ?? 0);
+      if (stale) return;
+      const count = !inc || inc.truncated || !idx || idx.truncated ? 0 : (notesFollowupIds(inc.text, idx.text)?.length ?? 0);
+      unreadNewCache.set(unreadCacheKey, count);
+      setUnreadState((cur) => (cur.key === unreadCacheKey && cur.count === count ? cur : { key: unreadCacheKey, count }));
     })();
     return () => {
       stale = true;
     };
-  }, [unreadStep?.name, unreadRoot, projectPath, refreshToken, catchUpTick]);
+  }, [unreadStep?.name, unreadCacheKey, unreadRoot, projectPath, refreshToken, catchUpTick]);
+
+  // 进项目时后台预热全部已开工/已保存步骤的 StepFlow 缓存与报告状态标签，首次点切步骤也不闪
+  const prefetchStepsSig = steps.map((s) => `${s.name}:${s.workspaceName}:${s.skills.join(",")}`).join("|");
+  const prefetchWsSig = workspaces
+    .filter((w) => w.status === "active")
+    .map((w) => `${w.name}:${w.worktreePath}:${w.mergedAt ?? ""}`)
+    .join("|");
+  const prefetchKeysSig = (stepKeys ?? []).join(",");
+  useEffect(() => {
+    if (!projectPath || steps.length === 0) return;
+    let stale = false;
+    const isStale = () => stale;
+    void prefetchStepFlowCaches({
+      projectPath,
+      steps,
+      workspaces,
+      stepKeys,
+      skillProvides,
+      isStale,
+    });
+    void prefetchStepEvidence(projectPath, steps, workspaces, isStale);
+    // 顺带预热精读步的新增未读篇数与未开工步的上一步收尾提醒
+    if (notesStepDto) {
+      const notesIdx = steps.findIndex((s) => s.name === notesStepDto.name);
+      const notesKey = notesIdx >= 0 ? stepKeys?.[notesIdx] : undefined;
+      if (notesKey === "done" || notesKey === "review") {
+        const notesWs = pickStepWorkspace(workspaces, projectPath, notesStepDto);
+        const notesWtRoot = notesWs?.status === "active" ? notesWs.worktreePath : null;
+        const uKey = `${projectPath}\n${notesWtRoot ?? ""}`;
+        void (async () => {
+          const inc = await readResearchLedger(projectPath, "papers/included.json").catch(() => null);
+          const idx =
+            (notesWtRoot ? await readResearchLedger(notesWtRoot, "notes/index.json").catch(() => null) : null) ??
+            (await readResearchLedger(projectPath, "notes/index.json").catch(() => null));
+          if (stale) return;
+          const count = !inc || inc.truncated || !idx || idx.truncated ? 0 : (notesFollowupIds(inc.text, idx.text)?.length ?? 0);
+          unreadNewCache.set(uKey, count);
+        })();
+      }
+    }
+    for (let i = 1; i < steps.length; i += 1) {
+      const curKey = stepKeys?.[i];
+      if ((curKey && curKey !== "pending") || stepKeys?.[i - 1] !== "done") continue;
+      const prevStep = steps[i - 1]!;
+      const prevWs = pickStepWorkspace(workspaces, projectPath, prevStep);
+      const savedAt = prevWs?.mergedAt ?? "done";
+      if (readPrevFollowupDismissed(projectPath, prevStep.name) === savedAt) continue;
+      const pKey = `${projectPath}\n${prevStep.name}\n${savedAt}\n${i - 1}`;
+      const slug = nextActionStepSlug(prevStep.workspaceName || prevWs?.name || prevStep.name);
+      const afterSave = stepAfterSaveLabels(prevStep, skillProvides);
+      void (async () => {
+        let parsed = null;
+        if (slug) {
+          try {
+            const res = await readResearchFile(projectPath, `.ccode/step-next/${slug}.json`);
+            parsed = parseStepNextActions(res.text);
+          } catch {
+            /* 没有镜像文件则只看保存后可做 */
+          }
+        }
+        if (stale) return;
+        const summary = summarizePostSaveFollowup({
+          stepName: prevStep.name,
+          nextActions: parsed,
+          doneIds: readNextActionChecks(projectPath, prevStep.name),
+          afterSaveLabels: afterSave,
+        });
+        prevFollowupCache.set(pKey, summary ? { stepIdx: i - 1, stamp: savedAt, summary } : null);
+      })();
+    }
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectPath, prefetchStepsSig, prefetchWsSig, prefetchKeysSig, refreshToken, skillProvides]);
   const dirtyBlocked = historySaveBlockedReason(dirtyFiles, dirtyMerging);
   /** 还没开聊过的预置话题（讨论种子）：开过的已经在话题清单里，不再出 chip */
   const openSeeds = focusStepDto
@@ -513,26 +740,24 @@ export default function TaskCardsSection({
     e.preventDefault();
     const name = draftName.trim();
     if (!name) return;
-    setError(null);
     try {
       // 未挂步骤的卡无步骤语境，只建卡归档
       await createCard(projectPath, name, null);
       setCreatingIn(null);
       setDraftName("");
     } catch (reason) {
-      setError(String(reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     }
   }
 
   async function submitRename(e: React.FormEvent) {
     e.preventDefault();
     if (!renaming || !renaming.name.trim()) return;
-    setError(null);
     try {
       await renameCard(projectPath, renaming.id, renaming.name.trim());
       setRenaming(null);
     } catch (reason) {
-      setError(String(reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     }
   }
 
@@ -544,11 +769,10 @@ export default function TaskCardsSection({
       ))
     )
       return;
-    setError(null);
     try {
       await deleteCard(projectPath, card.id);
     } catch (reason) {
-      setError(String(reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     }
   }
 
@@ -638,6 +862,72 @@ export default function TaskCardsSection({
     const kind = stepKind(focusStepDto, skillProvides);
     return (kind === "writing" || kind === "final") && !!stepWorkspace(focusStepDto)?.mergedAt;
   })();
+
+  /** 上一步收尾提醒（2026-11-23 用户实测：保存完自动跳到下一步，把刚保存那步的「后续建议」和
+   *  刚解锁的「保存后可做」藏在后面看不到）：当前步还没开工且紧邻上一步已保存时，轻读上一步镜像的
+   *  .ccode/step-next/<slug>.json 与 afterSave 项，有未处理收尾就在卡片顶露出一行可点回去、可点 × 忽略。 */
+  const prevDoneStep =
+    (focusRunStatus ?? "pending") === "pending" &&
+    focusIdx > 0 &&
+    stepKeys?.[focusIdx - 1] === "done"
+      ? steps[focusIdx - 1]
+      : null;
+  const prevDoneSavedAt = prevDoneStep ? (stepWorkspace(prevDoneStep)?.mergedAt ?? "done") : null;
+  const prevFollowupKey =
+    prevDoneStep && prevDoneSavedAt && readPrevFollowupDismissed(projectPath, prevDoneStep.name) !== prevDoneSavedAt
+      ? `${projectPath}\n${prevDoneStep.name}\n${prevDoneSavedAt}\n${focusIdx - 1}`
+      : null;
+  const [prevFollowupState, setPrevFollowupState] = useState<{
+    key: string | null;
+    value: PrevFollowupState | null;
+  }>(() => ({
+    key: prevFollowupKey,
+    value: prevFollowupKey ? (prevFollowupCache.get(prevFollowupKey) ?? null) : null,
+  }));
+  const prevFollowup =
+    prevFollowupKey == null
+      ? null
+      : prevFollowupState.key === prevFollowupKey
+        ? prevFollowupState.value
+        : (prevFollowupCache.get(prevFollowupKey) ?? null);
+  useEffect(() => {
+    if (!prevDoneStep || !prevDoneSavedAt || !prevFollowupKey) return;
+    let stale = false;
+    const stepIdx = focusIdx - 1;
+    const prevName = prevDoneStep.name;
+    const prevWs = stepWorkspace(prevDoneStep);
+    const slug = nextActionStepSlug(prevDoneStep.workspaceName || prevWs?.name || prevName);
+    const afterSave = stepAfterSaveLabels(prevDoneStep, skillProvides);
+    void (async () => {
+      let parsed = null;
+      if (slug) {
+        try {
+          const res = await readResearchFile(projectPath, `.ccode/step-next/${slug}.json`);
+          parsed = parseStepNextActions(res.text);
+        } catch {
+          /* 没有镜像文件则只看保存后可做 */
+        }
+      }
+      if (stale) return;
+      const summary = summarizePostSaveFollowup({
+        stepName: prevName,
+        nextActions: parsed,
+        doneIds: readNextActionChecks(projectPath, prevName),
+        afterSaveLabels: afterSave,
+      });
+      const nextValue = summary ? { stepIdx, stamp: prevDoneSavedAt, summary } : null;
+      prevFollowupCache.set(prevFollowupKey, nextValue);
+      setPrevFollowupState((cur) =>
+        cur.key === prevFollowupKey && JSON.stringify(cur.value) === JSON.stringify(nextValue)
+          ? cur
+          : { key: prevFollowupKey, value: nextValue },
+      );
+    })();
+    return () => {
+      stale = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevFollowupKey, projectPath, prevDoneStep?.name, prevDoneStep?.workspaceName, prevDoneSavedAt, focusIdx, refreshToken, skillProvides]);
 
   /** 「请几家研讨」：问题按这一步预填，材料 = 这一步的任务书 + 已经存在的主要产物（按弹层上限截）。
    *  步骤开着工作副本时成员读工作副本（产物还没带回项目根，同评审页 readRoot 口径），记录照样写项目根；
@@ -757,21 +1047,35 @@ export default function TaskCardsSection({
     card?: TaskCardDto | null,
     fresh = false,
   ) {
-    let launch: { agentId: string; profileId: string; model: string } | null = null;
+    let launch: {
+      agentId: string;
+      profileId: string;
+      model: string;
+      effort?: string | null;
+      permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+    } | null = null;
     if (stepName) {
       try {
-        const b = await invoke<{ profile: string; model?: string | null } | null>(
+        const b = await invoke<{
+          profile: string;
+          model?: string | null;
+          effort?: string | null;
+          permissionTier?: string | null;
+        } | null>(
           "get_project_agent_binding",
           { projectRoot: projectPath, slot: stepSlotKey(stepName) },
         );
-        launch = taskBindingLaunch(useAppStore.getState().profiles, b);
+        launch = withProjectPreset(
+          taskBindingLaunch(useAppStore.getState().profiles, b),
+          defaultPresets,
+        );
       } catch {
         /* DB 读失败走 props 链 */
       }
     }
     if (!launch?.profileId) launch = stepLaunchFor(stepName);
     if (!launch?.profileId) {
-      setError("还没解析到可用连接：去「Agent 分工」页签给这一步绑一条，或确认项目默认 Agent 有连接。");
+      toast("还没解析到可用连接：去「Agent 分工」页签给这一步绑一条，或确认项目默认 Agent 有连接。", "error");
       return;
     }
     // 先把项目最新内容并进来（2026-11-06 流程贯通 §3）：后面步骤保存的笔记、大纲，这一步的 AI 接着做时就在手边
@@ -782,7 +1086,7 @@ export default function TaskCardsSection({
       incoming = got;
       if (got.length > 0) onWorkspacesChanged?.();
     } catch (reason) {
-      setError(String(reason instanceof Error ? reason.message : reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
       return;
     }
     try {
@@ -801,7 +1105,7 @@ export default function TaskCardsSection({
       try {
         await resumeContinuation(launch, ws, title, card, incoming);
       } catch (reason) {
-        setError(String(reason));
+        toast(String(reason instanceof Error ? reason.message : reason), "error");
       }
       return;
     }
@@ -828,7 +1132,7 @@ export default function TaskCardsSection({
       // 「这一步的几轮」要知道这一轮是人点的新开一轮：真开起来了才记（没连接、接力框取消都不记）
       if (fresh && stepName) void recordRound(ws, stepName, "fresh");
     } catch (reason) {
-      setError(String(reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     }
   }
 
@@ -852,9 +1156,16 @@ export default function TaskCardsSection({
 
   /** 新开一轮：不 resume。仍用这个工作区的复用键——同一步只有一个终端标签（2026-10-22：
    *  不带键时这个标签之后「去终端回答」认不出，又开一个）；闲着的旧标签就地换成新一轮。
-   *  prompt 可以是完成标准，或先读简报再完成标准。 */
+   *  prompt 可以是完成标准，或先读简报再完成标准。
+   *  整包透传 req（含 permission / permissionMode / effort / railStep），不再手工列字段漏传权限与思考档。 */
   async function launchContinuation(
-    launch: { agentId: string; profileId: string; model: string },
+    launch: {
+      agentId: string;
+      profileId: string;
+      model: string;
+      effort?: string | null;
+      permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+    },
     ws: WorkspaceDto,
     title: string,
     prompt: string,
@@ -866,13 +1177,13 @@ export default function TaskCardsSection({
       stepLaunch: launch,
     });
     setPendingTerminal({
-      cwd: req.cwd,
-      extraEnv: req.extraEnv,
+      ...req,
       title: req.title || title,
-      reuseKey: req.reuseKey,
       agentId: launch.agentId,
       profileId: launch.profileId,
       model: launch.model,
+      resume: undefined,
+      focusSession: undefined,
       initialPrompt: prompt,
       autoStart: true,
     });
@@ -961,15 +1272,29 @@ export default function TaskCardsSection({
     return recordStepRound(projectPath, ws, step, kind, reworkId).then(() => onHumanChanged?.());
   }
 
-  /** 补料轮 / 跟进轮用哪条连接：步骤绑定 > 步骤槽链（同「继续」）；都没有报错 */
+  /** 补料轮 / 跟进轮用哪条连接：步骤绑定 > 步骤槽链（同「继续」）；完整保留 effort 与 permissionTier；都没有报错 */
   async function loopLaunch(stepName: string) {
-    let launch: { agentId: string; profileId: string; model: string } | null = null;
+    let launch: {
+      agentId: string;
+      profileId: string;
+      model: string;
+      effort?: string | null;
+      permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+    } | null = null;
     try {
-      const b = await invoke<{ profile: string; model?: string | null } | null>(
+      const b = await invoke<{
+        profile: string;
+        model?: string | null;
+        effort?: string | null;
+        permissionTier?: string | null;
+      } | null>(
         "get_project_agent_binding",
         { projectRoot: projectPath, slot: stepSlotKey(stepName) },
       );
-      launch = taskBindingLaunch(useAppStore.getState().profiles, b);
+      launch = withProjectPreset(
+        taskBindingLaunch(useAppStore.getState().profiles, b),
+        defaultPresets,
+      );
     } catch {
       /* DB 读失败走 props 链 */
     }
@@ -986,7 +1311,6 @@ export default function TaskCardsSection({
     const step = focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
     if (!step || !found) return;
-    setError(null);
     try {
       const picked = await openFileDialog({ multiple: false, directory: false, filters: [{ name: "Word", extensions: ["docx"] }] });
       const docxPath = typeof picked === "string" ? picked : null;
@@ -1006,30 +1330,61 @@ export default function TaskCardsSection({
       onWorkspacesChanged?.();
       toast(`抽出 ${got.count} 条批注，写进 ${got.relPath}；这一步另开了一轮逐条处理。`, "info");
     } catch (reason) {
-      setError(String(reason instanceof Error ? reason.message : reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     }
   }
 
-  /** 打开补料单：本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
-  async function openRework(initial?: { target: string; topics: string; reason: string }) {
+  /** 打开补料单：先校验确实存在可退回的上游步骤（绝不弹出无目标、确定钮灰掉的死弹窗）；
+   *  本步有 outline.md 且「覆盖检查」里有薄节时按退回目标预填（三期 §9.3）。读不到就空着开 */
+  async function openRework(initial?: { target: string; topics: string; reads?: string; reason: string }) {
+    const upstream = reworkTargets(steps, focusIdx);
+    if (upstream.length === 0) {
+      toast("当前步骤没有可退回的上一步。", "info");
+      return;
+    }
     setReworkError(null);
-    setReworkInitial(initial ? { ...initial, clues: "", scale: null } : null);
     const prefill: Record<string, { topics: string; reason: string }> = {};
     let unplaced: string[] = [];
     const step = focusStepDto;
     const ws = step ? activeWorkspaceFor(step.name, step.workspaceName) : undefined;
     let outline: string | null = null;
-    for (const root of [ws?.worktreePath, projectPath].filter(Boolean) as string[]) {
+    let outlineRoot: string | null = null;
+    const dataRoots = stepDataRoots(ws, focusRunStatus ?? "pending", projectPath);
+    for (const root of dataRoots) {
       try {
         const f = await readResearchFile(root, "outline.md");
         if (!f.truncated) {
           outline = f.text;
+          outlineRoot = root;
           break;
         }
       } catch {
         /* 这一处没有大纲 */
       }
     }
+    let pendingPapers: PendingFulltextChoice[] = [];
+    for (const root of dataRoots) {
+      try {
+        const idxFile = await readResearchFile(root, "notes/index.json");
+        if (!idxFile.truncated) {
+          let incText: string | null = null;
+          try {
+            const incFile = await readResearchFile(root, "papers/included.json");
+            if (!incFile.truncated) incText = incFile.text;
+          } catch {
+            /* included.json 缺失照样可列 bibKey */
+          }
+          pendingPapers = parsePendingFulltextForRework(idxFile.text, incText);
+          break;
+        }
+      } catch {
+        /* 这一处没有 index.json */
+      }
+    }
+    setReworkOutlineSections(outline ? parseOutlineChaptersForRework(outline) : []);
+    setReworkPendingPapers(pendingPapers);
+    setReworkOutlineRoot(outlineRoot);
+    let structuredReadTopics: string | null = null;
     if (outline) {
       const drafts = coverageReworkDrafts(outline);
       const upstream = reworkTargets(steps, focusIdx);
@@ -1038,9 +1393,28 @@ export default function TaskCardsSection({
       const search = groupCoverageDrafts(drafts, "search");
       const read = groupCoverageDrafts(drafts, "read");
       if (searchStep && search) prefill[searchStep.name] = search;
-      if (notesStep && read) prefill[notesStep.name] = read;
+      if (notesStep && read) {
+        prefill[notesStep.name] = read;
+        structuredReadTopics = read.topics;
+      }
       unplaced = unplacedCoverageDrafts(drafts, { search: !!searchStep, read: !!notesStep });
     }
+    // 建议卡传入的 reads 若是平铺单行无节号，而大纲覆盖检查已解析出按节分组的补读清单，
+    // 优先采用按节分组版本，确保补料单保留节号供精读步一步写准 forSections
+    const normalizedInitial = initial
+      ? {
+          ...initial,
+          reads:
+            initial.reads &&
+            structuredReadTopics &&
+            !/^\s*(?:第\s*)?\d+(?:\.\d+)*/m.test(initial.reads)
+              ? structuredReadTopics
+              : initial.reads,
+          clues: "",
+          scale: null,
+        }
+      : null;
+    setReworkInitial(normalizedInitial);
     // 意见清单里「去向：退回」的行（科研流程补全 §4）：按最新一份清单预填，覆盖检查已预填的目标不覆盖
     if (ws) {
       try {
@@ -1110,6 +1484,7 @@ export default function TaskCardsSection({
           scale: fields.scale,
           chain: fields.chain,
           reads: fields.reads,
+          fromWorktreePath: activeWorkspaceFor(focusStepDto.name, focusStepDto.workspaceName)?.worktreePath ?? null,
           provides: skillProvides,
           launch,
           confirm: confirmDialog,
@@ -1145,7 +1520,6 @@ export default function TaskCardsSection({
     // 解冲突、「继续」并入后「待跟进」已消、但新篇还没读时，staleUpstream 为空：写最近的上一步名
     const upstream = found.staleUpstream ?? steps[steps.findIndex((s) => s.name === step.name) - 1]?.name ?? "上一步";
     setFollowBusy(true);
-    if (!auto) setError(null);
     try {
       const launch = await loopLaunch(step.name);
       // 精读步的增量按项目根的台账算，不用工作副本：收起了也先算、先问，人确认了才恢复（2026-11-05 排查：原先一点就恢复）
@@ -1153,6 +1527,7 @@ export default function TaskCardsSection({
       let droppedIds: string[] = [];
       let reads: string[] = [];
       let sections: string[] = [];
+      let bundledCatchUp: { probe: CatchUpProbe; pdf: string }[] = [];
       // 人手动点跟进时，链上正轮到这一步的补料单照样按单做，并记链上这一步已开（保存后链不再自动重开一遍）
       let claimIds: string[] = [];
       if (stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides)) {
@@ -1182,9 +1557,14 @@ export default function TaskCardsSection({
             idx && !idx.truncated ? idx.text : null,
             bib && !bib.truncated ? bib.text : null,
           );
+          // 一轮合办：若此时正好有新到未读 PDF，顺带合进这轮跟进（排除刚被上游移出的篇），免得单开两轮撞车
+          const droppedSet = new Set(droppedIds);
+          bundledCatchUp = catchUp.filter((h) => !droppedSet.has(h.probe.id));
         }
-        // 没有新篇要读、也没有要撤的，但上游改了别的（清单、待获取）：按文件跟进
-        if (notesIds && notesIds.length === 0 && droppedIds.length === 0 && reads.length === 0) notesIds = null;
+        // 没有新篇要读、没有要撤的、也没有新到待补读 PDF，但上游改了别的（清单、待获取）：按文件跟进
+        if (notesIds && notesIds.length === 0 && droppedIds.length === 0 && reads.length === 0 && bundledCatchUp.length === 0) {
+          notesIds = null;
+        }
       }
       let ws = found;
       let files: string[] = [];
@@ -1209,7 +1589,15 @@ export default function TaskCardsSection({
       if (ws.status === "active") {
         await assertRoundable(ws, step.name, { allowUnsaved: !auto || auto.rework?.fromStep === step.name });
       }
-      const scale = followupScale({ upstream, notesIds, droppedIds, files, reads, sections });
+      const scale = followupScale({
+        upstream,
+        notesIds,
+        droppedIds,
+        files,
+        reads,
+        sections,
+        catchUpCount: bundledCatchUp.length,
+      });
       if (!scale) {
         await recordRound(ws, step.name, "ack");
         onWorkspacesChanged?.();
@@ -1223,9 +1611,19 @@ export default function TaskCardsSection({
       }
       if (!auto) {
         if (
-          !(await confirmDialog(followupConfirmText({ notesIds, droppedIds, files, unsaved, reads }), {
-            confirmText: unsaved ? "接着做，一起评审" : "开始跟进",
-          }))
+          !(await confirmDialog(
+            followupConfirmText({
+              notesIds,
+              droppedIds,
+              files,
+              unsaved,
+              reads,
+              catchUpKeys: bundledCatchUp.map((h) => h.probe.bibKey || h.probe.id),
+            }),
+            {
+              confirmText: unsaved ? "接着做，一起评审" : "开始跟进",
+            },
+          ))
         )
           return "stopped";
       }
@@ -1233,6 +1631,7 @@ export default function TaskCardsSection({
         ws = await ensureActive(ws, step.name);
         await assertRoundable(ws, step.name);
       }
+      await maybeSyncStepBuiltinSkills(step, Boolean(auto));
       if ((await bringLatest(ws, step.name, confirmDialog, "跟进")) === null) return "stopped";
       for (const id of claimIds) {
         await invoke("rework_chain_claim", { root: projectPath, reworkId: id, step: step.name }).catch(() => false);
@@ -1241,7 +1640,16 @@ export default function TaskCardsSection({
         launch,
         ws,
         step.name,
-        followupPrompt({ upstream, notesIds, droppedIds, files, reads, sections, clause: ROUND_CLAUSE[stepKind(step, skillProvides)] }),
+        followupPrompt({
+          upstream,
+          notesIds,
+          droppedIds,
+          files,
+          reads,
+          sections,
+          catchUp: bundledCatchUp,
+          clause: ROUND_CLAUSE[stepKind(step, skillProvides)],
+        }),
       );
       await recordRound(ws, step.name, "followup");
       onWorkspacesChanged?.();
@@ -1250,54 +1658,75 @@ export default function TaskCardsSection({
     } catch (reason) {
       const text = String(reason instanceof Error ? reason.message : reason);
       if (auto) toast(`${auto.label}停在「${step.name}」：${text} 处理完到这一步点「跟进更新」，保存后链接着往下。`, "error");
-      else setError(text);
+      else toast(text, "error");
       return "stopped";
     } finally {
       setFollowBusy(false);
     }
   }
 
-  /** 补读：只让 AI 读这几篇新到的全文、在原笔记上续写。已保存的步骤开新一轮，同「跟进更新」的拦法 */
+  /** 补读：只让精读步的 AI 读这几篇新到的全文、在原笔记/速读表/抽取表上更新。
+   *  支持从精读步（已保存或待评审）以及检索步收尾卡直接发起；待评审态明确告知两轮一起评审。 */
   async function catchUpReads() {
-    const step = focusStepDto;
+    const step = notesStepDto ?? focusStepDto;
     const found = step ? stepWorkspace(step) : undefined;
     if (!step || !found || catchUp.length === 0) return;
     const hits = catchUp;
     setFollowBusy(true);
-    setError(null);
     try {
       const launch = await loopLaunch(step.name);
+      const unsaved = await hasUnsavedRound(found);
+      const fromOtherStep = focusStepDto?.name !== step.name;
       if (
-        !(await confirmDialog(catchUpConfirmText(hits.map((h) => h.probe.bibKey || h.probe.id)), { confirmText: "开始补读" }))
+        !(await confirmDialog(
+          catchUpConfirmText(
+            hits.map((h) => h.probe.bibKey || h.probe.id),
+            { unsaved, stepName: fromOtherStep ? step.name : undefined },
+          ),
+          { confirmText: "开始补读" },
+        ))
       )
         return;
       const ws = await ensureActive(found, step.name);
-      await assertRoundable(ws, step.name);
+      await assertRoundable(ws, step.name, { allowUnsaved: unsaved });
+      await maybeSyncStepBuiltinSkills(step, false);
       if ((await bringLatest(ws, step.name, confirmDialog, "补读")) === null) return;
       await launchContinuation(launch, ws, step.name, catchUpPrompt(hits));
       await recordRound(ws, step.name, "catchup");
       onWorkspacesChanged?.();
     } catch (reason) {
-      setError(String(reason instanceof Error ? reason.message : reason));
+      toast(String(reason instanceof Error ? reason.message : reason), "error");
     } finally {
       setFollowBusy(false);
     }
   }
 
   // 补料链（流程贯通 §6）：链上的上一步保存进项目后，下一步自动开「跟进更新」。只认这次打开 Mesa 之后的保存；
-  // rework_chain_claim 原子地记「这一步开过」，两处同时看到也只开一次；一次只走一步
+  // 关键护栏（2026-11-22）：若目标步此刻正在忙（例如在跑「补读新到 N 篇」），绝不提前 claim 消费掉这条链，
+  // 挂起等到当前轮停下来自动接上，避免撞车报错丢链。同时缓存 activeReworks 供建议卡展示在途状态。
+  const [activeReworks, setActiveReworks] = useState<ReworkDto[]>([]);
   const chainBusyRef = useRef(false);
+  const busyRunSig = terminalRunInputs
+    .map((r) => `${r.cwd}:${r.attention === "working" || r.attention === "confirm" ? 1 : 0}`)
+    .join("|");
   useEffect(() => {
-    if (chainBusyRef.current || steps.length === 0) return;
+    if (steps.length === 0) return;
     let stale = false;
     void (async () => {
       const reworks = await invoke<ReworkDto[]>("rework_list", { root: projectPath }).catch(() => [] as ReworkDto[]);
-      if (stale || chainBusyRef.current) return;
+      if (stale) return;
+      setActiveReworks(reworks);
+      if (chainBusyRef.current) return;
       for (const r of reworks) {
         const next = chainNext(r, stepSavedAt);
         if (!next || Date.parse(next.savedAt) <= Date.parse(SESSION_STARTED_AT)) continue;
         const step = steps.find((x) => x.name === next.step);
         if (!step) continue;
+        const targetWs = stepWorkspace(step);
+        if (targetWs && stepBusy(targetWs)) {
+          // 目标步正在干活或等确认：先挂起不 claim，等这一轮停下（busyRunSig 变化）自动续上
+          continue;
+        }
         const claimed = await invoke<boolean>("rework_chain_claim", { root: projectPath, reworkId: r.id, step: next.step }).catch(() => false);
         if (!claimed || stale) continue;
         chainBusyRef.current = true;
@@ -1318,7 +1747,7 @@ export default function TaskCardsSection({
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaces, projectPath]);
+  }, [workspaces, projectPath, busyRunSig, reworkOpen]);
 
   /** 这个工作区有没有能接回的上次对话（只看会话列表，不管是哪家）：有才给「新开一轮」 */
   function hasPriorSession(ws: WorkspaceDto | undefined): boolean {
@@ -1343,7 +1772,7 @@ export default function TaskCardsSection({
     await invoke("write_task_draft", {
       projectRoot: projectPath,
       stepName: step.name,
-      content: resolveTaskMdSource(raw, assembled),
+      content: ensureDiscussSections(resolveTaskMdSource(raw, assembled)),
       expectedRevision: cur?.revision ?? null,
     });
     onDraftChanged?.();
@@ -1601,7 +2030,7 @@ export default function TaskCardsSection({
         )}
         {/* 「想法期只读保护」开关已收掉（2026-10-26 用户拍板）：聊想法固定只读开聊，这里不再有开关 */}
       </div>
-      {error && <InlineNotice tone="err" className="mt-1">{error}</InlineNotice>}
+      {error && <InlineNotice tone="err" className="mt-1" onDismiss={() => setError(null)}>{error}</InlineNotice>}
       {dirtyOpen && mainDirty !== null && mainDirty > 0 && (
         <div className="ccode-well mt-1.5 rounded-md px-2.5 py-2">
           {dirtyLoading && (
@@ -1627,7 +2056,7 @@ export default function TaskCardsSection({
             <p className="mt-1 text-micro text-l3">{dirtyBlocked}</p>
           )}
           {dirtyError && (
-            <InlineNotice tone="err" size="micro" className="mt-1">{dirtyError}</InlineNotice>
+            <InlineNotice tone="err" size="micro" className="mt-1" onDismiss={() => setDirtyError(null)}>{dirtyError}</InlineNotice>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <button
@@ -1757,6 +2186,49 @@ export default function TaskCardsSection({
               </div>
             );
           })()}
+          {prevFollowup && (focusRunStatus ?? "pending") === "pending" && (
+            <div
+              data-prev-step-followup=""
+              className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-canvas/45 px-3 py-2 text-xs text-l2"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-cta" />
+                <span className="min-w-0 break-words">
+                  上一步「{prevFollowup.summary.stepName}」{prevFollowup.summary.summaryText}
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-1">
+                {onFocusIndex && (
+                  <button
+                    type="button"
+                    onClick={() => onFocusIndex(prevFollowup.stepIdx)}
+                    title={`回到「${prevFollowup.summary.stepName}」处理后续建议与保存后可做`}
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium text-cta transition-colors hover:bg-hover"
+                  >
+                    回去查看
+                    <ArrowRight size={12} strokeWidth={2} aria-hidden="true" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label="忽略上一步收尾提醒"
+                  title="先跳过，以后随时可点上方步骤回去看"
+                  onClick={() => {
+                    writePrevFollowupDismissed(
+                      projectPath,
+                      prevFollowup.summary.stepName,
+                      prevFollowup.stamp,
+                    );
+                    if (prevFollowupKey) prevFollowupCache.set(prevFollowupKey, null);
+                    setPrevFollowupState({ key: prevFollowupKey, value: null });
+                  }}
+                  className="flex h-5 w-5 items-center justify-center rounded-sm text-xs text-l4 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+          )}
           {/* 步骤内协同流程线（v3.71）：人/agent 动作按先后排成节点链，当前节点就地操作。
               想法区经 discussContent 收进 discuss 节点内（原先是流程线上方的并列 strip，
               两块并排会把「一步 = 一条线」的时序感冲掉） */}
@@ -1767,13 +2239,50 @@ export default function TaskCardsSection({
             stepIndex={focusIdx >= 0 ? focusIdx + 1 : undefined}
             runId={focusRunId}
             projectLaunch={discussLaunch}
-            stepSlotLaunch={
+            stepSlotLaunch={withProjectPreset(
               taskBindingLaunch(
                 profiles,
                 taskBindings?.[stepSlotKey(focusStepDto.name)],
-              )
-            }
+              ),
+              defaultPresets,
+            )}
             onContinueStep={() => continueFocusedStep()}
+            nextStepName={
+              focusIdx >= 0 && focusIdx < steps.length - 1 ? steps[focusIdx + 1].name : null
+            }
+            onGoNextStep={
+              onFocusIndex && focusIdx >= 0 && focusIdx < steps.length - 1
+                ? () => onFocusIndex(focusIdx + 1)
+                : undefined
+            }
+            onReworkPrefill={(initial) => void openRework(initial)}
+            pendingRework={(() => {
+              const hit = activeReworks.find((r) => {
+                if (r.fromStep !== focusStepDto.name) return false;
+                const saved = stepSavedAt(r.toStep);
+                return !saved || Date.parse(saved) <= Date.parse(r.sentAt);
+              });
+              if (!hit) return null;
+              const targetIdx = steps.findIndex((s) => s.name === hit.toStep);
+              return {
+                toStep: hit.toStep,
+                status: (targetIdx >= 0 ? stepKeys?.[targetIdx] : undefined) ?? "active",
+                onGoTarget:
+                  onFocusIndex && targetIdx >= 0 ? () => onFocusIndex(targetIdx) : undefined,
+              };
+            })()}
+            defaultUpstreamStep={reworkTargets(steps, focusIdx)[0]?.name ?? null}
+            searchStepName={
+              steps.find((st) => stepFillsAnySlot(st.skills, ["lit-search"], skillProvides))?.name ?? null
+            }
+            notesStepName={
+              steps.find((st) => stepFillsAnySlot(st.skills, ["lit-notes"], skillProvides))?.name ?? null
+            }
+            catchUpCount={catchUp.length}
+            catchUpBusy={followBusy}
+            onCatchUpReads={catchUp.length > 0 ? () => void catchUpReads() : undefined}
+            onPdfAdded={() => setCatchUpTick((n) => n + 1)}
+            onFollowUpstream={() => void followUpstream()}
             nudge={followNudge()}
             loopActions={(() => {
               // 回头组（2026-11-13 步骤卡统一设计稿）：退回 / 补文献 → 跟进类 → 文件版本，四类步骤同一顺序；与商量组在步骤卡里竖线隔开
@@ -1822,11 +2331,46 @@ export default function TaskCardsSection({
                   更新检索（已 {refresh.days} 天）…
                 </button>
               );
-              if ((focusRunStatus ?? "pending") === "pending") return null;
+              const isNotesFocus = Boolean(notesStepDto && focusStepDto.name === notesStepDto.name);
+              const focusOutdatedSkills = focusStepDto.skills.filter((s) => builtinUpdates.includes(s));
+              const updateSkillsButton = focusOutdatedSkills.length > 0 && (
+                <button
+                  type="button"
+                  disabled={skillUpdateBusy || followBusy}
+                  onClick={async () => {
+                    if (
+                      !(await confirmDialog(
+                        `更新本步内置技能（${focusOutdatedSkills.join("、")}）到最新版？\n\n原文件会自动备份为 .bak，并同步给各 Agent。`,
+                        { confirmText: "备份并更新" },
+                      ))
+                    )
+                      return;
+                    await applyStepBuiltinSkillUpdates(focusOutdatedSkills);
+                  }}
+                  title={`本步内置技能（${focusOutdatedSkills.join("、")}）有新版脚本或规范，点此备份并更新到最新版，避免派单指令与本机旧脚本脱节`}
+                  className={LOOP_PENDING}
+                >
+                  {skillUpdateBusy ? "正在更新技能…" : `更新本步技能（${focusOutdatedSkills.join("、")}）`}
+                </button>
+              );
+              const catchUpButton = isNotesFocus && catchUp.length > 0 && (
+                <button
+                  type="button"
+                  disabled={followBusy}
+                  onClick={() => void catchUpReads()}
+                  title={`原来没有全文、现在 papers/ 里有了的：${catchUp.map((h) => h.probe.bibKey || h.probe.id).join("、")}。AI 只补读这几篇，在原笔记/速读表/抽取表上更新`}
+                  className={LOOP_PENDING}
+                >
+                  补读 {catchUp.length} 篇新到的全文
+                </button>
+              );
+              if ((focusRunStatus ?? "pending") === "pending") {
+                return updateSkillsButton ? loopRow([updateSkillsButton]) : null;
+              }
               // 做到一半上游又保存过（流程贯通 §3）：说一句「继续」时会先并进来，不另给按钮
               if (focusRunStatus === "active" || focusRunStatus === "review") {
                 const live = stepWorkspace(focusStepDto);
-                if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton) return null;
+                if (!live?.staleUpstream && !(focusRunStatus === "review" && unreadNew > 0) && !reworkButton && !refreshButton && !catchUpButton && !updateSkillsButton) return null;
                 return loopRow([
                   // 待评审时的「跟进更新」在「AI 干活」第一行的下一步提示里（followNudge），这里不再重复一颗
                   live?.staleUpstream && focusRunStatus === "active" && (
@@ -1837,25 +2381,17 @@ export default function TaskCardsSection({
                       「{live.staleUpstream}」有更新，继续时会并进来
                     </span>
                   ),
+                  updateSkillsButton,
                   reworkButton,
+                  catchUpButton,
                   refreshButton,
                 ]);
               }
               if (focusRunStatus !== "done") return null;
-              const catchUpButton = catchUp.length > 0 && (
-                <button
-                  type="button"
-                  disabled={followBusy}
-                  onClick={() => void catchUpReads()}
-                  title={`原来没有全文、现在 papers/ 里有了的：${catchUp.map((h) => h.probe.bibKey || h.probe.id).join("、")}。AI 只补读这几篇，在原笔记上续写`}
-                  className={LOOP_PENDING}
-                >
-                  补读 {catchUp.length} 篇新到的全文
-                </button>
-              );
-              if (!catchUpButton && targets.length === 0) return null;
+              if (!catchUpButton && !updateSkillsButton && targets.length === 0) return null;
               // 已保存步骤的「跟进更新」同样在下一步提示里（followNudge）
               return loopRow([
+                updateSkillsButton,
                 reworkButton,
                 catchUpButton,
               ]);
@@ -2125,6 +2661,21 @@ export default function TaskCardsSection({
           )}
           prefill={reworkPrefill}
           unplaced={reworkUnplaced}
+          outlineSections={reworkOutlineSections}
+          pendingPapers={reworkPendingPapers}
+          onOpenOutline={
+            reworkOutlineRoot
+              ? () => {
+                  const root = reworkOutlineRoot;
+                  void openProjectFileInWindow({
+                    projectRoot: projectPath,
+                    root,
+                    path: `${root.replace(/[\\/]+$/, "")}/outline.md`,
+                    name: "outline.md",
+                  }).catch((err) => toast(`打不开大纲窗口：${String(err)}`, "error"));
+                }
+              : undefined
+          }
           busy={reworkBusy}
           error={reworkError}
           onCancel={() => setReworkOpen(false)}

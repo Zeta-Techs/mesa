@@ -42,4 +42,18 @@ test("AI 自己说出了错：失败 / 报错 / Traceback 算，「没有报错�
   assert.equal(aiReportsFailure("脚本跑完了，没有报错，输出在 output/。"), false);
   assert.equal(aiReportsFailure("测试全部通过，0 failed。"), false);
   assert.equal(aiReportsFailure("综述大纲写好了，等你评审。"), false);
+  // 复盘建议或统计里引号内的词条名与零计数不误报（2026-11-22 lit-search 补料实证）
+  assert.equal(aiReportsFailure("分别输出「无合规直链」「下载失败」「停止后未尝试」，校验通过。"), false);
+  assert.equal(aiReportsFailure("校验通过：0 处错误，下载失败 0。"), false);
+});
+
+test("latestStepSessionRun：最新 Run 尚无 sessionId 时绝不跨代倒退读几天前的旧会话", async () => {
+  const { latestStepSessionRun } = await import("../src/run-failure.ts");
+  const runs = [
+    { id: "old", internal: false, isolationPath: "/w/lit-search", createdAt: "2026-11-20T16:00:00Z", sessionId: "old-sess" },
+    { id: "new", internal: false, isolationPath: "/w/lit-search", createdAt: "2026-11-22T09:59:00Z", sessionId: null },
+  ];
+  assert.equal(latestStepSessionRun(runs, "/w/lit-search", false), null);
+  const bound = [runs[0], { ...runs[1], sessionId: "new-sess" }];
+  assert.equal(latestStepSessionRun(bound, "/w/lit-search", false)?.id, "new");
 });

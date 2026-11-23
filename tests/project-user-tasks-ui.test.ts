@@ -75,6 +75,10 @@ async function renderGoals(options: {
   protectedPaths?: string[];
   coexistsWithNewChat?: boolean;
   seenGoalVsChat?: boolean;
+  onPickTemplate?: () => void;
+  onOpenSchedules?: () => void;
+  onOpenAgents?: () => void;
+  needsDefaultAgent?: boolean;
 } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
   if (options.seenGoalVsChat) {
@@ -206,6 +210,10 @@ async function renderGoals(options: {
     project: { path: "/project", name: "项目", workMode: options.mode ?? "office", defaultAgent: "codex", defaultProfiles: { codex: "codex-a" } },
     embed: options.embed ?? false,
     coexistsWithNewChat: options.coexistsWithNewChat ?? false,
+    onPickTemplate: options.onPickTemplate,
+    onOpenSchedules: options.onOpenSchedules,
+    onOpenAgents: options.onOpenAgents,
+    needsDefaultAgent: options.needsDefaultAgent ?? false,
   })));
   function button(label: string, parent: ParentNode = host): HTMLButtonElement {
     const result = Array.from(parent.querySelectorAll("button")).find((b) =>
@@ -769,7 +777,7 @@ test("在弹层里点了连接才钉到这条目标，且可改回跟随项目�
   } finally { await view.close(); }
 });
 
-test("启动失败的提示不被下一次轮询抹掉", async () => {
+test("启动失败的提示不被下一次轮询抹掉，点关闭钮可手关", async () => {
   const task = goal("失败提示");
   const view = await renderGoals({ tasks: [task] });
   try {
@@ -778,6 +786,8 @@ test("启动失败的提示不被下一次轮询抹掉", async () => {
     assert.match(view.host.querySelector('[role="alert"]')!.textContent!, /启动目标失败/);
     await view.poll();
     assert.match(view.host.querySelector('[role="alert"]')!.textContent!, /启动目标失败/);
+    await view.click("关闭提示");
+    assert.equal(view.host.querySelector('[role="alert"]'), null);
   } finally { await view.close(); }
 });
 
@@ -835,4 +845,42 @@ test("与「＋ 新对话」同屏出现时首次弹出对比气泡，关闭后�
     });
     assert.equal(second.host.querySelector("[data-coach-tip]"), null, "按 Esc 收起");
   } finally { await second.close(); }
+});
+
+test("无流程新科研项目空态展示三项起步配置列表并各自触发跳转", async () => {
+  const hits: string[] = [];
+  const view = await renderGoals({
+    mode: "research",
+    embed: true,
+    onPickTemplate: () => hits.push("template"),
+    onOpenSchedules: () => hits.push("schedules"),
+    onOpenAgents: () => hits.push("agents"),
+    needsDefaultAgent: true,
+  });
+  try {
+    const group = view.host.querySelector('[aria-label="项目起步配置"]');
+    assert.ok(group, "新科研项目空态应显示起步配置列表");
+    assert.match(group.textContent!, /添加研究流程模板/);
+    assert.match(group.textContent!, /新建定时文献推送/);
+    assert.match(group.textContent!, /配置 Agent 分工/);
+    assert.match(group.textContent!, /未设默认模型/);
+    const rows = Array.from(group.querySelectorAll("button"));
+    assert.equal(rows.length, 3);
+    for (const row of rows) {
+      await view.act(async () => row.click());
+    }
+    assert.deepEqual(hits, ["template", "schedules", "agents"]);
+  } finally { await view.close(); }
+
+  const archivedOnly = await renderGoals({
+    mode: "research",
+    embed: true,
+    tasks: [goal("old", "done", { kind: "free_research", archivedAt: "2026-11-01T00:00:00Z" })],
+    onPickTemplate: () => hits.push("template"),
+    onOpenSchedules: () => hits.push("schedules"),
+    onOpenAgents: () => hits.push("agents"),
+  });
+  try {
+    assert.equal(archivedOnly.host.querySelector('[aria-label="项目起步配置"]'), null, "已有归档目标时不铺新手起步列表");
+  } finally { await archivedOnly.close(); }
 });

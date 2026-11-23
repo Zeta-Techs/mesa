@@ -213,16 +213,20 @@ export function searchPdfProbes(includedText: string): { id: string; title: stri
   return out;
 }
 
-/** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9」。没有的分项不出。 */
-export function searchProgressLine(p: SearchProgress): string {
-  return searchProgressParts(p).join(" · ");
+/** 「纳入 40 篇 · 待确认 3 · 已有全文 31 · 缺全文 9（· 仅摘要 1）」。没有的分项不出。 */
+export function searchProgressLine(p: SearchProgress, skipped = 0): string {
+  return searchProgressParts(p, skipped).join(" · ");
 }
 
-export function searchProgressParts(p: SearchProgress): string[] {
+export function searchProgressParts(p: SearchProgress, skipped = 0): string[] {
   const parts = [`纳入 ${p.included} 篇${p.reviews ? `（综述 ${p.reviews}）` : ""}`];
   if (p.pending > 0) parts.push(`待确认 ${p.pending}`);
   if (p.withPdf > 0) parts.push(`已有全文 ${p.withPdf}`);
-  if (p.included - p.withPdf > 0) parts.push(`缺全文 ${p.included - p.withPdf}`);
+  const rawMissing = Math.max(0, p.included - p.withPdf);
+  const effectiveSkipped = Math.min(rawMissing, Math.max(0, skipped));
+  const missing = rawMissing - effectiveSkipped;
+  if (missing > 0) parts.push(`缺全文 ${missing}`);
+  if (effectiveSkipped > 0) parts.push(`仅摘要 ${effectiveSkipped}`);
   return parts;
 }
 

@@ -40,7 +40,7 @@ export function stepKind(
 export const ROUND_CLAUSE: Record<StepKind, string> = {
   search: "",
   notes: "",
-  outline: "改大纲时在「定框架记录」里记一行改了哪一问、为什么；章节变了，覆盖检查、用图计划和表计划跟着改，别留着对不上的旧行。",
+  outline: "已有 outline.md「定框架记录」里已拍板的问直接沿用（优先于 TASK.md 开工前的「待拍板」旧快照）；改大纲时在「定框架记录」里记一行改了哪一问、为什么（若为第⑥问补料归来清零薄节、未推翻前六问选择，记一行「⑥（增量收口）」即可）；章节变了，覆盖检查、用图计划和表计划跟着改，别留着对不上的旧行。",
   clean:
     "清洗的改动一律走规则：先改 cleaning/rules.md（每条注明依据，新规则没批准就标阻塞、不应用），再从原始数据重跑清洗脚本，不手改清洗后的数据；" +
     "在 cleaning-report.md 记这一轮每条规则影响的行数（前 → 后），更新 cleaned-data-manifest.md 的 hash 与行列数。",

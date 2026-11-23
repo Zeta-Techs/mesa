@@ -414,17 +414,66 @@ async function projectPresetFor(projectRoot: string, agentId: string | undefined
   }
 }
 
-/** 不经开工弹层就自动拉起的步骤入口（继续、跟进、派活、退回修改）用哪一档权限：与开工弹层同一预选口径
- *  （项目默认预设 > 本项目上次 > CLI 本机设置 > 帮我批准 > 请求批准），上次选的完全访问不带过来。2026-11-10 HER 大纲：
+/** 同一工作副本上次开工/续跑用过的权限档（含完全访问）：
+ *  只在「同一个已经过人确认开工的工作副本」内续跑（补读/跟进/退回修改/继续/导入批注）时沿用，
+ *  不写入项目级 kickoffPerm（跨步骤新开工时完全访问仍须重新选择确认，安全边界不变）。 */
+function wsPermKey(worktreePath: string): string {
+  return `ccode.wsPerm.${worktreePath}`;
+}
+
+export function loadWorkspacePermission(
+  worktreePath: string,
+  agentId: string | undefined,
+  available: readonly string[],
+): KickoffPermission | null {
+  if (!worktreePath || !agentId || available.length === 0) return null;
+  try {
+    const raw = localStorage.getItem(wsPermKey(worktreePath));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<{ agentId: string; tier: string }>;
+    if (parsed.agentId && parsed.agentId !== agentId) return null;
+    if (
+      (parsed.tier === "ask" || parsed.tier === "auto" || parsed.tier === "full") &&
+      available.includes(parsed.tier)
+    ) {
+      return parsed.tier;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveWorkspacePermission(
+  worktreePath: string,
+  agentId: string | undefined,
+  tier: KickoffPermission | null | undefined,
+): void {
+  if (!worktreePath || !agentId || !tier) return;
+  try {
+    localStorage.setItem(wsPermKey(worktreePath), JSON.stringify({ agentId, tier }));
+  } catch {
+    /* 隐私模式：不记即可 */
+  }
+}
+
+/** 不经开工弹层就自动拉起的步骤入口（继续、跟进、补读、派活、退回修改）用哪一档权限：
+ *  优先沿用本工作副本上次开工确认的权限（含完全访问）；没有再走开工弹层同一预选口径
+ *  （项目默认预设 > 本项目上次 ask/auto > CLI 本机设置 > 帮我批准 > 请求批准）。2026-11-10 HER 大纲：
  *  Kimi「继续」不带档，落回 CLI 默认，每条命令都停下来问，人走开就白等 */
 async function defaultStepPermission(
   projectRoot: string,
   agentId: string | undefined,
   projectTier: string | undefined,
+  worktreePath?: string,
 ): Promise<KickoffPermission | null> {
   if (!agentId) return null;
   const available = wsLastGuardSource?.()?.permissionModes?.[agentId] ?? [];
   if (available.length === 0) return null;
+  if (worktreePath) {
+    const rememberedWs = loadWorkspacePermission(worktreePath, agentId, available);
+    if (rememberedWs) return rememberedWs;
+  }
   const local = await invoke<{ tier: string | null } | null>("cli_default_permission", { agent: agentId })
     .then((note) => note?.tier ?? null)
     .catch(() => null);
@@ -532,11 +581,16 @@ export async function buildWorkspaceTerminalRequest(
       ? opts.stepLaunch.permissionTier
       : null;
   const launchAgentId = resume?.agentId ?? chain.agentId;
+  if (opts?.launch?.permissionMode && launchAgentId) {
+    saveWorkspacePermission(ws.worktreePath, launchAgentId, opts.launch.permissionMode);
+  }
   const projectPreset = await projectPresetFor(ws.repoPath, launchAgentId);
   const permissionMode =
     opts?.launch?.permissionMode ??
     stepPermMode ??
-    (opts?.autoStart ? await defaultStepPermission(ws.repoPath, launchAgentId, projectPreset.permissionTier) : null);
+    (opts?.autoStart
+      ? await defaultStepPermission(ws.repoPath, launchAgentId, projectPreset.permissionTier, ws.worktreePath)
+      : null);
   const railStep = await workspaceStep(ws);
   return {
     cwd: ws.worktreePath,

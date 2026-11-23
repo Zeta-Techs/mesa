@@ -197,6 +197,7 @@ export async function replyDesk(
         });
         useAppStore.getState().setPage("terminal");
       }
+      useAppStore.getState().kickHelpDelivery();
       return `已记下，回答已排队；${item.where}的 AI 空闲时送到，送到前仍保留在待处理里`;
     }
     if (!liveRunIn(ws.worktreePath)) {
@@ -211,6 +212,7 @@ export async function replyDesk(
       useAppStore.getState().setPendingTerminal(request);
       useAppStore.getState().setPage("terminal");
     }
+    useAppStore.getState().kickHelpDelivery();
     return `已记下，回答已排队；${item.where}的 AI 空闲时送到，送到前仍保留在待处理里`;
   }
   const ws = await workspaceFor(item.worktreePath);

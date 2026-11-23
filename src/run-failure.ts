@@ -53,18 +53,34 @@ export function latestRunFailure<T extends RunFailureInput>(
   return { run: latest, reason: runFailureReason(latest) };
 }
 
+/** 挑出这个工作副本真正最新的一条非 internal Run（绝不因最新 Run 还没绑上 sessionId 就倒退去抓几天前的旧会话）。
+ *  若最新 Run 尚无 sessionId，返回 null。 */
+export function latestStepSessionRun<
+  T extends { internal: boolean; sessionId?: string | null; isolationPath: string; createdAt: string },
+>(runs: readonly T[], worktreePath: string, isWindows = false): T | null {
+  const latest = runs
+    .filter((r) => !r.internal && pathWithin(r.isolationPath, worktreePath, isWindows))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  if (!latest?.sessionId) return null;
+  return latest;
+}
+
 /**
  * AI 在对话里自己说出了错（2026-11-04：交互对话里「测试失败了」「报错了」不会把运行记成出错，卡点和步进器都看不到）。
  * 只看它最后一段话；「没有报错」「测试都通过了、无失败」这类否定说法不算。宁可漏、不乱报。
  */
 const FAILURE_RE = /(失败|报错|出错|错误|异常|崩溃|跑不通|跑不起来|没跑通|Traceback|Error:|Exception|FAILED|failed\b)/i;
-const NEGATED_RE = /(没有|没|未|无|不再|并未|零)\s*(失败|报错|出错|错误|异常)|0\s*(failed|errors?)\b|no\s+(errors?|failures?)\b|全部通过|都通过|已修好|已经修好|修复了/i;
+const NEGATED_RE =
+  /(没有|没|未|无|不再|并未|零)\s*(失败|报错|出错|错误|异常)|(失败|报错|出错|错误|异常)\s*0\b|0\s*(处|条|个)?\s*(失败|报错|出错|错误|异常|failed|errors?)\b|no\s+(errors?|failures?)\b|全部通过|都通过|已修好|已经修好|修复了/i;
+/** 剥掉引号与行内代码里被引用的词条名（如 `「下载失败」`、`“错误”`、`` `failed` ``），防止复盘建议或字段说明误触发「出错了」 */
+const QUOTED_LABEL_RE = /「[^」\n]{1,24}」|“[^”\n]{1,24}”|`[^`\n]{1,40}`/g;
 
 export function aiReportsFailure(text: string): boolean {
   const tail = text.slice(-600);
-  if (!FAILURE_RE.test(tail)) return false;
+  const cleaned = tail.replace(QUOTED_LABEL_RE, "");
+  if (!FAILURE_RE.test(cleaned)) return false;
   // 有否定说法、又没有明确的失败痕迹（Traceback / FAILED / 「失败了」）的，当没出错
-  if (NEGATED_RE.test(tail) && !/Traceback|FAILED|失败了|报错了|出错了/.test(tail)) return false;
+  if (NEGATED_RE.test(cleaned) && !/Traceback|FAILED|失败了|报错了|出错了/.test(cleaned)) return false;
   return true;
 }
 

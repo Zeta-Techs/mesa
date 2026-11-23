@@ -16,7 +16,13 @@ import { reworkPrompt, withLatestNote, type ReworkDto } from "./step-loop";
 import { ROUND_CLAUSE, stepKind } from "./step-kind";
 import type { ProjectStepDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
 
-export type Launch = { agentId: string; profileId: string; model: string };
+export type Launch = {
+  agentId: string;
+  profileId: string;
+  model: string;
+  effort?: string | null;
+  permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
+};
 
 /** 这次打开 Mesa 的时间：补料链只在 Mesa 开着、看见那次保存时自动往下走（关着期间保存的不在打开时突然开终端，流程贯通 §6） */
 export const SESSION_STARTED_AT = new Date().toISOString();
@@ -68,7 +74,12 @@ export async function hasUnsavedRound(ws: WorkspaceDto): Promise<boolean> {
 /** 这一步在 Agent 分工里绑的连接；没绑返回 null（开对话时按这个工作区上次用的预填） */
 export async function boundStepLaunch(projectPath: string, stepName: string): Promise<Launch | null> {
   try {
-    const b = await invoke<{ profile: string; model?: string | null } | null>("get_project_agent_binding", {
+    const b = await invoke<{
+      profile: string;
+      model?: string | null;
+      effort?: string | null;
+      permissionTier?: string | null;
+    } | null>("get_project_agent_binding", {
       projectRoot: projectPath,
       slot: stepSlotKey(stepName),
     });
@@ -78,23 +89,23 @@ export async function boundStepLaunch(projectPath: string, stepName: string): Pr
   }
 }
 
-/** 在工作副本里另开一段对话（不 resume），开场就是 prompt。同一步只有一个终端标签：闲着的旧标签就地换成新一轮 */
+/** 在工作副本里另开一段对话（不 resume），开场就是 prompt。同一步只有一个终端标签：闲着的旧标签就地换成新一轮。
+ *  整包透传 buildWorkspaceTerminalRequest 算出的 permission / permissionMode / effort / railStep，不手工挑字段漏传。 */
 export async function launchRound(ws: WorkspaceDto, title: string, prompt: string, launch: Launch | null): Promise<void> {
   const req = await buildWorkspaceTerminalRequest(ws, prompt, { autoStart: true, stepLaunch: launch });
   const { setPendingTerminal, setPage } = useAppStore.getState();
   setPendingTerminal(
     launch
       ? {
-          cwd: req.cwd,
-          extraEnv: req.extraEnv,
+          ...req,
           title: req.title || title,
-          reuseKey: req.reuseKey,
           agentId: launch.agentId,
           profileId: launch.profileId,
           model: launch.model,
+          resume: undefined,
+          focusSession: undefined,
           initialPrompt: prompt,
           autoStart: true,
-          railStep: req.railStep,
         }
       : { ...req, title: req.title || title, resume: undefined, focusSession: undefined, initialPrompt: prompt },
   );
@@ -140,6 +151,8 @@ export interface ReworkSend {
   chain?: string[];
   /** 同一张补文献单上「精读已有的」那几条（退回检索时随单存，链上精读跟进时一起做）；只退回精读时为空 */
   reads?: string[];
+  /** 发起步当前未合并工作副本路径（如大纲工作区 ../outline），供退回检索/精读直读 outline.md */
+  fromWorktreePath?: string | null;
   provides: SkillProvides;
   /** 解析不到绑定时用的连接（步骤卡传它那条链）；null 也行，按工作区上次用的预填 */
   launch: Launch | null;
@@ -182,6 +195,7 @@ export async function sendReworkRound(input: ReworkSend, onRestored?: () => void
       clause: ROUND_CLAUSE[stepKind(target, input.provides)],
       projectRoot: projectPath,
       date: `${d.getMonth() + 1}-${d.getDate()}`,
+      fromWorktreePath: input.fromWorktreePath ?? null,
     }),
     incoming,
   );

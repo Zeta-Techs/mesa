@@ -14,8 +14,9 @@ import { isManuscriptBody } from "./manuscript-files.ts";
 
 // ---------- 从脚本移植的正则（改这里先改脚本，对照测试会拦） ----------
 
-/** cite_check.py PANDOC_KEY：Python 的 \w 认 Unicode 字母数字，这里用 \p{L}\p{N}_ 对上 */
-const PANDOC_KEY = /(?<![\p{L}\p{N}_@.\\])-?@([A-Za-z0-9_][\p{L}\p{N}_:.#$%&\-+?<>~/]*)/gu;
+/** cite_check.py PANDOC_KEY：Python 的 \w 认 Unicode 字母数字，这里用 \p{L}\p{N}_ 对上；同步排除化学/材料写法里的 @（WB₂@WS₂、(Co,Ni)@NF 等）与行内代码 */
+const PANDOC_KEY = /(?<![\p{L}\p{N}_@.\\)\]\}/₀-₉⁰-⁹⁺⁻])-?@([A-Za-z0-9_][\p{L}\p{N}_:.#$%&\-+?<>~/]*)/gu;
+const INLINE_CODE = /`[^`]+`/g;
 const CROSSREF_PREFIXES = ["fig-", "tbl-", "sec-", "eq-", "lst-", "thm-", "lem-", "def-"];
 /** cite_check.py bib_ids */
 const BIB_ID = /@(?!comment|string|preamble)[\p{L}\p{N}_-]+\s*\{\s*([^,\s]+)\s*,/giu;
@@ -74,7 +75,7 @@ export function manuscriptCitations(text: string): { key: string; line: number }
       return;
     }
     if (fenced) return;
-    for (const m of line.matchAll(PANDOC_KEY)) {
+    for (const m of line.replace(INLINE_CODE, " ").matchAll(PANDOC_KEY)) {
       const key = m[1].replace(/[.:;,?]+$/, "");
       if (key && !/^\d+$/.test(key) && !CROSSREF_PREFIXES.some((p) => key.toLowerCase().startsWith(p))) out.push({ key, line: i + 1 });
     }
@@ -808,7 +809,16 @@ export function draftProgressParts(text: string, sections?: string | null): stri
     if (cur && !PLACEHOLDER_PARA.test(p.text)) cur.written = true;
   }
   if (chapters.length === 0) return null;
-  const notYet = (plannedSections(sections) ?? []).filter((t) => !chapters.some((c) => sameSection(c.title, t))).length;
+  const plan = plannedSections(sections) ?? [];
+  const matchedPlan = plan.filter((t) => chapters.some((c) => sameSection(c.title, t))).length;
+  // 与 checkDraft ⑧ 同口径：中文 sections.json 配英文初稿（或改写章名）导致标题全对不上字时，
+  // 按排除引言/结论后的正文大章数比，避免把 6 个计划节重复叠进分母显示成「已写 8 / 14 节」。
+  const bodyCount = chapters.filter((c) => !INTRO_OUTRO.test(strip(c.title))).length;
+  const notYet = plan.length === 0
+    ? 0
+    : matchedPlan > 0
+      ? plan.length - matchedPlan
+      : Math.max(0, plan.length - bodyCount);
   const total = chapters.length + notYet;
   const written = chapters.filter((c) => c.written).length;
   const parts = [written === total ? `已写 ${total} 节` : `已写 ${written} / ${total} 节`];

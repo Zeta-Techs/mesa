@@ -1,13 +1,33 @@
-import { FileText } from "lucide-react";
+import { AppWindow, ArrowRight, BookmarkPlus, Check, Compass, Copy, FileText, Maximize2, PanelRight, RotateCcw, Search, X } from "lucide-react";
+import { addProjectKnowledge } from "../assistant-desk";
+import {
+  defaultActionButtonText,
+  isEndnoteExportStep,
+  matchesPriorityFetch,
+  nextActionStepSlug,
+  parseStepNextActions,
+  priorityFetchProgress,
+  readNextActionChecks,
+  readNextActionsOpen,
+  resolveStepNextPrimary,
+  synthesizeStepNextActions,
+  writeNextActionChecks,
+  writeNextActionsOpen,
+  type StepNextActions,
+  type StepNextOption,
+} from "../step-next-actions";
 import CoachTip from "./CoachTip";
+import { Modal } from "./Modal";
 import { consultNudgeSeen, discussNudgeSeen, markConsultNudgeSeen, markDiscussNudgeSeen } from "../coach-tips";
 import { discussOpeningPrompt, discussReuseKey } from "../discuss-prompt";
 import { toast } from "../toast";
 import { sanitizeDocumentHtml } from "../document-html";
 import { useCallback, useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
   cachedJournalMetric,
+  forgetJournalMetrics,
   journalMetricTone,
   rememberJournalMetrics,
   type JournalMetricsDto,
@@ -40,25 +60,31 @@ import {
   isPaywallTaskTitle,
   isPendingConfirmTaskTitle,
   isSpotCheckTaskTitle,
+  isToFetchSkipped,
   LIBRARY_SYNC_ATTACH,
   LIBRARY_SYNC_NOTES_CAVEAT,
   missingToFetchCount,
   parseToFetchItems,
+  readToFetchSkipped,
   recalledToFetchDone,
   rememberToFetchDone,
+  stepDataRoots,
+  toFetchItemKey,
   toFetchPaperRel,
   toFetchSavedCount,
+  toFetchSkippedCount,
+  writeToFetchSkipped,
   type LibrarySyncAttach,
   type StepFlowNode,
   type ToFetchItem,
 } from "../step-flow";
-import { stepFillsAnySlot, useSkillProvides } from "../skill-slots.ts";
+import { stepFillsAnySlot, useSkillProvides, type SkillProvides } from "../skill-slots.ts";
 import {
   RESEARCH_TOOL_FIELDS,
   type ResearchToolField,
   type ResearchTools,
 } from "../research-tools";
-import { displayCitationTitle, parseIncludedRecords } from "../screening-review";
+import { displayCitationTitle, doiToken, parseIncludedRecords } from "../screening-review";
 import { loadDraftProgress, outlineThinWithNotes, readResearchFile, readResearchLedger, searchCountLineWithFiles } from "../research-report-load";
 import { stepKind } from "../step-kind";
 import {
@@ -89,7 +115,13 @@ import {
 } from "../step-decisions";
 import { useHumanTasks, RegisterOfferRow } from "./HumanTasksList";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
-import { stepSlotKey, taskBindingLaunch } from "../project-agents";
+import {
+  discussResumePresetFields,
+  discussTerminalLaunchFields,
+  stepSlotKey,
+  taskBindingLaunch,
+  type ResolvedTaskBindingLaunch,
+} from "../project-agents";
 import {
   CITATION_STYLE_CHOICES,
   citationFormFamily,
@@ -112,15 +144,28 @@ import {
 } from "../academic-mcp";
 import { CARSI_URL, instOpenTarget, type FetchedFulltextDto } from "../inst-access";
 import PendingConfirmList, { type PendingConfirmHandle } from "./PendingConfirmList";
-import ReviewDecisionList from "./ReviewDecisionList";
-import { DeclarationsForm, FigurePermissionsPanel } from "./HandbackPanels";
+import ReviewDecisionList, {
+  type ReviewDecisionMeta,
+  type ReviewDecisionOpenFileReq,
+} from "./ReviewDecisionList";
+import {
+  DeclarationsForm,
+  FigurePermissionsPanel,
+  type DeclarationsFormHandle,
+  type DeclarationsSummary,
+  type PermissionsSummary,
+} from "./HandbackPanels";
+import { summarizeDeclarations, summarizePermissions } from "../handback-files";
 import ProjectFilePreview from "./ProjectFilePreview";
 import { confirmDiscardProjectFile, openProjectFileInWindow, showProjectFile } from "../project-file-open";
 import { handbackTask } from "../handback-tasks";
 import {
   continueAfterDecisionsPrompt,
+  countReviewVerdicts,
   isInlineDecisionTaskTitle,
+  parseReviewItems,
   reviewItemKind,
+  type ReviewItemKind,
 } from "../review-decisions";
 import type { ProjectStepDto, WorkspaceDto } from "../types";
 import type { StepRunStatus } from "../step-flow";
@@ -318,6 +363,521 @@ const agentProgressCache = new Map<string, string[]>();
 const sameParts = (a: readonly string[] | null, b: readonly string[] | null) =>
   a === b || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]));
 
+type PaywallListState = { text: string | null; error: string | null; from: string | null };
+type EndnoteLibState = { path: string | null; revision: string; legacy?: boolean };
+
+/** 切步骤时 StepFlow 按 key 重新挂载，以下模块级缓存保留本次会话内各步骤最近读到的异步结果：
+ *  首帧直接用缓存画到最终态，挂载后再静默校对更新，彻底消除「先空/先占位 → 多次异步重排」的闪烁。 */
+const nextActionsCache = new Map<string, StepNextActions | null>();
+const rememberedTextsCache = new Map<string, Set<string>>();
+const paywallListCache = new Map<string, PaywallListState>();
+const pendingMetaCache = new Map<string, { count: number; busy: boolean }>();
+const spotCheckPicksCache = new Map<string, { root: string; items: SpotCheckPick[] } | null>();
+const endnoteLibCache = new Map<string, EndnoteLibState>();
+const citeStyleCache = new Map<string, { family: StyleFamily | null; journal: string | null }>();
+type HandbackSummaryState =
+  | { kind: "permissions"; data: PermissionsSummary }
+  | { kind: "sections"; data: DeclarationsSummary };
+
+const decisionOpenCache = new Map<string, Map<string, number>>();
+const decisionMetaCache = new Map<string, Record<string, ReviewDecisionMeta>>();
+const handbackSummaryCache = new Map<string, Record<string, HandbackSummaryState>>();
+let lastAcademicMcpCache: AcademicMcpLogin | null = null;
+
+const sameStringSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
+  a === b || (a.size === b.size && [...a].every((x) => b.has(x)));
+
+const sameStringRecord = (a: Record<number, string>, b: Record<number, string>) => {
+  if (a === b) return true;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  return ak.length === bk.length && ak.every((k) => a[Number(k)] === b[Number(k)]);
+};
+
+const sameJson = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+const samePaywallList = (a: PaywallListState, b: PaywallListState) =>
+  a.text === b.text && a.error === b.error && a.from === b.from;
+
+const sameEndnoteLib = (a: EndnoteLibState | undefined, b: EndnoteLibState | undefined) =>
+  a === b || (!!a && !!b && a.path === b.path && a.revision === b.revision && a.legacy === b.legacy);
+
+function cachedPaywallMetricsFor(text: string | null): Map<number, JournalMetricsDto | null> {
+  const out = new Map<number, JournalMetricsDto | null>();
+  if (!text) return out;
+  for (const item of parseToFetchItems(text)) {
+    if (!item.url) continue;
+    const hit = cachedJournalMetric(item.url);
+    if (hit !== undefined) out.set(item.line, hit);
+  }
+  return out;
+}
+
+async function readFirstNonEmptyText(roots: string[], rel: string, ledger = false): Promise<string | null> {
+  for (const r of roots) {
+    try {
+      const res = ledger ? await readResearchLedger(r, rel) : await readResearchFile(r, rel);
+      if (res.text.trim()) return res.text;
+    } catch {
+      /* 继续试下一路径 */
+    }
+  }
+  return null;
+}
+
+async function loadStepNextActionsSnapshot(params: {
+  projectPath: string;
+  step: ProjectStepDto;
+  ws: WorkspaceDto | undefined;
+  dataWs: WorkspaceDto | undefined;
+  runStatus: StepRunStatus;
+  skillProvides: SkillProvides;
+  nextStepName: string | null;
+  searchStepName: string | null;
+  notesStepName: string | null;
+  toFetchDone: Record<number, string>;
+  toFetchSkipped: ReadonlySet<string>;
+}): Promise<StepNextActions | null> {
+  const {
+    projectPath,
+    step,
+    ws,
+    dataWs,
+    runStatus,
+    skillProvides,
+    nextStepName,
+    searchStepName,
+    notesStepName,
+    toFetchDone,
+    toFetchSkipped,
+  } = params;
+  if (runStatus === "pending") return null;
+  const slug = nextActionStepSlug(step.workspaceName || ws?.name || step.name);
+  const candidates: { root: string; rel: string }[] = [];
+  if (ws?.worktreePath) {
+    candidates.push({ root: ws.worktreePath, rel: ".ccode/next-actions.json" });
+  }
+  if (slug) {
+    candidates.push({ root: projectPath, rel: `.ccode/step-next/${slug}.json` });
+  }
+  for (const c of candidates) {
+    try {
+      const res = await readResearchFile(c.root, c.rel);
+      const parsed = parseStepNextActions(res.text);
+      if (parsed) return parsed;
+    } catch {
+      /* 该路径没有 next-actions */
+    }
+  }
+  // 确定性兜底：从当前步骤的真实产物合成
+  const dataRoots = [dataWs?.worktreePath, projectPath].filter((r): r is string => Boolean(r));
+  const isSearch = stepFillsAnySlot(step.skills, ["lit-search"], skillProvides);
+  const isNotes = stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides);
+  const isOutline = stepFillsAnySlot(step.skills, ["review-framework"], skillProvides) || step.workspaceName === "outline";
+  const isFinal = stepFillsAnySlot(step.skills, ["bib-check", "quarto-render"], skillProvides) || step.workspaceName === "polish";
+  const isDraft = !isFinal && (stepFillsAnySlot(step.skills, ["review-writing", "research-writing"], skillProvides) || step.workspaceName === "draft");
+  const kind = isSearch ? "search" : isNotes ? "notes" : isOutline ? "outline" : isFinal ? "final" : isDraft ? "draft" : "other";
+  const saved = runStatus === "done";
+  const liveDone = Object.keys(toFetchDone).length > 0 ? toFetchDone : recalledToFetchDone(projectPath);
+  if (kind === "search") {
+    const [includedJsonText, toFetchText, screening] = await Promise.all([
+      readFirstNonEmptyText(dataRoots, "papers/included.json", true),
+      readFirstNonEmptyText(dataRoots, "papers/to-fetch.md", true),
+      readFirstNonEmptyText(dataRoots, "papers/screening.md"),
+    ]);
+    return synthesizeStepNextActions({
+      stepKind: "search",
+      saved,
+      nextStepName,
+      includedJsonText,
+      toFetchText,
+      toFetchDone: liveDone,
+      toFetchSkipped,
+      hasScreening: Boolean(screening),
+    });
+  }
+  if (kind === "notes") {
+    const [notesIndexText, handoffText, includedJsonText, toFetchText, angles, extraction] = await Promise.all([
+      readFirstNonEmptyText(dataRoots, "notes/index.json", true),
+      readFirstNonEmptyText(dataRoots, "notes/handoff.md"),
+      readFirstNonEmptyText(dataRoots, "papers/included.json", true),
+      readFirstNonEmptyText(dataRoots, "papers/to-fetch.md", true),
+      readFirstNonEmptyText(dataRoots, "notes/angles.md"),
+      readFirstNonEmptyText(dataRoots, "notes/extraction.md"),
+    ]);
+    return synthesizeStepNextActions({
+      stepKind: "notes",
+      saved,
+      nextStepName,
+      notesIndexText,
+      handoffText,
+      includedJsonText,
+      toFetchText,
+      toFetchDone: liveDone,
+      toFetchSkipped,
+      hasAngles: Boolean(angles),
+      hasExtraction: Boolean(extraction),
+    });
+  }
+  if (kind === "outline") {
+    const outlineText = await readFirstNonEmptyText(dataRoots, "outline.md");
+    return synthesizeStepNextActions({
+      stepKind: "outline",
+      saved,
+      nextStepName,
+      searchStepName,
+      notesStepName,
+      outlineText,
+    });
+  }
+  if (kind === "draft" || kind === "final") {
+    const msCandidates = ["manuscript/final.md", "manuscript/draft.md", "manuscript/paper.md", "manuscript/thesis.md"];
+    let manuscriptFile: string | null = null;
+    for (const rel of msCandidates) {
+      if (await readFirstNonEmptyText(dataRoots, rel)) {
+        manuscriptFile = rel;
+        break;
+      }
+    }
+    const [perms, decl] = kind === "final"
+      ? await Promise.all([
+          readFirstNonEmptyText(dataRoots, "submission/figure-permissions.md"),
+          readFirstNonEmptyText(dataRoots, "submission/declarations.md"),
+        ])
+      : [null, null];
+    return synthesizeStepNextActions({
+      stepKind: kind,
+      saved,
+      nextStepName,
+      manuscriptFile,
+      hasPermissions: Boolean(perms),
+      hasDeclarations: Boolean(decl),
+    });
+  }
+  const firstRel = (step.expectedArtifacts ?? []).find((a) => !a.includes("*") && !a.endsWith("/")) ?? null;
+  const hasFirst = firstRel ? Boolean(await readFirstNonEmptyText(dataRoots, firstRel)) : false;
+  return synthesizeStepNextActions({
+    stepKind: "other",
+    saved,
+    nextStepName,
+    firstExistingArtifact: hasFirst ? firstRel : null,
+  });
+}
+
+async function loadPaywallListSnapshot(projectPath: string, dataWs: WorkspaceDto | undefined): Promise<PaywallListState> {
+  const candidates = dataWs
+    ? [
+        {
+          path: `${dataWs.worktreePath}/papers/to-fetch.md`,
+          root: dataWs.worktreePath,
+          from: "步骤工作区",
+        },
+        {
+          path: `${projectPath}/papers/to-fetch.md`,
+          root: projectPath,
+          from: "项目根",
+        },
+      ]
+    : [
+        {
+          path: `${projectPath}/papers/to-fetch.md`,
+          root: projectPath,
+          from: "项目根",
+        },
+      ];
+  for (const c of candidates) {
+    try {
+      const p = await invoke<{ text: string }>("read_research_ledger", {
+        path: c.path,
+        root: c.root,
+      });
+      return { text: p.text, error: null, from: c.from };
+    } catch {
+      // 试下一个位置
+    }
+  }
+  return {
+    text: null,
+    error: "还没找到 papers/to-fetch.md——agent 筛完会在步骤工作区生成缺全文清单（评审合并后进项目根）",
+    from: null,
+  };
+}
+
+async function loadRememberedTextsSnapshot(projectPath: string): Promise<Set<string>> {
+  const doc = await invoke<{ entries: { text: string; meta: { state: string } }[] }>("project_memory_read", {
+    path: projectPath,
+  });
+  const next = new Set(
+    (doc?.entries ?? [])
+      .filter((e) => e.meta?.state === "active")
+      .map((e) => e.text.trim()),
+  );
+  rememberedTextsCache.set(projectPath, next);
+  return next;
+}
+
+async function loadEndnoteLibSnapshot(projectPath: string): Promise<EndnoteLibState> {
+  try {
+    const file = await readResearchFile(projectPath, "papers/endnote-library.path");
+    const line = file.text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith("#"));
+    const base: EndnoteLibState = { path: line ?? null, revision: file.revision ?? "new" };
+    if (line) {
+      const legacy = await invoke<boolean>("endnote_library_legacy", { path: line }).catch(() => undefined);
+      const next = legacy === undefined ? base : { ...base, legacy };
+      endnoteLibCache.set(projectPath, next);
+      return next;
+    }
+    endnoteLibCache.set(projectPath, base);
+    return base;
+  } catch {
+    const fallback: EndnoteLibState = { path: null, revision: "new" };
+    endnoteLibCache.set(projectPath, fallback);
+    return fallback;
+  }
+}
+
+async function loadSpotCheckPicksSnapshot(rootsKey: string): Promise<{ root: string; items: SpotCheckPick[] } | null> {
+  for (const root of rootsKey.split("\n")) {
+    try {
+      const file = await readResearchLedger(root, "notes/index.json");
+      if (file.truncated) continue;
+      const items = spotCheckPicks(file.text);
+      const next = items.length > 0 ? { root, items } : null;
+      spotCheckPicksCache.set(rootsKey, next);
+      return next;
+    } catch {
+      /* 这一处还没有索引，试下一处 */
+    }
+  }
+  spotCheckPicksCache.set(rootsKey, null);
+  return null;
+}
+
+async function readCiteStyleFamilyFromRoots(roots: string[]): Promise<StyleFamily | null> {
+  for (const root of roots) {
+    for (const rel of ["manuscript/citation.csl", "citation.csl"]) {
+      try {
+        const file = await invoke<{ text: string }>("read_file_preview", {
+          path: `${root}/${rel}`,
+          root,
+        });
+        return styleFamilyOf(file.text);
+      } catch {
+        // 试下一个位置
+      }
+    }
+  }
+  return null;
+}
+
+async function readTargetJournalFromRoots(roots: string[]): Promise<string | null> {
+  for (const root of roots) {
+    try {
+      const file = await invoke<{ text: string }>("read_file_preview", {
+        path: `${root}/submission/target-journal.md`,
+        root,
+      });
+      return parseTargetJournal(file.text);
+    } catch {
+      // 试下一个位置
+    }
+  }
+  return null;
+}
+
+/** 进项目时在后台静默预热全部非 pending 步骤的 StepFlow 模块缓存，确保首次点击切换也能一帧到位。 */
+export async function prefetchStepFlowCaches(params: {
+  projectPath: string;
+  steps: readonly ProjectStepDto[];
+  workspaces: readonly WorkspaceDto[];
+  stepKeys?: readonly string[];
+  skillProvides: SkillProvides;
+  isStale?: () => boolean;
+}): Promise<void> {
+  const { projectPath, steps, workspaces, stepKeys, skillProvides, isStale } = params;
+  if (!projectPath || steps.length === 0) return;
+  const searchStepName =
+    steps.find((st) => stepFillsAnySlot(st.skills, ["lit-search"], skillProvides))?.name ?? null;
+  const notesStepName =
+    steps.find((st) => stepFillsAnySlot(st.skills, ["lit-notes"], skillProvides))?.name ?? null;
+  const toFetchDone = recalledToFetchDone(projectPath);
+  const toFetchSkipped = readToFetchSkipped(projectPath);
+
+  let needsRemember = false;
+  let needsPaywall = false;
+  let needsEndnote = false;
+  const paywallRoots = new Set<string>();
+
+  await Promise.all(
+    steps.map(async (step, idx) => {
+      if (isStale?.()) return;
+      const key = stepKeys?.[idx];
+      const runStatus: StepRunStatus =
+        key === "done"
+          ? "done"
+          : key === "review" || key === "blocked"
+            ? "review"
+            : key === "active" || key === "checking"
+              ? "active"
+              : "pending";
+      const ws = workspaces.find(
+        (w) => w.name === step.workspaceName && w.status === "active",
+      );
+      if (runStatus === "pending" && !ws) return;
+      const dataWs = runStatus === "done" ? undefined : ws;
+      const stepRoots = stepDataRoots(ws, runStatus, projectPath);
+      const nextStepName = idx < steps.length - 1 ? steps[idx + 1]!.name : null;
+
+      // 1. 预热「后续建议」
+      const nextKey = `${projectPath}\n${step.name}\n${ws?.worktreePath ?? ""}\n${runStatus}`;
+      const nextStepKey = `${projectPath}\n${step.name}\n${runStatus}`;
+      const na = await loadStepNextActionsSnapshot({
+        projectPath,
+        step,
+        ws,
+        dataWs,
+        runStatus,
+        skillProvides,
+        nextStepName,
+        searchStepName,
+        notesStepName,
+        toFetchDone,
+        toFetchSkipped,
+      }).catch(() => null);
+      if (isStale?.()) return;
+      nextActionsCache.set(nextKey, na);
+      nextActionsCache.set(nextStepKey, na);
+      if (na?.optional.some((o) => o.action === "remember")) needsRemember = true;
+      if (na?.optional.some((o) => o.action === "fetch_pdf")) {
+        needsPaywall = true;
+        paywallRoots.add(dataWs?.worktreePath ?? "");
+      }
+
+      // 2. 预热「AI 干活」统计行
+      const hasStepProgress = !!ws || runStatus === "done";
+      const progressStepKey = `${projectPath}\n${step.name}`;
+      const progressKey = `${progressStepKey}\n${dataWs?.worktreePath ?? ""}\n${hasStepProgress}`;
+      const notesStep = stepFillsAnySlot(step.skills, ["lit-notes"], skillProvides);
+      const searchStep = stepFillsAnySlot(step.skills, ["lit-search"], skillProvides);
+      const outlineStep = stepFillsAnySlot(step.skills, ["review-framework"], skillProvides);
+      const draftStep = stepKind(step, skillProvides) === "writing";
+      let parts: string[] | null = null;
+      if (notesStep) {
+        for (const root of stepRoots) {
+          try {
+            const file = await readResearchLedger(root, "notes/index.json");
+            if (file.truncated) continue;
+            const excluded = await readResearchLedger(root, "papers/included.json")
+              .then((f) => (f.truncated ? new Set<string>() : excludedIncludedIds(f.text)))
+              .catch(() => new Set<string>());
+            const progress = notesProgress(file.text, excluded);
+            parts = progress ? notesProgressParts(progress) : null;
+            break;
+          } catch {
+            /* 试下一处 */
+          }
+        }
+        const spotRoots = (dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]).join("\n");
+        void loadSpotCheckPicksSnapshot(spotRoots);
+      } else if (searchStep) {
+        if (readPaywallListOpen(projectPath)) {
+          needsPaywall = true;
+          paywallRoots.add(dataWs?.worktreePath ?? "");
+        }
+        for (const root of stepRoots) {
+          try {
+            const file = await readResearchLedger(root, "papers/included.json");
+            if (file.truncated) continue;
+            parts = await searchCountLineWithFiles(projectPath, file.text).catch(() => null);
+            break;
+          } catch {
+            /* 试下一处 */
+          }
+        }
+      } else if (outlineStep) {
+        for (const root of stepRoots) {
+          try {
+            const file = await readResearchFile(root, "outline.md");
+            if (file.truncated) continue;
+            parts = await outlineCountLine(stepRoots)(file.text).catch(() => null);
+            break;
+          } catch {
+            /* 试下一处 */
+          }
+        }
+      } else if (draftStep) {
+        const roots = dataWs ? [dataWs.worktreePath, projectPath] : [projectPath];
+        parts = await loadDraftProgress(roots, step.expectedArtifacts ?? []).catch(() => null);
+      }
+      if (!isStale?.() && parts) {
+        agentProgressCache.set(progressKey, parts);
+        agentProgressCache.set(progressStepKey, parts);
+      }
+
+      // 3. 预热 EndNote 库与引用样式
+      if (isEndnoteExportStep(step)) needsEndnote = true;
+      if ((step.humanTasks ?? []).some((t) => isCitationStyleTask(t.title)) && runStatus !== "pending") {
+        const citeKey = `${projectPath}\n${ws?.worktreePath ?? ""}`;
+        const roots = [...(ws ? [ws.worktreePath] : []), projectPath];
+        const [family, journal] = await Promise.all([
+          readCiteStyleFamilyFromRoots(roots),
+          readTargetJournalFromRoots(roots),
+        ]);
+        if (!isStale?.()) {
+          citeStyleCache.set(citeKey, { family, journal });
+          citeStyleCache.set(projectPath, { family, journal });
+        }
+      }
+    }),
+  );
+
+  if (isStale?.()) return;
+  const projectTasks: Promise<unknown>[] = [];
+  if (needsRemember) {
+    projectTasks.push(loadRememberedTextsSnapshot(projectPath).catch(() => {}));
+  }
+  if (needsEndnote) {
+    projectTasks.push(loadEndnoteLibSnapshot(projectPath).catch(() => {}));
+  }
+  if (needsPaywall) {
+    for (const wt of paywallRoots) {
+      const dataWs = wt ? workspaces.find((w) => w.worktreePath === wt) : undefined;
+      const pKey = `${projectPath}\n${wt}`;
+      projectTasks.push(
+        loadPaywallListSnapshot(projectPath, dataWs)
+          .then((res) => {
+            if (isStale?.()) return;
+            paywallListCache.set(pKey, res);
+            if (res.text != null) {
+              paywallListCache.set(projectPath, res);
+              const items = parseToFetchItems(res.text);
+              if (items.length > 0) {
+                return invoke<(string | null)[]>("to_fetch_progress", {
+                  projectRoot: projectPath,
+                  items: items.map((it) => ({ title: it.title, url: it.url })),
+                })
+                  .then((names) => {
+                    const map: Record<number, string> = {};
+                    names?.forEach((n, i) => {
+                      const it = items[i];
+                      if (n && it) map[it.line] = n;
+                    });
+                    rememberToFetchDone(projectPath, map);
+                  })
+                  .catch(() => {});
+              }
+            }
+          })
+          .catch(() => {}),
+      );
+    }
+  }
+  await Promise.all(projectTasks);
+}
+
 /** 精读步「AI 干活」行下的进度（notes/index.json，工作区优先、项目根兜底）。
  *  Agent 分批写、中途提交后接着读：跑着时 20 秒重读一次，窗口回到前台也重读。 */
 function NotesProgressLine({ roots, live, onChange }: { roots: string[]; live: boolean; onChange: (parts: string[] | null) => void }) {
@@ -466,25 +1026,16 @@ function SpotCheckPicks({
 }) {
   const setReaderReq = useAppStore((s) => s.setReaderReq);
   const setPage = useAppStore((s) => s.setPage);
-  const [picks, setPicks] = useState<{ root: string; items: SpotCheckPick[] } | null>(null);
   const roots = ws ? [ws.worktreePath, projectPath] : [projectPath];
   const rootsKey = roots.join("\n");
+  const [picks, setPicks] = useState<{ root: string; items: SpotCheckPick[] } | null>(
+    () => spotCheckPicksCache.get(rootsKey) ?? null,
+  );
   useEffect(() => {
     let stale = false;
-    void (async () => {
-      for (const root of rootsKey.split("\n")) {
-        try {
-          const file = await readResearchLedger(root, "notes/index.json");
-          if (file.truncated) continue;
-          const items = spotCheckPicks(file.text);
-          if (!stale) setPicks(items.length > 0 ? { root, items } : null);
-          return;
-        } catch {
-          /* 这一处还没有索引，试下一处 */
-        }
-      }
-      if (!stale) setPicks(null);
-    })();
+    void loadSpotCheckPicksSnapshot(rootsKey).then((next) => {
+      if (!stale) setPicks((cur) => (sameJson(cur, next) ? cur : next));
+    });
     return () => {
       stale = true;
     };
@@ -537,7 +1088,7 @@ function SpotCheckPicks({
 }
 
 /** 按钮没说的那一句：可选/跳过的后果。做法进行内按钮 title。 */
-const PAYWALL_HINT = "跳过的篇目下一篇按摘要记。";
+const PAYWALL_HINT = "未补全文的篇目下一步按摘要记。";
 const PENDING_HINT = "待确认点纳入或排除。已纳入不想要就点移出，笔记和引文留着。";
 const PENDING_DONE_HINT =
   "待确认都定了，这一项已自动勾上。已纳入的仍可移出：移出会从纳入清单、待获取和两份 RIS 里拿掉，已写的笔记和引文留着，要到精读那一步清。";
@@ -629,6 +1180,18 @@ export default function StepFlow({
   onContinueStep,
   onContinueFresh,
   stepIndex,
+  nextStepName = null,
+  onGoNextStep,
+  onReworkPrefill,
+  pendingRework = null,
+  defaultUpstreamStep = null,
+  searchStepName = null,
+  notesStepName = null,
+  catchUpCount = 0,
+  catchUpBusy = false,
+  onCatchUpReads,
+  onPdfAdded,
+  onFollowUpstream,
 }: {
   projectPath: string;
   step: ProjectStepDto;
@@ -720,19 +1283,40 @@ export default function StepFlow({
    *  商量类入口（任务书讨论/MCP 登录）刻意不吃步骤专属绑定（2026-10-15 用户拍板）：
    *  讨论质量取决于通用对话能力、与步骤任务类型无关，全项目保持一致的商量体验；
    *  步骤绑定只管执行面（开工弹层/继续/去终端）。 */
-  projectLaunch?: { agentId: string; profileId: string; model: string } | null;
+  projectLaunch?: ResolvedTaskBindingLaunch | null;
   /** 仅 step: 槽命中（不含 discuss/项目默认回落）。去终端看看用来决定要不要接回旧会话。 */
-  stepSlotLaunch?: { agentId: string; profileId: string; model: string } | null;
+  stepSlotLaunch?: ResolvedTaskBindingLaunch | null;
   /** 工作区已开时：新会话，用步骤绑定接着做到完成标准。不接回旧 Agent。 */
   onContinueStep?: () => void;
   /** 有能接回的上次对话时才给：不接原对话，新开一个会话从任务书读起 */
   onContinueFresh?: () => void;
+  /** 下一步名称与跳转回调（供收尾「下一步建议」卡在已保存后一键进入下一步） */
+  nextStepName?: string | null;
+  onGoNextStep?: () => void;
+  /** 从「下一步建议」卡一键打开预填好的退回/补文献弹层（reads 可同时预填补文献的「精读已有的」栏） */
+  onReworkPrefill?: (initial: { target: string; topics: string; reads?: string; reason: string }) => void;
+  /** 本步已发出、尚未保存收口的在途上游补料单：建议卡把对应退回按钮原位变成实时直达态，并让主焦点柔和让位 */
+  pendingRework?: { toStep: string; status: string; onGoTarget?: () => void } | null;
+  /** 默认退回的上一步名称（当建议条目未显式指定 targetStep 时回落） */
+  defaultUpstreamStep?: string | null;
+  /** 本流程里的检索步 / 精读步名称（用于大纲兜底补文献） */
+  searchStepName?: string | null;
+  notesStepName?: string | null;
+  /** 精读步里原本缺全文、现已新到 papers/ 的篇数，以及一键启动精读补读轮的回调 */
+  catchUpCount?: number;
+  catchUpBusy?: boolean;
+  onCatchUpReads?: () => void;
+  /** papers/ 匹配到新 PDF 时通知父级刷新精读补读候选 */
+  onPdfAdded?: () => void;
+  /** 触发「跟进更新」 */
+  onFollowUpstream?: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const {
     states,
     error,
     note,
+    clearError,
     busyTitle,
     dropHover,
     toggle,
@@ -751,6 +1335,10 @@ export default function StepFlow({
   // 原先保存后仍先读写工作副本那份旧的——后面步骤改过的看不到，回头在这里改的也永远进不了项目（2026-11-05 排查）。
   // 要交回这一步 AI 接着做的（逐条决定、许可 / 声明、引用样式）仍走工作副本：AI 在那里接着干活
   const dataWs = runStatus === "done" ? undefined : ws;
+  const stepRoots = useMemo(
+    () => stepDataRoots(ws, runStatus, projectPath),
+    [ws?.status, ws?.worktreePath, runStatus, projectPath],
+  );
   // 分段：首段放标题旁，其余进明细行；由取数函数直接分好，改计数文案不会把标题和明细拆错
   // 换步骤时整张卡按 key 重新挂载，计数要等异步读完台账：先空着再补一行，工具行会被往下推一下（2026-11-13 用户：切步骤小字抖）。
   // 记住每步上次读到的分段，挂载时直接画出来，读完有变化才换；「保存进项目」瞬间 worktreePath 变空时退回步骤级缓存防闪空
@@ -873,15 +1461,152 @@ export default function StepFlow({
     text: string;
     tone?: "info" | "warn" | "err";
   } | null>(null);
-  const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(new Map());
+  const decisionOpenKey = `${projectPath}\n${step.name}`;
+  const [decisionOpen, setDecisionOpen] = useState<Map<string, number>>(
+    () => new Map(decisionOpenCache.get(decisionOpenKey) ?? []),
+  );
+  const [decisionMeta, setDecisionMeta] = useState<Record<string, ReviewDecisionMeta>>(
+    () => ({ ...(decisionMetaCache.get(decisionOpenKey) ?? {}) }),
+  );
+  const [decisionFold, setDecisionFold] = useState<Record<string, boolean>>({});
+  const [decisionModal, setDecisionModal] = useState<{
+    title: string;
+    target: string;
+    kind: ReviewItemKind;
+    readOnly: boolean;
+  } | null>(null);
+  const [decisionModalSyncTick, setDecisionModalSyncTick] = useState(0);
+  const [decisionSplitOpen, setDecisionSplitOpen] = useState(false);
+  const [decisionSplitFile, setDecisionSplitFile] = useState<{
+    path: string;
+    root: string;
+    name: string;
+    rel: string;
+    line?: number;
+    nonce: number;
+  } | null>(null);
+  const [handbackSummary, setHandbackSummary] = useState<Record<string, HandbackSummaryState>>(
+    () => ({ ...(handbackSummaryCache.get(decisionOpenKey) ?? {}) }),
+  );
+  const [handbackModal, setHandbackModal] = useState<{
+    title: string;
+    target: string;
+    panel: "permissions" | "sections";
+    handback: string;
+  } | null>(null);
+  const [handbackSyncTick, setHandbackSyncTick] = useState(0);
+  const inlineDeclRef = useRef<DeclarationsFormHandle>(null);
+  const modalDeclRef = useRef<DeclarationsFormHandle>(null);
+
+  const updateDecisionMeta = useCallback(
+    (title: string, meta: ReviewDecisionMeta) => {
+      setDecisionMeta((prev) => {
+        const cur = prev[title];
+        if (
+          cur &&
+          cur.total === meta.total &&
+          cur.open === meta.open &&
+          cur.decided === meta.decided &&
+          cur.accepted === meta.accepted &&
+          cur.modified === meta.modified &&
+          cur.rejected === meta.rejected &&
+          cur.missing === meta.missing &&
+          cur.fileRoot === meta.fileRoot &&
+          cur.fileList.length === meta.fileList.length &&
+          cur.fileList.every((f, i) => f.path === meta.fileList[i]?.path)
+        ) {
+          return prev;
+        }
+        const next = { ...prev, [title]: meta };
+        decisionMetaCache.set(decisionOpenKey, next);
+        return next;
+      });
+    },
+    [decisionOpenKey],
+  );
+
+  const updateHandbackSummary = useCallback(
+    (title: string, summary: HandbackSummaryState) => {
+      setHandbackSummary((prev) => {
+        if (sameJson(prev[title], summary)) return prev;
+        const next = { ...prev, [title]: summary };
+        handbackSummaryCache.set(decisionOpenKey, next);
+        return next;
+      });
+    },
+    [decisionOpenKey],
+  );
+
+  function openDecisionModal(title: string, target: string, kind: ReviewItemKind, readOnly: boolean) {
+    setDecisionModal({ title, target, kind, readOnly });
+    setDecisionSplitFile(null);
+    const cachedFiles = decisionMeta[title]?.fileList ?? [];
+    const wide = typeof window !== "undefined" ? window.innerWidth >= 1024 : false;
+    setDecisionSplitOpen(wide && cachedFiles.length > 0);
+  }
+
+  function closeDecisionModal() {
+    setDecisionModal(null);
+    setDecisionSplitOpen(false);
+    setDecisionSplitFile(null);
+    setDecisionModalSyncTick((t) => t + 1);
+  }
+
+  function openModalSplitFile(req: ReviewDecisionOpenFileReq, title: string) {
+    void (async () => {
+      // 用户已通过「新窗口打开」拆出独立文件窗口时，行号跳转同步到该独立窗口，不重复挤分栏
+      const externalOpen = await invoke<boolean>("file_viewer_is_open").catch(() => false);
+      if (externalOpen) {
+        await openProjectFileInWindow({
+          projectRoot: projectPath,
+          root: req.root,
+          path: req.path,
+          name: req.name,
+          rel: req.rel,
+          line: req.line,
+          showList: req.showList,
+          list: req.list,
+          from: title,
+        });
+        return;
+      }
+      setDecisionSplitOpen(true);
+      setDecisionSplitFile((prev) => ({
+        path: req.path,
+        root: req.root,
+        name: req.name,
+        rel: req.rel,
+        line: req.line,
+        nonce: (prev?.nonce ?? 0) + 1,
+      }));
+    })();
+  }
+
+  async function closeHandbackModal() {
+    if (handbackModal?.panel === "sections") {
+      await modalDeclRef.current?.flushSave().catch(() => {});
+    }
+    setHandbackModal(null);
+    setHandbackSyncTick((t) => t + 1);
+  }
   const [citeOpen, setCiteOpen] = useState<string | null>(null);
   const [citeBusy, setCiteBusy] = useState(false);
   const [citeNote, setCiteNote] = useState<string | null>(null);
-  const [currentCiteFamily, setCurrentCiteFamily] = useState<StyleFamily | null>(null);
+  const stepHasCitationTask = (step.humanTasks ?? []).some((task) => isCitationStyleTask(task.title));
+  const citeCacheKey = `${projectPath}\n${ws?.worktreePath ?? ""}`;
+  const cachedCite =
+    stepHasCitationTask && runStatus !== "pending"
+      ? (citeStyleCache.get(citeCacheKey) ?? citeStyleCache.get(projectPath) ?? null)
+      : null;
+  const [currentCiteFamily, setCurrentCiteFamily] = useState<StyleFamily | null>(
+    () => cachedCite?.family ?? null,
+  );
 
   const [journals, setJournals] = useState<{ name: string; count: number }[] | null>(null);
   const [journalName, setJournalName] = useState("");
-  const [draftJournal, setDraftJournal] = useState<string | null>(null);
+  const [draftJournal, setDraftJournal] = useState<string | null>(
+    () => cachedCite?.journal ?? null,
+  );
   const [journalSwap, setJournalSwap] = useState(false);
   // 点选时记下「要哪一类样式」和「改前的样式」，用户回来时据此核对是否真换成。
   const citeWant = useRef<{ family: StyleFamily | null; label: string } | null>(null);
@@ -891,18 +1616,38 @@ export default function StepFlow({
   // 首次点开才读文件，收起不清缓存；这一步的运行状态变了（退回修改后 agent 在同一工作区
   // 又跑一轮）就重读——项目页常驻不卸载，不重读会一直显示上一轮的清单。
   // 位置口径：agent 的产出落在步骤工作区，评审合并后才进项目根——先读工作区再回落项目根
-  const [pendingListOpen, setPendingListOpen] = useState(true);
+  // 已保存步骤（done）或「核对待确认篇目」已勾选默认收起文献清单，首帧即定开合，避免先闪开一帧再收起
+  const [pendingListOpen, setPendingListOpen] = useState(
+    () => runStatus !== "done" && !(states ?? []).some((s) => isPendingConfirmTaskTitle(s.title) && s.done),
+  );
   // 开工后「确定文献来源」收成一行；点「更改」才摊开选项
   const [litSourceEditing, setLitSourceEditing] = useState(false);
-  // 进来时「核对待确认篇目」已经做完：文献清单先收起（回看不铺一长串）；当场清完的保持展开，画面不跳
-  const pendingFoldInit = useRef(false);
+  // 进来时若 states 还没读到，等首份 states 回来补判一次；当场清完的保持展开，画面不跳
+  const pendingFoldInit = useRef(Boolean(states));
   useEffect(() => {
     if (pendingFoldInit.current || !states) return;
     pendingFoldInit.current = true;
-    if (states.some((s) => isPendingConfirmTaskTitle(s.title) && s.done)) setPendingListOpen(false);
-  }, [states]);
+    if (runStatus === "done" || states.some((s) => isPendingConfirmTaskTitle(s.title) && s.done)) {
+      setPendingListOpen(false);
+    }
+  }, [states, runStatus]);
+  useEffect(() => {
+    if (runStatus === "done") setPendingListOpen(false);
+  }, [runStatus]);
   const pendingListRef = useRef<PendingConfirmHandle>(null);
-  const [pendingMeta, setPendingMeta] = useState({ count: 0, busy: false });
+  const pendingMetaKey = `${projectPath}\n${dataWs?.worktreePath ?? ""}`;
+  const [pendingMeta, setPendingMetaState] = useState(
+    () => pendingMetaCache.get(pendingMetaKey) ?? { count: 0, busy: false },
+  );
+  const setPendingMeta = useCallback(
+    (meta: { count: number; busy: boolean }) => {
+      pendingMetaCache.set(pendingMetaKey, meta);
+      setPendingMetaState((cur) =>
+        cur.count === meta.count && cur.busy === meta.busy ? cur : meta,
+      );
+    },
+    [pendingMetaKey],
+  );
   const pendingSettled =
     pendingMeta.count === 0 && (states ?? []).some((s) => isPendingConfirmTaskTitle(s.title) && s.done);
   /** 清单行下那句说明：有待确认篇目才写「怎么点」；都定了只在摊开清单时写移出的后果 */
@@ -937,17 +1682,159 @@ export default function StepFlow({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledgerRefreshKey]);
-  const [academicMcp, setAcademicMcp] = useState<AcademicMcpLogin | null>(null);
+
+  /** 轻量预读本步的逐条决定 / 许可清单 / 投稿声明进度：未展开或已勾选完成时也能在行头看到计数与「回看」入口。 */
+  useEffect(() => {
+    if (runStatus === "pending") return;
+    const tasks = step.humanTasks ?? [];
+    const decisionTasks = tasks.filter((t) => Boolean(t.target && reviewItemKind(t.title)));
+    const hbTasks = tasks.filter((t) => Boolean(t.target && handbackTask(t.title)));
+    if (decisionTasks.length === 0 && hbTasks.length === 0) return;
+    const roots = [...new Set([ws?.worktreePath, projectPath].filter((p): p is string => Boolean(p)))];
+    let stale = false;
+    void (async () => {
+      const readFirstInRoots = async (rel: string) => {
+        for (const root of roots) {
+          try {
+            const file = await readResearchFile(root, rel);
+            if (!file.truncated) return { root, text: file.text };
+          } catch {
+            /* 试下一处 */
+          }
+        }
+        return null;
+      };
+      for (const task of decisionTasks) {
+        const kind = reviewItemKind(task.title);
+        if (!kind || !task.target) continue;
+        const hit = await readFirstInRoots(task.target);
+        if (stale || !hit) continue;
+        const parsed = parseReviewItems(hit.text, kind);
+        const counts = countReviewVerdicts(parsed);
+        setDecisionOpen((prev) => {
+          if (prev.get(task.title) === counts.open) return prev;
+          const next = new Map(prev);
+          next.set(task.title, counts.open);
+          decisionOpenCache.set(decisionOpenKey, next);
+          return next;
+        });
+        setDecisionMeta((prev) => {
+          const cur = prev[task.title];
+          const nextMeta: ReviewDecisionMeta = {
+            ...counts,
+            missing: false,
+            fileList: cur?.fileList ?? [],
+            fileRoot: cur?.fileRoot || hit.root,
+          };
+          if (
+            cur &&
+            cur.total === nextMeta.total &&
+            cur.open === nextMeta.open &&
+            cur.decided === nextMeta.decided &&
+            cur.accepted === nextMeta.accepted &&
+            cur.modified === nextMeta.modified &&
+            cur.rejected === nextMeta.rejected &&
+            !cur.missing
+          ) {
+            return prev;
+          }
+          const next = { ...prev, [task.title]: nextMeta };
+          decisionMetaCache.set(decisionOpenKey, next);
+          return next;
+        });
+      }
+      for (const task of hbTasks) {
+        const hb = handbackTask(task.title);
+        if (!hb || !task.target) continue;
+        const hit = await readFirstInRoots(task.target);
+        if (stale || !hit) continue;
+        if (hb.panel === "permissions") {
+          updateHandbackSummary(task.title, {
+            kind: "permissions",
+            data: summarizePermissions(hit.text),
+          });
+        } else {
+          updateHandbackSummary(task.title, {
+            kind: "sections",
+            data: summarizeDeclarations(hit.text),
+          });
+        }
+      }
+    })();
+    return () => {
+      stale = true;
+    };
+  }, [
+    runStatus,
+    step.humanTasks,
+    ws?.worktreePath,
+    projectPath,
+    ledgerRefreshKey,
+    decisionModalSyncTick,
+    handbackSyncTick,
+    decisionOpenKey,
+    updateHandbackSummary,
+  ]);
+  const stepHasAcademicMcp = (step.humanTasks ?? []).some((task) =>
+    isAcademicMcpTaskTitle(task.title),
+  );
+  const [academicMcp, setAcademicMcp] = useState<AcademicMcpLogin | null>(() =>
+    stepHasAcademicMcp ? lastAcademicMcpCache : null,
+  );
+  const [pendingModalOpen, setPendingModalOpen] = useState(false);
+  const [pendingModalSyncTick, setPendingModalSyncTick] = useState(0);
+  const pendingModalRef = useRef<PendingConfirmHandle>(null);
+  const [paywallModalOpen, setPaywallModalOpen] = useState(false);
+  const [paywallQuery, setPaywallQuery] = useState("");
+  const [paywallOnlyMissing, setPaywallOnlyMissing] = useState(false);
+  const [paywallPriority, setPaywallPriority] = useState<{
+    label: string;
+    dois: string[];
+    keys: string[];
+  } | null>(null);
+  const [paywallOnlyPriority, setPaywallOnlyPriority] = useState(false);
+  const [paywallSort, setPaywallSort] = useState<"listed" | "if-desc" | "added-desc">("listed");
+  /** 本步收尾「下一步建议」导航卡（.ccode/next-actions.json / 合并后镜像 / 确定性台账兜底） */
+  const nextActionsKey = `${projectPath}\n${step.name}\n${ws?.worktreePath ?? ""}\n${runStatus}`;
+  const nextActionsStepKey = `${projectPath}\n${step.name}\n${runStatus}`;
+  const [nextActions, setNextActions] = useState<StepNextActions | null>(() =>
+    runStatus === "pending"
+      ? null
+      : (nextActionsCache.get(nextActionsKey) ?? nextActionsCache.get(nextActionsStepKey) ?? null),
+  );
+  // null = 跟随自动策略（已保存且仍有未处理建议时默认展开，全部勾完再自动收成一行；2026-11-23 实测：
+  // 此前已保存一律折叠，切回来还得再点开）；boolean = 用户手动展开/收起，记住直到本步再次保存
+  const [nextActionsManualOpen, setNextActionsManualOpen] = useState<boolean | null>(() =>
+    readNextActionsOpen(projectPath, step.name),
+  );
+  const [doneNextOptIds, setDoneNextOptIds] = useState<Set<string>>(() =>
+    readNextActionChecks(projectPath, step.name),
+  );
+  const prevNextRunStatusRef = useRef(runStatus);
+  useEffect(() => {
+    if (runStatus === "done" && prevNextRunStatusRef.current !== "done") {
+      setNextActionsManualOpen(null);
+      writeNextActionsOpen(projectPath, step.name, null);
+    }
+    prevNextRunStatusRef.current = runStatus;
+  }, [runStatus, projectPath, step.name]);
+  const [rememberedTexts, setRememberedTexts] = useState<Set<string>>(
+    () => rememberedTextsCache.get(projectPath) ?? new Set(),
+  );
+  const [rememberBusyId, setRememberBusyId] = useState<string | null>(null);
+  const paywallModalDropRef = useRef<HTMLDivElement>(null);
   const [paywallListOpen, setPaywallListOpen] = useState(() =>
     readPaywallListOpen(projectPath),
   );
-  const [paywallMetrics, setPaywallMetrics] = useState<Map<number, JournalMetricsDto | null>>(new Map());
+  const paywallCacheKey = `${projectPath}\n${dataWs?.worktreePath ?? ""}`;
+  const initialPaywallList =
+    paywallListCache.get(paywallCacheKey) ??
+    paywallListCache.get(projectPath) ?? { text: null, error: null, from: null };
+  const [paywallMetrics, setPaywallMetrics] = useState<Map<number, JournalMetricsDto | null>>(
+    () => cachedPaywallMetricsFor(initialPaywallList.text),
+  );
   const [paywallMetricsLoading, setPaywallMetricsLoading] = useState(false);
-  const [paywallList, setPaywallList] = useState<{
-    text: string | null;
-    error: string | null;
-    from: string | null;
-  }>({ text: null, error: null, from: null });
+  const [paywallList, setPaywallList] = useState<PaywallListState>(initialPaywallList);
   const [zoteroSyncing, setZoteroSyncing] = useState(false);
   const [zoteroSyncResult, setZoteroSyncResult] = useState<{
     line: string;
@@ -960,10 +1847,11 @@ export default function StepFlow({
     line: string;
     xmlPath?: string;
   } | null>(null);
+  const endnoteStep = isEndnoteExportStep(step);
   /** 人指定的 EndNote 库（papers/endnote-library.path 那一行）。undefined = 还没读；null = 没指定 */
-  const [endnoteLib, setEndnoteLib] = useState<
-    { path: string | null; revision: string; legacy?: boolean } | undefined
-  >(undefined);
+  const [endnoteLib, setEndnoteLib] = useState<EndnoteLibState | undefined>(() =>
+    endnoteStep ? endnoteLibCache.get(projectPath) : undefined,
+  );
   const [endnoteLibNote, setEndnoteLibNote] = useState<string | null>(null);
   /** 「选这个 EndNote 库」展开的候选：EndNote 最近打开过的库，加文稿 / 桌面里的 .enl */
   const [endnoteChoices, setEndnoteChoices] = useState<
@@ -983,15 +1871,179 @@ export default function StepFlow({
   const [toFetchDone, setToFetchDone] = useState<Record<number, string>>(() =>
     recalledToFetchDone(projectPath),
   );
+  // 用户在待获取清单里标记「跳过 / 仅摘要即可」的篇目键集合（按项目持久化，不脏 git）
+  const [toFetchSkipped, setToFetchSkipped] = useState<Set<string>>(() =>
+    readToFetchSkipped(projectPath),
+  );
+  useEffect(() => {
+    const next = readToFetchSkipped(projectPath);
+    setToFetchSkipped((cur) => (sameStringSet(cur, next) ? cur : next));
+  }, [projectPath]);
+  function toggleSkipToFetchItem(item: ToFetchItem) {
+    const key = toFetchItemKey(item);
+    if (!key) return;
+    setToFetchSkipped((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+        toast("已恢复到待获取清单", "info");
+      } else {
+        next.add(key);
+        toast("已跳过，保留仅摘要（不计入缺全文，随时可恢复）", "info");
+      }
+      writeToFetchSkipped(projectPath, next);
+      return next;
+    });
+  }
   const paywallSavedCount = useMemo(
     () => toFetchSavedCount(toFetchItems, toFetchDone),
     [toFetchItems, toFetchDone],
   );
+  const paywallSkippedCount = useMemo(
+    () => toFetchSkippedCount(toFetchItems, toFetchDone, toFetchSkipped),
+    [toFetchItems, toFetchDone, toFetchSkipped],
+  );
+  const paywallPriorityMatchSet = useMemo(() => {
+    const out = new Set<number>();
+    if (!paywallPriority) return out;
+    for (const item of toFetchItems) {
+      if (matchesPriorityFetch(item, paywallPriority.dois, paywallPriority.keys)) {
+        out.add(item.line);
+      }
+    }
+    return out;
+  }, [toFetchItems, paywallPriority]);
+  const visibleToFetchItems = useMemo(() => {
+    const terms = paywallQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const filtered = toFetchItems.filter((item) => {
+      const done = item.done || Boolean(toFetchDone[item.line]);
+      const skipped = !done && isToFetchSkipped(item, toFetchSkipped);
+      if (paywallOnlyMissing && (done || skipped)) return false;
+      if (paywallOnlyPriority && paywallPriorityMatchSet.size > 0 && !paywallPriorityMatchSet.has(item.line)) {
+        return false;
+      }
+      if (terms.length > 0) {
+        const hay = `${item.title} ${item.venue} ${item.url}`.toLowerCase();
+        if (!terms.every((t) => hay.includes(t))) return false;
+      }
+      return true;
+    });
+    const scoreOf = (line: number) => {
+      const raw = paywallMetrics.get(line)?.impactFactor;
+      const n = raw ? Number.parseFloat(raw) : Number.NaN;
+      return Number.isFinite(n) ? n : -1;
+    };
+    const compare = (a: ToFetchItem, b: ToFetchItem) => {
+      if (paywallPriorityMatchSet.size > 0) {
+        const pa = paywallPriorityMatchSet.has(a.line) ? 0 : 1;
+        const pb = paywallPriorityMatchSet.has(b.line) ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+      }
+      if (paywallSort === "listed") return a.line - b.line;
+      if (paywallSort === "if-desc") {
+        const diff = scoreOf(b.line) - scoreOf(a.line);
+        return diff !== 0 ? diff : a.line - b.line;
+      }
+      const ad = a.addedOn ?? "";
+      const bd = b.addedOn ?? "";
+      if (ad !== bd) return bd.localeCompare(ad);
+      return a.line - b.line;
+    };
+    if (paywallSort === "listed" && paywallPriorityMatchSet.size === 0) return filtered;
+    return [...filtered].sort(compare);
+  }, [
+    toFetchItems,
+    toFetchDone,
+    toFetchSkipped,
+    paywallQuery,
+    paywallOnlyMissing,
+    paywallOnlyPriority,
+    paywallPriorityMatchSet,
+    paywallSort,
+    paywallMetrics,
+  ]);
   const toFetchProbeRef = useRef<{ text: string | null; items: typeof toFetchItems }>({
     text: null,
     items: [],
   });
   toFetchProbeRef.current = { text: paywallList.text, items: toFetchItems };
+
+  // 读取本步收尾「下一步建议」：
+  // 1) 工作区 .ccode/next-actions.json；
+  // 2) 保存合并后镜像的项目根 .ccode/step-next/<slug>.json（清工作区也不丢）；
+  // 3) Agent 未写时，从本步真实台账确定性合成兜底建议卡（零 AI 调用）。
+  useEffect(() => {
+    if (runStatus === "pending") {
+      nextActionsCache.set(nextActionsKey, null);
+      nextActionsCache.set(nextActionsStepKey, null);
+      setNextActions((cur) => (cur === null ? cur : null));
+      return;
+    }
+    let cancelled = false;
+    void loadStepNextActionsSnapshot({
+      projectPath,
+      step,
+      ws,
+      dataWs,
+      runStatus,
+      skillProvides,
+      nextStepName,
+      searchStepName,
+      notesStepName,
+      toFetchDone,
+      toFetchSkipped,
+    }).then((loaded) => {
+      if (cancelled) return;
+      nextActionsCache.set(nextActionsKey, loaded);
+      nextActionsCache.set(nextActionsStepKey, loaded);
+      setNextActions((cur) => (sameJson(cur, loaded) ? cur : loaded));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    nextActionsKey,
+    nextActionsStepKey,
+    ws?.worktreePath,
+    ws?.name,
+    dataWs?.worktreePath,
+    projectPath,
+    step.name,
+    step.workspaceName,
+    step.skills,
+    step.expectedArtifacts,
+    skillProvides,
+    runStatus,
+    agentAttention,
+    ledgerRefreshKey,
+    nextStepName,
+    searchStepName,
+    notesStepName,
+    toFetchDone,
+    toFetchSkipped,
+  ]);
+
+  // 有 fetch_pdf 建议项时自动预载/静默校对待获取清单，让「已补 X / Y 篇」与「重读已补全文」实时亮出
+  useEffect(() => {
+    if (!nextActions?.optional.some((o) => o.action === "fetch_pdf")) return;
+    void loadPaywallList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nextActions]);
+
+  // 有 remember 建议项时读取已有项目知识，避免重复记下（先用缓存首帧画到位，后台静默校对）
+  useEffect(() => {
+    if (!nextActions?.optional.some((o) => o.action === "remember")) return;
+    let stale = false;
+    loadRememberedTextsSnapshot(projectPath)
+      .then((next) => {
+        if (stale) return;
+        setRememberedTexts((cur) => (sameStringSet(cur, next) ? cur : next));
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [nextActions, projectPath]);
   // 「浏览器打开」进行中状态（2026-09-17 审计：旧口径点了之后按钮毫无变化，
   // 90 秒窗从注册到过期全程零可见性，漏收也无从察觉）：打开后 95 秒内按钮显示
   // 等待收货文案，到期回落；配套独立错误位（旧口径把报错写进 Zotero 结果槽，
@@ -1030,16 +2082,14 @@ export default function StepFlow({
   );
   const browserSpotlightAway = useRef(false);
   const toFetchListRef = useRef<HTMLUListElement>(null);
-  const stepHasAcademicMcp = (step.humanTasks ?? []).some((task) =>
-    isAcademicMcpTaskTitle(task.title),
-  );
   useEffect(() => {
     if (!stepHasAcademicMcp) return;
     let stale = false;
     void invoke<AcademicMcpLogin>("academic_mcp_login_status")
       .then((status) => {
+        lastAcademicMcpCache = status;
         if (stale) return;
-        setAcademicMcp(status);
+        setAcademicMcp((cur) => (sameJson(cur, status) ? cur : status));
         if (!status.ready) return;
         const title = (step.humanTasks ?? []).find((task) =>
           isAcademicMcpTaskTitle(task.title),
@@ -1105,6 +2155,7 @@ export default function StepFlow({
   useEffect(() => {
     if (!paywallListOpen) setBrowserOpenErr(null);
   }, [paywallListOpen]);
+  const prevToFetchCountRef = useRef(-1);
   const refreshToFetchProgress = () => {
     const { text, items } = toFetchProbeRef.current;
     if (!text || !items.length) return;
@@ -1119,17 +2170,32 @@ export default function StepFlow({
           if (n && it) map[it.line] = n;
         });
         rememberToFetchDone(projectPath, map);
-        setToFetchDone(map);
+        setToFetchDone((cur) => (sameStringRecord(cur, map) ? cur : map));
+        const count = Object.keys(map).length;
+        if (prevToFetchCountRef.current >= 0 && prevToFetchCountRef.current !== count) {
+          onPdfAdded?.();
+        }
+        prevToFetchCountRef.current = count;
       })
       .catch(() => {});
   };
+  const hasNextFetchOpt = Boolean(nextActions?.optional.some((o) => o.action === "fetch_pdf"));
   useEffect(() => {
-    if (paywallListOpen && paywallList.text) refreshToFetchProgress();
+    if ((paywallListOpen || paywallModalOpen || hasNextFetchOpt) && paywallList.text) {
+      refreshToFetchProgress();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paywallListOpen, paywallList.text]);
-  // 恢复展开（从持久化读回的 true）：清单内容也要加载回来
+  }, [paywallListOpen, paywallModalOpen, hasNextFetchOpt, paywallList.text]);
+  // 清单展开或打开大窗且有文本时，按需补齐期刊影响因子/分区指标
   useEffect(() => {
-    if (paywallListOpen && paywallList.text == null && !paywallList.error) {
+    if ((paywallListOpen || paywallModalOpen) && paywallList.text) {
+      void loadPaywallMetrics(paywallList.text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paywallListOpen, paywallModalOpen, paywallList.text]);
+  // 恢复展开（从持久化读回的 true）：清单内容挂载时静默校对（已有缓存时首帧直接展示，不闪「加载中…」）
+  useEffect(() => {
+    if (paywallListOpen) {
       void loadPaywallList();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1242,33 +2308,12 @@ export default function StepFlow({
   /** 这一步有「同步到文献库」那一行（三套模板的初稿、期刊格式、投稿材料、返修）。
    *  2026-11-10 从精读挪到初稿：大纲后还会补文献，初稿保存后清单才基本定；定稿出的两份域稿要库里每篇恰好一条，
    *  所以在定稿开工前同步一次（每次同步都是整份导入，早同步、多同步只会多出重复条目） */
-  const hasFieldDocRefresh = (step.humanTasks ?? []).some((h) => isFieldDocRefreshTitle(h.title));
-  const endnoteStep =
-    step.workspaceName === "draft" ||
-    step.workspaceName === "paper-draft" ||
-    step.workspaceName === "thesis-draft" ||
-    step.workspaceName === "journal-format" ||
-    step.workspaceName === "submission-materials" ||
-    /^rebuttal-r\d+$/.test(step.workspaceName ?? "") ||
-    hasFieldDocRefresh;
   useEffect(() => {
     if (!endnoteStep) return;
     let stale = false;
-    readResearchFile(projectPath, "papers/endnote-library.path")
-      .then((file) => {
-        if (stale) return;
-        const line = file.text
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .find((l) => l && !l.startsWith("#"));
-        setEndnoteLib({ path: line ?? null, revision: file.revision ?? "new" });
-        if (line) {
-          void invoke<boolean>("endnote_library_legacy", { path: line })
-            .then((legacy) => !stale && setEndnoteLib((cur) => (cur && cur.path === line ? { ...cur, legacy } : cur)))
-            .catch(() => {});
-        }
-      })
-      .catch(() => !stale && setEndnoteLib({ path: null, revision: "new" }));
+    void loadEndnoteLibSnapshot(projectPath).then((next) => {
+      if (!stale) setEndnoteLib((cur) => (sameEndnoteLib(cur, next) ? cur : next));
+    });
     return () => {
       stale = true;
     };
@@ -1312,7 +2357,9 @@ export default function StepFlow({
         expectedRevision: endnoteLib?.revision ?? "new",
       });
       const legacy = await invoke<boolean>("endnote_library_legacy", { path: selected }).catch(() => false);
-      setEndnoteLib({ path: selected, revision, legacy });
+      const saved: EndnoteLibState = { path: selected, revision, legacy };
+      endnoteLibCache.set(projectPath, saved);
+      setEndnoteLib(saved);
       setEndnoteChoices(null);
     } catch (e) {
       setEndnoteLibNote(String(e));
@@ -1381,23 +2428,25 @@ export default function StepFlow({
 
 
   useEffect(() => {
-    if (!paywallListOpen || !projectPath) return;
+    if ((!paywallListOpen && !paywallModalOpen) || !projectPath) return;
     function overList(x: number, y: number): boolean {
       const scale = window.devicePixelRatio || 1;
-      const box = paywallDropRef.current;
-      if (!box) return false;
-      for (const [cx, cy] of [
-        [x, y],
-        [x / scale, y / scale],
-      ]) {
+      const boxes = [paywallModalDropRef.current, paywallDropRef.current].filter((b): b is HTMLDivElement => Boolean(b));
+      if (boxes.length === 0) return false;
+      for (const box of boxes) {
         const rect = box.getBoundingClientRect();
-        if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) return true;
+        for (const [cx, cy] of [
+          [x, y],
+          [x / scale, y / scale],
+        ]) {
+          if (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom) return true;
+        }
       }
       return false;
     }
     const unlisten = getCurrentWebviewWindow().onDragDropEvent((event) => {
       if (event.payload.type === "over") {
-        if (overList(event.payload.position.x, event.payload.position.y)) setDropNote("松开后按标题对上条目");
+        if (overList(event.payload.position.x, event.payload.position.y)) setDropNote("松开后按 DOI / 标题匹配进 papers/");
         else setDropNote(null);
       } else if (event.payload.type === "drop") {
         const here = overList(event.payload.position.x, event.payload.position.y);
@@ -1413,7 +2462,7 @@ export default function StepFlow({
     };
     // paywallList.text 在匹配时读取，拖放监听只跟清单是否展开走
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paywallListOpen, projectPath]);
+  }, [paywallListOpen, paywallModalOpen, projectPath]);
 
   async function matchDroppedPdf(path: string) {
     const items = parseToFetchItems(paywallList.text ?? "").filter((item) => !item.done);
@@ -1469,45 +2518,10 @@ export default function StepFlow({
   }
   /** 读 to-fetch.md（步骤工作区优先回落项目根）；恢复展开的挂载路径也走这里 */
   async function loadPaywallList() {
-    const candidates = dataWs
-      ? [
-          {
-            path: `${dataWs.worktreePath}/papers/to-fetch.md`,
-            root: dataWs.worktreePath,
-            from: "步骤工作区",
-          },
-          {
-            path: `${projectPath}/papers/to-fetch.md`,
-            root: projectPath,
-            from: "项目根",
-          },
-        ]
-      : [
-          {
-            path: `${projectPath}/papers/to-fetch.md`,
-            root: projectPath,
-            from: "项目根",
-          },
-        ];
-    for (const c of candidates) {
-      try {
-        const p = await invoke<{ text: string }>("read_research_ledger", {
-          path: c.path,
-          root: c.root,
-        });
-        setPaywallList({ text: p.text, error: null, from: c.from });
-        void loadPaywallMetrics(p.text);
-        return;
-      } catch {
-        // 试下一个位置
-      }
-    }
-    setPaywallList({
-      text: null,
-      error:
-        "还没找到 papers/to-fetch.md——agent 筛完会在步骤工作区生成缺全文清单（评审合并后进项目根）",
-      from: null,
-    });
+    const next = await loadPaywallListSnapshot(projectPath, dataWs);
+    paywallListCache.set(paywallCacheKey, next);
+    if (next.text != null) paywallListCache.set(projectPath, next);
+    setPaywallList((cur) => (samePaywallList(cur, next) ? cur : next));
   }
 
   async function loadPaywallMetrics(text: string) {
@@ -1550,31 +2564,40 @@ export default function StepFlow({
       setPaywallMetricsLoading(false);
     }
   }
-  // 换步骤就清掉上一步读到的期刊：按需读，不在每步无条件打 IPC。
   useEffect(() => {
-    setDraftJournal(null);
+    const text = paywallList?.text;
+    if (!text) return;
+    let stale = false;
+    let unlisten: (() => void) | undefined;
+    listen("journal-metrics-updated", () => {
+      if (stale) return;
+      forgetJournalMetrics();
+      void loadPaywallMetrics(text);
+    })
+      .then((u) => (unlisten = u))
+      .catch(() => {});
+    return () => {
+      stale = true;
+      unlisten?.();
+    };
+  }, [paywallList?.text]);
+  // 换步骤或切项目时只重置「正在换期刊」UI 态，不把已缓存的期刊名闪清成 null。
+  useEffect(() => {
     setJournalSwap(false);
   }, [step.name, projectPath]);
 
   /** 打开「按期刊」时才读已定期刊：先看工作区，再看项目根（上一步合并前只有工作区里有）。 */
   async function loadTargetJournal() {
-    const candidates = [
-      ...(ws ? [{ path: `${ws.worktreePath}/submission/target-journal.md`, root: ws.worktreePath }] : []),
-      { path: `${projectPath}/submission/target-journal.md`, root: projectPath },
+    const roots = [
+      ...(ws ? [ws.worktreePath] : []),
+      ...(projectPath ? [projectPath] : []),
     ];
-    for (const c of candidates) {
-      try {
-        const file = await invoke<{ text: string }>("read_file_preview", {
-          path: c.path,
-          root: c.root,
-        });
-        setDraftJournal(parseTargetJournal(file.text));
-        return;
-      } catch {
-        // 试下一个位置
-      }
-    }
-    setDraftJournal(null);
+    const journal = await readTargetJournalFromRoots(roots);
+    const prev = citeStyleCache.get(citeCacheKey) ?? citeStyleCache.get(projectPath);
+    const entry = { family: prev?.family ?? null, journal };
+    citeStyleCache.set(citeCacheKey, entry);
+    citeStyleCache.set(projectPath, entry);
+    setDraftJournal((cur) => (cur === journal ? cur : journal));
   }
 
   async function recordTargetJournal(name: string, source: "沿用已定" | "本次选定") {
@@ -1625,12 +2648,18 @@ export default function StepFlow({
     if (!ws || !task) return;
     setHandbackNote(null);
     try {
+      if (task.panel === "sections") {
+        const okModal = await (modalDeclRef.current?.flushSave() ?? Promise.resolve(true));
+        const okInline = await (inlineDeclRef.current?.flushSave() ?? Promise.resolve(true));
+        if (!okModal || !okInline) return;
+      }
       const req = await buildWorkspaceTerminalRequest(ws, task.prompt(target), {
         autoStart: true,
         resumeSession: true,
         stepLaunch: resumeLaunch,
       });
       setEditOpen(null);
+      setHandbackModal(null);
       setUnhandedTitle(null);
       if (markDoneTask && !markDoneTask.done) {
         const matched = states?.find((row) => row.step === step.name && row.title === markDoneTask.title);
@@ -1726,31 +2755,21 @@ export default function StepFlow({
       ...(ws ? [ws.worktreePath] : []),
       ...(projectPath ? [projectPath] : []),
     ];
-    for (const root of roots) {
-      for (const rel of ["manuscript/citation.csl", "citation.csl"]) {
-        try {
-          const file = await invoke<{ text: string }>("read_file_preview", {
-            path: `${root}/${rel}`,
-            root,
-          });
-          return styleFamilyOf(file.text);
-        } catch {
-          // 试下一个位置
-        }
-      }
-    }
-    return null;
+    return readCiteStyleFamilyFromRoots(roots);
   }
 
-  const stepHasCitationTask = (step.humanTasks ?? []).some((task) => isCitationStyleTask(task.title));
   useEffect(() => {
     if (!stepHasCitationTask || runStatus === "pending") {
-      setCurrentCiteFamily(null);
+      setCurrentCiteFamily((cur) => (cur === null ? cur : null));
       return;
     }
     let stale = false;
     void readStyleFamily().then((family) => {
-      if (!stale) setCurrentCiteFamily(family);
+      const prev = citeStyleCache.get(citeCacheKey) ?? citeStyleCache.get(projectPath);
+      const entry = { family, journal: prev?.journal ?? null };
+      citeStyleCache.set(citeCacheKey, entry);
+      citeStyleCache.set(projectPath, entry);
+      if (!stale) setCurrentCiteFamily((cur) => (cur === family ? cur : family));
     });
     void loadTargetJournal();
     if (citeWant.current !== null && agentAttention !== "working" && agentAttention !== "confirm") {
@@ -1844,6 +2863,7 @@ export default function StepFlow({
               provider: resume.provider,
             },
             autoLaunchProfileId: projectLaunch?.profileId,
+            ...discussResumePresetFields(projectLaunch, resume.agentId),
             autoStart: true,
             // 接回后再送一句（TerminalPage：resume + initialPrompt = 接上后注入）
             ...(topic ? { initialPrompt: `接着聊这个问题：${topic}` } : {}),
@@ -1858,7 +2878,7 @@ export default function StepFlow({
                 projectSettings,
                 seeds,
               }) + (topic ? `\n\n先从这个问题聊起：${topic}` : ""),
-            ...(projectLaunch ?? {}),
+            ...discussTerminalLaunchFields(projectLaunch),
             autoStart: Boolean(projectLaunch?.profileId),
           }),
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
@@ -2047,14 +3067,19 @@ export default function StepFlow({
   });
   const seeds = step.discussionSeeds ?? [];
 
-  function goTerminal() {
+  function goTerminal(initialPrompt?: string) {
     if (!ws) return;
     // 共享交接（pipeline-start.ts）：有活标签就切回去。没有活会话时，步骤绑定若是
     // 另一家 Agent，不接回历史会话，启动栏用绑定。同一家或没绑步骤才接回原对话。
     void (async () => {
-      let stepL: { agentId: string; profileId: string; model: string } | null = null;
+      let stepL: ResolvedTaskBindingLaunch | null = null;
       try {
-        const b = await invoke<{ profile: string; model?: string | null } | null>(
+        const b = await invoke<{
+          profile: string;
+          model?: string | null;
+          effort?: string | null;
+          permissionTier?: string | null;
+        } | null>(
           "get_project_agent_binding",
           { projectRoot: projectPath, slot: stepSlotKey(step.name) },
         );
@@ -2063,7 +3088,7 @@ export default function StepFlow({
         /* DB 读失败走 props 里的步骤槽 */
       }
       try {
-        const req = await buildWorkspaceTerminalRequest(ws, undefined, {
+        const req = await buildWorkspaceTerminalRequest(ws, initialPrompt, {
           stepLaunch: stepL ?? stepSlotLaunch ?? undefined,
           releaseToStepBinding: true,
         });
@@ -2330,7 +3355,7 @@ export default function StepFlow({
             {live || idleOpen || !onContinueStep ? (
               <button
                 type="button"
-                onClick={goTerminal}
+                onClick={() => goTerminal()}
                 title={
                   idleOpen
                     ? "这一步的对话还开着：切过去看 AI 说了什么，不替你发话；要它接着做或改哪里，在对话里说"
@@ -2373,7 +3398,7 @@ export default function StepFlow({
         return (
           <button
             type="button"
-            onClick={goTerminal}
+            onClick={() => goTerminal()}
             title="回到这一步 AI 干活的那段对话，不替你发话。在对话里让它改的，改完照样去评审、保存；想留下修改记录，用评审里的「写意见退回修改」"
             className="shrink-0 rounded-sm border border-field px-1.5 py-0.5 text-xs text-l2 hover:bg-hover"
           >
@@ -2479,6 +3504,339 @@ export default function StepFlow({
       )}
     </div>
   );
+
+  function renderPaywallListBody(inModal = false) {
+    const total = toFetchItems.length;
+    const saved = paywallSavedCount;
+    const skippedCount = paywallSkippedCount;
+    const activeTotal = Math.max(0, total - skippedCount);
+    const missing = Math.max(0, activeTotal - saved);
+    const pct =
+      activeTotal > 0
+        ? Math.min(100, Math.round((saved / activeTotal) * 100))
+        : total > 0
+          ? 100
+          : 0;
+    const hasAddedNotes = toFetchItems.some((item) => Boolean(item.addedOn));
+    const filtering = paywallQuery.trim().length > 0 || paywallOnlyMissing;
+    return (
+      <div
+        ref={inModal ? paywallModalDropRef : paywallDropRef}
+        className={inModal ? "flex min-h-0 flex-1 flex-col" : "mt-1.5 rounded-lg bg-canvas/45 px-2.5 py-2"}
+      >
+        {instLoginErr && (
+          <p className="mb-1 shrink-0 break-words text-micro text-err-text" role="alert">
+            {instLoginErr}
+          </p>
+        )}
+        {dropNote && <p className="mb-1 shrink-0 text-micro font-medium text-cta-pill-text">{dropNote}</p>}
+        {paywallList.error ? (
+          <p className="text-micro text-l4">{paywallList.error}</p>
+        ) : paywallList.text == null ? (
+          <p className="text-micro text-l4">加载中…</p>
+        ) : (
+          <>
+            {browserOpenErr && (
+              <p className="mb-1 shrink-0 break-words text-micro text-err-text" role="alert">
+                {browserOpenErr}
+              </p>
+            )}
+            {paywallMetricsLoading && (
+              <p className="mb-1 shrink-0 text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
+            )}
+            {total > 0 ? (
+              <>
+                <div className="mb-2 shrink-0 border-b border-hairline pb-2">
+                  <div className="flex flex-wrap items-center gap-2 text-micro text-l3">
+                    <span className="tabular-nums">
+                      已存 {saved} / {activeTotal}
+                      <span className="ml-1 text-l4">
+                        （还缺 {missing}
+                        {skippedCount > 0 ? ` · 已跳过 ${skippedCount}` : ""}）
+                      </span>
+                    </span>
+                    <div className="h-1.5 w-20 overflow-hidden rounded-full bg-inset" aria-hidden="true">
+                      <div className="h-full rounded-full bg-done transition-[width]" style={{ width: `${pct}%` }} />
+                    </div>
+                    {(saved > 0 || skippedCount > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => setPaywallOnlyMissing((v) => !v)}
+                        className={`rounded-full border px-2 py-0.5 text-micro transition-colors ${
+                          paywallOnlyMissing
+                            ? "border-cta-bd bg-cta-pill font-medium text-cta-pill-text"
+                            : "border-hairline bg-inset/60 text-l3 hover:border-field hover:text-l1"
+                        }`}
+                      >
+                        仅看未下 {missing}
+                      </button>
+                    )}
+                    {paywallPriority && paywallPriorityMatchSet.size > 0 && (
+                      <span className="inline-flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setPaywallOnlyPriority((v) => !v)}
+                          title={paywallPriority.label}
+                          className={`rounded-full border px-2 py-0.5 text-micro transition-colors ${
+                            paywallOnlyPriority
+                              ? "border-cta-bd bg-cta-pill font-medium text-cta-pill-text"
+                              : "border-hairline bg-inset/60 text-l3 hover:border-field hover:text-l1"
+                          }`}
+                        >
+                          本步优先 {paywallPriorityMatchSet.size}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="清除本步优先筛选"
+                          onClick={() => {
+                            setPaywallPriority(null);
+                            setPaywallOnlyPriority(false);
+                          }}
+                          className="rounded-full p-0.5 text-l4 hover:bg-hover hover:text-l1"
+                        >
+                          <X size={10} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      </span>
+                    )}
+                    <div className="ccode-search-shell ml-auto flex h-7 min-w-[10rem] max-w-[16rem] flex-1 items-center gap-1.5 rounded-md border border-field bg-inset/60 px-2 transition-colors focus-within:border-l3">
+                      <Search size={12} strokeWidth={1.8} className="shrink-0 text-l4" aria-hidden="true" />
+                      <input
+                        type="text"
+                        value={paywallQuery}
+                        onChange={(e) => setPaywallQuery(e.target.value)}
+                        placeholder="搜标题 / 期刊 / DOI…"
+                        className="min-w-0 flex-1 bg-transparent text-micro text-l1 outline-none placeholder:text-l4 focus:outline-none focus-visible:outline-none"
+                      />
+                      {paywallQuery && (
+                        <button
+                          type="button"
+                          aria-label="清空待获取搜索"
+                          onClick={() => setPaywallQuery("")}
+                          className="shrink-0 text-l4 hover:text-l1"
+                        >
+                          <X size={11} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-1 text-micro text-l3">
+                      排序
+                      <select
+                        value={paywallSort}
+                        onChange={(e) => setPaywallSort(e.target.value as "listed" | "if-desc" | "added-desc")}
+                        className="rounded-sm border border-field bg-canvas px-1 py-0.5 text-l2"
+                      >
+                        <option value="listed">清单原序</option>
+                        <option value="if-desc">影响因子从高到低</option>
+                        {hasAddedNotes && <option value="added-desc">新加优先</option>}
+                      </select>
+                    </label>
+                  </div>
+                </div>
+                {visibleToFetchItems.length === 0 ? (
+                  <p className="py-3 text-center text-micro text-l4">
+                    {paywallOnlyMissing && missing === 0
+                      ? "全部待获取全文已补齐。"
+                      : "没有匹配当前筛选条件的待获取文献。"}
+                    {filtering && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaywallQuery("");
+                          setPaywallOnlyMissing(false);
+                        }}
+                        className="ml-1.5 underline decoration-dotted underline-offset-2 hover:text-l1"
+                      >
+                        显示全部
+                      </button>
+                    )}
+                  </p>
+                ) : (
+                  <ul
+                    ref={inModal ? undefined : toFetchListRef}
+                    className={`${inModal ? "min-h-0 flex-1" : "max-h-72"} space-y-0.5 overflow-y-auto overflow-x-hidden px-0.5 py-px pr-1.5`}
+                    onScroll={
+                      inModal
+                        ? undefined
+                        : (e) => writeToFetchScroll(projectPath, e.currentTarget.scrollTop)
+                    }
+                  >
+                    {visibleToFetchItems.map((item) => {
+                      const st = toFetchBusy[item.line];
+                      const doneName = toFetchDone[item.line];
+                      const done = item.done || !!doneName;
+                      const skipped = !done && isToFetchSkipped(item, toFetchSkipped);
+                      const spotlight = browserSpotlight === item.line;
+                      const doi = item.url ? doiToken("", item.url) : "";
+                      return (
+                        <li
+                          key={item.line}
+                          data-to-fetch-line={item.line}
+                          className={`group/fetch flex min-w-0 flex-wrap items-center gap-1 rounded-md px-1 py-0.5 ${
+                            spotlight
+                              ? "bg-cta/10 ring-1 ring-inset ring-cta-bd"
+                              : "hover:bg-hover"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className={`min-w-0 flex-1 truncate text-left text-xs ${
+                              doneName
+                                ? "text-l4 line-through hover:text-l2"
+                                : skipped
+                                  ? "text-l4 hover:text-l2"
+                                  : "text-l2 hover:text-l1"
+                            }`}
+                            title={
+                              doneName
+                                ? `在右侧打开 papers/${doneName}`
+                                : skipped
+                                  ? `${item.title}\n已标记跳过（保留仅摘要，不计入缺全文）`
+                                  : item.url
+                                    ? `${item.title}\n用右侧「官网」打开这篇的出版商页面`
+                                    : item.title
+                            }
+                            onClick={() => {
+                              focusToFetchLine(item.line);
+                              if (doneName) {
+                                const rel = toFetchPaperRel(doneName);
+                                if (!rel) return;
+                                void showProjectFile({
+                                  projectRoot: projectPath,
+                                  path: absoluteResourcePath(projectPath, rel),
+                                  from: "待获取清单",
+                                });
+                              }
+                            }}
+                          >
+                            {displayCitationTitle(item.title)}
+                          </button>
+                          {paywallPriorityMatchSet.has(item.line) && (
+                            <span
+                              className="shrink-0 rounded-sm bg-cta-pill px-1 text-micro font-medium text-cta-pill-text"
+                              title={paywallPriority?.label || "本步骤点名优先补齐全文"}
+                            >
+                              本步优先
+                            </span>
+                          )}
+                          {item.addedOn && (
+                            <span
+                              className="shrink-0 rounded-sm bg-raised px-1 text-micro text-l3"
+                              title={`${item.addedOn} 这一轮新加进待获取的（编号接在上一版后面）`}
+                            >
+                              新加 {item.addedOn.slice(5)}
+                            </span>
+                          )}
+                          <JournalPills metric={paywallMetrics.get(item.line)} />
+                          {done ? (
+                            <span
+                              className={`shrink-0 text-micro ${doneName ? "text-done" : "text-l4"}`}
+                              title={doneName ? `点标题打开 papers/${doneName}` : undefined}
+                            >
+                              {doneName ? "✓ 已存" : "✓ 已勾"}
+                            </span>
+                          ) : skipped ? (
+                            <span className="flex shrink-0 items-center gap-1">
+                              <span
+                                className="rounded-sm bg-inset px-1.5 py-0.5 text-micro text-l4"
+                                title="已跳过下载，保留仅摘要，不计入缺全文"
+                              >
+                                仅摘要
+                              </span>
+                              {!item.skipped && (
+                                <button
+                                  type="button"
+                                  className="inline-flex h-5 items-center rounded px-1 text-micro text-l4 hover:bg-hover hover:text-l1"
+                                  title="恢复到待获取清单"
+                                  onClick={() => toggleSkipToFetchItem(item)}
+                                >
+                                  恢复
+                                </button>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="flex shrink-0 items-center gap-0.5">
+                              {doi && (
+                                <button
+                                  type="button"
+                                  className="inline-flex h-5 items-center gap-0.5 rounded px-1 text-micro text-l4 opacity-0 transition-opacity hover:bg-hover hover:text-l1 group-hover/fetch:opacity-100 focus-visible:opacity-100"
+                                  title={`复制 DOI：${doi}`}
+                                  onClick={() =>
+                                    void navigator.clipboard
+                                      .writeText(doi)
+                                      .then(() => toast(`已复制 DOI：${doi}`, "info"))
+                                  }
+                                >
+                                  <Copy size={10} strokeWidth={1.8} aria-hidden="true" />
+                                  <span>DOI</span>
+                                </button>
+                              )}
+                              {item.url && (
+                                <PublisherOpenButton
+                                  url={item.url}
+                                  title={item.title}
+                                  projectPath={projectPath}
+                                  onOpened={() => focusToFetchLine(item.line)}
+                                  onError={(message) => setBrowserOpenErr(message || null)}
+                                />
+                              )}
+                              <button
+                                type="button"
+                                className={`${ghostActionClass} shrink-0`}
+                                disabled={st?.status === "busy"}
+                                title="选一个已下载的 PDF，按本行标题复制进 papers/（文件名随意）"
+                                onClick={() => void attachToFetchItem(item)}
+                              >
+                                {st?.status === "busy" ? "关联中…" : "关联"}
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex h-5 items-center rounded px-1 text-micro text-l4 opacity-0 transition-opacity hover:bg-hover hover:text-l1 group-hover/fetch:opacity-100 focus-visible:opacity-100"
+                                title="下不动或不需要全文时跳过，保留仅摘要，不计入缺全文（随时可恢复）"
+                                onClick={() => toggleSkipToFetchItem(item)}
+                              >
+                                跳过
+                              </button>
+                            </span>
+                          )}
+                          {!done && st?.status === "ok" && (
+                            <span className="shrink-0 text-micro text-done" title={st.note}>
+                              ✓ 已存
+                            </span>
+                          )}
+                          {!done && st?.status === "error" && (
+                            <span className="max-w-[12rem] shrink-0 truncate text-micro text-err-text" title={st.note ?? ""}>
+                              {st.note}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </>
+            ) : (
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-micro leading-5 text-l3">
+                {paywallList.text}
+              </pre>
+            )}
+          </>
+        )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void openPapersDir()}
+            title="打开课题的 papers/。PDF 在这里；要挂附件，拖到 Zotero 或 EndNote 里对应的那条文献上"
+            className={`${ghostActionClass} shrink-0`}
+          >
+            打开 papers/
+          </button>
+          <span className="text-micro text-l4">
+            提示：下载好的 PDF 可直接拖进这里，自动按 DOI / 标题匹配进 papers/
+          </span>
+        </div>
+      </div>
+    );
+  }
 
   function renderNode(node: StepFlowNode, dense = false) {
     const isCurrent = node.key === flow.currentKey;
@@ -2661,18 +4019,84 @@ export default function StepFlow({
               </span>
             ) : null
           ) : node.kind === "human" && human && isPaywallTaskTitle(human.title) ? (
-            toFetchItems.length > 0 ? (
-              <span
-                className="shrink-0 text-micro tabular-nums text-l4"
-                title={`已存 ${paywallSavedCount} 篇，清单共 ${toFetchItems.length} 篇`}
-              >
-                {paywallSavedCount}/{toFetchItems.length}
-              </span>
-            ) : human.expectedCount != null ? (
+            toFetchItems.length > 0 ? (() => {
+              const activeTotal = Math.max(0, toFetchItems.length - paywallSkippedCount);
+              return (
+                <span
+                  className="shrink-0 text-micro tabular-nums text-l4"
+                  title={`已存 ${paywallSavedCount} 篇，需补 ${activeTotal} 篇${paywallSkippedCount > 0 ? `（另已跳过 ${paywallSkippedCount} 篇仅摘要）` : ""}`}
+                >
+                  {paywallSavedCount}/{activeTotal}
+                </span>
+              );
+            })() : human.expectedCount != null ? (
               <span className="shrink-0 text-micro tabular-nums text-l4">
                 清单 {human.expectedCount}
               </span>
             ) : null
+          ) : node.kind === "human" && human && isInlineDecisionTaskTitle(human.title) ? (
+            (() => {
+              const meta = decisionMeta[human.title];
+              if (!meta || meta.missing || meta.total === 0) return null;
+              if (node.done) {
+                return (
+                  <span
+                    className="shrink-0 text-micro tabular-nums text-l4"
+                    title={`接受 ${meta.accepted} · 修改 ${meta.modified} · 拒绝 ${meta.rejected}`}
+                  >
+                    已决 {meta.decided}/{meta.total}
+                  </span>
+                );
+              }
+              return meta.open > 0 ? (
+                <span
+                  className="shrink-0 text-micro tabular-nums text-warn-text"
+                  title={`共 ${meta.total} 条，已决定 ${meta.decided} 条，还剩 ${meta.open} 条`}
+                >
+                  待决 {meta.open}/{meta.total}
+                </span>
+              ) : (
+                <span
+                  className="shrink-0 text-micro tabular-nums text-done"
+                  title={`全部 ${meta.total} 条已决定（接受 ${meta.accepted} · 修改 ${meta.modified} · 拒绝 ${meta.rejected}）`}
+                >
+                  已决 {meta.total}/{meta.total}
+                </span>
+              );
+            })()
+          ) : node.kind === "human" && human && handbackTask(human.title) ? (
+            (() => {
+              const hb = handbackSummary[human.title];
+              if (!hb || node.done) return null;
+              if (hb.kind === "permissions") {
+                if (hb.data.paperCount === 0) return null;
+                return hb.data.pending > 0 ? (
+                  <span
+                    className="shrink-0 text-micro tabular-nums text-warn-text"
+                    title={`共 ${hb.data.paperCount} 篇，待申请 ${hb.data.pending} 篇`}
+                  >
+                    待申请 {hb.data.pending}/{hb.data.paperCount} 篇
+                  </span>
+                ) : (
+                  <span className="shrink-0 text-micro tabular-nums text-done">
+                    {hb.data.paperCount} 篇已处理
+                  </span>
+                );
+              }
+              if (hb.data.total === 0) return null;
+              return hb.data.pending > 0 ? (
+                <span
+                  className="shrink-0 text-micro tabular-nums text-l4"
+                  title={`共 ${hb.data.total} 节，已填 ${hb.data.filled} 节，待填 ${hb.data.pending} 节`}
+                >
+                  已填 {hb.data.filled}/{hb.data.total} 节
+                </span>
+              ) : (
+                <span className="shrink-0 text-micro tabular-nums text-done">
+                  已填 {hb.data.total}/{hb.data.total} 节
+                </span>
+              );
+            })()
           ) : node.kind === "human" && human?.hitCount != null && !isCitationStyleTask(human.title) && !isInlineDecisionTaskTitle(human.title) && !handbackTask(human.title) ? (
             <span className="shrink-0 text-micro text-l4">
               已见到 {human.hitCount} 个文件
@@ -2688,13 +4112,36 @@ export default function StepFlow({
             isPaywallTaskTitle(human.title) && (
             <span
               className="shrink-0 rounded-sm bg-raised px-1.5 py-0.5 text-micro text-l4"
-              title="可选：不做也能跑完这一步。跳过的篇目下一篇按摘要记"
+              title="可选：不做也能跑完这一步。未补全文的篇目下一步按摘要记"
             >
               可选
             </span>
           )}
           {/* 篇数、「可选」紧跟标题，按钮由这段空白推到右缘（2026-11-13 步骤卡统一设计稿 .line / .right） */}
           <span aria-hidden className="min-w-0 flex-1" />
+          {node.kind === "human" &&
+            human &&
+            node.done &&
+            !dense &&
+            human.target &&
+            reviewItemKind(human.title) &&
+            (decisionMeta[human.title]?.total ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  openDecisionModal(
+                    human.title,
+                    human.target!,
+                    reviewItemKind(human.title)!,
+                    true,
+                  )
+                }
+                title="在大窗口里回看已决定的条目与原稿对照（只读）"
+                className="shrink-0 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+              >
+                回看
+              </button>
+            )}
           {nodeActions(node)}
         </div>
         {node.kind === "human" && human && isCitationStyleTask(human.title) && ws && !node.done && afterReady(human) && (
@@ -2856,7 +4303,7 @@ export default function StepFlow({
                   : currentCiteFamily
                     ? STYLE_FAMILY_LABEL[currentCiteFamily]
                     : "方括号编号 [1]"}
-                。点选新样式后，AI 回原对话重渲 PDF、Word 和带引用域的 Word。
+                ；选新样式后将回原对话重渲。
               </p>
             )}
           </div>
@@ -3379,7 +4826,7 @@ export default function StepFlow({
                   </div>
                 )}
                 {decisionError && (
-                  <InlineNotice tone="err" size="micro">{decisionError}</InlineNotice>
+                  <InlineNotice tone="err" size="micro" onDismiss={() => setDecisionError(null)}>{decisionError}</InlineNotice>
                 )}
               </div>
             )}
@@ -3390,7 +4837,7 @@ export default function StepFlow({
             {/* 商量引导气泡（2026-11-05 用户点名）：每个项目第一次走到没开工、没商量过的步骤时出，引导先聊再开工 */}
             {node.kind === "discuss" && !talkOnAgent && talkGroup}
             {chatError && (
-              <InlineNotice tone="err" size="micro">{chatError}</InlineNotice>
+              <InlineNotice tone="err" size="micro" onDismiss={() => setChatError(null)}>{chatError}</InlineNotice>
             )}
             {!draft && draftLoadError && (
               <p className="text-micro text-err-text">{draftLoadError}</p>
@@ -3422,28 +4869,29 @@ export default function StepFlow({
         )}
         {node.kind === "agent" && notesStep && (ws || runStatus === "done") && (
           <NotesProgressLine
-            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
+            roots={stepRoots}
             live={runStatus === "active"}
             onChange={setAgentProgress}
           />
         )}
         {node.kind === "agent" && searchStep && (ws || runStatus === "done") && (
           <LedgerCountLine
-            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
+            roots={stepRoots}
             live={runStatus === "active"}
             rel="papers/included.json"
             line={(text) => searchCountLineWithFiles(projectPath, text)}
+            refreshKey={`${ledgerRefreshKey}|${Object.keys(toFetchDone).length}|${toFetchSkipped.size}`}
             onChange={setAgentProgress}
           />
         )}
         {/* 计数在上、回头入口在下，各步骤同一顺序（2026-11-11：大纲的计数原先排在回头入口下面） */}
         {node.kind === "agent" && outlineStep && (ws || runStatus === "done") && (
           <LedgerCountLine
-            roots={dataWs ? [dataWs.worktreePath, projectPath] : [projectPath]}
+            roots={stepRoots}
             live={runStatus === "active"}
             rel="outline.md"
             read={readResearchFile}
-            line={outlineCountLine(dataWs ? [dataWs.worktreePath, projectPath] : [projectPath])}
+            line={outlineCountLine(stepRoots)}
             refreshKey={`${ledgerRefreshKey}|${nudge?.text ?? ""}`}
             onChange={setAgentProgress}
           />
@@ -3457,15 +4905,24 @@ export default function StepFlow({
           />
         )}
         {node.kind === "agent" && (progressHeadline || progressDetails.length > 0) && (
-          <div data-step-progress="details" className="mt-1 flex flex-wrap items-baseline gap-x-1.5 pl-6 text-micro tabular-nums text-l3" title={
+          <div data-step-progress="details" className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-6 text-micro tabular-nums text-l3" title={
             notesStep ? "按 notes/index.json 数；全文和仅摘要属于已写笔记，只速读的篇不算已写笔记" :
-            searchStep ? "按纳入清单与项目里的 PDF 数；待确认和缺全文单独列出" :
+            searchStep ? "按纳入清单与项目里的 PDF 数；待确认、缺全文与跳过仅摘要单独列出" :
             draftStep ? "按稿件的章级标题数：标题下有正文才算已写，sections.json 定了、稿件里还没出现的节也算进总数；引用按出现次数数；待定标记是 [待核实] [待确认] 一类还没处理的" :
             "按大纲的定框架记录、覆盖检查与用图计划数；补料是否已到由笔记状态核对。用图计划里初稿会从全文 PDF 裁子图拼成这些图、按表计划出对照表，裁不到的改成「见 [@键] Fig.n」"
           }>
-            {progressHeadline && <span data-step-progress="headline" className="font-medium text-l2">{progressHeadline}</span>}
+            {progressHeadline && (
+              <span data-step-progress="headline" className="mr-0.5 text-xs font-medium text-l1">
+                {progressHeadline}
+              </span>
+            )}
             {progressDetails.map((d) => (
-              <span key={d} className="before:mr-1.5 before:text-l4 before:content-['·'] first:before:hidden">{d}</span>
+              <span
+                key={d}
+                className="inline-flex items-center rounded-md bg-inset/75 px-1.5 py-0.5 text-micro text-l3"
+              >
+                {d}
+              </span>
             ))}
           </div>
         )}
@@ -3492,6 +4949,479 @@ export default function StepFlow({
             )}
           </div>
         )}
+        {node.kind === "agent" &&
+          nextActions &&
+          ((runStatus === "active" && agentAttention !== "working" && agentAttention !== "confirm") ||
+            runStatus === "done") && (() => {
+            const primary = resolveStepNextPrimary(nextActions, {
+              runStatus,
+              hasNextStep: Boolean(onGoNextStep),
+              nextStepName,
+              reviewConflict,
+              hasFollowNudge: Boolean(nudge),
+            });
+            const toggleCheckOpt = (id: string, force?: boolean) => {
+              setDoneNextOptIds((cur) => {
+                const next = new Set(cur);
+                const want = force ?? !next.has(id);
+                if (want) next.add(id);
+                else next.delete(id);
+                writeNextActionChecks(projectPath, step.name, next);
+                return next;
+              });
+            };
+            const triggerCatchUp = () => {
+              if (catchUpCount > 0 && onCatchUpReads) {
+                onCatchUpReads();
+                return;
+              }
+              toast("暂未检测到精读步需要补读的新全文（如精读步尚未开工，开工时会自动读取已补 PDF）。", "info");
+            };
+            const runAction = (opt: StepNextOption) => {
+              switch (opt.action) {
+                case "review":
+                  toggleCheckOpt(opt.id, true);
+                  goReview();
+                  return;
+                case "next_step":
+                  toggleCheckOpt(opt.id, true);
+                  onGoNextStep?.();
+                  return;
+                case "follow_upstream":
+                  toggleCheckOpt(opt.id, true);
+                  onFollowUpstream?.();
+                  return;
+                case "confirm_pending":
+                  toggleCheckOpt(opt.id, true);
+                  setPendingModalOpen(true);
+                  return;
+                case "continue_chat":
+                  toggleCheckOpt(opt.id, true);
+                  goTerminal();
+                  return;
+                case "fetch_pdf": {
+                  const dois = opt.priorityDois ?? [];
+                  const keys = opt.priorityKeys ?? [];
+                  if (dois.length > 0 || keys.length > 0) {
+                    setPaywallPriority({ label: opt.label, dois, keys });
+                    setPaywallOnlyPriority(true);
+                  } else {
+                    setPaywallPriority(null);
+                    setPaywallOnlyPriority(false);
+                  }
+                  setPaywallOnlyMissing(true);
+                  void loadPaywallList();
+                  setPaywallModalOpen(true);
+                  return;
+                }
+                case "reread_pdfs": {
+                  if (catchUpCount > 0 && onCatchUpReads) {
+                    toggleCheckOpt(opt.id, true);
+                    onCatchUpReads();
+                  } else {
+                    triggerCatchUp();
+                  }
+                  return;
+                }
+                case "return_step": {
+                  const target =
+                    opt.targetStep?.trim() ||
+                    (opt.reads?.trim() && !opt.topics?.trim() ? notesStepName : null) ||
+                    defaultUpstreamStep ||
+                    searchStepName ||
+                    notesStepName ||
+                    "";
+                  if (onReworkPrefill && defaultUpstreamStep && target) {
+                    toggleCheckOpt(opt.id, true);
+                    onReworkPrefill({
+                      target,
+                      topics: opt.topics || (opt.reads ? "" : opt.label),
+                      reads: opt.reads,
+                      reason: opt.reason || opt.detail || opt.label,
+                    });
+                  } else {
+                    toast("当前步骤没有可退回的上一步。", "info");
+                  }
+                  return;
+                }
+                case "remember": {
+                  const line = (opt.memoryText || opt.label).trim();
+                  if (!line || rememberBusyId === opt.id) return;
+                  if (rememberedTexts.has(line)) {
+                    toast("这条已记在项目知识「已定 / 不做」里。", "info");
+                    return;
+                  }
+                  setRememberBusyId(opt.id);
+                  void addProjectKnowledge(projectPath, line)
+                    .then(() => {
+                      setRememberedTexts((cur) => {
+                        const next = new Set(cur).add(line);
+                        rememberedTextsCache.set(projectPath, next);
+                        return next;
+                      });
+                      toggleCheckOpt(opt.id, true);
+                      toast("已记进项目知识「已定 / 不做」，后续步骤会自动遵守。", "info");
+                    })
+                    .catch((reason) => {
+                      toast(`记进项目知识失败：${String(reason)}`, "error");
+                    })
+                    .finally(() => setRememberBusyId(null));
+                  return;
+                }
+                case "open_file": {
+                  const rel = opt.file?.trim();
+                  if (!rel) return;
+                  toggleCheckOpt(opt.id, true);
+                  const base = dataWs?.worktreePath || projectPath;
+                  void showProjectFile({
+                    projectRoot: projectPath,
+                    root: base,
+                    path: absoluteResourcePath(base, rel),
+                    from: "下一步建议",
+                  });
+                  return;
+                }
+                case "spot_check": {
+                  const el = containerRef.current?.querySelector("[data-spot-check]");
+                  if (el) {
+                    el.scrollIntoView({ behavior: "smooth", block: "center" });
+                  } else if (opt.file?.trim()) {
+                    toggleCheckOpt(opt.id, true);
+                    const base = dataWs?.worktreePath || projectPath;
+                    void showProjectFile({
+                      projectRoot: projectPath,
+                      root: base,
+                      path: absoluteResourcePath(base, opt.file.trim()),
+                      from: "下一步建议",
+                    });
+                  } else {
+                    toast(
+                      notesStep
+                        ? "请在下方「抽查 3 篇笔记」行点选一篇进入沉浸阅读。"
+                        : "本步没有「抽查笔记」面板，请直接在项目文件页查看对应产物。",
+                      "info",
+                    );
+                  }
+                  return;
+                }
+              }
+            };
+            const runPrimary = () => {
+              if (!primary) return;
+              if (primary.action === "review") goReview();
+              else if (primary.action === "next_step") onGoNextStep?.();
+              else if (primary.action === "return_step") {
+                const opt =
+                  nextActions.optional.find((o) => o.id === primary.optionId) ??
+                  nextActions.optional.find((o) => o.action === "return_step");
+                if (opt) runAction(opt);
+              } else if (primary.action === "continue_chat") goTerminal();
+            };
+            const spotDone = (states ?? []).some(
+              (s) => isSpotCheckTaskTitle(s.title) && Boolean(s.done),
+            );
+            const hasSavedOptional = nextActions.optional.length > 0;
+            const hasCatchUp = catchUpCount > 0 && Boolean(onCatchUpReads);
+            if (runStatus === "done" && !hasSavedOptional && !hasCatchUp) return null;
+            const optAutoDone = (opt: StepNextOption) => {
+              const memLine = (opt.memoryText || opt.label).trim();
+              if (opt.action === "remember" && rememberedTexts.has(memLine)) return true;
+              if (opt.action === "spot_check" && spotDone) return true;
+              if (opt.action === "confirm_pending" && pendingMeta !== null && pendingMeta.count === 0) return true;
+              if (opt.action === "fetch_pdf" && toFetchItems.length > 0) {
+                const fp = priorityFetchProgress(
+                  toFetchItems,
+                  toFetchDone,
+                  opt.priorityDois ?? [],
+                  opt.priorityKeys ?? [],
+                  toFetchSkipped,
+                );
+                if (fp.total > 0 && fp.saved >= fp.total) return true;
+              }
+              return false;
+            };
+            const pendingOpts = nextActions.optional.filter(
+              (opt) => !optAutoDone(opt) && !doneNextOptIds.has(opt.id),
+            );
+            const nextActionsCollapsed =
+              nextActionsManualOpen !== null
+                ? !nextActionsManualOpen
+                : runStatus === "done" && pendingOpts.length === 0 && !hasCatchUp;
+            const toggleNextActionsCollapsed = () => {
+              const nextOpen = nextActionsCollapsed;
+              setNextActionsManualOpen(nextOpen);
+              writeNextActionsOpen(projectPath, step.name, nextOpen);
+            };
+            const previewText = (pendingOpts.length > 0 ? pendingOpts : nextActions.optional)
+              .slice(0, 2)
+              .map((opt) => opt.label.replace(/（[^）]*）/g, "").trim())
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <div
+                data-step-next-actions=""
+                className={
+                  runStatus === "done"
+                    ? nextActionsCollapsed
+                      ? "ml-3.5 mt-2 rounded-lg bg-inset/45 px-2.5 py-1.5 text-xs"
+                      : "ml-[13px] mt-2 rounded-lg border border-hairline bg-canvas/55 px-2.5 py-2 text-xs"
+                    : "ml-6 mt-2.5 rounded-lg border border-hairline bg-canvas/55 px-3 py-2 text-xs"
+                }
+              >
+                {runStatus === "done" ? (
+                  <div className="flex w-full flex-wrap items-center gap-2">
+                    {hasSavedOptional && (
+                      <button
+                        type="button"
+                        onClick={toggleNextActionsCollapsed}
+                        aria-expanded={!nextActionsCollapsed}
+                        className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md py-0.5 text-micro text-l2 transition-colors hover:text-l1"
+                      >
+                        <FoldMark open={!nextActionsCollapsed} />
+                        <span className="shrink-0 font-medium">
+                          后续建议{pendingOpts.length > 0 ? `（${pendingOpts.length}）` : "（已处理）"}
+                        </span>
+                        {nextActionsCollapsed && previewText && (
+                          <span className="min-w-0 truncate text-l4">
+                            {previewText}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                    {nextActionsCollapsed && hasCatchUp && onCatchUpReads && (
+                      <button
+                        type="button"
+                        disabled={catchUpBusy}
+                        onClick={() => onCatchUpReads()}
+                        title="把精读步里原本缺全文、现已新补进 papers/ 的 PDF 交给精读 AI 原位补读并更新笔记/速读表/抽取表"
+                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-cta-bd bg-cta-pill px-2 text-micro font-medium text-cta-pill-text transition-colors hover:brightness-110 disabled:opacity-50"
+                      >
+                        <RotateCcw size={11} strokeWidth={2} aria-hidden="true" />
+                        {catchUpBusy ? "正在启动补读…" : `补读新到 ${catchUpCount} 篇`}
+                      </button>
+                    )}
+                    {nextStepName && onGoNextStep && (
+                      <button
+                        type="button"
+                        onClick={() => onGoNextStep()}
+                        title={`切换到「${nextStepName}」`}
+                        className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l1"
+                      >
+                        <span>下一步：{nextStepName}</span>
+                        <ArrowRight size={11} strokeWidth={1.8} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-micro font-medium ${
+                        nextActions.readiness === "blocked"
+                          ? "bg-warn-bg text-warn-text"
+                          : "bg-cta-pill text-cta-pill-text"
+                      }`}
+                    >
+                      <Compass size={11} strokeWidth={2} aria-hidden="true" />
+                      {nextActions.readiness === "blocked" ? "需先处理" : "下一步建议"}
+                    </span>
+                    <span className="min-w-0 flex-1 text-xs leading-5 text-l1">
+                      {nextActions.summary}
+                    </span>
+                    {pendingRework?.onGoTarget ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={pendingRework.onGoTarget}
+                          title={`先去「${pendingRework.toStep}」查看或评审保存刚退回的清理，保存后会自动跟进本步`}
+                          className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text hover:brightness-110"
+                        >
+                          {pendingRework.status === "review"
+                            ? `去评审「${pendingRework.toStep}」`
+                            : `先去看「${pendingRework.toStep}」`}
+                          <ArrowRight size={11} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                        {primary && (
+                          <button
+                            type="button"
+                            onClick={runPrimary}
+                            title={`建议等「${pendingRework.toStep}」保存跟进后再操作；也可直接继续`}
+                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-surface px-2 text-micro text-l3 hover:bg-hover hover:text-l1"
+                          >
+                            {primary.label}
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      primary && (
+                        <button
+                          type="button"
+                          onClick={runPrimary}
+                          className={
+                            primary.emphasize
+                              ? "inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-cta-bd bg-cta px-2.5 text-xs font-medium text-cta-text hover:brightness-110"
+                              : "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-surface px-2 text-micro text-l2 hover:bg-hover hover:text-l1"
+                          }
+                        >
+                          {primary.label}
+                          <ArrowRight size={11} strokeWidth={2} aria-hidden="true" />
+                        </button>
+                      )
+                    )}
+                    {(nextActions.optional.length > 0 || nextActions.handedOff) && (
+                      <button
+                        type="button"
+                        onClick={toggleNextActionsCollapsed}
+                        className="shrink-0 rounded-sm px-1.5 py-0.5 text-micro text-l4 hover:bg-hover hover:text-l2"
+                      >
+                        {nextActionsCollapsed
+                          ? nextActions.optional.length > 0
+                            ? `展开 ${nextActions.optional.length} 项后续建议`
+                            : "展开"
+                          : "收起"}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {!nextActionsCollapsed && nextActions.optional.length > 0 && (
+                  <div className="mt-2 border-t border-hairline/70 pt-2">
+                    {runStatus !== "done" && (
+                      <div className="mb-1 text-micro text-l4">
+                        {nextActions.readiness === "blocked"
+                          ? "待处理事项与顺手可做"
+                          : "可选后续（跳过也能直接去评审）"}
+                      </div>
+                    )}
+                    <ul className="space-y-1">
+                      {nextActions.optional.map((opt) => {
+                        const fetchProg =
+                          opt.action === "fetch_pdf" && toFetchItems.length > 0
+                            ? priorityFetchProgress(
+                                toFetchItems,
+                                toFetchDone,
+                                opt.priorityDois ?? [],
+                                opt.priorityKeys ?? [],
+                                toFetchSkipped,
+                              )
+                            : null;
+                        const memLine = (opt.memoryText || opt.label).trim();
+                        const isRemembered =
+                          opt.action === "remember" && rememberedTexts.has(memLine);
+                        const isAutoDone =
+                          isRemembered ||
+                          (opt.action === "spot_check" && spotDone) ||
+                          (opt.action === "confirm_pending" &&
+                            pendingMeta !== null &&
+                            pendingMeta.count === 0) ||
+                          Boolean(fetchProg && fetchProg.total > 0 && fetchProg.saved >= fetchProg.total);
+                        const checked = isAutoDone || doneNextOptIds.has(opt.id);
+                        return (
+                          <li
+                            key={opt.id}
+                            className="flex flex-wrap items-center gap-2 rounded-md px-1.5 py-1 transition-colors hover:bg-hover/60"
+                          >
+                            <button
+                              type="button"
+                              aria-label={checked ? "取消标记完成" : "标为已处理"}
+                              title={checked ? "已处理（再点取消标记）" : "点一下标为已处理 / 跳过"}
+                              onClick={() => toggleCheckOpt(opt.id)}
+                              className={`flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                                checked
+                                  ? "border-done bg-done/15 text-done"
+                                  : "border-field text-transparent hover:border-l3"
+                              }`}
+                            >
+                              <Check size={9} strokeWidth={2.5} />
+                            </button>
+                            <div className="min-w-0 flex-1">
+                              <span className={checked ? "text-xs text-l3" : "text-xs text-l2"}>
+                                {opt.label}
+                              </span>
+                              {fetchProg && fetchProg.total > 0 && (
+                                <span
+                                  className={`ml-1.5 inline-flex rounded-sm px-1 text-micro tabular-nums ${
+                                    fetchProg.saved >= fetchProg.total
+                                      ? "bg-ok-bg text-ok-text"
+                                      : fetchProg.saved > 0
+                                        ? "bg-cta-pill text-cta-pill-text"
+                                        : "bg-inset text-l4"
+                                  }`}
+                                >
+                                  已补 {fetchProg.saved}/{fetchProg.total}
+                                </span>
+                              )}
+                              {opt.detail && (
+                                <span className="ml-1.5 text-micro text-l4">{opt.detail}</span>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
+                              {opt.action === "fetch_pdf" && catchUpCount > 0 && onCatchUpReads && (
+                                <button
+                                  type="button"
+                                  disabled={catchUpBusy}
+                                  onClick={() => {
+                                    toggleCheckOpt(opt.id, true);
+                                    onCatchUpReads();
+                                  }}
+                                  title="把精读步里原本缺全文、现已新补进 papers/ 的 PDF 交给精读 AI 原位补读并更新笔记/速读表/抽取表"
+                                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-cta-bd bg-cta-pill px-2 text-micro font-medium text-cta-pill-text transition-colors hover:brightness-110 disabled:opacity-50"
+                                >
+                                  <RotateCcw size={11} strokeWidth={2} aria-hidden="true" />
+                                  {catchUpBusy ? "正在启动补读…" : `补读新到 ${catchUpCount} 篇`}
+                                </button>
+                              )}
+                              {isRemembered ? (
+                                <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-micro text-ok-text">
+                                  <Check size={11} strokeWidth={2.2} aria-hidden="true" />
+                                  已记下
+                                </span>
+                              ) : opt.action === "return_step" &&
+                                pendingRework &&
+                                (!opt.targetStep || opt.targetStep === pendingRework.toStep) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => pendingRework.onGoTarget?.()}
+                                  disabled={!pendingRework.onGoTarget}
+                                  title={`已退回「${pendingRework.toStep}」，点击直接切去查看或评审保存，无需重复发单`}
+                                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-cta-bd/60 bg-cta-pill/70 px-2 text-micro font-medium text-cta-pill-text transition-colors hover:brightness-110 disabled:opacity-60"
+                                >
+                                  <span>
+                                    {pendingRework.status === "review"
+                                      ? `${pendingRework.toStep} 待评审 · 去保存`
+                                      : `${pendingRework.toStep} 处理中 · 去看看`}
+                                  </span>
+                                  <ArrowRight size={10} strokeWidth={2} aria-hidden="true" />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={rememberBusyId === opt.id}
+                                  onClick={() => runAction(opt)}
+                                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-field bg-surface px-2 text-micro text-l2 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+                                >
+                                  {opt.action === "remember" && (
+                                    <BookmarkPlus size={11} strokeWidth={1.8} aria-hidden="true" />
+                                  )}
+                                  {rememberBusyId === opt.id
+                                    ? "记下中…"
+                                    : opt.buttonText || defaultActionButtonText(opt.action)}
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+                {!nextActionsCollapsed && nextActions.handedOff && (
+                  <p className="mt-2 flex items-start gap-1.5 border-t border-hairline/70 pt-1.5 text-micro leading-5 text-l4">
+                    <Check size={12} strokeWidth={2.2} className="mt-0.5 shrink-0 text-done" aria-hidden="true" />
+                    <span>{nextActions.handedOff}</span>
+                  </p>
+                )}
+              </div>
+            );
+          })()}
         {/* 说明只在当前节点显示：一屏同时摊开五段说明是这一页最大的噪音源。
             非当前节点的说明挂在行的 title 上（悬停可见），信息不丢。
             例外（v3.97）：可选的 after 档事项被设计成不抢「当前节点」，若死守 isCurrent，
@@ -3530,7 +5460,14 @@ export default function StepFlow({
                     extraEnv: {},
                     title: "MCP 登录",
                     initialPrompt: academicMcpLoginPrompt(projectLaunch?.agentId),
-                    ...(projectLaunch ?? {}),
+                    ...(projectLaunch
+                      ? {
+                          agentId: projectLaunch.agentId,
+                          profileId: projectLaunch.profileId,
+                          model: projectLaunch.model,
+                          ...(projectLaunch.effort ? { effort: projectLaunch.effort } : {}),
+                        }
+                      : {}),
                     autoStart: Boolean(projectLaunch?.profileId),
                     permission: "discuss",
                     discussOnly: true,
@@ -3562,7 +5499,7 @@ export default function StepFlow({
                 <p>{pendingSettled ? PENDING_DONE_HINT : PENDING_HINT}</p>
               )}
               <div className={pendingHintShown ? "mt-1.5" : undefined}>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setPendingListOpen((open) => !open)}
@@ -3580,9 +5517,20 @@ export default function StepFlow({
                       onClick={() => pendingListRef.current?.includeAll()}
                       // 不做主按钮：这一步要人逐篇拍板，强调色留给勾选后的「纳入所选」
                       className="rounded-sm border border-field px-1.5 py-0.5 text-micro text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                      title={`把 ${pendingMeta.count} 篇待确认全部改为纳入。没有 PDF 的会追加到待获取。`}
+                      title={`只把剩余 ${pendingMeta.count} 篇待确认改为纳入（已排除的篇目不受影响）。没有 PDF 的会追加到待获取。`}
                     >
-                      {pendingMeta.busy ? "纳入中…" : "全部纳入"}
+                      {pendingMeta.busy ? "纳入中…" : `纳入其余 ${pendingMeta.count} 篇待确认`}
+                    </button>
+                  )}
+                  {pendingListOpen && (
+                    <button
+                      type="button"
+                      onClick={() => setPendingModalOpen(true)}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                      title="在大窗口里展开完整文献清单，方便批量筛选和看摘要"
+                    >
+                      <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                      <span>放大筛选</span>
                     </button>
                   )}
                 </div>
@@ -3591,7 +5539,7 @@ export default function StepFlow({
                     <PendingConfirmList
                       ref={pendingListRef}
                       onMeta={setPendingMeta}
-                      refreshKey={ledgerRefreshKey}
+                      refreshKey={`${ledgerRefreshKey}:${pendingModalSyncTick}`}
                       worktreePath={dataWs?.worktreePath}
                       projectRoot={projectPath}
                       commitToProject={runStatus === "done"}
@@ -3617,62 +5565,126 @@ export default function StepFlow({
           human.target &&
           !node.done &&
           !dense &&
-          (isCurrent || inlineDecisionListVisible(runStatus, agentAttention, human)) && (
-            <div className="mt-1 pl-6">
-              <ReviewDecisionList
-                worktreePath={ws?.worktreePath}
-                projectRoot={projectPath}
-                target={human.target}
-                kind={reviewItemKind(human.title)!}
-                refreshKey={`${runStatus}|${agentAttention ?? ""}`}
-                onOpenFile={(req) => {
-                  const alreadyOpen = Boolean(useAppStore.getState().projectFilePane);
-                  void showProjectFile({
-                    projectRoot: projectPath,
-                    root: req.root,
-                    path: req.path,
-                    name: req.name,
-                    rel: req.rel,
-                    line: req.line,
-                    showList: req.showList ?? (!alreadyOpen && req.list.length > 1 ? true : undefined),
-                    list: req.list,
-                    from: human.title,
-                  });
-                }}
-                onOpenFileInWindow={(req) => {
-                  void (async () => {
-                    if (useAppStore.getState().projectFilePane && (await confirmDiscardProjectFile())) {
-                      useAppStore.getState().closeProjectFile();
+          (isCurrent || inlineDecisionListVisible(runStatus, agentAttention, human)) &&
+          (() => {
+            const kind = reviewItemKind(human.title)!;
+            const meta = decisionMeta[human.title];
+            const hasItems = Boolean(meta && !meta.missing && meta.total > 0);
+            const open = decisionFold[human.title] ?? isCurrent;
+            const listMounted = !hasItems || open;
+            return (
+              <div className="mt-1.5 pl-6">
+                {hasItems && meta && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setDecisionFold((prev) => ({ ...prev, [human.title]: !open }))
+                      }
+                      aria-expanded={open}
+                      className="flex items-center gap-1 text-xs text-l3 transition-colors hover:text-l1"
+                    >
+                      <FoldMark open={open} />
+                      <span>
+                        {kind === "verify" ? "裁决清单" : "审查条目"}
+                        {meta.open > 0
+                          ? `（还剩 ${meta.open} / ${meta.total} 条）`
+                          : `（全部 ${meta.total} 条已决定）`}
+                      </span>
+                    </button>
+                    {!open && meta.open === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void checkPendingConfirmIfOpen(human.title);
+                          if (human.target) void continueAfterDecisions(human.target, human.title);
+                        }}
+                        className="rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-micro font-medium text-cta-text transition-[filter] hover:brightness-110"
+                      >
+                        让 Agent 按决定继续
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openDecisionModal(human.title, human.target!, kind, false)
+                      }
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                      title="在大窗口里展开完整清单，支持左右分栏对照原稿、搜索、按级别筛选与撤销"
+                    >
+                      <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                      <span>放大</span>
+                    </button>
+                  </div>
+                )}
+                {listMounted && (
+                  <ReviewDecisionList
+                    worktreePath={ws?.worktreePath}
+                    projectRoot={projectPath}
+                    target={human.target}
+                    kind={kind}
+                    refreshKey={`${runStatus}|${agentAttention ?? ""}|${decisionModalSyncTick}`}
+                    onEnlarge={
+                      hasItems
+                        ? undefined
+                        : () => openDecisionModal(human.title, human.target!, kind, false)
                     }
-                    await openProjectFileInWindow({
-                      projectRoot: projectPath,
-                      root: req.root,
-                      path: req.path,
-                      name: req.name,
-                      rel: req.rel,
-                      line: req.line,
-                      showList: req.showList ?? (req.list.length > 1 ? true : undefined),
-                      list: req.list,
-                      from: human.title,
-                    });
-                  })();
-                }}
-                onOpenCount={(count) =>
-                  setDecisionOpen((prev) => {
-                    if (prev.get(human.title) === count) return prev;
-                    const next = new Map(prev);
-                    next.set(human.title, count);
-                    return next;
-                  })
-                }
-                onAllDecided={() => {
-                  void checkPendingConfirmIfOpen(human.title);
-                  if (human.target) void continueAfterDecisions(human.target, human.title);
-                }}
-              />
-              {decisionNote && <InlineNotice tone="err" size="micro" className="mt-1">{decisionNote}</InlineNotice>}
-            </div>
-          )}
+                    onMeta={(m) => updateDecisionMeta(human.title, m)}
+                    onOpenFile={(req) => {
+                      const alreadyOpen = Boolean(useAppStore.getState().projectFilePane);
+                      void showProjectFile({
+                        projectRoot: projectPath,
+                        root: req.root,
+                        path: req.path,
+                        name: req.name,
+                        rel: req.rel,
+                        line: req.line,
+                        showList: req.showList ?? (!alreadyOpen && req.list.length > 1 ? true : undefined),
+                        list: req.list,
+                        from: human.title,
+                      });
+                    }}
+                    onOpenFileInWindow={(req) => {
+                      void (async () => {
+                        if (useAppStore.getState().projectFilePane && (await confirmDiscardProjectFile())) {
+                          useAppStore.getState().closeProjectFile();
+                        }
+                        await openProjectFileInWindow({
+                          projectRoot: projectPath,
+                          root: req.root,
+                          path: req.path,
+                          name: req.name,
+                          rel: req.rel,
+                          line: req.line,
+                          showList: req.showList ?? (req.list.length > 1 ? true : undefined),
+                          list: req.list,
+                          from: human.title,
+                        });
+                      })();
+                    }}
+                    onOpenCount={(count) =>
+                      setDecisionOpen((prev) => {
+                        if (prev.get(human.title) === count) return prev;
+                        const next = new Map(prev);
+                        next.set(human.title, count);
+                        decisionOpenCache.set(decisionOpenKey, next);
+                        return next;
+                      })
+                    }
+                    onAllDecided={() => {
+                      void checkPendingConfirmIfOpen(human.title);
+                      if (human.target) void continueAfterDecisions(human.target, human.title);
+                    }}
+                  />
+                )}
+                {decisionNote && (
+                  <InlineNotice tone="err" size="micro" className="mt-1" onDismiss={() => setDecisionNote(null)}>
+                    {decisionNote}
+                  </InlineNotice>
+                )}
+              </div>
+            );
+          })()}
         {!dense &&
           node.kind === "human" &&
           human &&
@@ -3708,7 +5720,8 @@ export default function StepFlow({
                 )
               )}
               {isSpotCheckTaskTitle(human.title) && !node.done && (
-                <SpotCheckPicks
+                <div data-spot-check="">
+                  <SpotCheckPicks
                   projectPath={projectPath}
                   ws={dataWs}
                   refreshKey={ledgerRefreshKey}
@@ -3716,6 +5729,7 @@ export default function StepFlow({
                   taskTitle={human.title}
                   hint={guidance}
                 />
+                </div>
               )}
               {/* 付费墙：清单就是入口。折叠标题带缺篇数；做法进行内按钮 title，
                   不再在清单上下各写一段说明书。 */}
@@ -3731,7 +5745,7 @@ export default function StepFlow({
                   >
                     <FoldMark open={paywallListOpen} />
                     {paywallList.text
-                      ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone)} 篇）`
+                      ? `待获取（还缺 ${missingToFetchCount(paywallList.text, toFetchDone, toFetchSkipped)} 篇）`
                       : "待获取"}
                     {paywallListOpen && paywallList.from && (
                       <span className="text-l4">· {paywallList.from}</span>
@@ -3773,175 +5787,22 @@ export default function StepFlow({
                       >
                         访问方式
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (paywallList.text == null && !paywallList.error) void loadPaywallList();
+                          setPaywallModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                        title="在大窗口里展开完整待获取清单，方便搜索、排序和拖放 PDF"
+                      >
+                        <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                        <span>放大</span>
+                      </button>
                     </span>
                   )}
                   </div>
-                  {paywallListOpen && (
-                    <div ref={paywallDropRef} className="mt-1.5 rounded-lg bg-canvas/45 px-2.5 py-2">
-                      {instLoginErr && (
-                        <p className="mb-1 break-words text-micro text-err-text" role="alert">
-                          {instLoginErr}
-                        </p>
-                      )}
-                      {dropNote && <p className="mb-1 text-micro text-l3">{dropNote}</p>}
-                      {paywallList.error ? (
-                        <p className="text-micro text-l4">
-                          {paywallList.error}
-                        </p>
-                      ) : paywallList.text == null ? (
-                        <p className="text-micro text-l4">加载中…</p>
-                      ) : (
-                        <>
-                          {browserOpenErr && (
-                            <p
-                              className="mb-1 break-words text-micro text-err-text"
-                              role="alert"
-                            >
-                              {browserOpenErr}
-                            </p>
-                          )}
-                          {paywallMetricsLoading && (
-                            <p className="mb-1 text-micro text-l4">正在按 DOI 补期刊名，影响因子稍后出现。</p>
-                          )}
-                          {toFetchItems.length > 0 ? (
-                            <ul
-                              ref={toFetchListRef}
-                              className="max-h-72 space-y-0.5 overflow-auto px-0.5 py-px"
-                              onScroll={(e) =>
-                                writeToFetchScroll(
-                                  projectPath,
-                                  e.currentTarget.scrollTop,
-                                )
-                              }
-                            >
-                              {toFetchItems.map((item) => {
-                                const st = toFetchBusy[item.line];
-                                const doneName = toFetchDone[item.line];
-                                const done = item.done || !!doneName;
-                                const spotlight = browserSpotlight === item.line;
-                                return (
-                                  <li
-                                    key={item.line}
-                                    data-to-fetch-line={item.line}
-                                    className={`flex min-w-0 flex-wrap items-center gap-1 rounded-md px-1 py-0.5 ${
-                                      spotlight
-                                        ? "bg-cta/10 ring-1 ring-inset ring-cta-bd"
-                                        : "hover:bg-hover"
-                                    }`}
-                                  >
-                                    <button
-                                      type="button"
-                                      className={`min-w-0 flex-1 truncate text-left text-xs ${
-                                        doneName
-                                          ? "text-l4 line-through hover:text-l2"
-                                          : "text-l2 hover:text-l1"
-                                      }`}
-                                      title={
-                                        doneName
-                                          ? `在右侧打开 papers/${doneName}`
-                                          : item.url
-                                            ? "用右侧「官网」打开这篇的出版商页面"
-                                            : item.title
-                                      }
-                                      onClick={() => {
-                                        focusToFetchLine(item.line);
-                                        if (doneName) {
-                                          const rel = toFetchPaperRel(doneName);
-                                          if (!rel) return;
-                                          void showProjectFile({
-                                            projectRoot: projectPath,
-                                            path: absoluteResourcePath(
-                                              projectPath,
-                                              rel,
-                                            ),
-                                            from: "待获取清单",
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      {displayCitationTitle(item.title)}
-                                    </button>
-                                    {item.addedOn && (
-                                      <span
-                                        className="shrink-0 rounded-sm bg-raised px-1 text-micro text-l3"
-                                        title={`${item.addedOn} 这一轮新加进待获取的（编号接在上一版后面）`}
-                                      >
-                                        新加 {item.addedOn.slice(5)}
-                                      </span>
-                                    )}
-                                    <JournalPills metric={paywallMetrics.get(item.line)} />
-                                    {done ? (
-                                      <span
-                                        className={`shrink-0 text-micro ${doneName ? "text-done" : "text-l4"}`}
-                                        title={
-                                          doneName
-                                            ? `点标题打开 papers/${doneName}`
-                                            : undefined
-                                        }
-                                      >
-                                        {doneName ? "✓ 已存" : "✓ 已勾"}
-                                      </span>
-                                    ) : (
-                                      <span className="flex shrink-0 items-center">
-                                        {item.url && (
-                                          <PublisherOpenButton
-                                            url={item.url}
-                                            title={item.title}
-                                            projectPath={projectPath}
-                                            onOpened={() => focusToFetchLine(item.line)}
-                                            onError={(message) => setBrowserOpenErr(message || null)}
-                                          />
-                                        )}
-                                        <button
-                                          type="button"
-                                          className={`${ghostActionClass} shrink-0`}
-                                          disabled={st?.status === "busy"}
-                                          title="选一个已下载的 PDF，按本行标题复制进 papers/（文件名随意）"
-                                          onClick={() => void attachToFetchItem(item)}
-                                        >
-                                          {st?.status === "busy" ? "关联中…" : "关联"}
-                                        </button>
-                                      </span>
-                                    )}
-                                    {!done && st?.status === "ok" && (
-                                      <span
-                                        className="shrink-0 text-micro text-done"
-                                        title={st.note}
-                                      >
-                                        ✓ 已存
-                                      </span>
-                                    )}
-                                    {!done && st?.status === "error" && (
-                                      <span
-                                        className="shrink-0 max-w-[12rem] truncate text-micro text-err-text"
-                                        title={st.note ?? ""}
-                                      >
-                                        {st.note}
-                                      </span>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          ) : (
-                            <pre className="max-h-72 overflow-auto whitespace-pre-wrap font-mono text-micro leading-5 text-l3">
-                              {paywallList.text}
-                            </pre>
-                          )}
-                        </>
-                      )}
-                      <div className="mt-1 flex min-w-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void openPapersDir()}
-                          title="打开课题的 papers/。PDF 在这里；要挂附件，拖到 Zotero 或 EndNote 里对应的那条文献上"
-                          className={`${ghostActionClass} shrink-0`}
-                        >
-                          打开 papers/
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {paywallListOpen && renderPaywallListBody(false)}
                 </div>
               )}
             </div>
@@ -4004,12 +5865,35 @@ export default function StepFlow({
                 >
                   {skipLabel}
                 </button>
+                {human.target && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void (async () => {
+                        if (task.panel === "sections" && open) {
+                          await inlineDeclRef.current?.flushSave().catch(() => {});
+                        }
+                        setHandbackModal({
+                          title: human.title,
+                          target: human.target!,
+                          panel: task.panel,
+                          handback: task.handback,
+                        });
+                      })();
+                    }}
+                    title="在大窗口里展开完整清单或表单，操作更宽敞"
+                    className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                    <span>放大</span>
+                  </button>
+                )}
               </div>
             );
           })()}
         {node.kind === "human" && human && handbackNote?.title === human.title && (
           <div className="mt-1 pl-6">
-            <InlineNotice tone={handbackNote.tone ?? "err"} size="micro">{handbackNote.text}</InlineNotice>
+            <InlineNotice tone={handbackNote.tone ?? "err"} size="micro" onDismiss={() => setHandbackNote(null)}>{handbackNote.text}</InlineNotice>
           </div>
         )}
         {node.kind === "human" &&
@@ -4017,15 +5901,24 @@ export default function StepFlow({
           !node.done &&
           editOpen === human.title &&
           handbackTask(human.title) && (
-            <div className="mt-1.5 ml-6 rounded-md border border-hairline px-2.5 py-2">
+            <div className="mt-1.5 ml-6 rounded-lg bg-canvas/45 px-2.5 py-2">
               {/* 不再就地开 Markdown 编辑（2026-10-24 用户：打开清单、打开填写很不方便）：
                   许可清单一篇一行、下拉改状态；声明一节一框，离开就存 */}
               {handbackTask(human.title)!.panel === "permissions" ? (
-                <FigurePermissionsPanel root={stepFileRoot} rel={human.target} projectRoot={projectPath} />
-              ) : (
-                <DeclarationsForm
+                <FigurePermissionsPanel
                   root={stepFileRoot}
                   rel={human.target}
+                  projectRoot={projectPath}
+                  refreshKey={`${ledgerRefreshKey}|${handbackSyncTick}`}
+                  onMeta={(data) => updateHandbackSummary(human.title, { kind: "permissions", data })}
+                />
+              ) : (
+                <DeclarationsForm
+                  ref={inlineDeclRef}
+                  root={stepFileRoot}
+                  rel={human.target}
+                  refreshKey={`${ledgerRefreshKey}|${handbackSyncTick}`}
+                  onMeta={(data) => updateHandbackSummary(human.title, { kind: "sections", data })}
                   fallback={
                     <div className="flex h-[24rem] flex-col overflow-hidden rounded-sm">
                       <ProjectFilePreview
@@ -4149,7 +6042,7 @@ export default function StepFlow({
           className="pl-1"
         />
       )}
-      {error && <InlineNotice tone="err" size="micro" className="mt-1 pl-1">{error}</InlineNotice>}
+      {error && <InlineNotice tone="err" size="micro" className="mt-1 pl-1" onDismiss={clearError}>{error}</InlineNotice>}
       {/* TASK.md 就地编辑弹层：不跳终端页。背景点击在有未保存改动时会先确认 */}
       {draftEdit && (
         <div
@@ -4247,6 +6140,427 @@ export default function StepFlow({
           </div>
         </div>
       )}
+      {typeof document !== "undefined" &&
+        createPortal(
+          <>
+            <Modal
+              open={pendingModalOpen}
+              size="xl"
+              overflow="hidden"
+              panelClassName="!max-w-[min(90vw,1080px)] h-[min(86vh,860px)]"
+              contentClassName="flex flex-1 flex-col overflow-hidden"
+              title="文献清单 · 核对待确认篇目"
+              description="支持关键词搜索、快捷筛选、按住 Shift 区间连选、原地看摘要与一键撤销；改动实时写入清单。"
+              onClose={() => {
+                setPendingModalOpen(false);
+                setPendingModalSyncTick((t) => t + 1);
+              }}
+              footer={
+                <>
+                  {pendingMeta.count > 0 && (
+                    <button
+                      type="button"
+                      disabled={pendingMeta.busy}
+                      onClick={() => pendingModalRef.current?.includeAll()}
+                      className={secondaryActionClass}
+                      title={`只把剩余 ${pendingMeta.count} 篇待确认改为纳入（已排除的篇目不受影响）`}
+                    >
+                      {pendingMeta.busy ? "纳入中…" : `纳入其余 ${pendingMeta.count} 篇待确认`}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPendingModalOpen(false);
+                      setPendingModalSyncTick((t) => t + 1);
+                    }}
+                    className={primaryActionClass}
+                  >
+                    完成
+                  </button>
+                </>
+              }
+            >
+              {pendingModalOpen && (
+                <PendingConfirmList
+                  ref={pendingModalRef}
+                  fill
+                  onMeta={setPendingMeta}
+                  refreshKey={`${ledgerRefreshKey}:${pendingModalSyncTick}`}
+                  worktreePath={dataWs?.worktreePath}
+                  projectRoot={projectPath}
+                  commitToProject={runStatus === "done"}
+                  onOpenPdf={(path) =>
+                    void showProjectFile({ projectRoot: projectPath, path, from: "待确认的文献" })
+                  }
+                  onChanged={() => {
+                    onChanged?.();
+                    void loadPaywallList();
+                  }}
+                  onCleared={() => {
+                    const title = step.humanTasks?.find((h) => isPendingConfirmTaskTitle(h.title))?.title;
+                    if (title) void checkPendingConfirmIfOpen(title);
+                  }}
+                />
+              )}
+            </Modal>
+            <Modal
+              open={paywallModalOpen}
+              size="xl"
+              overflow="hidden"
+              panelClassName="!max-w-[min(90vw,1080px)] h-[min(86vh,860px)]"
+              contentClassName="flex flex-1 flex-col overflow-hidden"
+              title={
+                paywallList.text
+                  ? `待获取全文清单（还缺 ${missingToFetchCount(paywallList.text, toFetchDone, toFetchSkipped)} 篇）`
+                  : "待获取全文清单"
+              }
+              description="可按影响因子排序、只看未下、跳过不需要全文的篇目、复制 DOI 或直接拖入已下载的 PDF 自动匹配进 papers/。"
+              onClose={() => setPaywallModalOpen(false)}
+              footer={
+                <button
+                  type="button"
+                  onClick={() => setPaywallModalOpen(false)}
+                  className={primaryActionClass}
+                >
+                  关闭
+                </button>
+              }
+            >
+              {paywallModalOpen && renderPaywallListBody(true)}
+            </Modal>
+            {(() => {
+              const activeMeta = decisionModal ? decisionMeta[decisionModal.title] : undefined;
+              const modalFiles = activeMeta?.fileList ?? [];
+              const fallbackFile = modalFiles[0]
+                ? {
+                    path: modalFiles[0].path,
+                    root: modalFiles[0].root ?? activeMeta?.fileRoot ?? stepFileRoot,
+                    name: modalFiles[0].name,
+                    rel: modalFiles[0].rel ?? modalFiles[0].name,
+                    line: undefined as number | undefined,
+                    nonce: 0,
+                  }
+                : null;
+              const splitFile = decisionSplitFile ?? fallbackFile;
+              const showSplit = Boolean(decisionModal && decisionSplitOpen && splitFile);
+              const allReady = Boolean(
+                decisionModal &&
+                  !decisionModal.readOnly &&
+                  activeMeta &&
+                  !activeMeta.missing &&
+                  activeMeta.total > 0 &&
+                  activeMeta.open === 0,
+              );
+              return (
+                <Modal
+                  open={Boolean(decisionModal)}
+                  size={showSplit ? "full" : "xl"}
+                  overflow="hidden"
+                  panelClassName={
+                    showSplit
+                      ? "!max-w-[min(95vw,1440px)] h-[min(90vh,900px)]"
+                      : "!max-w-[min(90vw,1080px)] h-[min(86vh,860px)]"
+                  }
+                  contentClassName="flex flex-1 flex-col overflow-hidden"
+                  title={
+                    decisionModal
+                      ? decisionModal.readOnly
+                        ? `${decisionModal.title} · 回看`
+                        : decisionModal.title
+                      : ""
+                  }
+                  description={
+                    decisionModal?.readOnly
+                      ? "只读回看本项已决定的全部条目；点击条目里的行号可在右侧对照原稿。"
+                      : "点条目里的文件与行号可在右侧对照原稿并高亮定位；刚拍板的条目原地留位、随时可撤销或改判。"
+                  }
+                  headerActions={
+                    decisionModal && modalFiles.length > 0 ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDecisionSplitOpen((v) => !v)}
+                          title={
+                            showSplit
+                              ? "收起右侧原稿对照，条目区恢复全宽"
+                              : "在大窗口右侧并排打开原稿，点条目行号实时跳转定位"
+                          }
+                          className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs transition-colors ${
+                            showSplit
+                              ? "border-cta-bd bg-cta-pill text-cta-pill-text"
+                              : "border-field bg-strip text-l2 hover:bg-hover hover:text-l1"
+                          }`}
+                        >
+                          <PanelRight size={13} strokeWidth={1.8} aria-hidden="true" />
+                          <span>
+                            {showSplit
+                              ? "收起原稿"
+                              : modalFiles.length > 1
+                                ? `对照原稿（${modalFiles.length}）`
+                                : "对照原稿"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const target = splitFile ?? fallbackFile;
+                            if (!target || !decisionModal) return;
+                            setDecisionSplitOpen(false);
+                            void openProjectFileInWindow({
+                              projectRoot: projectPath,
+                              root: target.root,
+                              path: target.path,
+                              name: target.name,
+                              rel: target.rel,
+                              line: target.line,
+                              showList: modalFiles.length > 1 ? true : undefined,
+                              list: modalFiles,
+                              from: decisionModal.title,
+                            });
+                          }}
+                          title="拆成独立系统窗口打开原稿（双屏或笔记本并排查看），本窗口条目区自动铺满"
+                          className="inline-flex h-7 items-center gap-1 rounded-md border border-field bg-strip px-2 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1"
+                        >
+                          <AppWindow size={13} strokeWidth={1.8} aria-hidden="true" />
+                          <span>新窗口打开</span>
+                        </button>
+                      </>
+                    ) : null
+                  }
+                  onClose={closeDecisionModal}
+                  footer={
+                    <>
+                      {activeMeta && !activeMeta.missing && activeMeta.total > 0 && (
+                        <span className="mr-auto text-micro tabular-nums text-l3">
+                          已决 {activeMeta.decided} / {activeMeta.total}
+                          {activeMeta.decided > 0
+                            ? `（接受 ${activeMeta.accepted} · 修改 ${activeMeta.modified} · 拒绝 ${activeMeta.rejected}）`
+                            : ""}
+                        </span>
+                      )}
+                      {allReady && decisionModal ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={closeDecisionModal}
+                            className={secondaryActionClass}
+                          >
+                            关闭
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const title = decisionModal.title;
+                              const target = decisionModal.target;
+                              closeDecisionModal();
+                              void checkPendingConfirmIfOpen(title);
+                              void continueAfterDecisions(target, title);
+                            }}
+                            className={primaryActionClass}
+                          >
+                            让 Agent 按决定继续
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={closeDecisionModal}
+                          className={primaryActionClass}
+                        >
+                          {decisionModal?.readOnly ? "关闭" : "完成"}
+                        </button>
+                      )}
+                    </>
+                  }
+                >
+                  {decisionModal && (
+                    <div className="flex min-h-0 flex-1 gap-3 overflow-hidden">
+                      <div
+                        className={`flex min-h-0 flex-col ${
+                          showSplit ? "w-[46%] min-w-[22rem] shrink-0" : "min-w-0 flex-1"
+                        }`}
+                      >
+                        <ReviewDecisionList
+                          fill
+                          readOnlyView={decisionModal.readOnly}
+                          hideFileActions
+                          hideContinueAction
+                          worktreePath={ws?.worktreePath}
+                          projectRoot={projectPath}
+                          target={decisionModal.target}
+                          kind={decisionModal.kind}
+                          refreshKey={`${runStatus}|${agentAttention ?? ""}|modal|${decisionModalSyncTick}`}
+                          onMeta={(m) => updateDecisionMeta(decisionModal.title, m)}
+                          onOpenFile={(req) => openModalSplitFile(req, decisionModal.title)}
+                          onOpenFileInWindow={(req) => {
+                            setDecisionSplitOpen(false);
+                            void openProjectFileInWindow({
+                              projectRoot: projectPath,
+                              root: req.root,
+                              path: req.path,
+                              name: req.name,
+                              rel: req.rel,
+                              line: req.line,
+                              showList: req.showList ?? (req.list.length > 1 ? true : undefined),
+                              list: req.list,
+                              from: decisionModal.title,
+                            });
+                          }}
+                          onOpenCount={(count) =>
+                            setDecisionOpen((prev) => {
+                              if (prev.get(decisionModal.title) === count) return prev;
+                              const next = new Map(prev);
+                              next.set(decisionModal.title, count);
+                              decisionOpenCache.set(decisionOpenKey, next);
+                              return next;
+                            })
+                          }
+                          onAllDecided={() => {
+                            const title = decisionModal.title;
+                            const target = decisionModal.target;
+                            closeDecisionModal();
+                            void checkPendingConfirmIfOpen(title);
+                            void continueAfterDecisions(target, title);
+                          }}
+                        />
+                      </div>
+                      {showSplit && splitFile && (
+                        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-hairline bg-canvas">
+                          <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-hairline bg-strip/70 px-2 py-1">
+                            {modalFiles.map((f) => {
+                              const active = samePath(f.path, splitFile.path, IS_WINDOWS);
+                              return (
+                                <button
+                                  key={f.path}
+                                  type="button"
+                                  onClick={() =>
+                                    setDecisionSplitFile((prev) => ({
+                                      path: f.path,
+                                      root: f.root ?? activeMeta?.fileRoot ?? stepFileRoot,
+                                      name: f.name,
+                                      rel: f.rel ?? f.name,
+                                      line: undefined,
+                                      nonce: (prev?.nonce ?? 0) + 1,
+                                    }))
+                                  }
+                                  title={f.rel ?? f.name}
+                                  className={`shrink-0 rounded-sm px-2 py-0.5 font-mono text-micro transition-colors ${
+                                    active
+                                      ? "bg-seg-sel font-medium text-l1"
+                                      : "text-l3 hover:bg-hover hover:text-l1"
+                                  }`}
+                                >
+                                  {f.name}
+                                </button>
+                              );
+                            })}
+                            {splitFile.line && (
+                              <span className="ml-auto shrink-0 rounded-sm bg-inset px-1.5 py-0.5 font-mono text-micro text-l3">
+                                L{splitFile.line}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              aria-label="收起原稿对照"
+                              onClick={() => setDecisionSplitOpen(false)}
+                              className={`${splitFile.line ? "" : "ml-auto "}shrink-0 rounded-sm p-0.5 text-l4 transition-colors hover:bg-hover hover:text-l1`}
+                            >
+                              <X size={13} strokeWidth={1.8} aria-hidden="true" />
+                            </button>
+                          </div>
+                          <ProjectFilePreview
+                            path={splitFile.path}
+                            root={splitFile.root}
+                            revealLine={splitFile.line}
+                            revealNonce={splitFile.nonce}
+                            hideFileName
+                            hideVersions
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Modal>
+              );
+            })()}
+            <Modal
+              open={Boolean(handbackModal)}
+              size="xl"
+              overflow="hidden"
+              panelClassName="!max-w-[min(90vw,1060px)] h-[min(86vh,860px)]"
+              contentClassName="flex flex-1 flex-col overflow-hidden"
+              title={handbackModal?.title ?? ""}
+              description={
+                handbackModal?.panel === "permissions"
+                  ? "按论文一篇一行核对版权状态，支持筛选、搜索、直达文章页与复制 DOI / 图注出处；改完可直接交给 AI 更新图注与重拼。"
+                  : "按小节展开填写，离开输入框自动保存；空着的节保留「待填」不进稿件。"
+              }
+              onClose={() => void closeHandbackModal()}
+              footer={
+                handbackModal ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void closeHandbackModal()}
+                      className={ws ? secondaryActionClass : primaryActionClass}
+                    >
+                      完成
+                    </button>
+                    {ws && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void handBack(handbackModal.title, handbackModal.target, {
+                            title: handbackModal.title,
+                            done: false,
+                          })
+                        }
+                        className={primaryActionClass}
+                      >
+                        {handbackModal.handback}
+                      </button>
+                    )}
+                  </>
+                ) : null
+              }
+            >
+              {handbackModal &&
+                (handbackModal.panel === "permissions" ? (
+                  <FigurePermissionsPanel
+                    fill
+                    root={stepFileRoot}
+                    rel={handbackModal.target}
+                    projectRoot={projectPath}
+                    refreshKey={`${ledgerRefreshKey}|modal|${handbackSyncTick}`}
+                    onMeta={(data) =>
+                      updateHandbackSummary(handbackModal.title, { kind: "permissions", data })
+                    }
+                  />
+                ) : (
+                  <DeclarationsForm
+                    ref={modalDeclRef}
+                    fill
+                    root={stepFileRoot}
+                    rel={handbackModal.target}
+                    refreshKey={`${ledgerRefreshKey}|modal|${handbackSyncTick}`}
+                    onMeta={(data) =>
+                      updateHandbackSummary(handbackModal.title, { kind: "sections", data })
+                    }
+                    fallback={
+                      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-sm">
+                        <ProjectFilePreview
+                          path={`${stepFileRoot.replace(/[\\/]+$/, "")}/${handbackModal.target}`}
+                          root={stepFileRoot}
+                        />
+                      </div>
+                    }
+                  />
+                ))}
+            </Modal>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }

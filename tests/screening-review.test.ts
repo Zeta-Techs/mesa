@@ -624,3 +624,56 @@ test("newRecordKeys / newFirst：工作副本里有、项目根里没有的算�
   assert.deepEqual(newRecordKeys(current, "不是 JSON").size, 0);
   assert.deepEqual(newFirst(current, (r) => keys.has(r.id)).map((r) => r.id), ["10.1/c", "10.1/a", "10.1/b"]);
 });
+
+test("文献清单搜索、快捷筛选、摘要判定与 Shift 区间连选", async () => {
+  const {
+    hasReadableAbstract,
+    isSuggestedExclude,
+    matchesScreeningFilter,
+    matchesScreeningQuery,
+    pickRangeKeys,
+  } = await import("../src/screening-review.ts");
+  const rec = {
+    id: "10.1002/aenm.20250001",
+    title: "Alkaline HER on MoB",
+    authors: "Li, Na",
+    source: "Adv. Energy Mater.",
+    reason: "建议排除：纯酸性条件",
+    url: "https://doi.org/10.1002/aenm.20250001",
+    abstract: "We investigate alkaline HER over MoB.",
+    kind: "research",
+  };
+  assert.equal(isSuggestedExclude(rec), true);
+  assert.equal(hasReadableAbstract(rec.abstract), true);
+  assert.equal(hasReadableAbstract("待补"), false);
+  assert.equal(hasReadableAbstract(""), false);
+  assert.equal(matchesScreeningQuery(rec, "mob alkaline"), true);
+  assert.equal(matchesScreeningQuery(rec, "mob oer"), false);
+  assert.equal(matchesScreeningFilter(rec, "suggest-exclude", { hasPdf: false, casQuartile: 1, hasMetric: true }), true);
+  assert.equal(matchesScreeningFilter(rec, "no-pdf", { hasPdf: false, casQuartile: 1, hasMetric: true }), true);
+  assert.equal(matchesScreeningFilter(rec, "low-tier", { hasPdf: false, casQuartile: 4, hasMetric: true }), true);
+  assert.equal(matchesScreeningFilter(rec, "low-tier", { hasPdf: false, casQuartile: 1, hasMetric: true }), false);
+
+  assert.deepEqual(pickRangeKeys(["a", "b", "c", "d"], "b", "d"), ["b", "c", "d"]);
+  assert.deepEqual(pickRangeKeys(["a", "b", "c", "d"], "d", "b"), ["b", "c", "d"]);
+  assert.deepEqual(pickRangeKeys(["a", "b", "c"], null, "b"), ["b"]);
+});
+
+test("matchPaperPdf 优先认 included.json 登记的 pdf（含 Zotero 库内绝对路径与相对路径）", () => {
+  const zoteroRec = {
+    id: "zotero1abc",
+    title: "Boride HER",
+    url: "https://doi.org/10.1000/a",
+    reason: "纳入",
+    pdf: "/Users/me/Zotero/storage/ABCD/paper.pdf",
+  };
+  assert.equal(matchPaperPdf(zoteroRec, [], "/proj/papers"), "/Users/me/Zotero/storage/ABCD/paper.pdf");
+  const relRec = {
+    id: "10.1000/b",
+    title: "Another",
+    url: "https://doi.org/10.1000/b",
+    reason: "纳入",
+    pdf: "papers/Li2025-Another.pdf",
+  };
+  assert.equal(matchPaperPdf(relRec, [], "/proj/papers"), "/proj/papers/Li2025-Another.pdf");
+});

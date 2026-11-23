@@ -115,9 +115,10 @@ export function hasReaderChats(
   );
 }
 
-/** 哪些课题在侧栏列出模板对话（流程步骤的对话，stepName 非空；项目菜单「显示模板对话」，2026-11-13 用户：
- *  同精读对话，默认不列，按课题打开）。本机 localStorage，存课题的 pathKey；解析 / 开关同精读那一对 */
-export const STEP_CHATS_SHOWN_KEY = "ccode.projectShowStepChats";
+/** 哪些课题在侧栏隐藏模板对话（流程步骤的对话，stepName 非空；2026-11-20 用户拍板改回默认显示，
+ *  项目菜单提供「隐藏模板对话 / 显示模板对话」按课题收起或恢复）。本机 localStorage，存课题的 pathKey；
+ *  解析 / 开关复用精读那一对。故意用新键名，避免此前手动开过显示的课题升级后被反向隐藏 */
+export const STEP_CHATS_HIDDEN_KEY = "ccode.projectHideStepChats";
 
 /** 某个课题有没有模板对话（项目菜单有这一项才出开关）：挂在课题下面的会话 + 刚开起尚未落盘的步骤标签都算 */
 export function hasStepChats(
@@ -443,7 +444,7 @@ export function folderDot(
 }
 
 /**
- * 课题下被开关收起来没列的对话（默认隐藏的模板对话 / 精读对话）最要紧的状态：
+ * 课题下被开关收起来没列的对话（手动隐藏的模板对话 / 默认隐藏的精读对话）最要紧的状态：
  * 课题展开时可见的对话行自己报状态，但被隐藏的那些没有行，由课题节头行尾代报，避免 AI 在跑或等确认时侧栏毫无提示。
  */
 export function hiddenFolderDot(input: {
@@ -460,7 +461,7 @@ export function hiddenFolderDot(input: {
   isWindows?: boolean;
 }): ChatDot {
   const showReader = input.showReader ?? false;
-  const showSteps = input.showSteps ?? false;
+  const showSteps = input.showSteps ?? true;
   if (showReader && showSteps) return null;
   const isWindows = input.isWindows ?? false;
   const worktrees = input.worktrees ?? [];
@@ -855,19 +856,44 @@ export function groupStepChats(
     const lanesRaw = list.filter((r) => r.s.stepRole === "lane" && r.s.laneNo);
     const merges = lanesRaw.length > 0 ? list.filter((r) => r.s.stepRole === "merge") : [];
     const rest = list.filter((r) => !lanesRaw.includes(r) && !merges.includes(r));
-    const roleCount = new Map<string, number>();
-    for (const r of rest) {
-      const l = stepRoleLabel(r.s);
-      if (l) roleCount.set(l, (roleCount.get(l) ?? 0) + 1);
-    }
-    const toRow = (r: ForkRow): StepChatRow => {
-      const l = stepRoleLabel(r.s);
-      const dated = l && (roleCount.get(l) ?? 0) > 1 && mmdd(created(r)) ? `${l} · ${mmdd(created(r))}` : l;
-      return { row: r, label: dated, done: r.s.stepRole === "lane" && Boolean(r.s.laneDone) };
-    };
     const order = (r: ForkRow) => (r.s.stepRole === "discuss" ? 0 : 1);
     rest.sort((a, b) => order(a) - order(b) || (created(a) < created(b) ? -1 : created(a) > created(b) ? 1 : 0));
     lanesRaw.sort((a, b) => (a.s.laneNo ?? 0) - (b.s.laneNo ?? 0) || (created(a) < created(b) ? -1 : 1));
+    // 同角色多条按跨日拼「 · MM-DD」，同一天撞名时自动带序号「 #1 · MM-DD」「 #2 · MM-DD」（按先后排序）
+    const roleCount = new Map<string, number>();
+    const roleDayCount = new Map<string, number>();
+    for (const r of rest) {
+      const l = stepRoleLabel(r.s);
+      if (!l) continue;
+      roleCount.set(l, (roleCount.get(l) ?? 0) + 1);
+      const day = mmdd(created(r));
+      const dk = `${l}\n${day}`;
+      roleDayCount.set(dk, (roleDayCount.get(dk) ?? 0) + 1);
+    }
+    const roleDaySeq = new Map<string, number>();
+    const labelOf = new Map<ForkRow, string | null>();
+    for (const r of rest) {
+      const l = stepRoleLabel(r.s);
+      if (!l || (roleCount.get(l) ?? 0) <= 1) {
+        labelOf.set(r, l);
+        continue;
+      }
+      const day = mmdd(created(r));
+      const dk = `${l}\n${day}`;
+      const seq = (roleDaySeq.get(dk) ?? 0) + 1;
+      roleDaySeq.set(dk, seq);
+      const sameDayDup = (roleDayCount.get(dk) ?? 0) > 1;
+      if (day) {
+        labelOf.set(r, sameDayDup ? `${l} #${seq} · ${day}` : `${l} · ${day}`);
+      } else {
+        labelOf.set(r, `${l} #${seq}`);
+      }
+    }
+    const toRow = (r: ForkRow): StepChatRow => ({
+      row: r,
+      label: labelOf.has(r) ? labelOf.get(r)! : stepRoleLabel(r.s),
+      done: r.s.stepRole === "lane" && Boolean(r.s.laneDone),
+    });
     const stepTabs = tabsOf.get(step) ?? [];
     const laneTabs = stepTabs.filter((t) => t.step!.kind === "lane").sort((a, b) => a.step!.laneNo! - b.step!.laneNo!);
     const laneNos = new Set([...lanesRaw.map((r) => r.s.laneNo), ...laneTabs.map((t) => t.step!.laneNo)]);

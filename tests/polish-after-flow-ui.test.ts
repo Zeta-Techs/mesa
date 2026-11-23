@@ -190,7 +190,9 @@ test("定稿步逐条裁决走完后：后续三项不发灰、行内逐步引�
     assert.ok(citeRow.className.includes("after:bg-cta"), "当前节点应在更换引用样式");
     assert.ok(buttonByText("保持当前，不换"), "更换引用样式应给直达跳过按钮");
     assert.ok(permRow.textContent?.includes("打开清单"), "未轮到的许可行右缘给打开清单");
+    assert.ok(permRow.textContent?.includes("待申请 1/1 篇"), "未点开许可清单前行头也应显示待申请进度");
     assert.ok(declRow.textContent?.includes("打开填写"), "未轮到的声明行右缘给打开填写");
+    assert.ok(declRow.textContent?.includes("已填 0/2 节"), "未点开声明前行头也应显示填写进度");
 
     // 2. 点「保持当前，不换」：更换引用样式勾上并收起胶囊，当前节点推进到「换原图与申请转载许可」
     await act(async () => {

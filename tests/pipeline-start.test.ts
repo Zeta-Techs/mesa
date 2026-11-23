@@ -471,6 +471,11 @@ test("wsLast 记忆层闸门：停用连接不被自动预填（autoStart 落空
     assert.equal(req5.permissionMode, "auto", "没记过、本机没设：帮我批准");
     assert.equal(req5.permission, "write_tree");
     store["ccode.kickoffPerm./p"] = "ask";
+    // 同工作副本已记过上次开工选的 auto（步骤 ④），续跑优先沿用本工作副本记忆
+    const req6Ws = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
+    assert.equal(req6Ws.permissionMode, "auto", "同工作副本已确认的权限优先于项目级默认");
+    // 没记过工作副本权限的新工作副本，回落本项目上次开工选的档（kickoffPerm）
+    delete store[`ccode.wsPerm.${ws.worktreePath}`];
     const req6 = await api.buildWorkspaceTerminalRequest(ws, "继续做到完成标准", { autoStart: true });
     assert.equal(req6.permissionMode, "ask", "本项目上次开工选的档优先");
     const req7 = await api.buildWorkspaceTerminalRequest(ws, undefined, {});

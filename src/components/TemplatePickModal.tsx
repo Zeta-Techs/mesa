@@ -23,7 +23,14 @@ import {
   NoticeBar,
 } from "./PageFrame";
 import { Modal } from "./Modal";
-import { SETTING_FOLLOW_UPS, SETTING_NOTES, answerWithFollowUp, parseSettingLine } from "../setting-choices";
+import {
+  SETTING_FOLLOW_UPS,
+  SETTING_NOTES,
+  answerWithFollowUp,
+  customPlaceholderFor,
+  isSettingOptionHidden,
+  parseSettingLine,
+} from "../setting-choices";
 
 /**
  * 「套一整套流程」选择层（v3.79；2026-11-08 起不在注册后自动弹，由无流程科研项目的目标空态打开）：
@@ -213,6 +220,138 @@ export default function TemplatePickModal({
     }
   }
 
+  const parsedSettings = settingsTpl?.projectSettings?.map(parseSettingLine) ?? [];
+  const answersByQ: Record<string, string> = {};
+  for (let i = 0; i < parsedSettings.length; i++) {
+    answersByQ[parsedSettings[i].q] = answers[i] ?? "";
+  }
+  const filledCount = answers.filter((a) => a.trim().length > 0).length;
+  const totalSettings = parsedSettings.length;
+
+  function updateSettingAnswer(index: number, nextValue: string) {
+    setAnswers((prev) => {
+      const next = prev.map((a, j) => (j === index ? nextValue : a));
+      const nextByQ: Record<string, string> = {};
+      for (let k = 0; k < parsedSettings.length; k++) {
+        nextByQ[parsedSettings[k].q] = next[k] ?? "";
+      }
+      return next.map((val, k) => {
+        const field = parsedSettings[k];
+        if (!field?.options || !val) return val;
+        return isSettingOptionHidden(field.q, val, nextByQ) ? "" : val;
+      });
+    });
+  }
+
+  const description = submissionTpl
+    ? "首投与返修不是同一条流水线；返修会按轮次生成独立的意见、回复信、修订稿和再投稿清单。"
+    : settingsTpl
+      ? "这些设定会写进之后每一步的任务书，AI 照着干活。拿不准的先空着，之后可以在项目设置里补，或开工时让 AI 问你。"
+      : `给「${projectName}」套一整套流程：写整篇综述、论文、学位论文或投稿返修时用，步骤排好顺序，每步你评审过再往下走。只做一件件具体的事，用不着套，关掉在「目标」里写就行。`;
+
+  const footer = (
+    <>
+      {error && <NoticeBar tone="err" className="mb-1 w-full">{error}</NoticeBar>}
+      {submissionTpl ? (
+        <div className="flex w-full items-center justify-between gap-2">
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => {
+              setSubmissionTpl(null);
+              setError(null);
+            }}
+            className={quietActionClass}
+          >
+            ‹ 换个模板
+          </button>
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => {
+              const tpl = submissionTpl;
+              setSubmissionTpl(null);
+              if (tpl.projectSettings?.length) {
+                setSettingsTpl(tpl);
+                setAnswers(tpl.projectSettings.map(() => ""));
+                setCustomOpen({});
+                setFollowUps({});
+              } else {
+                void apply(tpl);
+              }
+            }}
+            className={`${primaryActionClass} disabled:opacity-50`}
+          >
+            下一步
+          </button>
+        </div>
+      ) : settingsTpl ? (
+        <div className="flex w-full items-center justify-between gap-3">
+          <button
+            type="button"
+            disabled={busy !== null}
+            onClick={() => {
+              setSettingsTpl(null);
+              setError(null);
+            }}
+            className={quietActionClass}
+          >
+            ‹ 换个模板
+          </button>
+          <div className="flex items-center gap-3">
+            {filledCount > 0 && (
+              <span className="text-xs text-l3 tabular-nums">
+                已选 {filledCount}/{totalSettings}
+                {filledCount < totalSettings ? "，其余稍后可补" : ""}
+              </span>
+            )}
+            <button
+              type="button"
+              disabled={busy !== null}
+              title={
+                filledCount === 0
+                  ? "空着的项会留在项目设置的规则里，带括号提示"
+                  : undefined
+              }
+              onClick={() =>
+                filledCount === 0
+                  ? void apply(settingsTpl)
+                  : void apply(
+                      settingsTpl,
+                      answers.map((a, i) =>
+                        answerWithFollowUp(
+                          parsedSettings[i].q,
+                          a,
+                          followUps[i] ?? "",
+                        ),
+                      ),
+                    )
+              }
+              className={`${primaryActionClass} disabled:opacity-50`}
+            >
+              {busy === settingsTpl.id
+                ? "写入中…"
+                : filledCount === 0
+                  ? "暂不填写，直接应用模板"
+                  : "保存设定并应用模板"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex w-full items-center justify-end">
+          <button
+            type="button"
+            onClick={() => void closeLater()}
+            title="之后可从目标空态「添加研究流程模板」、项目设置「选择模板」或编辑器「＋ 从模板追加」随时添加"
+            className={secondaryActionClass}
+          >
+            先不套
+          </button>
+        </div>
+      )}
+    </>
+  );
+
   return (
     <Modal
       open
@@ -223,15 +362,15 @@ export default function TemplatePickModal({
             ? `「${settingsTpl.name}」的项目全局设定`
             : "选择研究流程模板"
       }
+      description={description}
       onClose={() => void closeLater()}
       size="lg"
+      overflow="hidden"
+      contentClassName="flex-1 overflow-y-auto -mx-1 px-1"
+      footer={footer}
     >
         {submissionTpl ? (
-          <>
-            <p className="mb-3.5 text-xs leading-5 text-l3">
-              首投与返修不是同一条流水线；返修会按轮次生成独立的意见、回复信、修订稿和再投稿清单。
-            </p>
-            <div className="space-y-2.5">
+          <div className="space-y-2.5">
               <label
                 className={`flex cursor-pointer items-start gap-3 rounded-xl ccode-well px-3.5 py-3 transition-colors hover:bg-hover ${
                   submissionMode === "initial" ? "ring-1 ring-inset ring-cta-bd" : ""
@@ -321,72 +460,31 @@ export default function TemplatePickModal({
                   )}
                 </span>
               </label>
-            </div>
-            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-between pt-1">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => {
-                  setSubmissionTpl(null);
-                  setError(null);
-                }}
-                className={quietActionClass}
-              >
-                ‹ 换个模板
-              </button>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => {
-                  const tpl = submissionTpl;
-                  setSubmissionTpl(null);
-                  if (tpl.projectSettings?.length) {
-                    setSettingsTpl(tpl);
-                    setAnswers(tpl.projectSettings.map(() => ""));
-                    setCustomOpen({});
-                    setFollowUps({});
-                  } else {
-                    void apply(tpl);
-                  }
-                }}
-                className={`${primaryActionClass} disabled:opacity-50`}
-              >
-                下一步
-              </button>
-            </div>
-          </>
+          </div>
         ) : settingsTpl ? (
           /* 第二屏只填全局设定。文献来源在检索步；稿件载体/库交付/Origin/Blender
              在用得上的那一步问，不挡在创建屏。 */
-          <>
-            <p className="mb-3.5 text-xs leading-5 text-l3">
-              这些设定会写进之后每一步的任务书，AI 照着干活。拿不准的先空着，之后可以在项目设置里补，或开工时让 AI 问你。
-            </p>
-            <div className="space-y-2.5">
-              {settingsTpl.projectSettings!.map((line, i) => {
-                const { q, hint, options } = parseSettingLine(line);
+          <div className="space-y-2">
+              {parsedSettings.map(({ q, hint, options }, i) => {
                 const notes = SETTING_NOTES[q];
                 const followUp = SETTING_FOLLOW_UPS[q];
                 const value = answers[i] ?? "";
-                const setValue = (v: string) =>
-                  setAnswers((prev) => prev.map((a, j) => (j === i ? v : a)));
-                const custom = options !== null && (customOpen[i] || (value !== "" && !options.includes(value)));
+                const visibleOptions = options
+                  ? options.filter((opt) => !isSettingOptionHidden(q, opt, answersByQ))
+                  : null;
+                const custom =
+                  visibleOptions !== null &&
+                  (customOpen[i] || (value !== "" && !visibleOptions.includes(value)));
                 return (
-                  <div key={q} className="rounded-xl ccode-well px-3.5 py-3">
-                    <span className="mb-2 block text-xs font-medium text-l1">{q}</span>
-                    {options ? (
+                  <div key={q} className="rounded-xl ccode-well px-3 py-2.5">
+                    <span className="mb-1.5 block text-xs font-medium text-l1">{q}</span>
+                    {visibleOptions ? (
                       <div
-                        className="grid gap-1.5"
-                        style={{
-                          gridTemplateColumns: notes
-                            ? "repeat(2, minmax(0, 1fr))"
-                            : `repeat(${options.length + 1}, minmax(0, 1fr))`,
-                        }}
+                        className={notes ? "grid grid-cols-2 gap-1.5" : "flex flex-wrap gap-1.5"}
                         role="group"
                         aria-label={q}
                       >
-                        {options.map((opt) => {
+                        {visibleOptions.map((opt) => {
                           const on = !custom && value === opt;
                           return (
                             <button
@@ -395,13 +493,27 @@ export default function TemplatePickModal({
                               aria-pressed={on}
                               onClick={() => {
                                 setCustomOpen((prev) => ({ ...prev, [i]: false }));
-                                setValue(on ? "" : opt);
+                                updateSettingAnswer(i, on ? "" : opt);
                               }}
-                              className={`${choiceClass(on)} ${notes ? "flex flex-col justify-start px-3 py-2 text-left" : "h-9 px-2 text-center"}`}
+                              className={`${choiceClass(on)} ${
+                                notes
+                                  ? "flex flex-col justify-start px-3 py-2 text-left"
+                                  : `h-8 px-3 text-center whitespace-nowrap text-sm ${
+                                      on ? "font-medium text-l1" : "text-l2 hover:text-l1"
+                                    }`
+                              }`}
                             >
-                              <span className="block truncate text-sm text-l1">{opt}</span>
-                              {notes?.options[opt] && (
-                                <span className="mt-0.5 block text-xs leading-5 text-l3">{notes.options[opt]}</span>
+                              {notes ? (
+                                <>
+                                  <span className="block text-sm font-medium text-l1">{opt}</span>
+                                  {notes.options[opt] && (
+                                    <span className="mt-0.5 block text-xs leading-5 text-l3">
+                                      {notes.options[opt]}
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                opt
                               )}
                             </button>
                           );
@@ -412,26 +524,47 @@ export default function TemplatePickModal({
                             aria-pressed={custom}
                             onClick={() => {
                               setCustomOpen((prev) => ({ ...prev, [i]: !custom }));
-                              if (!custom || options.includes(value)) setValue("");
+                              if (!custom || visibleOptions.includes(value)) updateSettingAnswer(i, "");
                             }}
-                            className={`${choiceClass(custom)} h-9 px-2 text-center`}
+                            className={`${choiceClass(custom)} ${
+                              notes
+                                ? "col-span-2 flex flex-col justify-start px-3 py-2 text-left"
+                                : `h-8 px-3 text-center whitespace-nowrap text-sm ${
+                                    custom ? "font-medium text-l1" : "text-l3 hover:text-l1"
+                                  }`
+                            }`}
                           >
-                            <span className="text-sm text-l2">其他…</span>
+                            {notes ? (
+                              <>
+                                <span
+                                  className={`block text-sm font-medium ${custom ? "text-l1" : "text-l2"}`}
+                                >
+                                  {notes.custom?.label ?? "其他…"}
+                                </span>
+                                {notes.custom?.note && (
+                                  <span className="mt-0.5 block text-xs leading-5 text-l3">
+                                    {notes.custom.note}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              "其他…"
+                            )}
                           </button>
                         )}
                       </div>
                     ) : null}
-                    {(options === null || custom) && (
+                    {(visibleOptions === null || custom) && (
                       <input
-                        className={`${fieldClass}${options ? " mt-2" : ""}`}
+                        className={`${fieldClass}${visibleOptions ? " mt-2" : ""}`}
                         value={value}
-                        placeholder={options ? "写你自己的答案" : hint}
+                        placeholder={visibleOptions ? customPlaceholderFor(q) : hint}
                         autoFocus={custom}
-                        onChange={(e) => setValue(e.target.value)}
+                        onChange={(e) => updateSettingAnswer(i, e.target.value)}
                       />
                     )}
-                    {followUp && value === followUp.option && (
-                      <label className="mt-2.5 block">
+                    {followUp && !custom && value === followUp.option && (
+                      <label className="mt-2 block">
                         <span className="mb-1 block text-xs text-l3">{followUp.label}</span>
                         <input
                           className={fieldClass}
@@ -446,57 +579,9 @@ export default function TemplatePickModal({
                   </div>
                 );
               })}
-            </div>
-            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-between pt-1">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => {
-                  setSettingsTpl(null);
-                  setError(null);
-                }}
-                className={quietActionClass}
-              >
-                ‹ 换个模板
-              </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() => void apply(settingsTpl)}
-                  title="空着的项会留在项目设置的规则里，带括号提示"
-                  className={`${secondaryActionClass} disabled:opacity-50`}
-                >
-                  暂不填写，稍后补充
-                </button>
-                <button
-                  type="button"
-                  disabled={busy !== null}
-                  onClick={() =>
-                    void apply(
-                      settingsTpl,
-                      answers.map((a, i) =>
-                        answerWithFollowUp(
-                          parseSettingLine(settingsTpl.projectSettings![i]).q,
-                          a,
-                          followUps[i] ?? "",
-                        ),
-                      ),
-                    )
-                  }
-                  className={`${primaryActionClass} disabled:opacity-50`}
-                >
-                  {busy === settingsTpl.id ? "写入中…" : "保存设定并应用模板"}
-                </button>
-              </div>
-            </div>
-          </>
+          </div>
         ) : (
           <>
-            <p className="mb-3 text-xs leading-5 text-l3">
-              给「{projectName}」套一整套流程：写整篇综述、论文、学位论文或投稿返修时用，步骤排好顺序，每步你评审过再往下走。只做一件件具体的事，用不着套，关掉在「目标」里写就行。
-            </p>
             <label className="mb-4 block rounded-xl ccode-well px-3.5 py-3">
               <span
                 className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2 text-xs font-medium text-l2"
@@ -613,17 +698,6 @@ export default function TemplatePickModal({
                 </ul>
               </>
             )}
-            {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
-            <div className="mt-4 flex items-center justify-end pt-1">
-              <button
-                type="button"
-                onClick={() => void closeLater()}
-                title="之后可从目标空态「套一整套流程…」、项目设置「选择模板」或编辑器「＋ 从模板追加」随时添加"
-                className={secondaryActionClass}
-              >
-                先不套
-              </button>
-            </div>
           </>
         )}
     </Modal>

@@ -122,7 +122,7 @@ import {
   type StepChatRow,
   type StepTabRow,
   READER_CHATS_SHOWN_KEY,
-  STEP_CHATS_SHOWN_KEY,
+  STEP_CHATS_HIDDEN_KEY,
   parseReaderChatsShown,
   toggleReaderChatsShown,
   hasReaderChats,
@@ -445,20 +445,20 @@ export default function ProjectTree({
       return next;
     });
   }
-  // 列出模板对话（流程步骤的对话）的课题（STEP_CHATS_SHOWN_KEY，2026-11-13）：同精读对话，默认都不列，项目菜单逐个打开
-  const [stepShown, setStepShown] = useState<string[]>(() => {
+  // 隐藏了模板对话（流程步骤的对话）的课题（STEP_CHATS_HIDDEN_KEY，2026-11-20 改回默认显示，项目菜单按课题收起/恢复）
+  const [stepHidden, setStepHidden] = useState<string[]>(() => {
     try {
-      return parseReaderChatsShown(localStorage.getItem(STEP_CHATS_SHOWN_KEY));
+      return parseReaderChatsShown(localStorage.getItem(STEP_CHATS_HIDDEN_KEY));
     } catch {
       return [];
     }
   });
-  const stepShownSet = useMemo(() => new Set(stepShown), [stepShown]);
-  function toggleStepShownFor(repoPath: string) {
-    setStepShown((prev) => {
+  const stepHiddenSet = useMemo(() => new Set(stepHidden), [stepHidden]);
+  function toggleStepHiddenFor(repoPath: string) {
+    setStepHidden((prev) => {
       const next = toggleReaderChatsShown(prev, pathKey(repoPath, IS_WINDOWS));
       try {
-        localStorage.setItem(STEP_CHATS_SHOWN_KEY, JSON.stringify(next));
+        localStorage.setItem(STEP_CHATS_HIDDEN_KEY, JSON.stringify(next));
       } catch {
         /* 存不下只影响下次启动 */
       }
@@ -1196,11 +1196,11 @@ export default function ProjectTree({
       const k = pathKey(r.repoPath, IS_WINDOWS);
       m.set(
         k,
-        projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys, readerShownSet.has(k), stepShownSet.has(k)),
+        projectChats(unpinnedSessions, r.repoPath, worktreesOf.get(k) ?? [], IS_WINDOWS, openChatKeys, readerShownSet.has(k), !stepHiddenSet.has(k)),
       );
     }
     return m;
-  }, [rows, unpinnedSessions, worktreesOf, openChatKeys, readerShownSet, stepShownSet]);
+  }, [rows, unpinnedSessions, worktreesOf, openChatKeys, readerShownSet, stepHiddenSet]);
   const scratchList = useMemo(
     () => scratchChats(unpinnedSessions, projectPaths, IS_WINDOWS, openChatKeys),
     [unpinnedSessions, projectPaths, openChatKeys],
@@ -1231,14 +1231,14 @@ export default function ProjectTree({
       focusedTabId: terminalActiveTabId,
       folderOf: (cwd) => currentFolderKey(cwd, folders, projectPaths, IS_WINDOWS),
       showReader: (k) => k != null && readerShownSet.has(k),
-      showSteps: (k) => k == null || stepShownSet.has(k),
+      showSteps: (k) => k == null || !stepHiddenSet.has(k),
     })) {
       const list = m.get(r.folderKey) ?? [];
       list.push(r);
       m.set(r.folderKey, list);
     }
     return m;
-  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths, readerShownSet, stepShownSet]);
+  }, [scratchList, chatsByRoot, pinnedKeys, terminalRunInputs, terminalActiveTabId, folders, projectPaths, readerShownSet, stepHiddenSet]);
 
   // 「展开更多」点过的文件夹多列几段（只记这次打开 Mesa 期间；收起即删）
   const [chatExtra, setChatExtra] = useState<Record<string, number>>({});
@@ -2325,10 +2325,10 @@ export default function ProjectTree({
       )
         ? [
             {
-              label: stepShownSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "隐藏模板对话" : "显示模板对话",
+              label: stepHiddenSet.has(pathKey(row.repoPath, IS_WINDOWS)) ? "显示模板对话" : "隐藏模板对话",
               icon: ListOrdered,
-              title: "模板对话是流程各步骤里开的对话，平时不在这里列；回去接着做点项目页的步骤卡",
-              onSelect: () => toggleStepShownFor(row.repoPath),
+              title: "模板对话是流程各步骤里开的对话，默认按步骤分组显示在这里；嫌占地方可按课题收起，随时从项目页的步骤卡接着做",
+              onSelect: () => toggleStepHiddenFor(row.repoPath),
             },
           ]
         : []),
@@ -2456,7 +2456,7 @@ export default function ProjectTree({
       sessions: unpinnedSessions,
       pinnedKeys,
       showReader: readerShownSet.has(fkey),
-      showSteps: stepShownSet.has(fkey),
+      showSteps: !stepHiddenSet.has(fkey),
       unread: unreadSet,
       focusedTabId: terminalActiveTabId,
       highlightChatKey,

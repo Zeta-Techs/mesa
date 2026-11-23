@@ -502,6 +502,7 @@ test("检索步先核对待确认，再下载已纳入全文，pending 不进 to
     assert.ok(paywallAt >= 0, `${step.name} 缺付费墙下载`);
     assert.ok(pendingAt < paywallAt, `${step.name} 待确认必须排在下载全文之前`);
     assert.match(step.brief, /禁止把 pending 写入 to-fetch/);
+    assert.match(step.brief, /不要把待确认篇目清单塞进 \.ccode\/help-wanted\.md/);
   }
 });
 
@@ -626,7 +627,7 @@ test("综述初稿：不以词数为完成标准，扩写必须回笔记或原�
   assert.match(draft.brief, /不以词数判定完成/);
   assert.match(draft.brief, /防御性套话/);
   assert.match(draft.brief, /PDF 首页可读/);
-  assert.match(draft.brief, /G1 不准进稿件/);
+  assert.match(draft.brief, /空白编号 G1.*不准进稿件/);
   assert.match(draft.brief, /摘要只放全文撑得住/);
   assert.match(draft.brief, /禁止「待绘制」/);
   assert.ok(draft.expectedArtifacts?.includes("figures/README.md"));

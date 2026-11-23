@@ -76,6 +76,8 @@ export function useHumanTasks({
   }
 
   useEffect(() => {
+    setError(null);
+    setNote(null);
     let stale = false;
     invoke<HumanTaskStateDto[]>("list_human_task_states", {
       projectRoot: projectPath,
@@ -325,6 +327,8 @@ export function useHumanTasks({
     states,
     error,
     note,
+    clearError: () => setError(null),
+    clearNote: () => setNote(null),
     busyTitle,
     dropHover,
     toggle,
@@ -406,6 +410,8 @@ export default function HumanTasksList({
     states,
     error,
     note,
+    clearError,
+    clearNote,
     busyTitle,
     dropHover,
     toggle,
@@ -572,7 +578,7 @@ export default function HumanTasksList({
             ))}
         </div>
       )}
-      {note && <InlineNotice tone="ok" size="micro" className="mt-1">{note}</InlineNotice>}
+      {note && <InlineNotice tone="ok" size="micro" className="mt-1" onDismiss={clearNote}>{note}</InlineNotice>}
       {registerOffer && (
         <RegisterOfferRow
           destRels={registerOffer.destRels}
@@ -580,7 +586,7 @@ export default function HumanTasksList({
           onDismiss={dismissRegisterOffer}
         />
       )}
-      {error && <InlineNotice tone="err" size="micro" className="mt-1">{error}</InlineNotice>}
+      {error && <InlineNotice tone="err" size="micro" className="mt-1" onDismiss={clearError}>{error}</InlineNotice>}
     </div>
   );
 }

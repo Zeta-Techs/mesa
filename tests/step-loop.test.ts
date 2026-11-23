@@ -117,7 +117,7 @@ test("跟进时撤下排除的篇：写作约束、可写点、索引撤掉，�
   assert.match(both, /后来排除了 1 篇，精读这边还留着：d1/);
   assert.match(both, /handoff\.md 写作约束里提到它们的条目删掉或改写/);
   assert.match(both, /笔记文件留着不删/);
-  assert.match(both, /收尾跑 lit_records\.py bib/);
+  assert.match(both, /收尾跑 `"\$MESA_PYTHON" "\$MESA_LIT_RECORDS" bib`/);
   assert.match(both, /只留现在仍成立的写作约束/);
   const onlyDropped = followupPrompt({ upstream: "x", notesIds: [], droppedIds: ["d1", "d2"], files: [] });
   assert.doesNotMatch(onlyDropped, /新加了/);
@@ -164,7 +164,9 @@ test("reworkTargets：本步之前有工作区的步骤，近的在前", () => {
 
 test("roundCauseLabel", () => {
   assert.equal(roundCauseLabel("first"), "首轮");
-  assert.equal(roundCauseLabel("rework"), "补料轮");
+  assert.equal(roundCauseLabel("rework"), "退回补料");
+  assert.equal(roundCauseLabel("followup"), "跟进更新");
+  assert.equal(roundCauseLabel("catchup"), "补读全文");
   assert.equal(roundCauseLabel("manual"), "接着改");
 });
 
@@ -317,7 +319,7 @@ test("意见回流：处理意见的开场话；按「去向：退回」归成�
   assert.match(p, /导入了 3 条 Word 批注.*manuscript\/comments\/20261107-稿\.md/);
   assert.match(p, /不自己改上游交的文件/);
   assert.match(p, /「## 意见处理（11-07）」/);
-  assert.equal(roundCauseLabel("comments"), "意见轮");
+  assert.equal(roundCauseLabel("comments"), "处理批注");
   const sheet = [
     "| 编号 | 批注人 | 原文 | 意见 | 类别 | 去向 | 处理 |",
     "|---|---|---|---|---|---|---|",
@@ -343,6 +345,7 @@ test("catchUpProbes：只挑索引里 abstract-only 的篇，带上纳入清单�
     { id: "a", bibKey: "A2020", fulltextStatus: "fulltext", notePath: "notes/a.md" },
     { id: "b", bibKey: "B2021", fulltextStatus: "abstract-only", notePath: "notes/b.md" },
     { id: "c", bibKey: "C2022", fulltextStatus: "unavailable", notePath: "notes/c.md" },
+    { id: "d", bibKey: "Liu2024", fulltextStatus: "abstract-only", supportingInfoOnly: true, notePath: "" },
   ]);
   assert.deepEqual(catchUpProbes(included, index), [
     { id: "b", bibKey: "B2021", notePath: "notes/b.md", title: "Paper B", url: "https://doi.org/10.1/B" },
@@ -352,20 +355,55 @@ test("catchUpProbes：只挑索引里 abstract-only 的篇，带上纳入清单�
   assert.deepEqual(catchUpProbes(included, JSON.stringify({ records: [] })), []);
 });
 
-test("catchUpPrompt：点名篇与全文文件，在原笔记上续写、用户写的原样保留、收尾改 fulltextStatus", () => {
+test("catchUpPrompt：点名篇与全文文件，区分综述/已有笔记与初轮仅速读、SI-only 与 >5 篇防爆、走新脚本链", () => {
   const text = catchUpPrompt([
     { probe: { id: "b", bibKey: "B2021", notePath: "notes/b.md", title: "Paper B", url: "" }, pdf: "Paper B.pdf" },
+    { probe: { id: "c", bibKey: "C2022", notePath: "", title: "Paper C", url: "", kind: "research", skimmed: true }, pdf: "Paper C.pdf" },
   ]);
-  assert.match(text, /有 1 篇原来没有全文/);
-  assert.match(text, /B2021（b，笔记 notes\/b\.md）：全文 papers\/Paper B\.pdf/);
-  assert.match(text, /在原笔记上续写（没有笔记的按技能新写），不另起平行笔记/);
-  assert.match(text, /「我的想法」与用户手写的内容原样保留/);
-  assert.match(text, /fulltextStatus 改成 fulltext/);
+  assert.match(text, /有 2 篇原来没有全文/);
+  assert.match(text, /B2021（b，原笔记 notes\/b\.md）：全文 papers\/Paper B\.pdf/);
+  assert.match(text, /C2022（c，初轮仅速读）：全文 papers\/Paper C\.pdf/);
+  assert.match(text, /在原笔记上续写/);
+  assert.match(text, /不强行新建单篇八段笔记/);
+  assert.match(text, /「我的想法」与用户手写内容原样保留/);
+  assert.match(text, /fulltextStatus=fulltext/);
+  assert.match(text, /SI_ONLY/);
+  assert.match(text, /MESA_LIT_RECORDS" extract-text/);
+  assert.match(text, /MESA_LIT_RECORDS" table/);
+  assert.match(text, /MESA_LIT_RECORDS" validate/);
   // 交棒只留现行约束：删掉「仅摘要」那条，不记补读经过；精读不跑 write
   assert.match(text, /handoff\.md 写作约束里这几篇「仅摘要 \/ 题录」的那条删掉/);
   assert.doesNotMatch(text, /记一句补读了哪几篇/);
-  assert.match(text, /lit_records\.py pdfs/);
   assert.doesNotMatch(text, /lit_records\.py write/);
+  assert.doesNotMatch(text, /必须分批处理/);
+
+  const big = catchUpPrompt(
+    Array.from({ length: 6 }, (_, i) => ({
+      probe: { id: `p${i}`, bibKey: `P202${i}`, notePath: "", title: `Paper ${i}`, url: "", kind: "research", skimmed: true },
+      pdf: `p${i}.pdf`,
+    })),
+  );
+  assert.match(big, /必须分批处理（每批 4–5 篇/);
+  assert.match(big, /≤400 字结构化抽取卡片/);
+
+  // 一轮合办：跟进上游排除篇的同时顺带补读新到 PDF
+  const bundled = [
+    { probe: { id: "c", bibKey: "C2022", notePath: "", title: "Paper C", url: "", kind: "research", skimmed: true }, pdf: "C.pdf" },
+  ];
+  const mergedPrompt = followupPrompt({
+    upstream: "文献检索与筛选",
+    notesIds: [],
+    droppedIds: ["zotero1m4yah8b3"],
+    files: [],
+    catchUp: bundled,
+  });
+  assert.match(mergedPrompt, /zotero1m4yah8b3/);
+  assert.match(mergedPrompt, /顺带合办新到全文补读/);
+  assert.match(mergedPrompt, /C2022/);
+  assert.match(
+    followupConfirmText({ notesIds: [], droppedIds: ["z1"], files: [], unsaved: false, catchUpKeys: ["C2022", "D2023"] }),
+    /同时顺带补读新到的 2 篇全文（C2022、D2023）/,
+  );
 });
 
 test("跟进 / 补读确认框：问句标题 + 一两句后果；上一轮没保存只加一条注意", () => {
@@ -375,6 +413,10 @@ test("跟进 / 补读确认框：问句标题 + 一两句后果；上一轮没�
   assert.match(u, /\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。$/);
   assert.match(followupConfirmText({ notesIds: null, files: ["x.md"], unsaved: false }), /^跟进上游改过的 1 个文件？/);
   assert.equal(catchUpConfirmText(["Kim2025", "Li2018"]), "补读 2 篇新到的全文？\n\nAI 在原笔记上续写：Kim2025、Li2018。别的篇不动。");
+  assert.match(
+    catchUpConfirmText(["Kim2025"], { unsaved: true, stepName: "文献精读与笔记" }),
+    /^在「文献精读与笔记」里补读 1 篇新到的全文？[\s\S]*两轮会一起评审。$/,
+  );
 });
 
 test("看这一轮：差异去掉文件头、段头换分隔、增删去掉 +/-；台账文件与标签", () => {
@@ -519,4 +561,76 @@ test("reworkPath：退回目标 → 链上各步 → 发起步，各走到哪；
   delete saved["检索"];
   keys["检索"] = "review";
   assert.equal(show(reworkPath({ ...r, chainState: { started: [], stopped: true } }, at, key)), "检索:等你评审 → 大纲:之后点继续");
+});
+
+test("增量跟进与补读提示：覆盖 TASK.md 首轮全量口径、明列宽表排除清理、记录 supportingInfoFile 与 MESA_LIT_RECORDS", () => {
+  const fp = followupPrompt({
+    upstream: "文献检索与筛选",
+    notesIds: [],
+    droppedIds: ["zotero1m4yah8b3"],
+    files: [],
+    catchUp: [{ probe: { id: "W1", bibKey: "Liu2024", notePath: "", title: "T", url: "", skimmed: true }, pdf: "Liu2024.pdf" }],
+  });
+  assert.match(fp, /优先覆盖 TASK\.md 中的首轮全量要求/);
+  assert.match(fp, /notes\/skim\.md 与 notes\/extraction\.md/);
+  assert.match(fp, /table --file <表> --remove <bibKeys>/);
+  assert.match(fp, /supportingInfoFile/);
+  assert.match(fp, /MESA_LIT_RECORDS/);
+  assert.match(fp, /validate/);
+});
+
+test("reworkPrompt：退回精读直给未合并大纲路径，并明确被点名篇目的 skim.md 须同步纠错", () => {
+  const rp = reworkPrompt(
+    {
+      fromStep: "综述大纲",
+      topics: ["2. 定界与 OER 对照：[@Du2025] [@Saad2021]"],
+      reason: "覆盖检查第 2 章偏薄",
+      clues: "",
+      scale: null,
+      relPath: ".ccode/rework/r1.json",
+    },
+    {
+      isSearch: false,
+      isNotes: true,
+      projectRoot: "/proj/boride",
+      date: "11-22",
+      fromWorktreePath: "/wt/boride/outline",
+    },
+  );
+  assert.match(rp, /\/wt\/boride\/outline\/outline\.md/);
+  assert.match(rp, /被点名补读的这几篇.*notes\/skim\.md.*必须同步纠错该行/);
+  assert.match(rp, /index-update/);
+});
+
+test("parseOutlineChaptersForRework & parsePendingFulltextForRework：抽出大纲章节覆盖数与待读全文候选", async () => {
+  const { parseOutlineChaptersForRework, parsePendingFulltextForRework } = await import("../src/step-loop.ts");
+  const outline = [
+    "# 综述大纲",
+    "## 覆盖检查",
+    "| 节 | 可写正文篇数 | 仅线索篇数 | 最新一篇年份 | 判断 | 建议 |",
+    "|---|---|---|---|---|---|",
+    "| 1. 引言 | 10 | 1 | 2026 | 够 | |",
+    "| 2. 界面演化 | 8 | 6 | 2025 | 薄 | 补检：原位拉曼 |",
+    "## 1. 引言",
+    "## 2. 界面演化",
+    "### 2.1 脱硼重构",
+    "## 证据综合表",
+    "## 框架推演",
+  ].join("\n");
+  const secs = parseOutlineChaptersForRework(outline);
+  assert.equal(secs.length, 3);
+  assert.deepEqual(secs[1], { num: "2", label: "2. 界面演化", level: 2, writable: 8, hint: 6, latest: "2025", verdict: "薄" });
+  assert.deepEqual(secs[2], { num: "2.1", label: "2.1 脱硼重构", level: 3 });
+
+  const idx = JSON.stringify([
+    { id: "1", bibKey: "Done2024", fulltextStatus: "fulltext", reviewStatus: "reviewed" },
+    { id: "2", bibKey: "Wait2025", fulltextStatus: "fulltext", reviewStatus: "pending", skimmed: true },
+    { id: "3", bibKey: "NoPdf2023", fulltextStatus: "abstract-only", reviewStatus: "pending" },
+  ]);
+  const inc = JSON.stringify([
+    { id: "2", bibKey: "Wait2025", authors: ["Zhang, Juan", "Wu, Q."], year: 2025, journalAbbreviation: "Nano Energy", title: "Amorphous <sub>Boride</sub> HER" },
+  ]);
+  assert.deepEqual(parsePendingFulltextForRework(idx, inc), [
+    { bibKey: "Wait2025", author: "Zhang", year: "2025", venue: "Nano Energy", title: "Amorphous Boride HER" },
+  ]);
 });

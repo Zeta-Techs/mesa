@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { extractResearchSections, researchAbsolutePath, researchRelativePath, type ResearchReport, type ResearchReportKind } from "./research-report";
 import type { DirEntryDto } from "./components/FileTree";
 import { searchPdfProbes, searchProgress, searchProgressParts } from "./notes-progress";
-import { missingToFetchCount, parseToFetchItems } from "./step-flow";
+import { missingToFetchCount, parseToFetchItems, readToFetchSkipped, toFetchItemKey } from "./step-flow";
 import { checkOutline, outlineThinStatus, type OutlineCheckResult } from "./outline-check";
 import { checkNotes, type NoteFile } from "./notes-check";
 import { checkDraft, draftProgressParts, imageRefs, manuscriptCandidateDirs, pickManuscript, supersededWritingIds, type DraftStepKind } from "./draft-check";
@@ -39,16 +39,22 @@ async function probePapers(projectRoot: string, items: { title: string; url: str
   return Array.isArray(names) ? names : [];
 }
 
-/** 检索篇数一行：台账没记 pdf、但 papers/ 里已经有的也算已有全文（PDF 下在项目根，所以对照 projectRoot） */
+/** 检索篇数一行：台账没记 pdf、但 papers/ 里已经有的也算已有全文（PDF 下在项目根，所以对照 projectRoot）；
+ *  用户在待获取清单标为跳过/仅摘要的单独列「仅摘要 N」，与待获取清单「还缺」同口径。 */
 export async function searchCountLineWithFiles(projectRoot: string, includedText: string): Promise<string[] | null> {
   const probes = searchPdfProbes(includedText);
   const names = await probePapers(projectRoot, probes);
   const found = new Set(probes.flatMap((p, i) => (names[i] ? [p.id] : [])));
+  const skippedKeys = readToFetchSkipped(projectRoot);
+  const skippedCount =
+    skippedKeys.size > 0
+      ? probes.filter((p, i) => !names[i] && skippedKeys.has(toFetchItemKey(p))).length
+      : 0;
   const p = searchProgress(includedText, found);
-  return p ? searchProgressParts(p) : null;
+  return p ? searchProgressParts(p, skippedCount) : null;
 }
 
-/** 待获取还缺几篇：去掉已勾 ✓ 的和 papers/ 里已经有的（不是清单总条数） */
+/** 待获取还缺几篇：去掉已勾 ✓ 的、papers/ 里已经有的、以及用户跳过/仅摘要的（不是清单总条数） */
 export async function missingToFetchWithFiles(projectRoot: string, toFetchText: string): Promise<number> {
   const items = parseToFetchItems(toFetchText).filter((it) => !it.done);
   const names = await probePapers(projectRoot, items);
@@ -56,7 +62,7 @@ export async function missingToFetchWithFiles(projectRoot: string, toFetchText: 
   items.forEach((it, i) => {
     if (names[i]) doneByLine[it.line] = names[i] as string;
   });
-  return missingToFetchCount(toFetchText, doneByLine);
+  return missingToFetchCount(toFetchText, doneByLine, readToFetchSkipped(projectRoot));
 }
 
 /** 大纲核对的取数（outline-check.ts 只算）：outline.md 取第一处有的（工作副本优先）；笔记索引、引文库几处都读、按键合并

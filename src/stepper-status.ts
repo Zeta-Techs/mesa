@@ -89,6 +89,6 @@ export function stepperStatusText(
             tone: "text-warn-text",
             title: `「${opts.staleUpstream}」有更新，这一步可能还没用上；到这一步点「跟进更新」，或不管它直接往下走`,
           }
-        : { text: "已完成", tone: "text-l3" };
+        : { text: "已保存", tone: "text-l3" };
   }
 }

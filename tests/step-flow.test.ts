@@ -11,6 +11,7 @@ import {
   formatZoteroDuplicatePrompt,
   isEndnoteTaskTitle,
   isPaywallTaskTitle,
+  isToFetchSkipped,
   missingToFetchCount,
   parseToFetchItems,
   reviewActionVisible,
@@ -19,8 +20,10 @@ import {
   stripOptionalTitlePrefix,
   recalledToFetchDone,
   rememberToFetchDone,
+  toFetchItemKey,
   toFetchPaperRel,
   toFetchSavedCount,
+  toFetchSkippedCount,
 } from "../src/step-flow.ts";
 import type { HumanTaskStateDto, ProjectStepDto } from "../src/types.ts";
 
@@ -735,4 +738,27 @@ test("pickDiscussResume：只认项目根商量会话，跳过带 workspace 的�
   ];
   assert.equal(pickDiscussResume(list, "文献检索与筛选")?.sessionId, "disc-1");
   assert.equal(pickDiscussResume([list[0]], "文献检索与筛选"), null);
+});
+
+test("待获取清单跳过/仅摘要：支持本机跳过集与 [跳过]/[仅摘要] 前缀，且后补到 PDF 自动按已存算", () => {
+  const md = [
+    "1. Mega Review — 10.1021/acs.chemrev.3c00005",
+    "2. [仅摘要] Old Paper — 10.1000/old",
+    "3. Core HER Paper — 10.1002/smll.202408571",
+  ].join("\n");
+  const items = parseToFetchItems(md);
+  assert.equal(items.length, 3);
+  assert.equal(items[1].skipped, true);
+  assert.equal(items[1].title, "Old Paper");
+  // 未传 skippedKeys 时，第 2 条因前缀已跳过，还缺 2 篇
+  assert.equal(missingToFetchCount(md, {}), 2);
+  assert.equal(toFetchSkippedCount(items, {}), 1);
+  // 跳过第 1 条（按 DOI 键）
+  const skipped = new Set([toFetchItemKey(items[0])]);
+  assert.equal(isToFetchSkipped(items[0], skipped), true);
+  assert.equal(missingToFetchCount(md, {}, skipped), 1);
+  assert.equal(toFetchSkippedCount(items, {}, skipped), 2);
+  // 后来如果第 1 条的 PDF 落进了 papers/，自动算已存，不再算跳过
+  assert.equal(toFetchSkippedCount(items, { 1: "Mega Review.pdf" }, skipped), 1);
+  assert.equal(missingToFetchCount(md, { 1: "Mega Review.pdf" }, skipped), 1);
 });

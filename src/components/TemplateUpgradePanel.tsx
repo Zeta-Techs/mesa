@@ -91,7 +91,7 @@ export default function TemplateUpgradePanel({
 
       {loaded.length > 0 && (
         <p className="mt-2.5 rounded-lg bg-canvas/55 px-3 py-2 text-ok-text">
-          已换进草稿：{loaded.join("、")}。点右上角「保存」才写进项目，不想要就点「取消」。
+          已换进草稿：{loaded.join("、")}。点右上角「保存」才写进项目，不想要就点「取消」。若其中某步此前已生成过任务书草稿（`.ccode/drafts/`），开工前记得在商量对话或草稿预览里同步新版口径。
         </p>
       )}
       {changes && changes.length === 0 && loaded.length === 0 && (

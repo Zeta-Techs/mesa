@@ -150,6 +150,80 @@ export function parseDeclarations(text: string): DeclarationSection[] {
   return out;
 }
 
+export interface PermissionGroup {
+  key: string;
+  paper: string;
+  doiUrl: string | null;
+  publisher: string;
+  licence: string;
+  need: string;
+  rows: PermissionRow[];
+  selfDrawn: boolean;
+}
+
+export interface PermissionsSummary {
+  paperCount: number;
+  pending: number;
+  applied: number;
+  granted: number;
+  exempt: number;
+  selfDrawn: number;
+}
+
+export interface DeclarationsSummary {
+  total: number;
+  filled: number;
+  pending: number;
+}
+
+export function groupPermissionsByPaper(rows: readonly PermissionRow[]): PermissionGroup[] {
+  const map = new Map<string, PermissionGroup>();
+  for (const row of rows) {
+    const key = row.doiUrl ?? row.paper;
+    const hit = map.get(key);
+    if (hit) hit.rows.push(row);
+    else {
+      const selfDrawn = !row.doiUrl && row.licence === "作者自绘";
+      map.set(key, {
+        key,
+        paper: row.paper,
+        doiUrl: row.doiUrl,
+        publisher: row.publisher,
+        licence: row.licence,
+        need: row.need,
+        rows: [row],
+        selfDrawn,
+      });
+    }
+  }
+  return [...map.values()];
+}
+
+export function summarizePermissions(text: string): PermissionsSummary {
+  const groups = groupPermissionsByPaper(parsePermissionRows(text));
+  const paperGroups = groups.filter((g) => !g.selfDrawn);
+  const selfDrawn = groups.filter((g) => g.selfDrawn).reduce((sum, g) => sum + g.rows.length, 0);
+  const count = (status: string) => paperGroups.filter((g) => g.rows.every((r) => r.status === status)).length;
+  return {
+    paperCount: paperGroups.length,
+    pending: count("待申请"),
+    applied: count("已申请"),
+    granted: count("已获许可"),
+    exempt: count("无需申请"),
+    selfDrawn,
+  };
+}
+
+export function summarizeDeclarations(text: string): DeclarationsSummary {
+  const sections = parseDeclarations(text);
+  const filled = sections.filter((s) => s.body.trim().length > 0).length;
+  return {
+    total: sections.length,
+    filled,
+    pending: Math.max(0, sections.length - filled),
+  };
+}
+
 /** 按节写回：空的写「待填」（原来有提示的带上提示），其余原样；开头说明与小标题不动 */
 export function writeDeclarations(text: string, sections: readonly DeclarationSection[]): string {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";

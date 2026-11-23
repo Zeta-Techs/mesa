@@ -6,6 +6,48 @@ import type { ProjectStepDto, WorkspaceDto } from "../types";
 
 const lastLabels = new Map<string, string | null>();
 
+function evidencePathsFor(step: ProjectStepDto): string[] {
+  return (step.expectedArtifacts ?? [])
+    .map((path) => researchRelativePath(path))
+    .filter((path): path is string => !!path && path.endsWith(".md") && !path.includes("*"))
+    .slice(0, 8);
+}
+
+/** 进项目时后台预热各步骤报告状态标签，首次切步骤也能首帧到位。 */
+export async function prefetchStepEvidence(
+  projectPath: string,
+  steps: readonly ProjectStepDto[],
+  workspaces: readonly WorkspaceDto[],
+  isStale?: () => boolean,
+): Promise<void> {
+  await Promise.all(
+    steps.map(async (step) => {
+      if (isStale?.()) return;
+      const active = workspaces.find(
+        (workspace) => workspace.name === step.workspaceName && workspace.status === "active",
+      );
+      const root = active?.worktreePath || projectPath;
+      const paths = evidencePathsFor(step);
+      const identity = JSON.stringify([root, paths]);
+      if (paths.length === 0) {
+        lastLabels.set(identity, null);
+        return;
+      }
+      const files = await Promise.all(
+        paths.map(async (path) => {
+          try {
+            return { path, text: (await readResearchFile(root, path)).text };
+          } catch {
+            return { path, text: "" };
+          }
+        }),
+      );
+      if (isStale?.()) return;
+      lastLabels.set(identity, stepEvidenceLabel(stepEvidenceSummaryOf(files)));
+    }),
+  );
+}
+
 /** 当前步骤卡上的一行：报告自述的质量状态，以及未决标记数量。 */
 export default function StepEvidenceChip({
   projectPath,
@@ -22,10 +64,7 @@ export default function StepEvidenceChip({
     (workspace) => workspace.name === step.workspaceName && workspace.status === "active",
   );
   const root = active?.worktreePath || projectPath;
-  const paths = (step.expectedArtifacts ?? [])
-    .map((path) => researchRelativePath(path))
-    .filter((path): path is string => !!path && path.endsWith(".md") && !path.includes("*"))
-    .slice(0, 8);
+  const paths = evidencePathsFor(step);
   const identity = JSON.stringify([root, paths]);
   const key = JSON.stringify([identity, refreshToken]);
   // 读到的状态连同「是哪一步的」一起记：切步骤时这个组件不重新挂载，只按 label 判会先露出上一步的

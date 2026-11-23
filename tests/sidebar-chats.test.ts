@@ -543,11 +543,16 @@ test("精读对话默认不在课题下列，项目菜单打开后照列；开�
   assert.deepEqual(shown.map((r) => r.tabId), ["r"]);
 });
 
-test("模板对话（流程步骤的对话）按课题开关：关着不列、开着的步骤标签也收；菜单只在有时出（2026-11-13）", () => {
+test("模板对话（流程步骤的对话）默认显示、可按课题隐藏；隐藏时开着的步骤标签也收，菜单只在有时出", () => {
   const sessions = [
     session({ sessionId: "mine", updatedAt: "2026-11-13T02:00:00Z" }),
     session({ sessionId: "step", stepName: "综述大纲", updatedAt: "2026-11-13T03:00:00Z" }),
   ];
+  assert.deepEqual(
+    projectChats(sessions, "/repo", [], false, new Set(), false).map((s) => s.sessionId),
+    ["step", "mine"],
+    "不传 showSteps 时默认列出模板对话",
+  );
   assert.deepEqual(projectChats(sessions, "/repo", [], false, new Set(), false, false).map((s) => s.sessionId), ["mine"]);
   assert.deepEqual(
     projectChats(sessions, "/repo", [], false, new Set(), false, true).map((s) => s.sessionId),
@@ -571,7 +576,7 @@ test("模板对话（流程步骤的对话）按课题开关：关着不列、�
   assert.deepEqual(shown.map((r) => r.tabId), ["s", "t", "c"]);
 });
 
-test("hiddenFolderDot：项目展开但模板/精读对话默认收起时，运行与待确认仍由项目节头代报", async () => {
+test("hiddenFolderDot：项目展开时被收起的模板/精读对话由项目节头代报，默认显示的模板对话不重复代报", async () => {
   const { hiddenFolderDot } = await import("../src/sidebar-chats.ts");
   const stepTab = {
     tabId: "s1",
@@ -600,6 +605,16 @@ test("hiddenFolderDot：项目展开但模板/精读对话默认收起时，运�
       root: "/repo",
       worktrees: ["/repo/wt/outline"],
       runs: [stepTab, normalTab],
+      showReader: false,
+    }),
+    null,
+    "不传 showSteps 时默认视为模板对话可见，不在展开的节头重复挂光标",
+  );
+  assert.equal(
+    hiddenFolderDot({
+      root: "/repo",
+      worktrees: ["/repo/wt/outline"],
+      runs: [stepTab, normalTab],
       showSteps: false,
       showReader: false,
     }),
@@ -614,7 +629,7 @@ test("hiddenFolderDot：项目展开但模板/精读对话默认收起时，运�
       showReader: false,
     }),
     null,
-    "打开模板对话开关且无隐藏精读对话后，不再在展开的节头重复挂光标",
+    "显示模板对话且无隐藏精读对话时，不在展开的节头重复挂光标",
   );
   assert.equal(
     hiddenFolderDot({
@@ -666,7 +681,17 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   assert.deepEqual(manual.map((r) => r.s.sessionId), ["pin"]);
   assert.deepEqual(groups.map((g) => [g.index, g.step]), [[1, "文献检索与筛选"], [2, "文献精读与笔记"]]);
   // 检索：人改过名的照写标题（null），认不出角色的 null；两段「执行任务书」各接日期
-  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "执行任务书 · 11-09", "执行任务书 · 11-10", "补料轮"]);
+  // 同一种角色跨天带日期「 · MM-DD」，同一天撞名自动带序号「 #1 · MM-DD」「 #2 · MM-DD」
+  assert.deepEqual(groups[0].rows.map((r) => r.label), [null, null, "执行任务书 · 11-09", "执行任务书 · 11-10", "退回补料"]);
+  const sameDay = groupStepChats([
+    row({ sessionId: "w1", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "work", createdAt: "2026-11-21T09:00:00Z" }),
+    row({ sessionId: "w2", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "work", createdAt: "2026-11-21T14:00:00Z" }),
+    row({ sessionId: "c1", stepName: "文献精读与笔记", stepIndex: 2, stepRole: "round", roundKind: "catchup", createdAt: "2026-11-21T16:00:00Z" }),
+  ]);
+  assert.deepEqual(
+    sameDay.groups[0].rows.map((r) => r.label),
+    ["执行任务书 #1 · 11-21", "执行任务书 #2 · 11-21", "补读全文"],
+  );
   assert.equal(groups[0].lanes, null);
   assert.deepEqual(groups[0].after, []);
   // 精读：商量在外面，分路子组按路号、收尾最后，做完几路
@@ -674,8 +699,8 @@ test("groupStepChats：按步骤分组、按角色起行名，分路收进子组
   assert.deepEqual(groups[1].lanes!.rows.map((r) => [r.label, r.done]), [["第 2 路", false], ["第 3 路", true], ["收尾", false]]);
   assert.equal(groups[1].lanes!.total, 2);
   assert.equal(groups[1].lanes!.done, 1);
-  // 分路之后开的跟进轮写起因、画在分路子组下面（不是第二个「收尾」）
-  assert.deepEqual(groups[1].after.map((r) => r.label), ["跟进轮"]);
+  // 分路之后开的跟进更新写起因、画在分路子组下面（不是第二个「收尾」）
+  assert.deepEqual(groups[1].after.map((r) => r.label), ["跟进更新"]);
   assert.equal(stepRoleLabel(session({ stepRole: "round", roundKind: "bogus" })), null);
   assert.equal(stepRoleLabel(session({ stepRole: "lane", laneNo: null })), null);
   assert.equal(circledIndex(2), "②");

@@ -43,12 +43,18 @@ export async function commitLeftovers(ws: WorkspaceDto, stepName: string, confir
     { confirmText: "一起提交，继续" },
   );
   if (!ok) return false;
-  await invoke("git_commit", {
-    cwd: ws.worktreePath,
-    message: `${next}前提交上一轮留下的改动`,
-    push: false,
-    paths: null,
-  });
+  try {
+    await invoke("git_commit", {
+      cwd: ws.worktreePath,
+      message: `${next}前提交上一轮留下的改动`,
+      push: false,
+      paths: null,
+    });
+  } catch (reason) {
+    // 并发态或仅剩 Mesa 过程文件时，后端判定「没有需要提交的改动」即表示工作树已无须提交，放行继续并入
+    if (String(reason).includes("没有需要提交的改动")) return true;
+    throw reason;
+  }
   return true;
 }
 

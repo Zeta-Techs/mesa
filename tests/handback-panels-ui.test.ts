@@ -94,9 +94,23 @@ test("许可清单一篇一行、下拉改状态即存；声明一节一框、�
     await act(async () => {
       root.render(h(FigurePermissionsPanel, { root: "/wt", rel: "submission/figure-permissions.md", projectRoot: "/proj" }));
     });
-    // 同一篇两块合成一行
+    // 同一篇两块合成一行，且直接露出图注出处与仅看待申请筛选
     assert.match(host.textContent ?? "", /2 篇 · 待申请 1 篇/);
     assert.match(host.textContent ?? "", /图 1\(a\)、1\(b\)/);
+    assert.match(host.textContent ?? "", /图注出处：/);
+    const onlyPendingBtn = [...host.querySelectorAll("button")].find((b) =>
+      (b.textContent ?? "").includes("仅看待申请"),
+    );
+    assert.ok(onlyPendingBtn);
+    await act(async () => {
+      onlyPendingBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.match(host.textContent ?? "", /Zhang/);
+    assert.doesNotMatch(host.textContent ?? "", /Zhai/);
+    // 重置筛选再改状态
+    await act(async () => {
+      onlyPendingBtn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
     const select = host.querySelector<HTMLSelectElement>("select")!;
     await act(async () => {
       select.value = "已申请";
@@ -107,6 +121,7 @@ test("许可清单一篇一行、下拉改状态即存；声明一节一框、�
     await act(async () => {
       root.render(h(DeclarationsForm, { root: "/wt", rel: "submission/declarations.md" }));
     });
+    assert.match(host.textContent ?? "", /已填 0 \/ 2 节/);
     const boxes = host.querySelectorAll<HTMLTextAreaElement>("textarea");
     assert.equal(boxes.length, 2);
     assert.match(boxes[0].placeholder, /通讯作者邮箱/);

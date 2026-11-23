@@ -120,11 +120,21 @@ export default function HelpRequestDialog() {
       toast(`打不开终端：${String(reason)}`, "error");
       return;
     }
-    if (itemIds?.length) {
-      toast("回答已排队，原对话空闲时发送；送到前仍保留在待处理里。", "info");
-    }
     setPendingTerminal(req);
     setPage("terminal");
+    if (itemIds?.length) {
+      const liveTab = useAppStore
+        .getState()
+        .terminalRunInputs.find((r) => r.running && !r.shell && (r.runId === req.runId || r.cwd === target.root));
+      useAppStore.getState().kickHelpDelivery();
+      if (liveTab && liveTab.attention !== "working" && liveTab.attention !== "confirm") {
+        toast("回答已记下，正在发回原对话…", "info");
+      } else if (liveTab) {
+        toast("原对话正在干活，回答已排队；等这一轮停下会自动发过去（若停下前它改写了该问题会提醒你核对）。", "info");
+      } else {
+        toast("回答已记下，正在接回原对话并发送…", "info");
+      }
+    }
   }
 
   if (!view) return null;

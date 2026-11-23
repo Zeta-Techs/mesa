@@ -985,10 +985,19 @@ export function pdfNameFromReason(reason: string): string | null {
 
 /** 项目 papers/ 里已有 PDF 时配对：理由里的文件名 > DOI > 标题与文件名互相包含。 */
 export function matchPaperPdf(
-  record: Pick<IncludedRecord, "title" | "id" | "url" | "reason">,
+  record: Pick<IncludedRecord, "title" | "id" | "url" | "reason" | "pdf">,
   files: readonly { name: string; path: string }[],
   papersDir?: string,
 ): string | null {
+  const recorded = record.pdf?.trim();
+  if (recorded) {
+    if (/^(?:[a-zA-Z]:[\\/]|\/)/.test(recorded)) return recorded;
+    const base = recorded.replace(/\\/g, "/").split("/").pop() ?? recorded;
+    const exact = files.find((file) => file.name.toLowerCase() === base.toLowerCase());
+    if (exact) return exact.path;
+    if (papersDir) return `${papersDir.replace(/[\\/]+$/, "")}/${base}`;
+    return recorded;
+  }
   const named = pdfNameFromReason(record.reason ?? "");
   if (named) {
     const want = alnum(named);
@@ -1547,4 +1556,75 @@ export function zoteroRisFromSource(block: string): string {
   kept.unshift("TY  - JOUR");
   kept.push("ER  - ");
   return kept.join("\r\n");
+}
+
+export type ScreeningQuickFilter =
+  | "all"
+  | "suggest-exclude"
+  | "review"
+  | "research"
+  | "no-pdf"
+  | "has-pdf"
+  | "low-tier";
+
+/** 这条待确认是否带 AI「建议排除」标记 */
+export function isSuggestedExclude(row: Pick<IncludedRecord, "reason">): boolean {
+  return /建议排除/.test(row.reason || "");
+}
+
+/** 清单里是否带可读摘要（排除空串与「待补」占位） */
+export function hasReadableAbstract(abstract: string | null | undefined): boolean {
+  const text = (abstract ?? "").trim();
+  return text.length > 0 && text !== "待补" && text !== "—" && text !== "无";
+}
+
+/** 文献清单关键词检索：空格隔开的多个词须同时命中（标题 / 作者 / 期刊 / 理由 / id / DOI / 摘要） */
+export function matchesScreeningQuery(
+  row: Pick<IncludedRecord, "id" | "title" | "authors" | "source" | "reason" | "url" | "abstract">,
+  query: string,
+): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const hay = [row.title, row.authors, row.source, row.reason, row.id, row.url, row.abstract]
+    .join(" ")
+    .toLowerCase();
+  return terms.every((term) => hay.includes(term));
+}
+
+/** 文献清单快捷筛选 */
+export function matchesScreeningFilter(
+  row: Pick<IncludedRecord, "reason" | "kind">,
+  filter: ScreeningQuickFilter,
+  ctx: { hasPdf: boolean; casQuartile: number | null | undefined; hasMetric: boolean },
+): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "suggest-exclude":
+      return isSuggestedExclude(row);
+    case "review":
+      return row.kind === "review";
+    case "research":
+      return row.kind === "research";
+    case "no-pdf":
+      return !ctx.hasPdf;
+    case "has-pdf":
+      return ctx.hasPdf;
+    case "low-tier":
+      return ctx.casQuartile === 4 || !ctx.hasMetric;
+  }
+}
+
+/** Shift + 点击区间连选：在当前有序键列表里取出 [anchor..target] 全部键；找不到锚点时退回只含 target */
+export function pickRangeKeys(
+  orderedKeys: readonly string[],
+  anchorKey: string | null | undefined,
+  targetKey: string,
+): string[] {
+  if (!anchorKey) return [targetKey];
+  const a = orderedKeys.indexOf(anchorKey);
+  const b = orderedKeys.indexOf(targetKey);
+  if (a < 0 || b < 0) return [targetKey];
+  const [from, to] = a <= b ? [a, b] : [b, a];
+  return orderedKeys.slice(from, to + 1);
 }

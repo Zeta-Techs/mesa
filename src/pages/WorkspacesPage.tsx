@@ -7,7 +7,6 @@ import { sendSystemNotification } from "../system-notification";
 import {
   Archive,
   ArchiveRestore,
-  CheckCheck,
   ClipboardCheck,
   Copy,
   Eraser,
@@ -21,8 +20,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { startProjectChat } from "../components/AskAiModal";
+import InboxPopover from "../components/InboxPopover";
 import {
-  appUpdateInboxEntry,
   runInboxAction,
   useAppStore,
   type InboxItem,
@@ -76,6 +75,7 @@ import {
   NoticeBar,
   PageFrame,
   primaryActionClass,
+  quietActionClass,
   rowActionClass,
   secondaryActionClass,
   InlineNotice,
@@ -457,7 +457,7 @@ function AddProjectModal({
           </p>
         )}
         <div
-          className="grid grid-cols-3 gap-0.5 rounded-lg bg-inset p-0.5"
+          className="ccode-modal-seg grid grid-cols-3 gap-0.5 rounded-lg bg-inset p-0.5"
           role="radiogroup"
           aria-label="工作方式"
         >
@@ -480,16 +480,16 @@ function AddProjectModal({
             </button>
           ))}
         </div>
-        <p className="mb-4 mt-1.5 text-xs text-l3">
+        <p className="mt-2 text-xs text-l3">
           {WORK_MODE_HINT[mode]}
           {modeLocked ? "（已选定，不可更改）" : ""}
         </p>
-        {error && <NoticeBar tone="err" className="mb-3">{error}</NoticeBar>}
-        <div className="flex items-center justify-end gap-2">
+        {error && <NoticeBar tone="err" className="mt-3">{error}</NoticeBar>}
+        <div className="mt-5 flex items-center justify-end gap-2">
           {creating && !createdPath && onPickExisting && (
             <button
               type="button"
-              className="mr-auto rounded-md px-2 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
+              className={`${quietActionClass} mr-auto`}
               title="文献、数据或稿子已经在一个文件夹里：选它登记成项目，Mesa 自动认出里面的文献和数据"
               onClick={() =>
                 void open({ directory: true, multiple: false }).then((dir) => {
@@ -928,6 +928,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }, [created]);
   // P1b 项目分组：注册项目列表 + 每次刷新自增的令牌（触发各分组重读 project.toml）
   const [projects, setProjects] = useState<ProjectDto[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectsRefreshSeq, setProjectsRefreshSeq] = useState(0);
+  const refreshCallIdRef = useRef(0);
+  const selectRetryRef = useRef<{ path: string; afterSeq: number } | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [homeDir, setHomeDir] = useState("");
   useEffect(() => {
@@ -993,7 +997,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const profiles = useAppStore((s) => s.profiles);
   // 依赖体检镜像（store，启动时探测一次）：git 非 ok → 收件箱常驻「依赖」条目
   const depCheck = useAppStore((s) => s.depCheck);
-  const appUpdate = useAppStore((s) => s.appUpdate);
   // 收件箱「去核验」一次性请求：选中该工作区所属项目并展开其任务行的产物清单
   const artifactCheckReq = useAppStore((s) => s.artifactCheckReq);
   const setArtifactCheckReq = useAppStore((s) => s.setArtifactCheckReq);
@@ -1088,21 +1091,34 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }, [inboxLive, liveSig]);
 
   async function refresh() {
+    const callId = ++refreshCallIdRef.current;
     try {
-      const list = await invoke<WorkspaceDto[]>("list_workspaces");
+      // 工作区与项目表并行拉取、同批落 state（2026-11-20 修）：原先先 await list_workspaces
+      // 再异步拉 list_projects，导致有工作区的项目先落进 groups（length > 0），首次点击其他无工作区项目时
+      // selectProjectReq 被误判为「不存在」直接清空并跳到第一个有工作区的项目
+      const [wsResult, projResult] = await Promise.allSettled([
+        invoke<WorkspaceDto[]>("list_workspaces"),
+        invoke<ProjectDto[]>("list_projects"),
+      ]);
+      if (callId !== refreshCallIdRef.current) return;
+      if (wsResult.status === "rejected") throw wsResult.reason;
+      const list = wsResult.value;
       setWorkspaces(list);
       // 项目注册表：失败不阻断工作区列表，分组退化为仅按 repo 归组
-      invoke<ProjectDto[]>("list_projects")
-        .then((list) => {
-          setProjects(list);
-          useAppStore.getState().setProjectPaths(list.map((p) => p.path));
-          for (const p of list) {
-            if (normalizeWorkMode(p.workMode) === "coding") {
-              prefetchCodingOverview(p.path);
-            }
+      if (projResult.status === "fulfilled") {
+        const projList = projResult.value;
+        setProjects(projList);
+        useAppStore.getState().setProjectPaths(projList.map((p) => p.path));
+        for (const p of projList) {
+          if (normalizeWorkMode(p.workMode) === "coding") {
+            prefetchCodingOverview(p.path);
           }
-        })
-        .catch(() => toast("项目注册表读取失败，已按工作区列表继续显示", "warning"));
+        }
+      } else {
+        toast("项目注册表读取失败，已按工作区列表继续显示", "warning");
+      }
+      setProjectsLoaded(true);
+      setProjectsRefreshSeq((s) => s + 1);
       setRefreshToken((t) => t + 1);
       const driftFailures: Record<string, boolean> = {};
       const driftEntries = await Promise.all(
@@ -1199,6 +1215,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       );
     } catch (e) {
       setError(String(e));
+      if (callId === refreshCallIdRef.current) {
+        setProjectsLoaded(true);
+        setProjectsRefreshSeq((s) => s + 1);
+      }
     }
   }
 
@@ -1435,6 +1455,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       })),
   ];
   const selectedGroup =
+    (selectProjectReq
+      ? groups.find(
+          (gr) =>
+            samePath(gr.repoPath, selectProjectReq) ||
+            gr.list.some((w) => samePath(w.worktreePath, selectProjectReq)),
+        )
+      : undefined) ??
     groups.find((group) => group.key === selectedGroupKey) ??
     (selectedGroupKey
       ? groups.find((group) => samePath(group.repoPath, selectedGroupKey.replace(/^[pr]:/, "")))
@@ -1551,6 +1578,8 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       if (selectedGroupKey !== null) setSelectedGroupKey(null);
       return;
     }
+    // 正在等一次性切项目请求落地时，不先回落成 groups[0]
+    if (selectProjectReq) return;
     if (!groups.some((group) => group.key === selectedGroupKey)) {
       // 选中的分组换了键（启动时工作区先到、项目表后到：先选上的 r:<路径> 变成 p:<路径>）：按同一路径接上，
       // 找不到才退回第一个。原先直接退回第一个（最近打开的项目），点 HER 催化综述跳到了刚建的聊天层测试（2026-11-09 用户）
@@ -1558,7 +1587,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       const same = prevPath ? groups.find((group) => samePath(group.repoPath, prevPath)) : undefined;
       setSelectedGroupKey((same ?? groups[0]).key);
     }
-  }, [groupKeySignature, selectedGroupKey]);
+  }, [groupKeySignature, selectedGroupKey, selectProjectReq]);
   // 切项目（含分组表重算后的被动切换）时收起所有产物清单
   const shownGroupKey = selectedGroup?.key ?? null;
   useEffect(() => {
@@ -1606,11 +1635,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   // 收件箱条目为可序列化数据（action 描述而非闭包）：镜像进 store 供 App 标题栏收件箱共用，
   // 点击统一走 store.ts 的 runInboxAction 派发
   const depItem = depInboxItem(depCheck);
-  const updateItem = appUpdateInboxEntry(
-    appUpdate
-      ? { version: appUpdate.version, currentVersion: appUpdate.currentVersion }
-      : null,
-  );
   const inboxItems = [
     ...active
       .filter((w) => health[w.id]?.conflict)
@@ -1835,7 +1859,6 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           },
         ]
       : []),
-    ...(updateItem ? [updateItem] : []),
   ] as InboxItem[];
 
   // 收件箱条目镜像进 store（App 开机即隐藏挂载本页、此后常驻；签名变更才写，防每 render 抖动订阅方）
@@ -1859,6 +1882,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     const g = groups.find((gr) =>
       gr.list.some((w) => w.id === artifactCheckReq),
     );
+    if (!g && !projectsLoaded) return;
     if (g) {
       const ws = g.list.find((w) => w.id === artifactCheckReq)!;
       setSelectedGroupKey(g.key);
@@ -1868,7 +1892,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     }
     setArtifactCheckReq(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [artifactCheckReq, groups]);
+  }, [artifactCheckReq, groups, projectsLoaded]);
 
   // 高亮闪烁 2.5s 自动消退（与「文献与数据」进料口 ring 口径一致）；渲染后滚动进视野
   useEffect(() => {
@@ -1883,22 +1907,31 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     return () => window.clearTimeout(t);
   }, [flashWsId]);
 
-  // 对话页卡片 chip / 收件箱「去查看」的一次性跳转：按项目根或工作树根选中分组
-  //（无对应分组静默忽略，与 focusTabReq 同口径）
+  // 对话页卡片 chip / 收件箱「去查看」/ 侧栏点项目的一次性跳转：按项目根或工作树根选中分组
+  //（无对应分组时先确认项目表已就位并补拉一轮，仍不存在才静默清空，避免首次点无工作区或新建项目被吞掉并回落到第一个项目）
   useLayoutEffect(() => {
-    if (!selectProjectReq) return;
+    if (!selectProjectReq) {
+      selectRetryRef.current = null;
+      return;
+    }
     const g = groups.find(
       (gr) =>
         samePath(gr.repoPath, selectProjectReq) ||
         gr.list.some((w) => samePath(w.worktreePath, selectProjectReq)),
     );
     if (!g) {
-      // 页面刚切入时项目列表可能仍在加载；保留请求到下一次 groups 更新，
-      // 避免收件箱点击在空列表首帧被静默吞掉。
-      if (groups.length === 0) return;
+      if (!projectsLoaded) return;
+      if (selectRetryRef.current?.path !== selectProjectReq) {
+        selectRetryRef.current = { path: selectProjectReq, afterSeq: projectsRefreshSeq };
+        void refresh();
+        return;
+      }
+      if (projectsRefreshSeq <= selectRetryRef.current.afterSeq) return;
+      selectRetryRef.current = null;
       setSelectProjectReq(null);
       return;
     }
+    selectRetryRef.current = null;
     setSelectedGroupKey(g.key);
     setSelectProjectReq(null);
     // 工作台「待你验收」同行还派了 taskReviewReq：消费它的 ProjectUserTasksView
@@ -1934,12 +1967,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectProjectReq, groups]);
+  }, [selectProjectReq, groups, projectsLoaded, projectsRefreshSeq]);
 
-  // Windows/Linux 页内收件箱：与标题栏同一套「待处理 N」单入口，点开列出全部分组
+  // Linux 页内收件箱：与标题栏同一套「待处理 N」单入口，点开列出全部分组
   const [inboxOpen, setInboxOpen] = useState(false);
-  const inboxGroups = groupInbox(filterDismissed(inboxItems, inboxDismissed));
-  const bulkInboxItems = bulkReadableItems(inboxItems);
+  const visibleWorkspaceInbox = filterDismissed(inboxItems, inboxDismissed);
+  const inboxGroups = groupInbox(visibleWorkspaceInbox);
+  const bulkInboxItems = bulkReadableItems(visibleWorkspaceInbox);
   useEffect(() => {
     if (inboxOpen && inboxGroups.length === 0) setInboxOpen(false);
   }, [inboxGroups, inboxOpen]);
@@ -2146,7 +2180,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           onClick={() => setInboxOpen(false)}
         />
       )}
-      {!IS_MAC && !IS_WINDOWS && inboxItems.length > 0 && (
+      {!IS_MAC && !IS_WINDOWS && visibleWorkspaceInbox.length > 0 && (
         <section className="relative z-20 shrink-0 px-6 pt-2">
           <div className="relative mx-auto w-full">
             <button
@@ -2158,80 +2192,34 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               <span
                 className={`size-1.5 shrink-0 rounded-full ${inboxGroups[0]?.items[0]?.dot ?? "bg-l4"}`}
               />
-              待处理 {inboxItems.length}
+              待处理 {visibleWorkspaceInbox.length}
               <span className="text-l4">{inboxOpen ? "▴" : "▾"}</span>
             </button>
             {inboxOpen && (
-              <ul className="absolute left-0 top-full z-20 mt-1 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
-                {/* 计数只在不重复时出，口径同 App.tsx 标题栏收件箱下拉 */}
-                {(inboxGroups.length > 1 || bulkInboxItems.length > 0) && (
-                <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
-                  <span className="text-micro text-l4">
-                    {inboxGroups.length > 1 ? `共 ${inboxItems.length} 条` : ""}
-                  </span>
-                  {bulkInboxItems.length > 0 && (
-                    <button
-                      type="button"
-                      className="rounded-sm p-1 text-l3 hover:bg-hover hover:text-l1"
-                      title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
-                      aria-label="全部已读（仅信息类）"
-                      onClick={() => {
-                        dismissInboxBulk(bulkInboxItems);
-                        setInboxOpen(false);
-                      }}
-                    >
-                      <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
-                    </button>
-                  )}
-                </li>
-                )}
-                {inboxGroups.map((group) => (
-                  <li key={group.category}>
-                    <div className="px-2.5 py-1 text-micro text-l4">
-                      {group.label}
-                      {group.items.length > 1 && ` ${group.items.length}`}
-                    </div>
-                    {group.items.map((item) => (
-                      <div
-                        key={item.key}
-                        className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs hover:bg-hover"
-                      >
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${item.dot}`}
-                        />
-                        <span className="min-w-0 flex-1 truncate text-l2">
-                          {item.text}
-                        </span>
-                        <button
-                          type="button"
-                          title="忽略（状态变化后会重新出现）"
-                          onClick={() =>
-                            item.key.startsWith("help:")
-                              ? dismissHelpRequest(
-                                  item.key.slice("help:".length),
-                                  item.dismissSignature ?? "",
-                                )
-                              : dismissInbox(item)
-                          }
-                          className="shrink-0 text-l4 hover:text-l1"
-                        >
-                          ✕
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInboxOpen(false);
-                            runInboxAction(item);
-                          }}
-                          className={rowActionClass}
-                        >
-                          {item.actionLabel}
-                        </button>
-                      </div>
-                    ))}
-                  </li>
-                ))}
-              </ul>
+              <InboxPopover
+                groups={inboxGroups}
+                totalCount={visibleWorkspaceInbox.length}
+                bulkItems={bulkInboxItems}
+                align="left"
+                onRunAction={(item) => {
+                  setInboxOpen(false);
+                  runInboxAction(item);
+                }}
+                onDismiss={(item) => {
+                  if (item.key.startsWith("help:")) {
+                    dismissHelpRequest(
+                      item.key.slice("help:".length),
+                      item.dismissSignature ?? "",
+                    );
+                  } else {
+                    dismissInbox(item);
+                  }
+                }}
+                onDismissBulk={(items) => {
+                  dismissInboxBulk([...items]);
+                  setInboxOpen(false);
+                }}
+              />
             )}
           </div>
         </section>
@@ -2464,6 +2452,18 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             onError={setError}
             chromeReq={identityChrome}
             onOpenAgents={() => selectProjectSurface("agents")}
+            onOpenSchedules={
+              selectedGroup.project
+                ? () => {
+                    selectProjectSurface("schedules");
+                    setProjectFocusReq({
+                      projectRoot: selectedGroup.project!.path,
+                      focus: "lit",
+                      token: Date.now(),
+                    });
+                  }
+                : undefined
+            }
             onChromeConsumed={consumeIdentityChrome}
             onPickTemplate={
               selectedGroup.project
@@ -2855,6 +2855,18 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
             onError={setError}
             chromeReq={identityChrome}
             onOpenAgents={() => selectProjectSurface("agents")}
+            onOpenSchedules={
+              selectedGroup.project
+                ? () => {
+                    selectProjectSurface("schedules");
+                    setProjectFocusReq({
+                      projectRoot: selectedGroup.project!.path,
+                      focus: "lit",
+                      token: Date.now(),
+                    });
+                  }
+                : undefined
+            }
             onChromeConsumed={consumeIdentityChrome}
             onPickTemplate={() => {
               const p = selectedGroup.project!;

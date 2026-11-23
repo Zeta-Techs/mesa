@@ -42,6 +42,7 @@ test("手写依据 UI：不提供默认批准，保存原文与依据后才满�
   const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/" });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage,
     HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true,
     // pdfjs 模块初始化即 new DOMMatrix()（SCALE_MATRIX 常量）；JSDOM 没有该 API，测试又不渲染 PDF，空壳够用
     DOMMatrix: class { multiplySelf() { return this; } preMultiplySelf() { return this; } invertSelf() { return this; } translateSelf() { return this; } scaleSelf() { return this; } multiply() { return this; } inverse() { return this; } } })) {

@@ -68,7 +68,7 @@ export default function StepSkillsChips({
   const required = new Set(requiredSkills ?? skills);
   const showRequirement = requiredSkills !== undefined;
   const candidates = (available ?? []).filter((name) => !skills.includes(name));
-  const outputConflicts = skillLib ? skillOutputConflicts(skills, skillLib) : [];
+  const outputConflicts = skillLib ? skillOutputConflicts(skills, skillLib, brief) : [];
   const unresolvedRefs = skillLib && brief ? unresolvedSkillRefs(brief, skills, skillLib) : [];
   const chainWarnings =
     skillLib && chainSupply && expectedArtifacts

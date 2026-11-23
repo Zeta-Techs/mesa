@@ -3,11 +3,17 @@ import test from "node:test";
 import {
   applyReportVerdict,
   applyVerifyVerdict,
+  clearReportVerdict,
+  clearVerifyVerdict,
   continueAfterDecisionsPrompt,
+  countReviewVerdicts,
   decisionCandidatePaths,
   isInlineDecisionTaskTitle,
   itemSuggestion,
   parseReviewItems,
+  reviewItemDisplayBody,
+  reviewItemMatchesQuery,
+  reviewItemSourceTag,
   reviewItemSummary,
   reviewItemsCleared,
   tokenizeDecisionSummary,
@@ -175,4 +181,51 @@ R001 位置：\`manuscript/draft.md:166, 212, 240\`（\`@tbl-her\`）。问题�
     "manuscript/review-report.md",
   ]);
   assert.deepEqual(candidatesByRaw.get("draft.md"), ["draft.md", "manuscript/draft.md"]);
+});
+
+test("审查报告保留小节严重度与类别，撤销清空决定并支持筛选检索", () => {
+  const doc = `## 严重问题
+
+R001 位置：manuscript/draft.md:12。问题：摘要数字偏大。类别：数据。建议改法：改回 12%。
+
+## 一般问题
+
+R002 位置：manuscript/draft.md:40。问题：转场生硬。类别：写作。
+
+## 建议
+
+R003 位置：manuscript/draft.md:90。问题：可补一句展望。类别：写作。建议：末尾加一句。
+`;
+  const parsed = parseReviewItems(doc, "report");
+  assert.deepEqual(
+    parsed.map((i) => ({ id: i.id, section: i.section, category: i.category })),
+    [
+      { id: "R001", section: "severe", category: "数据" },
+      { id: "R002", section: "general", category: "写作" },
+      { id: "R003", section: "suggestion", category: "写作" },
+    ],
+  );
+  // 展示正文剥离末尾已单独渲染的建议段，避免同一条里重复两遍
+  assert.doesNotMatch(reviewItemDisplayBody(parsed[0], "report"), /建议改法/);
+  assert.match(reviewItemDisplayBody(parsed[0], "report"), /摘要数字偏大/);
+
+  const applied = applyReportVerdict(doc, "R001", "修改", "改回 12%");
+  assert.equal(parseReviewItems(applied, "report")[0]?.verdict, "修改");
+  const undone = clearReportVerdict(applied, "R001");
+  assert.equal(parseReviewItems(undone, "report")[0]?.verdict, null);
+  assert.doesNotMatch(undone, /决定：修改/);
+
+  const verifyLine =
+    "- V001 | 位置：manuscript/review-final.md:145 | 原文摘要：过电位 | 来源：[@Liu2025] | 裁决：待裁决 | 依据：\n";
+  const vMod = applyVerifyVerdict(verifyLine, "V001", "修改", "按原文改写");
+  assert.equal(parseReviewItems(vMod, "verify")[0]?.verdict, "修改");
+  const vUndone = clearVerifyVerdict(vMod, "V001");
+  assert.equal(parseReviewItems(vUndone, "verify")[0]?.verdict, null);
+  assert.match(vUndone, /裁决：待裁决 \| 依据：/);
+  assert.equal(reviewItemSourceTag(parseReviewItems(verifyLine, "verify")[0]!, "verify"), "review-final.md");
+
+  assert.equal(reviewItemMatchesQuery(parsed[0], "report", "严重 数据"), true);
+  assert.equal(reviewItemMatchesQuery(parsed[2], "report", "严重"), false);
+  const counts = countReviewVerdicts(parseReviewItems(applied, "report"));
+  assert.deepEqual(counts, { total: 3, open: 2, decided: 1, accepted: 0, modified: 1, rejected: 0 });
 });

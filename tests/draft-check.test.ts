@@ -305,6 +305,37 @@ test("对照 cite_check.py refs：解析不了的键、库里重复键两边一�
   }
 });
 
+test("材料/电催化写法里的 @ 与行内代码不误报成引用键（draft-check 与 cite_check.py 一致）", () => {
+  const sampleText = [
+    "# Materials",
+    "",
+    "WB₂@WS₂、Co(OH)₂@NiB、(Co,Ni)@NF、[CoB]@NF 与 η@100 mA cm⁻² 以及 `@exampleKey` 均不是引用 [@Real2024; @Second2025]。",
+    "文中叙述见 @Real2024。",
+  ].join("\n");
+  assert.deepEqual(
+    manuscriptCitations(sampleText).map((c) => c.key),
+    ["Real2024", "Second2025", "Real2024"],
+  );
+  const root = sample();
+  try {
+    writeFileSync(join(root, "manuscript/draft.md"), sampleText);
+    writeFileSync(
+      join(root, "references.bib"),
+      "@article{Real2024, title={A}, author={Li, A}, year={2024}}\n@article{Second2025, title={B}, author={Wu, B}, year={2025}}\n",
+    );
+    const r = spawnSync(python, [skill("bib-check", "cite_check.py"), "refs", "--root", root, "--offline", "--manuscript", "manuscript/draft.md"], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const blocked = jsonl(root, "cite-refs.jsonl").filter((i) => i.status === "blocked");
+    assert.deepEqual(blocked, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("对照 ms_check.py：标题编号、图表编号、图注出处两边一致", () => {
   const root = sample();
   try {
@@ -351,6 +382,23 @@ test("初稿统计行：章级标题下有正文才算已写，sections.json 里
   // 写满了只写总数；没引用、没待定标记就不列
   assert.deepEqual(draftProgressParts("# T\n## A\ntext\n## B\nmore"), ["已写 2 节"]);
   assert.equal(draftProgressParts("no headings here"), null);
+  // 中文 sections.json 配英文初稿：标题跨语言对不上字时按正文大章数兜底（不把计划节重复加进分母显示成 8 / 14 节）
+  const zhSections = JSON.stringify([
+    { id: "S1", title: "2. 研究对象定界" },
+    { id: "S2", title: "3. 强共价晶态硼化物" },
+    { id: "S3", title: "4. 非晶与富金属硼化物" },
+  ]);
+  const enFull = [
+    "## Introduction", "Intro body.",
+    "## Defining Boundaries", "Body 1.",
+    "## Strongly Covalent Borides", "Body 2.",
+    "## Amorphous Borides", "Body 3.",
+    "## Conclusions and Outlook", "Outro body.",
+    "## References", "Ref.",
+  ].join("\n");
+  assert.deepEqual(draftProgressParts(enFull, zhSections), ["已写 5 节"]);
+  const enHalf = ["## Introduction", "Intro body.", "## Defining Boundaries", "Body 1."].join("\n");
+  assert.deepEqual(draftProgressParts(enHalf, zhSections), ["已写 2 / 4 节"]);
 });
 
 test("非 manuscript/ 的写作与定稿步：分析报告、开题报告、期刊格式适配、研究论文大纲都能挑中并核对", () => {

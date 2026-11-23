@@ -7,6 +7,14 @@
 
 export type ReviewVerdict = "接受" | "拒绝" | "修改";
 
+export type ReviewSeverity = "severe" | "general" | "suggestion";
+
+export const REVIEW_SEVERITY_LABEL: Record<ReviewSeverity, string> = {
+  severe: "严重",
+  general: "一般",
+  suggestion: "建议",
+};
+
 export interface ReviewItem {
   id: string;
   /** 条目正文，不含决定行。 */
@@ -14,6 +22,21 @@ export interface ReviewItem {
   verdict: ReviewVerdict | null;
   /** 只在「修改」时有内容。 */
   note: string;
+  /** 审查报告所属小节（## 严重问题 / ## 一般问题 / ## 建议）；未匹配到时省略 */
+  section?: ReviewSeverity;
+  /** 审查报告小节原标题（如「严重问题」「一般问题」「建议」） */
+  sectionTitle?: string;
+  /** 条目内的类别标注（如 事实 / 引用 / 逻辑 / 数据 / 写作） */
+  category?: string;
+}
+
+export interface ReviewVerdictCounts {
+  total: number;
+  open: number;
+  decided: number;
+  accepted: number;
+  modified: number;
+  rejected: number;
 }
 
 export type ReviewItemKind = "report" | "verify";
@@ -93,10 +116,42 @@ export function verifyVerdict(body: string): { verdict: ReviewVerdict | null; no
 /** Agent 预留给人填的空「决定：」行（2026-10-24 HER 实证：每条末尾都留了一行）。不进条目正文，点选时就地替换。 */
 const VERDICT_PLACEHOLDER = /^(?:[-*]\s+)?决定[：:]\s*$/;
 
+function classifySectionHeading(rawHeading: string): { section: ReviewSeverity; title: string } | null {
+  const cleaned = rawHeading
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\*\*/g, "")
+    .replace(/^\d+\s*[.、)]\s*/, "")
+    .trim();
+  if (!cleaned) return null;
+  if (/严重|致命|阻塞|高优|critical|major|severe|blocker/i.test(cleaned)) {
+    return { section: "severe", title: cleaned };
+  }
+  if (/一般|中等|普通|minor|moderate|general/i.test(cleaned)) {
+    return { section: "general", title: cleaned };
+  }
+  if (/建议|可选|优化|润色|suggestion|polish|optional/i.test(cleaned)) {
+    return { section: "suggestion", title: cleaned };
+  }
+  return null;
+}
+
+function extractItemCategory(body: string): string | undefined {
+  const matched = body.match(/(?:^|[\s。；;，,|｜])类别[：:]\s*([^\s。；;，,|｜（(]+)/);
+  const val = matched?.[1]?.trim();
+  return val || undefined;
+}
+
 export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const items: ReviewItem[] = [];
-  let current: { id: string; lines: string[] } | null = null;
+  let current: {
+    id: string;
+    lines: string[];
+    section?: ReviewSeverity;
+    sectionTitle?: string;
+  } | null = null;
+  let activeSection: ReviewSeverity | undefined;
+  let activeSectionTitle: string | undefined;
 
   const flush = () => {
     if (!current) return;
@@ -113,7 +168,7 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
       if (VERDICT_PLACEHOLDER.test(line.trim())) continue;
       bodyLines.push(line);
     }
-    let body = bodyLines.join("\n").trim();
+    const body = bodyLines.join("\n").trim();
     if (kind === "verify") {
       const fromField = verifyVerdict(body);
       if (!verdict) {
@@ -121,7 +176,15 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
         note = fromField.note;
       }
     }
-    items.push({ id: current.id, body, verdict, note });
+    const category = extractItemCategory(body);
+    items.push({
+      id: current.id,
+      body,
+      verdict,
+      note,
+      ...(current.section ? { section: current.section, sectionTitle: current.sectionTitle } : {}),
+      ...(category ? { category } : {}),
+    });
     current = null;
   };
 
@@ -130,12 +193,25 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
     const head = trimmed.match(ID_HEAD);
     if (head) {
       flush();
-      current = { id: head[1], lines: [trimmed] };
+      current = {
+        id: head[1],
+        lines: [trimmed],
+        section: activeSection,
+        sectionTitle: activeSectionTitle,
+      };
       continue;
     }
     // 报告小节标题（如 ## 一般问题、## 建议）结束上一条，不连带后面的「无」粘进上一条末尾
     if (/^#{1,6}\s/.test(trimmed)) {
       flush();
+      const classified = classifySectionHeading(trimmed);
+      if (classified) {
+        activeSection = classified.section;
+        activeSectionTitle = classified.title;
+      } else if (/^#{2,3}\s/.test(trimmed)) {
+        activeSection = undefined;
+        activeSectionTitle = undefined;
+      }
       continue;
     }
     if (current) current.lines.push(line);
@@ -146,6 +222,27 @@ export function parseReviewItems(text: string, kind: ReviewItemKind): ReviewItem
 
 export function reviewItemsCleared(items: readonly ReviewItem[]): boolean {
   return items.length > 0 && items.every((item) => item.verdict != null);
+}
+
+export function countReviewVerdicts(items: readonly ReviewItem[]): ReviewVerdictCounts {
+  let open = 0;
+  let accepted = 0;
+  let modified = 0;
+  let rejected = 0;
+  for (const item of items) {
+    if (item.verdict == null) open += 1;
+    else if (item.verdict === "接受") accepted += 1;
+    else if (item.verdict === "修改") modified += 1;
+    else rejected += 1;
+  }
+  return {
+    total: items.length,
+    open,
+    decided: items.length - open,
+    accepted,
+    modified,
+    rejected,
+  };
 }
 
 function verdictLine(verdict: ReviewVerdict, note: string): string {
@@ -182,6 +279,28 @@ export function applyReportVerdict(
   return next.join("\n");
 }
 
+/** 审查报告：清除该条已写的「决定：」行，恢复为未决（用于撤销）。 */
+export function clearReportVerdict(text: string, id: string): string {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const start = lines.findIndex((line) => line.trim().match(ID_HEAD)?.[1] === id);
+  if (start < 0) return text;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (ID_HEAD.test(lines[i].trim()) || /^#{1,6}\s/.test(lines[i].trim())) {
+      end = i;
+      break;
+    }
+  }
+  const block = lines.slice(start, end);
+  const trailing: string[] = [];
+  while (block.length > 0 && block[block.length - 1].trim() === "") trailing.push(block.pop()!);
+  const last = block[block.length - 1] ?? "";
+  if (parseVerdictLine(last)) block.pop();
+  const next = [...lines.slice(0, start), ...block, ...trailing, ...lines.slice(end)];
+  return next.join("\n");
+}
+
 function setPipeField(line: string, name: string, value: string): string {
   const pattern = new RegExp(`(${name}[：:])\\s*[^|｜]*?(\\s*[|｜])`);
   if (pattern.test(line)) {
@@ -211,8 +330,25 @@ export function applyVerifyVerdict(
     verdict === "接受" ? "确认" : verdict === "拒绝" ? "删除该论断" : `改正为${correction}`;
   let line = setPipeField(lines[index], "裁决", ruling);
   if (verdict === "修改") line = setPipeField(line, "依据", correction);
+  else if (/依据[：:]/.test(line)) line = setPipeField(line, "依据", "");
   lines[index] = line;
   return lines.join("\n");
+}
+
+/** 待核实行：恢复为「裁决：待裁决 | 依据：」（用于撤销）。 */
+export function clearVerifyVerdict(text: string, id: string): string {
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const index = lines.findIndex((line) => line.trim().match(ID_HEAD)?.[1] === id);
+  if (index < 0) return text;
+  let line = setPipeField(lines[index], "裁决", "待裁决");
+  if (/依据[：:]/.test(line)) line = setPipeField(line, "依据", "");
+  lines[index] = line;
+  return lines.join("\n");
+}
+
+export function clearReviewVerdict(text: string, id: string, kind: ReviewItemKind): string {
+  return kind === "verify" ? clearVerifyVerdict(text, id) : clearReportVerdict(text, id);
 }
 
 /** 条目自带的改法：审查报告的「建议改法： / 修改建议： / 建议：」、待核实清单的「建议：」。选「修改」时预填，
@@ -237,6 +373,47 @@ export function reviewItemSummary(item: ReviewItem, kind: ReviewItemKind): strin
     .replace(/^\s*[.、:：]\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** 展示用正文：审查报告在单独渲染「建议改法」块时去掉末尾重复的建议段；待核实与 reviewItemSummary 一致。 */
+export function reviewItemDisplayBody(item: ReviewItem, kind: ReviewItemKind): string {
+  const summary = reviewItemSummary(item, kind);
+  if (kind === "verify") return summary;
+  if (!itemSuggestion(item, kind)) return summary;
+  const stripped = summary
+    .replace(/(?:^|[\s。；;，,])(?:建议改法|修改建议|建议)[：:]\s*[\s\S]*$/, "")
+    .trim();
+  return stripped || summary;
+}
+
+/** 待核实条目按涉及的首个文件名分组（如 review-final.md / ms-check.jsonl / citation-check.md）。 */
+export function reviewItemSourceTag(item: ReviewItem, kind: ReviewItemKind): string | null {
+  const summary = reviewItemSummary(item, kind);
+  for (const tok of tokenizeDecisionSummary(summary)) {
+    if (tok.kind === "file") {
+      const base = tok.path.split("/").pop() ?? tok.path;
+      if (base) return base;
+    }
+  }
+  return null;
+}
+
+/** 多词空格分词检索：编号、正文、修改说明、级别、类别全部纳入匹配。 */
+export function reviewItemMatchesQuery(item: ReviewItem, kind: ReviewItemKind, query: string): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = [
+    item.id,
+    item.body,
+    item.note,
+    item.sectionTitle ?? "",
+    item.section ? REVIEW_SEVERITY_LABEL[item.section] : "",
+    item.category ?? "",
+    itemSuggestion(item, kind),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return terms.every((term) => haystack.includes(term));
 }
 
 export interface DecisionLineJump {

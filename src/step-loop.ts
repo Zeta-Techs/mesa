@@ -269,13 +269,14 @@ export function litOrder(opts: {
  *  否则 AI 照任务书只补速读行（2026-11-05 排查）；精读步没有「主要报告」，不叫它往报告末尾追加。 */
 /** 点名精读的篇写成完整笔记（补料轮与链上跟进共用） */
 const FULL_NOTES_CLAUSE =
-  "写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed，单上带了节号的同步填进 forSections（如 [\"3.3\"]）；" +
-  "项目里有 notes/extraction.md 且这篇含可抽取定量指标的，一并补进 notes/extraction.md。" +
-  "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；其他篇的笔记和速读行一字不动。";
+  "写成完整精读笔记：一篇一个单篇笔记文件，写法照技能；notes/index.json 里那几篇改 reviewStatus=reviewed、填 notePath、去掉 skimmed，单上带了节号的同步填进 forSections（如 [\"3.3\"]，可用 lit_records.py index-update 批量更新）；" +
+  "项目里有 notes/extraction.md 且这篇含可抽取定量指标的，一并补进或纠错 notes/extraction.md；" +
+  "**被点名补读的这几篇**若经全文核实发现其原有 notes/skim.md 速读行有数值/单位或事实错漏，**必须同步纠错该行**（不留已知错行）。" +
+  "任务书里「研究论文只速读、不写单篇笔记」对这几篇不适用；**未点名**的其他篇笔记和速读行一字不动。";
 
 export function reworkPrompt(
   rework: Pick<ReworkDto, "fromStep" | "topics" | "reason" | "clues" | "scale" | "relPath" | "reads">,
-  opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string; clause?: string },
+  opts: { isSearch: boolean; isNotes?: boolean; projectRoot: string; date: string; clause?: string; fromWorktreePath?: string | null },
 ): string {
   const lit = opts.isSearch || !!opts.isNotes;
   const lines = [
@@ -291,8 +292,11 @@ export function reworkPrompt(
   lines.push("先读 TASK.md 的完成标准和决策暂停策略，它们照旧有效。");
   // 补检、补读要知道这一节拿来写什么（2026-11-06）：项目最新内容开轮前已并进工作副本，大纲和可写点清单就在手边；只读不改
   if (opts.isSearch || opts.isNotes) {
+    const outlineHint = opts.fromWorktreePath?.trim()
+      ? `（若项目根尚无 outline.md，发起步「${rework.fromStep}」的未合并大纲位于 ${joinRoot(opts.fromWorktreePath.trim(), "outline.md")}，直接只读查看确认各节写作目的与 forSections，不必跨目录盲找）`
+      : "";
     lines.push(
-      "项目里有 outline.md 的，先看单上这些节在大纲里要写什么、已经用了哪些文献；有 notes/angles.md 的也看对应角度。按这些去" +
+      `项目里有 outline.md 的，先看单上这些节在大纲里要写什么、已经用了哪些文献${outlineHint}；有 notes/angles.md 的也看对应角度。按这些去` +
         (opts.isSearch ? "找" : "读") +
         "，大纲和可写点清单本轮不改。",
     );
@@ -417,6 +421,11 @@ export interface CatchUpProbe {
   notePath: string;
   title: string;
   url: string;
+  kind?: string;
+  skimmed?: boolean;
+  /** 若该篇此前已核实当前 papers/ 里那份只是 Supporting Information，记下那个文件名；
+   *  只有换成别的文件（真补了正文）才重新触发补读；未记文件名时直接跳过以免死循环。 */
+  supportingInfoFile?: string;
 }
 
 export function catchUpProbes(includedText: string, indexText: string): CatchUpProbe[] | null {
@@ -439,32 +448,55 @@ export function catchUpProbes(includedText: string, indexText: string): CatchUpP
   for (const row of index) {
     const r = row as Record<string, unknown>;
     if (!["abstract-only", "unavailable"].includes(str(r.fulltextStatus)) || !str(r.id)) continue;
+    const siOnly = r.supportingInfoOnly === true;
+    const siFile = str(r.supportingInfoFile) || str(r.supportingInfoPdf);
+    // 已核实为仅 Supporting Information 且未指定排除文件名时，不再反复拿同一份 SI 催用户补读
+    if (siOnly && !siFile) continue;
     const paper = byId.get(str(r.id));
     const doi = str(paper?.doi);
+    const kind = str(r.kind) || str(paper?.kind);
     out.push({
       id: str(r.id),
       bibKey: str(r.bibKey),
       notePath: str(r.notePath),
       title: str(paper?.title),
       url: doi ? `https://doi.org/${doi.replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")}` : str(paper?.url),
+      ...(kind ? { kind } : {}),
+      ...(r.skimmed === true ? { skimmed: true } : {}),
+      ...(siFile ? { supportingInfoFile: siFile.replace(/^papers[\\/]/i, "") } : {}),
     });
   }
   return out;
 }
 
-/** 补读轮的开场指令：只补读这几篇，在原笔记上续写 */
+/** 补读轮的开场指令：只补读这几篇；区分综述/已有笔记 vs 初轮仅速读研究论文，并内置 SI-only、防爆与脚本工具链 */
 export function catchUpPrompt(hits: { probe: CatchUpProbe; pdf: string }[]): string {
   const lines = hits.map(({ probe, pdf }) => {
     const name = probe.bibKey || probe.id;
-    const note = probe.notePath ? `，笔记 ${probe.notePath}` : "";
-    return `- ${name}（${probe.id}${note}）：全文 papers/${pdf}`;
+    const tag = probe.notePath
+      ? `，原笔记 ${probe.notePath}`
+      : probe.kind === "review"
+        ? "，综述"
+        : probe.skimmed
+          ? "，初轮仅速读"
+          : "";
+    return `- ${name}（${probe.id}${tag}）：全文 papers/${pdf}`;
   });
+  const batchRule =
+    hits.length > 5
+      ? [
+          `本轮共 ${hits.length} 篇（>5 篇），必须分批处理（每批 4–5 篇读完立刻落盘更新，不要攒齐全部再写）；若派子 agent 读 PDF，每篇只返回 ≤400 字结构化抽取卡片（含关键数值、条件与页码），严禁把整篇全文原文回传主上下文。`,
+        ]
+      : [];
   return [
-    `有 ${hits.length} 篇原来没有全文（notes/index.json 里 fulltextStatus 是 abstract-only 或 unavailable），现在 papers/ 里有了：`,
+    `有 ${hits.length} 篇原来没有全文（notes/index.json 里 fulltextStatus 是 abstract-only 或 unavailable），现在项目根 papers/（$MESA_PAPERS_DIR）里有了：`,
     ...lines,
-    "这一轮只补读这几篇，别的篇一字不动。先跑 lit_records.py pdfs 认 PDF（精读只读清单，不跑 write），再读全文。",
-    "在原笔记上续写（没有笔记的按技能新写），不另起平行笔记：按全文补齐、改正各段，原来凭摘要写的判断逐条核对，改了的在该段写明「按全文改」；「标注」「译段」「我的想法」与用户手写的内容原样保留。",
-    "收尾把这几篇在 notes/index.json 里的 fulltextStatus 改成 fulltext；有数据抽取表的补这几篇的行（出处与页码按全文填）；可写点清单受影响的在 notes/angles.md 补一句；notes/handoff.md 写作约束里这几篇「仅摘要 / 题录」的那条删掉，按全文改了结论、要下游照着写的，把那条约束改成新结论，不记补读经过。",
+    "本轮是增量补读（范围与粒度以本条指令为准，优先覆盖 TASK.md 中的首轮全量要求；定稿输出如 endnote.docx/zotero.docx 与文献库同步不归本轮）。这一轮只补读这几篇，别的篇一字不动。先跑 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" extract-text --keys <bibKeys> --out-dir .ccode/local/pdf-texts`（`$MESA_LIT_RECORDS` 为空时用技能目录里的 `scripts/lit_records.py`）抽取清洗后的纯文本（脚本自动跨 worktree 定位项目根/Zotero PDF、清除控制字符并自动检测 Supporting Information；精读只读清单，不跑 write）。",
+    "若脚本报某篇为 `SI_ONLY`（仅 Supporting Information、正文仍缺），不要将 `fulltextStatus` 改为 `fulltext`（保持原状，并在 notes/index.json 对应条记 `\"supportingInfoOnly\": true` 与 `\"supportingInfoFile\": \"<脚本返回的 supportingInfoFile>\"` 免得后续拿同一份 SI 反复派单）；若引用 SI 中实测值，必须注明「来源：SI（正文仍缺）」。",
+    "补读粒度（避免状态双轨）：① 综述（kind=review）或已有单篇笔记（notePath 非空）或用户/大纲明确点名的篇：在原笔记上续写（综述没有笔记的按技能新写），按全文补齐、改正各段，改了的注明「按全文改」，「标注」「译段」「我的想法」与用户手写内容原样保留；② 其余初轮仅速读的研究论文（skimmed=true 且 notePath 为空）：**不强行新建单篇八段笔记**，读全文后只更新 notes/skim.md（把「全文」改为「有」并补关键结论与代表图/表）、notes/extraction.md（补定量指标及全文页码）与 notes/index.json（只改 fulltextStatus=fulltext，保持 skimmed=true、notePath=\"\"）。",
+    ...batchRule,
+    "更新宽表（notes/skim.md / notes/extraction.md）优先用 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" table --file <表> --get / --upsert` 按 @bibKey 精确读写（避免整份读大表和单元格未转义 `|` 拆列）；核对并补齐 references.bib 的题录字段；可写点清单受影响的在 notes/angles.md 补一句；notes/handoff.md 写作约束里这几篇「仅摘要 / 题录」的那条删掉，按全文改了结论、要下游照着写的，把那条约束改成新结论，不记补读经过。",
+    "收尾运行 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" validate` 一键核对 included.json / index.json / 来源 PDF / 宽表 / references.bib / handoff / angles 闭环，不再手写校验脚本。",
     KEEP_WORKING_CLAUSE,
   ].join("\n");
 }
@@ -501,14 +533,18 @@ export function withLatestNote(prompt: string, files: string[]): string {
   return note ? `${prompt}\n\n${note}` : prompt;
 }
 
-/** 检索后来排除的篇在精读这边怎么撤：写作约束、可写点清单、索引撤掉；笔记文件是读过的记录，留着不删 */
+/** 检索后来排除的篇在精读这边怎么撤：索引、速读/抽取宽表、写作约束、可写点清单、引文库全撤；单篇笔记文件是读过的记录，留着不删 */
 function droppedClause(ids: string[]): string {
   const shown = ids.slice(0, ID_CAP).join("、");
   const more = ids.length > ID_CAP ? ` 等 ${ids.length} 篇（以 papers/included.json 里 decision=excluded 为准）` : "";
   return (
-    `检索那一步后来排除了 ${ids.length} 篇，精读这边还留着：${shown}${more}。这些篇不再进综述：` +
-    "从 notes/index.json 里删掉它们那几行；notes/handoff.md 写作约束里提到它们的条目删掉或改写；notes/angles.md 里拿它们当依据的句子改掉或删掉；" +
-    "references.bib 里的条目由 lit_records.py bib 移出，它点名了哪些稿件还在引用这些键的，写进本步验收摘要交用户处理，本步不改稿件。笔记文件留着不删。"
+    `检索那一步后来排除了 ${ids.length} 篇，精读这边还留着：${shown}${more}。这些篇不再进综述，清理范围一次到位：` +
+    "① 从 notes/index.json 里删掉它们那几行；" +
+    "② notes/skim.md 与 notes/extraction.md（若存在且有对应行）删掉它们那几行（可用 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" table --file <表> --remove <bibKeys>`）；" +
+    "③ notes/handoff.md 写作约束里提到它们的条目删掉或改写；" +
+    "④ notes/angles.md 里拿它们当依据的句子改掉或删掉；" +
+    "⑤ references.bib 里的条目由 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" bib` 移出，它点名了哪些稿件还在引用这些键的，写进本步验收摘要交用户处理，本步不改稿件。" +
+    "单篇笔记文件留着不删。"
   );
 }
 
@@ -525,8 +561,10 @@ export function followupPrompt(opts: {
   reads?: string[];
   /** 精读步：这次新纳入的是为大纲这几节补检来的（退回检索的单子从大纲发起，按大纲的节转回路②）：研究论文也直接精读 */
   sections?: string[];
+  /** 精读步：同时新到了全文的篇目（一轮合办：跟进上游 + 顺带补读，省得单开两轮撞车） */
+  catchUp?: { probe: CatchUpProbe; pdf: string }[];
 }): string {
-  const head = `上游「${opts.upstream}」保存过新内容，这一轮只跟进新增的部分，不重做整步。项目里的新内容已经并进本工作区。`;
+  const head = `上游「${opts.upstream}」保存过新内容，本轮是增量跟进（范围与粒度以本条指令为准，优先覆盖 TASK.md 中的首轮全量要求，定稿输出如 endnote.docx/zotero.docx 与文献库同步不归本轮），只跟进新增/变动的部分，不重做整步。项目里的新内容已经并进本工作区。`;
   if (opts.notesIds) {
     const lines = [head];
     if (opts.notesIds.length > 0) {
@@ -541,10 +579,10 @@ export function followupPrompt(opts: {
               ...(opts.sections!.some((t) => !/^\s*§?\d/.test(t))
                 ? ["上面没写节号的，按 papers/included.json 里这几篇的纳入理由和大纲判断它撑哪几节。"]
                 : []),
-              `只处理这些篇（先跑 lit_records.py pdfs 认 PDF）：综述写综述卡；研究论文也直接${FULL_NOTES_CLAUSE}` +
+              `只处理这些篇（先跑 \`"$MESA_PYTHON" "$MESA_LIT_RECORDS" pdfs\` 认 PDF）：综述写综述卡；研究论文也直接${FULL_NOTES_CLAUSE}` +
                 "每篇在 notes/index.json 记 forSections（优先沿用 papers/included.json 那条的 forSections，没有的按上面哪几节写节号）。没全文的按摘要写并标「仅摘要·待全文」。",
             ].join("\n")
-          : "只处理这些篇，写法照 TASK.md 与技能（先跑 lit_records.py pdfs 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
+          : "只处理这些篇，写法照 TASK.md 与技能（先跑 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" pdfs` 认 PDF）：任务书要研究论文只速读的，就在 notes/skim.md 补行；综述写综述卡。已有笔记和速读行一字不动。",
       );
     }
     const reads = opts.reads ?? [];
@@ -557,9 +595,14 @@ export function followupPrompt(opts: {
     }
     const dropped = opts.droppedIds ?? [];
     if (dropped.length > 0) lines.push(droppedClause(dropped));
+    const catchUp = opts.catchUp ?? [];
+    if (catchUp.length > 0) {
+      lines.push("本轮顺带合办新到全文补读（同一轮完成，不必单开一轮）：", catchUpPrompt(catchUp));
+    }
     lines.push(
-      "收尾跑 lit_records.py bib 更新 references.bib，再更新 notes/index.json 与 notes/handoff.md（只留现在仍成立的写作约束）" +
-        (opts.notesIds.length > 0 || reads.length > 0 ? "；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句。" : "。"),
+      "收尾跑 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" bib` 更新 references.bib，更新 notes/index.json 与 notes/handoff.md（只留现在仍成立的写作约束）" +
+        (opts.notesIds.length > 0 || reads.length > 0 || catchUp.length > 0 ? "；有可写点清单的，新篇改变了哪个角度就在 notes/angles.md 里补一句" : "") +
+        "，最后跑 `\"$MESA_PYTHON\" \"$MESA_LIT_RECORDS\" validate` 校验闭环。",
       KEEP_WORKING_CLAUSE,
     );
     return lines.join("\n");
@@ -584,12 +627,14 @@ export function followupScale(opts: {
   files: string[];
   reads?: string[];
   sections?: string[];
+  catchUpCount?: number;
 }): string {
   if (opts.notesIds) {
     const n = opts.notesIds.length;
     const d = opts.droppedIds?.length ?? 0;
     const r = opts.reads?.length ?? 0;
-    if (n === 0 && d === 0 && r === 0) return "";
+    const c = opts.catchUpCount ?? 0;
+    if (n === 0 && d === 0 && r === 0 && c === 0) return "";
     const parts = [
       n > 0
         ? (opts.sections?.length ?? 0) > 0
@@ -598,6 +643,7 @@ export function followupScale(opts: {
         : "",
       r > 0 ? `补文献单上点名精读 ${r} 条，写成完整笔记` : "",
       d > 0 ? `后来排除 ${d} 篇，AI 把它们从交棒的写作约束、可写点清单、索引和引文库里撤掉，笔记留着` : "",
+      c > 0 ? `同时顺带补读新到的 ${c} 篇全文（合在同一轮完成）` : "",
     ].filter(Boolean);
     return `「${opts.upstream}」有更新：${parts.join("；")}。`;
   }
@@ -614,10 +660,12 @@ export function followupConfirmText(opts: {
   files: string[];
   unsaved: boolean;
   reads?: string[];
+  catchUpKeys?: string[];
 }): string {
   const n = opts.notesIds?.length ?? 0;
   const d = opts.notesIds ? (opts.droppedIds?.length ?? 0) : 0;
   const r = opts.notesIds ? (opts.reads?.length ?? 0) : 0;
+  const c = opts.notesIds ? (opts.catchUpKeys?.length ?? 0) : 0;
   const body =
     n > 0 && d > 0
       ? `跟进新纳入的 ${n} 篇、撤下后来排除的 ${d} 篇？\n\nAI 只读新纳入的，排除的从写作约束和引文库撤掉，已有笔记不动。`
@@ -628,13 +676,26 @@ export function followupConfirmText(opts: {
           : r > 0
             ? `精读补文献单上点名的 ${r} 条？\n\nAI 把这几条写成完整笔记，已有笔记不动。`
             : `跟进上游改过的 ${opts.files.length} 个文件？\n\nAI 只改受影响的部分。`;
-  const head = r > 0 && (n > 0 || d > 0) ? `${body}\n\n补文献单上点名精读的 ${r} 条也一起做，写成完整笔记。` : body;
+  let head = r > 0 && (n > 0 || d > 0) ? `${body}\n\n补文献单上点名精读的 ${r} 条也一起做，写成完整笔记。` : body;
+  if (c > 0) {
+    const shown = opts.catchUpKeys!.slice(0, 4).join("、") + (c > 4 ? ` 等 ${c} 篇` : "");
+    head += `\n\n同时顺带补读新到的 ${c} 篇全文（${shown}），合在同一轮完成。`;
+  }
   return opts.unsaved ? `${head}\n\n注意：上一轮还没保存，两轮会一起评审，不能只退回其中一轮。` : head;
 }
 
-/** 补读确认框：问句标题 + 哪几篇 */
-export function catchUpConfirmText(names: string[]): string {
-  return `补读 ${names.length} 篇新到的全文？\n\nAI 在原笔记上续写：${names.join("、")}。别的篇不动。`;
+/** 补读确认框：问句标题 + 哪几篇；待评审（未保存）态一并提示两轮一起评审 */
+export function catchUpConfirmText(
+  names: string[],
+  opts?: { unsaved?: boolean; stepName?: string },
+): string {
+  const head = opts?.stepName
+    ? `在「${opts.stepName}」里补读 ${names.length} 篇新到的全文？`
+    : `补读 ${names.length} 篇新到的全文？`;
+  const body = `${head}\n\nAI 在原笔记上续写：${names.join("、")}。别的篇不动。`;
+  return opts?.unsaved
+    ? `${body}\n\n注意：精读步上一轮还没保存，补读完成后两轮会一起评审。`
+    : body;
 }
 
 export function roundCauseLabel(cause: RoundCause): string {
@@ -642,17 +703,17 @@ export function roundCauseLabel(cause: RoundCause): string {
     case "first":
       return "首轮";
     case "rework":
-      return "补料轮";
+      return "退回补料";
     case "followup":
-      return "跟进轮";
+      return "跟进更新";
     case "fresh":
       return "新开一轮";
     case "manual":
       return "接着改";
     case "comments":
-      return "意见轮";
+      return "处理批注";
     case "catchup":
-      return "补读轮";
+      return "补读全文";
   }
 }
 
@@ -835,4 +896,154 @@ export function commentReworkDrafts(sheet: string, targets: readonly string[]): 
   return Object.fromEntries(
     Object.entries(out).map(([k, v]) => [k, { topics: v.topics.join("\n"), reason: `导师 / 合作者意见 ${v.ids.join("、")} 要前面这一步补或改` }]),
   );
+}
+
+// ===== 补文献弹窗大纲速览与待读全文候选（2026-11-22：不用凭记忆回想大纲章节或 @bibKey） =====
+
+export interface OutlineChapterChoice {
+  /** 节号，如 "2" 或 "3.2" */
+  num: string;
+  /** 完整标题，如 "2. 研究对象定界与证据分级" */
+  label: string;
+  /** 一级章 (2) 或二级小节 (3) */
+  level: 2 | 3;
+  /** 覆盖检查表对应行的可写/线索篇数、最新年份与判断（若有） */
+  writable?: number | null;
+  hint?: number | null;
+  latest?: string;
+  verdict?: string;
+}
+
+export interface PendingFulltextChoice {
+  bibKey: string;
+  author: string;
+  year: string;
+  venue: string;
+  title: string;
+}
+
+const OUTLINE_META_HEADING_RE = /(?:覆盖检查|框架推演|证据综合|定框架记录|验收摘要|本轮改了什么|参考文献|核心论断|论断定义)/;
+
+function cleanInlineMd(s: string): string {
+  return s
+    .replace(/<\/?(?:sub|sup|i|b|em|strong)>/gi, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function firstAuthorSurname(raw: unknown): string {
+  const first = Array.isArray(raw) ? raw[0] : typeof raw === "string" ? raw.split(/\s+and\s+|;/i)[0] : "";
+  if (typeof first !== "string") return "";
+  const t = first.trim();
+  if (!t) return "";
+  if (t.includes(",")) return t.split(",")[0].trim();
+  const parts = t.split(/\s+/);
+  return parts[parts.length - 1] ?? t;
+}
+
+function parseCountCell(cell: string | undefined): number | null {
+  const m = (cell ?? "").trim().match(/^(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/** 从 outline.md 抽出带编号的一级章与二级小节，并拼上「## 覆盖检查」里的篇数与判断，供补文献弹窗左栏点选 */
+export function parseOutlineChaptersForRework(outline: string): OutlineChapterChoice[] {
+  const covByNum = new Map<string, { writable: number | null; hint: number | null; latest: string; verdict: string }>();
+  for (const row of sectionTableRows(outline, "覆盖检查") ?? []) {
+    const label = (row[0] ?? "").trim();
+    const m = label.match(/^(?:第\s*)?(\d+(?:\.\d+)*)/);
+    if (!m) continue;
+    covByNum.set(m[1], {
+      writable: parseCountCell(row[1]),
+      hint: parseCountCell(row[2]),
+      latest: (row[3] ?? "").trim(),
+      verdict: (row[4] ?? "").trim(),
+    });
+  }
+  const out: OutlineChapterChoice[] = [];
+  let inFence = false;
+  for (const raw of outline.split(/\r?\n/)) {
+    if (/^\s*(```|~~~)/.test(raw)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const hm = raw.match(/^(#{2,3})\s+(.+?)\s*$/);
+    if (!hm) continue;
+    const level = hm[1].length as 2 | 3;
+    const title = cleanInlineMd(hm[2].replace(/\s+#+$/, ""));
+    if (OUTLINE_META_HEADING_RE.test(title)) continue;
+    const nm = title.match(/^(?:第\s*)?(\d+(?:\.\d+)*)(?:\s*章|[.、\s]|$)/);
+    if (!nm) continue;
+    const num = nm[1];
+    const cov = covByNum.get(num);
+    out.push({
+      num,
+      label: title,
+      level,
+      ...(cov ? cov : {}),
+    });
+  }
+  return out;
+}
+
+/** 从 notes/index.json（可选拼 papers/included.json 的作者、年份、期刊与标题）抽出已有全文、尚未精读的篇，供补文献弹窗人类可读列表点选 */
+export function parsePendingFulltextForRework(indexJson: string, includedJson?: string | null): PendingFulltextChoice[] {
+  let idx: unknown[] | null = null;
+  try {
+    idx = recordsOf(JSON.parse(indexJson));
+  } catch {
+    return [];
+  }
+  if (!idx) return [];
+  const metaByKey = new Map<string, { author: string; year: string; venue: string; title: string }>();
+  if (includedJson) {
+    try {
+      const inc = recordsOf(JSON.parse(includedJson));
+      for (const row of inc ?? []) {
+        const r = row as Record<string, unknown>;
+        const id = typeof r.id === "string" ? r.id.trim().toLowerCase() : "";
+        const bk = typeof r.bibKey === "string" ? r.bibKey.trim().toLowerCase() : "";
+        const author = firstAuthorSurname(r.authors ?? r.author);
+        const year = r.year != null ? String(r.year).trim() : "";
+        const venue = cleanInlineMd(
+          typeof r.journalAbbreviation === "string" && r.journalAbbreviation.trim()
+            ? r.journalAbbreviation
+            : typeof r.venue === "string"
+              ? r.venue
+              : "",
+        );
+        const title = cleanInlineMd(typeof r.title === "string" ? r.title : "");
+        const rec = { author, year, venue, title };
+        if (id) metaByKey.set(id, rec);
+        if (bk) metaByKey.set(bk, rec);
+      }
+    } catch {
+      /* 忽略题录解析异常 */
+    }
+  }
+  const out: PendingFulltextChoice[] = [];
+  const seen = new Set<string>();
+  for (const row of idx) {
+    const r = row as Record<string, unknown>;
+    const bk = typeof r.bibKey === "string" ? r.bibKey.trim() : "";
+    if (!bk || seen.has(bk.toLowerCase())) continue;
+    const ft = typeof r.fulltextStatus === "string" ? r.fulltextStatus.trim().toLowerCase() : "";
+    const rev = typeof r.reviewStatus === "string" ? r.reviewStatus.trim().toLowerCase() : "";
+    if (ft !== "fulltext") continue;
+    if (rev === "reviewed" || rev === "done" || rev === "completed") continue;
+    seen.add(bk.toLowerCase());
+    const id = typeof r.id === "string" ? r.id.trim().toLowerCase() : "";
+    const meta = metaByKey.get(bk.toLowerCase()) ?? (id ? metaByKey.get(id) : undefined);
+    out.push({
+      bibKey: bk,
+      author: meta?.author ?? "",
+      year: meta?.year ?? "",
+      venue: meta?.venue ?? "",
+      title: meta?.title ?? "",
+    });
+  }
+  return out;
 }
