@@ -5,10 +5,13 @@ import {
   helpNotifyKeys,
   helpPreview,
   helpSignature,
+  inboxBulkReadLabel,
   inboxCategoryOf,
   inboxCategoryLabel,
+  inboxHighestUrgency,
   inboxTaskLabel,
   inboxTaskLine,
+  inboxUrgencyOf,
   isHelpDismissed,
   parseHelpDismissed,
 } from "../src/inbox.ts";
@@ -26,7 +29,6 @@ test("inboxCategoryOf：key 前缀推导类别，confirm: 与 live: 合并为待
   assert.equal(inboxCategoryOf("sched:paused:s-1"), "schedule");
   assert.equal(inboxCategoryOf("sched:review:s-1:r-1"), "schedule");
   assert.equal(inboxCategoryOf("dep:git"), "dep");
-  assert.equal(inboxCategoryOf("update:0.1.1"), "update");
   assert.equal(inboxCategoryOf("phone:pending"), "phone");
   assert.equal(inboxCategoryLabel("phone"), "手机");
 });
@@ -57,13 +59,12 @@ test("inboxCategoryOf：未知前缀回落待确认（不静默丢失）", () =>
   assert.equal(inboxCategoryOf("whatever"), "confirm");
 });
 
-test("inboxCategoryLabel：类别中文标签齐备（更新在依赖之后、文献之前）", () => {
+test("inboxCategoryLabel：类别中文标签齐备", () => {
   assert.deepEqual(
     [
       "conflict",
       "confirm",
       "dep",
-      "update",
       "lit",
       "ready",
       "artifacts",
@@ -74,7 +75,6 @@ test("inboxCategoryLabel：类别中文标签齐备（更新在依赖之后、�
       "冲突",
       "待确认",
       "依赖",
-      "更新",
       "文献",
       "可合并",
       "待核验",
@@ -92,7 +92,6 @@ test("groupInbox：固定顺序、空类不返回、类内保持原顺序", () =
     { key: "help:/r1" },
     { key: "lit:s-1:t1" },
     { key: "live:claude:s-1" },
-    { key: "update:0.1.1" },
     { key: "ready:ws-3" },
   ];
   const groups = groupInbox(items);
@@ -101,7 +100,6 @@ test("groupInbox：固定顺序、空类不返回、类内保持原顺序", () =
     [
       ["conflict", "冲突", ["conflict:ws-1"]],
       ["confirm", "待确认", ["confirm:tab-1", "live:claude:s-1"]],
-      ["update", "更新", ["update:0.1.1"]],
       ["lit", "文献", ["lit:s-1:t1"]],
       ["ready", "可合并", ["ready:ws-2", "ready:ws-3"]],
       ["help", "人工请求", ["help:/r1"]],
@@ -193,4 +191,25 @@ test("忽略后条目消失，内容变化即复现", () => {
 test("未忽略的条目原样保留", () => {
   const a = { key: "conflict:x", text: "冲突", actionLabel: "解决" };
   assert.deepEqual(filterDismissed([a], {}), [a]);
+});
+
+test("inboxUrgencyOf / inboxHighestUrgency：按紧迫度三档分级，纯通知不亮琥珀警戒色", () => {
+  assert.equal(inboxUrgencyOf("confirm:t1"), "blocking");
+  assert.equal(inboxUrgencyOf("conflict:w1"), "blocking");
+  assert.equal(inboxUrgencyOf("help:/repo"), "blocking");
+  assert.equal(inboxUrgencyOf("dep:git"), "blocking");
+  assert.equal(inboxUrgencyOf("profile:p1"), "blocking");
+  assert.equal(inboxUrgencyOf("ready:w1"), "decide");
+  assert.equal(inboxUrgencyOf("sched:r1"), "decide");
+  assert.equal(inboxUrgencyOf("lit:s1"), "notice");
+  assert.equal(inboxUrgencyOf("asst:r1"), "notice");
+  assert.equal(inboxHighestUrgency([{ key: "lit:1" }, { key: "asst:2" }]), "notice");
+  assert.equal(inboxHighestUrgency([{ key: "lit:1" }, { key: "ready:2" }]), "decide");
+  assert.equal(inboxHighestUrgency([{ key: "lit:1" }, { key: "ready:2" }, { key: "confirm:3" }]), "blocking");
+});
+
+test("inboxBulkReadLabel：全是通知写「全部已读」，混有待拍板项时写清仅消掉通知数", () => {
+  assert.equal(inboxBulkReadLabel(0, 2), "");
+  assert.equal(inboxBulkReadLabel(3, 3), "全部已读");
+  assert.equal(inboxBulkReadLabel(2, 4), "已读 2 条通知");
 });

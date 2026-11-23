@@ -4,11 +4,12 @@ import {
   Activity,
   BookOpen,
   BookText,
-  CheckCheck,
+  CircleArrowUp,
   CircleHelp,
   Compass,
   ExternalLink,
   Info,
+  LoaderCircle,
   Megaphone,
   ListTree,
   PanelLeft,
@@ -47,19 +48,26 @@ import { ConfirmDialogHost, confirmDialog, confirmDialogOpen } from "./component
 import { DoctorDialogHost } from "./components/DoctorDialog";
 import { markCoachTipSeen } from "./coach-tips";
 import { HoverTip, useHoverTip } from "./components/HoverTip";
-import { LoadingRows, rowActionClass } from "./components/PageFrame";
+import { LoadingRows } from "./components/PageFrame";
+import InboxPopover, {
+  dismissDevInboxPreviewItems,
+  isDevInboxPreviewItem,
+  toggleDevInboxPreview,
+  useDevInboxPreview,
+} from "./components/InboxPopover";
 import "./App.css";
 import { useAppStore, runInboxAction, visibleInboxItems } from "./store";
 import {
   APP_UPDATE_FOCUS_RECHECK_MS,
   APP_UPDATE_RECHECK_INTERVAL_MS,
   APP_UPDATE_RECHECK_TICK_MS,
+  appUpdateRailLabel,
+  appUpdateRailTooltip,
   shouldRecheckAppUpdate,
 } from "./app-update";
-import { isAppUpdateInstallInFlight } from "./app-update-install";
+import { isAppUpdateInstallInFlight, useAppUpdateInstall } from "./app-update-install";
 import { useRouteWatch } from "./route-watch";
-import { bulkReadableItems } from "./inbox";
-import { groupInbox, type InboxCategory } from "./inbox";
+import { bulkReadableItems, groupInbox, inboxHighestUrgency } from "./inbox";
 import {
   RUN_ANNOUNCE_LINGER_MS,
   announceLabel,
@@ -190,6 +198,87 @@ function RailTooltip({
         <HoverTip tip={tip} text={label} side={collapsed} up={up && !collapsed} />
       )}
     </span>
+  );
+}
+
+/** 侧栏底部「可更新」快捷入口：有新版本时出现在底部一排最右（收成图标时沉底），点击原地打开更新弹窗直接安装；
+ *  单独拆组件订阅 useAppUpdateInstall，下载进度刷新时不带动整棵 App 重渲。 */
+function RailUpdateButton({
+  version,
+  collapsed,
+  iconOnly = false,
+  onClick,
+}: {
+  version: string;
+  collapsed: boolean;
+  iconOnly?: boolean;
+  onClick: () => void;
+}) {
+  const { installing, phase, progress } = useAppUpdateInstall();
+  const activePhase = installing ? phase : null;
+  const downloaded = progress?.downloaded ?? 0;
+  const total = progress?.total ?? null;
+  const tooltip = appUpdateRailTooltip(version, activePhase, downloaded, total);
+  const label = appUpdateRailLabel(activePhase, downloaded, total);
+
+  if (collapsed) {
+    return (
+      <RailTooltip label={tooltip} collapsed>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={tooltip}
+          aria-busy={installing}
+          className="mt-1 flex h-8 w-11 shrink-0 items-center justify-center rounded-md border border-cta-bd/40 bg-cta/15 text-cta-pill-text transition-colors hover:bg-cta/25"
+        >
+          {installing ? (
+            <LoaderCircle
+              size={15}
+              strokeWidth={2}
+              aria-hidden="true"
+              className="animate-spin motion-reduce:animate-none"
+            />
+          ) : (
+            <CircleArrowUp size={15} strokeWidth={1.8} aria-hidden="true" />
+          )}
+        </button>
+      </RailTooltip>
+    );
+  }
+
+  return (
+    <div className="ml-auto shrink-0">
+      <RailTooltip label={tooltip} collapsed={false} up>
+        <button
+          type="button"
+          onClick={onClick}
+          aria-label={tooltip}
+          aria-busy={installing}
+          className={`flex h-7 shrink-0 items-center justify-center gap-1 rounded-md border border-cta-bd/40 bg-cta/15 text-xs font-medium text-cta-pill-text transition-colors hover:bg-cta/25 ${
+            iconOnly ? "w-7 px-0" : "px-2"
+          }`}
+        >
+          {installing ? (
+            <LoaderCircle
+              size={13}
+              strokeWidth={2}
+              aria-hidden="true"
+              className="shrink-0 animate-spin motion-reduce:animate-none"
+            />
+          ) : (
+            <CircleArrowUp
+              size={13}
+              strokeWidth={1.8}
+              aria-hidden="true"
+              className="shrink-0"
+            />
+          )}
+          {!iconOnly && (
+            <span className="whitespace-nowrap tabular-nums">{label}</span>
+          )}
+        </button>
+      </RailTooltip>
+    </div>
   );
 }
 
@@ -570,9 +659,8 @@ function App() {
     chromeHidden && page !== "terminal" && announcements.length > 0
       ? announcements[announcements.length - 1]
       : null;
-  // 「待你处理」收件箱：业务条目由 WorkspacesPage 写入，应用更新由 visibleInboxItems 现算合并
+  // 「待你处理」收件箱：业务条目由 WorkspacesPage 写入，手机/线路/项目助手由 visibleInboxItems 现算合并
   const rawInboxItems = useAppStore((s) => s.inboxItems);
-  const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   // 从手机添加：后端事件全局接一次；弹层开着时不在收件箱重复提醒
   // 线路体检后台复查：只在有官方账号会话运行时每 5 分钟测一次，拦下 / 换了出口地区进收件箱「线路」
@@ -586,17 +674,20 @@ function App() {
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const assistantEchoes = useAppStore((s) => s.assistantEchoes);
   const routeAlerts = useAppStore((s) => s.routeAlerts);
-  const inboxItems = visibleInboxItems(
+  const devInboxPreviewItems = useDevInboxPreview();
+  const realInboxItems = visibleInboxItems(
     rawInboxItems,
-    appUpdate
-      ? { version: appUpdate.version, currentVersion: appUpdate.currentVersion }
-      : null,
     inboxDismissed,
     phonePending,
     assistantEchoes,
     Object.values(routeAlerts),
   );
+  const inboxItems =
+    devInboxPreviewItems.length > 0
+      ? [...devInboxPreviewItems, ...realInboxItems]
+      : realInboxItems;
   const inboxCount = inboxItems.length;
+  const inboxUrgency = inboxHighestUrgency(inboxItems);
   const contextLabel = useAppStore((s) => s.contextLabel);
   const shellPlacement = shellContextPlacement(
     shellMode(collapsed, chromeHidden),
@@ -697,27 +788,19 @@ function App() {
   // 类别胶囊：按 key 前缀分组（固定顺序，空类不渲染）
   const inboxGroups = groupInbox(inboxItems);
   const bulkInboxItems = bulkReadableItems(inboxItems);
-  // 标题栏收件箱的展开态：当前展开的类别（Ghostty 式下拉；遮罩/Esc/再点关闭）
-  const [titleInboxCat, setTitleInboxCat] = useState<InboxCategory | null>(
-    null,
-  );
-  // 展开中的类别被清空（如最后一条 help 被忽略）时收起下拉
+  // 标题栏收件箱的展开态（Ghostty 式下拉；遮罩/Esc/再点关闭；只在全部条目清空时自动收起）
+  const [titleInboxOpen, setTitleInboxOpen] = useState(false);
   useEffect(() => {
-    if (
-      titleInboxCat !== null &&
-      !inboxGroups.some((g) => g.category === titleInboxCat)
-    )
-      setTitleInboxCat(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [titleInboxCat, inboxItems]);
+    if (titleInboxOpen && inboxGroups.length === 0) setTitleInboxOpen(false);
+  }, [titleInboxOpen, inboxGroups.length]);
   useEffect(() => {
-    if (titleInboxCat === null) return;
+    if (!titleInboxOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setTitleInboxCat(null);
+      if (e.key === "Escape") setTitleInboxOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [titleInboxCat]);
+  }, [titleInboxOpen]);
   // 顶栏帮助菜单：开关态 + Esc 关闭，关闭范式与收件箱下拉一致（遮罩在 JSX 尾部 z-20）
   const [helpOpen, setHelpOpen] = useState(false);
   // 展开侧栏底部那一排：鼠标在上面（或键盘焦点在里面）时把技能 / MCP / 用量也摆出来
@@ -824,16 +907,16 @@ function App() {
   // 拖拽区——永远打不到遮罩，菜单不消失）。补 document 捕获阶段 mousedown：落点
   // 不在对应包裹层内即关；捕获先于拖拽区处理，按下不动它也不会误拖窗口。
   useEffect(() => {
-    if (!helpOpen && titleInboxCat === null) return;
+    if (!helpOpen && !titleInboxOpen) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (helpOpen && !helpRootRef.current?.contains(t)) setHelpOpen(false);
-      if (titleInboxCat !== null && !inboxRootRef.current?.contains(t))
-        setTitleInboxCat(null);
+      if (titleInboxOpen && !inboxRootRef.current?.contains(t))
+        setTitleInboxOpen(false);
     };
     document.addEventListener("mousedown", onDown, true);
     return () => document.removeEventListener("mousedown", onDown, true);
-  }, [helpOpen, titleInboxCat]);
+  }, [helpOpen, titleInboxOpen]);
   // 菜单打开时聚焦首项（方向键立即可用）。放 effect 而不是内联 ref 回调：
   // App 重渲染会重挂 ref 回调、把焦点反复拉回首项，打断方向键导航。
   useEffect(() => {
@@ -1788,7 +1871,7 @@ function App() {
                   type="button"
                   onClick={() => {
                     setHelpOpen((v) => !v);
-                    setTitleInboxCat(null);
+                    setTitleInboxOpen(false);
                   }}
                   title={appUpdateVersion ? `帮助（v${appUpdateVersion} 可更新）` : "帮助"}
                   aria-label="帮助"
@@ -1903,7 +1986,7 @@ function App() {
                 type="button"
                 onClick={() => {
                   setHelpOpen(false);
-                  setTitleInboxCat(null);
+                  setTitleInboxOpen(false);
                   setPaletteOpen(true);
                 }}
                 title={`打开命令面板（${paletteComboLabel}）`}
@@ -1925,87 +2008,82 @@ function App() {
                     onClick={() => {
                       // 与帮助菜单互斥：同锚区两个下拉不同时开
                       setHelpOpen(false);
-                      setTitleInboxCat((v) =>
-                        v ? null : inboxGroups[0].category,
-                      );
+                      setTitleInboxOpen((v) => !v);
                     }}
-                    aria-expanded={titleInboxCat !== null}
-                    className="ccode-titlebar-inbox-pill flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro"
-                    title="待处理"
+                    aria-expanded={titleInboxOpen}
+                    className={`flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-micro ${
+                      inboxUrgency === "blocking"
+                        ? "ccode-titlebar-inbox-pill"
+                        : inboxUrgency === "decide"
+                          ? "ccode-titlebar-inbox-pill-decide"
+                          : "ccode-titlebar-pill text-l2 hover:text-l1"
+                    }`}
+                    title={
+                      inboxUrgency === "blocking"
+                        ? `待处理（${inboxCount} 条，有需要你拍板的事项）`
+                        : inboxUrgency === "decide"
+                          ? `待处理（${inboxCount} 条，有结果可查看）`
+                          : `待处理（${inboxCount} 条通知）`
+                    }
                   >
-                    <RunCaret state="confirm" decorative />
+                    {inboxUrgency === "blocking" ? (
+                      <RunCaret state="confirm" decorative />
+                    ) : inboxUrgency === "decide" ? (
+                      <RunCaret state="unread" decorative />
+                    ) : (
+                      <span
+                        className="size-1.5 shrink-0 rounded-full bg-l3"
+                        aria-hidden="true"
+                      />
+                    )}
                     <span className="hidden sm:inline">待处理</span>
                     <span className="font-medium tabular-nums">{inboxCount}</span>
                   </button>
-                  {titleInboxCat !== null && (
-                    <ul className="absolute right-0 top-full z-40 mt-1.5 max-h-80 w-[360px] max-w-[80vw] space-y-2 overflow-auto rounded-md border border-field ccode-float-surface p-1">
-                      {/* 计数只在不重复时出（2026-10-26 用户）：只有一类时「共 N 条」与分类小标题同数，
-                          一类只一条时小标题的数字与那一行同义——都不挂；表头只剩全部已读或干脆不出 */}
-                      {(inboxGroups.length > 1 || bulkInboxItems.length > 0) && (
-                      <li className="flex items-center justify-between border-b border-hairline px-1.5 pb-1">
-                        <span className="text-micro text-l4">
-                          {inboxGroups.length > 1 ? `共 ${inboxItems.length} 条` : ""}
-                        </span>
-                        {bulkInboxItems.length > 0 && (
-                          <button
-                            type="button"
-                            className="rounded-sm p-1 text-l3 hover:bg-hover hover:text-l1"
-                            title="全部已读：一键收起信息类通报（文献 / 可合并 / 待核验 / 待发送 / 技能）；冲突、待确认这类要你拍板的不受影响，被收起的条目状态一变还会回来"
-                            aria-label="全部已读（仅信息类）"
-                            onClick={() => dismissInboxBulk(bulkInboxItems)}
-                          >
-                            <CheckCheck size={13} strokeWidth={1.8} aria-hidden="true" />
-                          </button>
-                        )}
-                      </li>
-                      )}
-                      {inboxGroups.map((group) => (
-                        <li key={group.category}>
-                          <div className="px-2.5 py-1 text-micro text-l3">
-                            {group.label}
-                            {group.items.length > 1 && ` ${group.items.length}`}
-                          </div>
-                          {group.items.map((item) => (
-                            <div
-                              key={item.key}
-                              className="flex items-center gap-2.5 rounded-md px-2.5 py-2 text-xs hover:bg-hover"
-                            >
-                              <span
-                                className={`size-2 shrink-0 rounded-full ${item.dot}`}
-                              />
-                              <span className="min-w-0 flex-1 truncate text-l2">
-                                {item.text}
-                              </span>
-                              <button
-                                type="button"
-                                title="忽略（状态变化后会重新出现）"
-                                onClick={() =>
-                                  item.key.startsWith("help:")
-                                    ? dismissHelpRequest(
-                                        item.key.slice("help:".length),
-                                        item.dismissSignature ?? "",
-                                      )
-                                    : dismissInbox(item)
-                                }
-                                className="shrink-0 text-l4 hover:text-l1"
-                              >
-                                ✕
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setTitleInboxCat(null);
-                                  runInboxAction(item);
-                                }}
-                                className={rowActionClass}
-                              >
-                                {item.actionLabel}
-                              </button>
-                            </div>
-                          ))}
-                        </li>
-                      ))}
-                    </ul>
+                  {titleInboxOpen && (
+                    <InboxPopover
+                      groups={inboxGroups}
+                      totalCount={inboxCount}
+                      bulkItems={bulkInboxItems}
+                      align="right"
+                      devPreviewActive={devInboxPreviewItems.length > 0}
+                      onExitDevPreview={() => toggleDevInboxPreview(false)}
+                      onRunAction={(item) => {
+                        setTitleInboxOpen(false);
+                        if (isDevInboxPreviewItem(item)) {
+                          toast("开发版预览条目，不会真的跳转", "info");
+                          return;
+                        }
+                        runInboxAction(item);
+                      }}
+                      onDismiss={(item) => {
+                        if (isDevInboxPreviewItem(item)) {
+                          dismissDevInboxPreviewItems([item.key]);
+                          return;
+                        }
+                        if (item.key.startsWith("help:")) {
+                          dismissHelpRequest(
+                            item.key.slice("help:".length),
+                            item.dismissSignature ?? "",
+                          );
+                        } else {
+                          dismissInbox(item);
+                        }
+                      }}
+                      onDismissBulk={(items) => {
+                        const previewKeys = items
+                          .filter((it) => isDevInboxPreviewItem(it))
+                          .map((it) => it.key);
+                        const realItems = items.filter(
+                          (it) => !isDevInboxPreviewItem(it),
+                        );
+                        if (previewKeys.length > 0) {
+                          dismissDevInboxPreviewItems(previewKeys);
+                        }
+                        if (realItems.length > 0) {
+                          dismissInboxBulk(realItems);
+                        }
+                      }}
+                    />
                   )}
                 </div>
               )}
@@ -2375,43 +2453,71 @@ function App() {
                       </RailTooltip>
                     );
                   };
+                  const openUpdateDialog = () => {
+                    setHelpOpen(false);
+                    setTitleInboxOpen(false);
+                    setHelpDialog("update");
+                  };
                   if (collapsed) {
                     return (
                       <div data-rail-bar className="shrink-0 border-t border-white/5 px-1.5 py-2">
                         {ordered.map((n, i) => railIcon(n, i))}
+                        {appUpdateVersion && (
+                          <RailUpdateButton
+                            version={appUpdateVersion}
+                            collapsed
+                            onClick={openUpdateDialog}
+                          />
+                        )}
                       </div>
                     );
                   }
                   const shown = ordered.slice(0, RAIL_BAR_VISIBLE);
                   const extras = ordered.slice(RAIL_BAR_VISIBLE);
+                  const rem = rootRem();
+                  // 抽屉展开时 5 个图标占 12.5rem：默认 18rem 放得下「图标 + 更新」，拖窄后先收成纯图标，最窄且抽屉展开/拖拽时让位不裁切
+                  const updateIconOnly = barOpen && railWidth < 17.5 * rem;
+                  const hideUpdateForSpace = dragging || (barOpen && railWidth < 15 * rem);
                   return (
                     <div
                       data-rail-bar
-                      onMouseEnter={() => setRailBarOpen(true)}
-                      onMouseLeave={() => setRailBarOpen(false)}
-                      onFocus={() => setRailBarOpen(true)}
-                      onBlur={(e) => {
-                        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRailBarOpen(false);
-                      }}
                       className="flex shrink-0 items-center gap-0.5 border-t border-white/5 px-1.5 py-2"
                     >
-                      {shown.map((n, i) => railIcon(n, i))}
-                      {/* 抽屉：› 与其余图标叠在同一处，宽度从一个 › 的宽度滑到全部图标的宽度；拖动中不裁切，图标能拖进拖出 */}
                       <div
-                        className={`ccode-rail-drawer relative flex items-center gap-0.5 transition-[max-width] duration-200 ${
-                          dragging ? "overflow-visible" : "overflow-hidden"
-                        } ${barOpen ? "max-w-[7rem]" : "max-w-9"}`}
+                        onMouseEnter={() => setRailBarOpen(true)}
+                        onMouseLeave={() => setRailBarOpen(false)}
+                        onFocus={() => setRailBarOpen(true)}
+                        onBlur={(e) => {
+                          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setRailBarOpen(false);
+                        }}
+                        className={`flex items-center gap-0.5 ${appUpdateVersion ? "shrink-0" : "flex-1"}`}
                       >
-                        <span
-                          aria-hidden="true"
-                          className={`ccode-rail-drawer-item pointer-events-none absolute left-0 top-0 flex h-8 w-9 items-center justify-center text-l4 transition-[opacity,translate] duration-150 ${
-                            barOpen ? "translate-x-1.5 opacity-0" : "translate-x-0 opacity-100"
-                          }`}
+                        {shown.map((n, i) => railIcon(n, i))}
+                        {/* 抽屉：› 与其余图标叠在同一处，宽度从一个 › 的宽度滑到全部图标的宽度；拖动中不裁切，图标能拖进拖出 */}
+                        <div
+                          className={`ccode-rail-drawer relative flex items-center gap-0.5 transition-[max-width] duration-200 ${
+                            dragging ? "overflow-visible" : "overflow-hidden"
+                          } ${barOpen ? "max-w-[7rem]" : "max-w-9"}`}
                         >
-                          <ChevronRight size={15} strokeWidth={1.8} />
-                        </span>
-                        {extras.map((n, index) => railIcon(n, RAIL_BAR_VISIBLE + index, { index }))}
+                          <span
+                            aria-hidden="true"
+                            className={`ccode-rail-drawer-item pointer-events-none absolute left-0 top-0 flex h-8 w-9 items-center justify-center text-l4 transition-[opacity,translate] duration-150 ${
+                              barOpen ? "translate-x-1.5 opacity-0" : "translate-x-0 opacity-100"
+                            }`}
+                          >
+                            <ChevronRight size={15} strokeWidth={1.8} />
+                          </span>
+                          {extras.map((n, index) => railIcon(n, RAIL_BAR_VISIBLE + index, { index }))}
+                        </div>
                       </div>
+                      {appUpdateVersion && !hideUpdateForSpace && (
+                        <RailUpdateButton
+                          version={appUpdateVersion}
+                          collapsed={false}
+                          iconOnly={updateIconOnly}
+                          onClick={openUpdateDialog}
+                        />
+                      )}
                     </div>
                   );
                 })()}
@@ -2429,10 +2535,10 @@ function App() {
                 )}
               </aside>
             )}
-            {titleInboxCat !== null && (
+            {titleInboxOpen && (
               <div
                 className="fixed inset-0 z-20"
-                onClick={() => setTitleInboxCat(null)}
+                onClick={() => setTitleInboxOpen(false)}
               />
             )}
             {helpOpen && (

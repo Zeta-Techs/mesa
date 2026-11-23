@@ -8,20 +8,14 @@
  * - 收起：只给信息类（inbox.ts BULK_READABLE），决策类不给，免得把要拍板的事藏掉。
  * 两种都先等几秒才真的送出，期间可撤销（createDeferred）。
  */
-import { BULK_READABLE, inboxCategoryOf, type InboxCategory } from "./inbox.ts";
+import { BULK_READABLE, inboxCategoryOf, inboxUrgencyOf, type InboxUrgency } from "./inbox.ts";
 import type { ChannelApproval } from "./chat-channel.ts";
 
 /** blocking = Agent 停着等你或干不下去；decide = 等你看结果；notice = 通知 */
-export type QueueTier = "blocking" | "decide" | "notice";
-
-const BLOCKING: ReadonlySet<InboxCategory> = new Set(["confirm", "help", "conflict", "dep", "profile"]);
-const NOTICE: ReadonlySet<InboxCategory> = new Set(["lit", "phone", "skill"]);
+export type QueueTier = InboxUrgency;
 
 export function queueTier(key: string): QueueTier {
-  const category = inboxCategoryOf(key);
-  if (BLOCKING.has(category)) return "blocking";
-  if (NOTICE.has(category)) return "notice";
-  return "decide";
+  return inboxUrgencyOf(key);
 }
 
 export const QUEUE_TIER_LABEL: Record<QueueTier, string> = {

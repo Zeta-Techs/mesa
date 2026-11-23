@@ -23,6 +23,8 @@ import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import FeishuSettingsCard from "../components/FeishuSettingsCard";
+import MesaBuddy from "../components/MesaBuddy";
+import { normalizeBuddyStyle, type BuddyStyle } from "../buddy-sprite";
 import RouteCheckCard from "../components/RouteCheckCard";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -109,7 +111,7 @@ import {
   formatLogText,
   logLocalTime,
 } from "../diagnostics";
-import { useAppUpdateInstall } from "../app-update-install";
+import { setDevUpdatePreview, useAppUpdateInstall } from "../app-update-install";
 import UpdateNotes from "../components/UpdateNotes";
 import {
   UPDATE_ACTION_BUSY_CLASS,
@@ -121,6 +123,7 @@ import { enableCodexWinSandbox } from "../components/CodexWinSandboxNotice";
 import {
   appUpdateCheckedAtLabel,
   appUpdateStatusHint,
+  isDevPreviewUpdate,
 } from "../app-update";
 
 /** 七套深色主题：色板双格预览（左=侧栏色，右=内容底色）+ 名称 */
@@ -3411,15 +3414,52 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
-        {/* 桌宠（2026-11-09，desk_pet.rs / src/pet/）：与托盘「在桌面上显示小桌」同一项 */}
-        <SubHeading title="桌宠" hint="项目助手小桌待在桌面上，哪个项目有事等你、哪一步跑完了，它来告诉你" />
+        {/* 项目助手与桌宠（2026-11-20：支持桌角黑猫 / Monolith 切换，同步到项目助手抽屉、顶栏图标与桌宠） */}
+        <SubHeading title="项目助手与桌宠" hint="选择项目助手形象；开启桌宠后，哪个项目有事等你、哪一步跑完了，它来告诉你" />
         <Row
-          label="在桌面上显示小桌"
+          label="助手形象"
+          hint="项目助手、顶栏图标与桌面桌宠同步切换"
+        >
+          <div className="flex flex-wrap items-center gap-2 text-xs" role="radiogroup" aria-label="助手形象">
+            {(
+              [
+                { id: "cat" as BuddyStyle, name: "桌角黑猫", note: "极简像素" },
+                { id: "monolith" as BuddyStyle, name: "Monolith", note: "精工终端" },
+              ] as const
+            ).map((opt) => {
+              const active = normalizeBuddyStyle(settings?.buddyStyle) === opt.id;
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => patch({ buddyStyle: opt.id })}
+                  className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+                    active
+                      ? "border-cta bg-cta/10 text-l1"
+                      : "border-hairline bg-inset/60 text-l2 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-canvas/70">
+                    <MesaBuddy size={26} pose="idle" motion="still" pokeable={false} buddyStyle={opt.id} />
+                  </span>
+                  <span className="leading-tight">
+                    <span className="block text-xs font-medium text-l1">{opt.name}</span>
+                    <span className="block text-micro text-l3">{opt.note}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Row>
+        <Row
+          label="在桌面上显示桌宠"
           hint="点它看等你的事；拖动换位置；右键勿扰一小时或隐藏"
           labelTitle="能就地回答 AI 的提问、放宽一次授权；评审、采纳、确认命令这类要看清楚的，点「去看看」回到 Mesa 里办。托盘菜单里也能开关"
         >
           <Toggle
-            label="在桌面上显示小桌"
+            label="在桌面上显示桌宠"
             checked={settings?.deskPetEnabled ?? false}
             onChange={(checked) => patch({ deskPetEnabled: checked })}
           />
@@ -3440,7 +3480,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           hint={
             (settings?.deskPetMotion ?? "calm") === "calm"
               ? "换状态时动一下就停住；你在 Mesa 里时它不动"
-              : "一直动，还会朝鼠标那边侧身"
+              : "一直保持轻柔循环动画"
           }
           disabled={!(settings?.deskPetEnabled ?? false)}
         >
@@ -4268,18 +4308,38 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             title={
               <>
                 发现新版本 <span className="text-l1">v{appUpdate.version}</span>
+                {import.meta.env?.DEV && isDevPreviewUpdate(appUpdate) && (
+                  <span className="ml-2 rounded-full bg-cta-pill px-1.5 py-0.5 align-middle text-micro font-normal text-cta-pill-text">
+                    开发预览
+                  </span>
+                )}
               </>
             }
-            hint={`当前 v${appUpdate.currentVersion} · 安装完成后会自动重启，进行中的对话请先保存`}
+            hint={
+              import.meta.env?.DEV && isDevPreviewUpdate(appUpdate)
+                ? `当前 v${appUpdate.currentVersion} · 开发版模拟预览，不会真的下载、停终端或重启`
+                : `当前 v${appUpdate.currentVersion} · 安装完成后会自动重启，进行中的对话请先保存`
+            }
             action={
-              <button
-                onClick={() => void installUpdate()}
-                disabled={installing}
-                aria-busy={installing}
-                className={`${primaryActionClass} shrink-0 ${installing ? UPDATE_ACTION_BUSY_CLASS : ""}`}
-              >
-                <UpdateActionContent phase={installing ? installPhase : null} />
-              </button>
+              <div className="flex shrink-0 items-center gap-2">
+                {import.meta.env?.DEV && isDevPreviewUpdate(appUpdate) && (
+                  <button
+                    type="button"
+                    onClick={() => void setDevUpdatePreview(false)}
+                    className={`shrink-0 ${rowActionClass}`}
+                  >
+                    退出预览
+                  </button>
+                )}
+                <button
+                  onClick={() => void installUpdate()}
+                  disabled={installing}
+                  aria-busy={installing}
+                  className={`${primaryActionClass} shrink-0 ${installing ? UPDATE_ACTION_BUSY_CLASS : ""}`}
+                >
+                  <UpdateActionContent phase={installing ? installPhase : null} />
+                </button>
+              </div>
             }
           >
             {installing && installPhase && (
@@ -4329,29 +4389,43 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </Row>
         )}
         {appUpdateStatus === "dev" && (
-          <Row
-            label="预览更新进度"
-            hint="只在开发版：用模拟数据走一遍下载、安装、重启的样子，不会真的下载或重启"
-            extra={
-              updatePreview.preview && (
-                <UpdateInstallProgress
-                  phase={updatePreview.preview.phase}
-                  downloaded={updatePreview.preview.downloaded}
-                  total={updatePreview.preview.total}
-                />
-              )
-            }
-          >
-            <button
-              type="button"
-              onClick={updatePreview.start}
-              disabled={updatePreview.preview !== null}
-              aria-busy={updatePreview.preview !== null}
-              className={`${primaryActionClass} shrink-0 ${updatePreview.preview ? UPDATE_ACTION_BUSY_CLASS : ""}`}
+          <>
+            <Row
+              label="预览可更新状态"
+              hint="只在开发版：模拟发现新版本，在侧栏底部、帮助菜单、弹窗和本页完整预览更新按钮与下载流程，不会真的下载或重启"
             >
-              <UpdateActionContent phase={updatePreview.preview?.phase ?? null} />
-            </button>
-          </Row>
+              <button
+                type="button"
+                onClick={() => void setDevUpdatePreview(true)}
+                className={`shrink-0 ${rowActionClass}`}
+              >
+                开启预览
+              </button>
+            </Row>
+            <Row
+              label="预览更新进度"
+              hint="只在开发版：用模拟数据走一遍下载、安装、重启的样子，不会真的下载或重启"
+              extra={
+                updatePreview.preview && (
+                  <UpdateInstallProgress
+                    phase={updatePreview.preview.phase}
+                    downloaded={updatePreview.preview.downloaded}
+                    total={updatePreview.preview.total}
+                  />
+                )
+              }
+            >
+              <button
+                type="button"
+                onClick={updatePreview.start}
+                disabled={updatePreview.preview !== null}
+                aria-busy={updatePreview.preview !== null}
+                className={`${primaryActionClass} shrink-0 ${updatePreview.preview ? UPDATE_ACTION_BUSY_CLASS : ""}`}
+              >
+                <UpdateActionContent phase={updatePreview.preview?.phase ?? null} />
+              </button>
+            </Row>
+          </>
         )}
       </Section>
 

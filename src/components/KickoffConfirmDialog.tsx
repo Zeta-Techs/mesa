@@ -949,13 +949,13 @@ export default function KickoffConfirmDialog({
   }
   return (
     <div
-      className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4 ccode-fade"
+      className="ccode-modal-backdrop fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-4 ccode-fade"
       onClick={() => {
         if (!busy) onCancel();
       }}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col rounded-lg border border-field ccode-float-surface"
+        className="ccode-modal-panel flex max-h-[85vh] w-full max-w-xl flex-col rounded-lg border border-field ccode-float-surface"
         onClick={(event) => event.stopPropagation()}
       >
         {/* 工作区名写在标题行右侧：原先挂在整个弹层的 title 上，鼠标停在任务书里就冒出一个

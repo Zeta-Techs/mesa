@@ -771,12 +771,15 @@ export function InlineNotice({
   tone = "err",
   size = "xs",
   children,
+  onDismiss,
   className = "",
 }: {
   tone?: "ok" | "info" | "warn" | "err";
   /** xs = 表单/面板；micro = 列表行内 */
   size?: "xs" | "micro";
   children: React.ReactNode;
+  /** 给了才显示右上角 × 关闭钮，让常驻行内提示能手关 */
+  onDismiss?: () => void;
   className?: string;
 }) {
   const Glyph =
@@ -816,6 +819,17 @@ export function InlineNotice({
           children
         )}
       </span>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="关闭提示"
+          title="关闭"
+          className={`shrink-0 rounded-sm text-l4 transition-colors hover:bg-hover hover:text-l1 ${micro ? "p-0.5" : "mt-[1px] p-0.5"}`}
+        >
+          <X size={micro ? 11 : 12} strokeWidth={1.9} aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

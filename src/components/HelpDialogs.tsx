@@ -37,8 +37,8 @@ import {
   type AppLogEntry,
 } from "../diagnostics";
 import { feedbackEnvLine } from "../feedback";
-import { appUpdateCheckedAtLabel } from "../app-update";
-import { useAppUpdateInstall } from "../app-update-install";
+import { appUpdateCheckedAtLabel, isDevPreviewUpdate } from "../app-update";
+import { setDevUpdatePreview, useAppUpdateInstall } from "../app-update-install";
 import { REPO_URL } from "../help-links";
 import { revealFolderLabel } from "../path-utils";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
@@ -358,9 +358,10 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
     void s.checkAppUpdate();
   }, [open]);
 
+  const isPreview = import.meta.env.DEV && isDevPreviewUpdate(appUpdate);
   const checking = !appUpdate && (status === "checking" || status === "idle");
   const close = () => {
-    if (!installing) onClose();
+    if (!installing || isPreview) onClose();
   };
   const releasesLink = (label: string) => (
     <button
@@ -384,10 +385,17 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
           title={
             <>
               发现新版本 <span className="font-mono">v{appUpdate.version}</span>
+              {isPreview && (
+                <span className="ml-2 rounded-full bg-cta-pill px-1.5 py-0.5 align-middle text-micro font-normal text-cta-pill-text">
+                  开发预览
+                </span>
+              )}
             </>
           }
         >
-          当前 v{appUpdate.currentVersion}。安装完成后 Mesa 会自动重启，进行中的对话请先保存。
+          {isPreview
+            ? `当前 v${appUpdate.currentVersion}。开发版模拟预览，点击「下载并安装」仅演示进度（可随时关窗看侧栏按钮同步），不会真的下载或重启。`
+            : `当前 v${appUpdate.currentVersion}。安装完成后 Mesa 会自动重启，进行中的对话请先保存。`}
         </StatusBlock>
         {installing && phase && (
           <UpdateInstallProgress
@@ -405,7 +413,16 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
     footer = (
       <>
         {releasesLink("发布页")}
-        {!installing && (
+        {isPreview && (
+          <button
+            type="button"
+            className={secondaryActionClass}
+            onClick={() => void setDevUpdatePreview(false)}
+          >
+            退出预览
+          </button>
+        )}
+        {(!installing || isPreview) && (
           <button type="button" className={secondaryActionClass} onClick={onClose}>
             稍后
           </button>
@@ -450,6 +467,15 @@ export function HelpUpdateDialog({ open, onClose }: { open: boolean; onClose: ()
     footer = (
       <>
         {releasesLink("发布记录")}
+        {import.meta.env.DEV && (
+          <button
+            type="button"
+            className={secondaryActionClass}
+            onClick={() => void setDevUpdatePreview(true)}
+          >
+            预览有更新
+          </button>
+        )}
         <button type="button" className={primaryActionClass} onClick={onClose}>
           知道了
         </button>

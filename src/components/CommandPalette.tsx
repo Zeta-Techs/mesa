@@ -63,6 +63,9 @@ import { RUN_CARET_LABEL } from "../run-caret";
 import { projectOfCwd } from "../start-page";
 import { isScratchCwd } from "../quick-chat";
 import { IS_WINDOWS } from "../hotkeys";
+import { isDevPreviewUpdate } from "../app-update";
+import { setDevUpdatePreview } from "../app-update-install";
+import { toggleDevInboxPreview, useDevInboxPreview } from "./InboxPopover";
 
 /** 面板里能打开的帮助类弹窗（宿主在 App：反馈表单与 HelpDialogs） */
 export type PaletteHelpTarget = "feedback" | "diag" | "update" | "about";
@@ -188,6 +191,7 @@ export default function CommandPalette({
   const setPage = useAppStore((s) => s.setPage);
   const setSettingsSectionReq = useAppStore((s) => s.setSettingsSectionReq);
   const appUpdate = useAppStore((s) => s.appUpdate);
+  const devInboxPreview = useDevInboxPreview();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const settings = useAppStore((s) => s.settings);
   const chromeHidden = useAppStore((s) => s.chromeHidden);
@@ -385,6 +389,35 @@ export default function CommandPalette({
                   },
                   icon: icon(Download),
                   run: () => onHelp("update"),
+                },
+              ]
+            : []),
+          ...(import.meta.env.DEV
+            ? [
+                {
+                  cmd: {
+                    id: "dev-app-update-preview",
+                    title: isDevPreviewUpdate(appUpdate)
+                      ? "退出应用更新预览（开发版）"
+                      : "预览应用更新（开发版）",
+                    group: "快速操作",
+                    keywords: ["update", "preview", "dev", "更新", "升级", "预览", "热更新", "gengxin", "yulan"],
+                  },
+                  icon: icon(Download),
+                  run: () => void setDevUpdatePreview(!isDevPreviewUpdate(appUpdate)),
+                },
+                {
+                  cmd: {
+                    id: "dev-inbox-preview",
+                    title:
+                      devInboxPreview.length > 0
+                        ? "退出收件箱预览（开发版）"
+                        : "预览收件箱（开发版）",
+                    group: "快速操作",
+                    keywords: ["inbox", "preview", "dev", "收件箱", "待处理", "预览", "shoujianxiang", "yulan"],
+                  },
+                  icon: icon(Download),
+                  run: () => toggleDevInboxPreview(),
                 },
               ]
             : []),
@@ -690,14 +723,14 @@ export default function CommandPalette({
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex justify-center bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
+      className={`ccode-modal-backdrop fixed inset-0 z-50 flex justify-center bg-black/40 ccode-fade${exiting ? " ccode-exiting" : ""}`}
       onClick={dismiss}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="命令面板"
-        className={`ccode-command-palette ccode-anchor-top mt-[10vh] h-fit w-[min(520px,calc(100vw-32px))] overflow-hidden rounded-xl border border-field ccode-float-surface${exiting ? " ccode-exiting" : ""}`}
+        className={`ccode-modal-panel ccode-command-palette ccode-anchor-top mt-[10vh] h-fit w-[min(520px,calc(100vw-32px))] overflow-hidden rounded-xl border border-field ccode-float-surface${exiting ? " ccode-exiting" : ""}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-hairline px-3.5">

@@ -1,6 +1,6 @@
 /**
  * 应用自更新（Tauri updater）的展示纯逻辑：与 DOM/插件解耦，供 node --test 直接测。
- * 真正的 check()/downloadAndInstall() 仍在 store.ts，这里只处理文案、代理与收件箱合并。
+ * 真正的 check()/downloadAndInstall() 仍在 store.ts 与 app-update-install.ts，这里只处理文案、代理与重查节奏。
  */
 
 export const APP_UPDATE_CHECK_TIMEOUT_MS = 30_000;
@@ -21,17 +21,6 @@ export type AppUpdateStatus =
   | "dev"
   | "error";
 
-/** 有可用更新时的收件箱字段；key 带版本，忽略后换新版本会自动复现 */
-export function appUpdateInboxFields(
-  info: { version: string; currentVersion: string } | null,
-): { key: string; text: string } | null {
-  if (!info?.version) return null;
-  return {
-    key: `update:${info.version}`,
-    text: `Mesa v${info.version} 可更新（当前 v${info.currentVersion}）`,
-  };
-}
-
 /**
  * 后台重查（定时 / 回前台）该不该发：启动那次还没开始（idle，含设置没读到、不能绕过代理出网）、
  * 开发模式、正在查、正在下载安装（重查会关掉安装中的更新句柄）都不发；其余按上次检查（含失败）算间隔。
@@ -47,15 +36,6 @@ export function shouldRecheckAppUpdate(opts: {
   if (installing) return false;
   if (status === "idle" || status === "dev" || status === "checking") return false;
   return now - lastCheckAt >= minGapMs;
-}
-
-/** 用当前检查结果替换旧的 update: 条目；无更新则摘掉 */
-export function mergeAppUpdateInbox<T extends { key: string }>(
-  items: readonly T[],
-  extra: T | null,
-): T[] {
-  const rest = items.filter((it) => !it.key.startsWith("update:"));
-  return extra ? [...rest, extra] : rest;
 }
 
 /** 出网代理给 updater 用：只传 http(s)，socks5 不传以免检查直接失败 */
@@ -163,6 +143,50 @@ export function appUpdateProgressPct(
 ): number | null {
   if (!total || total <= 0) return null;
   return Math.min(100, Math.round((downloaded / total) * 100));
+}
+
+/** 侧栏底部更新按钮的短字：平时「更新」，安装中跟进度段走（下载已知进度时直接写百分比，窄栏省字） */
+export function appUpdateRailLabel(
+  phase: AppUpdateInstallPhase | null,
+  downloaded: number,
+  total: number | null,
+): string {
+  if (phase === "downloading") {
+    const pct = appUpdateProgressPct(downloaded, total);
+    return pct !== null ? `${pct}%` : "下载中";
+  }
+  if (phase === "installing") return "安装中";
+  if (phase === "restarting") return "重启中";
+  return "更新";
+}
+
+/** 侧栏底部更新按钮的悬停提示 */
+export function appUpdateRailTooltip(
+  version: string,
+  phase: AppUpdateInstallPhase | null,
+  downloaded: number,
+  total: number | null,
+): string {
+  if (phase) return `正在更新到 v${version} · ${appUpdateProgressLabel(phase, downloaded, total)}`;
+  return `Mesa v${version} 可更新 · 点击更新`;
+}
+
+export const DEV_UPDATE_PREVIEW_MARKER = Symbol.for("mesa.devUpdatePreview");
+
+/** 判断一个 Update 对象是否是开发版模拟预览（生产构建绝不会创建带该标记的对象） */
+export function isDevPreviewUpdate(update: unknown): boolean {
+  return Boolean(
+    update &&
+      typeof update === "object" &&
+      (update as Record<symbol, unknown>)[DEV_UPDATE_PREVIEW_MARKER] === true,
+  );
+}
+
+/** 模拟预览用的「下一版本号」：标准三段版本把最后一位 +1，否则给 9.9.9 */
+export function nextPreviewVersion(currentVersion: string): string {
+  const m = currentVersion.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return "9.9.9";
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
 }
 
 function formatUpdateBytes(n: number): string {

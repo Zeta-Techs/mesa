@@ -3,7 +3,7 @@ import type { ReactNode, RefObject } from "react";
 import { X } from "lucide-react";
 import { useExitRender } from "../exit-animation";
 
-type ModalSize = "sm" | "md" | "lg" | "xl";
+type ModalSize = "sm" | "md" | "lg" | "xl" | "full";
 
 /** 正开着的对话框 / 抽屉，后开的在后：叠着开时（人工请求弹窗上再开研讨）只有最上面那个接 Esc / Tab */
 const openStack: symbol[] = [];
@@ -13,12 +13,14 @@ const sizes: Record<ModalSize, string> = {
   md: "max-w-lg",
   lg: "max-w-2xl",
   xl: "max-w-4xl",
+  full: "max-w-[92vw]",
 };
 
 /** 全站对话框壳：统一 Esc、遮罩、滚动边界、移动端宽度和可访问名称。 */
 export function Modal({
   open,
   title,
+  headerActions,
   children,
   onClose,
   size = "md",
@@ -33,6 +35,8 @@ export function Modal({
 }: {
   open: boolean;
   title: ReactNode;
+  /** 标题栏右侧紧邻关闭按钮的轻量操作（如看图灯箱的「标注 / 改图」「在右栏打开」） */
+  headerActions?: ReactNode;
   children: ReactNode;
   onClose: () => void;
   size?: ModalSize;
@@ -121,14 +125,17 @@ export function Modal({
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
-        className={`ccode-modal-panel ccode-float-surface flex max-h-[calc(100vh-24px)] w-full ${sizes[size]} flex-col rounded-lg border border-field p-4 sm:p-5 ${
+        className={`ccode-modal-panel ccode-float-surface flex max-h-[calc(100vh-24px)] w-full ${sizes[size]} flex-col rounded-lg border border-field p-5 sm:p-6 ${
           overflow === "hidden" ? "overflow-hidden overscroll-none" : "overflow-y-auto"
         }${exiting ? " ccode-exiting" : ""} ${panelClassName}`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3">
-          <h2 id={titleId} className="min-w-0 text-base font-semibold text-l1">{title}</h2>
-          <CloseButton onClose={onClose} />
+          <h2 id={titleId} className="min-w-0 truncate text-base font-semibold tracking-[-0.01em] text-l1">{title}</h2>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {headerActions}
+            <CloseButton onClose={onClose} />
+          </div>
         </div>
         {description && (
           <p id={descriptionId} className="mt-1 text-xs leading-5 text-l3">

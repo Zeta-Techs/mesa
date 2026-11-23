@@ -178,16 +178,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const terminalRunInputs = useAppStore((s) => s.terminalRunInputs);
   const unreadChats = useAppStore((s) => s.unreadChats);
   const rawInboxItems = useAppStore((s) => s.inboxItems);
-  const appUpdate = useAppStore((s) => s.appUpdate);
   const inboxDismissed = useAppStore((s) => s.inboxDismissed);
   const phonePending = usePhoneDropStore((s) => (s.open ? 0 : phonePendingCount(s.items)));
   const assistantEchoes = useAppStore((s) => s.assistantEchoes);
   const routeAlerts = useAppStore((s) => s.routeAlerts);
   const inboxItems = visibleInboxItems(
     rawInboxItems,
-    appUpdate
-      ? { version: appUpdate.version, currentVersion: appUpdate.currentVersion }
-      : null,
     inboxDismissed,
     phonePending,
     assistantEchoes,

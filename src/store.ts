@@ -34,8 +34,7 @@ import {
 } from "./inbox";
 import {
   APP_UPDATE_CHECK_TIMEOUT_MS,
-  appUpdateInboxFields,
-  mergeAppUpdateInbox,
+  isDevPreviewUpdate,
   summarizeUpdateCheckError,
   updaterProxyUrl,
   type AppUpdateStatus,
@@ -64,6 +63,7 @@ import type {
   DetectResult,
   Gateway,
   GatewayInput,
+  PlanQuotaDto,
   Profile,
   ProfileInput,
   RepoDto,
@@ -127,6 +127,8 @@ export interface AppSettings {
   deskPetSize?: "small" | "normal" | "large";
   /** 小桌怎么动：calm（默认，换状态时动一下就停住，Mesa 在前台时不动）| lively（一直动） */
   deskPetMotion?: "calm" | "lively";
+  /** 项目助手与桌宠形象：cat（默认：桌角黑猫）| monolith（无底座精工仪） */
+  buddyStyle?: "cat" | "monolith";
   /** 出图模型（网关 id + 模型 id，同进退；传空串 = 两个一起清空），见 image_gen.rs */
   imageGenGatewayId?: string | null;
   imageGenModel?: string | null;
@@ -479,21 +481,6 @@ export interface InboxItem {
     | { type: "assistant"; projectRoot: string };
 }
 
-/** 应用更新收件箱条目（去设置页「更新」分区） */
-export function appUpdateInboxEntry(
-  info: { version: string; currentVersion: string } | null,
-): InboxItem | null {
-  const fields = appUpdateInboxFields(info);
-  if (!fields) return null;
-  return {
-    key: fields.key,
-    dot: "bg-ok-text",
-    text: fields.text,
-    actionLabel: "去安装",
-    action: { type: "settings", section: "update" },
-  };
-}
-
 /** 「从手机添加」还没处理的条数 → 收件箱「手机」条目（点开弹层列表，不重新开始接收） */
 export function phoneDropInboxEntry(pending: number): InboxItem | null {
   const fields = phoneInboxFields(pending);
@@ -507,10 +494,9 @@ export function phoneDropInboxEntry(pending: number): InboxItem | null {
   };
 }
 
-/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的应用更新与手机待处理 + 项目助手派活回音（项目页未挂载也能看到） */
+/** 标题栏 / 工作台可见收件箱：业务条目 + 现算的手机待处理 / 线路提醒 / 项目助手派活回音（项目页未挂载也能看到） */
 export function visibleInboxItems(
   items: InboxItem[],
-  update: { version: string; currentVersion: string } | null,
   dismissed: Record<string, string>,
   phonePending = 0,
   assistant: readonly InboxItem[] = [],
@@ -519,7 +505,7 @@ export function visibleInboxItems(
   const phone = phoneDropInboxEntry(phonePending);
   return filterDismissed(
     [
-      ...mergeAppUpdateInbox(items, appUpdateInboxEntry(update)),
+      ...items.filter((it) => !it.key.startsWith("update:")),
       ...network,
       ...(phone ? [phone] : []),
       ...assistant,
@@ -654,6 +640,9 @@ export function runInboxAction(item: InboxItem) {
 interface AppState {
   profiles: Profile[];
   gateways: Gateway[];
+  /** 用量页最近一次查回的订阅余量缓存（供对话满额换号轻提示条复用，不额外轮询） */
+  planQuotaRows: PlanQuotaDto[];
+  setPlanQuotaRows: (rows: PlanQuotaDto[]) => void;
   agents: DetectResult[];
   sessions: SessionMetaDto[];
   /** 已添加项目路径（注册表）；快速开聊随手聊历史现算用，启动时拉一次 */
@@ -972,6 +961,9 @@ interface AppState {
   /** 人工请求答过 / 送过后 +1：收件箱数据源（工作区页）据此重拉 list_help_requests */
   helpRefreshTick: number;
   bumpHelpRefresh: () => void;
+  /** 人工请求回答入队后 +1：终端页立刻唤醒一次投递检查，不等 15 秒轮询 */
+  helpDeliveryTick: number;
+  kickHelpDelivery: () => void;
   /** 每个来源（工作副本 / 项目根）还要人管的人工请求条数（没答或答了没送）：流程线在那一步上给「回答问题」 */
   helpPending: Record<string, number>;
   setHelpPending: (map: Record<string, number>) => void;
@@ -1073,6 +1065,8 @@ export const useAppStore = create<AppState>((set, get) => {
   profiles: [],
   connectionLoadError: null,
   gateways: [],
+  planQuotaRows: [],
+  setPlanQuotaRows: (rows) => set({ planQuotaRows: rows }),
   agents: [],
   sessions: [],
   projectPaths: [],
@@ -1438,6 +1432,8 @@ export const useAppStore = create<AppState>((set, get) => {
   setHelpViewReq: (path) => set({ helpViewReq: path }),
   helpRefreshTick: 0,
   bumpHelpRefresh: () => set((s) => ({ helpRefreshTick: s.helpRefreshTick + 1 })),
+  helpDeliveryTick: 0,
+  kickHelpDelivery: () => set((s) => ({ helpDeliveryTick: s.helpDeliveryTick + 1 })),
   helpPending: {},
   setHelpPending: (map) => set({ helpPending: map }),
   setSelectProjectReq: (path) => set({ selectProjectReq: path }),
@@ -1506,6 +1502,7 @@ export const useAppStore = create<AppState>((set, get) => {
   appUpdateCheckedAt: null,
   checkAppUpdate: async () => {
     if (import.meta.env.DEV) {
+      if (isDevPreviewUpdate(get().appUpdate)) return;
       const prev = get().appUpdate;
       if (prev) prev.close().catch(() => {});
       set({

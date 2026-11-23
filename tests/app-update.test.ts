@@ -3,49 +3,20 @@ import test from "node:test";
 import {
   appUpdateActionLabel,
   appUpdateCheckedAtLabel,
-  appUpdateInboxFields,
   appUpdateProgressLabel,
   appUpdateProgressPct,
+  appUpdateRailLabel,
+  appUpdateRailTooltip,
   appUpdateStatusHint,
-  mergeAppUpdateInbox,
+  DEV_UPDATE_PREVIEW_MARKER,
+  isDevPreviewUpdate,
+  nextPreviewVersion,
   shouldRecheckAppUpdate,
   summarizeUpdateCheckError,
   updaterProxyUrl,
   APP_UPDATE_FOCUS_RECHECK_MS,
   APP_UPDATE_RECHECK_INTERVAL_MS,
 } from "../src/app-update.ts";
-import { filterDismissed, inboxSignature } from "../src/inbox.ts";
-
-test("appUpdateInboxFields：无更新 / 空版本 → null", () => {
-  assert.equal(appUpdateInboxFields(null), null);
-  assert.equal(appUpdateInboxFields({ version: "", currentVersion: "0.1.0" }), null);
-});
-
-test("appUpdateInboxFields：key 带版本，文案含新旧版本", () => {
-  assert.deepEqual(
-    appUpdateInboxFields({ version: "0.1.1", currentVersion: "0.1.0" }),
-    {
-      key: "update:0.1.1",
-      text: "Mesa v0.1.1 可更新（当前 v0.1.0）",
-    },
-  );
-});
-
-test("mergeAppUpdateInbox：无更新摘掉旧条目，有更新替换不重复", () => {
-  const items = [
-    { key: "dep:git" },
-    { key: "update:0.1.0" },
-    { key: "ready:ws-1" },
-  ];
-  assert.deepEqual(
-    mergeAppUpdateInbox(items, null).map((it) => it.key),
-    ["dep:git", "ready:ws-1"],
-  );
-  assert.deepEqual(
-    mergeAppUpdateInbox(items, { key: "update:0.1.1" }).map((it) => it.key),
-    ["dep:git", "ready:ws-1", "update:0.1.1"],
-  );
-});
 
 test("updaterProxyUrl：只放行 http(s)，空串与 socks5 不传", () => {
   assert.equal(updaterProxyUrl(null), undefined);
@@ -101,25 +72,6 @@ test("appUpdateStatusHint：检查中与开发模式不伪装成已是最新", (
   assert.equal(appUpdateStatusHint("error"), "检查更新失败");
 });
 
-test("忽略当前版本后换新版本会复现", () => {
-  const v1 = {
-    key: "update:0.1.1",
-    text: "Mesa v0.1.1 可更新（当前 v0.1.0）",
-    actionLabel: "去安装",
-  };
-  const dismissed = { [v1.key]: inboxSignature(v1) };
-  assert.equal(filterDismissed([v1], dismissed).length, 0);
-  const v2 = {
-    key: "update:0.1.2",
-    text: "Mesa v0.1.2 可更新（当前 v0.1.0）",
-    actionLabel: "去安装",
-  };
-  assert.equal(
-    filterDismissed(mergeAppUpdateInbox([v1], v2), dismissed).length,
-    1,
-  );
-});
-
 test("appUpdateProgressLabel / pct：下载时写已下 / 总大小（百分比另算），下完写在哪一段", () => {
   const MB = 1024 * 1024;
   assert.equal(appUpdateProgressLabel("downloading", 12 * MB, 48 * MB), "正在下载 12 MB / 48 MB");
@@ -138,6 +90,36 @@ test("appUpdateActionLabel：按钮随段落换字，没在装时是「下载并
   assert.equal(appUpdateActionLabel("downloading"), "下载中…");
   assert.equal(appUpdateActionLabel("installing"), "安装中…");
   assert.equal(appUpdateActionLabel("restarting"), "正在重启…");
+});
+
+test("appUpdateRailLabel / tooltip：侧栏按钮平时「更新」，安装中显示百分比或段落，悬停写版本与进度", () => {
+  const MB = 1024 * 1024;
+  assert.equal(appUpdateRailLabel(null, 0, null), "更新");
+  assert.equal(appUpdateRailLabel("downloading", 0, null), "下载中");
+  assert.equal(appUpdateRailLabel("downloading", 12 * MB, 48 * MB), "25%");
+  assert.equal(appUpdateRailLabel("installing", 48 * MB, 48 * MB), "安装中");
+  assert.equal(appUpdateRailLabel("restarting", 48 * MB, 48 * MB), "重启中");
+  assert.equal(
+    appUpdateRailTooltip("0.9.4", null, 0, null),
+    "Mesa v0.9.4 可更新 · 点击更新",
+  );
+  assert.equal(
+    appUpdateRailTooltip("0.9.4", "downloading", 12 * MB, 48 * MB),
+    "正在更新到 v0.9.4 · 正在下载 12 MB / 48 MB",
+  );
+  assert.equal(
+    appUpdateRailTooltip("0.9.4", "installing", 48 * MB, 48 * MB),
+    "正在更新到 v0.9.4 · 下载完成，正在安装…",
+  );
+});
+
+test("isDevPreviewUpdate / nextPreviewVersion：仅识别带开发预览标记的对象并递增修订号", () => {
+  assert.equal(isDevPreviewUpdate(null), false);
+  assert.equal(isDevPreviewUpdate({ version: "0.2.3" }), false);
+  assert.equal(isDevPreviewUpdate({ [DEV_UPDATE_PREVIEW_MARKER]: true }), true);
+  assert.equal(nextPreviewVersion("0.2.2"), "0.2.3");
+  assert.equal(nextPreviewVersion("1.4.9-beta.1"), "1.4.10");
+  assert.equal(nextPreviewVersion("dev"), "9.9.9");
 });
 
 test("appUpdateCheckedAtLabel：当天只写时分，跨天带月日，没查过为空", () => {

@@ -33,7 +33,6 @@ test("queueTier：停着等你 > 等你看结果 > 通知", () => {
   assert.equal(queueTier("conflict:w1"), "blocking");
   assert.equal(queueTier("ready:w1"), "decide");
   assert.equal(queueTier("sched:x"), "decide");
-  assert.equal(queueTier("update:1.2"), "decide");
   assert.equal(queueTier("lit:s:1"), "notice");
   assert.equal(queueTier("phone:3"), "notice");
 });

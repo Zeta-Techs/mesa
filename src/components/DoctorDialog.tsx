@@ -106,12 +106,12 @@ export function DoctorDialogHost() {
 
   const findings = orderFindings(report.findings);
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-6 ccode-fade">
+    <div className="ccode-modal-backdrop fixed inset-0 z-60 flex items-center justify-center bg-black/40 p-6 ccode-fade">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="ccode-doctor-title"
-        className="flex max-h-full w-full max-w-lg flex-col rounded-lg border border-hairline ccode-float-surface p-5"
+        className="ccode-modal-panel flex max-h-full w-full max-w-lg flex-col rounded-lg border border-hairline ccode-float-surface p-5 sm:p-6"
       >
         <h2 id="ccode-doctor-title" className="text-sm font-semibold leading-6 text-l1">
           「{req.stepName}」继续之前，先处理这几件事

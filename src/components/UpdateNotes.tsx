@@ -23,7 +23,7 @@ export default function UpdateNotes({ text }: { text: string }) {
   const html = useMemo(() => sanitizeDocumentHtml(notesMarked.parse(text) as string), [text]);
   return (
     <div>
-      <div className="mb-1 text-xs font-medium text-l3">更新说明</div>
+      <div className="mb-1.5 text-xs font-medium text-l3">更新说明</div>
       <div
         className="md-body md-chat ccode-well max-h-60 overflow-auto rounded-md px-3 py-2"
         style={{ fontSize: 13 }}

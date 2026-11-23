@@ -14,6 +14,7 @@ interface ConfirmRequest {
   danger: boolean;
   /** 调用方给的按钮文字；没给时危险操作从标题里推动词（inferConfirmText） */
   confirmText?: string;
+  cancelText?: string;
   alert: boolean;
   focusCancel: boolean;
   resolve: (ok: boolean) => void;
@@ -48,7 +49,7 @@ function settle(ok: boolean) {
  */
 export function confirmDialog(
   message: string,
-  opts?: { danger?: boolean; confirmText?: string; focusCancel?: boolean },
+  opts?: { danger?: boolean; confirmText?: string; cancelText?: string; focusCancel?: boolean },
 ): Promise<boolean> {
   current?.resolve(false);
   return new Promise<boolean>((resolve) => {
@@ -56,6 +57,7 @@ export function confirmDialog(
       message,
       danger: opts?.danger ?? false,
       confirmText: opts?.confirmText,
+      cancelText: opts?.cancelText,
       alert: false,
       // 危险操作默认焦点在「取消」（HIG：破坏性动作不做默认按钮），顺手一个回车不会误删；
       // 调用方显式 focusCancel: false 仍可改回
@@ -155,7 +157,7 @@ export function ConfirmDialogHost() {
   const Glyph = req.alert ? Info : req.danger ? TriangleAlert : CircleHelp;
   return (
     <div
-      className="fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-6 ccode-fade"
+      className="ccode-modal-backdrop fixed inset-0 z-70 flex items-center justify-center bg-black/40 p-6 ccode-fade"
       onClick={() => settle(false)}
     >
       <section
@@ -165,7 +167,7 @@ export function ConfirmDialogHost() {
         aria-labelledby="ccode-confirm-dialog-title"
         aria-describedby="ccode-confirm-dialog-message"
         // 限高：正文再长也只在框内滚，按钮永远露在窗口里
-        className="flex max-h-full w-full max-w-[28rem] flex-col rounded-lg border border-hairline ccode-float-surface p-5"
+        className="ccode-modal-panel flex max-h-full w-full max-w-[28rem] flex-col rounded-lg border border-hairline ccode-float-surface p-5 sm:p-6"
         onClick={(e) => e.stopPropagation()}
         tabIndex={-1}
       >
@@ -245,7 +247,7 @@ export function ConfirmDialogHost() {
               onClick={() => settle(false)}
               className={`${widen(secondaryActionClass)} min-w-16`}
             >
-              取消
+              {req.cancelText || "取消"}
             </button>
           )}
           <button
