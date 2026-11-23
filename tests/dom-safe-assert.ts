@@ -38,7 +38,9 @@ export function describeDomValue(value: unknown): string {
 function wrap(name: "equal" | "strictEqual" | "notEqual" | "notStrictEqual", expectSame: boolean) {
   const original = assert[name] as Asserter;
   const patched: Asserter = function (actual, expected, message) {
-    if (!isDomNode(actual) && !isDomNode(expected)) return original(actual, expected, message);
+    if (!isDomNode(actual) && !isDomNode(expected)) {
+      return arguments.length >= 3 ? original(actual, expected, message) : original(actual, expected);
+    }
     if (Object.is(actual, expected) === expectSame) return;
     if (message instanceof Error) throw message;
     const detail = `实际 ${describeDomValue(actual)}，${expectSame ? "期望" : "不应是"} ${describeDomValue(expected)}`;

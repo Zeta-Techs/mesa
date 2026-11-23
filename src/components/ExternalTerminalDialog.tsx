@@ -221,16 +221,20 @@ export function ExternalTerminalDialog({
       // 未匹配到连接卡的外部历史会话续聊：对官方/本机默认 CLI 按 Agent 与模型给出思考档位
       const m = selectedModel.trim().toLowerCase();
       if (activeAgentId === "agy") {
-        const nonGemini =
-          m && !m.startsWith("gemini-") && !m.startsWith("gpt-oss");
-        if (nonGemini) {
+        const noEffort =
+          m &&
+          ((!m.startsWith("gemini-") && !m.startsWith("gpt-oss")) ||
+            m.startsWith("gemini-pro-orchestrator") ||
+            m.startsWith("gpt-oss"));
+        if (noEffort) {
           setEffortSurface({ allowed: false, levels: [], launchEffort: null });
         } else {
-          const levels = m.includes("gemini-4-hydrogen")
-            ? ["low", "medium", "high", "xhigh"]
-            : m.includes("gemini-3.1-pro")
-              ? ["low", "high"]
-              : ["low", "medium", "high"];
+          const levels =
+            m.includes("gemini-4-hydrogen") || m.includes("gemini-4-neon")
+              ? ["low", "medium", "high", "xhigh"]
+              : m.includes("gemini-3.1-pro")
+                ? ["low", "high"]
+                : ["low", "medium", "high"];
           setEffortSurface({ allowed: true, levels, launchEffort: null });
         }
       } else if (activeAgentId === "claude-code" || activeAgentId === "codex") {

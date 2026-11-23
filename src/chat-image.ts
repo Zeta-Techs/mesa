@@ -41,10 +41,13 @@ function localPathFromLine(line: string, ext: RegExp): string | null {
   if (!t || URL_SCHEME.test(t)) return null;
   // 剥 shell 引号包裹：单引号含 '\'' 回转，双引号含 "" 回转
   let unquoted = t;
+  let quoted = false;
   if (t.length > 1 && t.startsWith("'") && t.endsWith("'")) {
     unquoted = t.slice(1, -1).replace(/'\\''/g, "'");
+    quoted = true;
   } else if (t.length > 1 && t.startsWith('"') && t.endsWith('"')) {
     unquoted = t.slice(1, -1).replace(/""/g, '"');
+    quoted = true;
   }
   if (!ext.test(unquoted)) return null;
   const isAbs =
@@ -52,7 +55,18 @@ function localPathFromLine(line: string, ext: RegExp): string | null {
     unquoted.startsWith("~") ||
     /^[A-Za-z]:[\\/]/.test(unquoted);
   const hasSep = unquoted.includes("/") || unquoted.includes("\\");
-  return isAbs || hasSep ? unquoted : null;
+  if (!isAbs && !hasSep) return null;
+  if (!quoted) {
+    // 未加引号的普通句子（含中文句读、冒号空格、带空格的斜杠「A / B」或相对路径首段含空白，如「2. 检查 PDF/Word 或 output/endnote.docx」）
+    // 不得整行吃掉变成文件附件卡（2026-11-21 用户截图）
+    if (/[，。、；：？！「」『』【】]/.test(unquoted) || /\s\/\s|:\s|[;?!]/.test(unquoted)) {
+      return null;
+    }
+    if (!isAbs && /\s/.test(unquoted.split(/[\\/]/)[0])) {
+      return null;
+    }
+  }
+  return unquoted;
 }
 
 /**
@@ -91,6 +105,24 @@ export function schematicSourceOf(path: string): { spec: string; pptx: string } 
   if (!m) return null;
   const dir = path.slice(0, path.length - `${m[3]}.png`.length);
   return { spec: `${dir}figure.json`, pptx: `${dir}${m[3]}.pptx` };
+}
+
+/**
+ * 仅用于目视核对的参考图 / 论文渲染页 / 临时截图（如 artifacts/du2025_p6.png、.ccode/local/、papers/、tmp/）：
+ * 进标注台时不出「移除背景 / 调整画幅」和「用出图模型改图」误导文案，只留通用标注工具。
+ */
+export function isInspectionImage(path: string): boolean {
+  const norm = path.replace(/\\/g, "/");
+  if (/(?:^|\/)(?:artifacts|\.ccode|papers|tmp|temp)\//i.test(norm)) return true;
+  const base = norm.split("/").pop() ?? "";
+  return /(?:[_-]p\d+|page[_-]?\d+)\.(?:png|jpe?g|webp)$/i.test(base);
+}
+
+/** 聊天图片灯箱与悬停条上「进标注/改图台」按钮的文案 */
+export function imageEditActionLabel(path: string): string {
+  if (schematicSourceOf(path)) return "改示意图";
+  if (isInspectionImage(path)) return "标出来问 AI";
+  return "标注 / 改图";
 }
 
 /**

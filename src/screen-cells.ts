@@ -18,6 +18,12 @@ export interface ScreenCell {
   bg: boolean;
   /** 斜体（SGR 3）：Kimi 的思考正文；来源给不出时没有这一项 */
   italic?: boolean;
+  /** 粗体（SGR 1）：读屏流式预览还原标题 / 加粗 */
+  bold?: boolean;
+  /** 下划线（SGR 4）：读屏流式预览还原链接 / 强调 */
+  underline?: boolean;
+  /** 删除线（SGR 9）：读屏流式预览还原删除线 */
+  strike?: boolean;
   /** 字色（颜色模式:值），终端默认色为 null；来源给不出字色时没有这一项 */
   fg?: string | null;
 }
@@ -30,6 +36,9 @@ export interface CellSource {
   isInverse(): number;
   isBgDefault(): boolean;
   isItalic?(): number;
+  isBold?(): number;
+  isUnderline?(): number;
+  isStrikethrough?(): number;
   getFgColor?(): number;
   getFgColorMode?(): number;
   isFgDefault?(): boolean;
@@ -65,6 +74,9 @@ export function lineCells(line: LineSource | undefined): ScreenCell[] {
       bg: !cell.isBgDefault(),
     };
     if (cell.isItalic) item.italic = cell.isItalic() !== 0;
+    if (cell.isBold) item.bold = cell.isBold() !== 0;
+    if (cell.isUnderline) item.underline = cell.isUnderline() !== 0;
+    if (cell.isStrikethrough) item.strike = cell.isStrikethrough() !== 0;
     if (cell.getFgColor && cell.getFgColorMode && cell.isFgDefault) {
       item.fg = cell.isFgDefault() ? null : `${cell.getFgColorMode()}:${cell.getFgColor()}`;
     }

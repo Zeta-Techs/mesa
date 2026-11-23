@@ -1,16 +1,17 @@
-import { isProseCodeSpan, mentionedAudioFiles, mentionedImageFiles, mentionedVideoFiles, splitReplySections, type ReplySection } from "../chat-reply";
+import { mentionedAudioFiles, mentionedImageFiles, mentionedVideoFiles, splitReplySections, type ReplySection } from "../chat-reply";
 import { sanitizeDocumentHtml } from "../document-html";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Marked } from "marked";
-import { ChevronRight, Film, ImageOff, Volume2 } from "lucide-react";
+import { ChevronRight, Film, ImageOff, PenLine, Volume2 } from "lucide-react";
 import { useAppStore } from "../store";
-import { classifyMdHref, resolveMdPath, rewriteMdImageHtml } from "../reader";
+import { classifyMdHref, fileUrlToPath, mdHrefLine, resolveMdPath } from "../reader";
+import { imageEditActionLabel } from "../chat-image";
+import { chatMarked, renderChatMarkdownHtml } from "../chat-markdown-html";
 import { cachedImageUrl, loadImageUrl, revalidateImageUrl } from "../image-cache";
 import { hydrateMdImages } from "../md-image-hydrate";
 import { decorateMdCodeBlocks, decorateMdTables, handleMdCodeCopyClick } from "../md-code-chrome";
-import { chatMathExtensions, renderMathInto } from "../md-math";
+import { renderMathInto } from "../md-math";
 import { highlightCodeBlocks } from "../code-highlight";
 import { citeTipFor, decorateCitations, linkFileRefs, linkStepStart } from "../chat-inline-refs";
 import { HoverTip } from "./HoverTip";
@@ -24,8 +25,9 @@ import { previewRoot } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 
 /**
- * 聊天层里点对话中的图 =「接着改这张图」（2026-10-25 用户对照 ChatGPT）：ChatSurface 提供，把图放进输入框并展开看图标注台。
- * 没有提供的地方（会话浏览等只读视图）点图照旧预览 / 看大图
+ * 聊天层里「标注 / 改图」的回调（ChatSurface 提供，把图放进输入框并展开看图标注台）。
+ * 2026-11-22 用户拍板：点对话里的图默认进真看图灯箱（ChatImageViewer，可缩放平移、不污染输入框），
+ * 只有点灯箱顶栏或图片悬停条上的「标注 / 改图」才触发本回调进入标注台。
  */
 export const ChatImageEditContext = createContext<((absPath: string) => void) | null>(null);
 /** 商量任务书的对话里点「开始」= 去那一步开工确认（ChatSurface 只在商量对话里提供，见 discuss-step-start.ts） */
@@ -42,28 +44,6 @@ export const ChatStepStartContext = createContext<(() => void) | null>(null);
  * 2026-10-21 排版一轮：公式（$ $$ 与模型常用的 \( \) / \[ \]，KaTeX 按需加载）、代码高亮、表格横滚壳与数字列、
  * 文献引用键胶囊、正文里提到的项目文件就地可点（取代回复末尾那排文件胶囊）；长回复分节的小标题照 Markdown 级别排。
  */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-const chatMarked = new Marked({ gfm: true, breaks: true, async: false });
-chatMarked.use({
-  renderer: {
-    html({ text }) {
-      return escapeHtml(text);
-    },
-    // 反引号里的中文说法不当代码排（chat-reply isProseCodeSpan）；其余走默认 <code>
-    codespan({ text }) {
-      return isProseCodeSpan(text) ? `<span class="md-code-prose">${escapeHtml(text)}</span>` : false;
-    },
-  },
-  extensions: chatMathExtensions,
-});
-
 /**
  * HTML 上屏后的就地加工（按 html 跑一次；StrictMode 双跑各函数自己幂等）：表格壳、代码高亮、公式、
  * 引用胶囊、文件链接。图片与代码头栏在每次 layout 都扫（见 MarkdownBody）
@@ -396,10 +376,7 @@ function MarkdownBody({
   text: string;
   cwd?: string | null;
 }) {
-  const html = useMemo(
-    () => sanitizeDocumentHtml(rewriteMdImageHtml(chatMarked.parse(text) as string)),
-    [text],
-  );
+  const html = useMemo(() => renderChatMarkdownHtml(text), [text]);
   const bodyRef = useRef<HTMLDivElement>(null);
   // React 19 按对象引用比 dangerouslySetInnerHTML：每次重画都给新对象，就每次重设 innerHTML，表格壳、高亮、公式、
   // 文件链接全被冲掉再重做一遍，高度跟着变（2026-10-26 实测：切到一段对话后整屏段落被重写两次，上面的字跟着挪）
@@ -426,6 +403,7 @@ function MarkdownBody({
 
   // 引用胶囊的悬停卡片（应用内浮层，不用 WKWebView 的原生 title）
   const [citeTip, setCiteTip] = useState<{ x: number; y: number; text: string; warn: string | null } | null>(null);
+  const [viewingImg, setViewingImg] = useState<string | null>(null);
   useEffect(() => {
     if (!citeTip) return;
     const hide = () => setCiteTip(null);
@@ -473,23 +451,28 @@ function MarkdownBody({
       return;
     }
     const img = target.closest("img");
-    if (img?.dataset.ccodePath && editImage) {
-      editImage(img.dataset.ccodePath);
-      return;
-    }
-    if (img?.dataset.ccodePath && cwd) {
-      const abs = img.dataset.ccodePath;
-      setPreviewReq({
-        path: abs,
-        name: abs.split(/[\\/]/).pop() ?? abs,
-        root: previewRoot(abs, cwd, IS_WINDOWS),
-      });
+    if (img?.dataset.ccodePath) {
+      setViewingImg(img.dataset.ccodePath);
       return;
     }
     const a = target.closest("a");
     if (!a) return;
     const href = a.getAttribute("href") ?? "";
     if (!href) return;
+    const line = mdHrefLine(href);
+    const fromFileUrl = fileUrlToPath(href);
+    if (fromFileUrl) {
+      e.preventDefault();
+      const abs = fromFileUrl;
+      const fallbackRoot = abs.replace(/[\\/][^\\/]+$/, "") || abs;
+      setPreviewReq({
+        path: abs,
+        name: abs.split(/[\\/]/).pop() ?? abs,
+        root: cwd ? previewRoot(abs, cwd, IS_WINDOWS) : fallbackRoot,
+        line,
+      });
+      return;
+    }
     const kind = classifyMdHref(href);
     if (kind === "anchor") return;
     e.preventDefault();
@@ -503,6 +486,7 @@ function MarkdownBody({
       path: abs,
       name: abs.split(/[\\/]/).pop() ?? abs,
       root: previewRoot(abs, cwd, IS_WINDOWS),
+      line,
     });
   }
 
@@ -517,6 +501,24 @@ function MarkdownBody({
         dangerouslySetInnerHTML={inner}
       />
       <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
+      {viewingImg && (
+        <ChatImageViewer
+          path={viewingImg}
+          cwdHint={cwd ?? null}
+          onClose={() => setViewingImg(null)}
+          onEdit={editImage ? () => editImage(viewingImg) : undefined}
+          onOpenSidebar={
+            cwd
+              ? () =>
+                  setPreviewReq({
+                    path: viewingImg,
+                    name: viewingImg.split(/[\\/]/).pop() ?? viewingImg,
+                    root: previewRoot(viewingImg, cwd, IS_WINDOWS),
+                  })
+              : undefined
+          }
+        />
+      )}
     </>
   );
 }
@@ -586,27 +588,53 @@ export function ChatImageCard({
       </div>
     );
   if (!src) return quiet ? null : <div className="md-img-pending my-1">图片加载中…</div>;
-  // 聊天层：点图进输入框上方的看图标注台接着改；只读视图里有工作目录走右栏文件预览，随手聊弹层看大图
+  // 2026-11-22 用户拍板：点击对话里的图一律先开真看图灯箱（可 5%–800% 缩放拖拽，不塞进输入框）；
+  // 悬停右上角与灯箱顶栏提供显式「标注 / 改图」（或「改示意图」「标出来问 AI」）一键切入标注台。
+  const editLabel = imageEditActionLabel(abs);
   return (
     <>
-      <button
-        type="button"
-        className={`my-1 block border-0 bg-transparent p-0 ${editImage ? "cursor-pointer" : "cursor-zoom-in"}`}
-        title={editImage ? `${name}（点击查看、标注，接着改）` : `${name}（点击放大预览）`}
-        onClick={() => {
-          if (editImage) editImage(abs);
-          else if (cwd) setPreviewReq({ path: abs, name, root: previewRoot(abs, cwd, IS_WINDOWS) });
-          else setViewing(true);
-        }}
-      >
-        <img
-          src={src}
-          alt={name}
-          decoding="async"
-          className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
+      <div className="group relative my-1 inline-block max-w-full align-top">
+        <button
+          type="button"
+          className="block cursor-zoom-in border-0 bg-transparent p-0"
+          title={`${name}（点击放大查看）`}
+          onClick={() => setViewing(true)}
+        >
+          <img
+            src={src}
+            alt={name}
+            decoding="async"
+            className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
+          />
+        </button>
+        {editImage && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              editImage(abs);
+            }}
+            title={`${editLabel}（打开标注台并挂入输入框）`}
+            className="ccode-float-surface absolute right-1.5 top-1.5 flex h-6 items-center gap-1 rounded-full border border-field px-2 text-micro font-medium text-l1 opacity-0 transition-opacity hover:bg-hover focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-cta group-hover:opacity-100"
+          >
+            <PenLine size={11} strokeWidth={1.8} aria-hidden="true" />
+            {editLabel}
+          </button>
+        )}
+      </div>
+      {viewing && (
+        <ChatImageViewer
+          path={abs}
+          cwdHint={cwd ?? null}
+          onClose={() => setViewing(false)}
+          onEdit={editImage ? () => editImage(abs) : undefined}
+          onOpenSidebar={
+            cwd
+              ? () => setPreviewReq({ path: abs, name, root: previewRoot(abs, cwd, IS_WINDOWS) })
+              : undefined
+          }
         />
-      </button>
-      {viewing && <ChatImageViewer path={abs} cwdHint={null} onClose={() => setViewing(false)} />}
+      )}
     </>
   );
 }

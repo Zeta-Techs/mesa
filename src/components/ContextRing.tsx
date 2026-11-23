@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
+import { Minimize2 } from "lucide-react";
 import { AGENTS } from "../types";
 import {
   breakdownSupported,
@@ -80,7 +81,8 @@ export default function ContextRing({
   warnColor,
   trackColor = "var(--color-field)",
   className = "",
-  extra = [],
+  totalTokens = null,
+  profileName = null,
   showPercent = false,
   imageBytes = null,
 }: {
@@ -97,8 +99,10 @@ export default function ContextRing({
   warnColor?: string;
   trackColor?: string;
   className?: string;
-  /** 浮层里多写的几行（2026-10-23 底栏收字：本段用了多少 token、经哪条连接不再单写在底栏上；2026-11-20 从悬停挪进浮层） */
-  extra?: string[];
+  /** 本段对话累计 token（已格式化，如 "12.7 万"），收进浮层底栏左侧（2026-11-20 从悬停挪进浮层） */
+  totalTokens?: string | null;
+  /** 连接名（同 Agent 名时调用方不传），收进浮层底栏右侧 */
+  profileName?: string | null;
   /** 聊天层直接显示比例，圆环与原有输入控件的位置不变。 */
   showPercent?: boolean;
   /** Codex 会话里存的图（字节，session_image_bytes）：到 8MB 圆环变橙并在悬停 / 浮层里说明（2026-11-11） */
@@ -181,6 +185,11 @@ export default function ContextRing({
 
   const light = typeof document !== "undefined" && (document.documentElement.dataset.theme ?? "").endsWith("-light");
   const view = contextView(detail.state === "ok" ? detail.data : null, { used, window: win }, light);
+  const usedRows = view.rows.filter((r) => r.tone !== "reserve" && r.tone !== "free");
+  const capRows = view.rows.filter((r) => r.tone === "reserve" || r.tone === "free");
+  const splitRows = usedRows.length > 1 && capRows.length > 0;
+  const hasMeta = Boolean(totalTokens || profileName);
+  const longHint = longContextHint(used);
   const supported = breakdownSupported(agentId);
   const note =
     detail.state === "ok"
@@ -192,6 +201,18 @@ export default function ContextRing({
           : supported
             ? "还没接上会话文件，暂时只有总量"
             : `${label} 不提供分类明细`;
+
+  const renderRow = (row: (typeof view.rows)[number], muted = false) => (
+    <div key={row.label} className="flex items-center gap-2 tabular-nums leading-[20px]">
+      <span
+        className={`size-2 shrink-0 rounded-[2px] ${toneClass(row.tone, warn)}`}
+        style={row.color ? { background: row.color } : undefined}
+      />
+      <span className={`min-w-0 flex-1 truncate ${muted ? "text-l3" : "text-l2"}`}>{row.label}</span>
+      <span className={muted ? "text-l3" : "text-l2"}>{contextFmtTokens(row.tokens)}</span>
+      <span className="w-[3.25rem] text-right text-l4">{fmtRatio(row.ratio)}</span>
+    </div>
+  );
 
   return (
     <button
@@ -241,90 +262,116 @@ export default function ContextRing({
               ref={panelRef}
               role="dialog"
               aria-label="上下文"
-              className="ccode-float-surface w-[20rem] rounded-lg border border-field p-3 text-left text-sm shadow-lg"
+              className="ccode-float-surface w-[20rem] overflow-hidden rounded-xl border border-field text-left text-sm shadow-lg"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-l1">上下文</span>
-                <span className={`tabular-nums ${warn ? "text-warn-text" : "text-l3"}`}>
-                  {contextFmtTokens(used)} / {contextFmtTokens(win)}（{pct}%）
-                </span>
-              </div>
-              {heavy && (
-                <p className={`mt-1.5 leading-[18px] ${heavy.level === "stuck" ? "text-err-text" : "text-warn-text"}`}>{heavy.text}</p>
-              )}
-              <div className="relative mt-2 h-1.5">
-                {/* 段与段之间留 2px 底色缝，相邻两色不糊在一起 */}
-                <div className="flex h-full gap-0.5 overflow-hidden rounded-full bg-field">
-                  {view.bar.segments.map((seg, i) => (
-                    <div
-                      key={i}
-                      className={`shrink-0 ${toneClass(seg.tone, warn)}`}
-                      style={{ width: `${seg.ratio * 100}%`, ...(seg.color ? { background: seg.color } : {}) }}
-                    />
-                  ))}
+              <div className="px-3.5 pt-3.5 pb-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-medium text-l1">上下文</span>
+                  <div className="flex items-baseline gap-1.5 tabular-nums">
+                    <span className={`text-xs ${warn ? "text-warn-text" : "text-l3"}`}>
+                      {contextFmtTokens(used)} / {contextFmtTokens(win)}
+                    </span>
+                    <span className={`font-medium ${warn ? "text-warn-text" : "text-l1"}`}>{pct}%</span>
+                  </div>
                 </div>
-                {view.bar.compactAt !== null && (
-                  <div
-                    className="absolute -top-0.5 h-2.5 w-px bg-l3"
-                    style={{ left: `${view.bar.compactAt * 100}%` }}
-                    title="到这里自动压缩"
-                  />
+                {heavy && (
+                  <p
+                    className={`mt-2 rounded-md px-2.5 py-1.5 text-xs leading-[18px] ${
+                      heavy.level === "stuck" ? "bg-err/60 text-err-text" : "bg-warn/60 text-warn-text"
+                    }`}
+                  >
+                    {heavy.text}
+                  </p>
+                )}
+                <div className="relative mt-2.5 h-1.5">
+                  {/* 段与段之间留 2px 底色缝，相邻两色不糊在一起 */}
+                  <div className="flex h-full gap-0.5 overflow-hidden rounded-full bg-field">
+                    {view.bar.segments.map((seg, i) => (
+                      <div
+                        key={i}
+                        className={`shrink-0 ${toneClass(seg.tone, warn)}`}
+                        style={{ width: `${seg.ratio * 100}%`, ...(seg.color ? { background: seg.color } : {}) }}
+                      />
+                    ))}
+                  </div>
+                  {view.bar.compactAt !== null && (
+                    <div
+                      className="absolute -top-0.5 h-2.5 w-px bg-l3"
+                      style={{ left: `${view.bar.compactAt * 100}%` }}
+                      title="到这里自动压缩"
+                    />
+                  )}
+                </div>
+                <div className="mt-3">
+                  {splitRows ? (
+                    <>
+                      <div className="space-y-1.5">{usedRows.map((row) => renderRow(row, false))}</div>
+                      <div className="my-2 border-t border-hairline/70" />
+                      <div className="space-y-1.5">{capRows.map((row) => renderRow(row, true))}</div>
+                    </>
+                  ) : (
+                    <div className="space-y-1.5">{view.rows.map((row) => renderRow(row, row.tone === "free"))}</div>
+                  )}
+                </div>
+                {longHint && (
+                  <div className="mt-2.5 rounded-md bg-warn/50 px-2.5 py-1.5 text-xs leading-[18px] text-warn-text">
+                    {longHint}
+                  </div>
                 )}
               </div>
-              <div className="mt-2.5 space-y-1">
-                {view.rows.map((row) => (
-                  <div key={row.label} className="flex items-center gap-2 tabular-nums">
-                    <span
-                      className={`size-2 shrink-0 rounded-xs ${toneClass(row.tone, warn)}`}
-                      style={row.color ? { background: row.color } : undefined}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-l2">{row.label}</span>
-                    <span className="text-l3">{contextFmtTokens(row.tokens)}</span>
-                    <span className="w-14 text-right text-l4">{fmtRatio(row.ratio)}</span>
-                  </div>
-                ))}
-              </div>
-              {longContextHint(used) && (
-                <div className="mt-2 leading-[18px] text-warn-text">{longContextHint(used)}</div>
-              )}
-              {/* 卡底一块（2026-11-20 用户：压缩和说明放一起、说明字小一点、别乱）：正文 text-sm、卡底 text-micro 才拉得开字号；
-                  左边累计与连接各一行、右边压缩钮居中，下面整行短句说明，不让按钮挤得说明折行。「离自动压缩还有」与上面「剩余」同一个数，不再写。
-                  字号挂在这层：全站 button { font: inherit } 会吞掉按钮自己的 text-* */}
-              <div className="mt-2.5 space-y-0.5 border-t border-hairline pt-2.5 text-micro">
-                {(extra.length > 0 || onCompact) && (
-                  <div className="flex min-h-6 items-center gap-3">
-                    <div className="min-w-0 flex-1 space-y-0.5 tabular-nums text-l3">
-                      {extra.map((line) => (
-                        <div key={line} className="truncate" title={line}>
-                          {line}
-                        </div>
-                      ))}
-                    </div>
-                    {onCompact && (
-                      <button
-                        type="button"
-                        className="h-6 shrink-0 rounded-md border border-field px-2 text-l2 hover:bg-hover"
-                        title="把前面的对话压成摘要，腾出上下文"
-                        onClick={() => {
-                          setPanel(null);
-                          onCompact();
-                        }}
+              {/* 卡底浅托盘（2026-11-20 重排）：累计与连接同一行左右对齐，压缩上下文独立满宽次级钮，最底两行小字说明。
+                  字号/字重挂在按钮外层：全站 button { font: inherit } 会吞掉按钮自己的 text-* / font-* */}
+              <div className="border-t border-hairline bg-strip/60 px-3.5 py-3">
+                {hasMeta && (
+                  <div className="flex items-center justify-between gap-2 text-xs leading-[18px]">
+                    {totalTokens ? (
+                      <span className="shrink-0 tabular-nums text-l3">累计 {totalTokens} token</span>
+                    ) : (
+                      <span />
+                    )}
+                    {profileName && (
+                      <span
+                        className="inline-flex min-w-0 max-w-[10.5rem] items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-micro leading-[14px] text-l3 ring-1 ring-inset ring-hairline"
+                        title={`经「${profileName}」连接`}
                       >
-                        压缩上下文
-                      </button>
+                        <span className="shrink-0 text-l4">经</span>
+                        <span className="truncate">{profileName}</span>
+                      </span>
                     )}
                   </div>
                 )}
-                {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-                <div className="text-l4">首轮已含系统提示、技能和工具定义</div>
-                <div className="text-l4">
-                  {note}
-                  {detail.state === "error" && (
-                    <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
-                      重试
+                {onCompact && (
+                  <div className={`${hasMeta ? "mt-2.5" : ""} text-xs font-medium`}>
+                    <button
+                      type="button"
+                      className={`flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-2.5 transition-colors ${
+                        warn
+                          ? "border-warn-text/40 bg-warn/40 text-warn-text hover:bg-warn/70"
+                          : "border-field bg-raised text-l2 hover:border-l4 hover:bg-hover hover:text-l1"
+                      }`}
+                      title="把前面的对话压成摘要，腾出上下文"
+                      onClick={() => {
+                        setPanel(null);
+                        onCompact();
+                      }}
+                    >
+                      <Minimize2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                      压缩上下文
                     </button>
-                  )}
+                  </div>
+                )}
+                {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
+                <div className={`${hasMeta || onCompact ? "mt-2.5" : ""} space-y-0.5 text-micro leading-[16px] text-l4`}>
+                  <div>首轮已含系统提示、技能和工具定义</div>
+                  <div>
+                    {note}
+                    {detail.state === "error" && (
+                      <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
+                        重试
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

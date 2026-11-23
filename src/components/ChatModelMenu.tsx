@@ -998,7 +998,10 @@ function WhoView({
             const header = p.group && p.group !== lastGroup ? p.group : null;
             lastGroup = p.group;
             const prof = profiles.find((x) => x.id === p.value);
-            const subHint = prof?.models[0] || (prof?.accountType === "official" ? "CLI 登录" : null);
+            const subHint =
+              prof?.accountType === "official"
+                ? (prof.officialRef?.accountHint || prof.models[0] || "CLI 登录")
+                : (prof?.models[0] || null);
             return (
               <li key={p.value}>
                 {header && <div className="px-2 pb-0.5 pt-1.5 text-micro text-l4">{header}</div>}

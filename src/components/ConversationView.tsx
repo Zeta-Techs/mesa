@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Bot,
   BookOpen,
@@ -58,6 +58,7 @@ import { MesaStatusMark } from "./MesaMark";
 import { IS_WINDOWS } from "../hotkeys";
 import { estimateSegmentHeight, useVirtualWindow } from "../virtual-window";
 import { makeChatQuote, type ChatQuote } from "../chat-navigation";
+import { absTime, shortWhen } from "../rel-time";
 
 /** 纯文本块：保留换行，超长不带空格的串（长 URL、一串 aaaa）在气泡内折行，不撑出气泡（2026-10-19 用户截图） */
 const WRAP_TEXT = "whitespace-pre-wrap [overflow-wrap:anywhere]";
@@ -325,10 +326,19 @@ export default function ConversationView({
 }) {
   const setDiffFocusReq = useAppStore((s) => s.setDiffFocusReq);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const hasTimestamps = messages.some((m) => m.timestamp != null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!hasTimestamps) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [hasTimestamps]);
   /** AI 回复的引用来源（键 = 消息根上的 data-chat-key）：选中文字浮出的「引用追问」按它认是哪条 */
   const quoteSources = useRef(new Map<string, { sources: ChatMessageDto[]; text: string }>());
   /** 悬停在消息上出现的操作（docs/design-chat-layer.md §5）：复制；用户消息另有「编辑后重发」，
-   *  助手消息另有「从这里分叉」。浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
+   *  助手消息另有「从这里分叉」「引用追问」与相对时间。最后一条助手消息（未在生成中）常显，其余悬停出现。
+   *  浮着不占高度（2026-10-25 用户：对话间距太松）：都挂在消息下面那段留白里
    *  （父元素 relative，下方留白 ≥ 这一行高，App.css .ccode-chat-user-row 一段）；用户消息的靠气泡右缘
    *  （同日用户：贴在气泡左边「怎么跑到左边去了」） */
   // 最新一条回答（「和终端对不上」只挂在它下面：对照的是此刻的终端，旧回答对不上的画面早已滚走）
@@ -336,6 +346,11 @@ export default function ConversationView({
   messages.forEach((m, i) => {
     if (m.role === "assistant" && !m.queued) lastAnswerIndex = i;
   });
+  // 最后一条非排队消息刚好是这条助手回答且当前不在生成中 → 符号栏与相对时间常显
+  const hasUserAfterLastAnswer =
+    lastAnswerIndex >= 0 &&
+    messages.slice(lastAnswerIndex + 1).some((m) => m.role === "user" && !m.queued);
+  const pinLatestActions = !working && lastAnswerIndex >= 0 && !hasUserAfterLastAnswer;
   function messageActions(
     m: ChatMessageDto,
     mk: string,
@@ -351,13 +366,24 @@ export default function ConversationView({
       .trim();
     if (!text) return null;
     if (align === "left") quoteSources.current.set(mk, { sources, text });
+    const alwaysVisible = align === "left" && latest && pinLatestActions;
+    const ts =
+      m.timestamp ??
+      [...sources].reverse().find((src) => src.timestamp)?.timestamp ??
+      null;
+    const when = align === "left" ? shortWhen(ts, nowMs) : "";
     // 只放图标（2026-10-31 用户：去掉文字），说明在悬停提示和 aria-label 里
     const btn =
       "inline-flex h-7 w-7 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta";
     return (
       <div
         data-copy-skip=""
-        className={`absolute flex gap-0.5 whitespace-nowrap opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100 ${
+        data-chat-actions={alwaysVisible ? "pinned" : "hover"}
+        className={`absolute flex items-center gap-0.5 whitespace-nowrap ${
+          alwaysVisible
+            ? "opacity-100"
+            : "opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100"
+        } ${
           align === "right" ? "right-0 top-full mt-0.5 justify-end" : "left-0 top-full mt-0.5"
         }`}
       >
@@ -415,6 +441,15 @@ export default function ConversationView({
           >
             <MessageSquareWarning size={13} strokeWidth={1.8} aria-hidden="true" />
           </button>
+        )}
+        {when && (
+          <span
+            data-chat-time="1"
+            title={absTime(ts) || undefined}
+            className="ml-1.5 select-none text-xs tabular-nums text-l4"
+          >
+            {when}
+          </span>
         )}
       </div>
     );

@@ -234,6 +234,27 @@ marked.use({ extensions: mathExtensions });
  * 后跑者若 await 后才读 textContent，读到的已是前者的排版结果，会误判 md-math-failed；
  * 快照后重跑只是用同一源码再渲染一遍（katex.render 原地覆盖，幂等）。
  */
+type KatexRenderer = {
+  render: (tex: string, el: HTMLElement, opts: { displayMode: boolean; throwOnError: boolean }) => void;
+};
+let cachedKatex: KatexRenderer | null = null;
+
+function applyKatexJobs(
+  katex: KatexRenderer,
+  jobs: Array<{ el: HTMLElement; display: boolean; tex: string }>,
+): void {
+  for (const { el, display, tex } of jobs) {
+    if (!el.isConnected) continue;
+    // 排版后占位文字就没了：源码记在 data-tex，复制时还原成 $TeX$（chat-copy.ts）
+    el.dataset.tex = tex;
+    try {
+      katex.render(tex, el, { displayMode: display, throwOnError: true });
+    } catch {
+      el.classList.add("md-math-failed");
+    }
+  }
+}
+
 export async function renderMathInto(host: HTMLElement): Promise<void> {
   const jobs = Array.from(host.querySelectorAll<HTMLElement>(".md-math")).map(
     (el) => {
@@ -247,16 +268,13 @@ export async function renderMathInto(host: HTMLElement): Promise<void> {
     },
   );
   if (jobs.length === 0) return;
+  // KaTeX 已加载过时同步渲染（useLayoutEffect 绘制前直接完成，避免流式重渲染帧间先闪原始 $...$ 再跳成公式）
+  if (cachedKatex) {
+    applyKatexJobs(cachedKatex, jobs);
+    return;
+  }
   const katex = (await import("katex")).default;
   await import("katex/dist/katex.min.css");
-  for (const { el, display, tex } of jobs) {
-    if (!el.isConnected) continue;
-    // 排版后占位文字就没了：源码记在 data-tex，复制时还原成 $TeX$（chat-copy.ts）
-    el.dataset.tex = tex;
-    try {
-      katex.render(tex, el, { displayMode: display, throwOnError: true });
-    } catch {
-      el.classList.add("md-math-failed");
-    }
-  }
+  cachedKatex = katex;
+  applyKatexJobs(katex, jobs);
 }

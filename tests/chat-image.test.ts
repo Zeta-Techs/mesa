@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { attachmentLines, composerImageKind, schematicSourceOf, docPathFromLine, imagePathFromLine, labeledImageFromLine, splitDocPaths, splitImagePaths } from "../src/chat-image.ts";
+import { attachmentLines, composerImageKind, imageEditActionLabel, isInspectionImage, schematicSourceOf, docPathFromLine, imagePathFromLine, labeledImageFromLine, splitDocPaths, splitImagePaths } from "../src/chat-image.ts";
 
 test("整行绝对路径识别为图片", () => {
   assert.equal(imagePathFromLine("/Users/x/pic/a.png"), "/Users/x/pic/a.png");
@@ -109,4 +109,28 @@ test("文档路径在列表 / 引用里：剥掉列表符号再认（项目助�
   assert.deepEqual(docs, ["papers/Rapid preparation of NiFe borides.pdf", "data/b.xlsx", "notes/c.docx"]);
   assert.equal(text, "依据材料：\n- papers/watch-seen.md");
   assert.equal(docPathFromLine("> - a/b.pdf"), "a/b.pdf");
+});
+
+test("普通句子含斜杠且以扩展名结尾，不得误吃成文档卡片（2026-11-21 用户截图：endnote.docx）", () => {
+  const prompt = [
+    "1. 指令冲突或歧义：TASK.md、各技能（review-writing / endnote-bridge）",
+    "2. 导出卡点：例如 PDF/Word 或 output/endnote.docx",
+    "3. 看看有没有生成 output/endnote.docx",
+    "4. 改图测试 A / B/c.png",
+  ].join("\n");
+  const { text, docs } = splitDocPaths(prompt);
+  assert.deepEqual(docs, []);
+  assert.equal(text, prompt);
+  assert.equal(imagePathFromLine("4. 改图测试 A / B/c.png"), null);
+});
+
+test("核对用图 / 论文渲染页识别与看图灯箱按钮文案（2026-11-22）", () => {
+  assert.equal(isInspectionImage("/p/artifacts/du2025_p6.png"), true);
+  assert.equal(isInspectionImage("/p/.ccode/local/page_2.png"), true);
+  assert.equal(isInspectionImage("/p/du2025_p6.png"), true);
+  assert.equal(isInspectionImage("/p/figures/cover.png"), false);
+  assert.equal(isInspectionImage("/p/figures/mech/mech.png"), false);
+  assert.equal(imageEditActionLabel("/p/figures/mech/mech.png"), "改示意图");
+  assert.equal(imageEditActionLabel("/p/artifacts/du2025_p6.png"), "标出来问 AI");
+  assert.equal(imageEditActionLabel("/p/figures/cover.png"), "标注 / 改图");
 });

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { ArrowUpRight, Crop, EyeOff, PenLine, Ratio, SquareDashedMousePointer, Trash2, Undo2, WandSparkles, X } from "lucide-react";
+import { pdfWheelShouldZoom, pdfWheelZoomFactor } from "../reader";
 import {
   HALO_COLOR,
   MARK_COLOR,
@@ -53,10 +54,16 @@ const TOOLS: { id: MarkTool; label: string; icon: ReactNode; hint: string }[] = 
 ];
 
 const IDLE_HINT = "选一样工具在图上标；消息照常在下面写，标好的图随消息发出，原图不动";
-/** 点 AI 回复里的图进来（接着改这张图）：说清发出去会怎样 */
-const EDIT_HINT = "在下面写怎么改，要改的地方可以先框出来；发出去由 AI 用出图模型在原图上改，原图不动";
+/** 点 AI 回复里的普通图进标注台：兼容改图与圈出提问，不硬称「由出图模型改」 */
+const EDIT_HINT = "在下面写怎么改或要问什么，要指的地方可以先框出来；原图不动";
+/** 论文渲染页 / 临时核对图进标注台：不提 AI 出图模型，也不出「移除背景 / 调整画幅」 */
+const INSPECTION_HINT = "选工具在图上圈出要问或要改的地方；在下面写消息发出，原图不动";
 /** 示意图（有图纸的）接着改：AI 改图纸重新渲染，人改过的 PPTX 就在它上面改 */
 const SCHEMATIC_HINT = "这是示意图：在下面写怎么改（改字、挪框、换图标），要改的地方可以先框出来；发出去由 AI 改图纸重新出图，你改过的 PPT 会保留";
+
+const MIN_SCALE = 0.25;
+const MAX_SCALE = 8;
+const clampScale = (v: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v));
 
 /** 改图时的常用说法：点一下写进输入框，照常可改（不直接发） */
 const EDIT_QUICK: { label: string; text: string; icon: ReactNode }[] = [
@@ -171,6 +178,7 @@ export default function ChatImageStage({
   onClose,
   onQuickText,
   schematic = false,
+  inspection = false,
 }: {
   name: string;
   url: string;
@@ -183,18 +191,26 @@ export default function ChatImageStage({
   /** 画好一个意见框：输入框在消息末尾接上它的圈码 */
   onBoxAdded: (n: number) => void;
   onClose: () => void;
-  /** 给了 = 这张是从 AI 回复里点进来接着改的：提示换成改图说明、工具条后面多「移除背景 / 调整画幅」，点了把说法写进输入框 */
+  /** 给了 = 这张是从 AI 回复里点进来接着改的：非核对图/非示意图时工具条后面多「移除背景 / 调整画幅」，点了把说法写进输入框 */
   onQuickText?: (text: string) => void;
   /** 接着改的是 schematic-forge 渲出的示意图：提示换成按图纸改，不出「移除背景 / 调整画幅」 */
   schematic?: boolean;
+  /** 论文渲染页 / 临时核对图：用中性标注提示，不出「移除背景 / 调整画幅」 */
+  inspection?: boolean;
 }) {
   const [tool, setTool] = useState<MarkTool | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(
     markup ? { w: markup.width, h: markup.height } : null,
   );
   const [area, setArea] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  /** "fit" = 适配框大小；数字 = 固定倍率（支持在标注台放大看清小字再精准框选） */
+  const [zoom, setZoom] = useState<"fit" | number>("fit");
+  const [dragging, setDragging] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
   const areaRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const anchorRef = useRef<{ ix: number; iy: number; px: number; py: number } | null>(null);
+  const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const startRef = useRef<{ x: number; y: number } | null>(null);
   const draftRef = useRef<Mark | null>(null);
   const [draft, setDraftState] = useState<Mark | null>(null);
@@ -215,13 +231,71 @@ export default function ChatImageStage({
     return () => ro.disconnect();
   }, []);
 
+  // 按住空格键可在选用绘图工具时临时抓手平移（输入焦点不在文本框里时）
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || e.repeat) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "TEXTAREA" || tag === "INPUT" || (e.target as HTMLElement | null)?.isContentEditable) return;
+      setSpaceHeld(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceHeld(false);
+    };
+    const onBlur = () => setSpaceHeld(false);
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
   const current: Markup | null = natural
     ? markup ?? { width: natural.w, height: natural.h, marks: [] }
     : null;
   const lw = current ? markLineWidth(current.width, current.height) : 2;
   // 适配显示区，最多放大到 2 倍（小截图也好下笔）
-  const scale = natural && area.w > 0 && area.h > 0 ? Math.min(area.w / natural.w, area.h / natural.h, 2) : 0;
+  const fit = natural && area.w > 0 && area.h > 0 ? Math.min(area.w / natural.w, area.h / natural.h, 2) : 0;
+  const scale = zoom === "fit" ? fit : zoom;
   const shown = natural && scale > 0 ? { w: natural.w * scale, h: natural.h * scale } : null;
+  const overflowing = Boolean(shown && area.w > 0 && (shown.w > area.w + 2 || shown.h > area.h + 2));
+
+  // 缩放后按锚点回正：让缩放前指针下的那一点仍在指针下（同 ImagePreview）
+  useLayoutEffect(() => {
+    const a = anchorRef.current;
+    const el = areaRef.current;
+    const svg = svgRef.current;
+    if (!a || !el || !svg) return;
+    anchorRef.current = null;
+    const er = el.getBoundingClientRect();
+    const sr = svg.getBoundingClientRect();
+    const ox = sr.left - er.left + el.scrollLeft;
+    const oy = sr.top - er.top + el.scrollTop;
+    el.scrollLeft = ox + a.ix * scale - a.px;
+    el.scrollTop = oy + a.iy * scale - a.py;
+  }, [scale]);
+
+  function zoomTo(next: number, pointer?: { x: number; y: number }) {
+    const clamped = clampScale(next);
+    const el = areaRef.current;
+    const svg = svgRef.current;
+    if (el && svg && scale > 0) {
+      const er = el.getBoundingClientRect();
+      const sr = svg.getBoundingClientRect();
+      const px = pointer ? pointer.x - er.left : er.width / 2;
+      const py = pointer ? pointer.y - er.top : er.height / 2;
+      anchorRef.current = {
+        ix: (er.left + px - sr.left) / scale,
+        iy: (er.top + py - sr.top) / scale,
+        px,
+        py,
+      };
+    }
+    setZoom(clamped);
+  }
 
   function toImage(e: ReactPointerEvent) {
     const svg = svgRef.current;
@@ -235,8 +309,10 @@ export default function ChatImageStage({
     );
   }
 
+  const panMode = overflowing && (!tool || spaceHeld);
+
   function onPointerDown(e: ReactPointerEvent<SVGSVGElement>) {
-    if (!tool || e.button !== 0) return;
+    if (!tool || spaceHeld || e.button !== 0) return;
     const p = toImage(e);
     if (!p) return;
     e.preventDefault();
@@ -300,7 +376,15 @@ export default function ChatImageStage({
     }
   }
 
-  const hint = tool ? TOOLS.find((t) => t.id === tool)?.hint : onQuickText ? (schematic ? SCHEMATIC_HINT : EDIT_HINT) : IDLE_HINT;
+  const hint = tool
+    ? TOOLS.find((t) => t.id === tool)?.hint
+    : onQuickText
+      ? schematic
+        ? SCHEMATIC_HINT
+        : inspection
+          ? INSPECTION_HINT
+          : EDIT_HINT
+      : IDLE_HINT;
   const hasMarks = (current?.marks.length ?? 0) > 0;
   const toolBtn = (on: boolean) =>
     `flex h-7 items-center gap-1 rounded-full px-2.5 text-xs transition-colors ${
@@ -316,65 +400,152 @@ export default function ChatImageStage({
       onKeyDown={onKeyDown}
     >
       <div className="flex shrink-0 items-center gap-2 px-4 pt-2.5 text-xs">
-        <span className="max-w-[40%] shrink-0 truncate text-l2" title={name}>
+        <span className="max-w-[30%] shrink-0 truncate text-l2" title={name}>
           {name}
         </span>
-        <span className="min-w-0 truncate text-l4">{hint}</span>
+        <span className="min-w-0 flex-1 truncate text-l4">{hint}</span>
+        {shown && (
+          <span className="flex shrink-0 items-center gap-0.5 text-micro">
+            <button
+              type="button"
+              className={`rounded-sm px-1.5 py-0.5 hover:bg-hover hover:text-l1 ${zoom === "fit" ? "text-l1" : "text-l3"}`}
+              onClick={() => setZoom("fit")}
+              title="整张图放进框里"
+            >
+              适应
+            </button>
+            <button
+              type="button"
+              className={`rounded-sm px-1.5 py-0.5 hover:bg-hover hover:text-l1 ${zoom === 1 ? "text-l1" : "text-l3"}`}
+              onClick={() => zoomTo(1)}
+              title="原始大小（100%）"
+            >
+              100%
+            </button>
+            <button
+              type="button"
+              className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+              onClick={() => zoomTo(scale / 1.25)}
+              title="缩小"
+              aria-label="缩小"
+            >
+              −
+            </button>
+            <span className="w-10 text-center font-mono tabular-nums text-l3">
+              {Math.round(scale * 100)}%
+            </span>
+            <button
+              type="button"
+              className="rounded-sm px-1.5 py-0.5 text-l3 hover:bg-hover hover:text-l1"
+              onClick={() => zoomTo(scale * 1.25)}
+              title="放大（也可用 ⌘/Ctrl+滚轮 或双指捏合）"
+              aria-label="放大"
+            >
+              +
+            </button>
+          </span>
+        )}
         <button
           type="button"
           onClick={onClose}
-          aria-label={onQuickText ? "取消改图" : "收起图片"}
-          title={onQuickText ? "取消改图，输入框里的这张图一并移除（Esc）" : "收起图片（Esc）"}
-          className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+          aria-label={onQuickText ? "取消标注" : "收起图片"}
+          title={onQuickText ? "取消标注，输入框里的这张图一并移除（Esc）" : "收起图片（Esc）"}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
         >
           <X size={15} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
-      <div ref={areaRef} className="flex min-h-0 flex-1 items-center justify-center px-4 py-2">
-        {!shown || !current ? (
-          <img
-            src={url}
-            alt={name}
-            draggable={false}
-            className="max-h-full max-w-full rounded-md border border-hairline object-contain"
-            ref={(img) => {
-              // 已在缓存里解码好的图不一定再发 load
-              if (img?.complete && img.naturalWidth && img.naturalHeight && !natural)
-                setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-            }}
-            onLoad={(e) => {
-              const img = e.currentTarget;
-              if (img.naturalWidth && img.naturalHeight) setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-            }}
-          />
-        ) : (
-          <div className="relative shrink-0" style={{ width: shown.w, height: shown.h }}>
+      <div
+        ref={areaRef}
+        className={`min-h-0 flex-1 overflow-auto ${panMode ? (dragging ? "cursor-grabbing" : "cursor-grab") : ""}`}
+        onWheel={(e) => {
+          if (!shown || !pdfWheelShouldZoom(e)) return;
+          const factor = pdfWheelZoomFactor(e.deltaY, e.deltaMode);
+          if (!factor) return;
+          e.preventDefault();
+          zoomTo(scale * factor, { x: e.clientX, y: e.clientY });
+        }}
+        onPointerDown={(e) => {
+          const el = areaRef.current;
+          const canPan = overflowing && (e.button === 1 || (e.button === 0 && (!tool || spaceHeld)));
+          if (!canPan || !el || e.target === el) return;
+          e.preventDefault();
+          panRef.current = { x: e.clientX, y: e.clientY, left: el.scrollLeft, top: el.scrollTop };
+          el.setPointerCapture(e.pointerId);
+          setDragging(true);
+        }}
+        onPointerMove={(e) => {
+          const d = panRef.current;
+          const el = areaRef.current;
+          if (!d || !el) return;
+          el.scrollLeft = d.left - (e.clientX - d.x);
+          el.scrollTop = d.top - (e.clientY - d.y);
+        }}
+        onPointerUp={() => {
+          if (!panRef.current) return;
+          panRef.current = null;
+          setDragging(false);
+        }}
+        onPointerCancel={() => {
+          if (!panRef.current) return;
+          panRef.current = null;
+          setDragging(false);
+        }}
+      >
+        <div className="flex min-h-full min-w-full w-max px-4 py-2">
+          {!shown || !current ? (
             <img
               src={url}
               alt={name}
               draggable={false}
-              className="block h-full w-full select-none rounded-md border border-hairline"
-            />
-            <svg
-              ref={svgRef}
-              role="img"
-              aria-label="标注"
-              className="absolute inset-0 h-full w-full"
-              viewBox={`0 0 ${current.width} ${current.height}`}
-              preserveAspectRatio="none"
-              style={{ cursor: tool ? "crosshair" : "default", touchAction: "none" }}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={() => {
-                startRef.current = null;
-                setDraft(null);
+              className="m-auto max-h-full max-w-full rounded-md border border-hairline object-contain"
+              ref={(img) => {
+                // 已在缓存里解码好的图不一定再发 load
+                if (img?.complete && img.naturalWidth && img.naturalHeight && !natural)
+                  setNatural({ w: img.naturalWidth, h: img.naturalHeight });
               }}
-            >
-              <MarkupLayer markup={current} draft={draft} />
-            </svg>
-          </div>
-        )}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth && img.naturalHeight) setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+              }}
+            />
+          ) : (
+            <div className="relative m-auto shrink-0" style={{ width: shown.w, height: shown.h }}>
+              <img
+                src={url}
+                alt={name}
+                draggable={false}
+                className="block h-full w-full select-none rounded-md border border-hairline"
+              />
+              <svg
+                ref={svgRef}
+                role="img"
+                aria-label="标注"
+                className="absolute inset-0 h-full w-full"
+                viewBox={`0 0 ${current.width} ${current.height}`}
+                preserveAspectRatio="none"
+                style={{
+                  cursor: panMode ? (dragging ? "grabbing" : "grab") : tool ? "crosshair" : "default",
+                  touchAction: "none",
+                }}
+                onDoubleClick={(e) => {
+                  if (tool) return;
+                  if (zoom === "fit") zoomTo(1, { x: e.clientX, y: e.clientY });
+                  else setZoom("fit");
+                }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={() => {
+                  startRef.current = null;
+                  setDraft(null);
+                }}
+              >
+                <MarkupLayer markup={current} draft={draft} />
+              </svg>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex shrink-0 justify-center px-4 pb-2.5">
         <div className="ccode-float-surface flex items-center gap-0.5 rounded-full border border-field px-1 py-1">
@@ -412,7 +583,7 @@ export default function ChatImageStage({
             <Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />
             清空
           </button>
-          {onQuickText && !schematic && (
+          {onQuickText && !schematic && !inspection && (
             <>
               <span aria-hidden="true" className="mx-1 h-4 w-px bg-hairline" />
               {EDIT_QUICK.map((q) => (

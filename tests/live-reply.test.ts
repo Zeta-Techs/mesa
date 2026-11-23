@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, outputTokensSupported, sameAsPrevReply, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, dropAskedEcho, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, mergeLiveReplyStyled, outputTokensSupported, sameAsEarlierReply, sameAsPrevReply, sentTextStuckInBox, sliceStyledLines, staleEcho, staleWithoutEcho, terminalHasInputBox, unsyncedTail } from "../src/live-reply.ts";
+import type { ScreenCell } from "../src/screen-cells.ts";
 
 const RULE = "─".repeat(100);
 // Claude Code 2.1.292 本机 PTY 实录（流式写到一半；假 API 慢速吐字）
@@ -1231,6 +1232,132 @@ test("Antigravity CLI 1.5.8：读出缩进两格的流式回复，审批菜单�
   ]);
   // 泛状态行（Generating.../Working.../Thinking...）不当作思考正文
   assert.equal(extractLiveThinking(streaming, "agy"), null);
+
+  // 2026-11-21 用户 Antigravity CLI 1.5.14 截图回归：
+  // 1) 工具摘要括号未闭合折到下一行（缩进 2 格）不得混进预览；
+  // 2) 缩进 6 格的像素画启动横幅（Antigravity CLI 1.5.14）不得绕过首行缩进闸门被当成回复
+  const wrappedToolsAndBanner = [
+    "      ▄▀▀▄        Antigravity CLI 1.5.14",
+    "    ▄▀    ▀▄      Gemini API key",
+    "   ██████████     Gemini 4 Carbon (Medium)",
+    "  ▄██▄    ▄██▄    ~/ccode/scratch",
+    " ▄▀  ▀▄  ▄▀  ▀▄",
+    "●  Write pelican_driving.html (Create HTML wit",
+    "  h an SVG animation of a pelican driving...)",
+    "  ⎿  Wrote 734 lines",
+    "●  Edit pelican_driving.html (Update `p",
+    "  elican-pouch`, `scarf-tail`, `crest-feather...",
+    "  ⎿  Edited +8 -4",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.equal(extractLiveReply(wrappedToolsAndBanner, "agy"), null);
+
+  // 同样在带用户回显、工具折行之后真正开始输出正文时，只读出正文
+  const afterWrappedTools = [
+    RULE,
+    "> 在桌面创建一个 HTML",
+    "",
+    "●  Edit pelican_driving.html (Update `p",
+    "  elican-pouch`, `scarf-tail`, `crest-feather...",
+    "  ⎿  Edited +8 -4",
+    "  已创建 pelican_driving.html，可以直接在浏览器打开查看动画。",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(afterWrappedTools, "agy")?.lines, [
+    "已创建 pelican_driving.html，可以直接在浏览器打开查看动画。",
+  ]);
+
+  // 2026-11-21 用户截图回归：
+  // 1) agy 长步骤简报回显顶格折行（无 2 格缩进）整段跳过，不把「决策暂停策略…」当成回复；
+  // 2) `──── Conversation compacted ────`（含窄屏折成两行）与 `… 10 more actions (4 reads, 6 commands) …` 不进预览
+  const longKickoffAndCompacted = [
+    RULE,
+    "> 读 TASK.md，按简报做到完成标准。停哪些见",
+    "「决策暂停策略」。写作红线以技能为准",
+    "：不凑字数、不准「待绘制」充图、G",
+    "git",
+    "提交或进度汇报不是停工理由。",
+    "",
+    "────────────────────────────── Conversation compacted",
+    "──────────────────────────────",
+    "… 10 more actions (4 reads, 6 commands) …",
+    "○ Thought for 4m 7s (The output indicates a discrepancy...)",
+    "● Ran 4 commands (cd \"/Users/x\" ×4) (ctrl+o to expand)",
+    "└ Tip: Use /tasks to see background tasks and their status.",
+    RULE,
+    "> Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+    RULE,
+  ];
+  assert.equal(extractLiveReply(longKickoffAndCompacted, "agy"), null);
+
+  // 同屏在 compacted 之后真正输出正文时，只读出正文
+  const afterCompacted = [
+    "────────────────────────────── Conversation compacted ──────────────────────────────",
+    "… 10 more actions (4 reads, 6 commands) …",
+    "  已完成全部 77 篇文献整理。",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(afterCompacted, "agy")?.lines, ["已完成全部 77 篇文献整理。"]);
+
+  // 2026-11-23 用户 Antigravity CLI 1.5.14 三组截图回归：
+  // 1) `⚠ Warning` + `⎿ --effort is not supported...` 不得当成正文（否则遮掉下方真正的思考进度）；
+  // 2) `▸ Thought for 47s, 1.2k tokens` 思考折叠条不得混入回复（否则击穿 sameAsPrevReply）；
+  // 3) 输入框上方右对齐的 `1 artifact · /artifact to review` 不得混入回复尾部
+  const warningOnly = [
+    RULE,
+    "> 继续",
+    "",
+    "⚠ Warning",
+    "  ⎿  --effort is not supported for model \"gemini-4-neon\". Ignoring the flag.",
+    "",
+    "○ Thought for 34.1s (Examining the rendered images...)",
+    "● Explored 3 files (render_hero.png, render_closeup.png, render_back_3q.png)",
+    "⠙ The proposed parallel edits are organized into four core categories...",
+    "  └ Tip: Use /diff to view uncommitted changes in your workspace.",
+    RULE,
+    ">",
+    RULE,
+  ];
+  assert.equal(extractLiveReply(warningOnly, "agy"), null);
+  assert.deepEqual(extractLiveThinking(warningOnly, "agy"), [
+    "The proposed parallel edits are organized into four core categories...",
+  ]);
+
+  const withThoughtBadgeAndArtifact = [
+    RULE,
+    "> 用 Blender 画一个七龙珠悟空的 3D 模型",
+    "",
+    "▸ Thought for 11s, 102 tokens",
+    "",
+    "  已完成七龙珠孙悟空 (Son Goku) 的 Blender 3D 角色建模与多角度渲染。",
+    "  如果您希望进一步拓展，可以告诉我：",
+    "                                                                                1 artifact · /artifact to review",
+    RULE,
+    "> Accept-edits mode: file edits auto-approved (shift+tab to cycle)",
+    RULE,
+  ];
+  assert.deepEqual(extractLiveReply(withThoughtBadgeAndArtifact, "agy")?.lines, [
+    "已完成七龙珠孙悟空 (Son Goku) 的 Blender 3D 角色建模与多角度渲染。",
+    "如果您希望进一步拓展，可以告诉我：",
+  ]);
+
+  // 跨多轮防串轮：两轮前的长回复残留在屏上时也拦下，但普通短句不误伤
+  const olderLong = "说得很中肯，我直接实话实说：\n1. 对现有 5 张自绘图的客观反思\n你指出的两个问题都切中要害：说明文字确实过多。";
+  assert.equal(
+    sameAsEarlierReply(
+      ["说得很中肯，我直接实话实说：", "1. 对现有 5 张自绘图的客观反思", "你指出的两个问题都切中要害：说明文字确实过多。"],
+      "已按你的要求开始重绘 5 张 3D 机理图。",
+      olderLong,
+    ),
+    true,
+  );
+  assert.equal(sameAsEarlierReply(["好的"], "完全没问题", "好的，我这就处理。"), false);
 });
 
 test("Windows：Grok 1.0.89 输入框换方角 ┌──┐ 也能认出实时预览与输入框（2026-11-18 金丝雀抓屏）", () => {
@@ -1262,6 +1389,91 @@ test("CodeBuddy 2.185：虽不逐字流式正文，但转圈行的 ↓ N tokens 
   assert.equal(outputTokensSupported("codex"), false);
   assert.equal(claudeOutputTokens(["✹ Waking… (2s · streaming · ↓ 10 tokens)"]), 10);
   assert.equal(claudeOutputTokens(["✹ Notifying… (7s · streaming · ↓ 1.2k tokens)"]), 1200);
+});
+
+test("读屏样式还原：extractLiveReply(rowCells) 还原标题 / 粗体 / 行内代码 / 表格 / 底色代码块，mergeLiveReplyStyled 与 sliceStyledLines 保持对齐", () => {
+  const mkCells = (
+    text: string,
+    style?: (ch: string, idx: number) => Partial<ScreenCell>,
+  ): ScreenCell[] =>
+    [...text].map((ch, idx) => ({
+      ch,
+      dim: false,
+      inverse: false,
+      bg: false,
+      ...(style ? style(ch, idx) : {}),
+    }));
+
+  const rows = [
+    "❯ 总结一下实现",
+    "⏺ 核心方案",
+    "  先跑 npm test 验证 关键点。",
+    "  ┌─────┬─────┐",
+    "  │ 项  │ 值  │",
+    "  └─────┴─────┘",
+    "  const ok = true;",
+    RULE,
+    "❯ ",
+  ];
+
+  const rowCells = (r: number): ScreenCell[] => {
+    const line = rows[r] ?? "";
+    if (r === 1) return mkCells(line, (_ch, i) => (i >= 2 ? { bold: true } : {}));
+    if (r === 2) {
+      return mkCells(line, (_ch, i) => {
+        if (i >= 5 && i < 13) return { fg: "16:6" }; // "npm test"
+        if (i >= 17 && i < 20) return { bold: true }; // "关键点"
+        return {};
+      });
+    }
+    if (r === 6) return mkCells(line, (_ch, i) => (i >= 2 ? { bg: true } : {}));
+    return mkCells(line);
+  };
+
+  const read = extractLiveReply(rows, "claude-code", undefined, rowCells);
+  assert.ok(read?.styled);
+  assert.equal(read.styled.length, read.lines.length);
+  // 标题行：整行加粗
+  assert.equal(read.styled[0].heading, true);
+  assert.equal(read.styled[0].text, "核心方案");
+  // 行内代码（fg + ASCII）与行内粗体
+  const codeSpan = read.styled[1].spans.find((s) => s.code);
+  const boldSpan = read.styled[1].spans.find((s) => s.bold);
+  assert.equal(codeSpan?.text.trim(), "npm test");
+  assert.equal(boldSpan?.text, "关键点");
+  // 终端框线表格
+  assert.equal(read.styled[2].table, true);
+  assert.equal(read.styled[3].table, true);
+  assert.equal(read.styled[4].table, true);
+  // 整行带底色的代码块
+  assert.equal(read.styled[5].codeBlock, true);
+  // 整行带底色的中文回显 / 提示句不得误判为代码块（Codex 灰底回显回归）
+  const proseRows = ["❯ 提问", "⏺ 4. 一个行内公式 E = mc² 和一段总结列表。", RULE, "❯ "];
+  const proseRead = extractLiveReply(proseRows, "claude-code", undefined, (r) =>
+    mkCells(proseRows[r] ?? "", (_ch, i) => (r === 1 && i >= 2 ? { bg: true } : {})),
+  );
+  assert.equal(proseRead?.styled?.[0].codeBlock, undefined);
+  assert.equal(proseRead?.styled?.[0].spans.some((s) => s.code), false);
+
+  // mergeLiveReplyStyled 接续滚屏时 lines 与 styled 严格同长对齐
+  const merged = mergeLiveReplyStyled(
+    { lines: read.lines, styled: read.styled },
+    {
+      lines: [read.lines[4], read.lines[5], "收尾说明"],
+      anchored: false,
+      styled: [read.styled[4], read.styled[5], { text: "收尾说明", spans: [{ text: "收尾说明", italic: true }] }],
+    },
+  );
+  assert.ok(merged?.styled);
+  assert.equal(merged.lines.length, merged.styled.length);
+  assert.equal(merged.styled[merged.styled.length - 1].spans[0].italic, true);
+
+  // sliceStyledLines 按匀速显示字符上限精准裁切
+  const fullText = merged.lines.join("\n");
+  const cutLen = merged.lines[0].length + 1 + 8; // 第一行 + \n + 第二行前 8 字
+  const sliced = sliceStyledLines(merged.styled, cutLen);
+  assert.equal(sliced.map((l) => l.text).join("\n"), fullText.slice(0, cutLen));
+  assert.equal(sliced[1].spans.map((s) => s.text).join(""), sliced[1].text);
 });
 
 test("Antigravity CLI 1.5.14：工具行下面重绘留下的提问残影不当这一轮的回显", () => {

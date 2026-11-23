@@ -46,8 +46,16 @@ export interface ScreenDecision {
   /** 屏上带序号的选项数：给同样多的数字键 */
   numbered: number;
   links: string[];
-  /** 屏上在等人输入一段文字：给输入框 */
+  /** 屏上在等人输入一段文字：默认展开输入框 */
   typeIn: boolean;
+  /** 屏上有横向选择 / 翻页提示：给 ← / → 键 */
+  horizontal?: boolean;
+  /** 屏上有复选框或 Space 提示：给 空格 键 */
+  multiSelect?: boolean;
+  /** 屏上有 Tab 切换提示：给 Tab 键 */
+  tabKey?: boolean;
+  /** 屏上有 (y/n) / [Y/n] 提示：给 Y / N 键 */
+  yesNo?: boolean;
   /** 给方向键 / 回车一排（启动失败卡不给） */
   keys: boolean;
   /** 给 Esc（Grok 非输入态按 Esc 是退出确认，不给） */
@@ -127,6 +135,7 @@ function DecisionBody({
   if (decision.plan) {
     return (
       <PlanCard
+        key={decision.key}
         title={decision.title}
         hint={decision.hint}
         plan={decision.plan}
@@ -137,12 +146,19 @@ function DecisionBody({
   }
   if (decision.screen) {
     return (
-      <ScreenCard decision={decision} screen={decision.screen} onOpenTerminal={onOpenTerminal} onPeek={onPeek} />
+      <ScreenCard
+        key={decision.key}
+        decision={decision}
+        screen={decision.screen}
+        onOpenTerminal={onOpenTerminal}
+        onPeek={onPeek}
+      />
     );
   }
   if (decision.ask) {
     return (
       <AskCard
+        key={decision.key}
         form={decision.ask.form}
         pending={decision.ask.pending}
         onAction={decision.ask.onAction}
@@ -359,6 +375,8 @@ function ScreenCard({
   onPeek?: () => void;
 }) {
   const [text, setText] = useState("");
+  const [showInput, setShowInput] = useState(false);
+  const inputVisible = screen.typeIn || showInput;
   const primary = decision.options.find((o) => o.primary) ?? null;
   const send = () => {
     const t = text.trim();
@@ -385,7 +403,7 @@ function ScreenCard({
       hint={decision.hint}
       onOpenTerminal={onOpenTerminal}
       onPeek={onPeek}
-      onPrimary={primary ? primary.onClick : null}
+      onPrimary={primary ? primary.onClick : screen.keys ? () => screen.onKey("enter") : null}
       footer={
         <>
           {screen.links.map((url) => (
@@ -401,6 +419,12 @@ function ScreenCard({
           ))}
           {screen.keys && (
             <div className="flex flex-wrap items-center gap-1.5">
+              {screen.yesNo && (
+                <>
+                  {key("char:y", "Y", "往终端按 y")}
+                  {key("char:n", "N", "往终端按 n")}
+                </>
+              )}
               {screen.numbered > 0 && (
                 <>
                   <span className="text-micro text-l4">选</span>
@@ -412,8 +436,22 @@ function ScreenCard({
               )}
               {key("up", "↑", "往终端按 ↑")}
               {key("down", "↓", "往终端按 ↓")}
+              {screen.horizontal && key("left", "←", "往终端按 ←")}
+              {screen.horizontal && key("right", "→", "往终端按 →")}
+              {screen.multiSelect && key("space", <span className="font-sans">空格</span>, "往终端按空格（勾选 / 取消）")}
+              {screen.tabKey && key("tab", "Tab", "往终端按 Tab")}
               {key("enter", <span className="font-sans">回车</span>, "往终端按回车")}
               {screen.esc && key("esc", <span className="font-sans">Esc</span>, "往终端按 Esc")}
+              {!screen.typeIn && (
+                <button
+                  type="button"
+                  onClick={() => setShowInput((v) => !v)}
+                  title="在聊天层直接输入文字发给终端"
+                  className="h-7 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  {showInput ? "收起输入" : "输入文字"}
+                </button>
+              )}
             </div>
           )}
           {decision.options
@@ -446,7 +484,7 @@ function ScreenCard({
           {screen.lines.join("\n")}
         </pre>
       </div>
-      {screen.typeIn && (
+      {inputVisible && (
         <form
           className="mx-4 mb-3 flex gap-2"
           onSubmit={(e) => {

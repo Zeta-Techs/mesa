@@ -31,8 +31,15 @@ test("文档链接：拦截混淆脚本协议和图片占位中的危险协议",
     assert.equal(host.querySelector("a")?.hasAttribute("href"), false, url);
     assert.equal(host.querySelector("span")?.hasAttribute("data-md-src"), false, url);
   }
-  const safe = parse('<a href="https://example.com/paper">论文</a><a href="#note">脚注</a><a href="../notes/a.md">笔记</a>');
-  assert.equal(safe.querySelectorAll("a[href]").length, 3);
+  const safe = parse(
+    '<a href="https://example.com/paper">论文</a><a href="#note">脚注</a><a href="../notes/a.md">笔记</a>' +
+      '<a href="file:///Users/u/硼化物析氢/notes/38.md#L10-L20">精读</a>',
+  );
+  assert.equal(safe.querySelectorAll("a[href]").length, 4);
+  assert.equal(
+    safe.querySelectorAll("a[href]")[3]?.getAttribute("href"),
+    "file:///Users/u/硼化物析氢/notes/38.md#L10-L20",
+  );
 });
 
 test("Markdown：表格、代码、公式、任务复选框和本地图占位保留", () => {

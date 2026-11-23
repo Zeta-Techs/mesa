@@ -259,6 +259,16 @@ test("回合失败与中断如实说明；提问不当作工具批准", () => {
   assert.equal(isQuestionApproval(approval()), false);
 });
 
+test("channelLiveLines：保留首行缩进（缩进代码块 / 嵌套列表），只去开头空行与尾空白", () => {
+  const indented = snap({
+    kind: "codex",
+    connection: "connected",
+    turn: turn("running"),
+    liveText: "\n\n    def f():\n        return 1  \n",
+  });
+  assert.deepEqual(channelLiveLines(indented), ["    def f():", "        return 1"]);
+});
+
 test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hooks 只报状态，不挡 xterm 实时扫描", () => {
   assert.equal(channelDeliversLiveText(null), false);
   assert.equal(channelDeliversLiveText(snap({ kind: "hooks", turn: turn("running") })), false);

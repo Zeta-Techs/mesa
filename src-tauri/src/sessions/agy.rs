@@ -1095,11 +1095,11 @@ pub(super) fn agy_tail_state(lines: &[String]) -> &'static str {
         if !matches!(status, "DONE" | "ERROR" | "CANCELLED" | "CANCELED") {
             return if asks_user { "confirm" } else { "working" };
         }
-        if matches!(status, "ERROR" | "CANCELLED" | "CANCELED") {
-            return "settled";
-        }
         match get_str(v, "type") {
             Some("PLANNER_RESPONSE") => {
+                if matches!(status, "ERROR" | "CANCELLED" | "CANCELED") {
+                    return "settled";
+                }
                 if calls.is_some() {
                     return if asks_user { "confirm" } else { "working" };
                 }
@@ -1111,6 +1111,14 @@ pub(super) fn agy_tail_state(lines: &[String]) -> &'static str {
                 };
             }
             Some("GENERIC") => {
+                // 单次工具调用失败（status=ERROR，如 edit_file 匹配失败 / 命令非零退出）属于回合内可恢复过程，
+                // 模型会读到报错并继续重试或回答，绝不是整轮结束（2026-11-23 用户截图）。
+                if status == "ERROR" {
+                    return "working";
+                }
+                if matches!(status, "CANCELLED" | "CANCELED") {
+                    return "settled";
+                }
                 if get_str(v, "content")
                     .unwrap_or_default()
                     .trim_start()
@@ -1128,10 +1136,105 @@ pub(super) fn agy_tail_state(lines: &[String]) -> &'static str {
                     return "working";
                 }
             }
-            _ => {}
+            _ => {
+                if matches!(status, "ERROR" | "CANCELLED" | "CANCELED") {
+                    return "settled";
+                }
+            }
         }
     }
     "unknown"
+}
+
+/// 核对 Antigravity CLI 会话文件在 `after_ms`（当前旁路回合开始时间）之后是否已明确收尾：
+/// - `agy` 开了全局 hooks 但漏发/延迟 `Stop`，或未开 hooks 走 OSC 7501 `program-status` 但末尾带 artifact 等未发 `idle/done` 时，
+///   旁路会一直卡在「还在回复」（2026-11-23 用户截图）；
+/// - 这里只认尾部最新有效步已是终态（无 `tool_calls` 的 `PLANNER_RESPONSE DONE`、或非工具步的 `ERROR`/`CANCELLED`）且时间戳在
+///   `after_ms - 5_000` 之后，避免误用上一轮的收尾记录，也不把单步工具失败（`GENERIC` `ERROR`）误判成整轮失败。
+pub(crate) fn agy_turn_end_after(path: &Path, after_ms: i64) -> Option<&'static str> {
+    let raw = path.to_string_lossy();
+    let owned_promoted;
+    let target = if let Some((db, cid)) = agy_split_db_target(&raw) {
+        owned_promoted = agy_resolve_live_transcript(db, cid)?;
+        owned_promoted.as_path()
+    } else {
+        path
+    };
+    let lines = last_lines(target, 256 * 1024);
+    if lines.is_empty() {
+        return None;
+    }
+    let steps = agy_dedup_steps(&lines);
+    let step_ms = |v: &Value| {
+        get_str(v, "created_at")
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .map(|t| t.timestamp_millis())
+    };
+    for v in steps.iter().rev() {
+        let status = get_str(v, "status").unwrap_or("");
+        let calls = v
+            .get("tool_calls")
+            .and_then(|x| x.as_array())
+            .filter(|a| !a.is_empty());
+        if !matches!(status, "DONE" | "ERROR" | "CANCELLED" | "CANCELED") {
+            return None;
+        }
+        match get_str(v, "type") {
+            Some("PLANNER_RESPONSE") => {
+                if status == "ERROR" {
+                    return step_ms(v)
+                        .is_some_and(|ts| ts >= after_ms - 5_000)
+                        .then_some("error");
+                }
+                if matches!(status, "CANCELLED" | "CANCELED") {
+                    return step_ms(v)
+                        .is_some_and(|ts| ts >= after_ms - 5_000)
+                        .then_some("cancelled");
+                }
+                if calls.is_some() {
+                    return None;
+                }
+                return step_ms(v)
+                    .is_some_and(|ts| ts >= after_ms - 5_000)
+                    .then_some("end_turn");
+            }
+            Some("GENERIC") => {
+                // GENERIC 为工具执行结果：单步工具失败（ERROR）或拒绝（CANCELLED）后模型仍可能继续本轮，
+                // 不得提前收掉旁路并报「这一轮未完成」（2026-11-23 用户截图）。
+                if status == "ERROR"
+                    || matches!(status, "CANCELLED" | "CANCELED")
+                    || get_str(v, "content")
+                        .unwrap_or_default()
+                        .trim_start()
+                        .starts_with("Created At:")
+                {
+                    return None;
+                }
+            }
+            Some("USER_INPUT") => {
+                if get_str(v, "content")
+                    .and_then(agy_extract_user_text)
+                    .is_some()
+                    || !agy_extract_media_paths(v).is_empty()
+                {
+                    return None;
+                }
+            }
+            _ => {
+                if status == "ERROR" {
+                    return step_ms(v)
+                        .is_some_and(|ts| ts >= after_ms - 5_000)
+                        .then_some("error");
+                }
+                if matches!(status, "CANCELLED" | "CANCELED") {
+                    return step_ms(v)
+                        .is_some_and(|ts| ts >= after_ms - 5_000)
+                        .then_some("cancelled");
+                }
+            }
+        }
+    }
+    None
 }
 
 /// 解析 `<agy_root>/conversation_summaries.db#<cid>` 形式的虚拟路径
@@ -1786,6 +1889,135 @@ mod tests {
             r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","content":"要不要继续执行下一步？"}"#.to_string(),
         ];
         assert_eq!(agy_tail_state(&question), "confirm");
+
+        // 单步工具失败（GENERIC status=ERROR）仍处于回合进行中，不得误判 settled
+        let tool_err = vec![
+            user[0].clone(),
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"edit_file","args":{}}]}"#.to_string(),
+            r#"{"step_index":2,"type":"GENERIC","status":"ERROR","content":"Created At: 2026-11-23T06:26:00Z\nTarget not found"}"#.to_string(),
+        ];
+        assert_eq!(agy_tail_state(&tool_err), "working");
+
+        let planner_err = vec![
+            user[0].clone(),
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"ERROR","content":""}"#.to_string(),
+        ];
+        assert_eq!(agy_tail_state(&planner_err), "settled");
+    }
+
+    #[test]
+    fn agy_turn_end_after_distinguishes_settled_question_running_and_stale() {
+        let tmp = TempDir::new();
+        let f = tmp.path().join("transcript.jsonl");
+        let ms = |rfc3339: &str| {
+            chrono::DateTime::parse_from_rfc3339(rfc3339)
+                .unwrap()
+                .timestamp_millis()
+        };
+        let started = ms("2026-11-23T02:40:00.000Z");
+
+        // 1) 上一轮早于 started 的回复不算本轮收尾
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","status":"DONE","created_at":"2026-11-23T02:30:00.000Z","content":"<USER_REQUEST>old</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-23T02:30:10.000Z","content":"旧回复"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), None);
+
+        // 2) 本轮工具调用尚未结束或处于 ask_question 时不得提前收尾
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":2,"type":"USER_INPUT","status":"DONE","created_at":"2026-11-23T02:40:01.000Z","content":"<USER_REQUEST>画悟空</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-23T02:40:05.000Z","content":"执行中","tool_calls":[{"name":"run_command","args":{}}]}"#, "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), None);
+
+        // 2b) 单步工具失败（GENERIC status=ERROR / CANCELLED）后模型还会重试，绝不能提前按 error 收掉回合
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":2,"type":"USER_INPUT","status":"DONE","created_at":"2026-11-23T02:40:01.000Z","content":"<USER_REQUEST>改 polish.md</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-23T02:40:43.000Z","tool_calls":[{"name":"edit_file","args":{}}]}"#, "\n",
+                r#"{"step_index":4,"type":"GENERIC","status":"ERROR","created_at":"2026-11-23T02:40:44.000Z","content":"Target not found"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), None);
+
+        // 3) 本轮最终正文（哪怕以问号收尾，如截图里的「是否需要切换贴图？」）无 tool_calls 且 DONE → end_turn
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":2,"type":"USER_INPUT","status":"DONE","created_at":"2026-11-23T02:40:01.000Z","content":"<USER_REQUEST>画悟空</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-23T02:45:10.000Z","content":"已完成，是否需要切换贴图？"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), Some("end_turn"));
+
+        // 4) PLANNER_RESPONSE 的 CANCELLED / ERROR 对应 cancelled / error
+        fs::write(
+            &f,
+            r#"{"step_index":5,"type":"PLANNER_RESPONSE","status":"CANCELLED","created_at":"2026-11-23T02:46:00.000Z","content":""}"#,
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), Some("cancelled"));
+
+        fs::write(
+            &f,
+            r#"{"step_index":6,"type":"PLANNER_RESPONSE","status":"ERROR","created_at":"2026-11-23T02:46:10.000Z","content":""}"#,
+        )
+        .unwrap();
+        assert_eq!(agy_turn_end_after(&f, started), Some("error"));
+    }
+
+    #[test]
+    fn agy_refresh_live_flag_ignores_completed_replies_with_fresh_mtime() {
+        let tmp = TempDir::new();
+        let f = tmp.path().join("transcript.jsonl");
+        let now_iso = iso_from_unix(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        );
+        let mk = |path: &Path| {
+            let mut m = agy_file_meta(path, Some("cid-1"), true, &HashMap::new()).unwrap();
+            m.updated_at = Some(now_iso.clone());
+            m
+        };
+
+        // 已完成回复即使时间戳在 60 秒内，也不得标为 live（避免误弹「正在别的终端里运行」）
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","status":"DONE","content":"<USER_REQUEST>画小猫钓鱼</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","content":"已在桌面为你创建好小猫钓鱼动画文件。"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        let mut m = mk(&f);
+        refresh_live_flag(&mut m);
+        assert!(!m.live);
+
+        // 真正还在跑（RUNNING）时才标为 live
+        fs::write(
+            &f,
+            concat!(
+                r#"{"step_index":0,"type":"USER_INPUT","status":"DONE","content":"<USER_REQUEST>画小猫钓鱼</USER_REQUEST>"}"#, "\n",
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"RUNNING","content":"生成中"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        let mut m2 = mk(&f);
+        refresh_live_flag(&mut m2);
+        assert!(m2.live);
     }
 
     #[test]

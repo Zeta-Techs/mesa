@@ -18,8 +18,16 @@ export interface WaitScreen {
   numbered: number;
   /** 屏上的网址（折到下一行的接上）；按出现顺序、去重 */
   links: string[];
-  /** 屏上在等人输入一段文字（「Paste code here」这类提示） */
+  /** 屏上在等人输入一段文字（「Paste code here」「Type your feedback」等） */
   typeIn: boolean;
+  /** 屏上有横向选择 / 翻页提示（←/→、横排 [ On ] Off 选项） */
+  horizontal?: boolean;
+  /** 屏上有复选框（[ ] / [✔] / ☐）或 Space 勾选提示 */
+  multiSelect?: boolean;
+  /** 屏上有 Tab 切换提示 */
+  tabKey?: boolean;
+  /** 屏上有 (y/n) / [Y/n] / [y/N] 确认提示 */
+  yesNo?: boolean;
 }
 
 const MAX_LINES = 16;
@@ -32,7 +40,12 @@ const QUESTION_END = /[?？:：]$/;
 const ASK = /^(?:Do you want|Would you like|Allow|Switch|Select|Choose|Are you sure|Apply|Proceed|Confirm|Paste|Enter)\b/i;
 const NUMBERED_LINE = /^\s*(?:[❯›>▶●]\s*)?(\d{1,2})[.)]\s+\S/;
 const URL = /https?:\/\/\S+/g;
-const TYPE_IN = /\b(?:paste|enter|type)\b.*\b(?:here|code|key|token)\b/i;
+const TYPE_IN =
+  /\b(?:paste|enter|type)\b.*\b(?:here|code|key|token|feedback|answer|response|something|password|value|path|name)\b|请输入|输入你的/i;
+const HORIZONTAL_HINT = /[←→]|\bleft\s*\/\s*right\b|\[\s*\S[^\]\n]{0,16}\s*\]\s{2,}\S/i;
+const MULTI_SELECT_HINT = /\[[ xX✔✓]\]|[☐☑☒]|\bspace\b.*\b(?:toggle|select|check)\b/i;
+const TAB_HINT = /\btab\b.*\b(?:switch|next|focus|move|select|navigate|toggle)\b|\b(?:switch|next)\b.*\btab\b/i;
+const YES_NO_HINT = /\(\s*y\s*\/\s*n\s*\)|\[\s*y\s*\/\s*n\s*\]|\(\s*yes\s*\/\s*no\s*\)/i;
 
 /** 启动字符画的一行（块字符、点、星占六成以上）：摘录与提示正文都不要它 */
 export function isArt(line: string): boolean {
@@ -93,6 +106,10 @@ export function waitScreenOf(raw: readonly string[]): WaitScreen | null {
     numbered: numberedCount(text),
     links: linksOf(text),
     typeIn: text.some((l) => TYPE_IN.test(l)),
+    horizontal: text.some((l) => HORIZONTAL_HINT.test(l)),
+    multiSelect: text.some((l) => MULTI_SELECT_HINT.test(l)),
+    tabKey: text.some((l) => TAB_HINT.test(l)),
+    yesNo: text.some((l) => YES_NO_HINT.test(l)),
   };
 }
 
@@ -134,14 +151,31 @@ function linksOf(text: readonly string[]): string[] {
 }
 
 /** 通用卡上的一下按键 */
-export type WaitKey = "up" | "down" | "enter" | "esc" | `digit:${number}` | `text:${string}`;
+export type WaitKey =
+  | "up"
+  | "down"
+  | "left"
+  | "right"
+  | "space"
+  | "tab"
+  | "enter"
+  | "esc"
+  | "char:y"
+  | "char:n"
+  | `digit:${number}`
+  | `text:${string}`;
 
 /** 按键对应写进终端的字节（回车由调用方按这家的提交键换，Kimi 是 CSI-u） */
 export function waitKeyBytes(key: WaitKey): string[] {
   if (key === "up") return ["\x1b[A"];
   if (key === "down") return ["\x1b[B"];
+  if (key === "right") return ["\x1b[C"];
+  if (key === "left") return ["\x1b[D"];
+  if (key === "space") return [" "];
+  if (key === "tab") return ["\t"];
   if (key === "enter") return ["\r"];
   if (key === "esc") return ["\x1b"];
+  if (key.startsWith("char:")) return [key.slice(5)];
   if (key.startsWith("digit:")) return [key.slice(6)];
   // 文字整段写一次再回车（Ink 的输入行接得住一整段）；换行压成空格，免得提前提交
   return [key.slice(5).replace(/[\r\n]+/g, " "), "\r"];

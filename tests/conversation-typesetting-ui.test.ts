@@ -193,3 +193,39 @@ test("排队气泡按这家 CLI 的行为写，「立即发送」只挂在最后
     await ui.close();
   }
 });
+
+test("最后一条助手消息的操作图标常显并带相对时间，更早消息和生成中保持悬停显示", async () => {
+  const ui = await mount();
+  try {
+    const recent = new Date(Date.now() - 18 * 60_000).toISOString();
+    const earlier = new Date(Date.now() - 90 * 60_000).toISOString();
+    const msgs = [
+      { role: "user", blocks: [block("text", "第一问")], timestamp: earlier, usage: null },
+      { role: "assistant", blocks: [block("text", "第一答")], timestamp: earlier, usage: null },
+      { role: "user", blocks: [block("text", "第二问")], timestamp: recent, usage: null },
+      { role: "assistant", blocks: [block("text", "第二答")], timestamp: recent, usage: null },
+    ];
+    await ui.render({ messages: msgs, onForkHere: () => {}, onQuote: () => {} });
+    const bars = Array.from(ui.el.querySelectorAll("[data-chat-actions]"));
+    // 2 条用户气泡 + 2 条助手回答；仅最后一条助手回答常显
+    const pinned = bars.filter((el) => el.getAttribute("data-chat-actions") === "pinned");
+    assert.equal(pinned.length, 1);
+    assert.match(pinned[0].className, /\bopacity-100\b/);
+    const timeEl = pinned[0].querySelector("[data-chat-time]");
+    assert.ok(timeEl);
+    assert.equal(timeEl.textContent, "18 分钟前");
+    assert.ok((timeEl.getAttribute("title") ?? "").length > 0);
+    // 较早的助手消息仍是悬停显示，但也带时间
+    const assistantHover = bars.filter(
+      (el) => el.getAttribute("data-chat-actions") === "hover" && el.querySelector("[data-chat-time]"),
+    );
+    assert.equal(assistantHover.length, 1);
+    assert.equal(assistantHover[0].querySelector("[data-chat-time]")?.textContent, "1 小时前");
+
+    // 正在生成新一轮时，上一条助手消息不再常显
+    await ui.render({ messages: msgs, working: true, onForkHere: () => {}, onQuote: () => {} });
+    assert.equal(ui.el.querySelectorAll('[data-chat-actions="pinned"]').length, 0);
+  } finally {
+    await ui.close();
+  }
+});

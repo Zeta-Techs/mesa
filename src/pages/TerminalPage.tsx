@@ -11,6 +11,8 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { saveClipboardImage } from "../clipboard-image";
+import { imageExtFromMime } from "../terminal-input";
 import "@xterm/xterm/css/xterm.css";
 import { sessionRuntimeKey, useAppStore, type PendingTerminal } from "../store";
 import type { ProjectSurfaceTab } from "../project-surface";
@@ -55,7 +57,12 @@ import ReaderOverlay from "../components/ReaderOverlay";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
 import type { SpotCheckSession } from "../spot-check";
 import { formatPdfExcerptPrompt, readerReuseKey, readerSessionFor } from "../reader";
-import { READER_BINDING_SLOT, taskBindingLaunch } from "../project-agents";
+import {
+  projectAgentLaunch,
+  READER_BINDING_SLOT,
+  taskBindingLaunch,
+  withProjectPreset,
+} from "../project-agents";
 import { defaultCommitMessage } from "../git-commit-message";
 import { pickResumeProfile, skipDisconnectedOfficial } from "../resume-profile";
 import {
@@ -181,6 +188,7 @@ import type {
 export type {
   CliPermissionNote,
   ConnIssueState,
+  QuotaLimitHint,
   FocusTabActions,
   LaunchPickState,
   NativePermissionMode,
@@ -738,7 +746,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // 终端选中文字交给对话（「Mesa内嵌终端优化」会话的右键菜单 / 选区浮条调 onConversationInsert）：
   // 这个标签在聊天层 → 进聊天输入框（send=true 直接发）；在终端层 → bracketed paste 写进 TUI 输入行，send 时补回车
   const [chatInsertByTab, setChatInsertByTab] = useState<
-    Record<string, { text: string; send: boolean; token: number }>
+    Record<string, { text: string; send: boolean; token: number; edit?: string }>
   >({});
   const [chatSearchByTab, setChatSearchByTab] = useState<Record<string, number>>({});
   const openChatSearch = useCallback((id: string) => setChatSearchByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 })), []);
@@ -1134,6 +1142,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cur.trustPrompt === s.trustPrompt &&
         cur.menuPrompt === s.menuPrompt &&
         cur.liveReply === s.liveReply &&
+        cur.liveReplySource === s.liveReplySource &&
+        cur.liveReplyStyled === s.liveReplyStyled &&
         cur.liveTokens === s.liveTokens &&
         cur.liveThinking === s.liveThinking &&
         cur.promptSuggestion === s.promptSuggestion &&
@@ -1432,6 +1442,16 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       返回 null 表示已写入，返回字符串为要展示给用户的提示。 */
   const injectToTab = useCallback(
     async (tabId: string, data: string, send?: boolean): Promise<string | null> => {
+      const mode = surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current;
+      // 聊天模式下非立即发送（如右栏划字「讨论/改写此段」或 PDF「问 AI」）：直接落进可见的聊天输入框，
+      // 而不是写进背后的隐藏终端里让用户看不见（2026-11-23）
+      if (!send && mode === "chat") {
+        setChatInsertByTab((prev) => ({
+          ...prev,
+          [tabId]: { text: data, send: false, token: Date.now() },
+        }));
+        return null;
+      }
       const s = statuses[tabId];
       if (!s?.running || !s.ptyId) {
         return "这段对话的 AI 没在运行，请先发一句或启动再试";
@@ -1472,7 +1492,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     [injectToActiveAgent],
   );
 
-  /** md 阅读视图选段「◈ 讨论/改写此段」：引用块格式注入，末尾引导行让用户接着补指令 */
+  /** md 阅读视图选段「◈ 讨论/改写此段」：聊天模式下直接放进可见输入框，终端模式下写入 PTY */
   const discussMdExcerpt = useCallback(
     (text: string, fileName: string, send?: boolean): Promise<string | null> => {
       // 注入上限保护：选段超过 4000 字截断
@@ -1481,10 +1501,43 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         .split("\n")
         .map((l) => `> ${l}`)
         .join("\n");
-      const data = `> 引自《${fileName}》的选段：\n>\n${quoted}\n\n（在这里输入你的意见：讨论、提问或要求改写）`;
+      const mode = surfaceModeRef.current[focusedId] ?? defaultSurfaceRef.current;
+      const data =
+        !send && mode === "chat"
+          ? `> 引自《${fileName}》：\n${quoted}\n\n`
+          : `> 引自《${fileName}》的选段：\n>\n${quoted}\n\n（在这里输入你的意见：讨论、提问或要求改写）`;
       return injectToActiveAgent(data, send);
     },
-    [injectToActiveAgent],
+    [injectToActiveAgent, focusedId],
+  );
+
+  /** 右栏图片 / Markdown 内嵌图 / Word 内嵌图「标出来问 AI / 标注 / 改图」：切到聊天标注台并挂入输入框 */
+  const editPreviewImageInChat = useCallback(
+    (absPath: string, leadText = "") => {
+      if (!focusedId) return;
+      setSurfaceModeByTab((prev) => ({ ...prev, [focusedId]: "chat" }));
+      setChatInsertByTab((prev) => ({
+        ...prev,
+        [focusedId]: { text: leadText, send: false, token: Date.now(), edit: absPath },
+      }));
+    },
+    [focusedId],
+  );
+
+  /** 右栏 PDF 圈选截图「◈ 发给 Agent」：把框出的图区落盘后直接送进左侧聊天标注台 */
+  const capturePdfImageToChat = useCallback(
+    async (blob: Blob, page: number, fileName: string): Promise<string | null> => {
+      if (!focusedId) return "请先打开一段对话";
+      try {
+        const ext = imageExtFromMime(blob.type || "image/png");
+        const savedPath = await saveClipboardImage(await blob.arrayBuffer(), ext);
+        editPreviewImageInChat(savedPath, `（截自《${fileName}》第 ${page} 页）\n`);
+        return null;
+      } catch (reason) {
+        return `截图落盘失败：${String(reason)}`;
+      }
+    },
+    [focusedId, editPreviewImageInChat],
   );
 
   /** 切换文件树根时关闭旧预览；脏文件先确认（异步内联确认框），且绝不映射新根下的同名文件。 */
@@ -2376,6 +2429,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     permissionTier?: "discuss" | "ask" | "auto" | "full" | null;
   }> {
     const st = useAppStore.getState();
+    const projects = await invoke<ProjectDto[]>("list_projects").catch(
+      () => [] as ProjectDto[],
+    );
+    const project = projects.find((p) => samePath(p.path, projectRoot, IS_WINDOWS));
     let research = true;
     try {
       const read = await invoke<{ config: { workMode?: string | null } }>(
@@ -2391,12 +2448,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         const binding = await invoke<
           { profile: string; model?: string | null; effort?: string | null; permissionTier?: string | null } | null
         >("get_project_agent_binding", { projectRoot, slot: READER_BINDING_SLOT });
-        const bound = taskBindingLaunch(st.profiles, binding);
+        const bound = withProjectPreset(taskBindingLaunch(st.profiles, binding), project?.defaultPresets);
         if (bound) return bound;
       } catch {
         /* 读不到按未绑定回落自动链，不让阅读区因注册表读取失败开不了会话 */
       }
     }
+    // 槽位「跟随默认」时优先走项目默认 Agent / 连接 / 模型 / 思考强度与权限预设
+    const projectDefault = projectAgentLaunch(
+      st.profiles,
+      project?.defaultAgent,
+      project?.defaultProfiles,
+      project?.defaultModels,
+      project?.defaultPresets,
+    );
+    if (projectDefault) return projectDefault;
     let agentId = "claude-code";
     try {
       const saved = JSON.parse(
@@ -2987,46 +3053,69 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const mailBusyRef = useRef(false);
   const pageVisibleRef = useRef(visible);
   pageVisibleRef.current = visible;
-  useEffect(() => {
-    const tick = async () => {
-      if (mailBusyRef.current) return;
-      mailBusyRef.current = true;
-      try {
-        for (const [tabId, st] of Object.entries(statusesRef.current)) {
-          if (!st?.running || st.shell || !st.runId || st.attention === "working" || st.attention === "confirm") continue;
-          if (draftByTabRef.current[tabId]) continue;
-          const action = tabActionsRef.current.get(tabId);
-          if (!action) continue;
-          let helpSent = false;
-          const helpError = await sendHelpDelivery(
-            st.runId,
-            (runId) => invoke<[string, string] | null>("help_delivery_take", { runId }),
-            (text) => { helpSent = true; return action.sendMessage(text); },
-            (id, runId) => invoke<void>("help_delivery_ack", { id, runId }),
-          ).catch((error) => `回答队列读取失败，未发送：${String(error)}`);
-          if (helpError) toast(helpError, "warning");
-          if (helpSent || helpError) continue;
-          // 你正对着它的终端层：可能在 TUI 里直接打字（聊天框草稿管不到），后台同伴来信先缓一轮，免得粘进你没打完的那行；
-          // 人亲手点的「交给 Agent 继续」（上方 sendHelpDelivery）是显式指令，不受终端层挡住（2026-11-14）
-          if (
-            pageVisibleRef.current &&
-            tabId === focusedIdRef.current &&
-            (surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current) === "terminal"
-          )
-            continue;
-          const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
-          if (!got) continue;
-          const [ids, text] = got;
-          const res = await action.sendMessage(text).catch((e) => ({ error: String(e) }));
-          if (res.error) await invoke("mail_requeue", { ids }).catch(() => {});
-        }
-      } finally {
-        mailBusyRef.current = false;
+  const helpDeliveryTick = useAppStore((s) => s.helpDeliveryTick);
+  const drainMailAndHelp = useCallback(async () => {
+    if (mailBusyRef.current) return;
+    mailBusyRef.current = true;
+    try {
+      for (const [tabId, st] of Object.entries(statusesRef.current)) {
+        if (!st?.running || st.shell || !st.runId || st.attention === "working" || st.attention === "confirm") continue;
+        if (draftByTabRef.current[tabId]) continue;
+        const action = tabActionsRef.current.get(tabId);
+        if (!action) continue;
+        let helpSent = false;
+        const helpError = await sendHelpDelivery(
+          st.runId,
+          (runId) => invoke<[string, string] | null>("help_delivery_take", { runId }),
+          (text) => { helpSent = true; return action.sendMessage(text); },
+          (id, runId) => invoke<void>("help_delivery_ack", { id, runId }),
+        ).catch((error) => `回答队列读取失败，未发送：${String(error)}`);
+        if (helpError) toast(helpError, "warning");
+        if (helpSent && !helpError) useAppStore.getState().bumpHelpRefresh();
+        if (helpSent || helpError) continue;
+        // 你正对着它的终端层：可能在 TUI 里直接打字（聊天框草稿管不到），后台同伴来信先缓一轮，免得粘进你没打完的那行；
+        // 人亲手点的「交给 Agent 继续」（上方 sendHelpDelivery）是显式指令，不受终端层挡住（2026-11-14）
+        if (
+          pageVisibleRef.current &&
+          tabId === focusedIdRef.current &&
+          (surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current) === "terminal"
+        )
+          continue;
+        const got = await invoke<[string[], string] | null>("mail_take", { runId: st.runId }).catch(() => null);
+        if (!got) continue;
+        const [ids, text] = got;
+        const res = await action.sendMessage(text).catch((e) => ({ error: String(e) }));
+        if (res.error) await invoke("mail_requeue", { ids }).catch(() => {});
       }
-    };
-    const timer = window.setInterval(() => void tick(), 15_000);
-    return () => window.clearInterval(timer);
+    } finally {
+      mailBusyRef.current = false;
+    }
   }, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => void drainMailAndHelp(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [drainMailAndHelp]);
+  // 人点「交给 Agent 继续」入队后立刻尝试投递，不等 15 秒轮询；250ms 补拍一次兜住刚切回/刚挂载的标签
+  useEffect(() => {
+    if (helpDeliveryTick === 0) return;
+    void drainMailAndHelp();
+    const retry = window.setTimeout(() => void drainMailAndHelp(), 250);
+    return () => window.clearTimeout(retry);
+  }, [helpDeliveryTick, drainMailAndHelp]);
+  // 任意对话刚结束一轮、变回空闲时立刻捞排队回答，不等 15 秒轮询
+  const prevReadyTabsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const readyNow = new Set<string>();
+    let becameReady = false;
+    for (const [tabId, st] of Object.entries(statuses)) {
+      if (st?.running && !st.shell && st.runId && st.attention !== "working" && st.attention !== "confirm") {
+        readyNow.add(tabId);
+        if (!prevReadyTabsRef.current.has(tabId)) becameReady = true;
+      }
+    }
+    prevReadyTabsRef.current = readyNow;
+    if (becameReady) void drainMailAndHelp();
+  }, [statuses, drainMailAndHelp]);
   // 一步分几路（2026-11-03 协作四期，fan-out.ts）：各路都写了做完标记，用这一步本来的复用键开收尾一路
   //（开工时拼好、存在 localStorage）；开了就删记录，三天还没到齐的不再等
   useEffect(() => {
@@ -4007,7 +4096,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         // 藏着的标签（没在看、也不在阅读区右栏）：记录照常刷新，不重画，露出来那一下再画
                         frozen={!tabVisible && !inReader}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
-                        metaSlots={chatMetaSlots[t.id] ?? null}
+                        metaSlots={chatOn && !peek ? (chatMetaSlots[t.id] ?? null) : null}
                         messages={forkChatMessages(
                           sessionByTab[t.id]?.conv ?? [],
                           forkPreview[t.id],
@@ -4143,6 +4232,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tuiPanel={sessionByTab[t.id]?.tuiPanel ?? false}
                         tuiNotice={sessionByTab[t.id]?.tuiNotice ?? null}
                         liveReply={sessionByTab[t.id]?.liveReply ?? null}
+                        liveReplySource={sessionByTab[t.id]?.liveReplySource ?? null}
+                        liveReplyStyled={sessionByTab[t.id]?.liveReplyStyled ?? null}
                         liveTokens={sessionByTab[t.id]?.liveTokens ?? null}
                         liveThinking={sessionByTab[t.id]?.liveThinking ?? null}
                         promptSuggestion={sessionByTab[t.id]?.promptSuggestion ?? null}
@@ -4186,6 +4277,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         onForkFrom={(text) => void forkChat(t.id, text)}
                         onReportMismatch={(from, card) => void reportChatMismatch(t.id, from, card ?? null)}
                         connIssue={sessionByTab[t.id]?.connIssue ?? null}
+                        quotaLimitHint={sessionByTab[t.id]?.quotaLimitHint ?? null}
+                        onApplyQuotaSwitch={(resend) =>
+                          tabActionsRef.current.get(t.id)?.applyQuotaSwitch(resend)
+                        }
+                        onDismissQuotaLimitHint={() =>
+                          tabActionsRef.current.get(t.id)?.dismissQuotaLimitHint()
+                        }
                         onSwitchConnection={(id) =>
                           tabActionsRef.current.get(t.id)?.switchConnection(id)
                         }
@@ -4290,7 +4388,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         contextUsed={lastContextTokens(sessionByTab[t.id]?.conv ?? [])}
                         onRelaunch={(patch) => tabActionsRef.current.get(t.id)?.relaunchWith(patch)}
                         colors={statusBarColors}
-                        chatMetaRef={chatBar ? chatMetaRefFor(t.id) : undefined}
+                        chatMetaRef={chatMetaRefFor(t.id)}
                       />
                     );
                   })()}
@@ -4752,6 +4850,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           cwdHint={preview.root ?? activeCwd}
                           maxFitMultiplier={1.5}
                           onAskAi={askAiFromPdf}
+                          onCaptureAgent={focusedId ? capturePdfImageToChat : undefined}
                           onOrganize={organizePdfExcerpt}
                           onOpenReader={() => void openReaderForPdf(preview.path)}
                         />
@@ -4759,6 +4858,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         <DocxPreview
                           path={preview.path}
                           cwdHint={preview.root ?? activeCwd}
+                          onEditImageInChat={focusedId ? editPreviewImageInChat : undefined}
                         />
                       ) : previewKind === "xlsx" ? (
                         <XlsxPreview
@@ -4777,6 +4877,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         <ImagePreview
                           path={preview.path}
                           cwdHint={preview.root ?? activeCwd}
+                          onEditInChat={focusedId ? () => editPreviewImageInChat(preview.path) : undefined}
                         />
                       ) : (
                         <FilePreviewEditor
@@ -4808,6 +4909,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           }
                           onDirtyChange={setPreviewDirty}
                           onDiscuss={discussMdExcerpt}
+                          onEditImageInChat={focusedId ? editPreviewImageInChat : undefined}
                           onOpenReader={
                             /\.(md|markdown)$/i.test(preview.path)
                               ? () => void openReaderForNote(preview.path)

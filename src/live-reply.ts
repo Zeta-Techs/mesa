@@ -18,6 +18,8 @@
  * OpenCode 1.19 是整屏重绘的分栏界面，对话区不按行排。这两家返回 null，聊天层退回「看实时输出」入口。
  */
 
+import type { ScreenCell } from "./screen-cells.ts";
+
 interface Layout {
   /** 输入框顶在第几行（之上是对话区）；-1 = 不在对话界面（信任菜单、登录页、全屏选择器） */
   boxTop(rows: readonly string[]): number;
@@ -93,6 +95,10 @@ interface Layout {
    * 读屏不拿它当这一轮的起点，见 {@link dropGhostEchoes}
    */
   ghostEcho?: boolean;
+  /**
+   * 提问回显折行顶格写（不额外缩进到回显正文列），直到空行 / 工具行 / 转圈行 / 横线为止都算用户提问（agy 长步骤简报回显）
+   */
+  echoUntilBlank?: boolean;
 }
 
 // 思考框左边那条竖线（Grok：Mesa 终端里是粗线 ┃，简化字形下是 │）
@@ -225,7 +231,8 @@ const LAYOUTS: Record<string, Layout> = {
   },
   agy: {
     // Antigravity CLI 1.5.8 抓屏：输入框包在上下两条 ──── 横线中间（`>` 或多行草稿），审批菜单时输入框收起（`> 1. Yes…` 下方无横线）；
-    // 工具行 `○  Running (...)` / `●  Ran (...)` 下跟 `  ⎿  ...` 缩进输出，思考与等待态是 `  ⣷  思考摘要`（续行缩进 5 格），正上方偶挂 `  └ Tip:`
+    // 工具行 `○  Running (...)` / `●  Ran (...)` 下跟 `  ⎿  ...` 缩进输出，思考与等待态是 `  ⣷  思考摘要`（续行缩进 5 格），正上方偶挂 `  └ Tip:`；
+    // 1.5.14 实测：另有折叠思考条 `▸ Thought for 47s, 1.2k tokens`、告警块 `⚠ Warning` + `  ⎿  ...`、以及输入框上方右对齐的 `1 artifact · /artifact to review`
     boxTop: (rows) =>
       lastBox(rows, (i) =>
         i > 0 &&
@@ -237,12 +244,15 @@ const LAYOUTS: Record<string, Layout> = {
       ),
     echo: /^>\s+\S/,
     ghostEcho: true,
+    echoUntilBlank: true,
     lead: null,
     tool: /^\s*[●○]\s/,
-    skip: /^─{8,}$|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)|^\s*└\s*Tip:/,
+    skip: /^\s*─{4,}\s*$|^─*\s*Conversation compacted\b|\bConversation compacted\s*─*$|^\s*…\s*\d+\s+more\s+(?:actions?|lines?|items?|tools?)\b|^\s*[▸▾]\s*Thought for \d|\b\d+\s+artifacts?\s*·\s*\/artifact\s+to\s+review\b|esc to cancel|\? for shortcuts|\(ctrl\+o to expand\)|shift\+tab to cycle|^\s*└\s*Tip:/i,
     wrapSkip: /^\s*(?:⎿|└\s*Tip:)/,
+    stderrNotice: /^\s*⚠\s/,
+    footNote: 24,
     thinkBlock: /^\s*[\u2800-\u28ff]\s+/,
-    thinkGutter: /^ {4,}/,
+    thinkGutter: /^ {3,}/,
     indent: 2,
   },
 };
@@ -422,9 +432,37 @@ export function sentTextStuckInBox(lines: readonly string[], agentId: string, se
  * anchored = 这一屏看得见这一轮的开头（用户回显或第一段助手行首），lines 就是整段；
  * 否则回复已经长过一屏、开头滚出去了，lines 只是屏上这一截，调用方用 {@link mergeLiveReply} 接到上一次读到的后面。
  */
+/** 读屏预览还原出的行内样式片段（从 xterm 单元格属性映射成聊天层语义排版，不照搬终端裸色） */
+export interface LiveStyledSpan {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  dim?: boolean;
+  /** 行内代码提示（带终端底色，或带前景色且长得像代码/路径/标识符） */
+  code?: boolean;
+  /** 带前景色但不像代码（彩色强调词、列表标记等） */
+  accent?: boolean;
+}
+
+/** 读屏预览还原出的一行（与 lines[i] 一一对应） */
+export interface LiveStyledLine {
+  text: string;
+  spans: LiveStyledSpan[];
+  /** 直角框线表格行（┌ ├ └ │）：等宽对齐渲染 */
+  table?: boolean;
+  /** 整行带终端底色的代码块行 */
+  codeBlock?: boolean;
+  /** 整行加粗的短小节标题行 */
+  heading?: boolean;
+}
+
 export interface LiveReplyRead {
   lines: string[];
   anchored: boolean;
+  /** 传入 rowCells 时一并抽出每行样式片段，与 lines 一一对应 */
+  styled?: LiveStyledLine[];
   /**
    * 屏顶那条回显认不准时的另一种读法：按「真回显刚好滚到第一行」读（多行提问的续行要跳过）。
    * lines 是按「钉在屏顶的提问」读的（anchored = false），{@link mergeLiveReply} 接不上上一次时才改用它
@@ -437,11 +475,13 @@ export interface LiveReplyRead {
   echo?: string;
 }
 
-/** italicRow：屏上第几行是斜体字（Layout.thinkItalic 的家用来认收起的思考；不给就只看文字） */
+/** italicRow：屏上第几行是斜体字（Layout.thinkItalic 的家用来认收起的思考；不给就只看文字）
+ *  rowCells：可选，读屏上第 row 行的单元格样式，用于把终端已渲染的粗体/斜体/代码/标题还原进聊天层实时预览 */
 export function extractLiveReply(
   lines: readonly string[],
   agentId: string,
   italicRow?: (row: number) => boolean,
+  rowCells?: (row: number) => readonly ScreenCell[],
 ): LiveReplyRead | null {
   const layout = LAYOUTS[agentId];
   if (!layout) return null;
@@ -455,7 +495,9 @@ export function extractLiveReply(
   if (boxTop < 0) return null;
   const away = layout.scrolledAway;
   if (away && rows.slice(Math.max(0, boxTop - 3), boxTop).some((l) => l.trim() !== "" && away.test(l.trim()))) return null;
-  const region0 = layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop);
+  const region0 = dropBannerBlocks(
+    layout.noticeBox ? dropNoticeBoxes(rows.slice(0, boxTop)) : rows.slice(0, boxTop),
+  );
   if (layout.footNote) dropFootNotes(region0, layout.footNote);
   // 收起的思考（斜体）换成空行：行号不变，下面照常认回显、行首与段落
   const region = layout.thinkItalic && italicRow ? region0.map((l, i) => (l.trim() && italicRow(i) ? "" : l)) : region0;
@@ -471,28 +513,28 @@ export function extractLiveReply(
   // 屏幕第一行的回显可能是钉住的提问（下面接的是回复中段，2026-10-19 用户：Codex 第 22 行起预览卡住、
   // 或者只剩下半截）。真回显下面先是续行、再空行、再是「•」开头的一段；对不上这个形状的一定是钉住的
   if (layout.pinnedEcho && echoAt === 0 && region.length > 1) {
-    const pinned = readReply(layout, region, 1, false);
+    const pinned = readReply(layout, region, 1, false, rowCells);
     if (!realEchoShape(layout, region)) return pinned;
-    const real0 = readReply(layout, region, echoStart(layout, region, 1), true);
+    const real0 = readReply(layout, region, echoStart(layout, region, 1), true, rowCells);
     const real = real0 ? { ...real0, echo: region[0] } : null;
     return pinned ? { ...pinned, ifRealEcho: real } : real;
   }
   if (echoAt >= 0) {
     const start = echoStart(layout, region, echoAt + 1);
-    const read = readReply(layout, region, start, !scrolledBelow(layout, region, start));
+    const read = readReply(layout, region, start, !scrolledBelow(layout, region, start), rowCells);
     return read ? { ...read, echo: region[echoAt] } : null;
   }
   if (layout.lead) {
     const lead = layout.lead;
     const first = region.findIndex((l) => lead.test(l) && !layout.tool.test(l));
-    if (first >= 0) return readReply(layout, region, first, true);
+    if (first >= 0) return readReply(layout, region, first, true, rowCells);
   }
   // 开头都滚出屏了（长回复，2026-10-17 用户：显示一半后就没了）：屏上这一截全是续行——续行都有缩进。
   // 顶上是没缩进的字（启动横幅、「Tips for getting started」、排队中的提问）说明这一轮的回复还没出来，
   // 不预览（2026-10-20 Windows 抓屏：Gemini 等 MCP 初始化时提问排着队、屏上还没有回显，横幅被当成回复）
-  const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()));
+  const firstText = region.find((l) => l.trim() && !BORDER.test(l.trim()) && !layout.skip.test(l));
   if (firstText !== undefined && firstText.length - firstText.trimStart().length < 2) return null;
-  return readReply(layout, region, 0, false);
+  return readReply(layout, region, 0, false, rowCells);
 }
 
 /** 输入框正上方右对齐的提示行换成空行（从下往上，跳过空行，遇到不够深的行为止） */
@@ -503,6 +545,37 @@ function dropFootNotes(region: string[], depth: number): void {
     if (l.length - l.trimStart().length < depth) return;
     region[i] = "";
   }
+}
+
+const BANNER_ART = /[▄▀█░▒▓▌▐▖▗▘▙▚▛▜▝▞▟]{2,}/;
+const BANNER_META = /\b(?:Antigravity CLI|Claude Code|Gemini CLI|Kimi Code|Grok Build)\s+v?\d/i;
+
+/**
+ * 去掉屏幕里的启动横幅像素画块（2026-11-21 用户 Antigravity CLI 1.5.14 截图：像素 logo 顶行缩进 6 格，
+ * 绕过「首行缩进 < 2」闸门，整块 Antigravity CLI 1.5.14 / Gemini API key / 模型 / 路径被拼进实时预览）。
+ * 连续两行以上含块字符像素画，或像素画行旁紧跟 CLI 版本标题行时整块置空，保持行号不变。
+ */
+function dropBannerBlocks(region: readonly string[]): string[] {
+  const out = [...region];
+  const isArtRow = (l: string) => {
+    const t = l.trim();
+    return t.length > 0 && !BORDER.test(t) && BANNER_ART.test(t);
+  };
+  let i = 0;
+  while (i < out.length) {
+    if (!isArtRow(out[i])) {
+      i++;
+      continue;
+    }
+    let j = i + 1;
+    while (j < out.length && isArtRow(out[j])) j++;
+    const slice = out.slice(i, j);
+    if (slice.length >= 2 || slice.some((l) => BANNER_META.test(l))) {
+      for (let k = i; k < j; k++) out[k] = "";
+    }
+    i = j;
+  }
+  return out;
 }
 
 /** 去掉顶格圆角框（╭ … ╰ 整块，含框里的行），换成空行保持行距 */
@@ -568,6 +641,21 @@ function dropGhostEchoes(layout: Layout, region: string[], echoAt: number): numb
 function echoStart(layout: Layout, region: readonly string[], start: number): number {
   const lead = layout.lead;
   if (!lead) {
+    if (layout.echoUntilBlank) {
+      // agy 长提问折行可能顶格或缩进 2 格，紧连到空行 / 工具行 / 思考转圈 / 分隔线为止都算提问回显（2026-11-21 用户截图）
+      while (
+        start < region.length &&
+        region[start].trim() &&
+        !layout.tool.test(region[start]) &&
+        !layout.thinkBlock?.test(region[start]) &&
+        !SPINNER.test(region[start]) &&
+        !BORDER.test(region[start].trim()) &&
+        !layout.skip.test(region[start])
+      ) {
+        start++;
+      }
+      return start;
+    }
     // 没有助手行首的（Grok）：提问续行对齐到回显正文那一列（「     > 」之后，缩进 7），回复正文只缩进 5。
     // 缩进够到回显正文列的非空行都是提问续行（含长提问被折成「2. … …」的末行），到空行或缩进回到正文列为止
     // （2026-10-21 用户 Windows 截图：七行清单提问的续行被当成回复，聊天层已有的段落跟着又画一遍）
@@ -624,19 +712,187 @@ function tableRows(region: readonly string[]): boolean[] {
   return out;
 }
 
-function readReply(layout: Layout, region: readonly string[], start: number, anchored: boolean): LiveReplyRead | null {
-  const dedent = (raw: string) => {
+const CODE_SYMBOL = /[/_=<>(){}[\]$`~\\|@#%^&*+.:-]/;
+
+/** 仅带前景色（无底色）的片段像不像代码 / 路径 / 标识符，而不是中文彩色提示词或列表符号 */
+function looksLikeInlineCode(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (/^[-*•+‣◦]$|^\d+[.)]$/.test(t)) return false;
+  if (/[，。、；：？！「」『』【】（）]/.test(t)) return false;
+  let ascii = 0;
+  let han = 0;
+  for (const ch of t) {
+    if (ch <= "\x7f" && !/\s/.test(ch)) ascii++;
+    else if (/\p{Script=Han}/u.test(ch)) han++;
+  }
+  if (ascii === 0) return false;
+  if (han > 0) return CODE_SYMBOL.test(t) && ascii >= han;
+  return true;
+}
+
+interface RawSpan {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strike: boolean;
+  dim: boolean;
+  bg: boolean;
+  hasFg: boolean;
+}
+
+function buildStyledLine(
+  text: string,
+  cells: readonly ScreenCell[] | undefined,
+  trimLeft: number,
+  table: boolean,
+): LiveStyledLine {
+  if (!text) return { text, spans: [] };
+  if (!cells || cells.length === 0) {
+    return table ? { text, spans: [{ text }], table: true } : { text, spans: [{ text }] };
+  }
+  const start = trimLeft;
+  const end = trimLeft + text.length;
+  const raw: RawSpan[] = [];
+  let pos = 0;
+  for (const c of cells) {
+    const ch = c.ch.replace(/[\uFE0E\uFE0F]/g, "");
+    const len = ch.length;
+    if (len === 0) continue;
+    const cStart = pos;
+    const cEnd = pos + len;
+    pos = cEnd;
+    if (cEnd <= start) continue;
+    if (cStart >= end) break;
+    const slice = ch.slice(Math.max(0, start - cStart), Math.min(len, end - cStart));
+    if (!slice) continue;
+    const bold = Boolean(c.bold);
+    const italic = Boolean(c.italic);
+    const underline = Boolean(c.underline);
+    const strike = Boolean(c.strike);
+    const dim = Boolean(c.dim);
+    const bg = Boolean(c.bg);
+    const hasFg = Boolean(c.fg);
+    const prev = raw[raw.length - 1];
+    if (
+      prev &&
+      prev.bold === bold &&
+      prev.italic === italic &&
+      prev.underline === underline &&
+      prev.strike === strike &&
+      prev.dim === dim &&
+      prev.bg === bg &&
+      prev.hasFg === hasFg
+    ) {
+      prev.text += slice;
+    } else {
+      raw.push({ text: slice, bold, italic, underline, strike, dim, bg, hasFg });
+    }
+  }
+  // 防御：宽字符 / 变体选择符极端错位时回退成纯文本，保证展示文字与 lines 严格一致
+  if (raw.map((s) => s.text).join("") !== text) {
+    return table ? { text, spans: [{ text }], table: true } : { text, spans: [{ text }] };
+  }
+
+  let nonSpaceChars = 0;
+  let bgNonSpaceChars = 0;
+  let allBold = true;
+  for (const r of raw) {
+    for (const ch of r.text) {
+      if (/\s/.test(ch)) continue;
+      nonSpaceChars++;
+      if (r.bg) bgNonSpaceChars++;
+      if (!r.bold) allBold = false;
+    }
+  }
+  const trimmed = text.trim();
+  const fullBg = nonSpaceChars > 0 && bgNonSpaceChars * 5 >= nonSpaceChars * 4;
+  // 整行带底色的只有像代码的行才当代码块（Codex 用户回显、中文提示条整行也有浅灰底，不能套成代码块）
+  const codeBlock = !table && fullBg && looksLikeInlineCode(trimmed);
+  const heading =
+    !table &&
+    !codeBlock &&
+    nonSpaceChars > 0 &&
+    allBold &&
+    trimmed.length <= 80 &&
+    !/^(?:[-*•+‣◦]|\d+[.)])\s/.test(trimmed) &&
+    !/[。；;!?！？]$/.test(trimmed);
+
+  const spans: LiveStyledSpan[] = [];
+  for (const r of raw) {
+    const span: LiveStyledSpan = { text: r.text };
+    if (r.bold && !heading) span.bold = true;
+    if (r.italic) span.italic = true;
+    if (r.underline) span.underline = true;
+    if (r.strike) span.strike = true;
+    if (r.dim) span.dim = true;
+    if (!table && !codeBlock && !heading) {
+      if (r.bg && r.text.trim() && (!fullBg || looksLikeInlineCode(r.text))) {
+        span.code = true;
+      } else if (r.hasFg && !r.bold && !r.dim && !r.underline) {
+        if (looksLikeInlineCode(r.text)) span.code = true;
+        else if (r.text.trim()) span.accent = true;
+      }
+    }
+    const prev = spans[spans.length - 1];
+    if (
+      prev &&
+      Boolean(prev.bold) === Boolean(span.bold) &&
+      Boolean(prev.italic) === Boolean(span.italic) &&
+      Boolean(prev.underline) === Boolean(span.underline) &&
+      Boolean(prev.strike) === Boolean(span.strike) &&
+      Boolean(prev.dim) === Boolean(span.dim) &&
+      Boolean(prev.code) === Boolean(span.code) &&
+      Boolean(prev.accent) === Boolean(span.accent)
+    ) {
+      prev.text += span.text;
+    } else {
+      spans.push(span);
+    }
+  }
+
+  const out: LiveStyledLine = { text, spans };
+  if (table) out.table = true;
+  if (codeBlock) out.codeBlock = true;
+  if (heading) out.heading = true;
+  return out;
+}
+
+function readReply(
+  layout: Layout,
+  region: readonly string[],
+  start: number,
+  anchored: boolean,
+  rowCells?: (row: number) => readonly ScreenCell[],
+): LiveReplyRead | null {
+  const dedentCount = (raw: string) => {
     let n = 0;
     while (n < layout.indent && raw[n] === " ") n++;
-    return raw.slice(n);
+    return n;
   };
   const table = tableRows(region);
-  const out: string[] = [];
+  const out: Array<{ text: string; styled?: LiveStyledLine }> = [];
+  const pushRow = (at: number, text: string, trimLeft: number, isTable: boolean) => {
+    out.push({
+      text,
+      styled: rowCells ? buildStyledLine(text, rowCells(at), trimLeft, isTable) : undefined,
+    });
+  };
   let inTool = false;
   let inWrapSkip = false;
+  let toolParenDepth = 0;
   let inNotice = false;
   let inThink = false;
   let thinkBody = false;
+  const parenDelta = (s: string) => {
+    let d = 0;
+    for (const ch of s) {
+      if (ch === "(") d++;
+      else if (ch === ")") d--;
+    }
+    return d;
+  };
   for (let at = start; at < region.length; at++) {
     const raw0 = region[at];
     const raw = layout.tail ? raw0.replace(layout.tail, "") : raw0;
@@ -644,6 +900,7 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
     if (layout.thinkBlock?.test(raw)) {
       inThink = true;
       thinkBody = false;
+      toolParenDepth = 0;
       continue;
     }
     // 头一行下面紧跟的空行还在框里（Kimi 2.5，同 extractLiveThinking）
@@ -654,43 +911,76 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
     }
     inThink = false;
     if (table[at]) {
-      if (!inTool) out.push(dedent(raw));
+      toolParenDepth = 0;
+      if (!inTool) {
+        const n = dedentCount(raw);
+        pushRow(at, raw.slice(n), n, true);
+      }
       continue;
     }
-    if (BORDER.test(t) || SPINNER.test(raw)) continue;
+    if (BORDER.test(t) || SPINNER.test(raw)) {
+      toolParenDepth = 0;
+      continue;
+    }
     if (layout.stderrNotice?.test(raw)) {
       inNotice = true;
+      toolParenDepth = 0;
       continue;
     }
     if (inNotice && t && !/^\s/.test(raw) && !layout.lead?.test(raw)) continue;
     inNotice = false;
     if (layout.tool.test(raw)) {
-      // 有行首符号的几家：工具块一直到下一段正文；Grok 没有行首符号，只跳这一行
+      // 有行首符号的几家：工具块一直到下一段正文；无行首符号的家（Grok / agy）跳这一行及其折行续行
       inTool = layout.lead !== null;
+      if (layout.lead === null) {
+        inWrapSkip = true;
+        toolParenDepth = Math.max(0, parenDelta(raw));
+      } else {
+        toolParenDepth = 0;
+      }
       continue;
+    }
+    // 无行首符号的家（agy 等）工具摘要折行（如 `● Edit file (Update ...` 括号未闭合折到下一行，缩进 2 格）：
+    // 一直跳过直到括号闭合、省略号收尾或空行（2026-11-21 用户截图回归）
+    if (toolParenDepth > 0) {
+      if (t && raw.length - raw.trimStart().length >= layout.indent && !layout.wrapSkip?.test(raw) && !layout.skip.test(raw)) {
+        toolParenDepth = /(?:\.\.\.|…)\s*$/.test(t) ? 0 : Math.max(0, toolParenDepth + parenDelta(raw));
+        continue;
+      }
+      toolParenDepth = 0;
     }
     if (inWrapSkip && t && raw.length - raw.trimStart().length > layout.indent && !layout.lead?.test(raw)) continue;
     inWrapSkip = Boolean(layout.wrapSkip?.test(raw));
     if (inWrapSkip || layout.skip.test(raw)) continue;
     if (layout.lead?.test(raw)) {
       inTool = false;
-      const text = raw.replace(layout.lead, "");
+      const m = layout.lead.exec(raw);
+      const cut = m ? m[0].length : 0;
+      const text = raw.slice(cut);
       // 只有行首符号没字 = 下一段还没出来的占位
-      if (text.trim()) out.push(text);
+      if (text.trim()) pushRow(at, text, cut, false);
       continue;
     }
     if (inTool) continue;
-    out.push(dedent(raw));
+    const n = dedentCount(raw);
+    pushRow(at, raw.slice(n), n, false);
   }
   // 头尾空行去掉，中间连续空行压成一行
-  const compact: string[] = [];
-  for (const l of out) {
-    if (!l.trim() && (!compact.length || !compact[compact.length - 1].trim())) continue;
-    compact.push(l);
+  const compact: Array<{ text: string; styled?: LiveStyledLine }> = [];
+  for (const item of out) {
+    if (!item.text.trim() && (!compact.length || !compact[compact.length - 1].text.trim())) continue;
+    compact.push(item);
   }
-  while (compact.length && !compact[compact.length - 1].trim()) compact.pop();
-  while (compact.length && !compact[0].trim()) compact.shift();
-  return compact.length ? { lines: compact, anchored } : null;
+  while (compact.length && !compact[compact.length - 1].text.trim()) compact.pop();
+  while (compact.length && !compact[0].text.trim()) compact.shift();
+  if (!compact.length) return null;
+  const lines = compact.map((c) => c.text);
+  if (!rowCells) return { lines, anchored };
+  return {
+    lines,
+    anchored,
+    styled: compact.map((c) => c.styled ?? { text: c.text, spans: c.text ? [{ text: c.text }] : [] }),
+  };
 }
 
 /**
@@ -704,33 +994,115 @@ function readReply(layout: Layout, region: readonly string[], start: number, anc
  * 两行以上（或一直对到上一次的结尾，最后一行可以只写了半截）就算找到了。
  * 找不到时：屏上这一截大半上一次已经有了 = 重画没对上，这次不接；大半是新的 = 两次读之间滚过了一整屏，直接接上。
  */
-export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRead): string[] | null {
+function plainStyled(lines: readonly string[]): LiveStyledLine[] {
+  return lines.map((text) => ({ text, spans: text ? [{ text }] : [] }));
+}
+
+function spliceCut(prev: readonly string[], cut: number, next: readonly string[], lead: number): number {
+  let end = cut;
+  for (let k = lead - 1; k >= 0 && end > 0; k--) {
+    const h = prev[end - 1];
+    if (norm(h) || !h.trim() !== !next[k].trim()) break;
+    end--;
+  }
+  return end;
+}
+
+/**
+ * 把屏上这一截（文本行 + 可选样式行）同步接到上一次后面，确保 lines 与 styled 始终 1:1 下标对齐。
+ */
+export function mergeLiveReplyStyled(
+  prev: { lines: readonly string[]; styled?: readonly LiveStyledLine[] | null } | null,
+  read: LiveReplyRead,
+): { lines: string[]; styled: LiveStyledLine[] | null } | null {
+  const prevLines = prev?.lines ?? null;
+  const hasStyled = Boolean(prev?.styled || read.styled || read.ifRealEcho?.styled);
+  const prevStyled = prevLines ? (prev?.styled ?? (hasStyled ? plainStyled(prevLines) : null)) : null;
+  const readStyled = read.styled ?? (hasStyled ? plainStyled(read.lines) : null);
+
   if (read.anchored) {
-    // 看得见开头时以整段为准；但「开头」其实缺了前几行时（Grok 卷动的过渡帧：回显还钉在屏顶、回复头一两行已被裁掉，
-    // 「▲」还没画出来，2026-10-22 抓屏），上一次的开头留着，不然预览从中段开始
-    if (prev?.length) {
-      const p = keyedLines(prev);
+    if (prevLines?.length) {
+      const p = keyedLines(prevLines);
       const n = keyedLines(read.lines);
       const known = new Set(n.map((x) => x.key));
       const at = n.length && p.length && !known.has(p[0].key) ? alignTop(p, n) : -1;
-      if (at > 0) return spliceAt(prev, p[at].at, read.lines, n[0].at);
+      if (at > 0) {
+        const end = spliceCut(prevLines, p[at].at, read.lines, n[0].at);
+        return {
+          lines: [...prevLines.slice(0, end), ...read.lines],
+          styled: hasStyled && prevStyled && readStyled ? [...prevStyled.slice(0, end), ...readStyled] : null,
+        };
+      }
     }
-    return read.lines;
+    return { lines: read.lines, styled: read.styled ?? null };
   }
   const real = read.ifRealEcho ?? null;
-  // 没见过这一轮的开头（回显 / ⏺），屏上这一截不知道是不是这一轮的：不预览
-  if (!prev?.length) return real?.lines ?? null;
+  if (!prevLines?.length) {
+    return real ? { lines: real.lines, styled: real.styled ?? null } : null;
+  }
   const next = read.lines;
-  const p = keyedLines(prev);
+  const p = keyedLines(prevLines);
   const n = keyedLines(next);
-  if (!n.length) return prev.slice();
+  if (!n.length) {
+    return { lines: prevLines.slice(), styled: prevStyled ? prevStyled.slice() : null };
+  }
   const at = alignTop(p, n);
-  if (at >= 0) return spliceAt(prev, p[at].at, next, n[0].at);
-  // 屏顶的回显其实是真回显（多行提问刚好滚到第一行）：屏上就是整段，开头应与上一次相同
-  if (real && real.lines[0] === prev[0]) return real.lines;
+  if (at >= 0) {
+    const end = spliceCut(prevLines, p[at].at, next, n[0].at);
+    return {
+      lines: [...prevLines.slice(0, end), ...next],
+      styled: hasStyled && prevStyled && readStyled ? [...prevStyled.slice(0, end), ...readStyled] : null,
+    };
+  }
+  if (real && real.lines[0] === prevLines[0]) {
+    return { lines: real.lines, styled: real.styled ?? null };
+  }
   const known = new Set(p.map((x) => x.key));
-  if (n.filter((x) => known.has(x.key)).length * 2 >= n.length) return prev.slice();
-  return [...prev, ...next];
+  if (n.filter((x) => known.has(x.key)).length * 2 >= n.length) {
+    return { lines: prevLines.slice(), styled: prevStyled ? prevStyled.slice() : null };
+  }
+  return {
+    lines: [...prevLines, ...next],
+    styled: hasStyled && prevStyled && readStyled ? [...prevStyled, ...readStyled] : null,
+  };
+}
+
+export function mergeLiveReply(prev: readonly string[] | null, read: LiveReplyRead): string[] | null {
+  return mergeLiveReplyStyled(prev ? { lines: prev } : null, read)?.lines ?? null;
+}
+
+/** 按匀速显示（useRevealedText）的字符上限裁切样式行，保持与纯文本拼接（join("\n")）严格等长 */
+export function sliceStyledLines(lines: readonly LiveStyledLine[], maxChars: number): LiveStyledLine[] {
+  if (maxChars <= 0 || lines.length === 0) return [];
+  const out: LiveStyledLine[] = [];
+  let rem = maxChars;
+  for (let i = 0; i < lines.length && rem > 0; i++) {
+    if (i > 0) {
+      rem -= 1; // "\n"
+      if (rem <= 0) break;
+    }
+    const line = lines[i];
+    if (line.text.length <= rem) {
+      out.push(line);
+      rem -= line.text.length;
+      continue;
+    }
+    const slicedSpans: LiveStyledSpan[] = [];
+    let spanRem = rem;
+    for (const sp of line.spans) {
+      if (spanRem <= 0) break;
+      if (sp.text.length <= spanRem) {
+        slicedSpans.push(sp);
+        spanRem -= sp.text.length;
+      } else {
+        slicedSpans.push({ ...sp, text: sp.text.slice(0, spanRem) });
+        spanRem = 0;
+      }
+    }
+    out.push({ ...line, text: line.text.slice(0, rem), spans: slicedSpans });
+    rem = 0;
+  }
+  return out;
 }
 
 /**
@@ -755,20 +1127,6 @@ function alignTop(p: readonly Keyed[], n: readonly Keyed[]): number {
     }
   }
   return best;
-}
-
-/**
- * 上一次的前 cut 行 + 屏上这一截。屏顶先是空行 / 表格边框这类没字的行（next 的前 lead 行）时，上一次在那个位置的同类行
- * 换成屏上的，一行对一行（都空或都不空才换），免得表格下沿、段落间的空行接出两份
- */
-function spliceAt(prev: readonly string[], cut: number, next: readonly string[], lead: number): string[] {
-  let end = cut;
-  for (let k = lead - 1; k >= 0 && end > 0; k--) {
-    const h = prev[end - 1];
-    if (norm(h) || !h.trim() !== !next[k].trim()) break;
-    end--;
-  }
-  return [...prev.slice(0, end), ...next];
 }
 
 interface Keyed {
@@ -825,9 +1183,9 @@ function linesKnown(lines: readonly string[], before: readonly string[] | null):
  * 只去开头连着的、按顺序能在提问里找到的行；短行（折行剩下的「pdf」、回复里的「好的」）只在紧接上一行时才算。
  * 回复第一行一旦对不上，后面一律保留
  */
-export function dropAskedEcho(live: readonly string[], asked: string): string[] {
+export function dropAskedEchoOffset(live: readonly string[], asked: string): number {
   const q = norm(asked);
-  if (!q) return [...live];
+  if (!q) return 0;
   let pos = -1;
   let i = 0;
   while (i < live.length) {
@@ -839,7 +1197,11 @@ export function dropAskedEcho(live: readonly string[], asked: string): string[] 
     }
     i++;
   }
-  return live.slice(i);
+  return i;
+}
+
+export function dropAskedEcho(live: readonly string[], asked: string): string[] {
+  return live.slice(dropAskedEchoOffset(live, asked));
 }
 
 /**
@@ -864,10 +1226,24 @@ export function sameAsPrevReply(live: readonly string[], prev: string): boolean 
 }
 
 /**
+ * 扩展防串轮：紧邻上一轮按 `sameAsPrevReply` 直接拦截；若读屏整段较长（≥2 行且 ≥40 个有效字符）且全部落在更早轮次
+ * 已落盘的正文里（例如当前轮长时间跑工具、终端画面还留着两轮前的长回复），同样判定为旧回复不予展示；
+ * 短句（如「好的」）只跟紧邻上一轮比，避免误伤新回复里的常见短句。
+ */
+export function sameAsEarlierReply(live: readonly string[], prevTurn: string, earlierTurns: string): boolean {
+  if (sameAsPrevReply(live, prevTurn)) return true;
+  if (!earlierTurns) return false;
+  const keys = live.map(norm).filter(Boolean);
+  const totalLen = keys.reduce((acc, k) => acc + k.length, 0);
+  if (keys.length < 2 || totalLen < 40) return false;
+  return sameAsPrevReply(live, earlierTurns);
+}
+
+/**
  * 去掉聊天层已经有了的行：从第一行「会话里还没有」的开始往后都算实时部分。
  * synced = 最近几条助手消息的正文（调用方拼好）
  */
-export function unsyncedTail(live: readonly string[], synced: string): string[] {
+export function unsyncedTailOffset(live: readonly string[], synced: string): number {
   const done = norm(synced);
   // 会话文件按顺序落盘：最后一行「够长、已落盘」的及其之前都算过去了。前面混进来的非回复行（提问续行、工具输出）
   // 原先让「从第一行没落盘的起」从头算起，已落盘的段落整段又画一遍（2026-10-21 Grok 截图）。短行到处对得上，不当锚
@@ -876,10 +1252,14 @@ export function unsyncedTail(live: readonly string[], synced: string): string[] 
     const n = norm(l);
     if (n.length >= 8 && done.includes(n)) from = i + 1;
   });
-  const idx = live.findIndex((l, i) => {
+  return live.findIndex((l, i) => {
     if (i < from) return false;
     const n = norm(l);
     return n.length > 0 && !done.includes(n);
   });
+}
+
+export function unsyncedTail(live: readonly string[], synced: string): string[] {
+  const idx = unsyncedTailOffset(live, synced);
   return idx < 0 ? [] : live.slice(idx);
 }

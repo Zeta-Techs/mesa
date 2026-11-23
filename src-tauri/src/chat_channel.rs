@@ -3126,7 +3126,8 @@ pub(crate) fn program_status_report(pty_id: &str, report: &crate::program_status
 }
 
 /// agy 开了全局 hooks 时（SessionStart / PreInvocation / PreToolUse / PostToolUse / Stop）缺 Notification /
-/// PermissionRequest：只取 OSC 7501 的 Blocked 补审批提醒、Working 收掉已答的审批，回合开关仍由 hooks 管
+/// PermissionRequest：取 OSC 7501 的 Blocked 补审批提醒、Working 收掉已答的审批，并在 Done / Idle / Error 时同步收尾
+/// （避免 agy 漏发 Stop hook 或带非 end_turn reason 时回合永远卡在「还在回复」，2026-11-23 用户截图）
 pub(crate) fn map_agy_hooks_program_status(
     r: &crate::program_status::Report,
     turn: &Option<TurnDto>,
@@ -3144,6 +3145,10 @@ pub(crate) fn map_agy_hooks_program_status(
         State::Working if turn.as_ref().is_some_and(|tr| tr.status == "awaiting_approval") => {
             vec![ChannelEvent::ApprovalResolved { request_id: None }]
         }
+        State::Done | State::Idle if is_open(turn) => vec![ChannelEvent::TurnEnd { reason: None }],
+        State::Error if is_open(turn) => vec![ChannelEvent::TurnEnd {
+            reason: Some("error".into()),
+        }],
         _ => Vec::new(),
     }
 }
@@ -3235,20 +3240,19 @@ pub fn chat_channel_snapshot(tab_id: String) -> Option<ChannelSnapshot> {
     Some(snap)
 }
 
-/// hooks 家（Claude Code）的回合在会话文件里已经收尾、旁路却还开着时收掉它：在审批菜单里拒绝工具或按 Esc 打断，
-/// Claude 不触发 Stop hook，回合一直开着，聊天层挂着「正在回复」（2026-10-21 用户实测：拒绝两个工具后终端已结束、
-/// 聊天层 1 分半仍在回复；三平台都有）。会话文件里有收尾标记（打断记一行 user「[Request interrupted…]」、
-/// 一轮结束记 system/turn_duration），时间晚于这一轮开始才算。前端读会话文件时顺带问；收了返回 true。
-/// Kimi Code 2.6.1 起一轮说完根本不触发 Stop hook（sessions::kimi_turn_end_after），同样靠会话文件收；
-/// Kimi 的 hook 不带会话文件路径，按 hook 报来的会话 id 找
+/// hooks 家（Claude Code / Kimi / agy）或 agy 的 program-status 旁路在会话文件里已经收尾、旁路却还开着时收掉它：
+/// - Claude 在审批菜单里拒绝工具或按 Esc 打断不触发 Stop hook；
+/// - Kimi Code 2.6.1 起一轮说完不触发 Stop hook（sessions::kimi_turn_end_after）；
+/// - Antigravity CLI 1.5.14 在长回合或生成 artifact 后偶发未发 Stop / OSC 7501 Idle（2026-11-23 用户截图），
+///   `program-status` 旁路本身不带会话路径，由前端透传 `file_path` 经 `sessions::agy_turn_end_after` 核对时间戳后收掉。
 #[tauri::command]
-pub async fn chat_channel_settle_from_transcript(tab_id: String) -> bool {
-    tauri::async_runtime::spawn_blocking(move || settle_from_transcript(&tab_id))
+pub async fn chat_channel_settle_from_transcript(tab_id: String, file_path: Option<String>) -> bool {
+    tauri::async_runtime::spawn_blocking(move || settle_from_transcript(&tab_id, file_path.as_deref()))
         .await
         .unwrap_or(false)
 }
 
-fn settle_from_transcript(tab_id: &str) -> bool {
+fn settle_from_transcript(tab_id: &str, hint_path: Option<&str>) -> bool {
     let Some(ch) = channel_for_tab(tab_id) else {
         return false;
     };
@@ -3258,7 +3262,17 @@ fn settle_from_transcript(tab_id: &str) -> bool {
         };
         let open = t.snap.turn.as_ref().filter(|turn| turn.ended_at.is_none());
         match (t.snap.kind, open) {
-            ("hooks", Some(turn)) if matches!(t.snap.agent.as_str(), "claude-code" | "kimi") => (
+            ("hooks", Some(turn))
+                if matches!(t.snap.agent.as_str(), "claude-code" | "kimi" | "agy") =>
+            {
+                (
+                    t.snap.agent.clone(),
+                    t.snap.transcript_path.clone(),
+                    t.snap.session_id.clone(),
+                    turn.started_at,
+                )
+            }
+            ("program-status", Some(turn)) if t.snap.agent == "agy" => (
                 t.snap.agent.clone(),
                 t.snap.transcript_path.clone(),
                 t.snap.session_id.clone(),
@@ -3275,6 +3289,15 @@ fn settle_from_transcript(tab_id: &str) -> bool {
             return false;
         };
         crate::sessions::kimi_turn_end_after(Path::new(&path), started)
+    } else if agent == "agy" {
+        let resolved = path
+            .or_else(|| hint_path.filter(|p| !p.trim().is_empty()).map(str::to_string))
+            .or_else(|| {
+                session_id
+                    .and_then(|sid| crate::sessions::find_session_sync("agy", &sid))
+                    .map(|meta| meta.file_path)
+            });
+        resolved.and_then(|p| crate::sessions::agy_turn_end_after(Path::new(&p), started))
     } else {
         // 只认这一轮开始之后的标记：上一轮的 turn_duration 一定早于这一轮的 UserPromptSubmit
         path.and_then(|path| crate::sessions::claude_turn_end_after(Path::new(&path), started))
@@ -4617,6 +4640,18 @@ mod tests {
         }
         assert!(t.snap.approval.is_none());
         assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("running"));
+
+        // OSC 7501 报 Idle / Done 时也能直接收掉已开的 agy hooks 回合（防漏发 Stop 永久转圈）
+        let idle = crate::program_status::Report {
+            state: crate::program_status::State::Idle,
+            kind: None,
+            msg: None,
+        };
+        for ev in map_agy_hooks_program_status(&idle, &t.snap.turn) {
+            t.apply(ev, 50);
+        }
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("completed"));
+        assert!(t.snap.turn.as_ref().and_then(|x| x.ended_at).is_some());
     }
 }
 
@@ -4932,7 +4967,7 @@ mod e2e {
                 }
             }
             // 同前端读会话文件时顺带问的那一下（chat_channel_settle_from_transcript）
-            if answered.as_deref() == Some("终端菜单 Esc") && settle_from_transcript("e2e-tab") {
+            if answered.as_deref() == Some("终端菜单 Esc") && settle_from_transcript("e2e-tab", None) {
                 println!("{agent}: 会话文件收尾收掉了回合");
             }
             let ran = last.turn.as_ref().is_some_and(|t| t.status == "completed" || t.status == "cancelled");

@@ -391,11 +391,9 @@ export default function TerminalStatusBar({
       ? () => onTuiCommand("/compact")
       : null;
   // 底栏不再单写的两件事收进圆环点开的浮层（2026-10-23 进悬停，2026-11-20 挪进浮层）：这段对话累计多少、经哪条连接
-  const ringExtra = [
-    ...(usage && usageTotal(usage) > 0 ? [`累计 ${fmtTokensZh(usageTotal(usage))} token`] : []),
-    // 连接名就是 Agent 名（官方账号）时不重复写
-    ...(profileName && profileName !== agentLabel ? [`经「${profileName}」`] : []),
-  ];
+  const ringTotalTokens = usage && usageTotal(usage) > 0 ? fmtTokensZh(usageTotal(usage)) : null;
+  // 连接名就是 Agent 名（官方账号）时不重复写
+  const ringProfileName = profileName && profileName !== agentLabel ? profileName : null;
   const [cwdMenuOpen, setCwdMenuOpen] = useState(false);
   const [cwdDraft, setCwdDraft] = useState("");
 
@@ -1125,7 +1123,7 @@ export default function TerminalStatusBar({
       {/* 右区：时长 · token（等宽小字）。聊天变体（2026-10-23 照 Claude 客户端收字）：上下文圆环 + 模型 · 思考芯片（聊天层挂进来）；
           这段对话用了多少、经哪条连接收进圆环点开的浮层。窗口大小不知道的家（如 Grok）没有圆环，照旧写 token 数 */}
       {chat ? (
-        <span className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-l4">
+        <span key="chat-right" className="ml-auto flex min-w-0 shrink-0 items-center gap-1.5 text-l4">
           {!ownHidden && ring ? (
             <ContextRing
               showPercent
@@ -1135,7 +1133,8 @@ export default function TerminalStatusBar({
               agentId={status?.agentId ?? ""}
               breakdown={breakdownRequest(status)}
               onCompact={compact}
-              extra={ringExtra}
+              totalTokens={ringTotalTokens}
+              profileName={ringProfileName}
             />
           ) : !ownHidden && usage && usageTotal(usage) > 0 ? (
             <span
@@ -1149,6 +1148,7 @@ export default function TerminalStatusBar({
         </span>
       ) : (
       <span
+        key="term-right"
         className="ml-auto flex min-w-0 items-center gap-3 overflow-hidden font-mono"
         style={{ color: faint }}
       >
@@ -1162,7 +1162,8 @@ export default function TerminalStatusBar({
               agentId={status?.agentId ?? ""}
               breakdown={breakdownRequest(status)}
               onCompact={compact}
-              extra={ringExtra}
+              totalTokens={ringTotalTokens}
+              profileName={ringProfileName}
               color={faint}
               warnColor={colors.yellow}
               trackColor={`${fg}26`}

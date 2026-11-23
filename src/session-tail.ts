@@ -4,15 +4,17 @@
  * 读不到就当没有，不报错。
  */
 import { invoke } from "@tauri-apps/api/core";
-import { pathWithin } from "./path-utils";
 import { IS_WINDOWS } from "./hotkeys";
-import { aiReportsFailure } from "./run-failure";
+import { aiReportsFailure, latestStepSessionRun } from "./run-failure";
 import type { ChatMessageDto, ConversationPageDto, RunDto, SessionMetaDto } from "./types";
+
+export { latestStepSessionRun };
 
 export interface StepTail {
   text: string;
   flagged: boolean;
   at: string | null;
+  runId?: string | null;
 }
 
 const cache = new Map<string, { at: number; value: StepTail | null }>();
@@ -32,14 +34,16 @@ function lastAssistantText(messages: readonly ChatMessageDto[]): { text: string;
   return null;
 }
 
-export async function stepSessionTail(runs: readonly RunDto[], worktreePath: string): Promise<StepTail | null> {
-  const run = runs
-    .filter((r) => !r.internal && !!r.sessionId && pathWithin(r.isolationPath, worktreePath, IS_WINDOWS))
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+export async function stepSessionTail(
+  runs: readonly RunDto[],
+  worktreePath: string,
+  opts: { fresh?: boolean } = {},
+): Promise<StepTail | null> {
+  const run = latestStepSessionRun(runs, worktreePath, IS_WINDOWS);
   if (!run?.sessionId) return null;
-  const key = `${run.agent}\n${run.sessionId}`;
+  const key = `${run.id}\n${run.agent}\n${run.sessionId}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (!opts.fresh && hit && Date.now() - hit.at < TTL_MS) return hit.value;
   let value: StepTail | null = null;
   try {
     const meta = await invoke<SessionMetaDto | null>("find_session", { agent: run.agent, sessionId: run.sessionId });
@@ -53,7 +57,7 @@ export async function stepSessionTail(runs: readonly RunDto[], worktreePath: str
       const last = lastAssistantText(page.messages);
       if (last) {
         const text = last.text.length > 700 ? `…${last.text.slice(-700)}` : last.text;
-        value = { text, flagged: aiReportsFailure(last.text), at: last.at };
+        value = { text, flagged: aiReportsFailure(last.text), at: last.at, runId: run.id };
       }
     }
   } catch {

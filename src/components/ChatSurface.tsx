@@ -22,7 +22,8 @@ import { chatGreeting, resolveChatCwd, starterContextFor } from "../chat-empty-s
 import { useAppStore } from "../store";
 import { inSessionPermissionSwitch, PERMISSION_CYCLE_ONLY } from "../switch-strategy";
 import { isLightTheme } from "../themes";
-import { MesaCaret, MesaMark, MesaStatusLead } from "./MesaMark";
+import { MesaMark, MesaStatusLead } from "./MesaMark";
+import { LiveScreenPreview, StreamingMarkdown } from "./ChatLivePreview";
 import ChatModelMenu from "./ChatModelMenu";
 import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
 import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
@@ -30,6 +31,7 @@ import { nextPermissionTier, rememberChatPermission } from "../chat-permission";
 import { readCombos, recordCombo, type LaunchCombo } from "../launch-combos";
 import type {
   ConnIssueState,
+  QuotaLimitHint,
   LaunchPickState,
   NativePermissionMode,
   RelayPickState,
@@ -37,7 +39,8 @@ import type {
 } from "../pages/TerminalPage";
 import type { MenuAnswer, TuiMenu } from "../tui-menu";
 import type { PermissionTierId } from "../chat-permission";
-import { dropAskedEcho, liveReplySupported, sameAsPrevReply, unsyncedTail } from "../live-reply";
+import { dropAskedEchoOffset, liveReplySupported, sameAsEarlierReply, sameAsPrevReply, unsyncedTailOffset, type LiveStyledLine } from "../live-reply";
+import { unsyncedMarkdownTail } from "../live-markdown";
 import { CUT_OFF_CONTINUE_TEXT } from "../terminal-tab-persistence";
 import { useRevealedText } from "../text-reveal";
 import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
@@ -90,6 +93,8 @@ import type { AskAction } from "../tui-ask";
 import { classifierBillingNotice, classifierNoticeText, setClassifierNoticeAutoSkip } from "../cli-notices";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
+  channelDeliversLiveText,
+  channelInfersApproval,
   channelSourceNote,
   channelOutcome,
   isQuestionApproval,
@@ -161,6 +166,8 @@ export default function ChatSurface({
   tuiPanel = false,
   tuiNotice = null,
   liveReply = null,
+  liveReplySource = null,
+  liveReplyStyled = null,
   liveTokens = null,
   liveThinking = null,
   promptSuggestion = null,
@@ -171,6 +178,9 @@ export default function ChatSurface({
   onExternalInsertConsumed,
   onOpenFile,
   connIssue = null,
+  quotaLimitHint = null,
+  onApplyQuotaSwitch,
+  onDismissQuotaLimitHint,
   onSwitchConnection,
   onDismissConnIssue,
   grokLoginStuck = false,
@@ -297,8 +307,12 @@ export default function ChatSurface({
   tuiPanel?: boolean;
   /** 终端里弹了一条要按回车才继续的通知（tui-panel.ts parseTuiNotice）：正文行 */
   tuiNotice?: string[] | null;
-  /** 终端画面里这一轮正在写的回复（live-reply.ts）；会话文件追上的行由这里剔掉 */
+  /** 终端画面或结构化旁路里这一轮正在写的回复（live-reply.ts / chat-channel.ts）；会话文件追上的行由这里剔掉 */
   liveReply?: string[] | null;
+  /** liveReply 的来源：markdown = 旁路原始 Markdown（Codex / Qwen / OpenCode）；screen = 终端读屏 */
+  liveReplySource?: "markdown" | "screen" | null;
+  /** 读屏来源时按行还原的样式片段，与 liveReply 一一对应 */
+  liveReplyStyled?: LiveStyledLine[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（Windows 上 Claude 不边写边画，靠它看出还在出字）；没有为 null */
   liveTokens?: number | null;
   /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking：Grok、Kimi）：正文出来前照原样显示在实时预览的位置 */
@@ -311,13 +325,16 @@ export default function ChatSurface({
   onInlinePermission?: (tier: "ask" | "auto" | "full") => void;
   /** 斜杠面板上半组「Mesa」操作（新对话、压缩、分叉、看改动、导出、打开终端） */
   mesaCommands?: MesaCommand[];
-  /** 外部送进来的一段话（终端选中文字「引用到输入框 / 问 AI」）：send=true 直接发，否则填进输入框 */
-  externalInsert?: { text: string; send: boolean; token: number } | null;
+  /** 外部送进来的一段话或要标注的图（终端/右栏选中文字或图片）：edit 给了打开看图标注台；send=true 直接发，否则填进输入框 */
+  externalInsert?: { text: string; send: boolean; token: number; edit?: string } | null;
   onExternalInsertConsumed?: () => void;
   /** 点击消息或工具记录里的文件：由宿主决定同步到独立窗口还是在右侧文件栏打开 */
   onOpenFile?: (file: { path: string; root: string; line: number | null }) => void;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型，conn-issue.ts 扫终端认出）+ 同家可换的连接 */
   connIssue?: ConnIssueState | null;
+  quotaLimitHint?: QuotaLimitHint | null;
+  onApplyQuotaSwitch?: (resend: boolean) => void;
+  onDismissQuotaLimitHint?: () => void;
   /** 换到这条连接接着这段对话（标签动作 switchConnection：停下、换连接、按原会话接回） */
   onSwitchConnection?: (profileId: string) => void;
   onDismissConnIssue?: () => void;
@@ -742,8 +759,11 @@ export default function ChatSurface({
     const t = window.setTimeout(() => setSettling(false), 4000);
     return () => window.clearTimeout(t);
   }, [settling]);
-  // 实时预览：终端里已经出来、会话文件还没落盘的那几行（生成中与刚结束的那一会儿显示，追上了自动让位）
-  const livePreview = (() => {
+  // 实时预览：旁路流式 Markdown（Codex / Qwen / OpenCode）或终端读屏富文本（生成中与刚结束的那一会儿显示，追上了自动让位）
+  const livePreviewMode: "markdown" | "screen" =
+    liveReplySource ?? (channelDeliversLiveText(channel) ? "markdown" : "screen");
+  const { livePreview, livePreviewStyled } = (() => {
+    const empty = { livePreview: [] as string[], livePreviewStyled: null as LiveStyledLine[] | null };
     // 有「等你决定」时屏上是菜单，不是回复（decision 在下方算，这里直接看三个来源）
     if (
       !(generating || settling) ||
@@ -755,7 +775,7 @@ export default function ChatSurface({
       menuPrompt ||
       tuiPanel
     )
-      return [];
+      return empty;
     let lastUser = -1;
     let prevUser = -1;
     messages.forEach((m, i) => {
@@ -771,6 +791,10 @@ export default function ChatSurface({
         .flatMap((m) => m.blocks.filter((b) => b.kind === "text").map((b) => b.text))
         .join("\n");
     const synced = replyText(lastUser + 1, messages.length);
+    if (livePreviewMode === "markdown") {
+      if (lastUser >= 0 && sameAsPrevReply(liveReply, replyText(prevUser + 1, lastUser))) return empty;
+      return { livePreview: unsyncedMarkdownTail(liveReply, synced), livePreviewStyled: null };
+    }
     // 分几段的提问（带项目说明的第一句）在终端里隔着空行回显，读屏只认得第一段：其余几段不当回复
     const asked =
       lastUser >= 0
@@ -779,11 +803,24 @@ export default function ChatSurface({
             .map((b) => b.text)
             .join("\n")
         : "";
-    const live = dropAskedEcho(liveReply, asked);
-    // 读到的整段都是上一轮已经画出来的回复：读屏在新回显画出来之前读到了上一轮（隔一会再发、两句一样时），不当这一轮的预览。
-    // 只在整段都对得上时才拦，新回复里碰巧有一行与上一轮相同不受影响（2026-10-27 用户截图；读屏侧的拦法见 live-reply.ts staleEcho）
-    if (lastUser >= 0 && sameAsPrevReply(live, replyText(prevUser + 1, lastUser))) return [];
-    return unsyncedTail(live, synced);
+    const echoOff = dropAskedEchoOffset(liveReply, asked);
+    const live = liveReply.slice(echoOff);
+    const alignedStyled =
+      liveReplyStyled && liveReplyStyled.length === liveReply.length ? liveReplyStyled.slice(echoOff) : null;
+    // 读到的整段都是上一轮（或更早几轮残留的长回复）已经画出来的正文：读屏在新回显画出来之前或跑长工具期间读到了旧轮，不当这一轮的预览。
+    // 只在整段都对得上时才拦，新回复里碰巧有一行与上一轮相同不受影响（2026-10-27 / 2026-11-23 用户截图）
+    if (
+      lastUser >= 0 &&
+      sameAsEarlierReply(live, replyText(prevUser + 1, lastUser), prevUser > 0 ? replyText(0, prevUser) : "")
+    ) {
+      return empty;
+    }
+    const tailOff = unsyncedTailOffset(live, synced);
+    if (tailOff < 0) return empty;
+    return {
+      livePreview: live.slice(tailOff),
+      livePreviewStyled: alignedStyled ? alignedStyled.slice(tailOff) : null,
+    };
   })();
   // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
   // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
@@ -908,6 +945,10 @@ export default function ChatSurface({
         numbered: screen.numbered,
         links: screen.links,
         typeIn: screen.typeIn,
+        horizontal: screen.horizontal,
+        multiSelect: screen.multiSelect,
+        tabKey: screen.tabKey,
+        yesNo: screen.yesNo,
         keys: true,
         // Grok 非 prompt 态 Esc 会触发整进程退出确认（escInterruptSafe）
         esc: escInterruptSafe(agentId),
@@ -1021,13 +1062,41 @@ export default function ChatSurface({
           })),
         }
       : isQuestionApproval(channelApproval) && !menuPrompt && !trustPrompt
-      ? {
-          key: `question:${channelApproval?.requestId ?? ""}`,
-          title: `${agentLabel(agentId)} 在等你回答`,
-          hint: "请在终端完成这份提问；回答后会自动继续同步",
-          preview,
-          options: [],
-        }
+      ? // hooks 报来的提问（如 Claude AskUserQuestion）先等宽限期让专用表单卡认出来，免得先闪一下兜底卡；
+        // OpenCode / Qwen / Codex 等非推断旁路立刻展示可交互提问卡
+        channelInfersApproval(channel) && !confirmAged
+        ? null
+        : waitScreen
+        ? {
+            key: `question:${channelApproval?.requestId ?? ""}`,
+            title: waitScreen.title ? `${agentLabel(agentId)} 在等你回答：${waitScreen.title}` : `${agentLabel(agentId)} 在等你回答`,
+            detail: channelApproval?.detail ?? null,
+            hint: "可直接用下方按键或输入框回答，也可以点右上角去终端操作；回答后自动继续",
+            preview,
+            options: [],
+            screen: {
+              lines: waitScreen.lines,
+              live: true,
+              numbered: waitScreen.numbered,
+              links: waitScreen.links,
+              typeIn: waitScreen.typeIn,
+              horizontal: waitScreen.horizontal,
+              multiSelect: waitScreen.multiSelect,
+              tabKey: waitScreen.tabKey,
+              yesNo: waitScreen.yesNo,
+              keys: true,
+              esc: escInterruptSafe(agentId),
+              onKey: (k) => onWaitKey?.(k),
+              onOpenLink: (url) => onOpenLink?.(url),
+            },
+          }
+        : {
+            key: `question:${channelApproval?.requestId ?? ""}`,
+            title: `${agentLabel(agentId)} 在等你回答`,
+            hint: "请在终端完成这份提问；回答后会自动继续同步",
+            preview,
+            options: [],
+          }
       : attention === "confirm" && !menuPrompt && !trustPrompt && !onlyAsked && waitScreen
       ? // 宽限里先不出卡（菜单多半马上认出来），过了还认不出才出通用卡
         confirmAged
@@ -1245,7 +1314,8 @@ export default function ChatSurface({
   const externalToken = externalInsert?.token ?? null;
   useEffect(() => {
     if (!externalInsert) return;
-    if (externalInsert.send) void onSend(externalInsert.text);
+    if (externalInsert.edit) setSeedInsert({ text: externalInsert.text, paths: [], edit: externalInsert.edit });
+    else if (externalInsert.send) void onSend(externalInsert.text);
     else setSeedInsert(externalInsert.text);
     onExternalInsertConsumed?.();
     // 只在新请求到来时处理一次
@@ -1736,15 +1806,22 @@ export default function ChatSurface({
             </ChatStepStartContext.Provider>
             </ChatImageEditContext.Provider>
           )}
-          {livePreview.length > 0 && (
-            // 与助手正文同一栏、同字号，但不走 Markdown（终端里已渲染过）：灰一级表示「还在写、以落盘为准」。
-            // 还在写时 Mesa 光标接在最后一个字后面，不另起一行写状态（2026-10-21）
-            // 字号行高与落盘后的回答同一档（.ccode-chat-body），落盘那一下不跳。
-            <div className="ccode-chat-body mb-2 whitespace-pre-wrap break-words text-l3">
-              {livePreviewText}
-              {generating && !decision && <MesaCaret light={isLightTheme(theme)} />}
-            </div>
-          )}
+          {livePreview.length > 0 &&
+            (livePreviewMode === "markdown" ? (
+              <StreamingMarkdown
+                text={livePreviewText}
+                showCaret={generating && !decision}
+                light={isLightTheme(theme)}
+              />
+            ) : (
+              <LiveScreenPreview
+                styledLines={livePreviewStyled}
+                text={livePreviewText}
+                maxChars={livePreviewText.length}
+                showCaret={generating && !decision}
+                light={isLightTheme(theme)}
+              />
+            ))}
           {livePreview.length === 0 && thinkingPreview && (
             // 终端里的思考（Grok 思考框、Kimi「thinking…」下的两行）：上面固定一行「M▁ 思考中」，原文在下面，
             // 换成别家思考展开后的样子（ConversationView 过程「思考」行的正文：过程行那一档字号 .ccode-chat-meta、左边一条细线，
@@ -1774,6 +1851,50 @@ export default function ChatSurface({
             <p role="status" className="mb-2 text-xs text-caution-text">{channelSourceNote(channel)}</p>
           )}
           {firstRunNote && (firstRunNote.theme || firstRunNote.security) && <FirstRunLine note={firstRunNote} agent={agentLabel(agentId)} />}
+          {quotaLimitHint && !decision && (
+            <div
+              role="status"
+              className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline bg-inset px-2.5 py-1.5 text-xs text-l2"
+            >
+              <span className="min-w-0 flex-1 truncate">
+                <span className="font-medium text-caution-text">「{quotaLimitHint.currentName}」</span>
+                额度已满，可换用
+                <span className="mx-1 font-medium text-l1">「{quotaLimitHint.altName}」</span>
+                继续
+                {quotaLimitHint.altUsedPct != null ? (
+                  <span className="ml-1 text-micro text-l4">（已用 {quotaLimitHint.altUsedPct}%）</span>
+                ) : null}
+              </span>
+              {quotaLimitHint.canResend && onApplyQuotaSwitch && (
+                <button
+                  type="button"
+                  onClick={() => onApplyQuotaSwitch(true)}
+                  className="rounded-md border border-cta-bd bg-cta px-2 py-0.5 text-xs font-medium text-cta-text hover:brightness-110"
+                >
+                  换号重发上一句
+                </button>
+              )}
+              {onApplyQuotaSwitch && (
+                <button
+                  type="button"
+                  onClick={() => onApplyQuotaSwitch(false)}
+                  className="rounded-md border border-field px-2 py-0.5 text-xs text-l2 hover:bg-hover hover:text-l1"
+                >
+                  挂接力待发送
+                </button>
+              )}
+              {onDismissQuotaLimitHint && (
+                <button
+                  type="button"
+                  onClick={onDismissQuotaLimitHint}
+                  aria-label="关闭换号提示"
+                  className="rounded px-1 text-l3 hover:bg-hover hover:text-l1"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
           {helpHere && !decision && (
             <p role="status" className="mb-2 flex items-center gap-2 text-xs text-caution-text">
               {/* 不说「AI 写了」：项目根是几段对话共用的，问题未必是眼前这段写的（2026-11-03 用户截图：出图对话下挂着 21 个旧问题） */}

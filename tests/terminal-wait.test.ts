@@ -154,3 +154,29 @@ test("通用卡跳过横线下的状态栏，标题取 Kimi 提问面板「? 」
   assert.equal(w.lines[0], "question");
   assert.ok(!w.lines.some((l) => l.includes("Ask When Needed")));
 });
+
+test("通用卡按屏上形态识别横向切换 / 多选勾选 / Tab / Y·N / 自由输入，并给出对应按键字节", () => {
+  const multi = waitScreenOf([
+    "Select features to enable:",
+    "❯ [ ] TypeScript",
+    "  [✔] ESLint",
+    "Space to toggle · ←/→ to switch tabs · Tab to next · Enter to confirm",
+  ])!;
+  assert.equal(multi.multiSelect, true);
+  assert.equal(multi.horizontal, true);
+  assert.equal(multi.tabKey, true);
+  assert.equal(multi.yesNo, false);
+
+  const yn = waitScreenOf(["Overwrite existing file? (y/n)"])!;
+  assert.equal(yn.yesNo, true);
+
+  const feedback = waitScreenOf(["Type your feedback to revise the plan:"])!;
+  assert.equal(feedback.typeIn, true);
+
+  assert.deepEqual(waitKeyBytes("left"), ["\x1b[D"]);
+  assert.deepEqual(waitKeyBytes("right"), ["\x1b[C"]);
+  assert.deepEqual(waitKeyBytes("space"), [" "]);
+  assert.deepEqual(waitKeyBytes("tab"), ["\t"]);
+  assert.deepEqual(waitKeyBytes("char:y"), ["y"]);
+  assert.deepEqual(waitKeyBytes("char:n"), ["n"]);
+});

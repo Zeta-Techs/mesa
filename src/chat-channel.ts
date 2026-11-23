@@ -146,11 +146,12 @@ export function channelDeliversLiveText(
   return snap.kind === "qwen" || snap.kind === "opencode" || snap.kind === "codex";
 }
 
-/** 旁路送来的这一轮实时文字（Qwen / OpenCode / Codex）；回合结束后不再当预览 */
+/** 旁路送来的这一轮实时文字（Qwen / OpenCode / Codex）；保留首行缩进（缩进代码块 / 嵌套列表），只去掉开头空行与尾部空白 */
 export function channelLiveLines(snap: ChatChannelSnapshot | null): string[] | null {
   if (!snap?.liveText || !snap.turn || snap.connection === "disconnected") return null;
-  const text = snap.liveText.trim();
-  return text ? text.split("\n") : null;
+  if (!snap.liveText.trim()) return null;
+  const text = snap.liveText.replace(/^(?:[ \t]*\r?\n)+/, "").replace(/\s+$/, "");
+  return text ? text.split(/\r?\n/) : null;
 }
 
 export type DecisionPreview =

@@ -915,7 +915,7 @@ test("点对话里的图接着改：图进输入框、直接展开看图台，�
     assert.deepEqual(ui.host.imageReads, ["/proj/scratch/puppy.jpg"]);
     const box = ui.el.querySelector("textarea")!;
     assert.equal(box.placeholder, "描述修改内容");
-    assert.match(stage()!.textContent ?? "", /出图模型在原图上改/);
+    assert.match(stage()!.textContent ?? "", /在下面写怎么改或要问什么/);
     await ui.click("移除背景");
     assert.equal(box.value, "去掉背景，只留主体（透明或纯白底），其余不变", "常用说法写进输入框，不直接发");
     assert.deepEqual(sent, []);

@@ -22,6 +22,15 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useAppStore } from "../store";
+import type { AgyActiveSessionDto } from "../types";
+import {
+  findPlanRowForProfile,
+  isPlanRowExhausted,
+  isQuotaExhaustedError,
+  needsRelayOnSameAgentSwitch,
+  officialAccountModeOf,
+  pickAlternateAccountForLimit,
+} from "../official-accounts";
 import { IS_MAC, IS_WINDOWS } from "../hotkeys";
 import { monoFallbackStack, terminalFontStack } from "../terminal-font";
 import { sendSystemNotification } from "../system-notification";
@@ -176,7 +185,7 @@ import { PLAN_EXIT_TOOLS, screenPlan } from "../plan-approval";
 import { promptSuggestionSupported, readPromptSuggestion } from "../prompt-suggestion";
 import { activeScreenCells, activeScreenLines, italicLine } from "../screen-cells";
 import { type MesaCommand } from "../composer-assist";
-import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReply, outputTokensSupported, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox } from "../live-reply";
+import { claudeOutputTokens, claudeTurnActiveOnScreen, extractLiveReply, extractLiveThinking, liveReplySupported, mergeLiveReplyStyled, outputTokensSupported, sentTextStuckInBox, staleEcho, staleWithoutEcho, terminalHasInputBox, type LiveStyledLine } from "../live-reply";
 import { parseTuiNotice, parseTuiPanel } from "../tui-panel";
 import { classifierBillingNotice, classifierNoticeAutoSkip } from "../cli-notices";
 import {
@@ -296,6 +305,24 @@ export const StableChatSurface = memoWithLatestFunctions(ChatSurface, {
   mesaCommands: 3,
 });
 export const StableTerminalStatusBar = memoWithLatestFunctions(TerminalStatusBar, { colors: 2 });
+
+// 官方账号已登录状态前端短期缓存（120 秒，只缓存 connected === true）：
+// 新建标签时若近期刚确认已登录，立即放行 autoStart 并在后台静默复核，
+// 避免点「与 AI 商量一下」后空屏等 `agy models` / `claude auth status` 跑完几秒才发消息。
+const OFFICIAL_STATUS_CACHE_TTL_MS = 120_000;
+const officialStatusCache = new Map<
+  string,
+  { st: OfficialAccountStatusDto; at: number }
+>();
+function readFreshOfficialStatus(agentId: string): OfficialAccountStatusDto | null {
+  const hit = officialStatusCache.get(agentId);
+  if (!hit) return null;
+  if (Date.now() - hit.at > OFFICIAL_STATUS_CACHE_TTL_MS || !hit.st.connected) {
+    officialStatusCache.delete(agentId);
+    return null;
+  }
+  return hit.st;
+}
 
 // wsLast 记忆层闸门接线（H4 修复）：buildWorkspaceTerminalRequest 是纯逻辑层、按测试
 // 打包口径不直接依赖 store 模块；这里模块加载时把真实数据源接上（停用连接不被自动
@@ -481,6 +508,9 @@ export interface FocusTabActions {
   switchConnection: (profileId: string) => void;
   /** 关掉「连接出问题」提示：此刻屏上的错误记作已看过，同一个错误不再提示，新的照常 */
   dismissConnIssue: () => void;
+  /** 满额一键换号轻提示条：resend=true 立刻把上一句原话经接力发给备选号；false 挂接力待发送 */
+  applyQuotaSwitch: (resend: boolean) => void;
+  dismissQuotaLimitHint: () => void;
   /** Grok 卡在续期过期的官方登录上（grok_login.rs）：停下 Grok、grok logout、按原会话接回 */
   grokLogout: () => void;
   /** 关掉上面那条提示：这次启动不再提示 */
@@ -636,10 +666,16 @@ export interface SessionLinkState {
   specialScreen: SpecialScreen | null;
   /** 连接出问题（额度 / 限流 / 钥匙 / 服务 / 模型；conn-issue.ts 扫终端画面认出）+ 可换的同家连接 */
   connIssue: ConnIssueState | null;
+  /** 满额一键换号轻提示条（检测到当前号额度满或报限额，且同厂存在另一未满账号） */
+  quotaLimitHint: QuotaLimitHint | null;
   /** Grok 用 API 连接启动，却卡在续期本地已过期的 xAI 官方登录上（grok_login.rs），消息发不出去 */
   grokLoginStuck: boolean;
-  /** 终端画面里这一轮正在写的回复（live-reply.ts；只认 Claude Code / CodeBuddy，别家 null） */
+  /** 终端画面或结构化旁路里这一轮正在写的回复（live-reply.ts / chat-channel.ts） */
   liveReply: string[] | null;
+  /** liveReply 的来源：markdown = 结构化旁路原始 Markdown（Codex / Qwen / OpenCode）；screen = 终端读屏 */
+  liveReplySource: "markdown" | "screen" | null;
+  /** 读屏来源时按行还原的样式片段，与 liveReply 一一对应；旁路来源为 null */
+  liveReplyStyled: LiveStyledLine[] | null;
   /** Claude 转圈行里这一轮已生成的 token 数（live-reply.ts claudeOutputTokens）；别家与没认出时 null */
   liveTokens: number | null;
   /** 终端思考框里正在显示的思考（live-reply.ts extractLiveThinking：Grok、Kimi；去掉竖线与 Thinking 头）；不在想为 null */
@@ -659,6 +695,14 @@ export interface SessionLinkState {
   mcps: McpServerDto[];
   /** 结构化旁路快照（chat_channel.rs：hooks / Qwen Dual Output / OpenCode 服务 / Codex app-server）；没接上为 null */
   channel: ChatChannelSnapshot | null;
+}
+
+export interface QuotaLimitHint {
+  currentName: string;
+  altProfileId: string;
+  altName: string;
+  altUsedPct: number | null;
+  canResend: boolean;
 }
 
 export const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
@@ -1004,17 +1048,25 @@ export const TerminalView = memo(function TerminalView({
     initialProfileId ?? saved.profileId ?? "",
   );
   const [officialSt, setOfficialSt] = useState<OfficialAccountStatusDto | null>(
-    null,
+    () => readFreshOfficialStatus(initialAgentId ?? saved.agentId ?? "claude-code"),
   );
   // 登录检测是否已落锤（成功或失败都算）；officialSt=null 既可能是「未探测完」
   // 也可能是「探测失败」，自动启动必须区分这两种（见下方 autoStart 守卫）
-  const [officialStReady, setOfficialStReady] = useState(false);
+  const [officialStReady, setOfficialStReady] = useState<boolean>(
+    () => readFreshOfficialStatus(initialAgentId ?? saved.agentId ?? "claude-code") !== null,
+  );
   useEffect(() => {
     let cancelled = false;
-    setOfficialSt(null);
-    setOfficialStReady(false);
+    const cached = readFreshOfficialStatus(agentId);
+    setOfficialSt(cached);
+    setOfficialStReady(cached !== null);
     invoke<OfficialAccountStatusDto>("official_account_status", { agentId })
       .then((st) => {
+        if (st.connected) {
+          officialStatusCache.set(agentId, { st, at: Date.now() });
+        } else {
+          officialStatusCache.delete(agentId);
+        }
         if (!cancelled) {
           setOfficialSt(st);
           setOfficialStReady(true);
@@ -1022,7 +1074,7 @@ export const TerminalView = memo(function TerminalView({
       })
       .catch(() => {
         if (!cancelled) {
-          setOfficialSt(null);
+          if (!cached) setOfficialSt(null);
           setOfficialStReady(true);
         }
       });
@@ -2176,7 +2228,7 @@ export const TerminalView = memo(function TerminalView({
       curMode && det && !det.permissionModes?.includes(curMode) ? null : curMode;
     let nextMode: NativePermissionMode | null | undefined =
       supportedMode !== curMode ? supportedMode : undefined;
-    if (!restored && targetProfileId && chatPermissionMemoryApplies(reuseKey)) {
+    if (targetProfileId && chatPermissionMemoryApplies(reuseKey)) {
       const calibrated = profilePermissionMode({
         permission: permissionRef.current ?? (readonly ? "discuss" : "write_tree"),
         mode: supportedMode,
@@ -2200,8 +2252,9 @@ export const TerminalView = memo(function TerminalView({
     }
   }
   useEffect(() => {
-    // 跑着的进程权限已定，不改标签上的记录（否则标记写的和实际不符）；等回落后再按当前连接校准一次
-    if (restored || running || !profileId || !chatPermissionMemoryApplies(reuseKey)) return;
+    // 跑着的进程权限已定，不改标签上的记录（否则标记写的和实际不符）；等回落或重启恢复后按当前连接校准一次
+    // （2026-11-23 用户拍板：重启恢复的普通聊天标签若所属连接记过完全访问，也跟着恢复完全访问）
+    if (running || !profileId || !chatPermissionMemoryApplies(reuseKey)) return;
     const key = `${agentId}:${profileId}:${launchFullAvailable ? 1 : 0}`;
     if (calibratedPermKeyRef.current === key) return;
     calibratedPermKeyRef.current = key;
@@ -2817,9 +2870,11 @@ export const TerminalView = memo(function TerminalView({
     setPanelOpen(panel);
     const inputBox = terminalHasInputBox(lines, launchAgentRef.current);
     setPromptIdle(next === null && inputBox === true);
-    // 通用卡的摘录：认得出的屏（菜单 / 通知 / 面板 / 信任）各有专用卡，看得见输入框就是没在等人
+    // 通用卡的摘录：认得出的屏（菜单 / 通知 / 面板 / 信任）各有专用卡，看得见输入框就是没在等人；
+    // 刚从回放快照接回、还没重画出新画面前（含 REPLAY_TAIL 占位行）绝不把旧回复里的编号列表误报成「终端在等你」
+    const isStaleReplay = lines.some((l) => l.trim() === REPLAY_TAIL);
     const recognized = found !== null || notice !== null || panel || trustPromptRef.current !== null || parseTrustPrompt(lines) !== null;
-    const wait = recognized || inputBox === true ? null : waitScreenOf(lines);
+    const wait = isStaleReplay || recognized || inputBox === true ? null : waitScreenOf(lines);
     setWaitScreenState(wait ? { ...wait, noInputBox: inputBox === false } : null);
     const ask = next?.ask ?? null;
     // 卡片上交过卷又到了确认页：答案就是刚在卡片上选的，替人按「Submit answers」，不要人再点一次
@@ -2874,14 +2929,17 @@ export const TerminalView = memo(function TerminalView({
     if (waitWatchRef.current) scanMenuSoon();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attention, ptyQuiet]);
-  /** 通用卡上点的键：回车按这家的提交键（Kimi 是 CSI-u），按完再扫一次屏，卡片跟着终端变 */
+  /** 通用卡上点的键：回车与 Esc 按这家的键盘协议换（Kimi 开 kitty 后用 CSI-u），按完再扫一次屏，卡片跟着终端变 */
   function pressWaitKey(key: WaitKey) {
     const id = ptyIdRef.current;
     if (!id) return;
     const enter = submitCsiU ? KIMI_CSI_U_ENTER : "\r";
-    const keys = waitKeyBytes(key).map((k) => (k === "\r" ? enter : k));
+    const esc = submitCsiU ? "\x1b[27u" : "\x1b";
+    const keys = waitKeyBytes(key).map((k) => (k === "\r" ? enter : k === "\x1b" ? esc : k));
     const done = queuePtyKeys(id, keys);
-    if (key === "enter" || key.startsWith("digit:") || key.startsWith("text:")) armPtyWorking();
+    if (key === "enter" || key.startsWith("digit:") || key.startsWith("text:") || key.startsWith("char:")) {
+      armPtyWorking();
+    }
     menuWatchUntilRef.current = done + 3000;
     window.setTimeout(scanMenuSoon, Math.max(0, done - Date.now()) + 200);
   }
@@ -2966,6 +3024,23 @@ export const TerminalView = memo(function TerminalView({
   // 实时预览：Agent 出字时节流 300ms 读一次可视区，抽出这一轮正在写的回复给聊天层（会话文件一段写完才落盘）
   const [liveReply, setLiveReply] = useState<string[] | null>(null);
   const liveReplyRef = useRef<string[] | null>(null);
+  const [liveReplySource, setLiveReplySource] = useState<"markdown" | "screen" | null>(null);
+  const liveReplySourceRef = useRef<"markdown" | "screen" | null>(null);
+  const [liveReplyStyled, setLiveReplyStyled] = useState<LiveStyledLine[] | null>(null);
+  const liveReplyStyledRef = useRef<LiveStyledLine[] | null>(null);
+  const liveReplyStyledSigRef = useRef<string | null>(null);
+  /** Ink 非同步输出重绘半帧时，屏上临时只画到旧前缀：防抖 2 拍（~240ms）不回缩，避免预览瞬间消失闪回「思考中」 */
+  const liveShrinkGuardRef = useRef(0);
+  function clearLiveReply() {
+    liveReplyRef.current = null;
+    setLiveReply(null);
+    liveReplySourceRef.current = null;
+    setLiveReplySource(null);
+    liveReplyStyledRef.current = null;
+    liveReplyStyledSigRef.current = null;
+    liveShrinkGuardRef.current = 0;
+    setLiveReplyStyled(null);
+  }
   const [liveTokens, setLiveTokens] = useState<number | null>(null);
   const liveTokensRef = useRef<number | null>(null);
   const [liveThinking, setLiveThinking] = useState<string | null>(null);
@@ -2986,9 +3061,10 @@ export const TerminalView = memo(function TerminalView({
     const agent = launchAgentRef.current;
     if (!liveReplySupported(agent) && !outputTokensSupported(agent)) return;
     if (liveHoldRef.current) return;
-    // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）不再读屏；hooks 与 program-status 仍靠读屏展示流式正文与思考
+    // 旁路直接送实时文字的家（Qwen / OpenCode / Codex）接通后不再读屏（含发话到 turn/started 之间的空当，避免把回显灰条读成预览）；
+    // hooks 与 program-status 仍靠读屏展示流式正文与思考
     const ch = channelRef.current;
-    if (ch && channelDeliversLiveText(ch) && channelTurnOpen(ch)) return;
+    if (ch && channelDeliversLiveText(ch)) return;
     if (liveScanTimerRef.current) return;
     const wait = Math.max(0, liveScanAtRef.current + 300 - Date.now());
     liveScanTimerRef.current = window.setTimeout(scanLiveReplyNow, wait);
@@ -2996,6 +3072,7 @@ export const TerminalView = memo(function TerminalView({
   function scanLiveReplyNow() {
     liveScanTimerRef.current = null;
     if (liveHoldRef.current) return;
+    if (channelDeliversLiveText(channelRef.current)) return;
     const term = termRef.current;
     if (!term || ptyKindRef.current !== "agent") return;
     // 一帧正画到一半（同步输出 ?2026h 还没收尾，Claude Code 每帧都这样包；一帧常分两块到）：这时读到的是
@@ -3018,8 +3095,8 @@ export const TerminalView = memo(function TerminalView({
       }
     }
     if (!liveReplySupported(agent)) return;
-    // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReply）
-    const read = extractLiveReply(lines, agent, screenItalicRow);
+    // 长回复滚出屏后只看得见续行：接到上一次读到的整段后面（mergeLiveReplyStyled），同时保留每行单元格样式
+    const read = extractLiveReply(lines, agent, screenItalicRow, screenCells);
     // 正在想的那一框（Grok、Kimi）：不混进回复预览，照终端原样（去掉竖线与 Thinking 头）另给聊天层；框收起 = 想完了，清掉
     const thinking = extractLiveThinking(lines, agent)?.join("\n") ?? null;
     if (thinking !== liveThinkingRef.current) {
@@ -3039,15 +3116,50 @@ export const TerminalView = memo(function TerminalView({
     }
     // 回显换了 = 新的一轮（在终端里直接发的话不经聊天发送，不会清掉上一轮的预览）：不拿上一轮的开头去补这一轮
     let prev = shown;
+    let prevStyled = liveReplyStyledRef.current;
     if (read.echo !== undefined) {
-      if (read.echo !== liveEchoRef.current) prev = null;
+      if (read.echo !== liveEchoRef.current) {
+        prev = null;
+        prevStyled = null;
+      }
       liveEchoRef.current = read.echo;
     }
-    const next = mergeLiveReply(prev, read);
-    if (!next) return;
-    if ((shown?.join("\n") ?? null) === next.join("\n")) return;
-    liveReplyRef.current = next;
-    setLiveReply(next);
+    const merged = mergeLiveReplyStyled(prev ? { lines: prev, styled: prevStyled } : null, read);
+    if (!merged) return;
+    const prevText = prev?.join("\n") ?? "";
+    const nextText = merged.lines.join("\n");
+    // 同轮次 Ink 终端重绘半帧（底部新行暂未画完）：结果缩成上一次的真前缀时先留着旧预览并 120ms 后复扫，
+    // 防止 unsyncedTail 瞬间变空、聊天层在「输出正文 ↔ M▁ 思考中」之间来回跳（2026-11-21 用户反馈）
+    if (
+      prevText.length > 0 &&
+      nextText.length < prevText.length &&
+      prevText.startsWith(nextText) &&
+      liveShrinkGuardRef.current < 2
+    ) {
+      liveShrinkGuardRef.current++;
+      if (!liveScanTimerRef.current) {
+        liveScanTimerRef.current = window.setTimeout(scanLiveReplyNow, 120);
+      }
+      return;
+    }
+    liveShrinkGuardRef.current = 0;
+    const nextStyleSig = merged.styled ? JSON.stringify(merged.styled) : null;
+    if (
+      (shown?.join("\n") ?? null) === nextText &&
+      liveReplySourceRef.current === "screen" &&
+      liveReplyStyledSigRef.current === nextStyleSig
+    ) {
+      return;
+    }
+    liveReplyRef.current = merged.lines;
+    setLiveReply(merged.lines);
+    if (liveReplySourceRef.current !== "screen") {
+      liveReplySourceRef.current = "screen";
+      setLiveReplySource("screen");
+    }
+    liveReplyStyledRef.current = merged.styled;
+    liveReplyStyledSigRef.current = nextStyleSig;
+    setLiveReplyStyled(merged.styled);
   }
   // 连接出问题（conn-issue.ts）：Agent 出字时节流 500ms 扫一次可视区。基线 = 「已经看过」的错误（按次数）：
   // 关提示、换连接、发下一句、新进程接上时把屏上已有的记进去，之后同一个错误次数涨了才算新的
@@ -3147,6 +3259,64 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [rawConnIssue, profiles, agentId, profileId, hiddenProfileKey, isOfficialProfile]);
   const [connPick, setConnPick] = useState("");
+  const planQuotaRows = useAppStore((s) => s.planQuotaRows);
+  const [quotaHintDismissedKey, setQuotaHintDismissedKey] = useState<string | null>(null);
+  const quotaLimitHint = useMemo<QuotaLimitHint | null>(() => {
+    if (!selectedProfile) return null;
+    const hitByConn =
+      rawConnIssue != null &&
+      (rawConnIssue.kind === "quota" ||
+        rawConnIssue.status === 429 ||
+        isQuotaExhaustedError(rawConnIssue.message));
+    const hitByError = isQuotaExhaustedError(error);
+    const hitByQuota = isPlanRowExhausted(findPlanRowForProfile(selectedProfile, planQuotaRows));
+    if (!hitByConn && !hitByError && !hitByQuota) return null;
+    const hidden = hiddenProfileKey ? hiddenProfileKey.split("\n") : [];
+    const alt = pickAlternateAccountForLimit(selectedProfile, profiles, planQuotaRows, hidden);
+    if (!alt) return null;
+    const key = `${selectedProfile.id}:${alt.profile.id}`;
+    if (quotaHintDismissedKey === key) return null;
+    return {
+      currentName: selectedProfile.name,
+      altProfileId: alt.profile.id,
+      altName: alt.profile.name,
+      altUsedPct: alt.usedPct,
+      canResend: Boolean(lastSentRef.current?.trim() && relaySource()),
+    };
+  }, [
+    selectedProfile,
+    rawConnIssue,
+    error,
+    planQuotaRows,
+    hiddenProfileKey,
+    profiles,
+    quotaHintDismissedKey,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    conv.length,
+  ]);
+  // Antigravity 单活护栏：收到其他标签发来的停止请求时，若匹配本 tabId 则立刻停掉 PTY 并注销活跃登记
+  useEffect(() => {
+    const onStopTab = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ tabId?: string }>).detail;
+      if (detail?.tabId !== tabId) return;
+      invoke("official_agy_unregister_session", { tabId }).catch(() => {});
+      if (ptyKindRef.current === "agent" && ptyIdRef.current) {
+        void stop();
+      }
+    };
+    window.addEventListener("mesa:stop-tab", onStopTab);
+    return () => {
+      window.removeEventListener("mesa:stop-tab", onStopTab);
+      invoke("official_agy_unregister_session", { tabId }).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId]);
+  // 进程退出或回落 shell 时立刻注销 Antigravity 官方活跃状态，释放单活锁
+  useEffect(() => {
+    if (!running || shellActive) {
+      invoke("official_agy_unregister_session", { tabId }).catch(() => {});
+    }
+  }, [running, shellActive, tabId]);
   // Grok 卡在续期官方登录上（2026-10-26，grok_login.rs）：用 API 连接启动的 Grok 也会先续期本地存着的 xAI 官方登录，
   // 连不上 auth.x.ai 时每条消息卡半分钟以上、屏上没有任何报错。启动时探一次登录服务器，运行中每 8 秒看一眼 Grok 日志
   const [grokLoginStuck, setGrokLoginStuck] = useState(false);
@@ -3587,8 +3757,11 @@ export const TerminalView = memo(function TerminalView({
       launchBlock,
       specialScreen,
       connIssue,
+      quotaLimitHint,
       grokLoginStuck,
       liveReply,
+      liveReplySource,
+      liveReplyStyled,
       liveTokens,
       liveThinking,
       promptSuggestion,
@@ -3623,8 +3796,11 @@ export const TerminalView = memo(function TerminalView({
     launchBlock,
     specialScreen,
     connIssue,
+    quotaLimitHint,
     grokLoginStuck,
     liveReply,
+    liveReplySource,
+    liveReplyStyled,
     liveTokens,
     liveThinking,
     promptSuggestion,
@@ -4519,6 +4695,19 @@ export const TerminalView = memo(function TerminalView({
   // 启动放进 setTimeout(0)，卸载时清掉：开发态 StrictMode 会假卸载再挂一次，
   // 同步连启两次会抢同一条 Run 锁，第二次报「此运行已在启动或执行中」。
   const autoLaunchedRef = useRef(false);
+  // 首次冷启动官方账号时，`official_account_status` 可能需 2–5 秒（如 `agy models` / `claude auth status`）：
+  // 等待探测落锤期间先把开场话气泡画出来（不先晒几秒空白「新对话」页）；探测完连上则无缝接力给 launch，未登录或卸载则收回。
+  const earlyAutoBubbleRef = useRef<ReturnType<typeof showEarlyBubble> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (earlyAutoBubbleRef.current) {
+        earlyAutoBubbleRef.current.retract();
+        earlyAutoBubbleRef.current = null;
+        endEarlyBubbleLaunch();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (!autoStart || !visible || !everVisible || autoLaunchedRef.current)
       return;
@@ -4528,8 +4717,19 @@ export const TerminalView = memo(function TerminalView({
     // 官方账号必须等登录检测落锤：未探测完不启动（避免拿 401 当启动结果），
     // 已确认未登录则停自动启动并提示，不静默改道别的配置
     if (profile?.accountType === "official") {
-      if (!officialStReady) return;
+      if (!officialStReady) {
+        const opening = !restored && !customRuntimeId ? promptText.trim() : "";
+        if (opening && !earlyAutoBubbleRef.current) {
+          earlyAutoBubbleRef.current = showEarlyBubble(opening);
+        }
+        return;
+      }
       if (!officialSt?.connected) {
+        if (earlyAutoBubbleRef.current) {
+          earlyAutoBubbleRef.current.retract();
+          earlyAutoBubbleRef.current = null;
+          endEarlyBubbleLaunch();
+        }
         autoLaunchedRef.current = true;
         setError(
           "官方账号未登录：请到连接页登录，或在启动栏改选网关配置后手动启动",
@@ -4546,7 +4746,9 @@ export const TerminalView = memo(function TerminalView({
       // （2026-11-11 用户：退回修改跳到聊天层，消息要等一会才出来——CLI 起来、接回长对话、话写进会话文件之前一片空白）。
       // 启动没成就收回；成了照常等会话文件记下后替换
       const opening = !restored && !customRuntimeId ? promptText.trim() : "";
-      const early = opening ? showEarlyBubble(opening) : null;
+      const early =
+        earlyAutoBubbleRef.current ?? (opening ? showEarlyBubble(opening) : null);
+      earlyAutoBubbleRef.current = null;
       // launch 内部 try 只包住 pty_spawn 起的后半段；前置段（目录检查/清理/官方账号
       // 确认）抛错时 void 吞掉就是「自动启动没反应」。落到错误面并展开启动栏，
       // 让用户（和我们）看得到失败原因。Promise.resolve 兜 launch 返回 null 的分支。
@@ -4601,7 +4803,7 @@ export const TerminalView = memo(function TerminalView({
   async function attach(
     ptyId: string,
     kind: PtyKind,
-    opts?: { reset?: boolean; focus?: boolean },
+    opts?: { reset?: boolean; focus?: boolean; reattach?: boolean },
   ) {
     // await 途中组件可能已卸载（关标签）：杀掉没人持有的 PTY，不碰已 dispose 的 xterm
     if (!mountedRef.current || !termRef.current) {
@@ -4619,8 +4821,9 @@ export const TerminalView = memo(function TerminalView({
     ptyKindRef.current = kind;
     if (kind === "agent") {
       ptyAttachedAtRef.current = Date.now();
-      inputReadyRef.current = false;
-      startupSettledRef.current = false;
+      // 接回仍在运行的既有进程（页面刷新/热重载重挂）：CLI 早已完成启动，不重锁输入与启动稳定闸
+      inputReadyRef.current = Boolean(opts?.reattach);
+      startupSettledRef.current = Boolean(opts?.reattach);
     }
     kkpArmedRef.current = false;
     queryPendingRef.current = "";
@@ -4831,11 +5034,29 @@ export const TerminalView = memo(function TerminalView({
     } catch {}
     const fitted = fittedPtySize(fitRef.current, term);
     if (fitted) {
-      await invoke("pty_resize", {
-        ptyId,
-        cols: fitted.cols,
-        rows: fitted.rows,
-      }).catch(() => {});
+      if (opts?.reattach && fitted.cols > 20) {
+        // 接回空闲中的既有 TUI 进程：同尺寸 pty_resize 在 macOS 上不触发 SIGWINCH 重绘，
+        // 1 列微幅回弹促发 CLI 立即重画真实活画面，清掉「点恢复任务后重新接上」占位
+        await invoke("pty_resize", {
+          ptyId,
+          cols: fitted.cols - 1,
+          rows: fitted.rows,
+        }).catch(() => {});
+        window.setTimeout(() => {
+          if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
+          void invoke("pty_resize", {
+            ptyId,
+            cols: fitted.cols,
+            rows: fitted.rows,
+          }).catch(() => {});
+        }, 40);
+      } else {
+        await invoke("pty_resize", {
+          ptyId,
+          cols: fitted.cols,
+          rows: fitted.rows,
+        }).catch(() => {});
+      }
     }
     // 退出回落等被动 attach 不抢焦点（分屏下用户在另一个 pane 打字）
     if (opts?.focus !== false) term.focus();
@@ -4877,8 +5098,7 @@ export const TerminalView = memo(function TerminalView({
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     setObservedTier(null);
-    liveReplyRef.current = null;
-    setLiveReply(null);
+    clearLiveReply();
     liveTokensRef.current = null;
     setLiveTokens(null);
     liveThinkingRef.current = null;
@@ -5038,18 +5258,22 @@ export const TerminalView = memo(function TerminalView({
     if (!ctx?.filePath) return;
     let nextSig: string | null = null;
     let turnSettled = false;
+    let rawTurnSettled = false;
     // 签名门控仍作兜底，但 watcher 事件会强制刷新。每次都记录新签名，避免事件后
     // 的下一轮轮询再次无条件解析；requestId 防止旧的异步读取覆盖新结果。
     const sig = await invoke<[number, number] | null>("session_file_sig", {
       filePath: ctx.filePath,
     }).catch(() => null);
     if (linkCtxRef.current !== ctx) return;
-    // hooks 家的旁路回合还开着：照「等回复」一样每轮都读到尾部检查——拒绝工具 / Esc 打断时 Claude 不发 Stop，
-    // 只能靠读会话文件收掉（chat_channel_settle_from_transcript），文件不再变也要接着查
-    const hooksTurnOpen = channelRef.current?.kind === "hooks" && channelTurnOpen(channelRef.current);
+    // hooks 家或 agy program-status 的旁路回合还开着：照「等回复」一样每轮都读到尾部检查——
+    // 拒绝工具 / Esc 打断 / agy 漏发 Stop 或 OSC 7501 未发 Idle 时，靠读会话文件收掉（chat_channel_settle_from_transcript），文件不再变也要接着查
+    const channelSettleable =
+      (channelRef.current?.kind === "hooks" ||
+        (channelRef.current?.kind === "program-status" && ctx.agentId === "agy")) &&
+      channelTurnOpen(channelRef.current);
     if (sig) {
       nextSig = `${sig[0]}:${sig[1]}`;
-      if (!force && !pendingReplyRef.current && !hooksTurnOpen && nextSig === convSigRef.current) return;
+      if (!force && !pendingReplyRef.current && !channelSettleable && nextSig === convSigRef.current) return;
     }
     // 过了签名门才占序号：被门挡掉的轮询不能把正在等后端的那次读取作废——原先先占号，那次读取回来见号变了就退出，
     // 而签名已经记下、之后的轮询都被门挡掉，收尾检查再也没人做，聊天层一直「还在回复」（2026-10-25 用户：提问被拒后终端已结束）
@@ -5151,8 +5375,8 @@ export const TerminalView = memo(function TerminalView({
         setPendingReply(false);
       }
       // 等回复期间不把上一轮助手正文当成「这一轮已生成完」
-      turnSettled =
-        !pendingReplyRef.current && conversationTurnSettled(parsedMessages);
+      rawTurnSettled = conversationTurnSettled(parsedMessages);
+      turnSettled = !pendingReplyRef.current && rawTurnSettled;
       if (nextSig) convSigRef.current = nextSig;
       setLinkState("linked");
       if (
@@ -5224,10 +5448,20 @@ export const TerminalView = memo(function TerminalView({
       // 之后会话文件若再无新写入，签名门会让 5s 轮询永远不再重跑 fetch，
       // 「已收尾但被推迟」就冻结成永久转圈（2026-09-19 综述大纲跑完实测）
       const fileSaysOver = state === "done" || state === "settled" || turnSettled;
-      // hooks 家的回合被打断（审批菜单里拒绝 / Esc）时 Claude 不发 Stop，旁路一直「在回复」：会话文件说收尾了就让后端核对后收掉
+      // hooks 家的回合被打断或漏发 Stop（Claude / Kimi / agy），或 agy program-status 未发 Idle/Done 时，
+      // 旁路一直「在回复」：会话文件已收尾（含以问号收尾的最终回复 rawTurnSettled）就让后端按时间戳核对后收掉
       const openChannel = channelRef.current;
-      if (fileSaysOver && openChannel?.kind === "hooks" && channelTurnOpen(openChannel)) {
-        void invoke<boolean>("chat_channel_settle_from_transcript", { tabId }).catch(() => false);
+      if (
+        (fileSaysOver || rawTurnSettled) &&
+        openChannel &&
+        (openChannel.kind === "hooks" ||
+          (openChannel.kind === "program-status" && ctx.agentId === "agy")) &&
+        channelTurnOpen(openChannel)
+      ) {
+        void invoke<boolean>("chat_channel_settle_from_transcript", {
+          tabId,
+          filePath: ctx.filePath,
+        }).catch(() => false);
       }
       const ptyLive = Date.now() - lastOutputAtRef.current < PTY_LIVE_MS;
       // 回合确定结束、且刚发的用户消息都已落盘（不是上一轮残留的收尾标记）：
@@ -5457,6 +5691,7 @@ export const TerminalView = memo(function TerminalView({
     pendingUsersRef.current = [];
     pendingAssistantKeysRef.current = new Set();
     setPendingReply(false);
+    clearLiveReply();
     const note: ChatMessageDto = {
       role: "user",
       blocks: [{ kind: "command_output", text: sessionSwitchNote(source), toolName: null }],
@@ -5479,8 +5714,7 @@ export const TerminalView = memo(function TerminalView({
     if (!snap) return;
     if (snap.connection === "disconnected") {
       setAttention(null);
-      liveReplyRef.current = null;
-      setLiveReply(null);
+      clearLiveReply();
       scanMenuSoon();
       void fetchConversation(true);
       return;
@@ -5559,13 +5793,26 @@ export const TerminalView = memo(function TerminalView({
       });
       void fetchConversation(true);
     }
-    // 旁路送来的实时文字（Qwen / OpenCode / Codex）取代读屏预览
+    // 旁路送来的实时文字（Qwen / OpenCode / Codex）取代读屏预览，保留原始 Markdown 走流式渲染：
+    // - 新回合开始且还没有新正文时清空上一轮残留（直接从终端发话或排队回合续跑时不会闪旧正文）；
+    // - 回合结束那帧若带着最后一段增量（snap.turn.endedAt），一并更新供 settling 期间完整展示，避免尾句截断
     const live = channelLiveLines(snap);
-    if (live && channelTurnOpen(snap)) {
+    if (channelDeliversLiveText(snap) && snap.turn?.seq !== prev?.turn?.seq && !live) {
+      clearLiveReply();
+    }
+    const acceptClosingLive = Boolean(snap.turn?.endedAt && snap.turn.seq === prev?.turn?.seq);
+    if (live && (channelTurnOpen(snap) || acceptClosingLive)) {
       const prevLive = liveReplyRef.current?.join("\n") ?? null;
-      if (prevLive !== live.join("\n")) {
+      if (prevLive !== live.join("\n") || liveReplySourceRef.current !== "markdown") {
         liveReplyRef.current = live;
         setLiveReply(live);
+        liveReplySourceRef.current = "markdown";
+        setLiveReplySource("markdown");
+        if (liveReplyStyledRef.current !== null) {
+          liveReplyStyledRef.current = null;
+          liveReplyStyledSigRef.current = null;
+          setLiveReplyStyled(null);
+        }
       }
     }
   }
@@ -5755,8 +6002,7 @@ export const TerminalView = memo(function TerminalView({
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     setObservedTier(null);
-    liveReplyRef.current = null;
-    setLiveReply(null);
+    clearLiveReply();
     liveTokensRef.current = null;
     setLiveTokens(null);
     liveThinkingRef.current = null;
@@ -5865,6 +6111,7 @@ export const TerminalView = memo(function TerminalView({
     }
     if (
       selectedProfile?.accountType === "official" &&
+      officialAccountModeOf(selectedProfile) === "default" &&
       officialSt &&
       !officialSt.connected
     ) {
@@ -5874,6 +6121,40 @@ export const TerminalView = memo(function TerminalView({
       );
       if (!ok) {
         setBarExpanded(true);
+        return null;
+      }
+    }
+    // Antigravity 官方多号单活防串号护栏：全局仅一条系统钥匙串，若已有异号 agy 官方对话在跑，先经用户确认停掉再切钥匙串
+    if (selectedProfile?.accountType === "official" && agentId === "agy") {
+      try {
+        const conflicts = await invoke<AgyActiveSessionDto[]>("official_agy_check_conflicts", {
+          bindingId: selectedProfile.id,
+          excludeTabId: tabId,
+        });
+        if (conflicts.length > 0) {
+          const names = conflicts.map((c) => `「${c.label}」`).join("、");
+          const ok = await confirmDialog(
+            `Antigravity 官方登录同一时间只支持一个账号在运行。\n\n当前还有 ${conflicts.length} 个对话正在使用其他账号（${names}）。是否先停止它们，再切换到「${selectedProfile.name}」？`,
+            { confirmText: "停止并切换" },
+          );
+          if (!ok) {
+            launchCancelRef.current = "已取消切换 Antigravity 账号";
+            return null;
+          }
+          for (const c of conflicts) {
+            window.dispatchEvent(new CustomEvent("mesa:stop-tab", { detail: { tabId: c.tabId } }));
+            await invoke("official_agy_unregister_session", { tabId: c.tabId }).catch(() => {});
+          }
+          await new Promise((r) => setTimeout(r, 350));
+        }
+        if (officialAccountModeOf(selectedProfile) === "managedSnapshot") {
+          await invoke("official_agy_activate", {
+            bindingId: selectedProfile.id,
+            excludeTabId: tabId,
+          });
+        }
+      } catch (e) {
+        setError(`切换 Antigravity 账号失败：${String(e)}`);
         return null;
       }
     }
@@ -6006,13 +6287,15 @@ export const TerminalView = memo(function TerminalView({
       setSyncState("detecting");
       linkStartedAtRef.current = Date.now();
       startLinkPolling(500);
-      await attach(existingPty, "agent", { reset: false });
+      await attach(existingPty, "agent", { reset: Boolean(restored), reattach: true });
       setExited(false);
       setExitCode(null);
       setShellActive(false);
       setRunning(true);
       setStartedAt((prev) => prev ?? Date.now());
       setNotice("已接回正在跑的进程，画面大小先不动");
+      if (restored) onRestoreComplete?.(tabId);
+      if (resumeSessionId) onConsumeResume?.(tabId);
       return { ptyId: existingPty, promptDropped: false };
     }
     if (chrome.kind === "collapse") {
@@ -6104,8 +6387,7 @@ export const TerminalView = memo(function TerminalView({
           launchPermission === "discuss"
             ? null
             : (permissionMode ??
-              (!restored &&
-              chatPermissionMemoryApplies(reuseKey) &&
+              (chatPermissionMemoryApplies(reuseKey) &&
               launchFullAvailable &&
               rememberedFullAccess(profileId)
                 ? "full"
@@ -6121,6 +6403,13 @@ export const TerminalView = memo(function TerminalView({
         rows: size.rows,
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
+      if (selectedProfile?.accountType === "official" && agentId === "agy") {
+        void invoke("official_agy_register_session", {
+          tabId,
+          bindingId: selectedProfile.id,
+          label: selectedProfile.name,
+        }).catch(() => {});
+      }
       if (res.runId) {
         runIdRef.current = res.runId;
         setRunId(res.runId);
@@ -6201,7 +6490,10 @@ export const TerminalView = memo(function TerminalView({
       // 首次关联阶段使用短间隔，避免聊天层长时间停留在“识别中”；关联成功后
       // lockLink 会切回较宽松的兜底轮询，正常刷新由 session watcher 驱动。
       startLinkPolling(500);
-      await attach(res.ptyId, "agent", { reset: !res.adopted });
+      await attach(res.ptyId, "agent", {
+        reset: !res.adopted || Boolean(restored),
+        reattach: Boolean(res.adopted),
+      });
       const launchedPrompt = (options?.prompt ?? promptText).trim();
       const armWorking = shouldArmWorkingOnLaunch({
         prompt: launchedPrompt,
@@ -6368,14 +6660,60 @@ export const TerminalView = memo(function TerminalView({
   function switchConnection(id: string) {
     const target = profiles.find((p) => p.id === id && p.agent === agentId);
     if (!target) return;
+    const curProfile = profiles.find((p) => p.id === profileId) ?? null;
     dismissConnIssue();
-    setProfileId(id);
     const cur = model.trim();
-    setModel(cur && target.models.includes(cur) ? cur : (target.models[0] ?? ""));
+    const nextModel = cur && target.models.includes(cur) ? cur : (target.models[0] ?? "");
+    // 跨官方账号（Claude/Codex 隔离目录、Antigravity 托管号）会话目录/归属不互通，有会话记录时自动走接力简报无缝续聊
+    if (needsRelayOnSameAgentSwitch(curProfile, target) && relaySource()) {
+      setRelayPick({
+        agentId,
+        profileId: target.id,
+        model: nextModel,
+        mode: "new",
+        resumeSession: null,
+      });
+      setNotice(`已挂接力到「${target.name}」，发下一句将携带上下文无缝换号继续`);
+      return;
+    }
+    setProfileId(id);
+    setModel(nextModel);
     setModelKept(false);
     calibratePermissionFor(agentId, id);
     switchPendingRef.current = id;
     if (ptyKindRef.current === "agent" && ptyIdRef.current) void stop();
+  }
+  function applyQuotaSwitch(resend: boolean) {
+    if (!quotaLimitHint) return;
+    const target = profiles.find((p) => p.id === quotaLimitHint.altProfileId);
+    if (!target) return;
+    const cur = model.trim();
+    const nextModel = cur && target.models.includes(cur) ? cur : (target.models[0] ?? "");
+    const relayTarget: RelayTarget = {
+      agentId: target.agent,
+      profileId: target.id,
+      model: nextModel,
+      mode: "new",
+      resumeSession: null,
+    };
+    setQuotaHintDismissedKey(`${profileId}:${target.id}`);
+    dismissConnIssue();
+    if (resend && lastSentRef.current?.trim() && relaySource()) {
+      void relaySend(lastSentRef.current.trim(), relayTarget).then((r) => {
+        if (r.error) setError(r.error);
+      });
+      return;
+    }
+    if (relaySource()) {
+      setRelayPick(relayTarget);
+      setNotice(`已挂接力到「${target.name}」，发送下一句即携带上下文换号继续`);
+    } else {
+      switchConnection(target.id);
+    }
+  }
+  function dismissQuotaLimitHint() {
+    if (!quotaLimitHint) return;
+    setQuotaHintDismissedKey(`${profileId}:${quotaLimitHint.altProfileId}`);
   }
   useEffect(() => {
     const target = switchPendingRef.current;
@@ -6527,8 +6865,7 @@ export const TerminalView = memo(function TerminalView({
     // 发送发生在后台读取途中时，令旧读取失效，避免它把刚显示的本地消息覆盖掉。
     conversationRequestRef.current += 1;
     // 实时预览从这一轮重新攒（上一轮的长回复不能接到这一轮前面）
-    liveReplyRef.current = null;
-    setLiveReply(null);
+    clearLiveReply();
     liveTokensRef.current = null;
     setLiveTokens(null);
     liveThinkingRef.current = null;
@@ -6737,6 +7074,7 @@ export const TerminalView = memo(function TerminalView({
         targetAgent: target.agentId,
         resumeSession: target.mode === "resume" ? target.resumeSession : null,
         withWords: true,
+        allowSameAgent: target.agentId === source.agent,
       });
     } catch (e) {
       early.retract();
@@ -6955,6 +7293,8 @@ export const TerminalView = memo(function TerminalView({
     relaunchWith: () => {},
     switchConnection: () => {},
     dismissConnIssue: () => {},
+    applyQuotaSwitch: () => {},
+    dismissQuotaLimitHint: () => {},
     grokLogout: () => {},
     dismissGrokLogin: () => {},
     pressWaitKey: () => {},
@@ -7030,6 +7370,8 @@ export const TerminalView = memo(function TerminalView({
     relaunchWith,
     switchConnection,
     dismissConnIssue,
+    applyQuotaSwitch,
+    dismissQuotaLimitHint,
     grokLogout,
     dismissGrokLogin,
     pressWaitKey,
@@ -7079,6 +7421,8 @@ export const TerminalView = memo(function TerminalView({
       relaunchWith: (patch) => actionsRef.current.relaunchWith(patch),
       switchConnection: (id) => actionsRef.current.switchConnection(id),
       dismissConnIssue: () => actionsRef.current.dismissConnIssue(),
+      applyQuotaSwitch: (resend) => actionsRef.current.applyQuotaSwitch(resend),
+      dismissQuotaLimitHint: () => actionsRef.current.dismissQuotaLimitHint(),
       grokLogout: () => actionsRef.current.grokLogout(),
       dismissGrokLogin: () => actionsRef.current.dismissGrokLogin(),
       pressWaitKey: (k) => actionsRef.current.pressWaitKey(k),

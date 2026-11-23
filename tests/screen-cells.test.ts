@@ -108,3 +108,24 @@ test("activeScreenLines / activeScreenCells：读 baseY 当前屏，不跟停在
   assert.deepEqual(activeScreenLines(null), []);
   assert.deepEqual(activeScreenCells(undefined, 0), []);
 });
+
+test("lineCells：支持粗体 / 下划线 / 删除线属性读取", () => {
+  const mk = (ch: string, opts: { bold?: number; underline?: number; strike?: number }) => ({
+    getChars: () => ch,
+    getWidth: () => 1,
+    isDim: () => 0,
+    isInverse: () => 0,
+    isBgDefault: () => true,
+    isBold: () => opts.bold ?? 0,
+    isUnderline: () => opts.underline ?? 0,
+    isStrikethrough: () => opts.strike ?? 0,
+  });
+  const cells = lineCells({
+    length: 3,
+    getCell: (x) => [mk("A", { bold: 1 }), mk("B", { underline: 1 }), mk("C", { strike: 1 })][x],
+  });
+  assert.equal(cells[0].bold, true);
+  assert.equal(cells[0].underline, false);
+  assert.equal(cells[1].underline, true);
+  assert.equal(cells[2].strike, true);
+});

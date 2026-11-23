@@ -675,6 +675,12 @@ fn pty_agent_env() -> Vec<(String, String)> {
     if let Some((k, v)) = crate::dep_check::agent_python_env() {
         env.push((k.to_string(), v));
     }
+    if let Some(script) = crate::skills::lit_records_script_path() {
+        env.push((
+            crate::skills::LIT_RECORDS_ENV.to_string(),
+            script.to_string_lossy().into_owned(),
+        ));
+    }
     env
 }
 
@@ -712,6 +718,9 @@ fn spawn_tracked(
     if purpose == PtyPurpose::Agent {
         if let Some((key, value)) = crate::dep_check::agent_python_env() {
             cmd.env(key, value);
+        }
+        if let Some(script) = crate::skills::lit_records_script_path() {
+            cmd.env(crate::skills::LIT_RECORDS_ENV, &script);
         }
     }
     // 科研做图：图纸 SVG 转 PNG / PDF（svg_render.rs）；单独试跑 svg-render，旧 helper 不认就不注入

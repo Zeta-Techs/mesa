@@ -44,6 +44,9 @@ export function createDocumentSanitizer(window: WindowLike): (html: string) => s
     ],
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
+    // DOMPurify 默认 ALLOWED_URI_REGEXP 不含 file:，会把上面 hook 放行的 file:// 本地文件链接剥成无 href 的空 <a>
+    ALLOWED_URI_REGEXP:
+      /^(?:(?:https?|mailto|tel|file|blob):|data:image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml|x-icon);base64,|[a-z]:[\\/]|[^a-z]|[a-z+.-]+(?:[^a-z+.:-]|$))/i,
   });
 }
 
