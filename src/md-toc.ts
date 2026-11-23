@@ -36,10 +36,12 @@ export function headingsFromElement(root: Element): MdHeading[] {
   for (const el of root.querySelectorAll("h1,h2,h3,h4,h5,h6")) {
     const level = Number(el.tagName.slice(1));
     if (level < 1 || level > 6) continue;
-    const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-    if (!text) continue;
+    const rawText = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!rawText) continue;
     const id = headingIdOf(el, used);
     if (!el.getAttribute("id")) el.setAttribute("id", id);
+    const secNum = el.getAttribute("data-sec-num")?.trim();
+    const text = secNum ? `${secNum} ${rawText}` : rawText;
     out.push({ id, level, text });
   }
   return out;
@@ -70,7 +72,12 @@ export function sectionAnchorForLine(markdown: string, line: number): string | n
   for (let i = Math.min(line, lines.length) - 1; i >= 0; i--) {
     const raw = lines[i].trim();
     const heading = raw.match(/^#{1,6}\s+(.+?)\s*#*$/);
-    if (heading) return heading[1].replace(/[*_`]/g, "").trim();
+    if (heading) {
+      return heading[1]
+        .replace(/\s*\{[ \t]*(?:[#.-][^{}]*|[A-Za-z0-9_:-]+=[^}]*)\}\s*$/, "")
+        .replace(/[*_`]/g, "")
+        .trim();
+    }
     const bold = raw.match(/^\*\*(.+?)\*\*$/);
     if (bold) return bold[1].trim();
   }

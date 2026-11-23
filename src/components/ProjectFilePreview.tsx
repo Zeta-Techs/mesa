@@ -24,6 +24,7 @@ function PreviewContent({
   leading,
   trailing,
   hideFileName,
+  hideBranchBadge,
   onAnnotate,
   onDirtyChange,
   onOrganize,
@@ -43,6 +44,8 @@ function PreviewContent({
   trailing?: ReactNode;
   /** 宿主头已显示文件名时不重复显示文件名 */
   hideFileName?: boolean;
+  /** 审阅页已写明当前工作区分支，预览条不再重复标「分支 xxx」 */
+  hideBranchBadge?: boolean;
   /** 审阅划选：把选段和批注追加进意见框。只对 md 阅读态生效。 */
   onAnnotate?: ReviewAnnotate;
   /** PDF 选段「整理为笔记」（项目文件页接线，pdf-organize.ts） */
@@ -143,6 +146,7 @@ function PreviewContent({
           leading={leading}
           trailing={trailing}
           hideFileName={hideFileName}
+          hideBranchBadge={hideBranchBadge}
           onAnnotate={onAnnotate}
           onDirtyChange={onDirtyChange}
           readOnly={readOnly}

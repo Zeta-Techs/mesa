@@ -45,3 +45,47 @@ export function onEditorFontChange(fn: (size: number) => void): () => void {
   globalThis.addEventListener?.(EVENT, handler);
   return () => globalThis.removeEventListener?.(EVENT, handler);
 }
+
+// ---------- Markdown 阅读视图字号（2026-11-23 用户：加一个字号调整的按钮） ----------
+
+export const READ_FONT_DEFAULT = 15;
+export const READ_FONT_MIN = 12;
+export const READ_FONT_MAX = 24;
+const READ_KEY = "ccode.mdReadingFontSize";
+const READ_EVENT = "ccode-reading-font";
+
+export function clampReadingFont(v: number): number {
+  if (!Number.isFinite(v)) return READ_FONT_DEFAULT;
+  return Math.min(READ_FONT_MAX, Math.max(READ_FONT_MIN, Math.round(v * 2) / 2));
+}
+
+export function stepReadingFont(current: number, delta: 1 | -1): number {
+  return clampReadingFont(current + delta);
+}
+
+export function readReadingFont(): number {
+  try {
+    const raw = globalThis.localStorage?.getItem(READ_KEY);
+    return raw ? clampReadingFont(Number(raw)) : READ_FONT_DEFAULT;
+  } catch {
+    return READ_FONT_DEFAULT;
+  }
+}
+
+export function writeReadingFont(v: number): number {
+  const next = clampReadingFont(v);
+  try {
+    if (next === READ_FONT_DEFAULT) globalThis.localStorage?.removeItem(READ_KEY);
+    else globalThis.localStorage?.setItem(READ_KEY, String(next));
+  } catch {
+    /* 存不了就只改这一次 */
+  }
+  globalThis.dispatchEvent?.(new CustomEvent(READ_EVENT, { detail: next }));
+  return next;
+}
+
+export function onReadingFontChange(fn: (size: number) => void): () => void {
+  const handler = (e: Event) => fn((e as CustomEvent<number>).detail);
+  globalThis.addEventListener?.(READ_EVENT, handler);
+  return () => globalThis.removeEventListener?.(READ_EVENT, handler);
+}

@@ -63,6 +63,8 @@ import {
   GitCommitHorizontal,
   GitMerge,
   GitPullRequest,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Search,
   StickyNote,
@@ -637,9 +639,11 @@ function DeliveryReviewPane({
             <button
               type="button"
               onClick={() => setListOpen(false)}
-              className="shrink-0 text-micro text-l3 hover:text-l1"
+              title="收起文件列表"
+              aria-label="收起文件列表"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
             >
-              收起
+              <PanelLeftClose aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
           </div>
           <ul className="min-h-0 flex-1 overflow-auto px-1 pb-2">
@@ -669,6 +673,7 @@ function DeliveryReviewPane({
           key={current}
           path={absUnderRoot(root, current)}
           root={root}
+          hideBranchBadge
           leading={
             paths.length > 1 && !listOpen ? (
               <button
@@ -676,9 +681,9 @@ function DeliveryReviewPane({
                 onClick={() => setListOpen(true)}
                 title="展开文件列表"
                 aria-label="展开文件列表"
-                className="-ml-1 shrink-0 px-1 text-micro text-l3 hover:text-l1"
+                className="-ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
               >
-                ›
+                <PanelLeftOpen aria-hidden="true" className="h-3.5 w-3.5" />
               </button>
             ) : null
           }
@@ -1430,7 +1435,10 @@ function LiveWorkspaceReviewView({
   const [prPushed, setPrPushed] = useState(false);
   const [prUrl, setPrUrl] = useState<string | null>(null);
   const [prCopied, setPrCopied] = useState(false);
-  const [reviewRailOpen, setReviewRailOpen] = useState(false);
+  // 与「稿件 / 过程」一致：桌面端默认在左侧展开改动文件列表，窄屏先收起；侧栏内自带收起/展开图标钮，不再占顶栏按钮位
+  const [reviewRailOpen, setReviewRailOpen] = useState(
+    () => typeof window === "undefined" || window.innerWidth >= 1024,
+  );
   const initialActionRef = useRef<string | null>(null);
   const [unmerged, setUnmerged] = useState<UnmergedDto | null>(null);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
@@ -3230,7 +3238,8 @@ function LiveWorkspaceReviewView({
   return (
     <div data-surface="canvas" className="absolute inset-0 z-30 flex min-h-0 flex-col bg-canvas">
       <header className="shrink-0 border-b border-hairline bg-strip">
-        <div className="flex h-12 items-center gap-3 px-3">
+        {/* 第一层（唯一导航与操作栏）：身份与紧凑统计 | 稿件/过程/文件主切签 | 请 AI 看看 / 刷新 / 退回修改 / 保存进项目 */}
+        <div className="flex h-12 items-center gap-2.5 px-3">
           <button
             type="button"
             onClick={onClose}
@@ -3239,7 +3248,22 @@ function LiveWorkspaceReviewView({
           >
             <ArrowLeft aria-hidden="true" className="h-4 w-4" />
           </button>
-          <div className="flex min-w-0 items-center gap-2">
+          <div
+            className="flex min-w-0 items-center gap-2"
+            title={
+              diff
+                ? [
+                    `${diff.branch} → ${diff.baseBranch}`,
+                    `${reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length} 个文件（+${diff.totalAdd} -${diff.totalDel}）`,
+                    health && health.behind > 0 ? `主分支在你开工后新增 ${health.behind} 个保存点` : "",
+                    reviewProfile.headerHint ?? "",
+                    REVIEW_SAVE.localOnlyHint,
+                  ]
+                    .filter(Boolean)
+                    .join("\n")
+                : undefined
+            }
+          >
             <span className="shrink-0 text-sm font-medium text-l1">
               {conflictMode || health?.conflict ? "解决冲突" : "审阅"}
             </span>
@@ -3247,19 +3271,71 @@ function LiveWorkspaceReviewView({
             <span className="truncate text-sm text-l2">
               {diff?.workspaceName ?? "加载中"}
             </span>
+            {diff && !conflictMode && !hasUncommitted && (
+              <span className="hidden shrink-0 items-center gap-1.5 text-micro text-l4 xl:inline-flex">
+                <span>·</span>
+                <span>
+                  {reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length} 个文件
+                </span>
+                {!reviewProfile.headerHint && (
+                  <>
+                    <span className="font-mono text-add">+{diff.totalAdd}</span>
+                    <span className="font-mono text-del">-{diff.totalDel}</span>
+                  </>
+                )}
+                {health && health.behind > 0 && (
+                  <span>· 主分支 +{health.behind}</span>
+                )}
+              </span>
+            )}
           </div>
 
-          <div className="ml-auto flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setReviewRailOpen((open) => !open)}
-              aria-expanded={reviewRailOpen}
-              aria-label={reviewRailOpen ? "收起文件列表" : "打开文件列表"}
-              className="flex h-8 items-center gap-1.5 rounded-sm px-2 text-xs text-l3 hover:bg-hover hover:text-l1"
+          {diff && !opening && contentReview && paneTabs && (
+            <div
+              role="tablist"
+              aria-label="审阅视图"
+              className="ml-1 inline-flex shrink-0 items-center rounded-md border border-hairline bg-inset/75 p-0.5 text-xs"
             >
-              <File aria-hidden="true" className="h-3.5 w-3.5" />
-              {reviewRailOpen ? "收起文件" : "文件列表"}
-            </button>
+              {paneTabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={reviewPane === tab.id}
+                  onClick={() => setReviewPane(tab.id)}
+                  className={`rounded-sm px-2.5 py-1 transition-colors ${
+                    reviewPane === tab.id
+                      ? "bg-seg-sel font-medium text-l1"
+                      : "text-l3 hover:text-l1"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {diff && !opening && askAiItems.length > 0 && (
+              <span className="relative shrink-0">
+                <ReviewAskAiMenu items={askAiItems} align="right" />
+                {coachStep === 1 && (
+                  <CoachTip
+                    arrow="up"
+                    arrowAt={264}
+                    title="拿不准，请 AI 帮你看"
+                    onClose={finishCoach}
+                    className="absolute top-full right-0 z-50 mt-2 w-80"
+                    actions={[
+                      { label: "跳过", onClick: finishCoach },
+                      { label: "下一条", onClick: () => setCoachStep(2) },
+                    ]}
+                  >
+                    让项目助手先过一遍，或请另一家 AI 核对引用、请几家一起研讨。它们只看不改，结论由你定。
+                  </CoachTip>
+                )}
+              </span>
+            )}
             <button
               type="button"
               onClick={() => void refresh()}
@@ -3378,7 +3454,7 @@ function LiveWorkspaceReviewView({
                   type="button"
                   onClick={() => void finish("merge")}
                   disabled={!canPrimary}
-                  title={hardBlocked ? blockerPrimaryText(blockers) : undefined}
+                  title={hardBlocked ? blockerPrimaryText(blockers) : REVIEW_SAVE.localOnlyHint}
                   className="min-w-32 rounded-l border border-cta-bd bg-cta px-3 py-1.5 text-sm text-cta-text hover:brightness-110 disabled:opacity-50"
                 >
                   {busy ? "处理中…" : primaryLabel}
@@ -3400,17 +3476,10 @@ function LiveWorkspaceReviewView({
           </div>
         </div>
 
-        {diff && (
+        {/* 条件工具行：仅冲突批量选边或有未提交改动需要写提交说明时展开；平时收进顶栏摘要，省去整行冗余 */}
+        {diff && (conflictMode || hasUncommitted) && (
           <div className="flex min-h-9 items-center gap-3 border-t border-hairline px-3 py-1.5 text-xs">
             <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden whitespace-nowrap text-l3">
-              {reviewProfile.headerHint ? (
-                <span className="truncate text-l2">
-                  {reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length} 个文件 · {reviewProfile.headerHint}
-                </span>
-              ) : (
-                <>
-              {/* 分支 → 主分支合成一段截断（两段各自截断时成了「ccode/lit… → ma…」，2026-10-22 截图）；
-                  全名放悬停 */}
               <span
                 className="flex min-w-0 shrink items-center gap-1.5"
                 title={`${diff.branch} → ${diff.baseBranch}`}
@@ -3425,7 +3494,6 @@ function LiveWorkspaceReviewView({
               </span>
               <span className="shrink-0 font-mono text-add">+{diff.totalAdd}</span>
               <span className="shrink-0 font-mono text-del">-{diff.totalDel}</span>
-              {/* 领先几个保存点就是这次要审的东西，不另写；只有主分支另有新保存点才值得说 */}
               {health && health.behind > 0 && (
                 <span
                   className="shrink-0 text-l4"
@@ -3433,8 +3501,6 @@ function LiveWorkspaceReviewView({
                 >
                   主分支新增 {health.behind} 个保存点
                 </span>
-              )}
-                </>
               )}
             </div>
 
@@ -3502,7 +3568,7 @@ function LiveWorkspaceReviewView({
                   不确定选哪边时可让 AI 按上下文建议；仍可逐文件手动改选
                 </span>
               </div>
-            ) : hasUncommitted ? (
+            ) : (
               <div className="ml-auto flex w-80 min-w-48 shrink flex-col gap-0.5">
                 <div className="flex items-center gap-1.5">
                   <input
@@ -3527,31 +3593,19 @@ function LiveWorkspaceReviewView({
                   </button>
                 </div>
               </div>
-            ) : (
-              <span
-                title={REVIEW_SAVE.localOnlyHint}
-                className="ml-auto flex h-7 w-7 items-center justify-center rounded-sm text-l4"
-              >
-                ⓘ
-              </span>
             )}
           </div>
         )}
 
-        {/* 可信度行：引用解析（bib 对照）+ 产物核验摘要 + 人工事项收尾提醒。
-            无 bib/全文无引用/无预期产物/无收尾事项时不渲染，不给非写作类项目添噪声；
-            数据进评审时一次性读取，失败静默降级；收尾事项只提醒不阻断合并 */}
+        {/* 第二层（纯粹的检查状态条）：只报客观核验、引用、产物与人工收尾提醒，不再混放操作菜单或页签 */}
         {diff && !opening &&
-          (contentReview ||
-            (citations && citations.bibFound && citations.totalRefs > 0) ||
+          ((citations && citations.bibFound && citations.totalRefs > 0) ||
             checks ||
-            (!checksReady && currentStepKind !== null) ||
+            (!checksReady && (contentReview || currentStepKind !== null)) ||
             (shownArtifacts && shownArtifacts.total > 0) ||
             (humanClosing && humanClosing.length > 0)) && (
             <div className="border-t border-hairline px-3 py-1.5 text-xs">
-              {/* 2026-11-11 评审页整理：查出来的状态（核验 / 引用 / 产物）、请 AI 帮看（一个菜单）、页签各成一组；
-                  退回意见挪到右侧意见栏，「退回修改…」上了右上角，和「保存进项目」放在一起 */}
-              <div className="flex min-h-6 flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="flex min-h-6 flex-wrap items-center gap-x-2.5 gap-y-1">
                 <span className="relative shrink-0">
                   <button
                     type="button"
@@ -3582,7 +3636,7 @@ function LiveWorkspaceReviewView({
                   )}
                 </span>
                 {!checksReady && (contentReview || currentStepKind !== null) ? (
-                  <span className="shrink-0 rounded-full border border-hairline px-2 text-l4">
+                  <span className="shrink-0 text-l4">
                     检查中…
                   </span>
                 ) : (
@@ -3593,11 +3647,11 @@ function LiveWorkspaceReviewView({
                         aria-expanded={checksExpanded}
                         onClick={() => setChecksExpanded((v) => !v)}
                         title="点开看每一条：拦下的、要你判断的、确认无误的；每条标了是谁查的（Mesa 核对、核验脚本、AI 判断）"
-                        className={`shrink-0 rounded-full border border-hairline px-2 hover:bg-hover ${
+                        className={`shrink-0 rounded-full border border-hairline px-2 py-px transition-colors hover:bg-hover ${
                           countChecks(checks.items).blocked > 0
-                            ? "text-err-text"
+                            ? "border-err-text/30 text-err-text"
                             : countChecks(checks.items).needsHuman > 0 || checks.skipped > 0
-                              ? "text-warn-text"
+                              ? "border-warn-text/30 text-warn-text"
                               : "text-l3"
                         }`}
                       >
@@ -3605,28 +3659,31 @@ function LiveWorkspaceReviewView({
                       </button>
                     )}
                     {citations && citations.bibFound && citations.totalRefs > 0 && (
-                      <button
-                        type="button"
-                        disabled={citations.missing.length === 0}
-                        onClick={() => setCiteExpanded((v) => !v)}
-                        title={
-                          citations.missing.length > 0
-                            ? `${citations.missing.length} 个引用键在 references.bib 里找不到，点开看是哪几个`
-                            : "正文里的引用键都能在 references.bib 里找到"
-                        }
-                        className={`shrink-0 rounded-full border border-hairline px-2 ${
-                          citations.missing.length > 0 ? "text-warn-text hover:bg-hover" : "text-l3"
-                        } disabled:cursor-default`}
-                      >
-                        引用 {citations.resolved}/{citations.totalRefs}
-                        {citations.missing.length > 0 && ` · 缺 ${citations.missing.length}`}
-                      </button>
+                      citations.missing.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setCiteExpanded((v) => !v)}
+                          title={`${citations.missing.length} 个引用键在 references.bib 里找不到，点开看是哪几个`}
+                          className="shrink-0 rounded-full border border-warn-text/30 px-2 py-px text-warn-text hover:bg-hover"
+                        >
+                          引用 {citations.resolved}/{citations.totalRefs} · 缺 {citations.missing.length}
+                        </button>
+                      ) : (
+                        <span
+                          title="正文里的引用键都能在 references.bib 里找到"
+                          className="shrink-0 tabular-nums text-l3"
+                        >
+                          引用 {citations.resolved}/{citations.totalRefs}
+                        </span>
+                      )
                     )}
                     {shownArtifacts && shownArtifacts.total > 0 && (
                       <span
                         title="任务书要交的文件，交了几份"
-                        className={`shrink-0 rounded-full border border-hairline px-2 ${
-                          shownArtifacts.produced < shownArtifacts.total ? "text-warn-text" : "text-l3"
+                        className={`shrink-0 tabular-nums ${
+                          shownArtifacts.produced < shownArtifacts.total
+                            ? "rounded-full border border-warn-text/30 px-2 py-px text-warn-text"
+                            : "text-l3"
                         }`}
                       >
                         产物 {shownArtifacts.produced}/{shownArtifacts.total}
@@ -3636,49 +3693,11 @@ function LiveWorkspaceReviewView({
                 )}
                 {humanClosing && humanClosing.length > 0 && (
                   <span
-                    className="min-w-0 truncate text-warn-text"
+                    className="ml-auto min-w-0 truncate text-warn-text"
                     title={`收尾人工事项未完成：${humanClosing.join("、")}`}
                   >
                     收尾：{humanClosing.join("、")}
                   </span>
-                )}
-                {askAiItems.length > 0 && (
-                  <span className="relative ml-1 shrink-0">
-                    <ReviewAskAiMenu items={askAiItems} />
-                    {coachStep === 1 && (
-                      <CoachTip
-                        arrow="up"
-                        arrowAt={28}
-                        title="拿不准，请 AI 帮你看"
-                        onClose={finishCoach}
-                        className="absolute top-full left-0 z-50 mt-2 w-80"
-                        actions={[
-                          { label: "跳过", onClick: finishCoach },
-                          { label: "下一条", onClick: () => setCoachStep(2) },
-                        ]}
-                      >
-                        让项目助手先过一遍，或请另一家 AI 核对引用、请几家一起研讨。它们只看不改，结论由你定。
-                      </CoachTip>
-                    )}
-                  </span>
-                )}
-                {contentReview && paneTabs && (
-                  <div className="ml-auto flex shrink-0 gap-1">
-                    {paneTabs.map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setReviewPane(tab.id)}
-                        className={`rounded-sm px-2 py-0.5 ${
-                          reviewPane === tab.id
-                            ? "bg-rail-sel text-l1"
-                            : "text-l3 hover:text-l1"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
                 )}
               </div>
               {checksExpanded && checks && !contentReady && checkListNode}
@@ -4212,122 +4231,27 @@ function LiveWorkspaceReviewView({
               className="ccode-review-rail-backdrop"
             />
           )}
-          <main
-            ref={reviewMainRef}
-            onScroll={trackActiveFile}
-            className="min-w-0 flex-1 overflow-auto bg-canvas"
-          >
-            {conflictMode ? (
-              staleBase ? (
-                <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-                  <p className="text-sm text-l2">
-                    当前冲突使用的是旧基准，已暂停展示两侧内容
-                  </p>
-                  <p className="max-w-xl text-xs text-l4">
-                    重新同步后会基于最新 {diff.baseBranch} 生成新的任务版 /
-                    基准版对照，避免看到一套内容、实际选择另一套内容。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => void startConflictResolution(true)}
-                    disabled={conflictBusy}
-                    className={primaryActionClass}
-                  >
-                    {conflictBusy
-                      ? "重新同步中…"
-                      : `重新同步最新 ${diff.baseBranch}`}
-                  </button>
-                </div>
-              ) : conflictFiles.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-l4">
-                  正在读取冲突文件…
-                </div>
-              ) : filteredConflictFiles.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-l4">
-                  没有匹配的冲突文件
-                </div>
-              ) : (
-                filteredConflictFiles.map((path) => (
-                  <ConflictFileSection
-                    key={path}
-                    path={path}
-                    content={conflictContents[path] ?? null}
-                    contentError={conflictContentErrors[path]}
-                    branch={diff.branch}
-                    baseBranch={diff.baseBranch}
-                    unresolved={unresolvedSet.has(path)}
-                    choice={conflictChoices[path]}
-                    advice={effectiveAdvice[path]}
-                    busy={conflictBusy || staleBase}
-                    register={registerSection}
-                    onChoose={(file, choice) =>
-                      void chooseConflict(file, choice)
-                    }
-                    onRetry={retryConflictContent}
-                  />
-                ))
-              )
-            ) : health?.conflict ? (
-              <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-                <p className="text-sm text-l2">
-                  {hasUncommitted
-                    ? "先提交任务改动，再准备最新主分支"
-                    : conflictBusy
-                      ? `正在同步最新 ${diff.baseBranch}…`
-                      : error
-                        ? "同步失败，请从右上角重试"
-                        : `与 ${diff.baseBranch} 存在冲突，可从右上角开始解决`}
-                </p>
-                <p className="max-w-xl text-xs text-l4">两边改了同一个地方，需要你逐个文件选一边。</p>
-              </div>
-            ) : !hasTaskChanges ? (
-              <div className="flex h-full items-center justify-center text-sm text-l4">
-                当前任务相对 {diff.baseBranch} 没有改动
-              </div>
-            ) : orderedFiles.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-l4">
-                没有匹配的改动文件
-              </div>
-            ) : stackedFiles.length === 0 ? (
-              <div className="flex h-full items-center justify-center px-8 text-center text-sm text-l4">
-                纳入清单见上方表格。右侧可打开筛选记录或待获取原文。
-              </div>
-            ) : (
-              stackedFiles.map((file) => (
-                <DiffFileSection
-                  key={file.path}
-                  file={file}
-                  worktreePath={diff.worktreePath}
-                  revision={revision}
-                  register={registerSection}
-                  unified={file.status === "A" || file.status === "??"}
-                  cached={
-                    diffCacheTick >= 0
-                      ? fileDiffCache.get(fileDiffCacheKey(worktreePath, file.path, revision)) ?? null
-                      : null
-                  }
-                />
-              ))
-            )}
-          </main>
-
           <aside
             className={[
-              "ccode-review-rail flex w-[292px] shrink-0 flex-col border-l border-hairline bg-rail2",
+              "ccode-review-rail flex w-60 shrink-0 flex-col border-r border-hairline bg-rail2",
               reviewRailOpen ? "ccode-review-rail-open" : "hidden",
             ].join(" ")}
           >
-            <div className="shrink-0 border-b border-hairline p-3">
-              <div className="flex h-8 items-center gap-2 rounded-sm border border-field bg-canvas px-2">
+            <div className="flex h-8 shrink-0 items-center gap-1 border-b border-hairline px-2">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm border border-field bg-inset px-2 py-0.5">
                 <Search
                   aria-hidden="true"
-                  className="h-3.5 w-3.5 shrink-0 text-l4"
+                  className="h-3 w-3 shrink-0 text-l4"
                 />
                 <input
                   value={fileQuery}
                   onChange={(event) => setFileQuery(event.target.value)}
-                  placeholder="筛选文件…"
-                  className="min-w-0 flex-1 bg-transparent text-xs text-l2 outline-none placeholder:text-l4"
+                  placeholder={`${conflictMode ? "筛选冲突文件" : "找文件"}（${
+                    conflictMode
+                      ? filteredConflictFiles.length
+                      : filteredFiles.length
+                  }）`}
+                  className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
                 />
                 {fileQuery && (
                   <button
@@ -4340,15 +4264,15 @@ function LiveWorkspaceReviewView({
                   </button>
                 )}
               </div>
-              <div className="mt-2 flex items-center text-micro text-l4">
-                <span>{conflictMode ? "冲突文件" : "改动文件"}</span>
-                <span className="ml-auto">
-                  {conflictMode
-                    ? filteredConflictFiles.length
-                    : filteredFiles.length}
-                  /{conflictMode ? conflictFiles.length : reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length}
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => setReviewRailOpen(false)}
+                title="收起文件列表"
+                aria-label="收起文件列表"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+              >
+                <PanelLeftClose aria-hidden="true" className="h-3.5 w-3.5" />
+              </button>
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto py-1">
@@ -4447,14 +4371,130 @@ function LiveWorkspaceReviewView({
                 </div>
               )}
             </div>
-            <button
-              type="button"
-              onClick={() => setReviewRailOpen(false)}
-              className="ccode-review-rail-close"
-            >
-              关闭文件列表
-            </button>
           </aside>
+
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {!reviewRailOpen && (
+              <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-2 text-xs text-l3">
+                <button
+                  type="button"
+                  onClick={() => setReviewRailOpen(true)}
+                  title="展开文件列表"
+                  aria-label="展开文件列表"
+                  className="inline-flex h-6 items-center gap-1.5 rounded-sm px-1.5 text-l3 hover:bg-hover hover:text-l1"
+                >
+                  <PanelLeftOpen aria-hidden="true" className="h-3.5 w-3.5" />
+                  <span>
+                    {conflictMode ? "冲突文件" : "改动文件"}（
+                    {conflictMode ? conflictFiles.length : reviewProfile.kind === "screening" ? filteredFiles.length : diff.files.length}）
+                  </span>
+                </button>
+                {activePath && (
+                  <span className="min-w-0 truncate font-mono text-micro text-l4">
+                    {activePath}
+                  </span>
+                )}
+              </div>
+            )}
+            <main
+              ref={reviewMainRef}
+              onScroll={trackActiveFile}
+              className="min-w-0 flex-1 overflow-auto bg-canvas"
+            >
+              {conflictMode ? (
+                staleBase ? (
+                  <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+                    <p className="text-sm text-l2">
+                      当前冲突使用的是旧基准，已暂停展示两侧内容
+                    </p>
+                    <p className="max-w-xl text-xs text-l4">
+                      重新同步后会基于最新 {diff.baseBranch} 生成新的任务版 /
+                      基准版对照，避免看到一套内容、实际选择另一套内容。
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void startConflictResolution(true)}
+                      disabled={conflictBusy}
+                      className={primaryActionClass}
+                    >
+                      {conflictBusy
+                        ? "重新同步中…"
+                        : `重新同步最新 ${diff.baseBranch}`}
+                    </button>
+                  </div>
+                ) : conflictFiles.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-l4">
+                    正在读取冲突文件…
+                  </div>
+                ) : filteredConflictFiles.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-sm text-l4">
+                    没有匹配的冲突文件
+                  </div>
+                ) : (
+                  filteredConflictFiles.map((path) => (
+                    <ConflictFileSection
+                      key={path}
+                      path={path}
+                      content={conflictContents[path] ?? null}
+                      contentError={conflictContentErrors[path]}
+                      branch={diff.branch}
+                      baseBranch={diff.baseBranch}
+                      unresolved={unresolvedSet.has(path)}
+                      choice={conflictChoices[path]}
+                      advice={effectiveAdvice[path]}
+                      busy={conflictBusy || staleBase}
+                      register={registerSection}
+                      onChoose={(file, choice) =>
+                        void chooseConflict(file, choice)
+                      }
+                      onRetry={retryConflictContent}
+                    />
+                  ))
+                )
+              ) : health?.conflict ? (
+                <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
+                  <p className="text-sm text-l2">
+                    {hasUncommitted
+                      ? "先提交任务改动，再准备最新主分支"
+                      : conflictBusy
+                        ? `正在同步最新 ${diff.baseBranch}…`
+                        : error
+                          ? "同步失败，请从右上角重试"
+                          : `与 ${diff.baseBranch} 存在冲突，可从右上角开始解决`}
+                  </p>
+                  <p className="max-w-xl text-xs text-l4">两边改了同一个地方，需要你逐个文件选一边。</p>
+                </div>
+              ) : !hasTaskChanges ? (
+                <div className="flex h-full items-center justify-center text-sm text-l4">
+                  当前任务相对 {diff.baseBranch} 没有改动
+                </div>
+              ) : orderedFiles.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm text-l4">
+                  没有匹配的改动文件
+                </div>
+              ) : stackedFiles.length === 0 ? (
+                <div className="flex h-full items-center justify-center px-8 text-center text-sm text-l4">
+                  纳入清单见上方表格。左侧可打开筛选记录或待获取原文。
+                </div>
+              ) : (
+                stackedFiles.map((file) => (
+                  <DiffFileSection
+                    key={file.path}
+                    file={file}
+                    worktreePath={diff.worktreePath}
+                    revision={revision}
+                    register={registerSection}
+                    unified={file.status === "A" || file.status === "??"}
+                    cached={
+                      diffCacheTick >= 0
+                        ? fileDiffCache.get(fileDiffCacheKey(worktreePath, file.path, revision)) ?? null
+                        : null
+                    }
+                  />
+                ))
+              )}
+            </main>
+          </div>
         </div>
         </div>
         {canReturn && notesOpen && (

@@ -109,3 +109,98 @@ test("块映射与文档渲染同口径：脚注定义不占顶层元素", () =>
   );
   assert.ok(lexMarkdownDocument(src).some((t) => t.type === "footnoteDef"));
 });
+
+test("Pandoc 上下标：~sub~ 与 ^sup^ 渲染为 <sub>/<sup>，不再把化学式画成删除线", () => {
+  const src =
+    "oxo-borate (BO~3~^3−^ or B(OH)~4~^−^), (^11^B-NMR), M~10~(BO~3~)~2~(OH)~14~, η~10~ = 174 mV, |ΔG~H\\*~| = 0.249 eV, Ar^+^, SCN^−^, 0.29 mmol L^−1^, ~~删除线~~, ~10 mV and ~20 mV.";
+  const html = sanitizeDocumentHtml(renderMarkdownDocument(src));
+  assert.doesNotMatch(html, /<del>10<\/del>|<del>3<\/del>|<del>H\*<\/del>/);
+  assert.match(html, /<del>删除线<\/del>/);
+  assert.match(html, /BO<sub>3<\/sub><sup>3−<\/sup>/);
+  assert.match(html, /B\(OH\)<sub>4<\/sub><sup>−<\/sup>/);
+  assert.match(html, /\(<sup>11<\/sup>B-NMR\)/);
+  assert.match(html, /M<sub>10<\/sub>\(BO<sub>3<\/sub>\)<sub>2<\/sub>\(OH\)<sub>14<\/sub>/);
+  assert.match(html, /η<sub>10<\/sub> = 174 mV/);
+  assert.match(html, /\|ΔG<sub>H\*<\/sub>\| = 0\.249 eV/);
+  assert.match(html, /Ar<sup>\+<\/sup>/);
+  assert.match(html, /SCN<sup>−<\/sup>/);
+  assert.match(html, /L<sup>−1<\/sup>/);
+  assert.match(html, /~10 mV and ~20 mV/);
+});
+
+test("Quarto 标题属性、表题、带引文图注、交叉引用与 ::: {#refs} 渲染干净且块映射对齐", () => {
+  const src = [
+    "## Abstract {.unnumbered}",
+    "",
+    "Overview of @sec-intro–@sec-scale and (@fig-1) and Table @tbl-1 on NiCoFeB@NiNC.",
+    "",
+    "## Introduction {#sec-intro}",
+    "",
+    "See Section @sec-scale.",
+    "",
+    "### Three-Tier Evidence Scale {#sec-scale}",
+    "",
+    "| Class | Value |",
+    "|---|---|",
+    "| Boride | H~2~O |",
+    "",
+    ": Diagnostic criteria for working-state borides (BO~3~^3−^). {#tbl-1}",
+    "",
+    '![Schematic overview of BO~2~^−^ [FTIR] from [@Lu2024; @Wang2026].](../figures/fig1/fig1.png){#fig-1 out-width="100%"}',
+    "",
+    "::: {#refs}",
+    ":::",
+  ].join("\n");
+
+  const html = sanitizeDocumentHtml(renderMarkdownDocument(src));
+  const host = dom.window.document.createElement("div");
+  host.innerHTML = html;
+
+  // 1. 标题属性剥除 + id 与章节编号保留
+  const h2s = [...host.querySelectorAll("h2")];
+  assert.equal(h2s[0]?.textContent, "Abstract");
+  assert.equal(h2s[0]?.getAttribute("data-sec-num"), null);
+  assert.equal(h2s[1]?.id, "sec-intro");
+  assert.equal(h2s[1]?.textContent, "Introduction");
+  assert.equal(h2s[1]?.getAttribute("data-sec-num"), "1");
+  const h3 = host.querySelector("h3")!;
+  assert.equal(h3.id, "sec-scale");
+  assert.equal(h3.textContent, "Three-Tier Evidence Scale");
+  assert.equal(h3.getAttribute("data-sec-num"), "1.1");
+
+  // 2. 交叉引用变成页内锚点链接，化学式里的 @NiNC 不误判
+  const xrefs = [...host.querySelectorAll("a.md-xref")].map((a) => [
+    a.getAttribute("href"),
+    a.textContent,
+  ]);
+  assert.deepEqual(xrefs, [
+    ["#sec-intro", "Section 1"],
+    ["#sec-scale", "Section 1.1"],
+    ["#fig-1", "Figure 1"],
+    ["#tbl-1", "1"],
+    ["#sec-scale", "1.1"],
+  ]);
+  assert.match(host.textContent ?? "", /NiCoFeB@NiNC/);
+
+  // 3. 表题去掉前导冒号与 {#tbl-1}，带 Table 1. 前缀与上下标
+  const tblCap = host.querySelector("p.md-table-caption")!;
+  assert.equal(tblCap.id, "tbl-1");
+  assert.match(tblCap.innerHTML, /<span class="md-caption-label">Table 1\.<\/span>/);
+  assert.match(tblCap.innerHTML, /BO<sub>3<\/sub><sup>3−<\/sup>/);
+  assert.doesNotMatch(tblCap.textContent ?? "", /\{#tbl-1\}|^:/);
+
+  // 4. 含嵌套方括号 [FTIR] / [@Lu2024] 的 Quarto 图块正常解析成 <img + 图注>
+  const fig = host.querySelector("p.md-figure")!;
+  assert.equal(fig.id, "fig-1");
+  const img = fig.querySelector("img")!;
+  assert.equal(img.getAttribute("src"), "../figures/fig1/fig1.png");
+  const figCap = fig.querySelector(".md-fig-caption")!;
+  assert.match(figCap.innerHTML, /<span class="md-caption-label">Figure 1\.<\/span>/);
+  assert.match(figCap.innerHTML, /BO<sub>2<\/sub><sup>−<\/sup>/);
+  assert.doesNotMatch(fig.textContent ?? "", /out-width/);
+
+  // 5. ::: {#refs} 围栏不渲染可见乱码，也不破坏块映射
+  assert.doesNotMatch(host.textContent ?? "", /:::/);
+  const blocks = mdBlocks(src).filter((b) => b.tag !== null);
+  assert.equal(blocks.length, host.children.length);
+});

@@ -19,7 +19,16 @@ export interface ReviewAskAiItem {
  * 三样收进一个菜单，每样下面一句说明；都只读、不改稿件，结论由人定。
  * 复核那一行的「换一家」是 AgentModelPicker，弹层挂在 body 上——点它不算点到菜单外面。
  */
-export default function ReviewAskAiMenu({ items }: { items: readonly ReviewAskAiItem[] }) {
+export default function ReviewAskAiMenu({
+  items,
+  align = "left",
+  triggerClassName,
+}: {
+  items: readonly ReviewAskAiItem[];
+  /** 下拉面板对齐方向：放右上角顶栏时传 "right"，避免贴右缘裁出窗口 */
+  align?: "left" | "right";
+  triggerClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -49,15 +58,18 @@ export default function ReviewAskAiMenu({ items }: { items: readonly ReviewAskAi
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
         title="让别的 AI 帮你看这一步交的东西；它们只看不改，结论由你定"
-        className="flex items-center gap-0.5 rounded-sm px-1 text-l3 hover:bg-hover hover:text-l1"
+        className={
+          triggerClassName ??
+          "flex h-8 items-center gap-1 rounded-sm px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+        }
       >
         请 AI 看看
-        <ChevronDown aria-hidden="true" className="h-3 w-3" />
+        <ChevronDown aria-hidden="true" className="h-3.5 w-3.5 text-l4" />
       </button>
       {open && (
         <div
           role="menu"
-          className="ccode-float-surface absolute top-full left-0 z-40 mt-1 w-80 rounded-lg border border-field p-1 shadow-lg"
+          className={`ccode-float-surface absolute top-full ${align === "right" ? "right-0" : "left-0"} z-40 mt-1 w-80 rounded-lg border border-field p-1 shadow-lg`}
         >
           {items.map((item) => (
             <div key={item.key} className="flex items-start gap-1 rounded-md hover:bg-hover">

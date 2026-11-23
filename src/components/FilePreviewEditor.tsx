@@ -71,7 +71,18 @@ import {
 } from "../md-edit";
 import { hydrateMdImages, revalidateMdImages } from "../md-image-hydrate";
 import { clearFindMarks, markFindHits, setCurrentHit } from "../md-find";
-import { onEditorFontChange, readEditorFont, stepEditorFont, writeEditorFont, EDITOR_FONT_DEFAULT } from "../editor-font";
+import {
+  EDITOR_FONT_DEFAULT,
+  onEditorFontChange,
+  onReadingFontChange,
+  READ_FONT_DEFAULT,
+  readEditorFont,
+  readReadingFont,
+  stepEditorFont,
+  stepReadingFont,
+  writeEditorFont,
+  writeReadingFont,
+} from "../editor-font";
 import { focusMdText, linkifyPdfRefs, pdfRefFromTarget } from "../md-pdf-refs";
 import type { PdfJumpRef } from "../reader-note";
 import { isPreviewableImagePath } from "../file-icons";
@@ -204,6 +215,7 @@ function MarkdownView({
   text,
   large,
   serif = false,
+  fontSize,
   fileName,
   filePath,
   root,
@@ -222,10 +234,15 @@ function MarkdownView({
   revealLine,
   revealNonce,
   findTick,
+  hostBodyRef,
 }: {
   text: string;
   /** 学术/出版物衬线阅读排版（全屏/笔记阅读一键切换） */
   serif?: boolean;
+  /** 阅读基准字号（px；由工具栏 A−/A+ 控制） */
+  fontSize?: number;
+  /** 外部工具栏（如目录按钮）共享的正文 DOM 引用 */
+  hostBodyRef?: React.MutableRefObject<HTMLDivElement | null>;
   /** 阅读 ⇄ 编辑切换保位置：宿主经它问「阅读态顶上是第几行」 */
   syncRef?: React.MutableRefObject<MdViewSync | null>;
   /** 上屏后滚到这一行所在的块（编辑 → 阅读时保持位置）；只在挂载时用一次 */
@@ -776,12 +793,12 @@ function MarkdownView({
     }
     const kind = classifyMdHref(href);
     if (kind === "anchor") {
-      // 页内锚点（脚注 ↔ 正文、手写目录）只在这份预览里找：同屏几份预览 id 会重名，交给 WebView
-      // 默认跳转会改应用地址栏的 hash、还可能跳到别的预览里
+      // 页内锚点（脚注 ↔ 正文、手写目录、Quarto @sec/@fig/@tbl 交叉引用）只在这份预览里找：
+      // 同屏几份预览 id 会重名，交给 WebView 默认跳转会改应用地址栏的 hash、还可能跳到别的预览里
+      e.preventDefault();
       const id = decodeURIComponent(href.slice(1));
       const target = id ? bodyRef.current?.querySelector(`[id="${CSS.escape(id)}"]`) : null;
       if (target) {
-        e.preventDefault();
         target.scrollIntoView({ block: "center", behavior: "smooth" });
       }
       return;
@@ -907,23 +924,51 @@ function MarkdownView({
         }}
         className="md-find-scope relative min-h-0 flex-1 overflow-y-auto outline-none"
       >
-        <MdToc bodyRef={bodyRef} />
         {doc.front && (
           <MdFrontmatterCard
             fields={doc.front.fields}
-            className={large ? "mx-auto max-w-3xl px-8 pt-10" : compact ? "px-4 pt-3" : "px-5 pt-4"}
+            className={
+              large
+                ? "mx-auto w-full max-w-[960px] px-10 pt-10"
+                : compact
+                  ? "px-4 pt-3"
+                  : "mx-auto w-full max-w-[920px] px-8 pt-6"
+            }
             onDoubleClick={onJumpToSource ? () => onJumpToSource(1) : undefined}
           />
         )}
         <div
-          ref={bodyRef}
+          ref={(el) => {
+            bodyRef.current = el;
+            if (hostBodyRef) hostBodyRef.current = el;
+          }}
           onClick={onBodyClick}
           onDoubleClick={onJumpToSource ? onBodyDoubleClick : undefined}
           onMouseOver={onBodyOver}
           onMouseLeave={() => setCiteTip(null)}
           className={`md-body${onAnnotate ? " md-body-annotatable" : ""}${large ? " md-body-lg" : ""}${compact ? " md-body-compact" : ""}${serif ? " md-body-serif" : ""} ${
-            large ? "mx-auto max-w-3xl px-8 py-10" : compact ? "px-4 py-3" : "px-5 py-4"
+            large
+              ? "mx-auto w-full max-w-[960px] px-10 py-10"
+              : compact
+                ? "px-4 py-3"
+                : "mx-auto w-full max-w-[920px] px-8 py-6"
           }`}
+          style={
+            fontSize !== undefined
+              ? {
+                  fontSize: `${
+                    large
+                      ? fontSize + 1.5
+                      : compact
+                        ? Math.max(11.5, fontSize - 1.5)
+                        : serif
+                          ? fontSize + 0.5
+                          : fontSize
+                  }px`,
+                  maxWidth: compact ? undefined : "62em",
+                }
+              : undefined
+          }
           dangerouslySetInnerHTML={bodyHtml}
         />
         <HoverTip tip={citeTip} text={citeTip?.text ?? ""} warn={citeTip?.warn} up />
@@ -1065,6 +1110,7 @@ function TextFilePreviewEditor({
   leading,
   trailing,
   hideFileName,
+  hideBranchBadge,
   folderTick,
   mainRepoIsHome,
   compact,
@@ -1123,6 +1169,8 @@ function TextFilePreviewEditor({
   trailing?: ReactNode;
   /** 外层宿主头已展示文件名时隐藏工具条里的重复文件名 */
   hideFileName?: boolean;
+  /** 外层宿主已明确归属当前审阅分支（如 WorkspaceReviewView）时隐藏重复的「分支 xxx」徽标 */
+  hideBranchBadge?: boolean;
 }) {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   // 编辑器宿主节点独立于 React 渲染树：沉浸编辑切换只移动 DOM 节点，
@@ -1131,6 +1179,8 @@ function TextFilePreviewEditor({
   if (!hostElRef.current) hostElRef.current = document.createElement("div");
   const normalSlotRef = useRef<HTMLDivElement>(null);
   const immersiveSlotRef = useRef<HTMLDivElement>(null);
+  const mdBodyRef = useRef<HTMLDivElement | null>(null);
+  const immersiveMdBodyRef = useRef<HTMLDivElement | null>(null);
   const [text, setText] = useState<string | null>(null);
   /** text 对应的文件路径：路径切换后旧内容不等新加载、立即视为无效（防残留误导） */
   const textPathRef = useRef<string | null>(null);
@@ -1211,6 +1261,8 @@ function TextFilePreviewEditor({
   useEffect(() => {
     editorRef.current?.updateOptions({ fontSize });
   }, [fontSize]);
+  const [readingFont, setReadingFont] = useState(readReadingFont);
+  useEffect(() => onReadingFontChange(setReadingFont), []);
   const rootRef = useRef<HTMLDivElement>(null);
   /** md 阅读态的位置查询（阅读 ⇄ 编辑保位置） */
   const mdSyncRef = useRef<MdViewSync | null>(null);
@@ -1658,6 +1710,19 @@ function TextFilePreviewEditor({
         saveRef.current();
         return;
       }
+      if (modeRef.current === "read") {
+        if (key === "=" || key === "+") {
+          e.preventDefault();
+          setReadingFont((v) => writeReadingFont(stepReadingFont(v, 1)));
+        } else if (key === "-") {
+          e.preventDefault();
+          setReadingFont((v) => writeReadingFont(stepReadingFont(v, -1)));
+        } else if (key === "0") {
+          e.preventDefault();
+          setReadingFont(writeReadingFont(READ_FONT_DEFAULT));
+        }
+        return;
+      }
       if (!editorRef.current?.hasTextFocus()) return;
       if (key === "=" || key === "+") {
         e.preventDefault();
@@ -2014,7 +2079,7 @@ function TextFilePreviewEditor({
       {(!hideReadOnlyToolbar || !readOnlyReason || mode === "edit") && <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline bg-strip px-3 text-xs">
         {leading}
         {!hideFileName && <span className="truncate text-l3">{path.split(/[\\/]/).pop()}</span>}
-        {ctx?.kind === "worktree" && (
+        {!hideBranchBadge && ctx?.kind === "worktree" && (
           <span
             className="flex min-w-0 items-center gap-1 text-l3"
             title={`该文件在工作区「${ctx.workspaceName}」的工作树里，改动属于分支 ${ctx.branch}`}
@@ -2133,6 +2198,7 @@ function TextFilePreviewEditor({
           )}
           {ready && isMd && mode === "read" && (
             <>
+              <MdToc bodyRef={mdBodyRef} watchKey={text} />
               <button
                 type="button"
                 aria-pressed={readingSerif}
@@ -2146,6 +2212,38 @@ function TextFilePreviewEditor({
               >
                 衬线
               </button>
+              <span
+                className="flex h-6 shrink-0 items-center rounded-md bg-inset p-0.5"
+                title={`阅读字号 ${readingFont}px（${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setReadingFont((v) => writeReadingFont(stepReadingFont(v, -1)))}
+                  aria-label="缩小字号"
+                  className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  A−
+                </button>
+                {readingFont !== READ_FONT_DEFAULT && (
+                  <button
+                    type="button"
+                    onClick={() => setReadingFont(writeReadingFont(READ_FONT_DEFAULT))}
+                    title={`点一下还原默认字号（${READ_FONT_DEFAULT}px）`}
+                    aria-label="还原默认字号"
+                    className="rounded-sm px-1 font-mono text-micro tabular-nums text-l2 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    {readingFont}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setReadingFont((v) => writeReadingFont(stepReadingFont(v, 1)))}
+                  aria-label="放大字号"
+                  className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                >
+                  A+
+                </button>
+              </span>
               <button
                 onClick={() => setFindTick((n) => n + 1)}
                 title={`在这份文件里查找（${IS_MAC ? "⌘" : "Ctrl+"}F）`}
@@ -2389,6 +2487,7 @@ function TextFilePreviewEditor({
           <MarkdownView
             text={text!}
             serif={readingSerif}
+            fontSize={readingFont}
             fileName={path.split(/[\\/]/).pop() ?? path}
             filePath={path}
             root={root}
@@ -2403,6 +2502,7 @@ function TextFilePreviewEditor({
             focusText={focusText}
             fsTick={fsTick + (folderTick ?? 0)}
             syncRef={mdSyncRef}
+            hostBodyRef={mdBodyRef}
             initialLine={readInitialLine}
             revealLine={revealLine}
             revealNonce={revealNonce}
@@ -2440,19 +2540,54 @@ function TextFilePreviewEditor({
               </button>
             )}
             {mode === "read" && isMd && (
-              <button
-                type="button"
-                aria-pressed={readingSerif}
-                onClick={toggleReadingSerif}
-                title={readingSerif ? "当前为学术衬线排版，点一下切回无衬线" : "切换为学术衬线阅读排版"}
-                className={`${!readOnlyReason && dirty ? "" : "ml-auto "}shrink-0 rounded-sm px-2 py-1 transition-colors ${
-                  readingSerif
-                    ? "bg-seg-sel font-medium text-l1"
-                    : "text-l3 hover:bg-hover hover:text-l1"
-                }`}
-              >
-                衬线
-              </button>
+              <div className={`${!readOnlyReason && dirty ? "" : "ml-auto "}flex shrink-0 items-center gap-1`}>
+                <MdToc bodyRef={immersiveMdBodyRef} watchKey={text} />
+                <button
+                  type="button"
+                  aria-pressed={readingSerif}
+                  onClick={toggleReadingSerif}
+                  title={readingSerif ? "当前为学术衬线排版，点一下切回无衬线" : "切换为学术衬线阅读排版"}
+                  className={`shrink-0 rounded-sm px-2 py-1 transition-colors ${
+                    readingSerif
+                      ? "bg-seg-sel font-medium text-l1"
+                      : "text-l3 hover:bg-hover hover:text-l1"
+                  }`}
+                >
+                  衬线
+                </button>
+                <span
+                  className="flex h-6 shrink-0 items-center rounded-md bg-inset p-0.5"
+                  title={`阅读字号 ${readingFont}px（${IS_MAC ? "⌘" : "Ctrl+"}= 放大、${IS_MAC ? "⌘" : "Ctrl+"}- 缩小、${IS_MAC ? "⌘" : "Ctrl+"}0 还原）`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setReadingFont((v) => writeReadingFont(stepReadingFont(v, -1)))}
+                    aria-label="缩小字号"
+                    className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    A−
+                  </button>
+                  {readingFont !== READ_FONT_DEFAULT && (
+                    <button
+                      type="button"
+                      onClick={() => setReadingFont(writeReadingFont(READ_FONT_DEFAULT))}
+                      title={`点一下还原默认字号（${READ_FONT_DEFAULT}px）`}
+                      aria-label="还原默认字号"
+                      className="rounded-sm px-1 font-mono text-micro tabular-nums text-l2 transition-colors hover:bg-hover hover:text-l1"
+                    >
+                      {readingFont}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setReadingFont((v) => writeReadingFont(stepReadingFont(v, 1)))}
+                    aria-label="放大字号"
+                    className="rounded-sm px-1.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    A+
+                  </button>
+                </span>
+              </div>
             )}
             <button
               onClick={() => setImmersive(false)}
@@ -2473,6 +2608,8 @@ function TextFilePreviewEditor({
                 text={text ?? ""}
                 large
                 serif={readingSerif}
+                fontSize={readingFont}
+                hostBodyRef={immersiveMdBodyRef}
                 fileName={path.split(/[\\/]/).pop() ?? path}
                 filePath={path}
                 root={root}

@@ -2533,14 +2533,14 @@ button.ccode-nav-island-announce:hover {
   }
   .ccode-review-rail.ccode-review-rail-open {
     position: absolute;
-    inset: 0 0 0 auto;
+    inset: 0 auto 0 0;
     z-index: 31;
     display: flex;
-    width: min(292px, 88vw);
-    min-width: min(292px, 88vw);
+    width: min(260px, 88vw);
+    min-width: min(260px, 88vw);
     overflow: auto;
-    border-left-width: 1px;
-    box-shadow: -12px 0 30px rgb(0 0 0 / 0.24);
+    border-right-width: 1px;
+    box-shadow: 12px 0 30px rgb(0 0 0 / 0.24);
   }
   .ccode-review-rail-trigger {
     display: inline-flex;
@@ -2576,10 +2576,10 @@ button.ccode-nav-island-announce:hover {
   .ccode-sessions-rail { width: 0 !important; }
   .ccode-review-rail.ccode-review-rail-open {
     display: flex;
-    width: min(292px, 88vw);
-    min-width: min(292px, 88vw);
+    width: min(260px, 88vw);
+    min-width: min(260px, 88vw);
     overflow: auto;
-    border-left-width: 1px;
+    border-right-width: 1px;
   }
   .ccode-float-surface {
     max-width: calc(100vw - 24px);
@@ -3387,6 +3387,12 @@ select:focus-visible {
   /* 长 URL / DOI 不断行时允许折行，避免撑出横向滚动 */
   overflow-wrap: break-word;
 }
+/* 主面板/审阅页文档阅读态（非窄栏笔记、非聊天气泡）：字号与对比度提一档，长文审读不费眼 */
+.md-body:not(.md-body-compact):not(.md-chat) {
+  color: color-mix(in oklab, var(--color-l1) 86%, var(--color-l2));
+  font-size: 14.5px;
+  line-height: 1.8;
+}
 
 /* Windows：笔记阅读、对话回放、产物 md 预览共用这套。静态 Segoe UI，
    13.5px 对齐到 14px 避免半像素发糊；字重不动。对话 .md-chat 仍 inherit。 */
@@ -3399,8 +3405,8 @@ select:focus-visible {
   -webkit-font-smoothing: auto;
 }
 .md-body-lg {
-  font-size: 15.5px;
-  line-height: 1.85;
+  font-size: 16px;
+  line-height: 1.86;
   text-autospace: normal;
   text-wrap: pretty;
 }
@@ -3409,6 +3415,11 @@ select:focus-visible {
   font-family:
     "Charter", "Iowan Old Style", "Georgia", "Source Han Serif SC", "Noto Serif CJK SC",
     "Songti SC", "Microsoft YaHei UI", serif;
+}
+.md-body-serif:not(.md-body-compact) {
+  font-size: 15.5px;
+  line-height: 1.84;
+  letter-spacing: 0.002em;
 }
 [data-platform="windows"] .md-body-serif {
   font-family:
@@ -3423,7 +3434,14 @@ select:focus-visible {
   font-weight: 600;
   line-height: 1.38;
   letter-spacing: -0.015em;
-  margin: 1.45em 0 0.55em;
+  margin: 1.65em 0 0.6em;
+}
+.md-body :is(h1, h2, h3, h4, h5, h6)[data-sec-num]::before {
+  content: attr(data-sec-num);
+  margin-right: 0.45em;
+  color: var(--color-l3);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 .md-body h1:first-child,
 .md-body h2:first-child,
@@ -3437,7 +3455,7 @@ select:focus-visible {
 }
 .md-body h2 {
   font-size: 1.35em;
-  padding-bottom: 0.25em;
+  padding-bottom: 0.28em;
   border-bottom: 1px solid var(--color-hairline);
 }
 .md-body h3 {
@@ -3447,7 +3465,7 @@ select:focus-visible {
   font-size: 1em;
 }
 .md-body p {
-  margin: 0.7em 0;
+  margin: 0.85em 0;
 }
 .md-body a {
   color: var(--color-link);
@@ -3578,35 +3596,88 @@ select:focus-visible {
   font-size: 12px;
   color: var(--color-err-text);
 }
-/* 上下标不撑高行盒（文献笔记大量化学式/单位上下标） */
+/* 上下标不撑高行盒（文献笔记与综述大量化学式/单位上下标） */
 .md-body sub,
 .md-body sup {
+  font-size: 0.74em;
   line-height: 0;
+  position: relative;
+  vertical-align: baseline;
 }
-/* 学术三线表风格（Booktabs）：去掉纵线与厚重网格，靠表头顶底细线与行间发丝线分层，数字等宽对齐 */
+.md-body sup {
+  top: -0.45em;
+}
+.md-body sub {
+  bottom: -0.22em;
+}
+/* 学术三线表风格（Booktabs）：去掉纵线与厚重网格，靠表头顶底细线与行间发丝线分层，数字等宽顶对齐 */
 .md-body table {
+  width: 100%;
   border-collapse: collapse;
-  margin: 1em 0;
-  font-size: 0.92em;
+  margin: 1.25em 0 0.5em;
+  font-size: 0.88em;
+  line-height: 1.58;
   font-variant-numeric: tabular-nums;
-  border-top: 1px solid var(--color-field);
-  border-bottom: 1px solid var(--color-field);
+  border-top: 1.5px solid var(--color-field);
+  border-bottom: 1.5px solid var(--color-field);
 }
 .md-body th,
 .md-body td {
   border: none;
   border-bottom: 0.5px solid var(--color-hairline);
-  padding: 0.45em 0.85em;
+  padding: 0.55em 0.85em;
   text-align: left;
+  vertical-align: top;
 }
 .md-body tbody tr:last-child td {
   border-bottom: none;
 }
+.md-body tbody tr:hover td {
+  background: color-mix(in oklab, var(--color-hover) 40%, transparent);
+}
 .md-body th {
-  background: color-mix(in oklab, var(--color-inset) 55%, transparent);
+  background: color-mix(in oklab, var(--color-inset) 72%, transparent);
   border-bottom: 1px solid var(--color-field);
   color: var(--color-l1);
   font-weight: 600;
+}
+.md-body .md-table-caption {
+  margin: 0.35em 0 1.4em;
+  font-size: 0.88em;
+  line-height: 1.62;
+  color: var(--color-l3);
+}
+.md-body .md-caption-label {
+  font-weight: 600;
+  color: var(--color-l1);
+}
+.md-body .md-figure {
+  margin: 1.4em 0;
+  padding: 0.85em 1em;
+  border-radius: 8px;
+  border: 1px solid var(--color-hairline);
+  background: color-mix(in oklab, var(--color-inset) 45%, transparent);
+}
+.md-body .md-figure > img {
+  display: block;
+  margin: 0 auto;
+  border-radius: 4px;
+}
+.md-body .md-fig-caption {
+  display: block;
+  margin-top: 0.7em;
+  font-size: 0.88em;
+  line-height: 1.62;
+  color: var(--color-l3);
+}
+.md-body a.md-xref {
+  color: var(--color-l1);
+  text-decoration: underline dotted var(--color-l4);
+  text-underline-offset: 3px;
+}
+.md-body a.md-xref:hover {
+  color: var(--color-link);
+  text-decoration-color: var(--color-link);
 }
 .md-body hr {
   border: none;
@@ -3975,13 +4046,16 @@ select:focus-visible {
 .md-chat .md-cite-item,
 .md-body .md-cite-item {
   display: inline-block;
-  margin: 0 0.12em;
-  padding: 0 0.42em;
+  margin: 0 0.08em;
+  padding: 0.02em 0.38em;
   border-radius: 4px;
-  background: var(--color-inset);
+  background: color-mix(in oklab, var(--color-inset) 85%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-hairline) 80%, transparent);
   color: var(--color-l2);
-  font-size: 0.86em;
-  line-height: 1.55;
+  font-family: var(--font-sans);
+  font-size: 0.82em;
+  line-height: 1.45;
+  vertical-align: baseline;
   white-space: nowrap;
   cursor: default;
 }
