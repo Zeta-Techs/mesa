@@ -164,7 +164,9 @@ import {
   countReviewVerdicts,
   isInlineDecisionTaskTitle,
   parseReviewItems,
+  resolveDecisionHandoffState,
   reviewItemKind,
+  reviewVerdictsSignature,
   type ReviewItemKind,
 } from "../review-decisions";
 import type { ProjectStepDto, WorkspaceDto } from "../types";
@@ -210,6 +212,25 @@ function readAfterSaveOpen(root: string, stepName: string): boolean | null {
 function writeAfterSaveOpen(root: string, stepName: string, open: boolean): void {
   try {
     localStorage.setItem(afterSaveOpenKey(root, stepName), open ? "1" : "0");
+  } catch {
+    /* 隐私模式写不进就只靠本次 */
+  }
+}
+
+/** 逐条决定 / 逐条裁决「已交回 Agent 的拍板指纹」（本机客户端偏好，不脏 git）：
+ *  已按此版点过「让 Agent 按决定继续」后不再亮起蓝色继续按钮，仅在用户改判/改写后重新提示交回。 */
+const decisionHandedSigKey = (root: string, stepName: string, title: string) =>
+  `ccode.decisionHandedSig.v1:${root}\n${stepName}\n${title}`;
+function readDecisionHandedSig(root: string, stepName: string, title: string): string | null {
+  try {
+    return localStorage.getItem(decisionHandedSigKey(root, stepName, title));
+  } catch {
+    return null;
+  }
+}
+function writeDecisionHandedSig(root: string, stepName: string, title: string, sig: string): void {
+  try {
+    localStorage.setItem(decisionHandedSigKey(root, stepName, title), sig);
   } catch {
     /* 隐私模式写不进就只靠本次 */
   }
@@ -1468,6 +1489,15 @@ export default function StepFlow({
   const [decisionMeta, setDecisionMeta] = useState<Record<string, ReviewDecisionMeta>>(
     () => ({ ...(decisionMetaCache.get(decisionOpenKey) ?? {}) }),
   );
+  const [decisionHandedSig, setDecisionHandedSig] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const h of step.humanTasks ?? []) {
+      if (!isInlineDecisionTaskTitle(h.title)) continue;
+      const saved = readDecisionHandedSig(projectPath, step.name, h.title);
+      if (saved) out[h.title] = saved;
+    }
+    return out;
+  });
   const [decisionFold, setDecisionFold] = useState<Record<string, boolean>>({});
   const [decisionModal, setDecisionModal] = useState<{
     title: string;
@@ -1511,6 +1541,7 @@ export default function StepFlow({
           cur.modified === meta.modified &&
           cur.rejected === meta.rejected &&
           cur.missing === meta.missing &&
+          cur.signature === meta.signature &&
           cur.fileRoot === meta.fileRoot &&
           cur.fileList.length === meta.fileList.length &&
           cur.fileList.every((f, i) => f.path === meta.fileList[i]?.path)
@@ -1704,6 +1735,14 @@ export default function StepFlow({
         }
         return null;
       };
+      const dirtyByRoot = new Map<string, Record<string, string> | null>();
+      const getDirtyMap = async (root: string) => {
+        if (dirtyByRoot.has(root)) return dirtyByRoot.get(root) ?? null;
+        const map = await invoke<Record<string, string>>("git_status_map", { cwd: root }).catch(() => null);
+        const valid = map && typeof map === "object" ? map : null;
+        dirtyByRoot.set(root, valid);
+        return valid;
+      };
       for (const task of decisionTasks) {
         const kind = reviewItemKind(task.title);
         if (!kind || !task.target) continue;
@@ -1711,6 +1750,23 @@ export default function StepFlow({
         if (stale || !hit) continue;
         const parsed = parseReviewItems(hit.text, kind);
         const counts = countReviewVerdicts(parsed);
+        const sig = reviewVerdictsSignature(parsed);
+        // 决定文件已全部拍板且在 git 里已提交（不再是未提交修改）：说明 Agent 已处理并提交过这一版决定，
+        // 即使跨会话/旧缓存没记过 localStorage 指纹，也直接认作「已交回无变动」，直到用户改判产生新指纹。
+        if (counts.open === 0 && counts.total > 0 && sig) {
+          const dirtyMap = await getDirtyMap(hit.root);
+          if (!stale && dirtyMap) {
+            const absTarget = `${hit.root.replace(/[\\/]+$/, "")}/${task.target.replace(/^[\\/]+/, "")}`;
+            const isDirty = Object.keys(dirtyMap).some((p) => samePath(p, absTarget, IS_WINDOWS));
+            if (!isDirty) {
+              writeDecisionHandedSig(projectPath, step.name, task.title, sig);
+              setDecisionHandedSig((prev) =>
+                prev[task.title] === sig ? prev : { ...prev, [task.title]: sig },
+              );
+            }
+          }
+        }
+        if (stale) continue;
         setDecisionOpen((prev) => {
           if (prev.get(task.title) === counts.open) return prev;
           const next = new Map(prev);
@@ -1723,6 +1779,7 @@ export default function StepFlow({
           const nextMeta: ReviewDecisionMeta = {
             ...counts,
             missing: false,
+            signature: sig,
             fileList: cur?.fileList ?? [],
             fileRoot: cur?.fileRoot || hit.root,
           };
@@ -1734,6 +1791,7 @@ export default function StepFlow({
             cur.accepted === nextMeta.accepted &&
             cur.modified === nextMeta.modified &&
             cur.rejected === nextMeta.rejected &&
+            cur.signature === nextMeta.signature &&
             !cur.missing
           ) {
             return prev;
@@ -1775,6 +1833,22 @@ export default function StepFlow({
     decisionOpenKey,
     updateHandbackSummary,
   ]);
+
+  /** 已勾选完成的逐条决定事项：自动记下当前拍板指纹，后续用户若取消勾选只是想翻看，
+   *  在真正改判某一条之前不会亮出蓝色「让 Agent 按决定继续」按钮。 */
+  useEffect(() => {
+    if (!states) return;
+    for (const row of states) {
+      if (!row.done || !isInlineDecisionTaskTitle(row.title)) continue;
+      const meta = decisionMeta[row.title];
+      if (!meta || meta.missing || meta.total === 0 || meta.open > 0 || !meta.signature) continue;
+      if (decisionHandedSig[row.title]) continue;
+      writeDecisionHandedSig(projectPath, step.name, row.title, meta.signature);
+      setDecisionHandedSig((prev) =>
+        prev[row.title] ? prev : { ...prev, [row.title]: meta.signature },
+      );
+    }
+  }, [states, decisionMeta, decisionHandedSig, projectPath, step.name]);
   const stepHasAcademicMcp = (step.humanTasks ?? []).some((task) =>
     isAcademicMcpTaskTitle(task.title),
   );
@@ -2714,6 +2788,29 @@ export default function StepFlow({
     } catch (reason) {
       setDecisionNote(String(reason));
     }
+  }
+
+  /** 显式点「让 Agent 按决定继续 / 让 Agent 按新决定继续」：记下本版拍板指纹、强制勾上本项（覆盖先前的手动取消）再接回原对话。 */
+  async function handoffDecisions(title: string, target: string) {
+    const meta = decisionMeta[title];
+    if (meta?.signature) {
+      writeDecisionHandedSig(projectPath, step.name, title, meta.signature);
+      setDecisionHandedSig((prev) =>
+        prev[title] === meta.signature ? prev : { ...prev, [title]: meta.signature },
+      );
+    }
+    const matched = states?.find((row) => row.step === step.name && row.title === title);
+    if (matched && !matched.done) {
+      await toggle(matched, true);
+    } else if (!matched) {
+      await invoke("set_human_task_check", {
+        projectRoot: projectPath,
+        step: step.name,
+        title,
+        checked: true,
+      }).catch(() => {});
+    }
+    await continueAfterDecisions(target, title);
   }
 
   async function chooseCitationStyle(
@@ -3943,6 +4040,13 @@ export default function StepFlow({
                 }
                 if (checked && isCitationStyleTask(human.title)) {
                   setCiteOpen(null);
+                }
+                if (checked && isInlineDecisionTaskTitle(human.title)) {
+                  const meta = decisionMeta[human.title];
+                  if (meta && meta.open === 0 && meta.signature) {
+                    writeDecisionHandedSig(projectPath, step.name, human.title, meta.signature);
+                    setDecisionHandedSig((prev) => ({ ...prev, [human.title]: meta.signature }));
+                  }
                 }
                 void toggle(human, checked);
               }}
@@ -5572,6 +5676,14 @@ export default function StepFlow({
             const hasItems = Boolean(meta && !meta.missing && meta.total > 0);
             const open = decisionFold[human.title] ?? isCurrent;
             const listMounted = !hasItems || open;
+            const handoffState = meta
+              ? resolveDecisionHandoffState(meta.signature, decisionHandedSig[human.title])
+              : "pending";
+            const showCollapsedCta =
+              !open &&
+              Boolean(meta && meta.open === 0) &&
+              (handoffState === "changed" ||
+                (handoffState === "pending" && agentAttention !== "working"));
             return (
               <div className="mt-1.5 pl-6">
                 {hasItems && meta && (
@@ -5589,32 +5701,39 @@ export default function StepFlow({
                         {kind === "verify" ? "裁决清单" : "审查条目"}
                         {meta.open > 0
                           ? `（还剩 ${meta.open} / ${meta.total} 条）`
-                          : `（全部 ${meta.total} 条已决定）`}
+                          : handoffState === "handed"
+                            ? `（全部 ${meta.total} 条已交 Agent 处理）`
+                            : handoffState === "changed"
+                              ? `（决定有变动 · ${meta.total} 条）`
+                              : agentAttention === "working"
+                                ? `（全部 ${meta.total} 条已决定，AI 处理中）`
+                                : `（全部 ${meta.total} 条已决定）`}
                       </span>
                     </button>
-                    {!open && meta.open === 0 && (
+                    {showCollapsedCta && (
                       <button
                         type="button"
                         onClick={() => {
-                          void checkPendingConfirmIfOpen(human.title);
-                          if (human.target) void continueAfterDecisions(human.target, human.title);
+                          if (human.target) void handoffDecisions(human.title, human.target);
                         }}
-                        className="rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-micro font-medium text-cta-text transition-[filter] hover:brightness-110"
+                        className="rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-micro font-medium text-cta-pill-text transition-[filter] hover:brightness-110"
                       >
-                        让 Agent 按决定继续
+                        {handoffState === "changed" ? "让 Agent 按新决定继续" : "让 Agent 按决定继续"}
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        openDecisionModal(human.title, human.target!, kind, false)
-                      }
-                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
-                      title="在大窗口里展开完整清单，支持左右分栏对照原稿、搜索、按级别筛选与撤销"
-                    >
-                      <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
-                      <span>放大</span>
-                    </button>
+                    {open && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openDecisionModal(human.title, human.target!, kind, false)
+                        }
+                        className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+                        title="在大窗口里展开完整清单，支持左右分栏对照原稿、搜索、按级别筛选与撤销"
+                      >
+                        <Maximize2 size={11} strokeWidth={1.8} aria-hidden="true" />
+                        <span>放大</span>
+                      </button>
+                    )}
                   </div>
                 )}
                 {listMounted && (
@@ -5623,6 +5742,7 @@ export default function StepFlow({
                     projectRoot={projectPath}
                     target={human.target}
                     kind={kind}
+                    handoffState={handoffState}
                     refreshKey={`${runStatus}|${agentAttention ?? ""}|${decisionModalSyncTick}`}
                     onEnlarge={
                       hasItems
@@ -5672,8 +5792,7 @@ export default function StepFlow({
                       })
                     }
                     onAllDecided={() => {
-                      void checkPendingConfirmIfOpen(human.title);
-                      if (human.target) void continueAfterDecisions(human.target, human.title);
+                      if (human.target) void handoffDecisions(human.title, human.target);
                     }}
                   />
                 )}
@@ -5865,7 +5984,7 @@ export default function StepFlow({
                 >
                   {skipLabel}
                 </button>
-                {human.target && (
+                {open && human.target && (
                   <button
                     type="button"
                     onClick={() => {
@@ -6252,6 +6371,10 @@ export default function StepFlow({
                   activeMeta.total > 0 &&
                   activeMeta.open === 0,
               );
+              const modalHandoffState =
+                decisionModal && activeMeta
+                  ? resolveDecisionHandoffState(activeMeta.signature, decisionHandedSig[decisionModal.title])
+                  : "pending";
               return (
                 <Modal
                   open={Boolean(decisionModal)}
@@ -6340,28 +6463,53 @@ export default function StepFlow({
                         </span>
                       )}
                       {allReady && decisionModal ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={closeDecisionModal}
-                            className={secondaryActionClass}
-                          >
-                            关闭
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const title = decisionModal.title;
-                              const target = decisionModal.target;
-                              closeDecisionModal();
-                              void checkPendingConfirmIfOpen(title);
-                              void continueAfterDecisions(target, title);
-                            }}
-                            className={primaryActionClass}
-                          >
-                            让 Agent 按决定继续
-                          </button>
-                        </>
+                        modalHandoffState === "handed" ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const title = decisionModal.title;
+                                const target = decisionModal.target;
+                                closeDecisionModal();
+                                void handoffDecisions(title, target);
+                              }}
+                              className={secondaryActionClass}
+                            >
+                              重新发给 Agent
+                            </button>
+                            <button
+                              type="button"
+                              onClick={closeDecisionModal}
+                              className={primaryActionClass}
+                            >
+                              完成
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={closeDecisionModal}
+                              className={secondaryActionClass}
+                            >
+                              关闭
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const title = decisionModal.title;
+                                const target = decisionModal.target;
+                                closeDecisionModal();
+                                void handoffDecisions(title, target);
+                              }}
+                              className={primaryActionClass}
+                            >
+                              {modalHandoffState === "changed"
+                                ? "让 Agent 按新决定继续"
+                                : "让 Agent 按决定继续"}
+                            </button>
+                          </>
+                        )
                       ) : (
                         <button
                           type="button"
@@ -6384,6 +6532,7 @@ export default function StepFlow({
                         <ReviewDecisionList
                           fill
                           readOnlyView={decisionModal.readOnly}
+                          handoffState={modalHandoffState}
                           hideFileActions
                           hideContinueAction
                           worktreePath={ws?.worktreePath}
@@ -6420,8 +6569,7 @@ export default function StepFlow({
                             const title = decisionModal.title;
                             const target = decisionModal.target;
                             closeDecisionModal();
-                            void checkPendingConfirmIfOpen(title);
-                            void continueAfterDecisions(target, title);
+                            void handoffDecisions(title, target);
                           }}
                         />
                       </div>

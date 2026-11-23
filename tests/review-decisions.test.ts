@@ -11,11 +11,13 @@ import {
   isInlineDecisionTaskTitle,
   itemSuggestion,
   parseReviewItems,
+  resolveDecisionHandoffState,
   reviewItemDisplayBody,
   reviewItemMatchesQuery,
   reviewItemSourceTag,
   reviewItemSummary,
   reviewItemsCleared,
+  reviewVerdictsSignature,
   tokenizeDecisionSummary,
 } from "../src/review-decisions.ts";
 
@@ -228,4 +230,11 @@ R003 位置：manuscript/draft.md:90。问题：可补一句展望。类别：�
   assert.equal(reviewItemMatchesQuery(parsed[2], "report", "严重"), false);
   const counts = countReviewVerdicts(parseReviewItems(applied, "report"));
   assert.deepEqual(counts, { total: 3, open: 2, decided: 1, accepted: 0, modified: 1, rejected: 0 });
+
+  const sigA = reviewVerdictsSignature(parseReviewItems(applied, "report"));
+  assert.equal(resolveDecisionHandoffState(sigA, null), "pending");
+  assert.equal(resolveDecisionHandoffState(sigA, sigA), "handed");
+  const changed = applyReportVerdict(applied, "R001", "拒绝");
+  const sigB = reviewVerdictsSignature(parseReviewItems(changed, "report"));
+  assert.equal(resolveDecisionHandoffState(sigB, sigA), "changed");
 });

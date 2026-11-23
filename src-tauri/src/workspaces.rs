@@ -3384,15 +3384,25 @@ fn decision_value_cleared(value: &str) -> bool {
     value.starts_with("改正为") && !value["改正为".len()..].trim().is_empty()
 }
 
-/// 审查条目编号：R001 / S001 / V001，可带标题符或列表符。
+/// 审查条目编号：R001 / S001 / V001，可带标题符、列表符或粗体包裹（如 `### R001`、`- **V001**`）。
 fn review_item_id(line: &str) -> Option<&str> {
-    let line = line
-        .trim()
-        .trim_start_matches('#')
-        .trim()
-        .trim_start_matches(['-', '*'])
-        .trim();
-    let mut chars = line.chars();
+    let mut s = line.trim();
+    // 可选标题前缀 `#{1,6} `
+    let hashes = s.bytes().take_while(|&b| b == b'#').count();
+    if hashes > 0 && hashes <= 6 && s[hashes..].starts_with(char::is_whitespace) {
+        s = s[hashes..].trim_start();
+    }
+    // 可选列表符 `- ` 或 `* `
+    if let Some(rest) = s.strip_prefix('-').or_else(|| s.strip_prefix('*')) {
+        if rest.starts_with(char::is_whitespace) {
+            s = rest.trim_start();
+        }
+    }
+    // 可选粗体包裹 `**R001**`
+    if let Some(rest) = s.strip_prefix("**") {
+        s = rest;
+    }
+    let mut chars = s.chars();
     let prefix = chars.next()?;
     if prefix != 'R' && prefix != 'S' && prefix != 'V' {
         return None;
@@ -3402,17 +3412,32 @@ fn review_item_id(line: &str) -> Option<&str> {
         return None;
     }
     let end = 1 + digits;
-    if let Some(boundary) = line[end..].chars().next() {
+    if let Some(boundary) = s[end..].chars().next() {
         if boundary.is_ascii_alphanumeric() {
             return None;
         }
     }
-    Some(&line[..end])
+    Some(&s[..end])
 }
 
-/// `decisions_cleared` 完成判定：文件里每一条都有拍板，且没有「待裁决」。
-/// 审查报告认「决定：接受/拒绝/修改：…」；待核实清单认「裁决：确认/删除该论断/改正为…」。
-/// 只点了一条、其余还空着，不算完成。
+/// 从待核实管道行提取「裁决：…」字段值（到下一个 `|`/`｜` 或行尾），与前端 `fieldValue(body, "裁决")` 同口径。
+fn extract_verify_ruling_field(line: &str) -> Option<&str> {
+    if !line.contains('|') && !line.contains('｜') {
+        return None;
+    }
+    let after = line
+        .rsplit_once("裁决：")
+        .or_else(|| line.rsplit_once("裁决:"))
+        .map(|(_, value)| value)?;
+    let val = after.split(['|', '｜']).next().unwrap_or(after).trim();
+    Some(val)
+}
+
+/// `decisions_cleared` 完成判定：文件里每一条编号条目都有明确拍板。
+/// 与前端 `parseReviewItems`（src/review-decisions.ts）保持同口径：
+/// - 忽略编号条目之前的前言/格式说明与 `##` 小节尾注（不因说明文字里出现「待裁决」或「决定：」误判未完成）；
+/// - 审查报告认条目块内的「决定：接受/拒绝/修改：…」（空占位行「决定：」跳过）；
+/// - 待核实清单认管道栏里的「裁决：确认/删除该论断/改正为…」。
 fn decisions_cleared_hit(root: &Path, target: &str) -> bool {
     let rel = target.trim().trim_end_matches(['/', '\\']);
     if rel.is_empty() || rel.contains('*') || rel.contains("..") || Path::new(rel).is_absolute() {
@@ -3424,38 +3449,67 @@ fn decisions_cleared_hit(root: &Path, target: &str) -> bool {
     let Ok(text) = fs::read_to_string(root.join(rel)) else {
         return false;
     };
-    if text.contains("待裁决") {
+    let mut items = Vec::<(String, Vec<&str>)>::new();
+    let mut current: Option<(String, Vec<&str>)> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(id) = review_item_id(trimmed) {
+            if let Some(prev) = current.take() {
+                items.push(prev);
+            }
+            current = Some((id.to_string(), vec![trimmed]));
+            continue;
+        }
+        // 小节标题（如 ## 一般问题 / ## 总结）结束上一条，不把后续总结粘进上一条末尾
+        let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+        if hashes > 0 && hashes <= 6 && trimmed[hashes..].starts_with(char::is_whitespace) {
+            if let Some(prev) = current.take() {
+                items.push(prev);
+            }
+            continue;
+        }
+        if let Some((_, lines)) = current.as_mut() {
+            lines.push(line);
+        }
+    }
+    if let Some(prev) = current.take() {
+        items.push(prev);
+    }
+    if items.is_empty() {
         return false;
     }
-    let mut ids = Vec::<String>::new();
-    let mut decided = std::collections::HashSet::<String>::new();
-    let mut current: Option<String> = None;
-    for line in text.lines() {
-        if let Some(id) = review_item_id(line) {
-            let id = id.to_string();
-            if !ids.contains(&id) {
-                ids.push(id.clone());
+    items.iter().all(|(_, lines)| {
+        let mut report_verdict: Option<bool> = None;
+        for line in lines {
+            let trimmed = line.trim();
+            let stripped = trimmed
+                .strip_prefix('-')
+                .or_else(|| trimmed.strip_prefix('*'))
+                .filter(|r| r.starts_with(char::is_whitespace))
+                .map(str::trim_start)
+                .unwrap_or(trimmed);
+            let value = stripped
+                .strip_prefix("决定：")
+                .or_else(|| stripped.strip_prefix("决定:"));
+            if let Some(val) = value {
+                let val = val.trim();
+                // 预留的空「决定：」占位行不覆盖前面/后面已写的决定，只看非空行
+                if !val.is_empty() {
+                    report_verdict = Some(decision_value_cleared(val));
+                }
             }
-            current = Some(id);
         }
-        let trimmed = line.trim().trim_start_matches(['-', '*']).trim();
-        let value = trimmed
-            .strip_prefix("决定：")
-            .or_else(|| trimmed.strip_prefix("决定:"))
-            .or_else(|| trimmed.rsplit_once("裁决：").map(|(_, value)| value))
-            .or_else(|| trimmed.rsplit_once("裁决:").map(|(_, value)| value));
-        let Some(value) = value else {
-            continue;
-        };
-        if !decision_value_cleared(value) {
-            return false;
+        if let Some(ok) = report_verdict {
+            return ok;
         }
-        let Some(id) = current.clone() else {
-            return false;
-        };
-        decided.insert(id);
-    }
-    !ids.is_empty() && ids.iter().all(|id| decided.contains(id))
+        let mut verify_verdict: Option<bool> = None;
+        for line in lines {
+            if let Some(val) = extract_verify_ruling_field(line) {
+                verify_verdict = Some(decision_value_cleared(val));
+            }
+        }
+        verify_verdict == Some(true)
+    })
 }
 
 fn human_target_satisfied(

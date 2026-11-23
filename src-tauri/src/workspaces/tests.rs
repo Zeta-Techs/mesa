@@ -2655,6 +2655,39 @@ fn completion_modes_do_not_treat_file_presence_as_manual_confirmation() {
         None,
         "",
     ));
+    // 前言/说明里出现「待裁决」或「决定：」、列表粗体 `- **V001**`、以及尾注小节不误伤已全部裁决的条目
+    fs::write(
+        root.join("manuscript/verification-decisions.md"),
+        "# 待核实与存疑条目\n\n> 说明：逐条将「裁决：待裁决」改为确认、删除该论断或改正为…\n\n- **V001** | 位置：review-final.md:4 | 裁决：确认 | 依据：\n- **V002** | 位置：review-final.md:8 | 裁决：改正为12% | 依据：原文\n\n## 说明\n\n此前有 2 条待裁决。\n",
+    )
+    .unwrap();
+    assert!(
+        human_target_satisfied(
+            &root,
+            "manuscript/verification-decisions.md",
+            "decisions_cleared",
+            None,
+            None,
+            "",
+        ),
+        "前言或尾注里提到「待裁决」且全部编号条目已裁决时应判完成"
+    );
+    fs::write(
+        root.join("manuscript/review-report.md"),
+        "# 审查报告\n\n> 每条末尾由 Mesa 写入「决定：接受/拒绝/修改」。\n\n## 严重问题\n\n- **R001** 位置：draft.md:3\n决定：接受\n\n## 总结\n\n本轮共 1 条。\n",
+    )
+    .unwrap();
+    assert!(
+        human_target_satisfied(
+            &root,
+            "manuscript/review-report.md",
+            "decisions_cleared",
+            None,
+            None,
+            "",
+        ),
+        "列表粗体 R001 与前言说明中的「决定：」不应误判未完成"
+    );
     fs::remove_dir_all(&dir).ok();
 }
 

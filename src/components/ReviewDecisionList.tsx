@@ -17,7 +17,9 @@ import {
   reviewItemDisplayBody,
   reviewItemMatchesQuery,
   reviewItemSourceTag,
+  reviewVerdictsSignature,
   tokenizeDecisionSummary,
+  type DecisionHandoffState,
   type ReviewItem,
   type ReviewItemKind,
   type ReviewSeverity,
@@ -45,6 +47,8 @@ export interface ReviewDecisionMeta {
   modified: number;
   rejected: number;
   missing: boolean;
+  /** 当前全部条目的拍板指纹，供宿主判断是否相对上次交回 AI 有变动。 */
+  signature: string;
   fileList: ProjectFilePaneFile[];
   fileRoot: string;
 }
@@ -133,6 +137,7 @@ export default function ReviewDecisionList({
   kind,
   fill = false,
   readOnlyView = false,
+  handoffState = "pending",
   hideFileActions = false,
   hideContinueAction = false,
   onAllDecided,
@@ -151,6 +156,8 @@ export default function ReviewDecisionList({
   fill?: boolean;
   /** 已勾完事项的回看模式：默认看全部、只读不改文件。 */
   readOnlyView?: boolean;
+  /** 全部决定完后的交回态：pending=尚未交回、handed=已原样交回无变动、changed=交回后用户改判过。 */
+  handoffState?: DecisionHandoffState;
   /** 宿主（如大窗顶栏）已经摆了「对照原稿 / 新窗口打开」时，不在清单工具条重复摆第二套。 */
   hideFileActions?: boolean;
   /** 宿主（如大窗页脚）已经摆了「让 Agent 按决定继续」主按钮时，不在清单工具条重复摆。 */
@@ -300,6 +307,7 @@ export default function ReviewDecisionList({
   usePolling(() => load(), missing ? 5000 : null);
 
   const counts = useMemo(() => countReviewVerdicts(items ?? []), [items]);
+  const signature = useMemo(() => reviewVerdictsSignature(items ?? []), [items]);
 
   useEffect(() => {
     if (items == null) return;
@@ -307,10 +315,11 @@ export default function ReviewDecisionList({
       ...counts,
       open: missing ? 1 : counts.open,
       missing,
+      signature,
       fileList,
       fileRoot,
     });
-  }, [items, counts, missing, fileList, fileRoot]);
+  }, [items, counts, missing, signature, fileList, fileRoot]);
 
   const severityCounts = useMemo(() => {
     const map: Record<ReviewSeverity, number> = { severe: 0, general: 0, suggestion: 0 };
@@ -784,7 +793,7 @@ export default function ReviewDecisionList({
         {counts.open === 0 ? (
           <div
             className={`flex flex-wrap items-center justify-between gap-2 rounded-md px-2 py-1.5 text-micro ${
-              readOnlyView
+              readOnlyView || handoffState === "handed"
                 ? "bg-inset/50 text-l3"
                 : "border border-cta-bd/35 bg-cta-pill/40 text-l1"
             }`}
@@ -792,15 +801,27 @@ export default function ReviewDecisionList({
             <span>
               {readOnlyView
                 ? `已完成（接受 ${counts.accepted} · 修改 ${counts.modified} · 拒绝 ${counts.rejected}）；如需改判，请先取消本项勾选。`
-                : `全部 ${counts.total} 条已决定（接受 ${counts.accepted} · 修改 ${counts.modified} · 拒绝 ${counts.rejected}），可在下方复核或撤销。`}
+                : handoffState === "handed"
+                  ? `本批 ${counts.total} 条决定已交给 Agent 处理（接受 ${counts.accepted} · 修改 ${counts.modified} · 拒绝 ${counts.rejected}）；改判或修改任一条后可重新交回。`
+                  : handoffState === "changed"
+                    ? `决定已有变动（接受 ${counts.accepted} · 修改 ${counts.modified} · 拒绝 ${counts.rejected}），确认后发给 Agent 按新决定更新。`
+                    : `全部 ${counts.total} 条已决定（接受 ${counts.accepted} · 修改 ${counts.modified} · 拒绝 ${counts.rejected}），可在下方复核或撤销。`}
             </span>
             {!readOnlyView && !hideContinueAction && onAllDecided && (
               <button
                 type="button"
                 onClick={() => onAllDecided()}
-                className="shrink-0 rounded-sm border border-cta-bd bg-cta px-2 py-0.5 text-micro font-medium text-cta-text transition-[filter] hover:brightness-110"
+                className={
+                  handoffState === "handed"
+                    ? "shrink-0 rounded-sm border border-field bg-strip px-2 py-0.5 text-micro text-l2 transition-colors hover:bg-hover hover:text-l1"
+                    : "shrink-0 rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-micro font-medium text-cta-pill-text transition-[filter] hover:brightness-110"
+                }
               >
-                让 Agent 按决定继续
+                {handoffState === "handed"
+                  ? "重新发给 Agent"
+                  : handoffState === "changed"
+                    ? "让 Agent 按新决定继续"
+                    : "让 Agent 按决定继续"}
               </button>
             )}
           </div>

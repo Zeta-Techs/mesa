@@ -39,6 +39,8 @@ export interface ReviewVerdictCounts {
   rejected: number;
 }
 
+export type DecisionHandoffState = "pending" | "handed" | "changed";
+
 export type ReviewItemKind = "report" | "verify";
 
 const ID_HEAD = /^(?:#{1,6}\s+)?(?:[-*]\s+)?(?:\*\*)?((?:R|S|V)\d{3,})\b/;
@@ -243,6 +245,25 @@ export function countReviewVerdicts(items: readonly ReviewItem[]): ReviewVerdict
     modified,
     rejected,
   };
+}
+
+/** 生成全部条目的稳定拍板指纹：任一条增删、改判或修改说明变化都会产生不同指纹。 */
+export function reviewVerdictsSignature(items: readonly ReviewItem[]): string {
+  return items
+    .map((item) => `${item.id}=${item.verdict ?? ""}:${item.verdict === "修改" ? item.note.trim() : ""}`)
+    .join("\n");
+}
+
+/** 全部条目标记完成后，对照上次交回 Agent 的指纹判定当前态：
+ * - `pending`：尚未交回过
+ * - `handed`：已把这一版原样交回过，没有新改动
+ * - `changed`：交回后用户又改判或改写了修改说明，需要按新决定再次交回 */
+export function resolveDecisionHandoffState(
+  signature: string,
+  handedSignature: string | null | undefined,
+): DecisionHandoffState {
+  if (!handedSignature) return "pending";
+  return handedSignature === signature ? "handed" : "changed";
 }
 
 function verdictLine(verdict: ReviewVerdict, note: string): string {

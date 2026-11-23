@@ -330,6 +330,39 @@ R002 位置：manuscript/draft.md:20。问题：标题可更简洁。类别：�
     });
     assert.doesNotMatch(saved, /R001[^\n]*\n决定：接受/);
     assert.match(saved, /R002[\s\S]*决定：接受/);
+
+    // 全部已决定且 handoffState="handed" 时不显示「让 Agent 按决定继续」主按钮，仅在「changed」时重新提示按新决定继续
+    saved = saved.replace("R001 位置：manuscript/draft.md:4。问题：核心数字有误。类别：数据。", "R001 位置：manuscript/draft.md:4。问题：核心数字有误。类别：数据。\n决定：接受");
+    await act(async () => {
+      root.render(
+        h(List, {
+          projectRoot: "/proj",
+          target: "manuscript/review-report.md",
+          kind: "report",
+          handoffState: "handed",
+          refreshKey: "handed-check",
+          onAllDecided: () => {},
+        }),
+      );
+    });
+    assert.match(host.textContent ?? "", /已交给 Agent 处理/);
+    assert.doesNotMatch(host.textContent ?? "", /让 Agent 按决定继续/);
+    assert.ok([...host.querySelectorAll("button")].some((b) => b.textContent === "重新发给 Agent"));
+
+    await act(async () => {
+      root.render(
+        h(List, {
+          projectRoot: "/proj",
+          target: "manuscript/review-report.md",
+          kind: "report",
+          handoffState: "changed",
+          refreshKey: "changed-check",
+          onAllDecided: () => {},
+        }),
+      );
+    });
+    assert.match(host.textContent ?? "", /决定已有变动/);
+    assert.ok([...host.querySelectorAll("button")].some((b) => b.textContent === "让 Agent 按新决定继续"));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
