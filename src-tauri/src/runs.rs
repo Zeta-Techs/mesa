@@ -4419,10 +4419,18 @@ fn task_run_headless_impl(run_id: &str, prompt: &str) -> Result<RunDto, String> 
         }
     }
     let mut job = crate::ai::build_headless_command(&profile, model.as_deref(), &text, &cwd, write)?;
-    // 看一眼：与交互终端同一对变量，能只读看同项目在做什么
+    // 看一眼：与交互终端同一对变量，能只读看同项目在做什么；可写目标同时注入出图与科研做图工具
     if let Some(tool) = crate::image_gen::helper_exe() {
         job.cmd.env(crate::peek::TOOL_ENV, &tool);
         job.cmd.env(crate::peek::RUN_ENV, &run.id);
+        if write {
+            job.cmd.env(crate::image_gen::TOOL_ENV, &tool);
+        }
+    }
+    if write {
+        if let Some(tool) = crate::svg_render::helper_exe() {
+            job.cmd.env(crate::svg_render::TOOL_ENV, &tool);
+        }
     }
     if let Some(tool) = crate::journal_metrics::helper_exe() {
         job.cmd.env(crate::journal_metrics::TOOL_ENV, &tool);

@@ -1,0 +1,63 @@
+{
+  "workspaceTransientFiles": [
+    ".ccode/review-notes.md",
+    ".ccode/next-actions.json"
+  ],
+  "workspaceTransientDirs": [
+    ".ccode/local/",
+    ".ccode/step-next/"
+  ],
+  "ledgerAnyStateFiles": [
+    "notes/inbox.md",
+    "papers/watch-seen.md",
+    "papers/watch-followup.md",
+    ".ccode/acceptance-log.jsonl",
+    ".ccode/acceptance-log.lock",
+    ".ccode/record.jsonl",
+    ".ccode/record.lock",
+    ".ccode/ai-usage.md",
+    ".ccode/step-rounds.jsonl"
+  ],
+  "ledgerAnyStateDirs": [
+    ".ccode/rework/",
+    ".ccode/consults/",
+    ".ccode/versions/",
+    ".ccode/checks/",
+    ".ccode/record/",
+    "notes/assets/",
+    ".ccode/watch/"
+  ],
+  "ledgerUntrackedOnlyFiles": [
+    ".ccode/watch-explains.json",
+    ".ccode/pending-registrations.json",
+    "papers/reading-list.md",
+    "papers/endnote-library.path",
+    "papers/zotero-library.ris",
+    "papers/zotero-library.xml",
+    "papers/endnote-library.ris",
+    "papers/endnote-library.xml",
+    "papers/endnote-journals.txt"
+  ],
+  "gitExcludeLines": [
+    "/.ccode/local/",
+    "/.ccode/next-actions.json",
+    "/.ccode/step-next/",
+    "/.ccode/rework/",
+    "/.ccode/step-rounds.jsonl",
+    "/.ccode/versions/",
+    "/.ccode/consults/",
+    "/.ccode/checks/",
+    "/.ccode/record/",
+    "/.ccode/record.jsonl",
+    "/.ccode/record.lock",
+    "/.ccode/ai-usage.md",
+    "/.ccode/acceptance-log.jsonl",
+    "/.ccode/acceptance-log.lock",
+    "/.ccode/watch/",
+    "/.ccode/watch-explains.json",
+    "/.ccode/pending-registrations.json",
+    ".ccode/handoff-*.md",
+    ".ccode/help-wanted.md",
+    ".ccode/outbox.jsonl"
+  ]
+}

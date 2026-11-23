@@ -516,7 +516,7 @@ fn active_commit_hooks(cwd: &str) -> Vec<String> {
 }
 
 const NOTHING_TO_COMMIT: &str =
-    "没有需要提交的改动（评审退回意见 .ccode/review-notes.md 只留在工作区，不进提交）";
+    "没有需要提交的改动（评审退回意见与 Mesa 过程文件只留在工作区，不进提交）";
 
 fn git_commit_sync(
     cwd: &str,
@@ -579,17 +579,28 @@ fn git_commit_sync(
     } else {
         let add = run_git_owned(&cwd, &["add".into(), "-A".into()])?;
         if add.status.success() {
-            // 退回意见只留在工作区，不进这次提交。
-            let _ = run_git(
-                &cwd,
-                &[
-                    "reset",
-                    "-q",
-                    "HEAD",
-                    "--",
-                    ".ccode/review-notes.md",
-                ],
-            );
+            // 退回意见、收尾建议与 .ccode/local/ 等过程文件只留在工作区，不进提交（单一真源 git_exemptions）。
+            if let Ok(staged) = run_git(&cwd, &["diff", "--cached", "--name-only"]) {
+                let transient: Vec<String> = String::from_utf8_lossy(&staged.stdout)
+                    .lines()
+                    .map(|l| l.trim().trim_matches('"').to_string())
+                    .filter(|p| crate::git_exemptions::is_workspace_transient(p))
+                    .collect();
+                if !transient.is_empty() {
+                    let mut reset_args: Vec<String> =
+                        vec!["reset".into(), "-q".into(), "HEAD".into(), "--".into()];
+                    reset_args.extend(transient.iter().cloned());
+                    let ok = run_git_owned(&cwd, &reset_args)
+                        .map(|o| o.status.success())
+                        .unwrap_or(false);
+                    if !ok {
+                        let mut rm_args: Vec<String> =
+                            vec!["rm".into(), "--cached".into(), "-q".into(), "--".into()];
+                        rm_args.extend(transient);
+                        let _ = run_git_owned(&cwd, &rm_args);
+                    }
+                }
+            }
         }
         if !add.status.success() {
             return Err(output_tail(&add));

@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::Path;
 
-pub(crate) const CURRENT_LAYOUT: i64 = 1;
+pub(crate) const CURRENT_LAYOUT: i64 = 2;
 
 struct Upgrade {
     to: i64,
@@ -14,17 +14,79 @@ struct Upgrade {
     run: fn(&Path) -> Result<(), String>,
 }
 
-const UPGRADES: &[Upgrade] = &[Upgrade {
-    to: 1,
-    what: "补齐 .gitignore 里 Mesa 自己的忽略行",
-    run: layout1_mesa_ignores,
-}];
+const UPGRADES: &[Upgrade] = &[
+    Upgrade {
+        to: 1,
+        what: "补齐 .gitignore 里 Mesa 自己的忽略行",
+        run: layout1_mesa_ignores,
+    },
+    Upgrade {
+        to: 2,
+        what: "同步新版过程文件忽略规则（.ccode/local/、next-actions、step-next）并解除历史过程文件误跟踪",
+        run: layout2_sync_mesa_git_exemptions,
+    },
+];
 
 /// 第 1 级：老科研项目的 .gitignore 缺后来进模板的 Mesa 记录 / 台账忽略行（2026-11-18）
 fn layout1_mesa_ignores(root: &Path) -> Result<(), String> {
     if crate::projects::project_work_mode_at(root) == "research" {
         crate::projects::upgrade_mesa_ignores_at(root)?;
     }
+    Ok(())
+}
+
+/// 第 2 级（2026-11-21）：补齐 .gitignore 新过程文件忽略行、同步仓库共享 .git/info/exclude，
+/// 并把历史版本误提交成 tracked 的工作区过程文件（如 .ccode/review-notes.md）移出索引（本地保留）。
+/// 若本次改动了 .gitignore，定向静默提交 .gitignore（不夹带用户别的文件），绝不留脏主仓在评审保存时拦用户。
+fn layout2_sync_mesa_git_exemptions(root: &Path) -> Result<(), String> {
+    let mut touched_gitignore = false;
+    if crate::projects::project_work_mode_at(root) == "research" {
+        touched_gitignore = crate::projects::upgrade_mesa_ignores_at(root)?;
+    }
+    crate::git_exemptions::sync_git_exclude(root);
+    crate::git_exemptions::untrack_committed_transients(root);
+    if touched_gitignore {
+        let _ = commit_gitignore_only(root);
+    }
+    Ok(())
+}
+
+/// 仅当仓库已存在且 .gitignore 有改动时，定向把 .gitignore 自己提交成一笔（绝不夹带用户其他文件）。
+fn commit_gitignore_only(root: &Path) -> Result<(), String> {
+    if !root.join(".git").exists() {
+        return Ok(());
+    }
+    let status = crate::process::background_command("git")
+        .args(["status", "--porcelain", "--", ".gitignore"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("检查 .gitignore 状态失败: {e}"))?;
+    if !status.status.success() || String::from_utf8_lossy(&status.stdout).trim().is_empty() {
+        return Ok(());
+    }
+    let add = crate::process::background_command("git")
+        .args(["add", "--", ".gitignore"])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("暂存 .gitignore 失败: {e}"))?;
+    if !add.status.success() {
+        return Ok(());
+    }
+    let _ = crate::process::background_command("git")
+        .args([
+            "-c",
+            "user.name=Mesa",
+            "-c",
+            "user.email=mesa@local",
+            "commit",
+            "-m",
+            "Mesa: 自动补齐 .gitignore 忽略规则",
+            "--only",
+            "--",
+            ".gitignore",
+        ])
+        .current_dir(root)
+        .output();
     Ok(())
 }
 
@@ -113,7 +175,14 @@ mod tests {
             assert_eq!(layout_at(&dir), Some(CURRENT_LAYOUT), "{}", sample.display());
             assert!(upgrade_at(&dir).unwrap().is_empty(), "第二次不该再做事");
             let ignore = fs::read_to_string(dir.join(".gitignore")).unwrap_or_default();
-            for line in ["/.ccode/record.jsonl", "/.ccode/step-rounds.jsonl", "/.ccode/versions/"] {
+            for line in [
+                "/.ccode/record.jsonl",
+                "/.ccode/step-rounds.jsonl",
+                "/.ccode/versions/",
+                "/.ccode/next-actions.json",
+                "/.ccode/step-next/",
+                "/.ccode/local/",
+            ] {
                 assert!(ignore.lines().any(|l| l.trim_start_matches('/') == line.trim_start_matches('/')), "{} 缺 {line}", sample.display());
             }
             fs::remove_dir_all(&dir).ok();

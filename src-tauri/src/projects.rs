@@ -3357,6 +3357,9 @@ pub(crate) fn gitignore_text(work_mode: &str, artifact_dir: &str) -> String {
          /.ccode/rework/\n\
          /.ccode/step-rounds.jsonl\n\
          /.ccode/versions/\n\
+         /.ccode/next-actions.json\n\
+         /.ccode/step-next/\n\
+         /.ccode/local/\n\
          \n\
          # 研讨记录：几家 AI 只读研讨同一个问题（本机记录，不进 git；2026-11-11）\n\
          /.ccode/consults/\n\
@@ -3534,6 +3537,8 @@ pub(crate) fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, Str
     if let Err(e) = crate::project_upgrade::upgrade_at(repo) {
         eprintln!("[projects] {e}");
     }
+    // 同步全部 Mesa 过程文件到仓库共享 .git/info/exclude（老项目与已有 worktree 立即生效）
+    crate::git_exemptions::sync_git_exclude(repo);
     if crate::agents::resolve_binary("git").is_none() {
         return Err("找不到 git 可执行文件，请先安装 git".to_string());
     }
@@ -3555,37 +3560,19 @@ pub(crate) fn commit_bootstrap_at(repo: &Path) -> Result<BootstrapCommitDto, Str
         });
     }
     // 暂存这两个路径下的全部改动（untracked / modified / 已暂存）。
-    // 排除雷达/验收台账缓存（2026-10-13 双台账口径）：老项目 .gitignore 还没有忽略行，
-    // 不排除的话这一把会把台账提交成 tracked——Mesa 自己制造自己要拦的合并阻塞。
-    // 用 pathspec exclude magic，故这一步不用 --literal-pathspecs（路径本身无通配，等价）
-    const BOOTSTRAP_EXCLUDES: [&str; 14] = [
-        ".ccode/watch-explains.json",
-        ".ccode/pending-registrations.json",
-        ".ccode/acceptance-log.jsonl",
-        ".ccode/acceptance-log.lock",
-        ".ccode/watch",
-        ".ccode/record.jsonl",
-        ".ccode/record.lock",
-        ".ccode/ai-usage.md",
-        ".ccode/checks",
-        ".ccode/record",
-        ".ccode/rework",
-        ".ccode/step-rounds.jsonl",
-        ".ccode/consults",
-        ".ccode/versions",
-    ];
-    // 已被 .gitignore 忽略的台账不再写 exclude：exclude 点名一个存在且已忽略的文件时，
-    // git add 整条报「paths are ignored」退出 1，档案卡一次也提交不上（2026-10-22 实测：
-    // 新模板 .gitignore 已忽略 acceptance-log 等，每次开工都弹「档案卡自动提交失败」）。
-    // check-ignore：有忽略的退出 0 并逐行列出，一个都没有退出 1（run_git 报错 → 当作都没忽略）
+    // 排除全部 Mesa 过程文件与台账（单一真源 git_exemptions::bootstrap_exclude_paths，
+    // 避免老项目 .gitignore 缺行时把过程文件提交成 tracked）。
+    let bootstrap_excludes = crate::git_exemptions::bootstrap_exclude_paths();
+    // 已被 .gitignore / .git/info/exclude 忽略的路径不再写 :(exclude)（2026-10-22 实测：
+    // exclude 点名一个存在且已忽略的文件时，git add 整条报「paths are ignored」退出 1）。
     let ignored: Vec<String> = {
         let mut args: Vec<&str> = vec!["check-ignore", "--"];
-        args.extend(BOOTSTRAP_EXCLUDES);
+        args.extend(bootstrap_excludes.iter().map(String::as_str));
         crate::workspaces::run_git(repo, &args, T)
             .map(|out| out.lines().map(|l| l.trim().replace('\\', "/")).collect())
             .unwrap_or_default()
     };
-    let excludes: Vec<String> = BOOTSTRAP_EXCLUDES
+    let excludes: Vec<String> = bootstrap_excludes
         .iter()
         .filter(|p| !ignored.iter().any(|i| i == *p))
         .map(|p| format!(":(exclude){p}"))
@@ -4102,6 +4089,10 @@ pub async fn purge_project_traces(path: String) -> Result<String, String> {
 pub async fn read_project_config(path: String) -> ProjectConfigReadDto {
     tauri::async_runtime::spawn_blocking(move || {
         let project = PathBuf::from(crate::sessions::expand_tilde(&path));
+        // 打开旧项目时静默把最新 Mesa 过程文件同步到 .git/info/exclude（幂等、不脏 git）
+        if project.join(".git").exists() {
+            crate::git_exemptions::sync_git_exclude(&project);
+        }
         read_config_at(&project)
     })
     .await
@@ -4647,6 +4638,8 @@ pub(crate) fn exclude_task_md(worktree_root: &Path) {
     exclude_in_git(worktree_root, "TASK.md");
     // 项目内传话的发件箱（project_mail.rs）：Agent 写在自己工作目录，过程文件不进 git
     exclude_in_git(worktree_root, crate::project_mail::OUTBOX_REL);
+    // 同步全部 Mesa 过程文件与本机台账到仓库共享 .git/info/exclude（主仓与所有 worktree 立即生效）
+    crate::git_exemptions::sync_git_exclude(worktree_root);
 }
 
 const GEMINIIGNORE_HEADER: &str = "# Mesa 生成：";

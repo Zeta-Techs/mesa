@@ -8,3 +8,4 @@
 
 - `layout-0-her-2026-11`：HER 综述项目 2026-11 时的 `.gitignore`（缺 `.ccode/rework/`、`step-rounds.jsonl`、`versions/`、文献库导入文件等）
 - `layout-0-no-id-2026-10`：更早的档案卡，没有项目 id，`.gitignore` 里还没有任何台账规则
+- `layout-1-research-2026-11`：layout = 1 的科研项目样本（`.gitignore` 已含 `versions/`、`consults/`，缺 2026-11-21 新过程文件 `next-actions.json`、`step-next/`、`local/`）

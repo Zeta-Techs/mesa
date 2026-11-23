@@ -32,6 +32,7 @@ mod effect_preview;
 mod fonts;
 mod fs_tree;
 mod gateway_store;
+mod git_exemptions;
 mod git_info;
 mod global_config;
 mod grok_login;

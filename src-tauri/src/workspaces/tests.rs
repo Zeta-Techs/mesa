@@ -745,9 +745,17 @@ fn workspace_env_block_from_port_base() {
     let Some(fx) = Fixture::new() else { return };
     let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "envs").unwrap();
     let env = workspace_env_impl(&fx.conn, &w.worktree_path);
-    assert_eq!(env.len(), 10);
+    assert_eq!(env.len(), 12);
     assert_eq!(env[0], ("CCODE_PORT".to_string(), "4000".to_string()));
     assert_eq!(env[9], ("CCODE_PORT_9".to_string(), "4009".to_string()));
+    assert_eq!(env[10], ("MESA_PROJECT_ROOT".to_string(), w.repo_path.clone()));
+    assert_eq!(
+        env[11],
+        (
+            "MESA_PAPERS_DIR".to_string(),
+            Path::new(&w.repo_path).join("papers").to_string_lossy().into_owned()
+        )
+    );
     assert!(workspace_env_impl(&fx.conn, "/nonexistent").is_empty());
     // 归档后不再占用端口段，不下发端口 env
     archive_impl(&fx.conn, &w.id).unwrap();
@@ -3137,8 +3145,22 @@ fn pipeline_recovery_finds_original_merge_after_crash_before_commit_id_was_saved
 fn review_notes_alone_is_not_an_unsaved_change() {
     assert!(!porcelain_has_changes(""));
     assert!(!porcelain_has_changes("?? .ccode/review-notes.md\n"));
+    assert!(!porcelain_has_changes("?? .ccode/next-actions.json\n"));
     assert!(porcelain_has_changes("?? .ccode/review-notes.md\n M papers/to-fetch.md\n"));
     assert!(porcelain_has_changes(" M .ccode/review-notes.md.bak\n"));
+
+    let root = std::env::temp_dir().join(format!("ccode-next-act-{}", std::process::id()));
+    let wt = root.join("wt");
+    let repo = root.join("repo");
+    fs::create_dir_all(wt.join(".ccode")).unwrap();
+    fs::create_dir_all(&repo).unwrap();
+    fs::write(wt.join(NEXT_ACTIONS_FILE), "{\"summary\":\"ok\",\"optional\":[]}").unwrap();
+    persist_step_next_actions(&wt, &repo, "lit-notes");
+    assert_eq!(
+        fs::read_to_string(repo.join(".ccode/step-next/lit-notes.json")).unwrap(),
+        "{\"summary\":\"ok\",\"optional\":[]}"
+    );
+    let _ = fs::remove_dir_all(&root);
 }
 
 /// 主文件夹改了一份已跟踪笔记、这一步也改了同一份（不同段落）：合并前 Mesa 先把主文件夹那份存进历史，
@@ -3285,4 +3307,72 @@ fn dryrun_real_project_copy() {
     let merged = fs::read_to_string(repo.join(&note)).unwrap();
     assert!(merged.starts_with("主文件夹加在开头的一行") && merged.contains("这一步追加的一行"));
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// 端到端科研流程回归（2026-11-21 真机复盘全链防回退）：
+/// 1) 检索步含 [已补]/[仅摘要]/[跳过] 与分隔线线索的 to-fetch.md 三端条目计数对齐；
+/// 2) 精读步进入待评审（ahead > 0）且工作区留有 .ccode/next-actions.json、.ccode/local/*、.ccode/review-notes.md；
+/// 3) 主仓继续更新后，精读步执行补读前 sync_base_impl 顺畅并入，不误报未提交改动、不丢失过程文件；
+/// 4) 补读提交并合并进主仓后，.ccode/step-next/<slug>.json 自动镜像且主仓无脏拦截。
+#[test]
+fn e2e_research_loop_worktree_sync_catchup_and_merge() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::create_dir_all(fx.repo.join("papers")).unwrap();
+    let dirty_fetch = "# 待获取全文\n\n1. ✓ Done One — 10.1000/one\n2. [已补 2026-09-24] Done Two — 10.1000/two\n3. [仅摘要] Mega Review — 10.1021/acs.chemrev.3c00005\n4. [跳过] Huge OER — 10.1000/four\n5. Real Missing — 10.1002/smll.202408571\n\n---\n\n- Trailing Clue — 10.1000/clue\n";
+    assert_eq!(to_fetch_entries_in(dirty_fetch), 5);
+    fs::write(fx.repo.join("papers/to-fetch.md"), dirty_fetch).unwrap();
+    fs::write(fx.repo.join("papers/included.json"), "[]\n").unwrap();
+    sh(&fx.repo, &["add", ".env", ".envrc", "papers/to-fetch.md", "papers/included.json"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "step1: lit-search"]);
+
+    // 开精读步工作副本并同步共享 .git/info/exclude
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "lit-notes").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    crate::projects::exclude_task_md(&wt);
+
+    // 精读第一轮提交（进入待评审态 ahead > 0）
+    fs::create_dir_all(wt.join("notes")).unwrap();
+    fs::write(wt.join("notes/index.json"), "[{\"id\":\"W1\",\"fulltextStatus\":\"abstract-only\"}]\n").unwrap();
+    commit_all_in_worktree(&wt, "lit-notes round 1");
+
+    // 写入各类 Mesa 过程文件（.ccode/next-actions.json、.ccode/local/*、.ccode/review-notes.md）
+    fs::create_dir_all(wt.join(".ccode/local")).unwrap();
+    fs::write(wt.join(NEXT_ACTIONS_FILE), "{\"summary\":\"ready\",\"optional\":[]}").unwrap();
+    fs::write(wt.join(".ccode/local/ui-state.json"), "{\"collapsed\":false}").unwrap();
+    fs::write(wt.join(REVIEW_NOTES_FILE), "退回意见测试\n").unwrap();
+
+    // 工作副本不得被过程文件标脏
+    let wt_status = run_git_porcelain(&wt, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30)).unwrap();
+    assert!(!porcelain_has_changes(&wt_status), "过程文件不应算未提交改动: {wt_status}");
+
+    // 主仓发生新提交（模拟检索步追加更新）
+    fs::write(fx.repo.join("papers/screening.md"), "# 筛选报告\n").unwrap();
+    sh(&fx.repo, &["add", "papers/screening.md"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "step1: screening update"]);
+
+    // 精读待评审态点击「补读新到全文」前的并入同步必须成功，且保留过程文件
+    let sync_msg = sync_base_impl(&wt, &w.base_branch, false).unwrap();
+    assert!(!sync_msg.is_empty());
+    assert!(wt.join(NEXT_ACTIONS_FILE).is_file());
+    assert!(wt.join(REVIEW_NOTES_FILE).is_file());
+    assert!(wt.join("papers/screening.md").is_file());
+
+    // 精读补读轮提交并合并进主仓
+    fs::write(wt.join("notes/index.json"), "[{\"id\":\"W1\",\"fulltextStatus\":\"fulltext\"}]\n").unwrap();
+    commit_all_in_worktree(&wt, "lit-notes catchup round 2");
+    let h = health_impl(&fx.conn, &w.id).unwrap();
+    assert!(!h.main_dirty && h.ready_to_merge, "合并前主仓应干净就绪");
+    let out = merge_impl(&fx.conn, &w.id, true).unwrap();
+    assert!(out.merged);
+
+    // 合并后主仓镜像出 .ccode/step-next/lit-notes.json 且不标脏
+    assert_eq!(
+        fs::read_to_string(fx.repo.join(".ccode/step-next/lit-notes.json")).unwrap(),
+        "{\"summary\":\"ready\",\"optional\":[]}"
+    );
+    let main_status = run_git_porcelain(&fx.repo, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30)).unwrap();
+    assert!(
+        main_status.lines().filter(|l| !l.trim().is_empty()).all(crate::review_contract::is_untracked_ledger_file),
+        "合并后主仓不应残留非豁免脏文件: {main_status}"
+    );
 }

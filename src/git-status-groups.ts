@@ -1,7 +1,9 @@
 /**
  * git 状态的分组与白话文案（界面白话化：白话主展示，字母徽标降为二级 mono + 悬浮中文）。
  * 纯逻辑，供改动面板分组渲染与徽标悬浮 title 复用。
+ * 不进 git 的过程文件与台账名单全部读自单一真源 `./mesa-git-exemptions.json`（与 Rust `git_exemptions.rs` 共用）。
  */
+import exemptions from "./mesa-git-exemptions.json" with { type: "json" };
 
 export type StatusGroupKey = "unmerged" | "modified" | "added" | "deleted";
 
@@ -33,64 +35,59 @@ export function isAcceptanceLedgerPath(path: string): boolean {
   return name === "acceptance-log.jsonl" || name === "acceptance-log.lock";
 }
 
-/** 积累面台账（2026-10-13 双台账口径，与后端合并闸门 review_contract.rs 同口径镜像）：
- * 雷达台账（inbox/watch-seen/watch-followup）、用户笔记（notes/*.md 与配图 notes/assets/）、验收账本的任何
- * 常规状态都不算「你的改动未存入历史」；reading-list / watch-explains /
- * pending-registrations 只豁免未跟踪态（防呆：agent 违规提交后变 tracked 的 M 要显形）。 */
+const WORKSPACE_TRANSIENT_FILES = new Set<string>(exemptions.workspaceTransientFiles);
+const WORKSPACE_TRANSIENT_DIRS: readonly string[] = exemptions.workspaceTransientDirs;
+const LEDGER_ANY_STATE_FILES = new Set<string>(exemptions.ledgerAnyStateFiles);
+const LEDGER_ANY_STATE_DIRS: readonly string[] = exemptions.ledgerAnyStateDirs;
+/** 只豁免未跟踪态的台账（与后端 review_contract.rs 共读同一份 mesa-git-exemptions.json）。 */
+const UNTRACKED_ONLY_LEDGER = new Set<string>(exemptions.ledgerUntrackedOnlyFiles);
+
+function normalizeGitRelPath(path: string): string {
+  return path.trim().replace(/^"|"$/g, "").replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+/** 工作区过程文件：只留在工作区、永不进 git 提交（与 Rust `git_exemptions::is_workspace_transient` 同源）。 */
+export function isWorkspaceTransientPath(path: string): boolean {
+  const p = normalizeGitRelPath(path);
+  if (!p) return false;
+  if (WORKSPACE_TRANSIENT_FILES.has(p)) return true;
+  if (
+    WORKSPACE_TRANSIENT_DIRS.some(
+      (dir) => p.startsWith(dir) || p === dir.replace(/\/$/, ""),
+    )
+  ) {
+    return true;
+  }
+  const name = p.split("/").pop() ?? p;
+  return name === "review-notes.md";
+}
+
+/** 积累面台账（2026-10-13 双台账口径，与后端 `git_exemptions.rs` 共读单一真源 `mesa-git-exemptions.json`）：
+ * 雷达台账、用户笔记（notes/*.md 与配图 notes/assets/）、工作区过程文件与本机账本的任何
+ * 常规状态都不算「你的改动未存入历史」；UNTRACKED_ONLY_LEDGER 只豁免未跟踪态。 */
 export function isAccumulationLedgerPath(path: string, status: string): boolean {
-  const p = path.replace(/\\/g, "/").replace(/^"|"$/g, "");
+  const p = normalizeGitRelPath(path);
+  if (!p) return false;
+  if (isWorkspaceTransientPath(p)) return true;
   const anyState =
-    p === "notes/inbox.md" ||
-    p === "papers/watch-seen.md" ||
-    p === "papers/watch-followup.md" ||
-    p === ".ccode/acceptance-log.jsonl" ||
-    p === ".ccode/acceptance-log.lock" ||
-    p === ".ccode/record.jsonl" ||
-    p === ".ccode/record.lock" ||
-    p === ".ccode/ai-usage.md" ||
-    p === ".ccode/step-rounds.jsonl" ||
-    (p.startsWith("notes/") && p.endsWith(".md")) ||
-    p.startsWith(".ccode/rework/") ||
-    p.startsWith(".ccode/consults/") ||
-    p.startsWith(".ccode/versions/") ||
-    p.startsWith(".ccode/checks/") ||
-    p.startsWith(".ccode/record/") ||
-    p.startsWith("notes/assets/") ||
-    p.startsWith(".ccode/watch/");
+    LEDGER_ANY_STATE_FILES.has(p) ||
+    LEDGER_ANY_STATE_DIRS.some((dir) => p.startsWith(dir)) ||
+    (p.startsWith("notes/") && p.endsWith(".md"));
   if (anyState) return true;
   return status === "??" && UNTRACKED_ONLY_LEDGER.has(p);
 }
 
-/** 只豁免未跟踪态的台账（与后端 review_contract.rs is_untracked_only_ledger 逐条一致：
- *  两边不一致就会「顶上说主文件夹有改动、提交面板说没有」，2026-11-18 用户实测）。 */
-const UNTRACKED_ONLY_LEDGER = new Set([
-  ".ccode/watch-explains.json",
-  ".ccode/pending-registrations.json",
-  "papers/reading-list.md",
-  "papers/endnote-library.path",
-  "papers/zotero-library.ris",
-  "papers/zotero-library.xml",
-  "papers/endnote-library.ris",
-  "papers/endnote-library.xml",
-  "papers/endnote-journals.txt",
-]);
-
-function isReviewNotesPath(path: string): boolean {
-  const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
-  return name === "review-notes.md";
-}
-
-/** 「保存进项目」前要不要先提交的口径：与后端 git_commit 全量提交同口径，退回意见文件不进提交，
- *  只剩它时不该去提交（否则 git 无物可提交而报错）。台账类照旧算——add -A 会带上它们。 */
+/** 「保存进项目」与「并入前自动提交」口径：与后端 git_commit 全量提交同口径，退回意见与步骤过程文件不进提交，
+ *  只剩它们时不该去提交（否则 git 无物可提交而报错）。台账类照旧算——add -A 会带上它们。 */
 export function commitWorthyFiles<T extends { path: string }>(files: readonly T[]): T[] {
-  return files.filter((file) => !isReviewNotesPath(file.path));
+  return files.filter((file) => !isWorkspaceTransientPath(file.path));
 }
 
 export function userDirtyFiles<T extends { path: string; status: string }>(
   files: readonly T[],
 ): T[] {
   return files.filter((file) => {
-    if (isReviewNotesPath(file.path)) return false;
+    if (isWorkspaceTransientPath(file.path)) return false;
     if (isAccumulationLedgerPath(file.path, file.status)) return false;
     return !(file.status === "??" && isAcceptanceLedgerPath(file.path));
   });

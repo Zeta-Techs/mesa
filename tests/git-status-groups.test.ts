@@ -124,10 +124,13 @@ test("项目页提醒不把 Mesa 自有档案（.ccode/、.gitignore）当成你
   assert.ok(userDirtyFiles(files).some((f) => f.path === ".ccode/project.toml"));
 });
 
-test("commitWorthyFiles 只剩退回意见时为空，台账类照旧算", async () => {
+test("commitWorthyFiles 只剩退回意见或收尾导航文件时为空，台账类照旧算", async () => {
   const { commitWorthyFiles } = await import("../src/git-status-groups.ts");
   const rows = [
     { path: ".ccode/review-notes.md", status: "??" },
+    { path: ".ccode/next-actions.json", status: "??" },
+    { path: ".ccode/step-next/lit-notes.json", status: "??" },
+    { path: ".ccode/local/scratch.json", status: "??" },
   ];
   assert.deepEqual(commitWorthyFiles(rows), []);
   assert.deepEqual(

@@ -38,46 +38,13 @@ pub fn is_untracked_ledger_file(status: &str) -> bool {
 
 /// 只豁免未跟踪态的 Mesa 台账（迁移完成前它们可能仍被跟踪；迁出后 ignore 双保险）。
 fn is_untracked_only_ledger(path: &str) -> bool {
-    matches!(
-        path,
-        ".ccode/watch-explains.json"
-            | ".ccode/pending-registrations.json"
-            | "papers/reading-list.md"
-            | "papers/endnote-library.path"
-            | "papers/zotero-library.ris"
-            | "papers/zotero-library.xml"
-            | "papers/endnote-library.ris"
-            | "papers/endnote-library.xml"
-            | "papers/endnote-journals.txt"
-    )
+    crate::git_exemptions::is_untracked_only_ledger(path)
 }
 
 /// 日常积累面：雷达台账、用户精读笔记（含沉浸阅读截图 notes/assets/）、本机验收台账、
-/// 雷达订阅——任何常规状态都不拦合并。notes/index.json 是流程正典（.json），不在此列。
-/// notes/assets/ 2026-10-17 补入：截图未提交时曾把所有工作区合并拦住。
+/// 雷达订阅与全部工作区过程文件（单一真源见 `src/mesa-git-exemptions.json`）——任何常规状态都不拦合并。
 fn is_accumulation_ledger(path: &str) -> bool {
-    matches!(
-        path,
-        "notes/inbox.md"
-            | "papers/watch-seen.md"
-            | "papers/watch-followup.md"
-            | ".ccode/acceptance-log.jsonl"
-            | ".ccode/acceptance-log.lock"
-            | ".ccode/record.jsonl"
-            | ".ccode/record.lock"
-            | ".ccode/ai-usage.md"
-            | ".ccode/step-rounds.jsonl"
-            // 评审退回意见只留在工作区、从不进提交；落在主文件夹时也不该拦合并（前端提交面板一直不列它，
-            // 后端若算它脏就是「顶上说有改动、面板说没有」的死结）
-            | ".ccode/review-notes.md"
-    ) || (path.starts_with("notes/") && path.ends_with(".md"))
-        || path.starts_with(".ccode/rework/")
-        || path.starts_with(".ccode/consults/")
-        || path.starts_with(".ccode/versions/")
-        || path.starts_with(".ccode/checks/")
-        || path.starts_with(".ccode/record/")
-        || path.starts_with("notes/assets/")
-        || path.starts_with(".ccode/watch/")
+    crate::git_exemptions::is_accumulation_ledger(path)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1187,7 +1187,18 @@ fn workspace_env_impl(conn: &Connection, worktree_path: &str) -> Vec<(String, St
     }) else {
         return Vec::new();
     };
-    port_env(w.port_base)
+    let mut env = port_env(w.port_base);
+    // 只读路径提示：供 worktree 内脚本（lit_records.py 等）与 Agent 直接定位主项目根和 papers/，
+    // 不再用相对路径在 worktree 里找主仓忽略的 PDF（三平台通用，不依赖符号链接）。
+    if !w.repo_path.is_empty() {
+        let papers = Path::new(&w.repo_path)
+            .join("papers")
+            .to_string_lossy()
+            .into_owned();
+        env.push(("MESA_PROJECT_ROOT".into(), w.repo_path));
+        env.push(("MESA_PAPERS_DIR".into(), papers));
+    }
+    env
 }
 
 /// worktree 路径 → 主仓 papers/ 目录（codex 沙箱预授权用，2026-09-15）：
@@ -2021,6 +2032,7 @@ fn merge_impl_with_guard(
     let version_warning = if ledger {
         crate::file_versions::capture_accepted_warning(&repo, &pending.fact, &review)
     } else { String::new() };
+    persist_step_next_actions(Path::new(&w.worktree_path), &repo, &w.name);
     let merged_at = crate::sessions::now_iso();
     if let Err(e) = conn.execute(
         "UPDATE workspaces SET merged_at=?1 WHERE id=?2",
@@ -3177,9 +3189,39 @@ fn to_fetch_entries_in(text: &str) -> usize {
     count
 }
 
+/// 剥掉 `[已补 …]` / `[跳过 …]` / `[仅摘要 …]` / `[ ]` 标记前缀（与前端 parseToFetchItems 及 lit_records.py 同口径）
+fn strip_to_fetch_tag_prefix(s: &str) -> &str {
+    let mut cur = s.trim_start();
+    loop {
+        let next = if let Some(rest) = cur.strip_prefix('[').or_else(|| cur.strip_prefix('【')) {
+            let close = rest.find(']').or_else(|| rest.find('】'));
+            match close {
+                Some(idx) => {
+                    let tag = rest[..idx].trim();
+                    if tag.is_empty()
+                        || tag.starts_with("已补")
+                        || tag.starts_with("跳过")
+                        || tag.starts_with("仅摘要")
+                    {
+                        rest[idx + rest[idx..].chars().next().map(char::len_utf8).unwrap_or(1)..]
+                            .trim_start()
+                    } else {
+                        break;
+                    }
+                }
+                None => break,
+            }
+        } else {
+            break;
+        };
+        cur = next;
+    }
+    cur
+}
+
 /// to-fetch.md 单行是否算一条条目（to_fetch_entry_count 的口径内核）。
 /// 前缀判定与正则 `^(\d+)[.、)]\s+(✓\s*)?(.+)$` / `^[-*+]\s+(✓\s*)?(.+)$` 对齐：
-/// 前缀后必须有空白、剥 ✓ 后正文非空；两种前缀都不匹配时按裸行处理
+/// 前缀后必须有空白、剥 ✓ 与 `[已补]/[跳过]/[仅摘要]` 后正文非空；两种前缀都不匹配时按裸行处理
 fn to_fetch_line_is_entry(raw: &str) -> bool {
     let line = raw.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -3187,7 +3229,7 @@ fn to_fetch_line_is_entry(raw: &str) -> bool {
     }
     match strip_to_fetch_marker(line) {
         Some(rest) => {
-            let body = rest.strip_prefix('✓').unwrap_or(rest).trim_start();
+            let body = strip_to_fetch_tag_prefix(rest.strip_prefix('✓').unwrap_or(rest));
             !body.is_empty()
         }
         None => to_fetch_bare_has_link_tail(line),
@@ -3793,7 +3835,7 @@ pub(crate) fn delivery_hash(path: &Path) -> Result<(u64, String), String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut hash = sha2::Sha256::new();
     let mut size = 0u64;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 256 * 1024];
     loop {
         let n = file.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
@@ -3806,14 +3848,6 @@ pub(crate) fn delivery_hash(path: &Path) -> Result<(u64, String), String> {
         hash.update(&buf[..n]);
     }
     Ok((size, format!("{:x}", hash.finalize())))
-}
-
-/// 两份产物内容一样（都是普通文件、指纹相同）。读不了、是链接、超预算都当不一样，走原来的冲突口径
-fn same_delivery_content(a: &Path, b: &Path) -> bool {
-    match (delivery_hash(a), delivery_hash(b)) {
-        (Ok((_, x)), Ok((_, y))) => x == y,
-        _ => false,
-    }
 }
 
 pub(crate) fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64, String), String> {
@@ -3829,7 +3863,7 @@ pub(crate) fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64,
     let mut output = options.open(dest).map_err(|e| e.to_string())?;
     let mut hash = sha2::Sha256::new();
     let mut size = 0u64;
-    let mut buf = [0u8; 64 * 1024];
+    let mut buf = vec![0u8; 256 * 1024];
     loop {
         let n = input.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
@@ -3842,7 +3876,9 @@ pub(crate) fn copy_delivery_snapshot(source: &Path, dest: &Path) -> Result<(u64,
         hash.update(&buf[..n]);
         output.write_all(&buf[..n]).map_err(|e| e.to_string())?;
     }
-    output.sync_all().map_err(|e| e.to_string())?;
+    // 刷到内核页缓存即可：快照目录可随时重冻，发布到主仓则有 pending.files_applied 恢复单兜底；
+    // 旧写法逐文件 sync_all() 在 macOS APFS 上会触发上百次 F_FULLFSYNC 硬件写栅栏，拖慢数秒。
+    output.flush().map_err(|e| e.to_string())?;
     Ok((size, format!("{:x}", hash.finalize())))
 }
 
@@ -4058,30 +4094,52 @@ fn freeze_deliverables_at(
                 disposition: "copy".into(),
                 required: false,
             };
+            let repo_dest = repo.join(&path);
+            let mut same_size_dest_sha: Option<String> = None;
             if crate::projects::path_is_protected(&path, &protected) {
                 file.disposition = "protected".into();
-            } else if repo.join(&path).exists() && !same_delivery_content(&source, &repo.join(&path)) {
+            } else if repo_dest.exists() {
                 // 项目里同名且内容一样的不算冲突：照常冻结，带回时 apply 见到同指纹直接认作已到
-                // （2026-11-10 HER：检索第二轮保存，上一轮已带回、一字未改的 artifacts/worklist.md 报「同名文件未覆盖」，挡了归档）
-                file.disposition = "conflict".into();
-            } else if size > 1024 * 1024 * 1024
-                || total.saturating_add(size) > 4 * 1024 * 1024 * 1024
+                // （2026-11-10 HER：检索第二轮保存，上一轮已带回、一字未改的 artifacts/worklist.md 报「同名文件未覆盖」，挡了归档）。
+                // 先比类型与长度（不等直接判冲突、零读盘），等长时只算一次项目端指纹，与下面复制快照顺带算出的源指纹比对（源文件只读一遍）。
+                let dest_ok = fs::symlink_metadata(&repo_dest)
+                    .map(|m| m.is_file() && !m.file_type().is_symlink() && m.len() == size)
+                    .unwrap_or(false);
+                if !dest_ok {
+                    file.disposition = "conflict".into();
+                } else if let Ok((_, dsha)) = delivery_hash(&repo_dest) {
+                    same_size_dest_sha = Some(dsha);
+                } else {
+                    file.disposition = "conflict".into();
+                }
+            }
+            if file.disposition == "copy"
+                && (size > 1024 * 1024 * 1024
+                    || total.saturating_add(size) > 4 * 1024 * 1024 * 1024)
             {
                 file.disposition = "too_large".into();
             }
             if file.disposition == "copy" {
-                let (actual_size, sha) =
-                    copy_delivery_snapshot(&source, &Path::new(&review.payload_dir).join(&path))?;
-                total += actual_size;
-                if total > 4 * 1024 * 1024 * 1024 {
-                    return Err("科研产物快照超过 4 GB，未发布新快照".into());
+                let payload_dest = Path::new(&review.payload_dir).join(&path);
+                let (actual_size, sha) = copy_delivery_snapshot(&source, &payload_dest)?;
+                if let Some(dsha) = same_size_dest_sha {
+                    if dsha != sha {
+                        let _ = fs::remove_file(&payload_dest);
+                        file.disposition = "conflict".into();
+                    }
                 }
-                file.size = actual_size;
-                // 人勾掉过的同一版：照旧不带回（副本照冻，改回带回不用重看）
-                if skips.get(&path) == Some(&sha) {
-                    file.disposition = "skipped".into();
+                if file.disposition == "copy" {
+                    total += actual_size;
+                    if total > 4 * 1024 * 1024 * 1024 {
+                        return Err("科研产物快照超过 4 GB，未发布新快照".into());
+                    }
+                    file.size = actual_size;
+                    // 人勾掉过的同一版：照旧不带回（副本照冻，改回带回不用重看）
+                    if skips.get(&path) == Some(&sha) {
+                        file.disposition = "skipped".into();
+                    }
+                    file.sha256 = Some(sha);
                 }
-                file.sha256 = Some(sha);
             }
             review.files.push(file);
         }
@@ -4247,15 +4305,20 @@ fn apply_delivery_review(
             if crate::projects::path_is_protected(&file.path, protected) {
                 return Err("保护范围已变化".to_string());
             }
+            let expected_sha = file.sha256.as_deref().ok_or("缺少产物指纹")?;
             let source = Path::new(&review.payload_dir).join(&file.path);
-            if delivery_hash(&source)?.1.as_str() != file.sha256.as_deref().ok_or("缺少产物指纹")?
-            {
-                return Err("冻结内容与所审版本不一致".into());
+            let src_meta = fs::symlink_metadata(&source).map_err(|e| e.to_string())?;
+            if !src_meta.is_file() || src_meta.file_type().is_symlink() {
+                return Err(format!("产物不是普通文件：{}", source.display()));
             }
             ensure_copy_dest_safe(repo, &file.path)?;
             let dest = repo.join(&file.path);
             if dest.exists() {
-                if delivery_hash(&dest)?.1 == file.sha256.clone().unwrap_or_default() {
+                // 先比长度，不等直接按同名变化拒写，不必读盘算整份哈希
+                let same_len = fs::symlink_metadata(&dest)
+                    .map(|m| m.is_file() && !m.file_type().is_symlink() && m.len() == file.size)
+                    .unwrap_or(false);
+                if same_len && delivery_hash(&dest)?.1 == expected_sha {
                     return Ok(());
                 }
                 return Err("项目同名文件已变化，不覆盖".into());
@@ -4264,9 +4327,10 @@ fn apply_delivery_review(
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             let staged = parent.join(format!(".ccode-delivery-{}.tmp", uuid::Uuid::new_v4()));
             let copied = (|| {
+                // 复制到暂存文件时顺带算出 SHA-256 并与所审指纹逐一核对，无需在复制前再多读一遍整个冻结目录
                 let (_, sha) = copy_delivery_snapshot(&source, &staged)?;
-                if Some(&sha) != file.sha256.as_ref() {
-                    return Err("产物副本在复制期间变化".into());
+                if sha != expected_sha {
+                    return Err("冻结内容与所审版本不一致".into());
                 }
                 // 已存在目标不能被 rename 覆盖；同目录硬链接只用于原子发布本次私有暂存，不共享工作树输入。
                 fs::hard_link(&staged, &dest)
@@ -4491,12 +4555,37 @@ pub async fn import_human_deliverable(
 }
 
 pub(crate) const REVIEW_NOTES_FILE: &str = ".ccode/review-notes.md";
+pub(crate) const NEXT_ACTIONS_FILE: &str = ".ccode/next-actions.json";
 
-/// `git status --porcelain` 里除了退回意见文件还有没有别的改动
+/// 合并进主仓前把工作区里的 `.ccode/next-actions.json` 按步骤名镜像到项目根
+/// `.ccode/step-next/<slug>.json`（不进 git），防止工作区归档清理后导航卡消失或跨步覆盖。
+pub(crate) fn persist_step_next_actions(wt: &Path, repo: &Path, workspace_name: &str) {
+    let src = wt.join(NEXT_ACTIONS_FILE);
+    let Ok(text) = fs::read_to_string(&src) else { return };
+    if text.trim().is_empty() || text.len() > 64 * 1024 {
+        return;
+    }
+    let slug: String = workspace_name
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let slug = slug.trim_matches('_');
+    if slug.is_empty() {
+        return;
+    }
+    let dir = repo.join(".ccode").join("step-next");
+    if fs::create_dir_all(&dir).is_ok() {
+        let _ = crate::profiles::atomic_write(&dir.join(format!("{slug}.json")), &text);
+        crate::git_exemptions::sync_git_exclude(repo);
+    }
+}
+
+/// `git status --porcelain` 里除了 Mesa 工作区过程文件（单一真源 `git_exemptions`）还有没有别的改动
 pub(crate) fn porcelain_has_changes(porcelain: &str) -> bool {
     porcelain.lines().any(|line| {
         let path = line.get(3..).unwrap_or("").trim().trim_matches('"');
-        !line.trim().is_empty() && path != REVIEW_NOTES_FILE
+        !line.trim().is_empty() && !crate::git_exemptions::is_workspace_transient(path)
     })
 }
 
@@ -4564,13 +4653,19 @@ pub async fn merge_workspace(
         emit_ws_archived(&app, &paths.0, &paths.1);
     }
     if out.merged {
-        if let Err(e) = crate::endnote::export_if_configured(std::path::Path::new(&paths.1)) {
-            crate::logbuf::record(
-                "warn",
-                "endnote",
-                &format!("保存进项目后生成 EndNote 导入文件失败: {e}"),
-            );
-        }
+        // EndNote 导入文件派生放后台线程，不阻塞「保存进项目」返回
+        let repo_for_endnote = paths.1.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) =
+                crate::endnote::export_if_configured(std::path::Path::new(&repo_for_endnote))
+            {
+                crate::logbuf::record(
+                    "warn",
+                    "endnote",
+                    &format!("保存进项目后生成 EndNote 导入文件失败: {e}"),
+                );
+            }
+        });
     }
     Ok(out)
 }
@@ -5049,7 +5144,9 @@ fn sync_base_impl(wt: &Path, base_branch: &str, restart: bool) -> Result<String,
     }
     // 工作树有未提交改动时 git 会拒绝合并，先说清楚。restart 已先 abort，避免把冲突状态误判为普通脏文件。
     // 评审退回意见只留在工作树、从不进提交，并入也碰不到它，不算未提交改动（2026-11-10 HER：补充文献时卡在这里）
-    // 逐个列未跟踪文件：.ccode/ 整个没被跟踪时 git 只报 `?? .ccode/`，认不出里面只有退回意见
+    // 同步 Mesa 过程文件到仓库共享 .git/info/exclude，老项目与已有工作副本立即生效
+    crate::git_exemptions::sync_git_exclude(wt);
+    // 逐个列未跟踪文件：.ccode/ 整个没被跟踪时 git 只报 `?? .ccode/`，认不出里面只有过程文件
     let porcelain = run_git_porcelain(wt, &["status", "--porcelain", "--untracked-files=all"], Duration::from_secs(30))?;
     if porcelain_has_changes(&porcelain) {
         return Err("工作区有未提交改动，请先在「改动」面板提交，再并入主分支".into());
