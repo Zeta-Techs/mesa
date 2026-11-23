@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 改进：开项目时在项目规则里填了目标期刊（如「去向：投期刊（目标期刊：EER）」），定稿步 **更换引用样式** 点 **按期刊** 时直接给出 **沿用已定：EER**，不用再敲一遍刊名；已写过 `submission/target-journal.md` 的仍以它为准。
 - 修复：定稿步的转载许可清单（`submission/figure-permissions.md`）与拼图来源表（`figures/sources.md`）——① CC BY-NC 等受限许可按实际条款说明（BY-NC 只写「非商业」，不再一律写成「非商业 / 禁止演绎」）；② 题名里 Zotero 带来的 `NbB<sub>2</sub>` 换成 `NbB₂`，**换原图与申请转载许可** 面板里不再露出标签。
 - 修复：Antigravity CLI（`agy`）用自定义模型跑过的步骤，项目 `.ccode/ai-usage.md`（AI 使用记录）的模型一栏出现一长串「.-no-need-to-comment-on-this-change-…」——那是 agy 设置变更行尾的一句提示，被误当成模型名记下。现只取到句号为止，取不到真模型名时回落启动时记下的模型；已写进运行记录的旧行读取时直接滤掉，用量统计里 agy 的会话会自动重抽一遍。
 - 修复：PDF 与 Word 阅读稿（`review-final.pdf` / `review-final.docx`）的参考文献表把 Zotero 导出题名里的上下标原样印成 `NbB<sub>2</sub>`、`Ni/MoBT<sub>x</sub>` 的问题——`references.lua` 读引文库时把 `<sub>`、`<sup>`、`<i>`、`<b>`、`<sc>` 等富文本标记换成真正的上下标、斜体与粗体（引文库文件本身不改）。已渲过的稿子在 Mesa 里更新内置技能 **quarto-render** 后重渲即可。

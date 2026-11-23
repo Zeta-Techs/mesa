@@ -128,6 +128,7 @@ import {
   citationRerenderPrompt,
   isCitationStyleTask,
   journalAsk,
+  journalFromSettings,
   parseTargetJournal,
   STYLE_FAMILY_LABEL,
   styleFamilyOf,
@@ -1639,6 +1640,8 @@ export default function StepFlow({
     () => cachedCite?.journal ?? null,
   );
   const [journalSwap, setJournalSwap] = useState(false);
+  // 已写的 submission/target-journal.md 优先；还没写时用开项目时在项目规则里填的目标期刊
+  const settledJournal = draftJournal ?? journalFromSettings(projectSettings ?? []);
   // 点选时记下「要哪一类样式」和「改前的样式」，用户回来时据此核对是否真换成。
   const citeWant = useRef<{ family: StyleFamily | null; label: string } | null>(null);
   const citeBefore = useRef<StyleFamily | null>(null);
@@ -4329,20 +4332,21 @@ export default function StepFlow({
                 ))}
               </div>
             )}
-            {citeOpen === "journal" && draftJournal && !journalSwap && (
+            {citeOpen === "journal" && settledJournal && !journalSwap && (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 <button
                   type="button"
                   disabled={citeBusy}
                   onClick={() =>
-                    void chooseCitationStyle(journalAsk(draftJournal), {
-                      name: draftJournal,
+                    void chooseCitationStyle(journalAsk(settledJournal), {
+                      name: settledJournal,
                       source: "沿用已定",
-                    }, { family: null, label: draftJournal })
+                    }, { family: null, label: settledJournal })
                   }
+                  title={draftJournal ? undefined : "开项目时在项目规则里填的目标期刊"}
                   className="rounded-sm border border-cta-bd bg-cta-pill px-2 py-0.5 text-xs text-cta-pill-text hover:brightness-110 disabled:opacity-50"
                 >
-                  沿用已定：{draftJournal}
+                  沿用已定：{settledJournal}
                 </button>
                 <button
                   type="button"
@@ -4357,7 +4361,7 @@ export default function StepFlow({
                 </button>
               </div>
             )}
-            {citeOpen === "journal" && (!draftJournal || journalSwap) && (
+            {citeOpen === "journal" && (!settledJournal || journalSwap) && (
               <form
                 className="mt-1.5 max-w-md"
                 onSubmit={(event) => {

@@ -8,6 +8,7 @@ import {
   currentJournal,
   isCitationStyleTask,
   journalAsk,
+  journalFromSettings,
   parseTargetJournal,
   styleFamilyOf,
   CITATION_STYLE_CHOICES,
@@ -52,6 +53,15 @@ test("目标期刊文件读得出刊名", () => {
   const doc = targetJournalDoc("Nature Energy", "本次选定");
   assert.equal(parseTargetJournal(doc), "Nature Energy");
   assert.equal(parseTargetJournal("# 目标期刊\n\n还没定\n"), null);
+});
+
+// 2026-11-23 硼化物定稿：开项目时填了「目标期刊：EER」，定稿步「更换引用样式」仍没有「沿用已定」
+test("项目规则里开项目时填的目标期刊读得出刊名，没填的选项提示不算", () => {
+  assert.equal(journalFromSettings(["综述角度：聚焦某个子问题", "去向：投期刊（目标期刊：EER）"]), "EER");
+  assert.equal(journalFromSettings(["目标期刊：Nature Energy"]), "Nature Energy");
+  assert.equal(journalFromSettings(["去向：投期刊"]), null);
+  assert.equal(journalFromSettings(["目标期刊：（冲高一档 / 求稳妥投；决定字数与格式）"]), null);
+  assert.equal(journalFromSettings([]), null);
 });
 
 test("引用样式只有「更换」一种形态，界面认得出新旧标题", () => {

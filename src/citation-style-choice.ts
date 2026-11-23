@@ -54,6 +54,19 @@ export function parseTargetJournal(doc: string): string | null {
   return name.length > 1 ? name : null;
 }
 
+/** 开项目时在项目规则里填的目标期刊：「去向：投期刊（目标期刊：EER）」或「目标期刊：EER」。
+ *  还没写 submission/target-journal.md 时，「沿用已定」按它给，不让人再敲一遍。没填（仍是括号里的选项提示）返回 null。 */
+export function journalFromSettings(settings: readonly string[]): string | null {
+  for (const line of settings) {
+    const hit =
+      line.match(/^去向[：:].*?[（(]目标期刊[：:][ \t]*([^）)]+)[）)]/) ??
+      line.match(/^目标期刊[：:][ \t]*([^（(\s].*)$/);
+    const name = hit?.[1]?.replace(/[。.\s]+$/, "").trim() ?? "";
+    if (name.length > 1) return name;
+  }
+  return null;
+}
+
 export type StyleFamily = "numeric-bracket" | "numeric-superscript" | "author-date";
 
 /**
