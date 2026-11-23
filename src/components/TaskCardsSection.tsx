@@ -15,7 +15,6 @@ import {
   hoverRevealClass,
   inlineActionClass,
   primaryActionClass,
-  RoleBadge,
   secondaryActionClass,
   InlineNotice,
 } from "./PageFrame";
@@ -2092,9 +2091,6 @@ export default function TaskCardsSection({
               </span>
             )}
             <span className="min-w-0 break-words text-sm font-semibold text-l1">{focusStep}</span>
-            {/* 角色标记（v3.89）：步骤名保留学术术语，另标「这一步轮到谁」——
-                用户扫一眼就知道哪几步要自己出场，流程感来自角色交替而非序号 */}
-            {focusStepDto && <RoleBadge role={focusStepDto.role} />}
             {focusStepDto && (
               <StepEvidenceChip
                 projectPath={projectPath}

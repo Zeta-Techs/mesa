@@ -834,24 +834,6 @@ export function InlineNotice({
   );
 }
 
-/** 步骤角色标记（v3.89）：you = 要你出场 / both = 协作。
- *  步骤名保留学术术语；「AI 做」与流程线「AI 干活」重复，默认不标。 */
-export function RoleBadge({ role }: { role?: string }) {
-  if (role !== "you" && role !== "both") return null;
-  const meta =
-    role === "you"
-      ? { text: "你来", cls: "text-cta", title: "这一步主要靠你，AI 打下手" }
-      : { text: "一起", cls: "text-l3", title: "这一步你和 AI 一起定" };
-  return (
-    <span
-      className={`shrink-0 rounded-sm bg-raised px-1.5 py-0.5 text-micro ${meta.cls}`}
-      title={meta.title}
-    >
-      {meta.text}
-    </span>
-  );
-}
-
 /* ───────────── 管理页借鉴 Claude 设置页的写法（2026-10-29） ─────────────
  * 页头与宽度各页照旧（PageHeader + PageFrame wide）；只统一列表 / 节标题 / 控件写法。
  * 两栏页 =「左二级栏 + 右内容」（PaneSplit + PaneNav inline），二级栏可拖宽、宽度按页记住，窄了收到内容上方。 */

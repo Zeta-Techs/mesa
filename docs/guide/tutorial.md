@@ -315,15 +315,13 @@ Mac 没装 Homebrew 时：Git 这一行会弹出系统的 Xcode 命令行工具�
 
 ### 7.0 总览
 
-| # | 步骤 | 角色 | 你主要做 | AI 主要做 | 主要产出 |
-|---|---|---|---|---|---|
-| 1 | 文献检索与筛选 | 一起 | 定文献来源、决定纳入 / 排除、补付费墙全文 | 检索、去重、按标准初筛、下开放获取 PDF | `papers/screening.md`、`included.md`、`included.json`、`to-fetch.md`、两份 RIS |
-| 2 | 精读笔记 | 一起 | 确认精读篇目、边读边补想法 | 逐篇读 PDF 写八段笔记、补 `references.bib` | `notes/*.md`、`references.bib` |
-| 3 | 大纲 | 你来 | 审核大纲、决定章节框架 | 提炼研究空白、拆解范式综述、构造框架 | `manuscript/outline.md` |
-| 4 | 初稿 | 一起 | 定正文字体、审核初稿、写修改意见 | 按大纲与笔记成稿、配图、渲染 | `manuscript/draft.md`、PDF、Word |
-| 5 | 润色定稿 | 你来 | 定引用样式 / 目标期刊、逐条确认审查报告的处理意见 | 审查、润色、核对引用、出最终稿 | `output/` 下 PDF、Word、EndNote 版、Zotero 版 |
-
-「角色」对应流程进度条（界面上叫步进器）上的小点：实心强调色 = 你主要负责，灰点 = 你和 AI 一起定，没有点 = 主要是 AI。
+| # | 步骤 | 你主要做 | AI 主要做 | 主要产出 |
+|---|---|---|---|---|
+| 1 | 文献检索与筛选 | 定文献来源、决定纳入 / 排除、补付费墙全文 | 检索、去重、按标准初筛、下开放获取 PDF | `papers/screening.md`、`included.md`、`included.json`、`to-fetch.md`、两份 RIS |
+| 2 | 精读笔记 | 确认精读篇目、边读边补想法 | 逐篇读 PDF 写八段笔记、补 `references.bib` | `notes/*.md`、`references.bib` |
+| 3 | 大纲 | 审核大纲、决定章节框架 | 提炼研究空白、拆解范式综述、构造框架 | `manuscript/outline.md` |
+| 4 | 初稿 | 定正文字体、审核初稿、写修改意见 | 按大纲与笔记成稿、配图、渲染 | `manuscript/draft.md`、PDF、Word |
+| 5 | 润色定稿 | 定引用样式 / 目标期刊、逐条确认审查报告的处理意见 | 审查、润色、核对引用、出最终稿 | `output/` 下 PDF、Word、EndNote 版、Zotero 版 |
 
 一篇综述要多久、花多少 token，取决于纳入篇数和你用的模型，这里不给一个会过期的数字。用量页按每次运行记录费用。
 

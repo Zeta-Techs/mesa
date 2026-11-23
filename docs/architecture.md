@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-23 · 移除流程步进器「角色提示」图例、圆点与步骤卡「你来 / 一起」标签
+
+用户反馈流程步进器上的「角色提示 · 你主要负责 · 你和 AI 一起定」以及步骤卡头部的「你来 / 一起」标签没有实际用途，拍板移除。定下：撤掉 `ProjectGroup.tsx` 步进器顶部的角色提示图例与步骤名旁的小圆点/悬停括号，撤掉 `TaskCardsSection.tsx` 与 `PageFrame.tsx` 的 `RoleBadge`（「你来 / 一起」）组件；底层 `step.role` 字段仅保留用于内部判断该步骤是否显示「请几家 AI 研讨」入口。
+
 ### 2026-11-23 · 移除「聊天层转到终端」设置模块与前后端计数
 
 用户查看设置「诊断 → 聊天层转到终端」模块后反馈「这个模块感觉没啥用 删了吧」（日常计数中 95% 是用户主动点顶部切换钮在聊天与终端间切换，既占诊断页篇幅也无实际诊断价值）。定下：整体移除 `ChatHandoffStatsPanel.tsx`、`chat-handoff-log.ts`、`chat_handoff_log.rs`、`tests/chat-handoff-log.test.ts`、各处 `recordChatHandoff` 埋点及诊断包里的 `chat-handoffs.json`。

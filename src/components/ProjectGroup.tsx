@@ -2103,27 +2103,6 @@ export default function ProjectGroup({
           （块位以圆心为锚分段等距计算，跨列无边界、各圆两侧断口一致），圆以同款内容井底色遮罩压在链上 */}
       {registered && cfg && cfg.steps.length > 0 && (
         <div className="ccode-well mb-3 rounded-md px-3 py-2.5">
-          {cfg.steps.some((step) => step.role === "you" || step.role === "both") && (
-            <div
-              className="mb-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-micro text-l4"
-              role="note"
-              aria-label="步骤角色提示"
-            >
-              <span>角色提示</span>
-              {cfg.steps.some((step) => step.role === "you") && (
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-cta" aria-hidden />
-                  你主要负责
-                </span>
-              )}
-              {cfg.steps.some((step) => step.role === "both") && (
-                <span className="inline-flex items-center gap-1">
-                  <span className="size-1.5 rounded-full bg-l4" aria-hidden />
-                  你和 AI 一起定
-                </span>
-              )}
-            </div>
-          )}
           {/* 等分列网格：列宽下限 9rem 让更多步骤在常规窗口内完整可见；
               窗口过窄放不下全部步骤时保持整体横向滚动（不换行，虚线与各列大圆同轴） */}
           {/* 横向滚动容器必须显式 overflow-y-clip：overflow-x:auto 会把 y 轴也算成 auto，
@@ -2152,24 +2131,9 @@ export default function ProjectGroup({
                     <div className="relative flex h-7 items-center px-7">
                       <span
                         className="flex min-w-0 flex-1 items-center justify-center gap-1 truncate text-center text-xs text-l2"
-                        title={
-                          step.role === "you"
-                            ? `${step.name}（这一步主要靠你）`
-                            : step.role === "both"
-                              ? `${step.name}（你和 AI 一起定）`
-                              : step.name
-                        }
+                        title={step.name}
                       >
                         <span className="min-w-0 truncate">{step.name}</span>
-                        {/* 「轮到我」的一眼扫描（v3.89）：名称带列宽只有 9rem，
-                            塞文字徽标会挤掉步骤名，故只用一个点；完整说明在 title 与流程线里 */}
-                        {(step.role === "you" || step.role === "both") && (
-                          <span
-                            className={`size-1.5 shrink-0 rounded-full ${
-                              step.role === "you" ? "bg-cta" : "bg-l4"
-                            }`}
-                          />
-                        )}
                       </span>
                       <button
                         type="button"
