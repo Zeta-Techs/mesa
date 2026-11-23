@@ -226,6 +226,7 @@ test("refs：句中点名的作者对号——整句找、带重音的 bib 也�
 test("refs：年份对 Crossref 出刊年——写了卷期取出刊年，未出刊的按在线年，已出刊却没卷期也提示", () => {
   const code = [
     "import sys, json, importlib.util",
+    "sys.stdout.reconfigure(encoding='utf-8')  # Windows 管道默认 cp1252，中文标题 print 即崩",
     "spec = importlib.util.spec_from_file_location('cc', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
     "msg = {'published-online': {'date-parts': [[2023, 12, 6]]}, 'published-print': {'date-parts': [[2024, 5]]}, 'volume': '20', 'issue': '18'}",
     "early = {'published-online': {'date-parts': [[2026, 9, 27]]}}",
