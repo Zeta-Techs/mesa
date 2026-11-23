@@ -7,8 +7,8 @@
   "kind": "program-status",
   "statuses": [
    "-",
-   "awaiting_approval",
    "running",
+   "awaiting_approval",
    "completed"
   ]
  },
@@ -109,5 +109,5 @@
    ]
   }
  },
- "version": "1.5.11"
+ "version": "1.5.15"
 }
