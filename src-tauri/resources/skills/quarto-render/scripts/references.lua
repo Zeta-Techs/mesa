@@ -7,7 +7,8 @@
 -- 4. 稿子里没有放参考文献的位置（#refs）时，在文末补一个不编号的 References 标题。
 -- 5. Unicode 上下标（H₂、cm⁻²、V₀.₃）换成真正的上下标排版：Times New Roman 等正文字体没有这些码位，
 --    xelatex 印成空方块（2026-11-12 HER 初稿实证：全文 294 处）。正文与引文库题名都换，PDF / Word 同一口径。
--- 6. 只在 PDF：表格列宽按内容分（不再五列一样宽、长词压到隔壁列），单元格开头允许断词，表格用小一号字。
+-- 6. 表格排版（PDF 与 Word）：宽表按内容分列宽（不再五至七列等宽把 Source 和长文字平分）；
+--    PDF 单元格开头及长斜杠词（如 XRD/XPS/TEM/Raman）允许断词并用小一号字；Word 宽表默认列改左对齐。
 
 local PLACEHOLDERS = { ["待补"] = true, ["待核"] = true, ["无期号"] = true }
 
@@ -181,19 +182,51 @@ local function tex_scripts(text)
   return table.concat(parts)
 end
 
--- ---------- 表格（只在 PDF） ----------
+-- ---------- 表格（PDF 与 Word 宽表列宽） ----------
 local function cell_text(cell)
   return pandoc.utils.stringify(pandoc.Div(cell.contents))
 end
 
 local function longest_word(text)
   local n = 0
-  for w in text:gmatch("%S+") do n = math.max(n, utf8.len(w) or #w) end
+  for w in text:gmatch("%S+") do
+    -- 斜杠串联的长测试名（XRD/XPS/TEM/Raman）允许按斜杠换行，不按整串抢占过宽列宽
+    for seg in w:gmatch("[^/]+") do
+      n = math.max(n, utf8.len(seg) or #seg)
+    end
+  end
   return n
 end
 
+-- LaTeX 表格里不含空格的长斜杠词（如 XRD/XPS/TEM/Raman）默认不可断行会撞进隔壁列，斜杠后补零宽断点
+local function allow_slash_breaks(cell)
+  cell.contents = pandoc.walk_block(pandoc.Div(cell.contents), {
+    Str = function(el)
+      local s = el.text
+      if #s < 8 or not s:find("/", 1, true) or s:find("://", 1, true) then
+        return nil
+      end
+      local out = pandoc.List()
+      local pos = 1
+      while true do
+        local slash = s:find("/", pos, true)
+        if not slash then
+          if pos <= #s then out:insert(pandoc.Str(s:sub(pos))) end
+          break
+        end
+        out:insert(pandoc.Str(s:sub(pos, slash)))
+        out:insert(pandoc.RawInline("latex", "\\hspace{0pt}"))
+        pos = slash + 1
+      end
+      return out
+    end,
+  }).content
+end
+
 function Table(tbl)
-  if not FORMAT:match("latex") then return nil end
+  local is_latex = FORMAT:match("latex") ~= nil
+  local is_docx = FORMAT:match("docx") ~= nil
+  if not is_latex and not is_docx then return nil end
   local cols = #tbl.colspecs
   if cols < 2 then return nil end
   local rows = pandoc.List()
@@ -213,10 +246,13 @@ function Table(tbl)
       total[j] = (total[j] or 0) + n
       word[j] = math.max(word[j] or 0, longest_word(t))
       row_len = row_len + n
-      -- 单元格第一个词 LaTeX 不会断（段首词不参与断词），长词就压到隔壁列：开头垫一个零宽空白
-      local first = cell.contents[1]
-      if first and (first.t == "Plain" or first.t == "Para") then
-        first.content:insert(1, pandoc.RawInline("latex", "\\hspace{0pt}"))
+      if is_latex then
+        -- 单元格第一个词 LaTeX 不会断（段首词不参与断词），长词就压到隔壁列：开头垫一个零宽空白
+        local first = cell.contents[1]
+        if first and (first.t == "Plain" or first.t == "Para") then
+          first.content:insert(1, pandoc.RawInline("latex", "\\hspace{0pt}"))
+        end
+        allow_slash_breaks(cell)
       end
     end
     wide_row = math.max(wide_row, row_len)
@@ -240,9 +276,18 @@ function Table(tbl)
       weights[j] = w
       sum = sum + w
     end
+    local scale = is_latex and 0.98 or 1.0
     for j = 1, cols do
-      tbl.colspecs[j] = { tbl.colspecs[j][1], 0.98 * weights[j] / sum }
+      local align = tbl.colspecs[j][1]
+      -- Word 宽表默认列对齐在 Quarto 交叉引用表里会被居中，改左对齐避免多行文字锯齿错乱
+      if is_docx and align == pandoc.AlignDefault then
+        align = pandoc.AlignLeft
+      end
+      tbl.colspecs[j] = { align, scale * weights[j] / sum }
     end
+  end
+  if is_docx then
+    return tbl
   end
   return {
     pandoc.RawBlock("latex", "\\begingroup\\small"),

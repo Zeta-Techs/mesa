@@ -285,7 +285,11 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
             zipfile.ZipFile(made).read("word/theme/theme1.xml").decode("utf-8"), latin, cjk
         )
         styles = zipfile.ZipFile(made).read("word/styles.xml").decode("utf-8")
-        styles = style_spacing(styles, "Normal", after="160", line="360")
+        styles = style_spacing(styles, "Normal", after="160", line="360", indent_body=False)
+        styles = style_spacing(styles, "BodyText", after="160", line="360", indent_body=True)
+        styles = style_compact_table_cells(styles)
+        styles = style_caption_and_bib(styles)
+        styles = style_table(styles)
         for level, size, before, after, outline in (
             ("Heading1", "32", "360", "120", "0"),
             ("Heading2", "28", "280", "80", "1"),
@@ -295,6 +299,9 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
             ("Heading6", "22", "160", "40", "5"),
         ):
             styles = style_heading(styles, level, size, before, after, outline)
+        doc_xml = page_geometry(
+            zipfile.ZipFile(made).read("word/document.xml").decode("utf-8")
+        )
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp_out = dest.with_suffix(".docx.tmp")
         with zipfile.ZipFile(made) as src, zipfile.ZipFile(tmp_out, "w") as out:
@@ -303,10 +310,24 @@ def reference_docx(dest: Path, latin: str, cjk: str) -> None:
                     data = theme.encode("utf-8")
                 elif info.filename == "word/styles.xml":
                     data = styles.encode("utf-8")
+                elif info.filename == "word/document.xml":
+                    data = doc_xml.encode("utf-8")
                 else:
                     data = src.read(info.filename)
                 out.writestr(info, data)
         tmp_out.replace(dest)
+
+
+def page_geometry(doc_xml: str) -> str:
+    """统一 A4 + 1 英寸页边距（可用栏宽 9026 dxa ≈ 6.27 in），避免 Pandoc 默认 reference.docx 缺 pgSz/pgMar 时把表格压窄到 5.5 in（7920 dxa）。"""
+    if "<w:pgSz " in doc_xml or "<w:sectPr>" not in doc_xml:
+        return doc_xml
+    geom = (
+        '<w:pgSz w:w="11906" w:h="16838"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"'
+        ' w:header="720" w:footer="720" w:gutter="0"/>'
+    )
+    return doc_xml.replace("<w:sectPr>", "<w:sectPr>" + geom, 1)
 
 
 def style_block(styles: str, style_id: str) -> tuple[int, int] | None:
@@ -321,7 +342,20 @@ def style_block(styles: str, style_id: str) -> tuple[int, int] | None:
     return start, end + len("</w:style>")
 
 
-def style_spacing(styles: str, style_id: str, after: str, line: str) -> str:
+def _set_ppr(block: str, ppr_inner: str) -> str:
+    if "<w:pPr>" in block:
+        return re.sub(r"<w:pPr>.*?</w:pPr>", f"<w:pPr>{ppr_inner}</w:pPr>", block, count=1, flags=re.S)
+    if "<w:pPr />" in block or "<w:pPr/>" in block:
+        return re.sub(r"<w:pPr\s*/>", f"<w:pPr>{ppr_inner}</w:pPr>", block, count=1)
+    return block.replace("</w:style>", f"<w:pPr>{ppr_inner}</w:pPr></w:style>", 1)
+
+
+def style_spacing(
+    styles: str, style_id: str, after: str, line: str, indent_body: bool = False
+) -> str:
+    """只把首行缩进 2 字符挂在 BodyText（FirstParagraph 继承它），不再挂到根样式 Normal：
+    挂在 Normal 会让所有表格单元格（Compact）、标题、图注表题和参考文献全部继承 2 字符缩进，
+    7 列表格每格首行被吃掉 1/3 宽度，英文单词逐个腰斩（2026-11-23 硼化物实证）。"""
     span = style_block(styles, style_id)
     if span is None:
         return styles
@@ -335,12 +369,91 @@ def style_spacing(styles: str, style_id: str, after: str, line: str) -> str:
         block = block.replace("<w:pPr>", "<w:pPr>" + spacing, 1)
     else:
         block = block.replace("</w:style>", f"<w:pPr>{spacing}</w:pPr></w:style>", 1)
-    if style_id == "Normal" and "firstLineChars" not in block:
+    if indent_body and "firstLineChars" not in block:
         if "<w:pPr>" in block:
             block = block.replace("<w:pPr>", "<w:pPr>" + indent, 1)
         else:
             block = block.replace("</w:style>", f"<w:pPr>{indent}</w:pPr></w:style>", 1)
     return styles[:start] + block + styles[end:]
+
+
+def style_compact_table_cells(styles: str) -> str:
+    """Compact 用于 Pandoc 表格单元格与紧凑列表：改为继承 Normal 并显式归零首行缩进、左对齐、单倍行距。"""
+    span = style_block(styles, "Compact")
+    if span is None:
+        return styles
+    start, end = span
+    block = styles[start:end]
+    block = re.sub(r'<w:basedOn w:val="[^"]+"\s*/>', '<w:basedOn w:val="Normal"/>', block, count=1)
+    block = _set_ppr(
+        block,
+        '<w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/>'
+        '<w:spacing w:before="20" w:after="20" w:line="240" w:lineRule="auto"/>',
+    )
+    return styles[:start] + block + styles[end:]
+
+
+def style_caption_and_bib(styles: str) -> str:
+    """图注/表题与参考文献条显式归零首行缩进，避免误承正文缩进。"""
+    for sid, inner in (
+        (
+            "Caption",
+            '<w:jc w:val="both"/><w:ind w:firstLine="0" w:firstLineChars="0"/>'
+            '<w:spacing w:before="0" w:after="120" w:line="276" w:lineRule="auto"/>',
+        ),
+        (
+            "Bibliography",
+            '<w:jc w:val="both"/><w:ind w:firstLine="0" w:firstLineChars="0"/>'
+            '<w:spacing w:after="100" w:line="276" w:lineRule="auto"/>',
+        ),
+    ):
+        span = style_block(styles, sid)
+        if span is None:
+            continue
+        start, end = span
+        block = _set_ppr(styles[start:end], inner)
+        styles = styles[:start] + block + styles[end:]
+    return styles
+
+
+def style_table(styles: str) -> str:
+    """学术三线表样式（仅作用于表格，不缩小正文列表字号）：9pt 字号、紧凑边距（60 dxa）、顶底粗线与表头细线、表头加粗。"""
+    span = style_block(styles, "Table")
+    if span is None:
+        return styles
+    start, end = span
+    table_style = (
+        '<w:style w:type="table" w:default="1" w:styleId="Table">'
+        '<w:name w:val="Table"/>'
+        '<w:basedOn w:val="TableNormal"/>'
+        '<w:semiHidden/><w:unhideWhenUsed/><w:qFormat/>'
+        '<w:pPr><w:ind w:firstLine="0" w:firstLineChars="0"/>'
+        '<w:spacing w:before="20" w:after="20" w:line="240" w:lineRule="auto"/></w:pPr>'
+        '<w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr>'
+        '<w:tblPr>'
+        '<w:tblInd w:w="0" w:type="dxa"/>'
+        '<w:tblBorders>'
+        '<w:top w:val="single" w:sz="12" w:space="0" w:color="000000"/>'
+        '<w:bottom w:val="single" w:sz="12" w:space="0" w:color="000000"/>'
+        '<w:left w:val="nil"/><w:right w:val="nil"/>'
+        '<w:insideH w:val="nil"/><w:insideV w:val="nil"/>'
+        '</w:tblBorders>'
+        '<w:tblCellMar>'
+        '<w:top w:w="40" w:type="dxa"/><w:left w:w="60" w:type="dxa"/>'
+        '<w:bottom w:w="40" w:type="dxa"/><w:right w:w="60" w:type="dxa"/>'
+        '</w:tblCellMar>'
+        '</w:tblPr>'
+        '<w:tcPr><w:vAlign w:val="top"/></w:tcPr>'
+        '<w:tblStylePr w:type="firstRow">'
+        '<w:rPr><w:b/></w:rPr>'
+        '<w:tcPr>'
+        '<w:tcBorders><w:bottom w:val="single" w:sz="6" w:space="0" w:color="000000"/></w:tcBorders>'
+        '<w:vAlign w:val="bottom"/>'
+        '</w:tcPr>'
+        '</w:tblStylePr>'
+        '</w:style>'
+    )
+    return styles[:start] + table_style + styles[end:]
 
 
 def style_heading(styles: str, style_id: str, size: str, before: str, after: str, outline: str) -> str:
@@ -351,6 +464,7 @@ def style_heading(styles: str, style_id: str, size: str, before: str, after: str
     block = styles[start:end]
     spacing = (
         f'<w:keepNext/><w:outlineLvl w:val="{outline}"/>'
+        f'<w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/>'
         f'<w:spacing w:before="{before}" w:after="{after}" w:line="360" w:lineRule="auto"/>'
     )
     if "<w:spacing " in block:

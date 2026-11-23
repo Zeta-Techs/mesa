@@ -871,14 +871,79 @@ def resolve_image(source_dir: Path, target: str) -> Path | None:
     return path if path.is_file() else None
 
 
+def _split_md_row(line: str) -> list[str]:
+    """按未转义的竖线切分 Markdown 表格行：保留单元格里的 `\\|`（如 `Os/TaB2 \\|\\| NiFe`），
+    避免把 7 列表格拆裂成 9 列并残留反斜杠（2026-11-23 硼化物表 8 实证）。"""
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|") and not re.search(r"(?<!\\)(?:\\\\)*\\\|$", s):
+        s = s[:-1]
+    parts: list[str] = []
+    buf: list[str] = []
+    i = 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s) and s[i + 1] == "|":
+            buf.append("\\|")
+            i += 2
+            continue
+        if s[i] == "|":
+            parts.append("".join(buf).strip())
+            buf = []
+            i += 1
+            continue
+        buf.append(s[i])
+        i += 1
+    parts.append("".join(buf).strip())
+    return parts
+
+
 def table_rows(text: str) -> list[list[str]]:
     rows = []
     for line in text.splitlines():
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        cells = _split_md_row(line)
         if cells and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
             continue
         rows.append(cells)
     return rows
+
+
+def _visible_cell_len(cell: str) -> tuple[int, int]:
+    """估算单元格显示长度与最长不可断词，用于按内容比例分配列宽。"""
+    s = CITE_RE.sub("(Author, 2025)", cell)
+    s = ESCAPE_RE.sub(r"\1", s)
+    s = re.sub(r"[~^*`]", "", s)
+    longest = 0
+    for word in s.split():
+        for seg in word.split("/"):
+            longest = max(longest, len(seg))
+    return len(s), longest
+
+
+def _table_col_widths(rows: list[list[str]], cols: int, total_width: int) -> list[int]:
+    if cols <= 1:
+        return [total_width]
+    widest = [0] * cols
+    totals = [0] * cols
+    words = [0] * cols
+    for row in rows:
+        for j in range(min(cols, len(row))):
+            n, lw = _visible_cell_len(row[j])
+            widest[j] = max(widest[j], n)
+            totals[j] += n
+            words[j] = max(words[j], lw)
+    nrows = max(len(rows), 1)
+    weights = [
+        max(words[j] * 1.1, min(widest[j], 60) * 0.35 + (totals[j] / nrows) * 0.65, 6.0)
+        for j in range(cols)
+    ]
+    wsum = sum(weights) or float(cols)
+    raw = [max(720, int(total_width * w / wsum)) for w in weights]
+    diff = total_width - sum(raw)
+    if diff != 0:
+        best = max(range(cols), key=lambda j: raw[j])
+        raw[best] = max(720, raw[best] + diff)
+    return raw
 
 
 def append_table(
@@ -892,48 +957,65 @@ def append_table(
     rows = table_rows(text)
     if not rows:
         return
-    width = 9360
+    # A4（11906 dxa）扣左右各 1 英寸（1440 dxa）页边距 = 9026 dxa，与正文栏宽精确对齐
+    width = 9026
     cols = max(len(row) for row in rows)
+    col_widths = _table_col_widths(rows, cols, width)
+    cell_style = "TableCell" if cols >= 5 else "TableCellWide"
     table = w_el("tbl")
     props = w_el("tblPr")
     props.append(w_el("tblW", **{"w": str(width), "type": "dxa"}))
+    props.append(w_el("tblLayout", **{"type": "fixed"}))
     props.append(w_el("tblBorders"))
     borders = props[-1]
     borders.append(w_el("top", **{"val": "single", "sz": "12", "space": "0", "color": "000000"}))
     borders.append(w_el("bottom", **{"val": "single", "sz": "12", "space": "0", "color": "000000"}))
     for edge in ("left", "right", "insideH", "insideV"):
         borders.append(w_el(edge, **{"val": "nil"}))
+    cell_mar = w_el("tblCellMar")
+    for side, val in (("top", "40"), ("left", "65"), ("bottom", "40"), ("right", "65")):
+        cell_mar.append(w_el(side, **{"w": val, "type": "dxa"}))
+    props.append(cell_mar)
     table.append(props)
     grid = w_el("tblGrid")
-    col_w = str(width // cols)
-    for _ in range(cols):
-        grid.append(w_el("gridCol", **{"w": col_w}))
+    for cw in col_widths:
+        grid.append(w_el("gridCol", **{"w": str(cw)}))
     table.append(grid)
     for index, row in enumerate(rows):
         tr = w_el("tr")
+        tr_pr = w_el("trPr")
+        tr_pr.append(w_el("cantSplit"))
         if index == 0:
-            tr.append(w_el("trPr"))
-            tr[0].append(w_el("tblHeader"))
-        for cell in row:
+            tr_pr.append(w_el("tblHeader"))
+        tr.append(tr_pr)
+        padded = row + [""] * (cols - len(row))
+        for col_idx, cell in enumerate(padded):
             tc = w_el("tc")
             tc_props = w_el("tcPr")
-            tc_props.append(w_el("tcW", **{"w": col_w, "type": "dxa"}))
+            tc_props.append(w_el("tcW", **{"w": str(col_widths[col_idx]), "type": "dxa"}))
             if index == 0:
                 cell_borders = w_el("tcBorders")
                 cell_borders.append(w_el("bottom", **{"val": "single", "sz": "6", "space": "0", "color": "000000"}))
                 tc_props.append(cell_borders)
+                tc_props.append(w_el("vAlign", **{"val": "bottom"}))
+            else:
+                tc_props.append(w_el("vAlign", **{"val": "top"}))
             tc.append(tc_props)
             p = w_el("p")
+            p_pr = w_el("pPr")
+            p_pr.append(w_el("pStyle", **{"val": cell_style}))
+            p.append(p_pr)
             append_inline(p, cell, bib, rec_nums, cited, missing, False)
             if index == 0:
                 for run in list(p):
                     if run.find(W + "t") is None:
                         continue
-                    props = run.find(W + "rPr")
-                    if props is None:
-                        props = w_el("rPr")
-                        run.insert(0, props)
-                    props.append(w_el("b"))
+                    rprops = run.find(W + "rPr")
+                    if rprops is None:
+                        rprops = w_el("rPr")
+                        run.insert(0, rprops)
+                    if rprops.find(W + "b") is None:
+                        rprops.append(w_el("b"))
             tc.append(p)
             tr.append(tc)
         table.append(tr)
@@ -1249,6 +1331,11 @@ def write_docx(
 <w:pPr><w:keepNext/><w:outlineLvl w:val="4"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
 <w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="heading 6"/><w:basedOn w:val="Normal"/>
 <w:pPr><w:keepNext/><w:outlineLvl w:val="5"/><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="TableCell"><w:name w:val="Table Cell"/><w:basedOn w:val="Normal"/>
+<w:pPr><w:jc w:val="left"/><w:ind w:firstLine="0" w:firstLineChars="0"/><w:spacing w:before="20" w:after="20" w:line="240" w:lineRule="auto"/></w:pPr>
+<w:rPr><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="TableCellWide"><w:name w:val="Table Cell Wide"/><w:basedOn w:val="TableCell"/>
+<w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>
 </w:styles>
 """
     latin_font, cjk_font = fonts or ("Times New Roman", default_cjk_font())

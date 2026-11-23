@@ -1254,3 +1254,46 @@ z.close()
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("两份域稿表格：保留转义竖线 \\| 不拆裂列数，单元格走 TableCell 零缩进 9pt 并按内容分列宽（2026-11-23 实证）", () => {
+  const root = mkdtempSync(join(tmpdir(), "mesa-table-pipe-"));
+  const zoteroDocx = resolve("src-tauri/resources/skills/zotero-sync/scripts/zotero_docx.py");
+  try {
+    const bib = join(root, "references.bib");
+    writeFileSync(
+      bib,
+      "@article{Wang2026,\n title={AEMWE}, author={Wang, Li}, year={2026}, journal={Chem. Sci.}, doi={10.1000/aemwe}\n}\n",
+    );
+    const md = join(root, "review-final.md");
+    writeFileSync(
+      md,
+      [
+        "| Cathode \\|\\| Anode | Operating conditions and electrolyte protocol | Durability | Post-operation boron and metal audit | Ref |",
+        "|---|---|---|---|---|",
+        "| Os/TaB~2~ \\|\\| NiFe LDH | 1.0 M KOH / 80 °C / 4 cm^2^ zero-gap AEMWE | >230 h @ 1.0 A cm^−2^ | Not reported in primary main text (SI not verified) | [@Wang2026] |",
+        "| A-NiCoB/NF | 1.0 M KOH / RT / 3E half-cell | >300 h @ 0.5 A cm^−2^ | 120 h ICP: B 0.29 mmol L^−1^ + depth XPS | [@Wang2026] |",
+        "",
+        ": AEMWE benchmark. {#tbl-1}",
+      ].join("\n") + "\n",
+    );
+    for (const [label, script] of [["endnote", citeDocx], ["zotero", zoteroDocx]] as const) {
+      const out = join(root, `${label}.docx`);
+      const res = run(script, ["--input", md, "--bib", bib, "--output", out, "--report", join(root, `${label}.md`)]);
+      assert.equal(res.status, 0, res.stderr);
+      const xml = zipXml(out, ["word/document.xml", "word/styles.xml"]).stdout;
+      // 保留为 5 列而非因 \|\| 裂成 7 列，且正文不残留反斜杠
+      const grid = xml.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] ?? "";
+      const widths = [...grid.matchAll(/w:w="(\d+)"/g)].map((m) => Number(m[1]));
+      assert.equal(widths.length, 5, `${label} 表格应保持 5 列而非被 \\| 拆裂`);
+      assert.equal(widths.reduce((a, b) => a + b, 0), 9026, `${label} 表格总宽应对齐 A4 栏宽 9026 dxa`);
+      assert.ok(widths[1] > widths[4], `${label} 长文字列应宽于短引用列：${widths.join(", ")}`);
+      assert.match(xml, /Cathode \|\| Anode/, `${label} 应还原字面 ||`);
+      assert.match(xml, /Os\/TaB.*\|\| NiFe LDH/, `${label} 数据行应还原字面 ||`);
+      assert.doesNotMatch(xml, /Cathode \\/, `${label} 不得残留反斜杠`);
+      assert.match(xml, /w:pStyle w:val="TableCell"/, `${label} 单元格须套 TableCell 样式`);
+      assert.match(xml, /w:styleId="TableCell"[\s\S]*?w:firstLine="0" w:firstLineChars="0"[\s\S]*?w:sz w:val="18"/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

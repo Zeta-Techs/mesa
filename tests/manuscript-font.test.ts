@@ -91,6 +91,22 @@ test("初稿字体写入 YAML：英文新罗马，中文宋体", () => {
     assert.match(styles.stdout, /outlineLvl w:val="0"/);
     assert.match(styles.stdout, /firstLineChars="200"/);
     assert.match(styles.stdout, /w:line="360"/);
+    // 首行缩进只挂 BodyText，不污染根样式 Normal；表格单元格 Compact / Caption / Heading1 均归零缩进，Table 样式带 9pt 字号与三线表边框
+    const normalBlock = styles.stdout.match(/<w:style[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)?.[0] ?? "";
+    const bodyBlock = styles.stdout.match(/<w:style[^>]*w:styleId="BodyText"[^>]*>[\s\S]*?<\/w:style>/)?.[0] ?? "";
+    const compactBlock = styles.stdout.match(/<w:style[^>]*w:styleId="Compact"[^>]*>[\s\S]*?<\/w:style>/)?.[0] ?? "";
+    const tableBlock = styles.stdout.match(/<w:style[^>]*w:styleId="Table"[^>]*>[\s\S]*?<\/w:style>/)?.[0] ?? "";
+    assert.doesNotMatch(normalBlock, /firstLineChars="200"/, "Normal 不得带首行缩进以免污染表格与标题");
+    assert.match(bodyBlock, /firstLineChars="200"/, "BodyText 须带首行缩进 2 字符");
+    assert.match(compactBlock, /w:firstLine="0" w:firstLineChars="0"/, "Compact（表格单元格）首行缩进须归零");
+    assert.match(tableBlock, /w:sz w:val="18"/, "Table 样式须设 9pt 字号防窄列断词");
+    assert.match(tableBlock, /w:left w:w="60"/, "Table 样式须收紧单元格边距");
+    const docXml = spawnSync(
+      python,
+      ["-c", "import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode())", join(root, "manuscript/reference.docx")],
+      { encoding: "utf8" },
+    );
+    assert.match(docXml.stdout, /w:pgSz w:w="11906" w:h="16838"/, "reference.docx 须声明 A4 页面尺寸");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -279,21 +295,35 @@ test("参考文献过滤器：Unicode 上下标换成真上下标（正文与引
   }
 });
 
-test("参考文献过滤器：PDF 里宽表按内容分列宽、单元格开头可断词、小一号字；窄表与 Word 不动", { skip: !quartoWorks() }, () => {
+test("参考文献过滤器：PDF 与 Word 宽表均按内容分列宽；PDF 补斜杠断词与小一号字；窄表不动", { skip: !quartoWorks() }, () => {
   const root = mkdtempSync(join(tmpdir(), "mesa-refs-table-"));
   try {
-    const wide = "| System | Current density and duration | Protocol | iR and FE status | Half-cell or device |\n|---|---|---|---|---|\n" +
-      "| a-Ni/c-MoO2 | 500 mA cm-2, 600 h with an extended stability hold | chronoamperometry + CV | iR not stated; no FE | three-electrode |\n";
+    const wide = "| System | Current density and duration | Diagnostics | iR and FE status | Ref |\n|---|---|---|---|---|\n" +
+      "| a-Ni/c-MoO2 | 500 mA cm-2, 600 h with an extended stability hold | XRD/XPS/TEM/Raman | iR not stated; no FE | [1] |\n";
     writeFileSync(join(root, "doc.md"), `${wide}\n| a | b |\n|---|---|\n| 1 | 2 |\n`);
     const tex = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "latex"], { cwd: root, encoding: "utf8" });
     assert.equal(tex.status, 0, tex.stderr);
     assert.match(tex.stdout, /\\begingroup\\small/);
-    assert.match(tex.stdout, /\\hspace\{0pt\}chronoamperometry/);
+    assert.match(tex.stdout, /XRD\/\\hspace\{0pt\}XPS\/\\hspace\{0pt\}TEM\/\\hspace\{0pt\}Raman/);
     const widths = [...tex.stdout.matchAll(/\(\\linewidth - \d+\\tabcolsep\) \* \\real\{([\d.]+)\}/g)].map((m) => Number(m[1]));
     assert.equal(widths.length, 5, "只有宽表给列宽");
     assert.ok(widths[1] > widths[4] && widths[2] > 0.1, `按内容分：${widths.join(", ")}`);
-    const docx = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "native"], { cwd: root, encoding: "utf8" });
-    assert.doesNotMatch(docx.stdout, /begingroup|hspace/);
+    const native = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "native"], { cwd: root, encoding: "utf8" });
+    assert.doesNotMatch(native.stdout, /begingroup|hspace/);
+    // Word 宽表同样按内容比例分配 gridCol 列宽（第 2 列长文字宽于第 5 列短引用），且不带 LaTeX 原文
+    const outDocx = join(root, "out.docx");
+    const docxRun = spawnSync("quarto", ["pandoc", "doc.md", "--lua-filter", luaFilter, "-t", "docx", "-o", outDocx], { cwd: root, encoding: "utf8" });
+    assert.equal(docxRun.status, 0, docxRun.stderr);
+    const docXml = spawnSync(
+      python,
+      ["-c", "import sys, zipfile; print(zipfile.ZipFile(sys.argv[1]).read('word/document.xml').decode())", outDocx],
+      { encoding: "utf8" },
+    ).stdout;
+    assert.doesNotMatch(docXml, /begingroup|hspace/);
+    const firstGrid = docXml.match(/<w:tblGrid>[\s\S]*?<\/w:tblGrid>/)?.[0] ?? "";
+    const cols = [...firstGrid.matchAll(/w:w="(\d+)"/g)].map((m) => Number(m[1]));
+    assert.equal(cols.length, 5);
+    assert.ok(cols[1] > cols[4], `Word 宽表应按内容分列宽而非等宽：${cols.join(", ")}`);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
