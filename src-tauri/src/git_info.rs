@@ -3212,6 +3212,8 @@ mod tests {
     #[test]
     fn unstage_and_discard_tracked_file_work() {
         let dir = init_repo("unstage-discard");
+        // Windows CI 全局 core.autocrlf=true：丢弃时 checkout 会按它写回 CRLF，这里只验取消暂存 / 丢弃本身
+        git(&dir, &["config", "core.autocrlf", "false"]);
         let cwd = dir.to_str().unwrap();
         let file = dir.join("a.txt");
         fs::write(&file, "v1\n").unwrap();
