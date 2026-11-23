@@ -75,6 +75,7 @@ import {
   litWatchFilterActive,
   litWatchFilterLabel,
   journalMetricTone,
+  forgetJournalMetrics,
   metricsTooltip,
   entryInTrendBucket,
   compactPubDate,
@@ -919,7 +920,7 @@ export function SubscriptionsModal({
         >
           ＋ 加一行
         </button>
-        {error && <NoticeBar tone="err" className="mt-2">{error}</NoticeBar>}
+        {error && <NoticeBar tone="err" className="mt-2" onDismiss={() => setError(null)}>{error}</NoticeBar>}
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
             type="button"
@@ -1242,11 +1243,23 @@ export default function LitWatchCard({
     })
       .then((u) => (unlistenPapers = u))
       .catch(() => {});
+    // 后端自动后台同步 / 手动更新 / 导入 CSV 完成后广播：立刻翻新状态与条目徽章
+    let unlistenMetrics: (() => void) | undefined;
+    listen<JournalMetricsStatusDto>("journal-metrics-updated", (e) => {
+      if (stale) return;
+      forgetJournalMetrics();
+      if (e.payload) setMetricsStatus(e.payload);
+      setMetricsUpdate(null);
+      reload();
+    })
+      .then((u) => (unlistenMetrics = u))
+      .catch(() => {});
     return () => {
       stale = true;
       unlisten?.();
       unlistenAdopt?.();
       unlistenPapers?.();
+      unlistenMetrics?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectRoot]);
@@ -1421,11 +1434,12 @@ export default function LitWatchCard({
     }
   }
 
-  /** 下载期刊指标表（可能耗时 1-4 分钟）：成功后就绪提示 + 重拉条目让徽章出现 */
+  /** 手动立即下载/刷新期刊指标表：成功后就绪提示 + 重拉条目让徽章出现 */
   async function downloadMetrics() {
     setMetricsDownloading(true);
     setError(null);
     try {
+      forgetJournalMetrics();
       const status =
         await invoke<JournalMetricsStatusDto>("download_journal_metrics");
       setMetricsStatus(status);
@@ -1977,20 +1991,22 @@ export default function LitWatchCard({
         {bodyOpen && (
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           <div className="flex shrink-0 items-center gap-0.5 rounded-lg bg-inset/65 p-0.5">
-            {metricsStatus && (
+            {metricsStatus && (() => {
+              const busy = metricsDownloading || Boolean(metricsStatus.downloading);
+              return (
               <button
                 type="button"
                 className={`flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro hover:bg-hover ${
-                  metricsDownloading ? "cursor-wait text-l4" : "text-l3 hover:text-l1"
+                  busy ? "cursor-wait text-l4" : "text-l3 hover:text-l1"
                 }`}
                 title={
-                  metricsDownloading
-                    ? "正在下载期刊指标表"
+                  busy
+                    ? "正在后台准备期刊指标表，完成后自动显示"
                     : metricsStatus.available
                       ? metricsTooltip(metricsStatus, metricsUpdate, relTime)
                       : "下载期刊指标表"
                 }
-                disabled={metricsDownloading}
+                disabled={busy}
                 onClick={() => void downloadMetrics()}
               >
                 {metricsStatus.available ? (
@@ -2004,11 +2020,12 @@ export default function LitWatchCard({
                 ) : (
                   <>
                     <Download size={13} strokeWidth={1.8} />
-                    下载表格
+                    {busy ? "准备中…" : "下载表格"}
                   </>
                 )}
               </button>
-            )}
+              );
+            })()}
             {radarSchedules.length <= 1 && (
               <button
                 type="button"
@@ -2111,7 +2128,7 @@ export default function LitWatchCard({
         </div>
       )}
 
-      {error && <InlineNotice tone="err" className="mb-2">{error}</InlineNotice>}
+      {error && <InlineNotice tone="err" className="mb-2" onDismiss={() => setError(null)}>{error}</InlineNotice>}
 
       {/* 我的积累（2026-11-05 用户选：从卡头「积累 N」抽屉改成新命中上面单独一块，入口只此一个）：
           攒下要精读的文献，行样式与新命中同一套；块头点击折叠、按项目记住 */}

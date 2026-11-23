@@ -268,6 +268,8 @@ pub fn run() {
             internal_sessions::spawn_auto_cleanup();
             // 公共模型能力库：没下过或超过 14 天就后台下一次（失败不打扰，连接页 ⋯ 照旧能手动下）
             model_registry::spawn_auto_refresh();
+            // 期刊指标表：没下过或距上次检查超 14 天有新版时后台静默同步（失败不打扰，界面照旧能手动更新或导入本地 CSV）
+            journal_metrics::spawn_auto_refresh(app.handle().clone());
             // 收货监听：启动即恢复（盘上登记在重启前留下的也要有人接）
             download_inbox::ensure_watcher_at_startup(app.handle());
             // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
@@ -1215,6 +1217,7 @@ pub fn run() {
             journal_metrics::journal_metrics_status,
             journal_metrics::download_journal_metrics,
             journal_metrics::check_journal_metrics_update,
+            journal_metrics::import_journal_metrics_csv,
             projects::update_lit_watch_filter,
             reader::ensure_paper_note,
             reader::pdf_for_note,

@@ -32,7 +32,7 @@ export interface WatchEntryDto {
   /** 巡检批次日期 YYYY-MM-DD（标准注释或旧版巡检标题）；缺失/无效为 null */
   date: string | null;
   rawLineRange: [number, number];
-  /** 期刊指标（JCR2025 + 中科院分区表2025 合并，按期刊名规范化匹配）；未匹配/未装表为 null */
+  /** 期刊指标（JCR + 中科院分区表合并，按期刊名规范化匹配）；未匹配/未装表为 null */
   metrics: JournalMetricsDto | null;
   /** 已落盘的快筛解读（`.ccode/watch-explains.json`）；未解读为 null */
   explain: string | null;
@@ -90,7 +90,7 @@ export function journalMetricTone(kind: "if" | "quartile" | "top", quartile?: nu
 
 /** 单条命中的期刊指标（对照 lit_watch.rs 序列化） */
 export interface JournalMetricsDto {
-  /** JCR2025 IF 原样字符串，如 "29.1"；无数据为 null */
+  /** JCR IF 原样字符串，如 "29.1"；无数据为 null */
   impactFactor: string | null;
   /** 中科院升级版大类分区 1-4；无数据为 null */
   casQuartile: number | null;
@@ -98,38 +98,55 @@ export interface JournalMetricsDto {
   top: boolean;
 }
 
-/** journal_metrics_status / download_journal_metrics 返回 */
+/** journal_metrics_status / download_journal_metrics / import_journal_metrics_csv 返回 */
 export interface JournalMetricsStatusDto {
   available: boolean;
   journalCount: number;
-  /** 本地表下载时间（RFC3339；两份 CSV 取较新 mtime），未装为 null */
+  /** 本地表下载时间（RFC3339；已加载 CSV 取较新 mtime），未装为 null */
   downloadedAt: string | null;
+  /** 当前加载的 JCR 表年份（如 2025 / 2026）；无法推断为 null */
+  jcrYear?: number | null;
+  /** 当前加载的中科院分区表年份（如 2025 / 2026）；无法推断为 null */
+  fqbYear?: number | null;
+  /** 是否正在后台自动拉取或手动更新中 */
+  downloading?: boolean;
 }
 
 /** check_journal_metrics_update 返回 */
 export interface JournalMetricsUpdateDto {
-  /** 上游 ShowJCR 数据目录最近 commit 时间（RFC3339） */
+  /** 上游 ShowJCR 数据目录最近更新时间（RFC3339） */
   upstreamUpdatedAt: string | null;
   /** 上游比本地表新 */
   hasUpdate: boolean;
+  latestJcrYear?: number | null;
+  latestFqbYear?: number | null;
 }
 
-/** 指标表按钮悬浮说明（纯逻辑）：表名 + 刊数 + 下载时间；上游有新版时改口「点我更新」。
+function metricsSourceLabel(
+  status: Pick<JournalMetricsStatusDto, "jcrYear" | "fqbYear">,
+): string {
+  const parts: string[] = [];
+  if (status.jcrYear != null) parts.push(`JCR ${status.jcrYear}`);
+  if (status.fqbYear != null) parts.push(`中科院分区表 ${status.fqbYear}`);
+  return parts.length > 0 ? parts.join(" + ") : "JCR + 中科院分区表";
+}
+
+/** 指标表按钮悬浮说明（纯逻辑）：表名年份 + 刊数 + 下载时间；上游有新版时改口「点我更新」。
  *  rel 为相对时间函数（组件传 relTime，测试可注入假值） */
 export function metricsTooltip(
-  status: Pick<JournalMetricsStatusDto, "journalCount" | "downloadedAt">,
+  status: Pick<JournalMetricsStatusDto, "journalCount" | "downloadedAt" | "jcrYear" | "fqbYear">,
   update: Pick<JournalMetricsUpdateDto, "upstreamUpdatedAt" | "hasUpdate"> | null,
   rel: (iso: string | null) => string,
 ): string {
   const ago = rel(status.downloadedAt);
-  const base = `JCR2025 + 中科院分区表 2025 · ${status.journalCount} 种期刊${
+  const base = `${metricsSourceLabel(status)} · ${status.journalCount} 种期刊${
     ago ? ` · 下载于 ${ago}` : ""
   }`;
   if (update?.hasUpdate) {
     const up = rel(update.upstreamUpdatedAt);
     return `${base}；上游已有新版${up ? `（${up}）` : ""}，点我更新`;
   }
-  return `${base}；出新版时点我重新下载即更新`;
+  return `${base}；自动定期更新，点我可立即刷新`;
 }
 
 // ===== 雷达筛选（与 lit_watch.rs metrics_pass_filter 同口径，改动需双端同步） =====

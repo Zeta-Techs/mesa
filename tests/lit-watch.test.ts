@@ -805,41 +805,46 @@ test("fulltextLinkFor：全文可得性分流", () => {
   assert.equal(fulltextLinkFor("   ").kind, "none");
 });
 
-test("metricsTooltip：刊数 + 下载时间 + 上游新版提示", () => {
+test("metricsTooltip：动态年份 + 刊数 + 下载时间 + 上游新版提示", () => {
   const rel = (iso: string | null) => (iso ? `<${iso}>` : "");
-  const status = { journalCount: 20000, downloadedAt: "2025-06-20" };
-  // 常规：带下载时间 + 更新口径说明
+  const status = { journalCount: 20000, downloadedAt: "2026-06-20", jcrYear: 2026, fqbYear: 2025 };
+  // 常规：按实际年份拼接 + 自动定期更新说明
   assert.equal(
     metricsTooltip(status, null, rel),
-    "JCR2025 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2025-06-20>；出新版时点我重新下载即更新",
+    "JCR 2026 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2026-06-20>；自动定期更新，点我可立即刷新",
   );
   // 查过上游但无新版：同口径
   assert.equal(
     metricsTooltip(
       status,
-      { upstreamUpdatedAt: "2025-06-01", hasUpdate: false },
+      { upstreamUpdatedAt: "2026-06-01", hasUpdate: false },
       rel,
     ),
-    "JCR2025 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2025-06-20>；出新版时点我重新下载即更新",
+    "JCR 2026 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2026-06-20>；自动定期更新，点我可立即刷新",
   );
   // 有新版：改口「点我更新」并带上游时间
   assert.equal(
     metricsTooltip(
       status,
-      { upstreamUpdatedAt: "2025-07-01", hasUpdate: true },
+      { upstreamUpdatedAt: "2026-07-01", hasUpdate: true },
       rel,
     ),
-    "JCR2025 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2025-06-20>；上游已有新版（<2025-07-01>），点我更新",
+    "JCR 2026 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2026-06-20>；上游已有新版（<2026-07-01>），点我更新",
   );
-  // 下载时间缺失（异常态）不拼「下载于」
+  // 缺年份与下载时间（手动导入或异常态）：回落通用表名且不拼「下载于」
   assert.equal(
     metricsTooltip({ journalCount: 5, downloadedAt: null }, null, rel),
-    "JCR2025 + 中科院分区表 2025 · 5 种期刊；出新版时点我重新下载即更新",
+    "JCR + 中科院分区表 · 5 种期刊；自动定期更新，点我可立即刷新",
+  );
+  // 仅有单表年份
+  assert.equal(
+    metricsTooltip({ journalCount: 12000, downloadedAt: null, jcrYear: 2026, fqbYear: null }, null, rel),
+    "JCR 2026 · 12000 种期刊；自动定期更新，点我可立即刷新",
   );
   // 有新版但上游时间缺失：不给空括号
   assert.equal(
     metricsTooltip(status, { upstreamUpdatedAt: null, hasUpdate: true }, rel),
-    "JCR2025 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2025-06-20>；上游已有新版，点我更新",
+    "JCR 2026 + 中科院分区表 2025 · 20000 种期刊 · 下载于 <2026-06-20>；上游已有新版，点我更新",
   );
 });
 
