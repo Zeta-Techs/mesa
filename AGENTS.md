@@ -1,344 +1,114 @@
 # AGENTS.md
 
-> **省力原则（2026-10-26 用户拍板：别让 Agent 做无用功）**：每次会话只需读本文件，其余文档**按需检索、不通读**。
-> - `docs/architecture.md`（三千多行）、`docs/code-structure.md`、`docs/conventions/` 下的大文件一律按关键词 / 文件名 / 函数名
->   Grep，只读命中的小节。下文写「改动前必读」，指读这次改动相关的条目，不是整份文件。
-> - architecture §10 是新在前的日志：用关键词搜，同一主题以最新一条为准，不顺着读。
-> - 按改动范围决定读什么、跑什么、改哪些文档：只改一处文案不必为「保险」去翻规范；没命中「文档同步」表的文档不用打开核对。
-> - 开发中验证用最小的命令（单个测试过滤、一次 grep、一次构建），提交前再按「git 提交」① 跑一次该跑的全量基线；已确认的事实不重复核对。
->
-> **规则沉淀（用户指令）**：每次重大改变，把由此确立的**规则/约定/决策**记录到本文件（硬约束、本机环境档案）或对应
-> `docs/conventions/*.md` 主题文件，以及 `docs/architecture.md` §10 决策记录。**不记操作流水账**——代码和 git 历史本身就是
-> 操作记录，这里只留"以后必须遵守什么"。§10 只记用户拍板、取舍、否决及由此定下的规则，写清拍板、理由和细则落在哪个文件即可，
-> 细则本身写进 conventions；按既有规则修 bug、重构、补测试只写提交信息，不进 §10。本文件只放每次会话都要守的硬约束，
-> 单一领域的细则放 conventions，这里留一行指针。
->
-> **边走边改（2026-09-22 用户拍板）**：用户在走科研流程时的提问和反馈，默认是要改他正在用的那条流程（当前课题档案卡 + 模板/任务书/界面），不是要一段说明。先核对实际落盘和界面再改，改到这一步能接着用；回答里写清改了什么、在哪能看见。
->
-> **动真实数据先干跑 + 未发布不养闲机器（2026-10-13 用户拍板）**：凡要写用户真实项目数据的功能（迁移/清理/批量改写一类），
-> 交到用户手里点之前必须先在干跑环境或用户一个真实项目上完整执行一遍验证——静态审查代替不了执行（当日实证：迁移命令审查
-> 全过，用户一点才暴露 git add 拒收被忽略文件）。应用未发布期间，只服务「假想老用户」的界面机器不留：用户数据量小就直接
-> 替用户做掉并验证，机器删掉（当日实证：文献台账迁移命令+界面整体移除）；~~真到发布需要重建的，重建序列记在
-> `docs/conventions/pipeline.md`「双台账·存量收口」~~（2026-10-26 拍板收窄：GitHub 上的 v0.1.0 只是测试版、没有外部老用户，
-> 存量迁移不重建，见 architecture §12「发布前检查项」当日条；「双台账·存量收口」仅作历史序列存档；2026-11-18 起已有打包版用户，老项目 `.gitignore` 补 Mesa 忽略行这类只追加的兼容照做，见 pipeline.md「合并闸门台账豁免」补充段），发布前检查项见 architecture §12。
->
-> **外部桌面软件协作先挖原生接口，不拿说明书替代自动闭环（2026-11-16 用户拍板）**：凡与外部桌面软件（文献库、办公套件、绘图工具等）协同，
-> 严格区分两件事——**禁止脆弱的键鼠界面模拟点击和无人值守操控文档插件**（如替人点 Word CWYW 按钮），但**必须第一时间拆查目标软件自带的官方原生接口**
-> （macOS `.sdef` AppleScript 字典、CLI 参数、URL Scheme、本地只读索引等）把能一步到位的动作由 Mesa 直接闭环，不得把「禁插件模拟点击」一刀切扩大成
-> 「不调官方接口」，更不得图省事写一串操作说明让人去深层目录找文件或改隐蔽下拉项配合工具；凡确无原生接口、仍需人点外部窗口的回退路径，必须真机走完
-> 外部软件弹窗的默认目录与默认选项（当日实证：`EndNote 2025.app` 自带 `EndNote.sdef` 原生 `import` 与建群组接口此前未查，且未真机点验手动导入默认锁在
-> `PDF File or Folder` 导致选 XML 点导入无反应）。细则 `docs/conventions/pipeline.md`「科研外部工具与交付合同」。
->
-> **文档同步（用户指令）**：文档和代码进同一个提交（2026-10-24 用户：「下次提交之前更新文档」），事后另补不算。
-> **只改受影响的文档**（2026-10-26 收窄，取代「每次提交前把全部文档过一遍」）：
->
-> | 这次改了什么 | 同步哪些文档 |
-> |---|---|
-> | 用户看得见的入口、步骤、按钮文案、默认行为 | `docs/guide/user-guide.md` 对应章节；新的用户可见术语补进 §14.1；`docs/guide/tutorial.md` 写到了才改；改了界面文字，在这两份文档里搜一遍旧说法 |
-> | 用户看得见的改动（含修好的用户可见问题） | `CHANGELOG.md` 未发布段 |
-> | 用户拍板、取舍、否决，或由此定下的以后要守的规则 | 本文件或对应 `docs/conventions/*.md`，加 architecture §10 一条 |
-> | 新增源文件，或文件的职责边界变了 | `docs/code-structure.md` 对应行 |
-> | 安装方式、功能总览变了 | `README.md` |
-> | 纯内部重构、按既有规则修 bug、只加测试 | 不改文档，写进提交信息 |
->
-> 说明书写法（2026-09-18 用户拍板，否决无小标题长文）：`user-guide.md` 是面向使用者的**产品说明书**，写给干活的人；对「你」说话；保留小标题（如「安装时可能碰到的唯一拦路虎（Mac）」）；每节尽量同一口气——解决什么问题、打开会看见什么、一步一步怎么点、怎样才算做成、常见卡在哪；内部词第一次出现用白话带过。不要功能清单，不要文首流水账，不要把步骤揉进没有小标题的长段落。白话不等于口语俚语——「找场子」「糊涂账」一类词不得出现，语气保持专业（2026-10-09 用户拍板）。**术语以说明书 §14.1「常用词对照」为准**（2026-10-20）：两份文档同一概念只用一个词；界面按钮原名照写并在首次出现时括号解释，不在文档里单方面改按钮名；界面文字改名后两份文档与 §14.1 同批改。文中 `【配图】` / `【配视频】` 是后补素材位，改用法时同步改说明。版本叙事写 `CHANGELOG.md`（发版本时更新）。
+> **体积硬上限（2026-11-23 用户拍板）**：本文件总大小必须控制在 **22 KB 以内**（Antigravity 等 Agent 平台单规则文件上限 24 KB，超出会被直接截断）。
+> 本文件只放**每次会话都要守的硬约束、提交流程、构建命令与索引**；单一领域的产品决策与细则一律写进 `docs/conventions/product-decisions.md` 或对应 `docs/conventions/*.md`，这里只留指针。
 
-> **跨平台换行约定**：仓库文本文件统一以 LF 形式存储，规则见 `.gitattributes`。Windows 本地可保留
-> `core.autocrlf=true`，但提交前不得把换行转换造成的全文件差异带入变更。
+## 一、核心协作与省力原则
 
-## 项目简介
+- **省力原则（2026-10-26）**：每次会话只需读本文件，其余文档**按需 Grep 检索、不通读**。`docs/architecture.md`、`docs/code-structure.md`、`docs/conventions/*.md` 只读命中的小节；architecture §10 是新在前的日志，按关键词搜、同一主题以最新一条为准。按改动范围决定读什么、跑什么、改哪些文档；开发中用最小验证，提交前按「git 提交」跑该跑的全量基线。
+- **规则沉淀**：重大拍板/取舍/否决记入 `docs/conventions/product-decisions.md`（或对应领域 `conventions/*.md`）与 `docs/architecture.md` §10；**不记操作流水账**。纯修 bug、重构、补测试只写提交信息，不进 §10。
+- **边走边改（2026-09-22）**：用户走科研流程时的提问和反馈，默认是要改他正在用的那条流程（课题档案卡 + 模板/任务书/界面），不是要一段说明；先核对实际落盘和界面再改，改到能接着用并写清改了什么、在哪能看见。
+- **动真实数据先干跑 + 未发布不养闲机器（2026-10-13）**：写用户真实项目数据的功能（迁移/清理/批量改写），交用户点前必须在干跑环境或真实项目副本上完整跑通；只服务假想老用户的迁移界面不留（细则见 `product-decisions.md` §四）。
+- **外部桌面软件先挖原生接口（2026-11-16）**：禁止脆弱的键鼠界面模拟点击和无人值守操控文档插件（如 Word CWYW），但必须第一时间拆查目标软件的官方原生接口（macOS `.sdef` AppleScript、CLI、URL Scheme、只读索引）直接闭环；确需人点外部窗口的回退路径必须真机走完默认目录与默认选项（细则 `pipeline.md`「科研外部工具与交付合同」）。
+- **跨平台换行**：仓库文本文件统一 LF（`.gitattributes`），提交前不得带入 CRLF 全文件差异。
 
-Mesa 是一个「AI Agent（科研）工作台」桌面应用（2026-11-01 用户拍板的对外称呼）（Tauri v2 + React/TS）——底层是十个 Agent CLI 的统一控制台（启动器 + 配置中心 +
-会话监控台），表面是科研流水线（读文献→整数据→做图→写论文）：AI 负责干活，Mesa 负责管活，人负责拍板。
-**对外定位（2026-11-07 用户拍板）**：主线是给研究生和科研人员的 AI 科研工作台（科研流程、出处可查不编造、AI 干活人拍板），
-十家 CLI 控制台是底层能力；README / 介绍 / 宣传先讲科研，CLI 只在「底下 / 同时也是」一段带过，不作首要卖点。见 architecture §10 同日条。
-展示名 **Mesa**；内部身份仍是 `ccode`（bundle ID `com.ccode.dev`、项目 `.ccode/`、`~/ccode/`、Codex provider `ccode`/`ccode-<短id>`）。禁止把内部路径/安装身份跟着展示名一起改。
-为 Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 管理多套 API 配置
-（端点/密钥/模型），内嵌终端一键拉起，并解析各 CLI 本地会话文件做可视化浏览。
+## 二、Git 提交、文档同步与分支纪律（每次任务必守）
 
-**设计文档即规格**：改架构/适配逻辑前，在 `docs/architecture.md`（总体设计）和 `docs/agent-integration-matrix.md`
-（十个 CLI 的 env/配置/会话格式，源码级调研结论）里检索相关小节——**勿凭印象写 env 变量名**。
+### 1. 做完一处就同步文档并提交（2026-10-26 用户拍板）
 
-**参考实现（长期有效）**：`.reference/` 下三个开源项目浅克隆，设计新机制前（不是修 bug、改文案）先查有没有成熟方案可借鉴：
+- **不攒不拖**：一个问题 / 一处改动做完、验过，**当场**按下方「文档同步」表更新受影响文档、跑对应侧基线、**立即自己提交**，不要停着等用户回头说「提交」（用户明确说先别提交的除外）。
+- **一个主题一个提交**：禁止攒多主题「一系列修复」大杂烩提交。
+- **按改动侧跑全量基线**：
+  - 只改文档：不跑测试；
+  - 只改 Rust：`cd src-tauri && cargo test`（全量，不能只跑单个模块）；
+  - 只改前端：`npm test` + `npm run build`（`node --test` 只剥类型不检查类型，必须跑 `npm run build` 让 tsc 把关）；
+  - 两侧都改或动了共用契约（`tests/fixtures/`、Tauri 命令名/参数、DTO 字段、双端镜像逻辑）：三样全跑；拿不准就全跑。
+  - **测试基线必须全绿**：存量失败不修会淹没新问题；CI 在 macOS + Windows 三样全跑兜底，红了当次处理（纯文档提交可加 `[skip ci]`）。
 
-- `.reference/cc-switch`（Tauri2+React+SQLite）：provider 预设/一键导入、双向同步回写保护、本地代理与故障转移、原子写入、测速、托盘速切、导入导出
-- `.reference/waveterm`（Electron+Go+SQLite）：block/workspace 对象模型与持久化、"named = saved" 留存语义、badge 注意力标记与 hooks 联动、滚动缓冲区序列化恢复、namespaced meta 键体系
-- `.reference/vscode`（blobless 浅克隆）：Explorer 文件树、编辑器 tab 与 split、面板布局、终端标签列表；目录索引在 `src/vs/workbench/contrib/`
+### 2. 只提交本会话自己的改动（2026-11-13 用户拍板）
 
-借鉴原则：学机制和取舍，不抄代码；冲突时以 `docs/architecture.md` 为准（不走本地代理主线、会话解析坚持只读）。镜像可随时 `git -C .reference/<repo> pull` 更新。
+同一 checkout 常有多个会话并行，**工作区里别人的改动（含未完成文件）一律不碰**。提交流程必须走**私有暂存区**：
 
-**已确认的产品决策**（用户拍板，勿擅自更改；细则在所指文件里）：
+1. 整文件放入前先 `git diff <文件>` 确认没有别人的块；共用文档（`CHANGELOG.md`、`user-guide.md`、`code-structure.md`、`architecture.md`）只放自己那几处。
+2. 用临时 `GIT_INDEX_FILE` 从当前 `HEAD` 起底，只放入本会话文件/片段并创建提交：
+   - `H=$(git rev-parse HEAD)`，`GIT_INDEX_FILE=/tmp/mesa-idx-$$` 起底 `git read-tree "$H"`；
+   - 仅把自己的文件/patch 加入私有暂存区（zsh 里文件清单写成数组）；
+   - `T=$(git write-tree)` → `C=$(git commit-tree "$T" -p "$H" -m "...")` → `git update-ref HEAD "$C" "$H"`（若 `HEAD` 中途被别人推进则失败重来；跑过基线的提交不用 `git commit`）；
+   - 成功后同一条命令里 `git reset -q -- <这些文件>` 对齐共享暂存区，再删临时 index 文件。
+3. 提交后必须 `git show --stat HEAD` 核对文件数与文件名全是自己的；若误带走或误撤别人的改动，**禁止 `amend` / `rebase`**，往前补一个提交并告知对方会话。
 
-- **可选独立定时核心与分轮跟进（2026-11-13）**：默认关闭，只有人已批准的定时任务按原连接/模型/授权续跑；等人退出进程、预约复查限轮数/期限/软预算，坏回执和不明执行不重做，成果仍人工评审。桌面退出不停止核心，更新/卸载先停；不接管普通目标、交互终端和手机窗口循环，不开放公网。细则 pipeline.md「分轮跟进与独立后台」。
+### 3. 提交信息格式与分支纪律
 
-- 应用展示名 **Mesa**（内部身份仍 `ccode`，见上）；十个 agent 全部支持（CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI 见 matrix §7/§8/§9/§9b；grok：MCP 只读不分发、技能强制 copy；「设为全局默认」2026-09-01 起支持，写 ~/.grok/config.toml；agy：启动生成会话级 `--settings` 文件合入用户自定义模型、仅官方 Google 账号支持「设为全局默认」、MCP/技能/hooks 写 `~/.gemini/config/` 不碰 Gemini CLI 的 `~/.gemini/skills/`、暂不进进程级只读场景）
-- **OpenCode 1.x / 2.x 两版都支持（2026-11-04）**：按 `--version` 大版本分开走（`agents::opencode_v2`），以 2.x 为主、不做共存；2.x 启动与无头调用一律私有服务，
-  禁止连它的共享后台服务（注入的密钥会留在服务里）。细则 matrix §5「OpenCode 2」行、safety.md 旁路条
-- **CLI 支持分级（2026-11-02，2026-11-14 补入 agy）**：一等 Claude Code、Codex、Kimi、Antigravity CLI——新功能（跨厂商复核、分轮续跑、核验接入等）先在这四家做全；其余六家维护级：能启动、能注入连接、能看会话、
-  金丝雀不红，新功能尽力而为，做不到的在界面写明原因（走 AgentSpec 能力表，不硬编码；进程级只读仍按能力表单独判定）。不删任何一家
-- **核验与研究记录（2026-11-02）**：核验结果只有通过 / 拦下 / 待你判断三档，要读懂内容的检查永不自动通过、不打总分；Run 事实与核验记录落项目 `.ccode/`
-  （与验收账本同口径不进 git）；不做「降 AI 率」。设计稿 `docs/design-research-moat.md`，细则 pipeline.md「核验记录」
-- **少占注意力（2026-11-02）**：人工请求按固定字段写进 `.ccode/help-wanted.md`，收件箱卡片点选即答、经原对话送达；只有七类必须停下来问；
-  「以后同类照此办」写进项目知识「已定 / 不做」，Mesa 不替人自动回答。事件规则只由人写、新建默认只记录、Run 记依据、只开流程外的活、不自动采纳；
-  不做模型路由 / 模型研判。设计稿 `docs/design-attention-dispatch.md`，细则 pipeline.md「人工请求」「事件规则」
-- **项目助手（2026-11-04）**：项目里问进度、查报错、问规划、要修复建议只有这一个入口；只解释不动手——不开终端、不派活、不传话、不替人拍板，
-  要动手只给跳到原入口的按钮；问出错原因、接活起草前可在项目里**只读**查看文件（Claude Code / Codex / Kimi Code / Grok Build，进程级只读）。
-  要动手时只起草**派活单**，人点「派出去」才交给那一步的 AI 或另起目标去做（同「AI 提议、人批准一次」，做完照常评审 / 验收）；按后面步骤的新结论回头补 / 改前面的步骤时起草**补料单**，人点「退回去补」才走步骤卡同一条退回补料的路（2026-11-06 流程贯通），项目助手自己永远不写文件。Mesa 自己的后台失败按项目记成出错记录供它判断「是不是 Mesa 的问题」；出错记录与问答记录放配置目录不进项目。
-  连接走 Agent 分工 `assistant` 槽。问「怎么用 Mesa」只翻说明书不读项目记录：**`docs/guide/user-guide.md` 编译期打包进后端供它检索**，
-  改说明书的标题或段首加粗引导句后要跑 `cd src-tauri && cargo test project_assistant`（常问话题的锚点有测试守着）。设计稿 `docs/design-project-assistant.md`
-  **接活不补浅层（2026-11-05）**：科研需求不按场景逐个加专门功能（组会、周报、实验规划一类不做专门按钮 / 页面），统一由项目助手按「问 / 做 / 定 / 常做 / 改流程 / 范围外」接住，
-  「做」起草完整任务合同；课题组的具体做法沉淀成任务包与项目知识；内置科研任务在 `builtin-tasks.ts`，不是流程模板。科研通则唯一出处 `RESEARCH_ORDER_RULES`。记录与记忆分开（2026-11-05）：问答记录只丢普通问答、派过活的不丢；记忆只经人点「记进项目知识」；派活回音只进问答与收件箱、不弹窗。细则 pipeline.md「项目助手接活」，设计稿 `docs/design-assistant-intake.md`
-- **科研项目不先套流程（2026-11-08）**：新科研项目默认落在「目标」，注册后不弹选模板；模板只是写整篇综述 / 论文时的可选路线（目标空态「套一整套流程…」、项目设置、编辑器追加），
-  项目助手只指路不代套。新能力（报告规范、模拟审稿等）优先做成技能 / 核验 / 随时能叫的任务，不只塞进某套模板。细则 pipeline.md 同名条
-- **任务包（2026-11-03）**：用户自定义科研任务打成包（参数、步骤合同、随包技能、核验脚本、可选触发），**不含跑在 Mesa 进程里的代码**；
-  包里的核验判「通过」降为待你判断，只能加必问不能减，改不动隔离 / 评审 / 核验 / 密钥 / 长度预算；不自动推荐或套用；
-  本机自建与 zip 分享放开、公开分发仍暂缓；导入先预览、人确认才装，导入的首次加进项目再确认脚本。旧「我的模板」已并进我的任务、不留两套；
-  内置模板仍在 `pipeline-presets.ts`，「另存为我的版本」记 based_on，差异比较前三份步骤一律经后端归一。设计稿 `docs/design-task-packs.md`，细则 pipeline.md「任务包」
-- **综述回路（2026-11-05）**：综述前三步可来回走——回头只有「退回补料」（人点才生效）、下游「待跟进」人逐步点、增量不重做、轮次只看不回滚；
-  综述模板精读第一轮综述精读 + 研究论文全部速读（速读表即大局，不标「核心」，要写进正文的由大纲点名精读）；可写点 AI 只给证据不判能不能写；大纲一问一答定框架。设计稿 `docs/design-review-loop.md`，细则 pipeline.md「综述回路」
-- **文件版本（2026-11-12）**：人选文件，后续评审保存进项目时内容变了才留版，另可手动留存并备注；不全量自动备份，不改变开工、验收、跟进与同名不覆盖规则。步骤卡只留短入口，内容复用右侧文件栏、选择复用聊天文件树，不另开预览弹窗；查看已有 Git 历史不要求先勾留存。旧版只读、可另存，不替换现稿、不回滚流程。细则 pipeline.md「按文件留存版本」
-- **流程贯通（2026-11-06）**：步骤是轮流打磨同几份资料，不是一次过的关卡——任何入口开一轮前先并入项目最新内容，「待跟进」按最后一次并入判（本步保存不算）；
-  从哪一步（含做到一半）、经项目助手说一句都能回头；补料单可勾一条下游链，上一步保存后下一步自动跟进（每步仍评审保存，不自动保存、Mesa 关着不自动开）；
-  在途的补料链在步进器卡底部一行看走到哪（「资料全貌」2026-11-11 撤掉）。设计稿 `docs/design-flow-weave.md`，细则 pipeline.md「综述回路」
-- **按大纲的节转回路（2026-11-11）**：补文献以大纲的节为单位——「补文献…」一张单两栏「找新文献 / 精读已有的」，Mesa 拆给检索、精读按序走；
-  从大纲补检来的新篇直接精读；覆盖篇数由 Mesa 按笔记状态数、AI 只判够 / 薄；积累清单可挂节。设计稿 `docs/design-outline-loop.md`，细则 pipeline.md「综述回路」
-- **科研流程补全（2026-11-07）**：实验分「计算 / 实验室」两种方式（实验室实验由人做，AI 管协议、处理规则、数据登记与质控，绝不编造测量值）；
-  定量文献走数据抽取表（末两列固定出处与页码）；定稿前检索超 14 天给「更新检索」入口（走退回补料）；Word 批注由 Mesa 抽成意见清单再回流各步；
-  初稿默认顺序写、先定写作规范、引言结论最后写，综述大稿才由人在开工弹层勾分路并统稿。设计稿 `docs/design-research-completion.md`，细则 pipeline.md「科研流程补全」
-- **科研做图（2026-11-05）**：交付能改的源文件加重建过程——示意图由 AI 写图纸出 PPTX + SVG，出图模型只画无字图标、不写字；
-  核验三档不打总分；人改过的文件为准，AI 只在其上局部改；不做 Mesa 内画图编辑器。设计稿 `docs/design-research-figures.md`，细则 pipeline.md「科研做图」
-- **项目体检与老项目升级（2026-11-18）**：入口拦人必须同时给出口（`scenarios.rs` 不变式测试守着）；会动 git / 工作副本的入口先过 `doctorGate` / `diagnose_impl`；
-  新发现的乱操作先加进 `Mess` 复现再补体检，不在入口各自打补丁；改项目结构必须在 `project_upgrade.rs` 加一级并放老项目样本；
-  标签上的旧 Run 只在 `runs::carried_run_id` 判能否沿用，旧记录不许挡开对话；发版前在 Mesa Dev 重启后走一遍步骤卡入口。细则 pipeline.md 同名节
-- 配置切换**双模式**：默认启动注入环境变量（零污染），另提供「设为全局默认」（写配置文件，先备份）
-- 终端为内嵌形态，且**与结构化会话视图联动**（同一会话双栏观看）
-- **会话标题**（2026-09-10）：展示格式 `MMDD|类型|主题`；自动起名只写 Mesa 侧 `custom_title`（`title_source=auto`），不写回 CLI 源文件、不覆盖人手改的标题（`title_source=user`）；续链合并为一条；设置里可关。细则见 terminal.md（搜 `MMDD|类型|主题`）
-- **研讨（2026-11-11）**：同一个问题请二到四位不同模型族的 AI **只读**作答，第一轮各答各的、再交叉补充；Mesa 只排对照条、核依据路径，不判谁对；结论只经人「记进项目知识」，动手只经项目助手派活单。
-  成员差别看模型族、能不能看项目看 CLI 外壳。不做 AI 私聊 / 分身 / 联合群 / 投票。细则 pipeline.md「研讨」，设计稿 `docs/design-group-consult.md`
-- **聊天里换一家接着做（2026-11-10）**：接回 / 运行中的对话能换 Agent，换 = 接力（写交接简报，接手那家开新会话或接回它原来那段），不改各家会话文件、换的那一刻不调 AI；
-  接力关系按简报文件名记（`relay_links`），一段接力对话在列表只占一行。细则 pipeline.md「接力与提炼接力」，设计稿 `docs/design-chat-relay.md`
-- 项目列表**从各 agent 历史会话自动聚合并分类**，辅以手动添加
-- token/费用统计随 P3 顺带做，不提前
-- **三平台（macOS/Windows/Linux）同步**支持，功能不得以平台为由裁剪
-- **Agent Workspace（v3.221 / v3.235）**：以 Project 为家。人负责目标，系统给环境（文件地图、规则、上下文）和验收门；Agent 自己规划。CLI 是第一种 Runtime。用户不面对 Run。**并行三层（2026-11-03 改写）**：Run 内部 CLI 自己的子 agent 不限制；Mesa 层的拆分由 AI 提议、人批准一次才开；免批准的自动展开只限模板 / 任务包声明过、能机械分片的（几路由数据定、每路只写自己的文件、有预算、合成一次评审）；不做自动模型路由。项目内工作者可互相「看一眼」与传话（留记录、可撤回），跨项目不直连。细则 agent-workbench.md「项目内协作」、设计稿 `docs/design-project-coordination.md`。科研/编程两套 worktree 库不合并。工作台「正在进行」只列交互活；关标签后按 `runId` 找回。定时隔离产物经评审才进主仓。改工作台/目标/验收前必读 `docs/conventions/agent-workbench.md`
-- **开源与许可（2026-10-12）**：Apache-2.0；**版权落款 `泽塔前沿科技（杭州）有限公司`**（七处署名）；商业中转预设不进开源默认表；
-  厂商图标只给官方域名，第三方中转站一律首字占位；**改动依赖后必须 `npm run gen:notices`**；对外发布修改版须换名换图标（`TRADEMARKS.md`）。
-  细则 `docs/conventions/open-source.md`
-- **用量页活跃度热力图（2026-10-12）**：色阶锚 `--color-cta`；着色/活跃/streak 恒只算非 internal 用量，「显示内部活动」开关不改色不改统计。
-  细则 design-system.md「活跃度热力图」
-- **定时雷达（2026-10-13）**：雷达文献＝项目内日常积累，不进科研流程——绝不写 `papers/included.md`、`notes/index.json`、`references.bib`；
-  雷达台账全 gitignored、不影响合并；**精读接续铁律**：某篇已有笔记时在原笔记上续写，「标注」「译段」「我的想法」与用户手写内容原样保留、
-  不另起平行笔记。细则 pipeline.md「评审与采纳口径」「双台账」
-- **设为全局写入规则（2026-10-30）**：切全局只动「新对话默认」，老对话要用的渠道 / 模型只加不删（2026-10-31，Codex / OpenCode / Kimi / Grok 已落地，含 Mesa 开的会话离开 Mesa 续聊）；写到 CLI 实际读的目录（认 `CODEX_HOME` 等搬迁变量）、与启动注入同源、只管自己写的键且先清再写、
-  写前说清会被什么盖掉、用户能改的写用户层、官方切回只撤 Mesa 写的、被引用的文件不随连接删、密钥能引用就不写明文、金丝雀「全局配置」层每天复核。
-  改任一家写计划前读 profiles.md §12 开头九条
-- **关窗口留在后台（2026-10-31）**：关主窗口默认只藏窗口（Mac 程序坞叫回、Windows 收托盘），设置可改回关窗即退出；
-  退出只经 `window_close::request_quit`（Mac 禁用预置 `quit()`）。细则 terminal.md「关窗与退出」
-- **终局方向（2026-11-08）**：执行离开笔记本（SSH 远程执行 → 常驻后端 → 官方云端）、授权在前核验在后（开工圈定目录 / 联网 / 身份 / 预算 / 时限，越界才找人）、
-  对外的门由 Mesa 管（凭证不给 AI，经 `mesa_helper` 出门计数记账）、长期活 AI 起草人批准一次；维持不做模型路由、语音朗读通话、接管屏幕。
-  **Mesa 不代下全文**（2026-11-09 HER 实测后整个撤掉）：能免费下的由检索步脚本按开放获取版本规则下，付费墙一律由人点「官网」用学校账号下；不设下载队列、不经学校订阅、不让浏览器扩展在后台去取，再放开须重新拍板并先在真实项目干跑（细则 pipeline.md「机构访问通道」）。§11.5 daemon 化、手机扩大授权、对外 MCP 入口逐期再拍板；
-  在常驻后端落地前，新的长循环一律写在后端、不再加进前端窗口。设计稿 `docs/design-autonomy-roadmap.md`
-- **从手机添加（2026-10-20）**：手机→桌面**单向**、**Mesa 开着才收**、只走局域网；配对永远要人点开始；收到的先进暂存区，**人点了才进项目**
-  且只走已有入口。改这块前读 `docs/design-phone-drop.md` 与 safety.md 同名条
-- **桌宠（2026-11-09）**：小桌待在桌面上跨项目报信，是桌面、手机之外的第三个出口：「等你的事」「做完 / 出错」只照搬调度台与「现在的情况」的取数（主窗口 `desk-pet-host.ts` 拼，不在 Rust 另判），
-  能点什么同手机档（`assistant-ops.ts`），只在桌面的一律「去看看」；话由 Mesa 按记录拼；新来一件才冒一句、可设不说话、默认关；动作默认安静（换状态动一下就停，Mesa 在前台时不动）；
-  问小桌走与手机同一条 askProjectAssistant；桌宠开着且会说话时等确认 / 人工请求不再另弹系统通知。设计稿 `docs/design-desk-pet.md`
-- **手机上用项目助手（2026-11-06）**：经用户自建的飞书机器人长连接（只出不进、不自建服务器），只听绑定的一个人；手机只做动作分级 auto / tap 两档
-  （`assistant-ops.ts` 唯一真源），确认命令、评审采纳、写回、删除只在桌面；调度台转达是原话、不经 AI 改写；一件活卡在哪只经 `run-blocker.ts`（新卡法只改这一处）；项目助手的话不当事实（`guardClaims`），结果只由 Mesa 按记录说。设计稿 `docs/design-assistant-dispatch-desk.md`，细则 safety.md「飞书通道」
+- **格式（2026-11-16）**：第一行 `类型(范围): 中文说明`——类型仅用小写 `feat / fix / ui / docs / test / refactor / perf / chore / release`，范围可省，**半角冒号加一个空格**，中文说明不加句号；合并提交写 `chore: 合并 origin/main，…`；已推送历史禁止 `amend` / `rebase`。
+- **分支纪律**：日常直接在 `main` 开发，大功能/实验开分支（`feat/...`）再 `git merge --no-ff` 回 `main`。未经用户明确指令，禁止 `checkout / switch / merge / rebase / stash` 或删分支；开工先 `git branch --show-current` 确认分支，收尾报告分支名 + `git status` 概况。
+- **推送与发版**：走 SSH:443 + deploy key；发版版本号三处同步、模型库刷新、CHANGELOG 驱动更新说明与 tag 防重复打包细则见 `product-decisions.md` §三。
 
-## 构建与运行
+### 4. 文档同步表（文档与代码进同一个提交，只改受影响的）
 
-> **审计收口硬约束（2026-09-08）**：配置读改写持进程锁＋OS 文件锁，失败不得无锁继续；拆层迁移以 pending 恢复日志最终删除为完成，私有临时文件创建即 0600。PTY 全局锁内禁止阻塞写入，诊断输出不得同步落库卡回显。新建/恢复都兑现 discuss 权限，缺能力拒绝；原生退出负责进程回收。生产 CSP 不得因调试置空，Vite 脚本显式选择 `vite.config.ts`。细则与未验收范围见 safety.md / terminal.md / `docs/audit-remediation.md`。
+| 这次改了什么 | 同步哪些文档 |
+|---|---|
+| 用户看得见的入口、步骤、按钮文案、默认行为 | `docs/guide/user-guide.md` 对应章节；新术语补 §14.1；`docs/guide/tutorial.md` 写到了才改；改界面文字在这两份里搜旧说法 |
+| 用户看得见的改动（含修好的用户可见问题） | `CHANGELOG.md` 未发布段 |
+| 用户拍板、取舍、否决，或由此定下的规则 | `docs/conventions/product-decisions.md` 或对应领域 `conventions/*.md`，加 `docs/architecture.md` §10 一条 |
+| 新增源文件，或文件的职责边界变了 | `docs/code-structure.md` 对应行 |
+| 安装方式、功能总览变了 | `README.md` |
+| 纯内部重构、按既有规则修 bug、只加测试 | 不改文档，写进提交信息 |
+
+> 说明书写法：对「你」说话、保留小标题、专业克制（禁口语俚语）、术语以 `user-guide.md` §14.1 为准；改了 `user-guide.md` 的标题或段首加粗引导句后需跑 `cd src-tauri && cargo test project_assistant`（完整细则见 `product-decisions.md` §四）。
+
+## 三、项目简介与构建运行
+
+- **定位与身份**：**Mesa** 是面向研究生与科研人员的 AI 科研工作台（Tauri v2 + React/TS），底层统一管理十家 Agent CLI（Claude Code、Codex、Gemini CLI、Qwen Code、OpenCode、Kimi Code、CodeBuddy Code、Cursor CLI、Grok Build、Antigravity CLI）。**内部身份仍是 `ccode`**（bundle ID `com.ccode.dev`、`.ccode/`、`~/ccode/`、Codex provider `ccode`/`ccode-<短id>`），严禁把内部路径或安装身份跟着展示名改掉。
+- **设计文档即规格**：改架构/适配逻辑前，在 `docs/architecture.md` 与 `docs/agent-integration-matrix.md` 检索相关小节——**勿凭印象写 env 变量名**。需要借鉴开源机制时先查 `.reference/`（`cc-switch` / `waveterm` / `vscode`）。
+- **已确认的产品决策全文**：见 `docs/conventions/product-decisions.md` §一（含一等/维护级 CLI 分级、项目助手、综述回路、流程贯通、任务包、研讨、接力、核验记录、科研做图、项目体检、Agent Workspace、桌宠、手机助手、开源署名等，改相关功能前必查）。
 
 ```bash
-# Rust 不在默认 PATH，每个新 shell 都要先 export
-export PATH="$HOME/.cargo/bin:$PATH"
-
-npm run tauri:dev      # 开发（独立 Mesa Dev 窗口；前端 HMR + Rust 改动自动重启）
-npm run build          # 前端构建（tsc + vite）
-npm test               # 前端测试（node --test，CI test job 同步执行）
+export PATH="$HOME/.cargo/bin:$PATH"   # Rust 不在默认 PATH，新 shell 先 export
+npm run tauri:dev                      # 热更新开发窗口（Mesa Dev - 热更新，端口 17575）
+npm run build                          # 前端构建（tsc + vite）
+npm test                               # 前端测试（node --test）
 cd src-tauri && cargo build / cargo test
-npm run tauri build    # 打包
+npm run tauri build                    # 打包
 ```
 
-环境：Node 22 + npm（无 pnpm）；Rust stable（minimal profile）；crates 走 rsproxy 镜像（`~/.cargo/config.toml`）。
+- **环境与验收锚点**：Node 22 + npm（无 pnpm）；Rust stable（crates 走 rsproxy）。dev 端口固定 **17575**（第二实例 `npm run tauri:dev:17576`，勿擅改端口，被占先报占用方）。**界面验收必须定位窗口标题「Mesa Dev - 热更新」（`com.ccode.dev.hmr`，连 17575）**，严禁拿 `/Applications/Mesa.app`、`target/release` 等旧打包当作验收依据；无法确认归属时停止并报「未验收」。
+- **代码结构速览**（逐文件职责与红线 Grep `docs/code-structure.md`）：
+  - `src/`：前端 React + TS + Tailwind v4（`pages/`、`components/`、领域纯逻辑 `.ts` + `tests/` 同名测试）
+  - `src-tauri/src/`：Rust 后端（`agent_specs.rs`、`agents.rs` 与各领域模块）
+  - `docs/`：`architecture.md`、`agent-integration-matrix.md`、`conventions/`
 
-开发预览必须使用 `npm run tauri:dev`：独立产品名 **Mesa Dev**、窗口标题 **Mesa Dev - 热更新**、bundle ID
-`com.ccode.dev.hmr`（`src-tauri/tauri.dev.conf.json`）。界面验证必须按该窗口标题或明确 `.app` 绝对路径定位，禁止用模糊应用名 `Mesa` / 旧名 `Ccode`。
-**界面核验不得混入旧打包前端**：`/Applications/Ccode.app`、`/Applications/Mesa.app`、`target/release`、普通 `com.ccode.dev` 与历史 `target/debug/bundle`
-均不可作为验收依据；只能验收 `tauri dev --config src-tauri/tauri.dev.conf.json` 启动、连接 17575 的热更新窗口。无法唯一确认窗口归属时停止界面操作，改报“未验收”，不得拿旧窗口截图或状态代替。
+## 四、每次会话都必须遵守的通用红线
 
-## 本机环境档案（每会话必读的短条目）
+> 特定子系统的详细红线（Codex `config.toml`、gitignored 科研产物口径 C、CLI 旁路与金丝雀、`lit_records.py` / `quarto render`、非对话模型与出图、UI 测试 esbuild 桩与 JSDOM 断言等）已完整归档在 `docs/conventions/product-decisions.md` §二–§三，改到对应模块前必搜。
 
-- **平台/网络踩坑全录见 `docs/conventions/environment.md`**（**涉网络下载、装依赖、Windows/macOS 平台行为、
-  构建异常、开第二开发实例时检索**）：crates 走 rsproxy、brew bottle 走南大 ghcr 代理、密钥弃钥匙串改 0600
-  `keys.json`、Windows conhost 闪窗与 npm .cmd shim、macOS CLT stub 与 Xcode 许可、PDF 预览白屏等。
-- **dev 端口固定 17575**（勿改回 1420；agent 不得自行改端口或另起配置外实例，被占先报占用方交用户处理）。
-  第二实例走 `npm run tauri:dev:17576`，验收三锚点 = 仓库路径 + 窗口标题后缀 + devUrl 端口（细则见 environment.md）。
-- **git 提交与单人开发流程（2026-09-22 定稿）**：日常直接在 main 上开发，三条纪律——
-  ① **一个主题一个提交**，提交时**改到的那一侧**基线全绿（2026-10-26 用户拍板，取代「每次三样全跑」）：
-  只改文档不跑；只改 Rust 跑 `cd src-tauri && cargo test`（全量，不能只跑改到的模块）；只改前端跑 `npm test` + `npm run build`；
-  两侧都改，或动了两侧共用的东西（共读的 `tests/fixtures/` 样例、Tauri 命令名与参数、DTO 字段名、双端镜像逻辑）三样全跑；
-  拿不准算哪种就全跑。CI 每次 push 在两平台三样全跑兜底，本地漏判的代价是 main 红，红了当次处理。
-  禁止攒多主题「一系列修复」式大杂烩提交（提交太大 `git bisect` 定位不了回退）。
-  **做完一处就同步文档并提交**（2026-10-26 用户：「以后做完一个地方就更新文档提交」）：一个问题 / 一处改动做完、
-  验过，当场按「文档同步」表改受影响的文档、跑该跑的基线、提交，不攒到用户回头说「提交」；用户说了先别提交的照办。
-  **只提交本会话自己的改动（2026-11-13 用户拍板）**：同一 checkout 常有几个会话并行，工作区里别人的改动（含写到一半的）一律不碰。
-  提交走私有暂存区：`GIT_INDEX_FILE` 指向临时文件、`read-tree <H>` 起底，只放自己的文件或片段，`write-tree` → `commit-tree -p <H>` →
-  `update-ref HEAD <新> <H>`（HEAD 中途被人动过就失败重来；跑过基线的提交不用 `git commit`）；成功后同一条命令里 `git reset -q -- <这些文件>` 对齐共享暂存区。
-  整文件放进去前先 `git diff <文件>` 看有没有别人的块；共用文档（CHANGELOG、user-guide、code-structure、architecture）只放自己那几处。
-  文件清单在 zsh 里写成数组。提交后 `git show --stat HEAD` 核对文件数和文件名都是自己的。带走了别人的、或撤掉了别人的，不 amend / rebase，往前补一个提交，并告诉对方会话。
-  **提交信息格式（2026-11-16 用户拍板，GitHub 首页逐目录露出最后一条提交）**：第一行 `类型(范围): 中文说明`——类型只用
-  feat / fix / ui / docs / test / refactor / perf / chore / release，小写；范围可省；**半角冒号加一个空格**；说明用中文、不加句号。
-  不写「新增：」「修复：」这类中文类型，不用全角冒号，不写英文整句；合并提交写 `chore: 合并 origin/main，…`。已推送的旧提交不改写。
-  **`node --test` 只剥类型
-  不做类型检查**，tsc 错误只有 `npm run build` 抓得住，改了前端提交前必须跑（2026-09-22 实证：三处 tsc 错误
-  带病进了 main，本地测试全绿）。
-  ② 几天的大功能或实验性改动开分支（`git switch -c feat/...`），做完 `git merge --no-ff` 回 main；
-  已 push 的历史禁止 rebase/amend 改写。单晚小修、文档直接 main。
-  ③ **测试基线必须保持全绿**：存量失败不修，「红绿」就没有信号价值，新失败也分不清是不是自己引入的
-  （2026-09-22 实证：3 个 UI 测试存量失败把 CI 挡在 npm test 一步，tsc 报错与 objc2 跨平台编译失败
-  两类更深的问题被挡住看不到）。
-- **CI 纪律（2026-09-22 修订，取代旧规「常规提交加 [skip ci]，里程碑提交才跑 CI」）**：push 到 main 即触发
-  test job（npm test + cargo test + npm run build；当前矩阵 macOS + Windows——**Linux 本版本未开发，
-  2026-09-22 移出测试矩阵**，恢复开发时把 ubuntu-latest 加回 build.yml，平台差异挡过主线三次），
-  **保持绿是硬要求**，红了当次推送就要处理；`[skip ci]` 只用于纯文档等不可能影响构建的提交。
-  平台专属 crate（如 objc2、windows-sys）必须放 `[target.'cfg(...)'.dependencies]` 段——主
-  `[dependencies]` 里的平台专属依赖会让别的平台直接编译失败（2026-09-22 objc2 实证）。
-  发版打包仍走 tag push（package job 只认 tag；Linux 2026-09-22 起同样移出发版矩阵——
-  不再出新安装包，已装的 Linux 用户收不到更新，恢复开发时把 ubuntu-latest 加回两个矩阵）。
-- **UI 组件测试打包口径（2026-09-22）**：tests 用 esbuild 内联打包 .tsx 组件的（research-*-ui.test.ts 模式），
-  组件图拉进 monaco css、Vite `?worker`/`?url`/`?raw` 导入（`?raw` 如 `AgentIcon` 的厂商 svg，凡引 `AgentMark` / `AgentIcon` 的组件都会拉进来）、pdfjs 时按桩处理：`.css` 配 empty loader（css 空了
-  其中字体 url 不再解析）、query 后缀路径桩成惰性 data: URL **字符串**（pdfjs 校验 workerSrc 必须是字符串）、
-  JSDOM globals 补空壳 `DOMMatrix`（pdfjs 模块初始化顶层 `new DOMMatrix()`，`pdf.mjs` 的 SCALE_MATRIX
-  常量）。新组件测试照抄这三个文件的口径，别让打包问题冒充组件 bug。
-- **git 分支纪律**：未经用户明确指令，禁止 checkout/switch/merge/rebase/stash/删分支等任何改动 HEAD 或分支指向的操作；
-  开工先 `git branch --show-current` 确认在用户指定的分支上，不符就停下报告，不自行切换；任务收尾报告分支名 + `git status` 结果。
-- **git 推送走 SSH:443 + repo deploy key**；发版推 tag 后先用 `gh run list --workflow build.yml` 确认是否已产生该 tag 的 push run，已触发则只保留该 run；30 秒内未触发才执行 `gh api repos/Zeta-Techs/mesa/actions/workflows/build.yml/dispatches -f ref=<tag>`。禁止让 tag push 与 workflow_dispatch 两个打包 run 并行写同一 Release。workflow 已配 `permissions: contents: write`（tauri-action 建 Release 草稿必需）。**仓库在公司组织 `Zeta-Techs/mesa`**（2026-10-27 由个人仓库 `hongtongzhou-design/ccode` 转入）：仓库 owner 与 tauri.conf 升级端点绑定，再转移时本命令、updater endpoint、README 与代码里的仓库链接必须同步改（`git grep` 旧地址）。**个人账号下永远不要再建名为 `ccode` 的仓库**——旧地址靠 GitHub 自动跳转，同名新仓库会截断跳转。
-- **CI 测试**：禁墙钟时序硬断言（runner 调度延迟不可控；只留内容语义断言 + 防挂死宽松兜底）；JSDOM 节点进断言由 `npm test` 预加载的 `tests/dom-safe-assert.ts` 兜住（node:assert 失败时按 1000 层展开 actual / expected、无视自定义打印，JSDOM 节点会吃光内存，2026-11-16 onboarding-ui 实证）——它只管 equal / strictEqual / notEqual / notStrictEqual，节点**禁进 `deepEqual`**（先 map 成字符串），`package.json` 的 `--import` 不得删（`dom-safe-assert.test.ts` 守着）；组件在下一帧（rAF）挪焦点 / 滚动的，断言前先等那一帧；unix 专属语义（symlink/PTY/脚本）测试加 `#[cfg(unix)]`；路径断言用 `Path::ends_with`（Windows `\`）；**测试禁触系统 UI/回收站**——`trash` 等走 Finder AppleScript 的调用在测试态必须经隔离缝直删（projects.rs `trash_to_recycle_bin` 先例：测试驱动 Finder 会与用户桌面互抢并偶发 -47，purge 组 51.7s→0.06s 实证）。
+1. **密钥与脱敏**：密钥存 0600 `keys.json`，仅拉起瞬间注入子进程 env，绝不回显或进 shell；`NO_COLOR` 必须 `env_remove`，显式设 `TERM=xterm-256color`/`COLORTERM=truecolor`/`TERM_PROGRAM=Mesa`。会话文本出站前必须在 Rust 层脱敏（只作用于 DTO/导出副本，不改源文件；前端遮盖不是安全边界）。
+2. **CLI 目录只读**：各 CLI 会话/配置目录一律只读（仅允许用户显式操作：设为全局默认、hooks 开关、会话删除/瘦身/导入、编辑配置文件等，白名单与备份口径见 `safety.md` / `product-decisions.md`）。用量历史 `usage_daily` 永久保留，禁整表清空。
+3. **锁与主线程**：配置读改写持进程锁 + OS 文件锁，失败不得无锁继续；PTY 全局锁内禁阻塞写入；**会等待的 Tauri 命令必须 `async fn` + `spawn_blocking`**（同步命令会卡死所有终端输出）。
+4. **三平台兼容与路径方言**：禁写平台特定路径，统一用 `crate::dirs` / `process::background_command` / `process::pty_command`（超时用 `kill_process_tree` + `join_with_timeout`）；后端跨来源路径比较一律用 `paths::same_path` / `path_within` / `path_key`（前端 `src/path-utils.ts`）；纯逻辑平台分支必须 `isWindows` 显式传参；unix 专属函数加 cfg 门控；平台专属 crate 放 `[target.'cfg(...)'.dependencies]`；测试禁墙钟硬断言、禁触系统 UI/回收站。
+5. **二进制与 Python**：解析统一走 `agents::resolve_binary` / `resolve_binary_all`（禁裸 `which::which`）；Python 一律走 `dep_check::usable_python()`，Agent 跑 Python 走 `MESA_PYTHON`。
+6. **序列化、前端边界与开源**：嵌套进 camelCase DTO 的结构体整体 `#[serde(rename_all = "camelCase")]`；前端不直接碰文件系统，全部经 Tauri command；UI 文案用中文，代码注释用中文且只在非显而易见处写；**改动依赖后必须跑 `npm run gen:notices`**（版权落款 `泽塔前沿科技（杭州）有限公司`）。
 
-## 代码结构
-
-**逐文件职责地图见 `docs/code-structure.md`**（含每个源文件的职责边界、红线注释与双端镜像口径）——
-**改源文件前在地图里 Grep 该文件名，读它的条目**（不通读地图）；新增文件同步补进地图（一行职责，只在非显而易见处写注释）。顶层速览：
-
-```
-src/             前端 React + TS + Tailwind v4：pages/（侧栏九页）+ components/（视图/弹层）+
-                 领域纯逻辑模块（一个领域一个 .ts，配 tests/ 同名测试）
-src-tauri/src/   Rust 后端：agent_specs.rs（九 CLI 中央规格表）+ agents.rs（适配分发入口）+
-                 各领域模块（profiles / projects / workspaces / sessions / usage / scheduler / …）
-docs/            architecture.md（总体设计 + §10 决策记录 + §12 当前待办）
-                 conventions/（主题细则，见下索引）+ agent-integration-matrix.md（九 CLI 源码级调研）
-```
-
-## 关键约定
-
-以下硬约束**任何会话都必须遵守**；各领域的细则（评审覆盖层交互、流水线开步参数、步进器视觉规格、MCP 字段映射等）
-在 `docs/conventions/`，改哪块就在对应文件里检索相关条目，日常会话不必加载。
-
-- **密钥绝不回显/进 shell**：存 0600 `keys.json`（键=网关 id），只在拉起瞬间注入子进程 env；绑定/网关 JSON 只存尾号 key_hint；
-  `NO_COLOR` 必须 `env_remove`；`TERM=xterm-256color`/`COLORTERM=truecolor`/`TERM_PROGRAM=Mesa` 必须显式设置。
-- **会话文本出站前必须在 Rust 层脱敏**：标题/摘要、结构化回放、AI 摘要、Markdown 导出均不得把已保存密钥或常见密钥前缀
-  送到 React；只作用于 DTO/导出副本，不得回写会话源文件；前端遮盖不是安全边界。
-- **gitignored 科研产物最终落点是项目根，但分两类走法**（2026-09-09 口径 C）：文献 PDF 与人工导入属**原始资料**，直写项目根 `papers/`；清洗后数据、实验结果、渲染成品等 **Agent 派生产物**写工作区产物目录或 `output/`（不进 git），评审时经 `workspace_review_deliverables` 冻结非 Git 文件，合并只由 `apply_delivery_review` 带回所审副本（同名冲突点名交人、保护路径跳过；人在评审页逐个勾掉的不带回；有未接收产物不得归档——人勾掉且仍是那一版的除外，见 pipeline.md「逐个勾掉不带回」）。派生产物直写项目根 = 未验收产物。TASK.md 必须给出项目根绝对路径（读提货单、写 papers/）。
-- **Codex 全局写入不碰 `~/.codex/auth.json`**（v3.249 / v3.250）：「设为全局」与客户端接力的渠道补写（`register_codex_client_provider_named`）都只写 `config.toml` 的 provider 块；共用渠道 `custom` 与补给老对话的 `ccode-<短id>` 块认证都用 `auth.command`（mesa_helper 现取，不落明文；找不到 helper 才退回 `experimental_bearer_token`；与 env_key / bearer 不能并存，见 profiles.md「Codex 客户端续聊」）。禁止写 `http_headers`（MCP 字段，写在 provider 上客户端加载失败报 Model provider not found）。禁止退回 `requires_openai_auth=true` + 改 auth.json。API 连接「设为全局」一律写共用渠道名 `custom`（2026-10-28，与 cc-switch 同名）；官方账号不进 `custom`，撤 `model_provider` 回内置 openai（中转历史接不到官方，见 profiles.md §12）。
-- **各 CLI 会话/配置目录一律只读**；例外仅限用户显式操作：设为全局默认、hooks 精确注意力开关（2026-10-20 起只剩 Gemini / Kimi / Grok；
-  其余五家启动时注入，以前写过的启动时收回）、Gemini 认证方式一键设成 API Key（只改这一项、先备份，2026-10-27）、会话删除、工作树文件删除（走系统回收站）、会话导入、内部对话保留期清理（只删 Mesa 自己的后台对话，
-  `internal_sessions.rs`）、会话瘦身（仅 Claude Code，写前完整备份，`session_slim.rs`）、连接页「编辑配置文件」（2026-11-01：密钥以可还原占位给前端，写入走设为全局同一把锁与批次备份，`config_editor.rs`）。每类的备份 / 白名单口径见 safety.md。
-- **用量历史永久保留（2026-10-17 用户拍板）**：会话文件消失（CLI 自己清理 / 内部对话清理）不得删 `usage_daily` 行，
-  重建只撤 `seen:` 标记；只有用户在 Mesa 亲手删除对话才 `forget_session_usage`。用量表版本升级**禁止整表清空**，
-  只清有 `seen:` 标记、能从文件重抽的行（不落盘调用的 `ephemeral-*` 行与已消失会话的行重抽不回来）。
-- **接第三方 API 只换渠道与模型（2026-11-18 用户拍板）**：Mesa 启动与「设为全局」后在外部用同一口径——只写地址、密钥、模型（及让选择器列出模型的清单），提示词、回答长短、思考档、输出上限等一律照 CLI 官方默认；只有中转接不住必须关的才动。写进别家配置的值先拿假网关或上游实测核对官方实发的样子，不凭旧注释或旧版本。细则 profiles.md §6.4。
-- **一次性内部调用不落盘**：`ai_prompt_impl` 对 Claude Code 用 `-p --output-format json --no-session-persistence`、
-  Codex 用 `exec --ephemeral --json`，花费从输出直接记账（`record_ephemeral_usage`）；定时任务等事后要回看的无头运行照旧落盘。
-- **聊天层取数（2026-10-20，`chat_channel.rs`）**：优先 CLI 自带的结构化旁路，其次会话文件，最后读屏；旁路**不写用户配置**
-  （只用启动参数 / 环境变量 / Mesa 目录下的临时文件），起不来照旧启动；hook 只记录、不阻塞、不替用户决定，审批只在用户点按钮后
-  经 CLI 官方通道回；口令 / 令牌只经环境变量。改任一家旁路或升级 CLI 前先跑 `scripts/e2e-model-routing/README.md`「聊天层结构化旁路」
-  两层核对。各家走法（Codex app-server、OpenCode 服务、OSC 7501 程序状态及其 Windows 不接）见 terminal.md / safety.md 同名条、
-  matrix §14、`docs/design-chat-structured-channels.md`。
-- **CLI 金丝雀（2026-10-21）**：`.github/workflows/cli-canary.yml` 每天装最新版十家 CLI 比指纹；红了是 CLI 变了、不是 Mesa 回退，不挡主线 CI。
-  适配（或判定无需适配）后在**同一平台**跑 `--accept`，把新指纹连同改动一起提交；基线 `version` 随包进 Mesa（`src/cli-verified.ts`；
-  装好的 Mesa 另半天一次从 main 取指纹没变的前移，`cli_verified.rs`，2026-11-04），**上游新出的结构化通道由金丝雀「上游通道雷达」开 issue 提醒、
-  结论记 `scripts/cli-canary/upstream.json`**（2026-11-04），
-  CI 会把只前进了版本的基线自动提交回 main，本地推送前先 pull。维护流程见 `docs/agent-skills/mesa-cli-canary/SKILL.md` 与
-  `scripts/cli-canary/README.md`；**仓库维护技能放 `docs/agent-skills/`，不进 `src-tauri/resources/skills/`**（那里随应用分发给用户）。
-- **非对话模型与出图（2026-10-23）**：出图 / 视频 / 向量等模型按名分类（`image_gen.rs` ↔ `src/model-kinds.ts` 镜像，共读
-  `tests/fixtures/model-kinds.json`），不得成为 Agent 对话模型（启动闸 `agents::validate_launch_compatibility`）。出图模型编辑处只在连接页。
-  Agent 经随包 `mesa_helper image` 出图，密钥由 helper 自取、不进 Agent env，PTY 只注入 `MESA_IMAGE_TOOL`；找随包 helper 一律走
-  `image_gen::find_bundled_helper`。细则 profiles.md / safety.md 同名条。
-- **子进程环境来自登录 shell（2026-10-27）**：从访达打开时 `shell_env::import_login_shell_env` 在起线程前读一次 `$SHELL -i -l -c` 的环境，
-  所有子进程继承；**API 密钥 / 端点类变量不从 shell 带入**（由 Mesa 连接配置注入）。改过滤表或启动顺序前读 environment.md 同名条。
-- **二进制解析统一走 `agents::resolve_binary`**：先 which（继承 PATH），miss 时按平台候选目录兜底；新增 CLI/工具调用点一律
-  用它，禁直接 `which::which` 或裸名 spawn（平台候选目录清单 = `agent_specs.rs::binary_candidate_dirs`，`agents.rs` 只是调用方）。
-  PATH 上第一个可能是占位程序时（Windows 应用商店的 `python`、macOS CLT 没装时的 `/usr/bin/python3`）改用
-  `agents::resolve_binary_all` 列全部候选、逐个试跑，拿「能跑」的那个（2026-10-19，见 dep_check `usable_python`）。
-  **Python 一律走 `dep_check::usable_python()`**，禁 `resolve_binary("python3")`：python.org 的 Windows 安装包只有
-  `python.exe`，`python3` 在 Windows 上永远先命中应用商店占位。给 Agent 的指令 / 技能里写 `python3` 时同时注明
-  「Windows 上改用 `python`」。**Agent 起的 Python（PTY 子进程与无头运行）在 Windows 由 `process::agent_python_io_env`
-  补 `PYTHONIOENCODING=utf-8`，禁补 `PYTHONUTF8`**（它连 `open()` 默认编码一起改）。Agent 加 `-I` / `-E` 时该变量失效
-  （中文系统回落 GBK），Windows 任务书固定带「本机 Python」节提示改加 `-X utf8`（2026-10-22，`task-md.ts`）。
-  **Agent 跑 Python 用 `MESA_PYTHON`**（2026-11-10）：起 Agent 时注入体检认出、一键安装装进去的那个 Python 的绝对路径，
-  任务书与项目说明各平台都写「跑 Python 用它」；Mesa 启动时去掉继承的 conda「已激活」变量。只调 PATH 不够，细则 environment.md 同名条。
-- **检索 / 精读的题录只经 `lit-search/scripts/lit_records.py` 从 `papers/included.json` 出**（2026-10-22）：included.md、to-fetch.md、
-  两份 RIS、references.bib 都是它生成，简报与技能不得再让 Agent 手写或自写补字段脚本；RIS 拼法与 `screening-review.ts risBody`
-  双端镜像（`tests/lit-records.test.ts` 逐条比对），改一边两边同改；「待补」「待核」「无期号」不得进任何 RIS / 文献库字段（「无期号」= Crossref 有卷没期，不是缺口，2026-10-23）。
-  **影响因子 / 分区只经 `lit_records.py impact` 从 Mesa 期刊指标表出**（2026-11-10）：查表由 helper `journal`（`journal_metrics::resolve_metrics`，与评审清单徽章同一套）做，
-  经 `MESA_JOURNAL_TOOL` 注入；AI 不凭记忆估，查不到写「表中无此刊」进待确认，不进 RIS / 引文库。
-- **`quarto render` 命令（模板 run 脚本与技能）统一 `--output-dir ../output`、不带 `--output`**（`--output-dir` 相对稿件所在目录解析；稿件在一级目录时写 `../output`，唯一例外是项目根的稿件写 `output`——2026-11-02 数据处理报告，macOS 实测同样落项目根 `output/`；更深的目录不放稿件）（2026-10-21 Windows 实测：写 `output`
-  落进 `manuscript/output/` 且后一次渲染清掉前一次）；项目根不放 `_quarto.yml`；存量项目的 run 命令存在各自 `.ccode/project.toml`，
-  改模板不会自动更新，要手工处理。PDF 走 xelatex 时 header 必须带 ActualText 开关（`manuscript_font.py` 写），否则分号文本层变 U+037E。
-- **发版版本号三处同步**：`package.json` / `src-tauri/Cargo.toml` / `src-tauri/tauri.conf.json` 的 `version` 必须与
-  git tag `vX.Y.Z` 的 `X.Y.Z` 一致（CI package job 会拦）。Tauri updater 只比较 `tauri.conf.json` 版本与
-  `latest.json`，不认 git tag / architecture 决策号；不 bump 则已安装用户永远看不到「可更新」。内部决策记录
-  （v3.x）不是应用版本。有可用更新时提示走收件箱 `update:`（不造顶部横幅、侧栏不挂徽标），设置页「更新」分区
-  是安装入口。
-- **发版前刷新随包模型能力库（2026-10-28）**：`npm run gen:model-db`（连不上 models.dev 时带 `HTTPS_PROXY`），把 `src-tauri/data/model-db-snapshot.json` 随版本提交；细则 profiles.md「能力库与价目怎么认模型」。
-- **更新说明来自 CHANGELOG（2026-10-19）**：用户在应用里看到的「更新说明」是 `latest.json` 的 `notes`，打包时由 CI 取自 `CHANGELOG.md`
-  （`scripts/release-notes.mjs`，优先 `## v<版本>` 段、其次 `## 未发布` 段，都空则 CI 失败；段内有 `**全部改动**` 时只取它前面的「本版要点」，2026-11-01 用户拍板——逐条清单只留在 CHANGELOG，Release 正文同样只有要点）。**发版前必须先把本版本的用户可见改动写进
-  CHANGELOG 对应段**；事后改 GitHub Release 草稿正文不会同步进 `latest.json`，用户仍看不到。
-- **嵌套进 camelCase DTO 的结构体必须整体 `#[serde(rename_all = "camelCase")]`**（2026-10-03 实证：`RunRecord` 以蛇形
-  `isolation_path` 出线、前端 `isolationPath` 恒 undefined，雷达「去评审」从未出现）。与磁盘共用一个结构体时加蛇形
-  `alias` 兼容读旧档；单词字段天然一致不算，逐字段 rename 只修一个字段是这类 bug 的温床——新增多词字段时整结构体统一。
-- **路径比较与文件名统一走方言层**（2026-08-29 Windows 协作批确立）：后端跨来源路径比较一律 `paths::same_path` /
-  `path_within` / `path_key`（禁字符串 == / starts_with / 拼 `/` 前缀），落盘与显示先 `strip_verbatim`；前端同口径在
-  `src/path-utils.ts`。新建/重命名文件（夹）名走 `paths::validate_fs_name`（报错），自动生成走 `sanitize_fs_name`
-  （清洗）——全平台同一套规则，护跨机同步。纯逻辑模块的平台分支（如 escapeShellPath/pickQuickChatSessions）必须
-  `isWindows` 显式传参，禁模块内隐式读平台（否则单测随宿主机器变）。
-- 三平台兼容：禁写平台特定路径，用 `crate::dirs`（系统目录唯一入口，Windows 新用户沙盒靠它换目录）/`keyring`/`portable-pty` 的抽象；unix 专属函数加
-  `#[cfg_attr(not(any(unix, test)), allow(dead_code))]` 或 cfg 门控（Windows 编译不过就是漏了）；起子进程统一
-  `process::background_command`（后台）/ `process::pty_command`（PTY），超时终止用 `kill_process_tree` +
-  `join_with_timeout`，禁裸 kill + 无限 join。子进程不继承 Mesa 自己的 `PWD`（后台删掉、PTY 设成工作目录；
-  `opencode run` 按 PWD 取目录，2026-10-20 实证写错地方）。前端往 shell 写 `cd` 走 `pty_cd`（按标签的 shell 方言），不自己拼。
-- **客户端接力（2026-10-18）**：对话 / 项目交给 agent 自己的 GUI 客户端打开，一律走 `client_open.rs`，**前端不得自己拼深链**；
-  判断全在发深链之前（只读预检），读不到的不假装知道，会话 id / 写进 TOML 的块名后端校验后才拼，按钮文案如实写能打开到哪一层，没装客户端就不显示。
-  改这块或新增客户端前读 `docs/design-client-handoff.md`。
-- UI 文案用中文；代码注释用中文、只在非显而易见处写（参照现有文件风格）。
-- 前端不直接碰文件系统，一切经 Tauri command；PTY 输出走前端交给 `pty_subscribe` 的通道（带流控确认 `pty_ack`），
-  退出与后台信号走 `pty-exit-<id>` / `pty-signal-<id>` 事件（terminal.md「终端输出走通道 + 流控」）。
-- **会等待的 Tauri 命令必须 async（2026-10-21）**：不带 `async` 的命令跑在主线程上，终端输出也要排主线程的队——同步命令里
-  等子进程 / 外部应用 / 端口 / 回收站 / 目录树 / 评审快照，等待期间所有终端停住。这类命令写 `async fn` + `spawn_blocking`；
-  细则与已挪清单见 terminal.md「会等待的命令不占主线程」。
-
-### 主题约定索引（改哪块，就在对应文件里检索相关条目）
+## 五、主题约定索引（改哪块就 Grep 对应文件）
 
 | 领域 | 文件 | 覆盖内容 |
 |---|---|---|
-| 安全与数据防护 | `docs/conventions/safety.md` | 密钥/脱敏细节、git 提交与逐 hunk 验收、多阶段 Git、profile 三层验证、会话/配置写操作口径、诊断包、MCP 分发与技能导入导出、CLI 更新、PDF/笔记白名单 |
-| 终端与工作台 | `docs/conventions/terminal.md` | PTY 回落 shell、会话标题、标签持久化白名单、评审/冲突覆盖层、改动面板、收件箱与注意力规则、键盘流、分屏、关窗守卫、WebGL 探针、输入侧（图片粘贴/文件拖入/右键菜单/链接点击）、沉浸阅读区、聊天层旁路 |
-| 流水线与项目域 | `docs/conventions/pipeline.md` | 工作区创建/漂移/归档/删除、流水线开步/模板/编辑器、接力与提炼接力、任务卡、人工事项与讨论种子、agent 人工请求（help-wanted）、收件箱分类胶囊、示例课题、白话双层、定时雷达与双台账 |
-| 编程 Git / GitHub | `docs/conventions/coding-git.md` | **改编程页 git 前必读**：工作树 vs 主仓 vs GitHub Desktop、从基准开工、远程身份、PR 环、不做任意 git 命令框 |
-| 多 Agent 工作台对象 | `docs/conventions/agent-workbench.md` | **改工作台/并行/无头/Runtime 前必读（v3.221 定稿；第 0–3 期核心路径已落地）**：Project→Task→Run、编程车道、RuntimeKind、并行三层与项目内协作；定时任务默认隔离 worktree；非 Git 项目失败 |
-| 步骤工作面板 | `docs/conventions/step-panel.md` | **新增步骤/模板前必读**：七条硬规则（顺序即语义、空节点不出现、同一事实只说一次、孤立按钮、主路径唯一、显式决策契约门控、角色标注）、问题该在什么时刻与层级出现（项目层/决策项/按需问/种子/人工事项五选一）、文案与术语、新增模板检查清单 |
-| 主题与设计系统 | `docs/conventions/design-system.md` | 主题令牌、字体栈、线条语言、控件密度、页面框架、对话页三栏、步进器规格、活跃度热力图、已否决设计 |
-| 各页界面规格 | `docs/conventions/codex-style-ui.md` | 应用外壳与灵动岛、交互语法、工作台/项目/运行/对话/连接/技能/MCP/用量/设置各页布局、逐项核验清单 |
-| Agent 绑定体系 | `docs/conventions/agent-binding.md` | **改任何「谁用什么配置启动」前必读（2026-10-15 定稿）**：解析塔（实体绑定>用途槽位>项目默认>记忆>全局）、槽位白名单（reader/discuss/step:）、开工弹层两态勾选、kickoffLast 拆键、工作区三链 workspaceLaunchChain、商量类不吃步骤绑定 |
-| 网关与绑定（配置模型层） | `docs/conventions/profiles.md` | **改配置/注入/设为全局/模型能力/托盘前必读（已落地）**：网关×绑定拆层、binding id 复用、provider 派生名、relay 缓存键、求交器、体检与通道表不对称、迁移合并、模型配置约定（Claude --settings、Grok fail-closed、Codex 端点分槽、思考档注入优先级）、非对话模型与出图模型 |
-| 普通目标评审冻结 | `docs/conventions/review-freeze.md` | **改普通目标开工/收尾/评审/采纳前必读（2026-09-09 落地）**：开工基线哈希、收尾冻结 payload、采纳三向判定与删除/大文件/旧 Run 口径 |
-| 开源与许可 | `docs/conventions/open-source.md` | **改许可文件、署名、服务商图标、预设表、依赖、「关于」页或帮助菜单前必读**：七处署名、图标署名与使用范围、gen:notices、反馈端点 |
-| 本机环境与踩坑 | `docs/conventions/environment.md` | 网络镜像、跨平台行为（Windows conhost/npm shim、macOS CLT/Xcode、PDF 白屏）、钥匙串、双 clone 第二实例、开发态随包 helper；涉网/装依赖/平台问题时检索 |
-| 客户端接力 | `docs/design-client-handoff.md` | **改「在 Codex 客户端 / Claude 桌面版打开」或新增客户端前必读**：能力分档、预检模型、失败话术表、分期与真机点验清单；调研事实见 matrix §13 |
-| 代码地图 | `docs/code-structure.md` | 每个源文件的职责/红线注释/双端镜像口径；改源文件前 Grep 该文件名读条目，新增文件补地图 |
+| 产品决策与子系统细则 | `docs/conventions/product-decisions.md` | **从 AGENTS.md 拆出的全部已确认产品决策、子系统实现红线、测试/CI/发版细则与说明书写法** |
+| 安全与数据防护 | `docs/conventions/safety.md` | 密钥/脱敏、git 逐 hunk 验收、多阶段 Git、profile 验证、会话/配置写白名单、诊断包、MCP/技能分发、飞书通道 |
+| 终端与工作台 | `docs/conventions/terminal.md` | PTY 通道与流控、会话标题、标签白名单、评审/冲突覆盖层、收件箱、关窗守卫、输入侧、沉浸阅读、聊天层旁路、async 命令 |
+| 流水线与项目域 | `docs/conventions/pipeline.md` | 工作区生命周期、流水线/模板/任务包、项目助手接活、综述回路与流程贯通、研讨/接力、核验记录、定时雷达、项目体检、外部软件接口 |
+| 编程 Git / GitHub | `docs/conventions/coding-git.md` | **改编程页 git 前必读**：工作树 vs 主仓、基准开工、远程身份、PR 环 |
+| 多 Agent 工作台对象 | `docs/conventions/agent-workbench.md` | **改工作台/并行/无头/Runtime 前必读**：Project→Task→Run、并行三层、项目内协作、定时隔离 |
+| 步骤工作面板 | `docs/conventions/step-panel.md` | **新增步骤/模板前必读**：七条硬规则、问题层级分配、文案与术语清单 |
+| 主题与设计系统 | `docs/conventions/design-system.md` | 主题令牌、字体栈、线条语言、页面框架、步进器规格、活跃度热力图、已否决设计 |
+| 各页界面规格 | `docs/conventions/codex-style-ui.md` | 应用外壳、灵动岛、各页布局与逐项核验清单 |
+| Agent 绑定体系 | `docs/conventions/agent-binding.md` | **改启动配置解析前必读**：解析塔、槽位白名单、开工弹层、工作区三链 |
+| 网关与绑定 | `docs/conventions/profiles.md` | **改配置/注入/设为全局/模型能力/托盘前必读**：网关×绑定拆层、求交器、模型配置约定、Codex/Grok/Claude 细则 |
+| 普通目标评审冻结 | `docs/conventions/review-freeze.md` | **改普通目标开工/收尾/评审/采纳前必读**：基线哈希、冻结 payload、三向判定 |
+| 开源与许可 | `docs/conventions/open-source.md` | 署名、厂商图标规则、`gen:notices`、反馈端点 |
+| 本机环境与踩坑 | `docs/conventions/environment.md` | 网络镜像、Windows/macOS 平台踩坑、登录 shell 环境、`MESA_PYTHON`、第二实例 |
+| 客户端接力 | `docs/design-client-handoff.md` | **改客户端打开前必读**：能力分档、预检模型、失败话术 |
+| 代码地图 | `docs/code-structure.md` | 逐文件职责/红线/双端镜像（按文件名 Grep） |
 
-## 路线图与当前待办
+## 六、路线图与当前待办
 
-见 `docs/architecture.md`：§11 演进线（P0–P5 定稿）、§12 当前待办与批次状态（滚动维护）、§10 决策记录（历次拍板全文，按关键词检索）。
+见 `docs/architecture.md`：§10 决策记录（按关键词检索）、§11 演进线（P0–P5）、§12 当前待办与发布前检查项。
