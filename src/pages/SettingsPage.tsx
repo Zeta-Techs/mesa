@@ -2651,7 +2651,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             id="settings-content"
             role="region"
             aria-labelledby={`settings-nav-${activeSection}`}
-            className="@container/settings min-w-0 max-w-4xl scroll-mt-16"
+            className="@container/settings min-w-0 scroll-mt-16"
           >
             {banners}
 
