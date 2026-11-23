@@ -61,10 +61,8 @@ import {
   chatMessageKey,
   CHAT_NO_SESSION_TEXT,
   composerShowsInterrupt,
-  confirmHandoffEvent,
   slashHandoff,
 } from "../chat-handoff";
-import { confirmHandoffReason, decisionKind, recordChatHandoff, type HandoffReason } from "../chat-handoff-log";
 import {
   chatStatus,
   chatStatusParts,
@@ -742,9 +740,6 @@ export default function ChatSurface({
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
-  // 聊天层接不住、要去终端的那一下记个数（chat-handoff-log.ts），排聊天层下一步补什么
-  const noteHandoff = (reason: HandoffReason, detail?: string) =>
-    recordChatHandoff(agentId, reason, detail);
   // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
   // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
   const [settling, setSettling] = useState(false);
@@ -921,15 +916,12 @@ export default function ChatSurface({
   }
   // 「终端在等你」通用卡（terminal-wait.ts）：认不出的确认、卡住、选择器开着、启动后停在没有输入框的画面上。
   // 原先这几种都自动弹出底部终端，2026-10-27 用户拍板改成卡片，去终端只在卡上由人点
-  const waitReason: HandoffReason | null = !waitScreen || !running
-    ? null
-    : attention === "confirm" && confirmAged
-      ? confirmHandoffReason(confirmHandoffEvent(agentId, hooksEnabled))
-      : pickerOpen
-        ? "picker"
-        : stuckWaiting || (ptyQuiet && waitScreen.noInputBox)
-          ? "stuck_start"
-          : null;
+  const showWaitCard =
+    Boolean(waitScreen && running) &&
+    ((attention === "confirm" && confirmAged) ||
+      pickerOpen ||
+      stuckWaiting ||
+      (ptyQuiet && Boolean(waitScreen?.noInputBox)));
   function waitDecision(screen: WaitScreen, detail?: string | null): ChatDecision {
     return {
       key: `wait:${screen.title}`,
@@ -1232,17 +1224,11 @@ export default function ChatSurface({
                   ? [{ label: "关闭面板", title: "往终端按 Esc", onClick: () => onApprovalKey?.("esc") }]
                   : [],
               }
-            : waitReason && waitScreen
+            : showWaitCard && waitScreen
               ? waitDecision(waitScreen)
               : null;
   // 出了新问题就滚到底：卡片贴着输入框，不能藏在视口外
   const decisionKey = decision?.key ?? null;
-  // 通用卡 = 聊天层没接住的一次（设置「诊断」里的计数，排下一步该补什么）：同一张卡只记一次
-  const waitCardKey = decision?.screen?.live ? decisionKey : null;
-  useEffect(() => {
-    if (waitCardKey && waitReason) recordChatHandoff(agentId, waitReason);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitCardKey]);
   useEffect(() => {
     if (decisionKey) requestAnimationFrame(scrollBottom);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1545,11 +1531,6 @@ export default function ChatSurface({
       )}
     </>
   );
-  // 「测试版」收进模型菜单底部一行（2026-10-23）：点进去说这一家在聊天里能做到哪一步、哪些要回终端
-  const openTerminalFromBeta = () => {
-    noteHandoff("user_switch", "beta");
-    onOpenTerminal();
-  };
   // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
   const metaRight =
     (launchPickOpen || resumePickOpen || launching) && onPickLaunch ? (
@@ -1572,7 +1553,7 @@ export default function ChatSurface({
           relay={launchPick?.resumePick ? relayMenu : null}
           imageKind={imageKind}
           onImageWarning={setImageWarning}
-          onOpenTerminal={openTerminalFromBeta}
+          onOpenTerminal={onOpenTerminal}
         />
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
@@ -1598,7 +1579,7 @@ export default function ChatSurface({
         relay={relayMenu}
         imageKind={imageKind}
         onImageWarning={setImageWarning}
-        onOpenTerminal={openTerminalFromBeta}
+        onOpenTerminal={onOpenTerminal}
         onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
         // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
         next={
@@ -1719,10 +1700,7 @@ export default function ChatSurface({
                   {onTogglePeek && (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!peek) noteHandoff("user_stuck", "peek");
-                        onTogglePeek();
-                      }}
+                      onClick={onTogglePeek}
                       className="rounded-md border border-field bg-raised px-3 py-1.5 text-xs text-l2 hover:bg-inset hover:text-l1"
                     >
                       {peek ? "终端已露出" : "露出终端"}
@@ -1730,10 +1708,7 @@ export default function ChatSurface({
                   )}
                   <button
                     type="button"
-                    onClick={() => {
-                      noteHandoff("user_stuck", "open");
-                      onOpenTerminal();
-                    }}
+                    onClick={onOpenTerminal}
                     className="rounded-md border border-field bg-raised px-3 py-1.5 text-xs text-l2 hover:bg-inset hover:text-l1"
                   >
                     打开终端处理
@@ -1911,18 +1886,8 @@ export default function ChatSurface({
           {decision && (
             <ChatDecisionCard
               decision={decision}
-              onOpenTerminal={() => {
-                noteHandoff("user_decision", decisionKind(decision.key));
-                onOpenTerminal();
-              }}
-              onPeek={
-                onTogglePeek && !peek
-                  ? () => {
-                      noteHandoff("user_decision", decisionKind(decision.key));
-                      onTogglePeek();
-                    }
-                  : undefined
-              }
+              onOpenTerminal={onOpenTerminal}
+              onPeek={onTogglePeek && !peek ? onTogglePeek : undefined}
               onReportMismatch={
                 onReportMismatch
                   ? () => onReportMismatch("decision", { title: decision.title, options: decisionOptionLabels(decision) })
@@ -1962,10 +1927,7 @@ export default function ChatSurface({
               {onTogglePeek && !peek && !liveReplyCapable && quiet && (
                 <button
                   type="button"
-                  onClick={() => {
-                    noteHandoff("user_live");
-                    onTogglePeek();
-                  }}
+                  onClick={onTogglePeek}
                   className="shrink-0 rounded-sm px-1 text-l4 underline decoration-dotted underline-offset-2 hover:text-l2"
                 >
                   看实时输出

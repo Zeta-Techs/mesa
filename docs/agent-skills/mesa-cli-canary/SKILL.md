@@ -191,15 +191,13 @@ report.md 最后一节「上游通道雷达（不算红）」，以及仓库 iss
 
 ## 每两周一次：哪些家可以摘「测试版」
 
-条件（`docs/design-chat-fidelity.md` §4）：这家连续两周金丝雀没报红，且「转到终端」计数里「等确认，聊天卡上认不出菜单」「等确认，这家没有精确状态」基本为 0。
+条件（`docs/design-chat-fidelity.md` §4）：这家连续两周金丝雀没报红，且日常等确认在聊天卡上都能接住。
 
 ```bash
 gh run list --workflow cli-canary.yml --limit 14 --json conclusion,createdAt
-# 计数在用户本机 Mesa 的数据库里：macOS ~/Library/Application Support/ccode/app.db；Windows %APPDATA%\ccode\app.db；Linux ~/.config/ccode/app.db
-sqlite3 "<app.db 路径>" "SELECT agent, reason, detail, SUM(count) FROM chat_handoff_events WHERE day >= date('now','-14 day') GROUP BY agent, reason, detail ORDER BY 4 DESC;"
 ```
 
-只读这个数据库，不写。列出达标的家，等用户确认后再把 `CHAT_FIDELITY` 里那家的 `beta` 改成 `false`，同步说明书里列「测试版」的那句。
+列出达标的家，等用户确认后再把 `CHAT_FIDELITY` 里那家的 `beta` 改成 `false`，同步说明书里列「测试版」的那句。
 
 ## 报告（中文，最后一条消息）
 

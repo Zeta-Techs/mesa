@@ -14,9 +14,8 @@ export type FidelityTier = 1 | 2 | 3 | 4;
 export interface ChatFidelity {
   tier: FidelityTier;
   /**
-   * 还标不标「测试版」。摘掉的条件（docs/design-chat-fidelity.md §4）：连续两周金丝雀全绿，且设置「诊断 → 聊天层转到终端」里
-   * 这家的「等确认，聊天卡上认不出菜单」「等确认，这家没有精确状态」基本为 0。达标把这一家改成 false 即可。
-   * 第三、四档本来就承诺不了完整，不叫测试版，固定写「简化」
+   * 还标不标「测试版」。摘掉的条件（docs/design-chat-fidelity.md §4）：连续两周金丝雀全绿，且日常等确认在聊天卡上都能接住。
+   * 达标把这一家改成 false 即可。第三、四档本来就承诺不了完整，不叫测试版，固定写「简化」
    */
   beta: boolean;
   /** 这一家在聊天里的状态、审批、正在写的字从哪来（一句话，给人看） */

@@ -26,7 +26,6 @@ import {
 } from "../hotkeys";
 import type { TerminalProgress } from "../terminal-notify";
 import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
-import { recordChatHandoff, switchState } from "../chat-handoff-log";
 import { currentVerifiedVersion } from "../cli-verified";
 import { chatFidelity, tierLabel, versionTrust } from "../chat-fidelity";
 import {
@@ -658,11 +657,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   }
 
   /** 右上角 >_ 与快捷键同一动作：聊天 ↔ 终端 */
-  function toggleSurface(via: "tab-bar" | "hotkey") {
-    if (focusedSurfaceMode === "chat") {
-      const st = statuses[focusedId];
-      recordChatHandoff(st?.agentId, "user_switch", `${via}-${switchState(st)}`);
-    }
+  function toggleSurface() {
     switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
   }
 
@@ -734,7 +729,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         label: "打开终端",
         hint: "切到这段对话的终端画面",
         run: () => {
-          recordChatHandoff(agent, "user_switch", "slash");
           setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
           useAppStore.getState().ackOnboarding("terminal");
         },
@@ -3375,7 +3369,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const el = document.activeElement;
       if (el instanceof HTMLElement && el.closest(".xterm")) el.blur();
       markCoachTipSeen("surfaceKey");
-      toggleSurfaceRef.current("hotkey");
+      toggleSurfaceRef.current();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -3716,7 +3710,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               onClick={(e) => {
                 // 用鼠标来回切到第 3 下时提醒快捷键（shortcut-nudges.tsx）：挂在按钮下面
                 noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
-                toggleSurface("tab-bar");
+                toggleSurface();
               }}
               aria-pressed={focusedSurfaceMode !== "chat"}
               title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${

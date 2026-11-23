@@ -123,7 +123,6 @@ mod pty_input;
 mod term_query;
 mod program_status;
 mod chat_channel;
-mod chat_handoff_log;
 mod context_breakdown;
 mod reader;
 mod research_quality;
@@ -1138,9 +1137,6 @@ pub fn run() {
             chat_channel::chat_channel_settle_interrupted,
             chat_channel::chat_channel_reply,
             chat_channel::chat_channel_interrupt,
-            chat_handoff_log::chat_handoff_record,
-            chat_handoff_log::chat_handoff_summary,
-            chat_handoff_log::chat_handoff_clear,
             context_breakdown::context_breakdown,
             ai::ai_prompt,
             ai::ai_commit_message,

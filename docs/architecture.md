@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-23 · 移除「聊天层转到终端」设置模块与前后端计数
+
+用户查看设置「诊断 → 聊天层转到终端」模块后反馈「这个模块感觉没啥用 删了吧」（日常计数中 95% 是用户主动点顶部切换钮在聊天与终端间切换，既占诊断页篇幅也无实际诊断价值）。定下：整体移除 `ChatHandoffStatsPanel.tsx`、`chat-handoff-log.ts`、`chat_handoff_log.rs`、`tests/chat-handoff-log.test.ts`、各处 `recordChatHandoff` 埋点及诊断包里的 `chat-handoffs.json`。
+
 ### 2026-11-23 · AGENTS.md 严控 22 KB 以内，产品决策与子系统细则拆入 product-decisions.md
 
 用户发现 Antigravity 每次做完任务不会按约定自动提交，排查实证根因是 `AGENTS.md` 涨到 56.5 KB，撞上 Antigravity 单规则文件 24,000 字节（24 KB）硬截断上限，第 138 行往后的提交纪律、私有暂存区流程与关键约定全部在注入上下文前被裁掉。拍板采取「瘦身 `AGENTS.md`」方案：① `AGENTS.md` 总大小严控 **22 KB 以内**（本批压缩至约 14.7 KB），只保留每会话必守的通用硬约束、Git 提交与私有暂存区流程、文档同步表、构建/验收锚点与主题索引，且把提交纪律与文档同步表置顶靠前；② 原「已确认的产品决策」全文、各子系统实现细则、测试/CI/发版细则与说明书写法细则原样拆入 `docs/conventions/product-decisions.md` 按需 Grep 检索，一条不丢；③ 以后新拍板的单一领域规则不再往 `AGENTS.md` 堆长段，只落 `docs/conventions/` 并在 `AGENTS.md` 留指针。

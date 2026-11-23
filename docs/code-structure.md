@@ -187,7 +187,6 @@ types.ts                   # 共享 DTO 与小闭集总表（全前端 100+ 文�
   components/FeedbackModal.tsx # 反馈表单弹层（帮助菜单、诊断弹窗「附到反馈」、设置→关于三入口）：端点已配只走端点，否则用户选发送方式（邮件应用/网页邮箱/邮箱直发）；附件=截图缩略图+诊断包（表单内现导出或 attachDiagnostics 带入，后端按路径白名单自读）；邮件类通道附件落盘+交接提示（清空/保留草稿由人定）；邮箱直发配置视图（保存并测试、结果就地显示、首存失败回滚授权码）
   components/UpdateNotes.tsx # 更新说明渲染（Markdown→浅底框，原始 HTML 转义、链接/图片只留文字）；设置→更新卡片与帮助「检查更新」弹窗共用
   components/UpdateProgressBar.tsx # 更新下载进度条（总大小未知画不定进度、已知按真实字节，不用固定宽度占位）＋ UpdateInstallProgress 整块进度（分段文案 + 百分比 + 条，下完保持满格换字）；设置→更新卡片与帮助「检查更新」弹窗共用
-  components/ChatHandoffStatsPanel.tsx # 设置「诊断」→ 聊天层转到终端：按 agent + 原因 + 细分的次数排序、近 30 天 / 全部、清空
 components/BackgroundTasksPanel.tsx  # 设置页「后台任务」卡（SettingsPage 唯一挂载）：active_background_runs 2 秒轮询列 Mesa 替你跑的无头 Agent（定时任务、起名摘要等），run_cancel 停单条——给无头任务一个人能停的出口，不用干等超时（tests/background-tasks-panel.test.ts）
   components/ChatBetaBadge.tsx # 聊天层「测试版」说明（useChatBeta + ChatBetaNotes）：2026-10-23 起在模型菜单底部一行的二级页，说这一家的档与要回终端的事，CLI 比核对过的新时菜单里那一行带点并提醒（芯片上不挂点）
   components/HelpDialogs.tsx # 帮助菜单三个内容弹窗：诊断与日志（日志按级别筛/计数/复制 + 导出诊断包 → 附到反馈）、检查更新（打开即查；状态/更新说明/下载进度/安装，安装走 useAppUpdateInstall）、关于（图标/版本复制/更新状态只读 store/仓库与许可入口，许可页同弹窗切换）；快捷键速查曾短暂存在后按「不与命令面板/设置/说明书重复」删除（2026-10-12）
@@ -706,10 +705,6 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # （tests/app-update.test.ts）；真正 check()/安装在 store.ts
   chat-step-drag.ts          # 侧栏把对话拖进某一步的纯逻辑（2026-11-20，tests/chat-step-drag.test.ts）：能不能拖（工作区 / 精读 / 内部对话不给）、⋯ 能不能移出、
                              #   拖时补出还没有对话的步骤落点、接力对话各段一起写（stepWriteTargets）；落库走 sessions::set_session_step
-  chat-handoff-log.ts        # 聊天层转到终端记数（2026-10-22，tests/chat-handoff-log.test.ts）：原因闭集 HANDOFF_REASONS（与 chat_handoff_log.rs
-                             # REASONS 同名同序，测试钉住）、说法、确认卡种类 decisionKind、同家同原因 3 秒去重；记录失败静默。
-                             # 记数点：标签栏与 /terminal 切终端（TerminalPage），ChatSurface 出「终端在等你」卡（认不出的确认 / 卡住 / 选择器）、卡片与「看实时输出」按钮；
-                             # 查看在 components/ChatHandoffStatsPanel.tsx（设置「诊断」）
   chat-relay.ts              # 聊天里换一家接着做（design-chat-relay.md）：接力抬头拆分（splitRelayPrompt / userSaid，与 relay_brief.rs 共读 tests/fixtures/relay-prompts.json）、
                              #   换配置层接力组两层（relayAgentRows 一家一行 → relayModeRows 用过的那家「接回 / 新开」）、输入框上那条 notice 文案
   chat-handoff.ts            # 聊天⇄终端交接：等确认有没有精确状态（confirmHandoffEvent）、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠会不会打开选择器、
@@ -1484,8 +1479,6 @@ src-tauri/src/
                              #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
-  chat_handoff_log.rs        # 聊天层转到终端的计数（2026-10-22）：app.db chat_handoff_events（日 × agent × CLI 版本 × 原因 × 细分），
-                             #   原因闭集、细分只收短标识、留 180 天；summary_for_bundle 进诊断包 chat-handoffs.json。只计数不记文字
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
                              #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode 1.x --port + 口令、
                              #   OpenCode 2.x 自起私有 serve（start_opencode2_server，stdin 租约）+ TUI --server、

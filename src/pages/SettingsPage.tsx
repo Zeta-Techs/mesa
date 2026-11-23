@@ -1,6 +1,5 @@
 import BackgroundTasksPanel from "../components/BackgroundTasksPanel";
 import { classifierNoticeAutoSkip, setClassifierNoticeAutoSkip } from "../cli-notices";
-import ChatHandoffStatsPanel from "../components/ChatHandoffStatsPanel";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookUser,
@@ -4575,7 +4574,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
         <BackgroundTasksPanel />
-        <ChatHandoffStatsPanel />
         <Card
           title="应用日志"
           hint="最近 100 条；重启 Mesa 后清空"
