@@ -700,6 +700,7 @@ test("fetch：每篇只试第 1 条直链不换链，连续 3 次 HTTP 403 即�
 import sys, types
 sys.path.insert(0, sys.argv[1])
 import lit_records as m
+m.utf8_stdio()  # 直调 cmd_fetch 绕过了 main()：Windows 管道默认 cp1252，中文进度一打印就崩
 tried = []
 def fake_candidates(doi, allow_preprint=False):
     if doi == "10.1000/nolink": return []

@@ -905,12 +905,15 @@ test("Blender validates provenance and dimensions without executing Blender; Ori
     }));
     result = run(script, ["--params", batchFile, "--validate"]);
     assert.equal(result.status, 0, result.stderr);
+    // 成图自检要 Pillow：CI 不装，缺时只验线宽换算（同 schematic-forge.test.ts 口径）
+    const hasPillow = spawnSync(python, ["-c", "import PIL"], { encoding: "utf8" }).status === 0;
     const illusCheck = spawnSync(python, ["-c", [
       "import sys, json, pathlib",
       "sys.path.insert(0, sys.argv[1])",
       "import scene_illus as SI",
       "px = SI.compute_freestyle_px(1800, 183.0, 0.75)",
       "assert 2.0 <= px <= 3.2, px",
+      ...(hasPillow ? [] : ["sys.exit(0)"]),
       "from PIL import Image, ImageDraw",
       "d = pathlib.Path(sys.argv[2])",
       "im_empty = Image.new('RGBA', (200, 200), (0, 0, 0, 0)); p_empty = d / 'empty.png'; im_empty.save(p_empty)",
