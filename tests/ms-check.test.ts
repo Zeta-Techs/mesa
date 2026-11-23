@@ -217,3 +217,138 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Pandoc 语法雷区：双约等号 ~ 误配下标、表格未转义 |e| 错列、列表前缺空行与漏方括号 (@Key) 全部检出", () => {
+  const root = mkdtempSync(join(tmpdir(), "ms-check-pandoc-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  writeFileSync(
+    join(root, "manuscript/draft.md"),
+    [
+      "---",
+      "title: Boride HER Review",
+      "---",
+      "",
+      "## Mechanisms",
+      "",
+      "Legitimate subscripts H~2~O, ΔG~H\\*~ and inline code `~10` or math $a \\sim 20$ stay clean.",
+      "Overpotential dropped from ~120 to ~38 mV across the series (@Wang2024).",
+      "Single approximate value ~45 mV needs review.",
+      "",
+      "| Material | Charge transfer | Source |",
+      "| --- | --- | --- |",
+      "| Co-B | 1.34 |e| | [@Wang2024] |",
+      "| Ni-B | 0.82 \\|e\\| | [@Wang2024] |",
+      "",
+      "Key takeaways below:",
+      "- First point without blank line before list.",
+      "- Second point.",
+      "",
+      "## Conclusions",
+      "",
+      "Done.",
+    ].join("\n"),
+  );
+  try {
+    const r = run(["--root", root], root);
+    assert.equal(r.status, 1, r.stderr + r.stdout);
+    const list = items(root);
+    assert.equal(find(list, "MD-TILDE-BLOCK")[0]?.status, "blocked", JSON.stringify(list));
+    assert.equal(find(list, "MD-TILDE-WARN")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "MD-TABLE-PIPE")[0]?.status, "blocked", JSON.stringify(list));
+    assert.match(find(list, "MD-TABLE-PIPE")[0]?.evidence?.detail ?? "", /表头 3 列、本行 5 列/);
+    assert.equal(find(list, "MD-LIST-BLANK")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "MD-PAREN-CITE")[0]?.status, "blocked", JSON.stringify(list));
+    assert.match(find(list, "MD-PAREN-CITE")[0]?.evidence?.detail ?? "", /\(@Wang2024\)/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("check_pdf_text.py：检出高图图注侵入页脚页码区，正常排版放行，--skip-layout 跳过版面检查", () => {
+  const hasFit = spawnSync(python, ["-c", "import pymupdf"], { encoding: "utf8" }).status === 0;
+  if (!hasFit) return;
+  const checkPdf = resolve("src-tauri/resources/skills/quarto-render/scripts/check_pdf_text.py");
+  const root = mkdtempSync(join(tmpdir(), "pdf-footer-"));
+  const okPdf = join(root, "ok.pdf");
+  const badPdf = join(root, "bad.pdf");
+  const mk = spawnSync(python, ["-c", [
+    "import sys, pymupdf",
+    "doc = pymupdf.open(); p = doc.new_page(width=595, height=842)",
+    "p.insert_text((72, 100), 'Figure 1. Clean caption well above footer.', fontsize=10)",
+    "p.insert_text((290, 800), '12', fontsize=10)",
+    "doc.save(sys.argv[1]); doc.close()",
+    "doc2 = pymupdf.open(); p2 = doc2.new_page(width=595, height=842)",
+    "p2.insert_text((72, 796), 'Figure 3. Very tall composite figure caption colliding with page number.', fontsize=10)",
+    "p2.insert_text((290, 800), '12', fontsize=10)",
+    "doc2.save(sys.argv[2]); doc2.close()",
+  ].join("\n"), okPdf, badPdf], { encoding: "utf8" });
+  assert.equal(mk.status, 0, mk.stderr);
+  try {
+    const rOk = spawnSync(python, [checkPdf, okPdf], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.equal(rOk.status, 0, rOk.stdout + rOk.stderr);
+    assert.match(rOk.stdout, /无页脚碰撞/);
+
+    const rBad = spawnSync(python, [checkPdf, badPdf], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.equal(rBad.status, 1, rBad.stdout + rBad.stderr);
+    assert.match(rBad.stdout, /页脚\/底边碰撞/);
+    assert.match(rBad.stdout, /图注\/表题/);
+
+    const rSkip = spawnSync(python, [checkPdf, badPdf, "--skip-layout"], { encoding: "utf8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    assert.equal(rSkip.status, 0, rSkip.stdout + rSkip.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("投稿体例卫生与绝对路径泄露：检出零散加粗、破折号过密、粗体清单、内部策划词、模板修辞、全称绝对否定与本机绝对路径", () => {
+  const root = mkdtempSync(join(tmpdir(), "ms-check-hygiene-"));
+  mkdirSync(join(root, "manuscript"), { recursive: true });
+  mkdirSync(join(root, "figures"), { recursive: true });
+  // 构造 >500 词正文以便测试长破折号千词密度
+  const filler = "Catalytic activity depends on surface reconstruction under alkaline polarization conditions in boride electrocatalysts. ";
+  const denseEmdash = Array.from({ length: 25 }, () => `${filler}The interface — governed by dynamic leaching — evolves rapidly across cycles.`).join(" ");
+  const boldList = Array.from({ length: 8 }, (_, i) => `- **Point ${i + 1}**: Surface boron dissolution alters kinetics.`).join("\n");
+  writeFileSync(
+    join(root, "manuscript/draft.md"),
+    [
+      "## Introduction",
+      "",
+      "The **alkaline boride interface** shows a **38 mV** overpotential. Rather than conventional oxide catalysis, we observe a stark contrast that proves indispensable and unmistakably central, and we delve into this multifaceted landscape.",
+      "",
+      "This review follows an eight-section sandwich architecture across the reviewed corpus under Pillar I and Track A, offering a forensic verdict based on abstract-level reporting.",
+      "",
+      "Across the entire peer-reviewed literature, not one study reports post-HER support XPS, giving zero reports (0/6).",
+      "",
+      denseEmdash,
+      "",
+      boldList,
+      "",
+      "## Conclusions",
+      "",
+      "Summary.",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(root, "manuscript/voice-profile.md"),
+    "## Voice Profile\n\n- **Benchmark**: stark contrast — indispensable.\n",
+  );
+  writeFileSync(
+    join(root, "figures/README.md"),
+    "# Figures\n\nBuilt via [script](file:///Users/alice/ccode/workspaces/demo/draft/analysis/run.py).\n",
+  );
+  try {
+    const r = run(["--root", root], root);
+    assert.equal(r.status, 1, "figures/README.md 残留本机绝对路径应拦下");
+    const list = items(root);
+    assert.ok(!list.some((i) => i.id.includes("voice-profile")), "voice-profile.md 属于配套文件不进正文扫描");
+    assert.equal(find(list, "PROSE-BOLD")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PROSE-BOLD-LIST")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PROSE-EMDASH")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PROSE-INTERNAL-TERMS")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PROSE-CLICHE")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PROSE-ABS-NEG")[0]?.status, "needs_human", JSON.stringify(list));
+    assert.equal(find(list, "PATH-ABS-LEAK@figures/README.md")[0]?.status, "blocked", JSON.stringify(list));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

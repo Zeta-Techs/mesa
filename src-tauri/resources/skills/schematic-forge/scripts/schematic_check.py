@@ -345,6 +345,55 @@ def seg_hits_rect(p, q, r, shrink=0.3):
     return False
 
 
+_STRICT_AI_JOURNAL_RE = re.compile(
+    r"(?:去向\s*[:：]\s*投期刊|目标期刊\s*[:：]|"
+    r"\b(?:Springer|Nature|EER|Electrochemical\s+Energy\s+Reviews|Elsevier|Cell|Joule|Chem|Matter|"
+    r"ACS|JACS|Angew|Wiley|Adv\.\s*Mater|Advanced\s+Materials|EES|Energy\s+Environ\.\s*Sci|"
+    r"RSC|Science|PNAS|Nat\.\s*(?:Rev|Energy|Catal|Commun|Mater))\b)",
+    re.I,
+)
+
+
+def detect_journal_target(root: Path) -> str | None:
+    """读取工作区 TASK.md（若存在）判断是否正式投期刊，返回命中的去向/期刊声明行。"""
+    task_md = root / "TASK.md"
+    if not task_md.is_file():
+        return None
+    try:
+        head = task_md.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return None
+    for line in head.splitlines():
+        s = line.strip().lstrip("-* ").strip()
+        if not s:
+            continue
+        if ("去向" in s or "目标期刊" in s) and _STRICT_AI_JOURNAL_RE.search(s):
+            return s[:80]
+    return None
+
+
+def make_thumb360(png_path: Path) -> Path | None:
+    """为成品 PNG 自动伴生 360 px 宽缩略图，便于冷读验证缩印到单栏/双栏后的可读性。"""
+    if not png_path.is_file():
+        return None
+    try:
+        from PIL import Image
+        with Image.open(png_path) as im:
+            w, h = im.size
+            if w <= 0 or h <= 0:
+                return None
+            out = png_path.with_name(f"{png_path.stem}-thumb360.png")
+            if w <= 360:
+                resized = im.copy()
+            else:
+                nh = max(1, round(h * 360 / w))
+                resized = im.resize((360, nh), Image.Resampling.LANCZOS)
+            resized.save(out)
+            return out
+    except Exception:
+        return None
+
+
 def main():
     F.utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -537,14 +586,131 @@ def main():
                         if image_patch_clean_contrast(im_cached, img_r, ink, txt_hex, bg_under):
                             continue
                     add(f"ONIMG-{lid}-{el['id']}", "schematic_layout", "needs_human", f"{owner} 的文字压在图片 {el['id']} 上，背景杂时看不清")
-        # 标签像句子（期刊示意图）
-        if cv["purpose"] == "journal" and not lid.endswith("#label"):
+        # 标签像句子 / 图注腔（期刊示意图 / 图形摘要；按原始段落检查，避免窄框自动换行绕过）
+        if cv["purpose"] in ("journal", "graphical-abstract") and not lid.endswith("#label"):
+            para_lines = [F.plain_text(p).strip() for p in raw_text.split("\n") if F.plain_text(p).strip()]
+            if not para_lines:
+                para_lines = ["".join(r[0] for r in l["runs"]).strip() for l in lay["lines"]]
+            for line in para_lines:
+                if not line or is_chem_formula_or_eq(line):
+                    continue
+                words = len(re.findall(r"[A-Za-z]+", line)) + len([c for c in line if F.is_cjk(c)]) / 2
+                has_colon_prose = words >= 6 and bool(re.search(r"[:：]", line)) and not is_chem_formula_or_eq(line.split(":", 1)[-1].split("：", 1)[-1])
+                has_sentence_end = words >= 6 and bool(re.search(r"[.。!?！？]\s*$", line))
+                too_wordy = words >= 10
+                if has_colon_prose or has_sentence_end or too_wordy:
+                    add(f"SENTENCE-{lid}", "schematic_text", "needs_human",
+                        f"{owner} 的标签像句子或过长（「{line[:36]}」）：期刊示意图标签宜用 2–4 词名词短语，解释进图注")
+                    break
+
+    # 文字密度门禁、相对栏宽中位字号与重边框卡片拥挤检测（期刊示意图 / 图形摘要）
+    area_cm2 = (cv["width_mm"] * cv["height_mm"]) / 100.0
+    if cv["purpose"] in ("journal", "graphical-abstract") and area_cm2 > 0:
+        total_words = 0.0
+        label_pts = []
+        for lid, lay in layouts.items():
+            st_pt = float(lay["style"].pt)
+            if not lid.endswith("#label"):
+                label_pts.append(st_pt)
             for l in lay["lines"]:
                 line = "".join(r[0] for r in l["runs"])
-                words = len(re.findall(r"[A-Za-z]+", line)) + len([c for c in line if F.is_cjk(c)]) / 2
-                if words >= 6 and re.search(r"[:：]", line) and not is_chem_formula_or_eq(line.split(":", 1)[-1].split("：", 1)[-1]):
-                    add(f"SENTENCE-{lid}", "schematic_text", "needs_human", f"{owner} 的标签像一句话（「{line[:30]}」）：期刊示意图标签用 2–4 词名词短语，解释进图注")
-                    break
+                total_words += len(re.findall(r"[A-Za-z0-9]+", line)) + len([c for c in line if F.is_cjk(c)]) / 2.0
+        density = total_words / area_cm2
+        if density > 0.70:
+            add("DENSITY", "schematic_style", "blocked",
+                f"图内文字密度 {density:.2f} words/cm² 严重过高（上限 0.70，顶刊建议 0.20–0.45，总词数约 {total_words:.0f} / 面积 {area_cm2:.1f} cm²）：删除冗余或双写文字并把解释挪进图注")
+        elif density > 0.50:
+            add("DENSITY", "schematic_style", "needs_human",
+                f"图内文字密度 {density:.2f} words/cm² 偏高（顶刊建议 0.20–0.45，总词数约 {total_words:.0f} / 面积 {area_cm2:.1f} cm²）：删去解释性句子挪进图注，保留核心名词短语与符号")
+        if label_pts and cv["width_mm"] > 0:
+            label_pts.sort()
+            med_pt = label_pts[len(label_pts) // 2]
+            width_pt = cv["width_mm"] / F.MM_PER_PT
+            rel_scale = med_pt / width_pt
+            # 28 篇 Nature 顶刊 Fig.1 基准：中位字号约占图宽 2.2%，25% 分位 1.65%
+            if rel_scale < 0.0165 and len(label_pts) >= 4:
+                rec_pt = round(0.0217 * width_pt, 1)
+                add("TEXT-SCALE", "schematic_style", "needs_human",
+                    f"相对栏宽中位字号偏小：{med_pt:g} pt 仅占图宽 {cv['width_mm']:g} mm 的 {rel_scale * 100:.2f}%（顶刊 25% 分位为 1.65%、中位 2.2%，该宽下建议约 {min(8.5, rec_pt):g} pt 或收窄栏宽至 120–136 mm）")
+        # 同图文字重复度检查（防止「图上 callout + 图下清单」双写文字）
+        sig_tokens = []
+        for lid, lay in layouts.items():
+            owner = lid.split("#")[0]
+            own_el = index.get(owner)
+            if own_el and own_el.get("decorative"):
+                continue
+            plain = F.plain_text(lay.get("raw_text", "")).strip()
+            if not plain or is_chem_formula_or_eq(plain):
+                continue
+            toks = {
+                w.lower() for w in re.findall(r"[A-Za-z]{3,}", plain)
+                if w.lower() not in _STOP_UNITS
+            }
+            toks |= set(re.findall(r"[\u4e00-\u9fff]{2,}", plain))
+            if len(toks) >= 3:
+                sig_tokens.append((owner, plain[:32], toks))
+        dup_pairs = []
+        for i, (o1, s1, t1) in enumerate(sig_tokens):
+            for o2, s2, t2 in sig_tokens[i + 1:]:
+                if o1 == o2:
+                    continue
+                inter = t1 & t2
+                overlap = len(inter) / max(1, min(len(t1), len(t2)))
+                if len(inter) >= 3 and overlap >= 0.60:
+                    dup_pairs.append(f"{o1}↔{o2}（「{s1}」/「{s2}」）")
+        if dup_pairs:
+            add("DUP-TEXT", "schematic_text", "needs_human",
+                f"疑似同图文字双写（{'；'.join(dup_pairs[:3])}）：每个阶段的核心信息只在图元旁标一次，避免 callout 与下方清单重复")
+        # 双栏宽图中 3D 主视觉过小检查（防 5 窄列硬挤）
+        if cv["width_mm"] >= 150:
+            tiny_heroes = [
+                f"{el['id']}（宽 {el['w']:g} mm）"
+                for el in spec["elements"]
+                if el["type"] == "hero_panel" and el["w"] < 28.0
+            ]
+            if tiny_heroes:
+                add("HERO-TINY", "schematic_layout", "needs_human",
+                    f"宽图中的主视觉偏小（{'、'.join(tiny_heroes[:4])}，183 mm 双栏建议 ≥ 32 mm）：避免 5 窄列硬排，改用左 3+2 双轨并行 → 右侧汇流塔或拆图")
+        # 圆形放大视窗（Zoom Medallion）内文字贴边检查：文字落在带描边大圆/椭圆内但距内壁不足 2.0 mm 时提醒
+        medallions = [
+            el for el in spec["elements"]
+            if el["type"] == "ellipse" and el["w"] >= 24.0 and el["h"] >= 24.0
+            and F.color(spec, el.get("stroke", "none")) is not None
+        ]
+        for med in medallions:
+            mx, my, mw, mh = F.bbox(med)
+            cx, cy = mx + mw / 2.0, my + mh / 2.0
+            rx, ry = mw / 2.0, mh / 2.0
+            safe_rx, safe_ry = rx - 2.5, ry - 2.5
+            if safe_rx <= 2.0 or safe_ry <= 2.0:
+                continue
+            cramped = []
+            for lid, lay in layouts.items():
+                owner = lid.split("#")[0]
+                if owner == med["id"]:
+                    continue
+                ix, iy, iw, ih = lay["ink"]
+                icx, icy = ix + iw / 2.0, iy + ih / 2.0
+                # 只检查中心落在该圆窗内部的文字块（严格在椭圆内即纳入）
+                if ((icx - cx) / rx) ** 2 + ((icy - cy) / ry) ** 2 >= 1.0:
+                    continue
+                corners = ((ix, iy), (ix + iw, iy), (ix, iy + ih), (ix + iw, iy + ih))
+                if any(((px - cx) / safe_rx) ** 2 + ((py - cy) / safe_ry) ** 2 > 1.0 for px, py in corners):
+                    cramped.append(owner)
+            if cramped:
+                uniq = list(dict.fromkeys(cramped))
+                add(f"ELLIPSE-MARGIN-{med['id']}", "schematic_layout", "needs_human",
+                    f"圆形视窗 {med['id']} 内的文字（{'、'.join(uniq[:4])}）距圆环内壁不足 2.5 mm：适当缩小内部内容或放大圆径，留出 ≥ 2.5 mm 呼吸感")
+        heavy_cards = [
+            el["id"] for el in spec["elements"]
+            if el["type"] in ("header_card", "chevron")
+            or (el["type"] == "box" and el.get("role") not in ("backdrop", "panel", "zone")
+                and F.color(spec, el.get("stroke", "none")) is not None)
+        ]
+        n_hc_chev = sum(1 for el in spec["elements"] if el["type"] in ("header_card", "chevron"))
+        if len(heavy_cards) >= 10 or n_hc_chev >= 5:
+            add("BOX-CLUTTER", "schematic_style", "needs_human",
+                f"图内含 {len(heavy_cards)} 个带边框框卡/横幅（其中 header_card/chevron {n_hc_chev} 个），易呈 PPT 流程图感：期刊图建议改用白底分区细线、浅色底纹与 0.45–0.75 pt 圆点引出线")
 
     if source_text and n_pieces and not any(i["id"].startswith("SOURCE-") for i in items):
         add("SOURCE", "schematic_source", "passed", f"图上 {n_pieces} 段核心文字都在 brief.md / facts.md 里找到了原文")
@@ -570,6 +736,24 @@ def main():
                         continue
                     if any(seg_hits_rect(p, q, ink) for p, q in zip(c_pts, c_pts[1:])):
                         add(f"THROUGH-{el['id']}-{lid}", "schematic_layout", "needs_human", f"引出线 {el['id']} 穿过 {lid.split('#')[0]} 的文字")
+                # 检测引出线是否穿过无关前景图元（排除自身、引出目标所属元素、背板与包含该标注框的父面板）
+                _, tgt_node, _ = F.resolve_anchor(el["target"], index, image_rects, f"callout {el['id']} 的 target")
+                tgt_id = tgt_node["id"] if tgt_node else None
+                el_box = F.bbox(el)
+                for other in spec["elements"]:
+                    oid = other["id"]
+                    if oid in (el["id"], tgt_id):
+                        continue
+                    if other["type"] not in ("box", "header_card", "ellipse", "sphere", "chevron", "icon", "image", "figure"):
+                        continue
+                    if other.get("role") in ("backdrop", "panel", "zone"):
+                        continue
+                    or_box = F.bbox(other)
+                    if F.inside(el_box, or_box) or F.inside((c_pts[0][0], c_pts[0][1], 0, 0), or_box):
+                        continue
+                    if any(seg_hits_rect(p, q, or_box, shrink=0.5) for p, q in zip(c_pts, c_pts[1:])):
+                        add(f"CALLOUT-CROSS-{el['id']}-{oid}", "schematic_layout", "needs_human",
+                            f"引出线 {el['id']} 穿过无关图元 {oid}：调整标注框位置或避让目标路径")
             except F.SpecError:
                 pass
             continue
@@ -797,6 +981,7 @@ def main():
 
     # 渲染记录：缺字回报、人改过、重建
     rec_path = fig_dir / "render.json"
+    rec = None
     if not svg_path.is_file() or not rec_path.is_file():
         add("RENDER", "schematic_rebuild", "blocked", f"还没渲染：先跑 render_figure.py {srel}")
     else:
@@ -845,14 +1030,27 @@ def main():
                     add("REBUILD", "schematic_rebuild", "blocked",
                         f"图纸重建出的 SVG 与现有文件不一致（引用素材改过或渲染未同步）：重跑 render_figure.py {srel}",
                         R.rel(svg_path, root))
-        ai = rec.get("ai_elements") or []
-        if ai:
+    ai = (rec.get("ai_elements") if rec else None) or [
+        {"id": el["id"], "model": (el.get("source") or {}).get("model", "unknown")}
+        for el in spec["elements"]
+        if (el.get("source") or {}).get("kind") == "image-model"
+    ]
+    if ai:
+        ai_desc = "、".join(x["id"] + "：" + x["model"] for x in ai)
+        journal_hit = detect_journal_target(root)
+        if journal_hit and not spec.get("ai_policy_confirmed"):
+            add("AI-POLICY", "schematic_disclosure", "blocked",
+                f"TASK.md 声明正式投稿（{journal_hit}），但图内含 {len(ai)} 个生成式 AI 图像元素（{ai_desc}）：主流期刊（Springer Nature / Elsevier 等）严限或禁用生成式 AI 图像进科研图成品，改走 blender-research 三维渲染或纯矢量原语；确已核实目标期刊允许且经人批准时，在图纸顶层加 \"ai_policy_confirmed\": true 并在图注披露")
+        else:
             add("AI-USE", "schematic_disclosure", "needs_human",
-                f"图里有 {len(ai)} 个出图模型画的元素（{'、'.join(x['id'] + '：' + x['model'] for x in ai)}）：图注或方法里注明 AI 生成，并查目标期刊对 AI 图像的政策")
+                f"图里有 {len(ai)} 个出图模型画的元素（{ai_desc}）：图注或方法里注明 AI 生成，并查目标期刊对 AI 图像的政策")
 
+    png_path = fig_dir / f"{name}.png"
+    thumb_path = make_thumb360(png_path)
+    thumb_hint = f"（已伴生 360 px 缩略图 {R.rel(thumb_path, root)}，请一并看缩印可读性）" if thumb_path else ""
     add("COLD-READ", "schematic_review", "needs_human",
-        "多模态冷读与事实核对：用看图工具检查成品 PNG——视觉主体是否饱满（占面板 60%–75%）、四周留白是否均匀、引出线圆点是否指准对应结构位点、反应方向与数值是否忠于 brief.md / facts.md？（几何检查全过不等于图好看且准确）",
-        R.rel(fig_dir / f"{name}.png", root))
+        f"多模态冷读与事实核对：用看图工具检查成品 PNG{thumb_hint}——视觉主体是否饱满、四周留白是否均匀、文字密度是否克制、引出线圆点是否指准对应结构位点、反应方向与数值是否忠于 brief.md / facts.md？（几何检查全过不等于图好看且准确）",
+        R.rel(png_path, root))
     path = C.write_items(root, f"schematic-{name}.jsonl", items)
     return C.summary(items, path)
 

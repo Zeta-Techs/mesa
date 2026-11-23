@@ -78,20 +78,74 @@ def _fit_row_equal_width(Image, images, width_px: int, gap: int, pad: int):
 # 连图注放不进一页。两条都按 --width-cm（期刊栏宽）算，超了不出图，交给人按子论点拆成两张。
 MIN_PANEL_CM = 3.5
 MAX_HEIGHT_CM = 23.0
+SAFE_CAPTION_HEIGHT_CM = 20.5
+ALIGN_WIDTH_MAX_AR_RATIO = 1.5
+ALIGN_WIDTH_MIN_FILL_RATIO = 0.75
 
 
-def write_layout(out: Path, panels: list[Path], width_cm: float, align_width: bool = False) -> None:
+def write_layout(
+    out: Path,
+    panels: list[Path],
+    width_cm: float,
+    align_width: bool = False,
+    height_cm: float | None = None,
+    warnings: list[str] | None = None,
+) -> None:
     """拼板旁边落 <图>.json：新编号 (a)(b)… 各是哪个子图文件。figure_sources.py 顺着它找到每块的来源记录。"""
     record: dict[str, object] = {
         "width_cm": width_cm,
         "panels": [{"letter": chr(ord("a") + i), "source": str(p)} for i, p in enumerate(panels)],
     }
+    if height_cm is not None:
+        record["height_cm"] = round(height_cm, 2)
     if align_width:
         record["layout_mode"] = "align-width"
+    if warnings:
+        record["warnings"] = warnings
     out.with_suffix(".json").write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def check_readable(widths_px: list[int], height_px: int, dpi: int, align_width: bool = False) -> None:
+def _max_feasible_width_cm(
+    width_cm: float,
+    height_px: int,
+    fixed_px: int,
+    dpi: int,
+    target_cm: float,
+) -> float | None:
+    content_h = height_px - fixed_px
+    avail_h = target_cm / 2.54 * dpi - fixed_px
+    if content_h <= 0 or avail_h <= 0:
+        return None
+    scale = avail_h / content_h
+    if scale >= 1.0:
+        return round(width_cm, 1)
+    # 向下取整到 0.1 cm，留少量像素取整裕度
+    return max(0.5, int(width_cm * scale * 10) / 10.0)
+
+
+def check_align_width_rows(row_stats: list[tuple[int, float, float]]) -> list[str]:
+    """检查 --align-width 每行的宽高比极值比与有效面积占比，过大留白时给出清晰告警。"""
+    warnings: list[str] = []
+    for row_idx, ar_ratio, fill_ratio in row_stats:
+        if ar_ratio > ALIGN_WIDTH_MAX_AR_RATIO or fill_ratio < ALIGN_WIDTH_MIN_FILL_RATIO:
+            msg = (
+                f"第 {row_idx} 行开启 --align-width 后宽高比极值比达 {ar_ratio:.2f}×、"
+                f"有效图像面积占比仅 {fill_ratio * 100:.0f}%（阈值 ≤ {ALIGN_WIDTH_MAX_AR_RATIO}× 且 ≥ {int(ALIGN_WIDTH_MIN_FILL_RATIO * 100)}%），"
+                f"行内存在大片垂直留白：建议去掉 --align-width 改默认同排等高，或用 --rows 把高矮悬殊的子图拆到不同行"
+            )
+            warnings.append(msg)
+            print(f"warning: {msg}", file=sys.stderr)
+    return warnings
+
+
+def check_readable(
+    widths_px: list[int],
+    height_px: int,
+    dpi: int,
+    align_width: bool = False,
+    width_cm: float = 8.5,
+    fixed_px: int = 0,
+) -> None:
     narrow = [i for i, w in enumerate(widths_px) if w / dpi * 2.54 < MIN_PANEL_CM]
     height_cm = height_px / dpi * 2.54
     problems = []
@@ -102,10 +156,30 @@ def check_readable(widths_px: list[int], height_px: int, dpi: int, align_width: 
             hint += "，或扁宽图与近方图同排时加 --align-width 按等列宽分配"
         problems.append(f"{letters} 印出来不到 {MIN_PANEL_CM} cm 宽，字读不清：{hint}")
     if height_cm > MAX_HEIGHT_CM:
-        problems.append(f"整张高 {height_cm:.1f} cm，超过一页能放的 {MAX_HEIGHT_CM} cm：按子论点拆成两张图")
+        max_w = _max_feasible_width_cm(width_cm, height_px, fixed_px, dpi, MAX_HEIGHT_CM)
+        safe_w = _max_feasible_width_cm(width_cm, height_px, fixed_px, dpi, SAFE_CAPTION_HEIGHT_CM)
+        min_w_cm = (min(widths_px) / dpi * 2.54) if widths_px else 0.0
+        extra = ""
+        if max_w is not None:
+            scaled_min = min_w_cm * (max_w / width_cm) if width_cm > 0 else 0.0
+            if scaled_min >= MIN_PANEL_CM:
+                pct = max(45, min(95, round((safe_w or max_w) / max(width_cm, 17.0) * 100)))
+                safe_part = f"（留图注安全高 {SAFE_CAPTION_HEIGHT_CM} cm 建议 --width-cm {safe_w:.1f} 或 Quarto width=\"{pct}%\"）" if safe_w else ""
+                extra = f"；若不拆图，当前排版不超 {MAX_HEIGHT_CM} cm 的最大 --width-cm 约为 {max_w:.1f} cm{safe_part}"
+            else:
+                extra = f"；即使把整宽压到 {max_w:.1f} cm，最窄子图也会降到 {scaled_min:.1f} cm（< {MIN_PANEL_CM} cm），必须按子论点拆成两张图"
+        problems.append(f"整张高 {height_cm:.1f} cm，超过一页能放的 {MAX_HEIGHT_CM} cm：按子论点拆成两张图{extra}")
     if problems:
         print("拼板读不清，没出图：" + "；".join(problems), file=sys.stderr)
         sys.exit(3)
+    if height_cm > SAFE_CAPTION_HEIGHT_CM:
+        safe_w = _max_feasible_width_cm(width_cm, height_px, fixed_px, dpi, SAFE_CAPTION_HEIGHT_CM)
+        pct = max(50, min(95, round((safe_w or width_cm) / max(width_cm, 17.0) * 100)))
+        print(
+            f"note: 整张高 {height_cm:.1f} cm（接近一页上限 {MAX_HEIGHT_CM} cm），进 Quarto PDF 时图注可能逼近页脚页码；"
+            f"建议在 Markdown 图片属性设 {{width=\"{pct}%\"}} 或把 --width-cm 调至约 {safe_w:.1f} cm",
+            file=sys.stderr,
+        )
 
 
 # 自绘块旁边有同名 SVG 时查里面的字：块自己以 (a) 开头写了面板字母，拼板再加一个 (a) 就成了两个
@@ -151,9 +225,17 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
     width_px = max(1, int(width_cm / 2.54 * dpi))
     fit = _fit_row_equal_width if align_width else _fit_row
     fitted, row_h = fit(Image, images, width_px, gap, pad)
-    check_readable([im.width for im in fitted], row_h + pad * 2 + label_h, dpi, align_width)
+    fixed_px = pad * 2 + label_h
+    total_h = row_h + fixed_px
+    check_readable([im.width for im in fitted], total_h, dpi, align_width, width_cm=width_cm, fixed_px=fixed_px)
+    warnings: list[str] = []
+    if align_width and len(images) >= 2:
+        aspects = [im.width / max(1, im.height) for im in images]
+        ar_ratio = max(aspects) / max(1e-6, min(aspects))
+        fill_ratio = sum(im.width * im.height for im in fitted) / max(1, sum(im.width for im in fitted) * row_h)
+        warnings = check_align_width_rows([(1, ar_ratio, fill_ratio)])
     font = _font(ImageFont, dpi)
-    canvas = Image.new("RGB", (width_px, row_h + pad * 2 + label_h), (255, 255, 255))
+    canvas = Image.new("RGB", (width_px, total_h), (255, 255, 255))
     draw = ImageDraw.Draw(canvas)
     x = pad
     letters = "abcdefghijklmnopqrstuvwxyz"
@@ -164,7 +246,7 @@ def assemble(inputs: list[Path], out: Path, width_cm: float, dpi: int, gap_mm: f
         x += im.width + gap
     out.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out, dpi=(dpi, dpi))
-    write_layout(out, inputs, width_cm, align_width)
+    write_layout(out, inputs, width_cm, align_width, height_cm=total_h / dpi * 2.54, warnings=warnings)
     print(out)
 
 
@@ -184,10 +266,16 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
     letter = 0
     rendered = []
     widths = []
+    row_stats: list[tuple[int, float, float]] = []
     fit = _fit_row_equal_width if align_width else _fit_row
-    for row in rows:
+    for r_idx, row in enumerate(rows, 1):
         images = [Image.open(p).convert("RGB") for p in row]
         fitted, row_h = fit(Image, images, width_px, gap, pad)
+        if align_width and len(images) >= 2:
+            aspects = [im.width / max(1, im.height) for im in images]
+            ar_ratio = max(aspects) / max(1e-6, min(aspects))
+            fill_ratio = sum(im.width * im.height for im in fitted) / max(1, sum(im.width for im in fitted) * row_h)
+            row_stats.append((r_idx, ar_ratio, fill_ratio))
         widths += [im.width for im in fitted]
         canvas = Image.new("RGB", (width_px, row_h + label_h), (255, 255, 255))
         draw = ImageDraw.Draw(canvas)
@@ -199,8 +287,10 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
             letter += 1
             x += im.width + gap
         rendered.append(canvas)
+    fixed_px = pad * 2 + label_h * len(rendered) + row_gap * (len(rendered) - 1)
     sheet_h = sum(c.height for c in rendered) + row_gap * (len(rendered) - 1) + pad * 2
-    check_readable(widths, sheet_h, dpi, align_width)
+    check_readable(widths, sheet_h, dpi, align_width, width_cm=width_cm, fixed_px=fixed_px)
+    warnings = check_align_width_rows(row_stats) if align_width else []
     sheet = Image.new("RGB", (width_px, sheet_h), (255, 255, 255))
     y = pad
     for canvas in rendered:
@@ -208,7 +298,7 @@ def assemble_rows(rows: list[list[Path]], out: Path, width_cm: float, dpi: int, 
         y += canvas.height + row_gap
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out, dpi=(dpi, dpi))
-    write_layout(out, [p for row in rows for p in row], width_cm, align_width)
+    write_layout(out, [p for row in rows for p in row], width_cm, align_width, height_cm=sheet_h / dpi * 2.54, warnings=warnings)
     print(out)
 
 

@@ -455,3 +455,123 @@ test("扩展原语与精准核查：polygon / curve / SVG path 转 PPTX Freeform
     assert.ok(checks(root).some((i) => i.id.startsWith("SOURCE-p2") && i.status === "blocked"));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("顶刊门禁与锚点增强：期刊 AI 图像合规拦下、文字密度/重框/引线穿图元、:bottom 端口、.png.json 自动锚点与 360px 缩略图", opts, () => {
+  const root = mkdtempSync(join(tmpdir(), "schematic-p1-"));
+  const figDir = join(root, "figures", "t");
+  mkdirSync(join(figDir, "assets"), { recursive: true });
+  // 写一张 600×400 白底测试 PNG 与同名 .png.json 伴生锚点（模拟 blender-research 输出）
+  const mkImg = spawnSync(python, ["-c",
+    "import sys; from PIL import Image, ImageDraw\nim=Image.new('RGB',(600,400),'white'); d=ImageDraw.Draw(im); d.rectangle([240,140,360,260],fill=(40,90,140)); im.save(sys.argv[1])",
+    join(figDir, "assets/cell.png")], { encoding: "utf8" });
+  assert.equal(mkImg.status, 0, mkImg.stderr);
+  writeFileSync(join(figDir, "assets/cell.png.json"), JSON.stringify({
+    schema: "mesa-blender-anchors-v1",
+    image: "cell.png",
+    image_size: [600, 400],
+    anchors: { we_tip: [0.5, 0.5], ce_tip: [0.25, 0.4] },
+  }));
+  // 顺手放一份成品 t.png 用于验证 360px 缩略图自动生成
+  const mkFull = spawnSync(python, ["-c",
+    "import sys; from PIL import Image\nImage.new('RGB',(1200,600),'white').save(sys.argv[1])",
+    join(figDir, "t.png")], { encoding: "utf8" });
+  assert.equal(mkFull.status, 0, mkFull.stderr);
+
+  const spec = {
+    name: "t",
+    canvas: { width_mm: 89, height_mm: 55, purpose: "journal" },
+    theme: { palette: "nature-reviews", base_pt: 6.5 },
+    elements: [
+      {
+        id: "hero", type: "hero_panel", x: 3, y: 3, w: 46, h: 36, src: "assets/cell.png",
+        fill: "none", stroke: "none",
+        source: { kind: "image-model", model: "gpt-image-2.6" },
+      },
+      { id: "blocker", type: "box", x: 46, y: 14, w: 12, h: 12, fill: "primary@15", stroke: "primary", text: "Mid" },
+      { id: "c1", type: "callout", x: 64, y: 17, w: 22, h: 8, target: "hero@we_tip", stroke: "primary", text: "Active site" },
+      { id: "b1", type: "box", x: 4, y: 42, w: 24, h: 10, stroke: "primary", text: "Step one" },
+      { id: "b2", type: "box", x: 60, y: 42, w: 26, h: 10, stroke: "primary", text: "This label is a full descriptive sentence." },
+      // 测试 id:right / id:left 端口语法
+      { id: "arr", type: "arrow", from: "b1:right", to: "b2:left", stroke: "primary" },
+    ],
+  };
+  writeFileSync(join(figDir, "figure.json"), JSON.stringify(spec));
+  writeFileSync(join(figDir, "brief.md"), "# 立意\nMid Active site Step one. This label is a full descriptive sentence.\n");
+  writeFileSync(join(figDir, "facts.md"), "- Mid\n- Active site\n- Step one\n- This label is a full descriptive sentence.\n");
+  // 模拟正式投期刊 TASK.md
+  writeFileSync(join(root, "TASK.md"), "# 综述初稿\n\n## 项目规则\n- 去向：投期刊（目标期刊：EER）\n");
+
+  try {
+    const r = run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg"]);
+    assert.equal(r.status, 0, r.stderr);
+    const chk = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chk.status, 1, chk.stdout + chk.stderr);
+    const items = checks(root);
+    assert.ok(items.some((i) => i.id === "AI-POLICY" && i.status === "blocked"), `期刊投递含生图模型应拦下：${JSON.stringify(items)}`);
+    assert.ok(items.some((i) => i.id.startsWith("CALLOUT-CROSS-c1-blocker") && i.status === "needs_human"), `引出线穿图元应告警：${JSON.stringify(items)}`);
+    assert.ok(items.some((i) => i.id.startsWith("SENTENCE-b2") && i.status === "needs_human"), `句末句号句子式标签应告警：${JSON.stringify(items)}`);
+    assert.ok(existsSync(join(figDir, "t-thumb360.png")), "应自动伴生 360px 缩略图");
+    assert.match(items.find((i) => i.id === "COLD-READ")!.title, /t-thumb360\.png/);
+
+    // 确认期刊允许并加 ai_policy_confirmed 后，AI-POLICY 降级为 AI-USE（不再 blocked）
+    writeFileSync(join(figDir, "figure.json"), JSON.stringify({ ...spec, ai_policy_confirmed: true }));
+    assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg"]).status, 0);
+    const chk2 = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chk2.status, 0, chk2.stdout + chk2.stderr);
+    const items2 = checks(root);
+    assert.equal(items2.filter((i) => i.id === "AI-POLICY").length, 0);
+    assert.ok(items2.some((i) => i.id === "AI-USE" && i.status === "needs_human"));
+
+    // 原生 spectrum（高斯+洛伦兹 XPS 谱峰 + minimal 无纵轴底基线）SVG & PPTX 双端渲染通过
+    const specSpectrum = {
+      name: "t",
+      canvas: { width_mm: 183, height_mm: 60, purpose: "journal" },
+      theme: { palette: "nature-reviews", base_pt: 5.2 },
+      elements: [
+        {
+          id: "xps", type: "spectrum", x: 10, y: 6, w: 68, h: 42, fill: "none", box_stroke: "none",
+          title: "B 1s XPS",
+          peaks: [
+            { center: 0.34, width: 0.08, amp: 0.72, shape: "lorentzian", color: "accent", label: "BO_{x}" },
+            { center: 0.68, width: 0.07, amp: 0.90, shape: "gaussian", color: "secondary", label: "M-B" },
+          ],
+        },
+        { id: "l1", type: "text", x: 90, y: 8, w: 40, h: 6, pt: 5.2, text: "Working skin" },
+        { id: "l2", type: "text", x: 90, y: 18, w: 40, h: 6, pt: 5.2, text: "Non-Pt CE" },
+        { id: "l3", type: "text", x: 90, y: 28, w: 40, h: 6, pt: 5.2, text: "UHV transfer" },
+        { id: "l4", type: "text", x: 90, y: 38, w: 40, h: 6, pt: 5.2, text: "XPS-UPS sync" },
+      ],
+    };
+    writeFileSync(join(figDir, "figure.json"), JSON.stringify(specSpectrum));
+    writeFileSync(join(figDir, "brief.md"), "# 立意\nB 1s XPS BOx M-B Working skin Non-Pt CE UHV transfer XPS-UPS sync\n");
+    writeFileSync(join(figDir, "facts.md"), "- B 1s XPS\n- Working skin\n- Non-Pt CE\n- UHV transfer\n- XPS-UPS sync\n");
+    assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg,pptx"]).status, 0);
+    const chkSp = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chkSp.status, 0, chkSp.stdout + chkSp.stderr);
+    // 183 mm 双栏宽下 5.2 pt 中位字号仅 1.0% < 1.65%：应触发 TEXT-SCALE 提醒
+    assert.ok(checks(root).some((i) => i.id === "TEXT-SCALE" && i.status === "needs_human"), JSON.stringify(checks(root)));
+
+    // 疑似双写（DUP-TEXT）与双栏过窄主视觉（HERO-TINY）告警
+    const specDup = {
+      name: "t",
+      canvas: { width_mm: 183, height_mm: 60, purpose: "journal" },
+      theme: { palette: "nature-reviews", base_pt: 7.0 },
+      elements: [
+        { id: "h1", type: "hero_panel", x: 4, y: 6, w: 22, h: 36, src: "assets/cell.png", fill: "none", stroke: "none" },
+        { id: "c_dup", type: "text", x: 34, y: 10, w: 68, h: 8, pt: 7.0, text: "Working surface reconstruction kinetics" },
+        { id: "b_dup", type: "text", x: 34, y: 26, w: 68, h: 8, pt: 7.0, text: "Working surface reconstruction kinetics check" },
+        { id: "zoom", type: "ellipse", x: 118, y: 8, w: 40, h: 40, fill: "#FFFFFF", stroke: "primary", stroke_pt: 1.0 },
+        { id: "z_top", type: "text", x: 124, y: 9.2, w: 28, h: 5, pt: 6.5, text: "B 1s XPS" },
+      ],
+    };
+    writeFileSync(join(figDir, "figure.json"), JSON.stringify(specDup));
+    writeFileSync(join(figDir, "brief.md"), "# 立意\nWorking surface reconstruction kinetics check B 1s XPS\n");
+    writeFileSync(join(figDir, "facts.md"), "- Working surface reconstruction kinetics check\n- B 1s XPS\n");
+    assert.equal(run(root, "render_figure.py", ["figures/t/figure.json", "--formats", "svg"]).status, 0);
+    const chkDup = run(root, "schematic_check.py", ["figures/t/figure.json"]);
+    assert.equal(chkDup.status, 0, chkDup.stdout + chkDup.stderr);
+    assert.ok(checks(root).some((i) => i.id === "DUP-TEXT" && i.status === "needs_human"), JSON.stringify(checks(root)));
+    assert.ok(checks(root).some((i) => i.id === "HERO-TINY" && i.status === "needs_human"), JSON.stringify(checks(root)));
+    assert.ok(checks(root).some((i) => i.id === "ELLIPSE-MARGIN-zoom" && i.status === "needs_human"), JSON.stringify(checks(root)));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

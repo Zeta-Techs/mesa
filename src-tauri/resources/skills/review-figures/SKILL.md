@@ -34,6 +34,8 @@ provides: [review-figures]
 
 ## 裁切（fail-closed）
 
+**先查全文真路径（含 Zotero 只读附件）**：源论文 PDF 可能在项目根 `papers/`，也可能在 Zotero 库外只读路径（记录在 `papers/included.json` 的 `pdf` 字段）。找某篇论文的 PDF 一律先运行 `lit_records.py pdfs --root <项目根>`（stdout 直接输出含 `bibKey`、`absPath`、`source` 的 JSON，并留意 `supportingOnly` 不是正文）或查 `papers/included.json` 的 `pdf` 字段，**不要只扫 `papers/` 目录就判「无 PDF」**。
+
 技能目录 `scripts/extract_figure.py`：
 
 ```bash
@@ -77,7 +79,7 @@ python3 scripts/assemble_panels.py --out figures/fig2.png --width-cm 8.5 --input
 python3 scripts/assemble_panels.py --out figures/fig4.png --width-cm 17 --align-width --inputs figures/src/wide.png figures/src/square.png
 ```
 
-默认：白底、300 dpi、间隙 2.5 mm。宽度用 figure-forge 的通用投稿规格（单栏约 8.5 cm / 双栏约 17 cm）。默认同一行按各图宽高比分这块栏宽（同排等高），字母写在图上方，不压在曲线上；当扁宽流程图（如 3:1）与近正方形数据图（如 1:1 XRD）同排、等高会把近方图挤窄时，加 `--align-width`（别名 `--grid-cells`）按网格等列宽分配宽度，高度不同时自动在行内垂直居中留白。一行最多 4 块；第 5 块起改 `--rows "a.png b.png c.png" "d.png e.png" "g.png h.png i.png"`（9 块排 3×3），字母跨行连续。脚本按 `--width-cm` 查可读性：哪一块印出来不到 3.5 cm 宽、或整张高过 23 cm，退出码 3、不出图——一行少放几块、扁宽配近方时改用 `--align-width`，或按子论点拆成两张。文献拼板**不做 hero 放大某一篇**。脚本不得改源图像素里的曲线或数值。
+默认：白底、300 dpi、间隙 2.5 mm。宽度用 figure-forge 的通用投稿规格（单栏约 8.5 cm / 双栏约 17 cm）。默认同一行按各图宽高比分这块栏宽（同排等高），字母写在图上方，不压在曲线上；仅当扁宽图与近方图必须同排且等高会把近方图挤窄（< 3.5 cm）时才加 `--align-width`（别名 `--grid-cells`）按网格等列宽分配——**触发阈值**：开启 `--align-width` 后若同行子图宽高比极值比 `> 1.5×` 或有效图像面积占比 `< 75%`，脚本会打印 `warning:` 提醒行内存在大片垂直留白，此时应去掉 `--align-width` 改默认等高，或用 `--rows` 把竖高多联谱图与扁宽图拆到不同行。一行最多 4 块；第 5 块起改 `--rows "a.png b.png c.png" "d.png e.png" "g.png h.png i.png"`（9 块排 3×3），字母跨行连续。脚本按 `--width-cm` 查可读性：哪一块印出来不到 3.5 cm 宽、或整张高过 23 cm，退出码 3、不出图（并直接打印不超 23 cm 的最大可行 `--width-cm` 与预留图注的建议 Quarto `width="XX%"`）；整张高在 20.5–23.0 cm 之间虽正常出图，也会提示在 Markdown 中收窄 `width` 以防图注撞击页脚页码。文献拼板**不做 hero 放大某一篇**。脚本不得改源图像素里的曲线或数值。
 
 每张图先写一句论点（这张拼图让读者看见什么），写不出就不要拼。图注进 `figures/figN.md`：先一句论点，再**逐块**写画了什么和来源，写明实际放进拼板的是哪一块——`(a) η₁₀ and η₅₀ of Ru@Ni–B/NF versus controls in 1 M KOH. Adapted from Fig. 2b of [@key1]. (b) … Adapted from Fig. 2e of [@key2].` 用了整张才写整张 Fig. n。论断进图注，不进图内。
 
@@ -112,7 +114,7 @@ python3 scripts/assemble_panels.py --out figures/fig4.png --width-cm 17 --align-
 - 仅引用：不插图，写「见 [@key] Fig. n」
 - **禁止**在稿里写「Figure N（待绘制）」充产出。计划是「拼」但裁失败 → 降级为仅引用并记 `figures/README.md`，不要留空占位。
 - **来源清单 `figures/sources.md`（2026-10-24）**：拼图是从 PDF 裁的，作者投稿前要去期刊换高清原图、申请转载许可，得知道每块从哪来。裁每块时用 `--label` 写它在原文里的编号（`Fig. 2(b)`、`Scheme 1`），文件名按 `<bib键>-fig2b.png`（或 `--key` 指定）——脚本在每块旁边落一份来源记录 `<块>.json`（bib 键、原图编号、PDF 页码、裁框）；拼板脚本在 `figN.png` 旁边落 `figN.json`（新编号对应哪块）。全部拼完跑 `python3 scripts/figure_sources.py --figures figures --bib references.bib`，生成 `figures/sources.md`：每张图的论点，每块的原文（作者、年份、期刊卷页、题名）、DOI 链接、原图编号与 PDF 页码、裁框、本地 PDF。拼进拼板的本综述自绘示意图（`schematic-forge`）或跨文献重绘数据图（`figure-forge`）会由 `figure_sources.py` 与 `figure_permissions.py` 自动从 `figures/manifest.json`（或同目录 `figure.json`）识别并标为「本综述自绘/重绘（无需申请）」，**禁止**给自绘/重绘子图伪造挂在某篇文献 `bibKey` 下的假 `.json` 来源文件。技能脚本外从文献 PDF 裁的块才手写同格式的 `.json`。
-- `figures/README.md` 一张图一节：论点一句；每块一行（新编号｜来源 [@键] Fig.n 子图｜裁法：`--panel` / `--box` 坐标 / `--erase`）；去掉的块和原因；**待人工确认**。Agent 读 PNG 经常只拿到地址、看不全一批图，不得把「已目检」写进完成标准。人没看过 PNG，拼图就还是待确认。
+- `figures/README.md` 一张图一节：**每节标题下必须直接嵌入相对路径预览图**（如 `![Figure 3](fig3.png)` 或 `![Figure 1](fig1/fig1.png)`，让人在 Mesa 点开「查图清单」就能逐图目检并点进大图灯箱，绝不只写纯文字文件名），接着写论点一句、每块一行（新编号｜来源 [@键] Fig.n 子图｜裁法：`--panel` / `--box` 坐标 / `--erase`）、去掉的块和原因、**待人工确认**。Agent 读 PNG 经常只拿到地址、看不全一批图，不得把「已目检」写进完成标准。人没看过 PNG，拼图就还是待确认。
 
 ## 完成标准
 

@@ -14,6 +14,8 @@
   连接号            同一对符号一会儿 en dash 一会儿连字符（Mg–S / Mg-S）→ 待你判断
   英美拼写          behavior / behaviour 一类混用 → 待你判断
   结论节            没有 Conclusion(s) / Summary / Outlook / 结论 一节 → 待你判断
+  Pandoc 语法雷区   Markdown 中孤立/成对误配约等号 `~数字`、表格未转义 `|` 错列、列表前缺空行、漏方括号 `(@bibKey)` → 拦下 / 待你判断
+  投稿体例与路径卫生 正文段落零散加粗、长破折号过密、粗体导语清单偏多、内部策划/审计/判官腔用语、高频模板化修辞、未查 SI 时的绝对全称否定（待你判断），以及正文或 `figures/README.md` 残留本机工作区绝对路径（拦下）
 结果写进 <工作目录>/.ccode/checks/ms-check.jsonl（三档）。只读，不改稿件。
 退出码：0 没有拦下的；1 有拦下的；2 一份稿件都没读到。Windows 上把 python3 换成 python。
 """
@@ -423,6 +425,398 @@ def check_conclusion(rel, paras, items):
                           detail="综述和研究论文一般都要有；期刊不要求时可忽略"))
 
 
+_INLINE_CODE_OR_MATH = re.compile(r"`[^`\n]+`|\$\$[^$\n]+\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$")
+_VALID_SUB_OR_STRIKE = re.compile(r"~~[^~\n]+~~|(?<![~\\])~[^\s~\n]{1,16}(?<!\\)~")
+_PAREN_CITE = re.compile(
+    r"(?<!\[)\(\s*@(?:zotero[A-Za-z0-9]+|[A-Za-z][A-Za-z0-9_:-]*\d{4}[a-z]?)(?:\s*;\s*@[A-Za-z0-9_:-]+)*\s*\)"
+)
+_TABLE_SEP_ROW = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$")
+_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]\s+\S|\d+[.)]\s+\S)")
+_UNESCAPED_PIPE = re.compile(r"(?<!\\)\|")
+
+
+def _mask_code_math(line: str) -> str:
+    return _INLINE_CODE_OR_MATH.sub(lambda m: " " * len(m.group(0)), line)
+
+
+def _table_col_count(line: str) -> int:
+    masked = _mask_code_math(line).strip()
+    if masked.startswith("|"):
+        masked = masked[1:]
+    if masked.endswith("|") and not masked.endswith("\\|"):
+        masked = masked[:-1]
+    return len(_UNESCAPED_PIPE.split(masked))
+
+
+def check_pandoc_markdown(rel: str, path: Path, items: list) -> None:
+    """检查 Markdown / Quarto 稿件中容易被 Pandoc 静默破坏的 4 类确定性语法雷区。"""
+    if path.suffix.lower() not in (".md", ".qmd"):
+        return
+    try:
+        raw_text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    body_start = 0
+    if raw_text.startswith("---"):
+        end = raw_text.find("\n---", 3)
+        if end > 0:
+            body_start = raw_text[: end + 4].count("\n") + 1
+
+    lines = raw_text.splitlines()
+    fenced = False
+    in_ref = False
+    ref_level = 0
+    tilde_blocked = []
+    tilde_warn = []
+    pipe_hits = []
+    list_hits = []
+    paren_cite_hits = []
+
+    # 1) 逐行扫描：跳过代码块与参考文献节
+    prev_raw = ""
+    prev_is_list_or_cont = False
+    active_table_cols: int | None = None
+
+    for idx in range(body_start, len(lines)):
+        ln = idx + 1
+        raw = lines[idx]
+        stripped = raw.strip()
+
+        if raw.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            active_table_cols = None
+            prev_raw = ""
+            prev_is_list_or_cont = False
+            continue
+        if fenced:
+            continue
+
+        hm = re.match(r"^(#{1,6})\s+(.*)$", raw)
+        if hm:
+            head_t = re.sub(r"\s*\{[#.][^}]*\}\s*$", "", hm.group(2)).strip()
+            lvl = len(hm.group(1))
+            if REF_HEADING.match(head_t):
+                in_ref = True
+                ref_level = lvl
+            elif in_ref and (ref_level == 0 or lvl <= ref_level):
+                in_ref = False
+            active_table_cols = None
+            prev_raw = raw
+            prev_is_list_or_cont = False
+            continue
+        if in_ref:
+            continue
+
+        # 表格列数一致性（检测单元格里未转义的 `|e|` / `|j|` 导致整行错列）
+        if active_table_cols is not None:
+            if not stripped or not _UNESCAPED_PIPE.search(_mask_code_math(raw)):
+                active_table_cols = None
+            else:
+                cols = _table_col_count(raw)
+                if cols != active_table_cols:
+                    pipe_hits.append((ln, active_table_cols, cols, stripped[:80]))
+        elif idx + 1 < len(lines) and _TABLE_SEP_ROW.match(lines[idx + 1]) and _UNESCAPED_PIPE.search(_mask_code_math(raw)):
+            active_table_cols = _table_col_count(raw)
+
+        # 跳过表格分隔行本身进入下面检查
+        if _TABLE_SEP_ROW.match(raw):
+            prev_raw = raw
+            prev_is_list_or_cont = False
+            continue
+
+        # 列表前缺空行检测
+        is_list = bool(_LIST_ITEM_RE.match(raw))
+        if is_list and prev_raw.strip():
+            ps = prev_raw.strip()
+            prev_exempt = (
+                prev_is_list_or_cont
+                or ps.startswith(("#", ">", "|", "<!--", "-->", "---", ":", "{"))
+                or ps.endswith("-->")
+                or bool(re.match(r"^(?:Table|Figure|Fig\.|Scheme)\s+", ps))
+            )
+            if not prev_exempt:
+                list_hits.append((ln, stripped[:60]))
+        if not stripped:
+            prev_is_list_or_cont = False
+        elif is_list:
+            prev_is_list_or_cont = True
+        elif raw.startswith(("  ", "\t")) and prev_is_list_or_cont:
+            prev_is_list_or_cont = True
+        else:
+            prev_is_list_or_cont = False
+
+        if not stripped:
+            prev_raw = ""
+            continue
+
+        masked = _mask_code_math(raw)
+
+        # 孤立约等号 `~数字` 或未闭合下标 `~`
+        without_valid = _VALID_SUB_OR_STRIKE.sub(" ", masked)
+        stray_tildes = list(re.finditer(r"(?<!\\)~", without_valid))
+        if stray_tildes:
+            approx_hits = re.findall(r"(?<!\\)~\s*\d", without_valid)
+            if len(stray_tildes) >= 2:
+                tilde_blocked.append((ln, stripped[:80]))
+            elif approx_hits or len(stray_tildes) == 1:
+                # 仅对含 `~数字` 或像化学/物理残缺下标的孤立 `~` 告警，避免误伤普通标点
+                if approx_hits or re.search(r"[A-Za-z0-9]~[A-Za-z0-9*]", without_valid):
+                    tilde_warn.append((ln, stripped[:80]))
+
+        # 疑似漏方括号引用 `(@Key2024)`（排除行首 Pandoc 示例编号列表）
+        if not re.match(r"^\s*\(@[A-Za-z0-9_-]+\)\s", raw):
+            for pm in _PAREN_CITE.finditer(masked):
+                paren_cite_hits.append((ln, pm.group(0), stripped[:80]))
+
+        prev_raw = raw
+
+    if tilde_blocked:
+        ln0 = tilde_blocked[0][0]
+        samples = "；".join(f"L{ln}: {txt[:45]}" for ln, txt in tilde_blocked[:4])
+        items.append(item(
+            "MD-TILDE-BLOCK", "pandoc-syntax", "blocked",
+            f"有 {len(tilde_blocked)} 行含 2 个以上未配对/约等号 `~`（Pandoc 会把两处 `~` 之间整段吞成下标）",
+            rel, ln0, detail=f"{samples}。约等于统一改 `≈` 或转义 `\\~`，下标确保成对 `~...~`",
+        ))
+    if tilde_warn:
+        ln0 = tilde_warn[0][0]
+        samples = "；".join(f"L{ln}: {txt[:45]}" for ln, txt in tilde_warn[:4])
+        items.append(item(
+            "MD-TILDE-WARN", "pandoc-syntax", "needs_human",
+            f"有 {len(tilde_warn)} 行含孤立约等号 `~` 或疑似残缺下标",
+            rel, ln0, detail=f"{samples}。约等于建议统一用 `≈`（或 `\\~`），残缺下标补齐配对 `~`",
+        ))
+    if pipe_hits:
+        ln0 = pipe_hits[0][0]
+        samples = "；".join(f"L{ln}（表头 {hc} 列、本行 {rc} 列）: {txt[:36]}" for ln, hc, rc, txt in pipe_hits[:4])
+        items.append(item(
+            "MD-TABLE-PIPE", "pandoc-syntax", "blocked",
+            f"Markdown 表格有 {len(pipe_hits)} 行列数与表头不符（常见原因：单元格内 `|e|` / `|j|` 未转义为 `\\|` 导致整行错列）",
+            rel, ln0, detail=samples,
+        ))
+    if list_hits:
+        ln0 = list_hits[0][0]
+        samples = "；".join(f"L{ln}: {txt[:40]}" for ln, txt in list_hits[:4])
+        items.append(item(
+            "MD-LIST-BLANK", "pandoc-syntax", "needs_human",
+            f"有 {len(list_hits)} 处列表项前缺空行（Pandoc 会把列表并成一行纯文本）",
+            rel, ln0, detail=f"{samples}。在列表第一项前补一行空行",
+        ))
+    if paren_cite_hits:
+        ln0 = paren_cite_hits[0][0]
+        samples = "；".join(f"L{ln} `{tok}`" for ln, tok, _ in paren_cite_hits[:6])
+        items.append(item(
+            "MD-PAREN-CITE", "pandoc-syntax", "blocked",
+            f"有 {len(paren_cite_hits)} 处疑似引用漏写方括号 `(@bibKey)`（Pandoc 不解析会原样印出）",
+            rel, ln0, detail=f"{samples}。改为 `[@bibKey]`",
+        ))
+
+
+_INLINE_BOLD = re.compile(r"\*\*(?!\s)([^*\n]{2,80}?)(?<!\s)\*\*")
+_BOLD_LEAD_LIST = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+\*\*[^*\n]{2,80}\*\*")
+_EN_WORD = re.compile(r"\b[A-Za-z]{2,}\b")
+_ABS_LOCAL_PATH = re.compile(
+    r"file:///(?:Users|home|[A-Za-z]:)/[^\s)\"'>]+|"
+    r"(?:/Users/|/home/)[^\s)\"'>]*/ccode/workspaces/[^\s)\"'>]+|"
+    r"[A-Za-z]:\\Users\\[^\s)\"'>]*\\ccode\\workspaces\\[^\s)\"'>]+"
+)
+
+# 内部策划代号、语料审计词与审稿挑错判官词（不应直接直译进正式投稿正文）
+_INTERNAL_AUDIT_TERMS = [
+    ("sandwich architecture", re.compile(r"\bsandwich\s+architecture\b", re.I)),
+    ("reviewed corpus", re.compile(r"\breviewed\s+corpus\b", re.I)),
+    ("full-text reviewed studies", re.compile(r"\bfull-text\s+reviewed\s+(?:studies|papers|articles)\b", re.I)),
+    ("abstract-level reporting", re.compile(r"\b(?:based\s+on\s+)?abstract-level\s+reporting\b", re.I)),
+    ("forensic verdict", re.compile(r"\bforensic\s+verdict\b", re.I)),
+    ("physical-logic conflict", re.compile(r"\bphysical-logic\s+conflict\b", re.I)),
+    ("attribution crisis", re.compile(r"\battribution\s+crisis\b", re.I)),
+    ("Methodological Red Lines", re.compile(r"\bmethodological\s+red\s+lines?\b", re.I)),
+    ("Pillar I/II", re.compile(r"\bPillar\s+(?:I|II|III)\b")),
+    ("Track A/B", re.compile(r"\bTrack\s+[AB]\b")),
+    ("along three uniform axes", re.compile(r"\balong\s+three\s+uniform\s+axes\b", re.I)),
+    ("RDS/RE errors / PEM/AEM mislabel", re.compile(r"\b(?:RDS/RE\s+errors?|PEM/AEM\s+mislabel|wording\s+contradiction|misattributed\s+author\s+names?)\b", re.I)),
+]
+
+# 高频模板化修辞（单处不拦，累积 >= 4 处提示核对改写）
+_FORMULAIC_CLICHES = [
+    ("Rather than X, …", re.compile(r"\brather\s+than\s+[^.,;\n]{2,45},\s*(?:we|this|the)\b", re.I)),
+    ("stark contrast", re.compile(r"\bstark\s+contrast\b", re.I)),
+    ("indispensable", re.compile(r"\bindispensable\b", re.I)),
+    ("unmistakably", re.compile(r"\bunmistakably\b", re.I)),
+    ("delve into", re.compile(r"\bdelve(?:s|d|ing)?\s+into\b", re.I)),
+    ("pave the way for", re.compile(r"\bpaves?\s+the\s+way\s+for\b", re.I)),
+    ("underscore the importance", re.compile(r"\bunderscores?\s+the\s+importance\s+of\b", re.I)),
+    ("multifaceted landscape", re.compile(r"\bmultifaceted\s+landscape\b", re.I)),
+    ("intricate interplay", re.compile(r"\bintricate\s+interplay\b", re.I)),
+]
+
+# 未下载核验 SI 时的全称绝对否定风险表达
+_ABSOLUTE_NEGATIVES = [
+    re.compile(r"\bacross\s+the\s+entire\s+(?:peer-reviewed\s+)?literature\b", re.I),
+    re.compile(r"\bnot\s+(?:a\s+single|one)\s+(?:study|report|paper|article)\s+reports?\b", re.I),
+    re.compile(r"\bzero\s+reports?\s*\(\s*0\s*/\s*\d+\s*\)", re.I),
+]
+
+
+def _is_table_or_caption(text: str) -> bool:
+    s = text.strip()
+    if not s:
+        return True
+    if s.startswith(("|", ":", "<!--", "![", "{", ">")):
+        return True
+    if CAPTION.match(s):
+        return True
+    if _TABLE_SEP_ROW.match(s):
+        return True
+    return False
+
+
+def check_editorial_hygiene(rel: str, path: Path, body_paras: list[Para], items: list) -> None:
+    """检查顶刊投稿常见的正文体例卫生、内部策划/审计腔泄露、全称否定边界与本机绝对路径残留。"""
+    is_md = path.suffix.lower() in (".md", ".qmd")
+    prose_paras = [p for p in body_paras if not p.heading and not _is_table_or_caption(p.text)]
+    if not prose_paras:
+        return
+
+    # 1) 本机工作区绝对路径泄露（全文扫描，含链接与图注）
+    abs_hits = []
+    for p in body_paras:
+        for m in _ABS_LOCAL_PATH.finditer(p.text):
+            abs_hits.append((p.line, m.group(0)[:70]))
+    if abs_hits:
+        samples = "；".join(f"L{ln}: {tok}" for ln, tok in abs_hits[:4])
+        items.append(item(
+            "PATH-ABS-LEAK", "artifact-hygiene", "blocked",
+            f"稿件中残留 {len(abs_hits)} 处本机工作区绝对路径",
+            rel, abs_hits[0][0],
+            detail=f"{samples}。投稿稿件严禁带本机 file:// 或 ccode/workspaces 绝对路径，请改为相对路径",
+        ))
+
+    # 2) Markdown 正文段落内零散 **加粗** 与「粗体导语 + 清单」占比
+    if is_md:
+        bold_hits = []
+        bold_list_lines = []
+        prose_block_count = 0
+        for p in prose_paras:
+            if _LIST_ITEM_RE.match(p.text):
+                if _BOLD_LEAD_LIST.match(p.text):
+                    bold_list_lines.append((p.line, p.text[:50]))
+                continue
+            prose_block_count += 1
+            masked = _mask_code_math(p.text)
+            # 跳过整段都是加粗的段首标签行（如 **Keywords:** / **Highlights**）
+            if re.match(r"^\*\*(?:Keywords?|Abstract|Highlights?|Note)\b", masked, re.I):
+                continue
+            for m in _INLINE_BOLD.finditer(masked):
+                bold_hits.append((p.line, m.group(1)[:36]))
+        if bold_hits:
+            samples = "；".join(f"L{ln}「{txt}」" for ln, txt in bold_hits[:6])
+            items.append(item(
+                "PROSE-BOLD", "style-hygiene", "needs_human",
+                f"正文段落内有 {len(bold_hits)} 处零散加粗（**…**）",
+                rel, bold_hits[0][0],
+                detail=f"{samples}。学术期刊正文自然段一般不用粗体强调词组或数字，建议改为正常字重并靠句式强调",
+            ))
+        total_units = prose_block_count + len(bold_list_lines)
+        if len(bold_list_lines) >= 8 or (len(bold_list_lines) >= 6 and total_units > 0 and len(bold_list_lines) / total_units > 0.25):
+            pct = int(round(100 * len(bold_list_lines) / max(1, total_units)))
+            samples = "；".join(f"L{ln}: {txt[:38]}" for ln, txt in bold_list_lines[:4])
+            items.append(item(
+                "PROSE-BOLD-LIST", "style-hygiene", "needs_human",
+                f"正文含 {len(bold_list_lines)} 条「粗体导语 + 清单」（约占段落与条目总数的 {pct}%）",
+                rel, bold_list_lines[0][0],
+                detail=f"{samples}。高水平期刊综述主体宜以连贯自然段论证，可将清单小点融回段落，仅保留必要枚举",
+            ))
+
+    # 3) 正文长破折号（—）千词密度
+    total_words = sum(len(_EN_WORD.findall(_mask_code_math(p.text))) for p in prose_paras)
+    em_lines = [(p.line, p.text.count("—")) for p in prose_paras if "—" in p.text]
+    em_total = sum(c for _, c in em_lines)
+    if total_words >= 500 and em_total > 0:
+        per_k = em_total * 1000.0 / total_words
+        if per_k > 4.5:
+            items.append(item(
+                "PROSE-EMDASH", "style-hygiene", "needs_human",
+                f"正文长破折号（—）偏密：共 {em_total} 处（约 {per_k:.1f} 次/千词，正文约 {total_words} 词）",
+                rel, em_lines[0][0],
+                detail="高频长破折号易显生硬，建议将部分插语改为逗号、括号或拆成自然长短句",
+            ))
+
+    # 4) 内部策划代号 / 语料审计腔 / 审稿挑错判官词
+    internal_hits = []
+    for p in prose_paras:
+        masked = _mask_code_math(p.text)
+        for label, pat in _INTERNAL_AUDIT_TERMS:
+            m = pat.search(masked)
+            if m:
+                internal_hits.append((p.line, label, m.group(0)))
+    if internal_hits:
+        uniq = list(dict.fromkeys(f"L{ln} `{tok}`" for ln, _, tok in internal_hits))
+        items.append(item(
+            "PROSE-INTERNAL-TERMS", "style-hygiene", "needs_human",
+            f"正文含 {len(internal_hits)} 处疑似内部策划代号、语料审计词或编校挑错用语",
+            rel, internal_hits[0][0],
+            detail="；".join(uniq[:8]) + "。大纲代号、语料统计与编校笔误备忘应转译为自然学科表达或移入内部记录",
+        ))
+
+    # 5) 高频模板化修辞（累计 >= 4 处才提示，避免偶发误报）
+    cliche_hits = []
+    for p in prose_paras:
+        masked = _mask_code_math(p.text)
+        for label, pat in _FORMULAIC_CLICHES:
+            for m in pat.finditer(masked):
+                cliche_hits.append((p.line, label, m.group(0)[:40]))
+    if len(cliche_hits) >= 4:
+        samples = "；".join(f"L{ln} `{tok}`" for ln, _, tok in cliche_hits[:6])
+        items.append(item(
+            "PROSE-CLICHE", "style-hygiene", "needs_human",
+            f"正文出现 {len(cliche_hits)} 处高频模板化修辞短语",
+            rel, cliche_hits[0][0],
+            detail=f"{samples}。建议替换为具体的物理/实验机理或定量差异描述",
+        ))
+
+    # 6) 未核验 SI 时的全称绝对否定风险表达
+    abs_neg_hits = []
+    for p in prose_paras:
+        masked = _mask_code_math(p.text)
+        for pat in _ABSOLUTE_NEGATIVES:
+            m = pat.search(masked)
+            if m:
+                abs_neg_hits.append((p.line, m.group(0)[:50]))
+    if abs_neg_hits:
+        samples = "；".join(f"L{ln} `{tok}`" for ln, tok in abs_neg_hits[:5])
+        items.append(item(
+            "PROSE-ABS-NEG", "evidence-scope", "needs_human",
+            f"正文含 {len(abs_neg_hits)} 处全称绝对否定表述，若核心文献有未核验 SI 易被审稿人质疑",
+            rel, abs_neg_hits[0][0],
+            detail=f"{samples}。如相关文献的 Supporting Information 未逐篇核对，建议限定为 within the primary main texts examined",
+        ))
+
+
+def check_companion_paths(root: Path, items: list) -> None:
+    """检查 figures/README.md 等配套交付清单是否残留本机工作区绝对路径。"""
+    fig_readme = root / "figures" / "README.md"
+    if not fig_readme.is_file():
+        return
+    try:
+        lines = fig_readme.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    hits = []
+    for ln, raw in enumerate(lines, 1):
+        for m in _ABS_LOCAL_PATH.finditer(raw):
+            hits.append((ln, m.group(0)[:70]))
+    if hits:
+        samples = "；".join(f"L{ln}: {tok}" for ln, tok in hits[:4])
+        items.append(item(
+            "PATH-ABS-LEAK@figures/README.md", "artifact-hygiene", "blocked",
+            f"figures/README.md 残留 {len(hits)} 处本机工作区绝对路径",
+            "figures/README.md", hits[0][0],
+            detail=f"{samples}。交付清单应一律使用相对路径（如 `analysis/...`）",
+        ))
+
+
 def check_file(path: Path, root: Path):
     try:
         rel = path.resolve().relative_to(root.resolve()).as_posix()
@@ -443,6 +837,8 @@ def check_file(path: Path, root: Path):
     check_dashes(rel, body_paras, items)
     check_spelling(rel, body_paras, items)
     check_conclusion(rel, paras, items)
+    check_pandoc_markdown(rel, path, items)
+    check_editorial_hygiene(rel, path, body_paras, items)
     # 多份稿件同名检查项不撞车
     for i in items:
         i["id"] = f"{i['id']}@{rel}"
@@ -463,6 +859,7 @@ def main():
         got, ok = check_file(f, root)
         items += got
         read += ok
+    check_companion_paths(root, items)
     if not read:
         items.append(item("MS", "structure", "needs_human", "没读到稿件，投稿前检查没做", "manuscript/"))
         C.summary(items, C.write_items(root, CHECK_FILE, items))

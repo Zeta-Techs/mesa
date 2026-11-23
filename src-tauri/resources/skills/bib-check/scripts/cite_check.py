@@ -32,7 +32,7 @@ CHECKER = "script:cite_check"
 MANUSCRIPT_HELPERS = (
     "citation-check", "citation-style", "review-report", "verification-decisions", "declarations",
     "checklist", "evidence", "section-status", "changelog", "numbers",
-    "revision-notes", "outline", "typeface", "readme", "style-sheet",
+    "revision-notes", "outline", "typeface", "readme", "style-sheet", "voice-profile",
 )
 SKIP_MANUSCRIPT = re.compile(
     "(" + "|".join(MANUSCRIPT_HELPERS) + ")", re.I
@@ -99,7 +99,9 @@ def summary(items, path):
 
 # ---------------- 稿件里的引用 ----------------
 
-PANDOC_KEY = re.compile(r"(?<![\w@.\\])-?@([A-Za-z0-9_][\w:.#$%&\-+?<>~/]*)")
+# 排除材料/化学写法里的 @（如 WB₂@WS₂、(Co,Ni)@NF、Co-B@CoO/Ti、η@100）及行内代码里的示例
+PANDOC_KEY = re.compile(r"(?<![\w@.\\)\]\}/₀-₉⁰-⁹⁺⁻])-?@([A-Za-z0-9_][\w:.#$%&\-+?<>~/]*)")
+INLINE_CODE = re.compile(r"`[^`]+`")
 LATEX_CITE = re.compile(r"\\[A-Za-z]*cite[A-Za-z]*\*?(?:\[[^\]]*\]){0,2}\{([^}]*)\}")
 
 
@@ -149,7 +151,7 @@ def citations(root, files):
                 for group in LATEX_CITE.findall(line):
                     out += [(k.strip(), rel, no) for k in group.split(",") if k.strip()]
                 continue
-            for key in PANDOC_KEY.findall(line):
+            for key in PANDOC_KEY.findall(INLINE_CODE.sub(" ", line)):
                 key = key.rstrip(".:;,?")
                 # 纯数字（「@500 mA」「@50 °C」）不是引用键
                 if key and not key.isdigit() and not key.lower().startswith(CROSSREF_PREFIXES):

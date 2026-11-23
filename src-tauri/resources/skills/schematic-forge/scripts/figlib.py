@@ -89,11 +89,11 @@ PALETTES = {
     },
 }
 
-SCI_CURVE_KINDS = {"energy_steps", "volcano_curve", "dos_lobe"}
+SCI_CURVE_KINDS = {"energy_steps", "volcano_curve", "dos_lobe", "spectrum"}
 SHAPES = {
     "box", "header_card", "ellipse", "sphere", "chevron", "polygon", "path",
     "text", "image", "hero_panel", "figure",
-    "lattice", "sci_curve", "energy_steps", "volcano_curve", "dos_lobe",
+    "lattice", "sci_curve", "energy_steps", "volcano_curve", "dos_lobe", "spectrum",
     "callout",
 }
 LINES = {"arrow", "coupled_arrow", "line", "polyline", "curve", "bezier"}
@@ -208,6 +208,27 @@ def load_spec(path):
             raise SpecError(f"引出标注 {eid} 要有 target（目标点 [x, y] 或 hero@锚点名 / [hero_id, nx, ny]）")
         if t == "hero_panel" and not el.get("src"):
             raise SpecError(f"hero_panel {eid} 要有 src（无字主视觉底图路径）")
+        if t in ("hero_panel", "image", "figure") and el.get("src") and not str(el["src"]).startswith("lib:"):
+            # 自动合入同目录伴生锚点文件（如 blender-research 导出的 assets/cell.png.json），图纸显式 anchors 优先
+            src_p = Path(el["src"])
+            if not src_p.is_absolute():
+                src_p = path.parent / src_p
+            af = el.get("anchors_file")
+            cand = (Path(af) if Path(af).is_absolute() else path.parent / af) if af else Path(str(src_p) + ".json")
+            if cand.is_file():
+                try:
+                    sidecar = json.loads(cand.read_text(encoding="utf-8"))
+                    sc_anchors = sidecar.get("anchors") if isinstance(sidecar, dict) else None
+                    if isinstance(sc_anchors, dict):
+                        merged_anc = {}
+                        for k, v in sc_anchors.items():
+                            if isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, (int, float)) for x in v):
+                                merged_anc[str(k)] = [float(v[0]), float(v[1])]
+                        merged_anc.update(el.get("anchors") or {})
+                        if merged_anc:
+                            el["anchors"] = merged_anc
+                except (OSError, json.JSONDecodeError):
+                    pass
         if t == "sci_curve" and el.get("kind", "energy_steps") not in SCI_CURVE_KINDS:
             raise SpecError(f"sci_curve {eid} 的 kind={el.get('kind')!r} 不认识（可用：{', '.join(sorted(SCI_CURVE_KINDS))}）")
     return spec
@@ -772,7 +793,8 @@ def resolve_anchor(ref, index, image_rects=None, label_owner=""):
     """解析坐标或锚点引用：
       - [x, y] → 直接毫米坐标
       - ['hero1', nx, ny] → hero1 图像实际矩形上的归一化坐标 (0..1)
-      - 'hero1@mo_site' → hero1.anchors.mo_site 定义的归一化坐标
+      - 'hero1@mo_site' → hero1.anchors.mo_site（或伴生 .png.json）定义的归一化坐标
+      - 'box1:top' / ':bottom' / ':left' / ':right' / ':center' → 元素指定边端口
       - 'box1' → 返回 (None, node, None) 供边连接决定
     """
     image_rects = image_rects or {}
@@ -793,22 +815,34 @@ def resolve_anchor(ref, index, image_rects=None, label_owner=""):
                 raise SpecError(f"{label_owner} 引用的元素 {hid!r} 不存在")
             anchors = index[hid].get("anchors") or {}
             if aname not in anchors:
-                raise SpecError(f"{label_owner} 引用的锚点 {ref!r} 未在 {hid}.anchors 中定义")
+                raise SpecError(f"{label_owner} 引用的锚点 {ref!r} 未在 {hid}.anchors 或伴生 .png.json 中定义")
             nx, ny = anchors[aname]
             fx, fy, fw, fh = image_rects.get(hid) or bbox(index[hid])
             return ((fx + float(nx) * fw, fy + float(ny) * fh), index[hid], None)
-        if ref not in index:
-            raise SpecError(f"{label_owner} 的引用 {ref!r} 不是任何元素的 id")
-        return (None, index[ref], None)
-    raise SpecError(f"{label_owner} 的端点 {ref!r} 要么是元素 id / hero@锚点，要么是 [x, y] / [hero_id, nx, ny]")
+        if ref in index:
+            return (None, index[ref], None)
+        if ":" in ref:
+            eid, port = ref.rsplit(":", 1)
+            if eid in index:
+                p_low = port.strip().lower()
+                if p_low in ("top", "bottom", "left", "right"):
+                    return (None, index[eid], p_low)
+                if p_low == "center":
+                    bx, by, bw, bh = bbox(index[eid])
+                    return ((bx + bw / 2, by + bh / 2), index[eid], None)
+                raise SpecError(
+                    f"{label_owner} 的端口 {ref!r} 不支持 :{port}（可用 :top / :bottom / :left / :right / :center，或 hero@锚点名）"
+                )
+        raise SpecError(f"{label_owner} 的引用 {ref!r} 不是任何元素的 id（可用元素 id、id:bottom、hero@锚点名 或 [x, y]）")
+    raise SpecError(f"{label_owner} 的端点 {ref!r} 要么是元素 id / id:side / hero@锚点，要么是 [x, y] / [hero_id, nx, ny]")
 
 
 def endpoints(el, index, image_rects=None):
     """连线两端：[(x,y), 连到的元素或 None, 边名或 None] × 2"""
     eid = f"连线 {el['id']}"
-    p_a, a, _ = resolve_anchor(el["from"], index, image_rects, f"{eid} 的 from")
-    p_b, b, _ = resolve_anchor(el["to"], index, image_rects, f"{eid} 的 to")
-    sa, sb = (el.get("from_side"), el.get("to_side"))
+    p_a, a, port_a = resolve_anchor(el["from"], index, image_rects, f"{eid} 的 from")
+    p_b, b, port_b = resolve_anchor(el["to"], index, image_rects, f"{eid} 的 to")
+    sa, sb = (el.get("from_side") or port_a, el.get("to_side") or port_b)
     # 若任一端已是锚点精确坐标，另一端按朝向该坐标选边
     if p_a is None and p_b is None and a and b and (not sa or not sb):
         auto = auto_sides(a, b)
@@ -1208,10 +1242,15 @@ def sci_curve_geometry(spec, el):
         labels.append(("title", {"text": el["title"], "pt": float(el.get("title_pt", base_pt + 0.5)), "bold": True,
                                  "align": "center", "valign": "top", "color": el.get("title_color", th["text_color"])},
                        (x + 1, y + 0.4, w - 2, pad_t + 1.5)))
+    minimal = bool(el.get("minimal", kind == "spectrum"))
     if show_axes:
-        # 坐标轴 L 形框（带微小箭头）
-        strokes.append(([("M", px, py + ph), ("L", px, py)], axis_col, axis_pt, None, "end"))
-        strokes.append(([("M", px, py + ph), ("L", px + pw, py + ph)], axis_col, axis_pt, None, "end"))
+        if minimal:
+            # 极简 Nature 风格谱图：只画干净底轴基线，不画纵轴与重框
+            strokes.append(([("M", px, py + ph), ("L", px + pw, py + ph)], axis_col, axis_pt, None, "none"))
+        else:
+            # 坐标轴 L 形框（带微小箭头）
+            strokes.append(([("M", px, py + ph), ("L", px, py)], axis_col, axis_pt, None, "end"))
+            strokes.append(([("M", px, py + ph), ("L", px + pw, py + ph)], axis_col, axis_pt, None, "end"))
         if axes.get("xlabel"):
             labels.append(("xlabel", {"text": axes["xlabel"], "pt": base_pt, "align": "center", "valign": "bottom",
                                       "color": axes.get("label_color", th["text_color"])},
@@ -1420,11 +1459,11 @@ def sci_curve_geometry(spec, el):
                                            "bold": bool(mk.get("bold", True)), "align": al, "valign": "middle",
                                            "color": mk.get("text_color", mk.get("color", th["text_color"]))}, lbox))
 
-    elif kind == "dos_lobe":
-        lobes = el.get("lobes") or [{"center": 0.46, "width": 0.14, "amp": 0.72, "fill": "primary@25", "stroke": "primary", "d_center": 0.46}]
-        # 若 center 用的是物理能量（如 -1.4 eV）或有 sigma，默认横向能带图并按 elim 归一化到 0..1
+    elif kind in ("dos_lobe", "spectrum"):
+        lobes = el.get("peaks") or el.get("lobes") or [{"center": 0.46, "width": 0.14, "amp": 0.72, "fill": "primary@25", "stroke": "primary", "d_center": 0.46}]
+        # 若 center 用的是物理能量（如 -1.4 eV / 188 eV）或有 sigma，默认横向能带/谱图并按 elim 归一化到 0..1
         phys_e = any(float(lb.get("center", 0.5)) < 0 or float(lb.get("center", 0.5)) > 1.0 or "sigma" in lb for lb in lobes) or ("ef_x" in el)
-        elim = el.get("elim") or [-4.0, 2.0]
+        elim = el.get("elim") or ([-4.0, 2.0] if kind == "dos_lobe" else [0.0, 1.0])
 
         def norm_e(val):
             v = float(val)
@@ -1432,9 +1471,10 @@ def sci_curve_geometry(spec, el):
                 return max(0.02, min(0.98, (v - elim[0]) / max(1e-6, elim[1] - elim[0])))
             return v
 
-        default_orient = "horizontal" if phys_e else "vertical"
+        default_orient = "horizontal" if (kind == "spectrum" or phys_e) else "vertical"
         vertical = el.get("orientation", default_orient) == "vertical"
-        fermi = el.get("fermi", norm_e(el.get("ef_x", 0.0)) if phys_e else 0.66)
+        default_fermi = None if kind == "spectrum" else (norm_e(el.get("ef_x", 0.0)) if phys_e else 0.66)
+        fermi = el.get("fermi", default_fermi)
         if fermi is not None:
             fv = float(fermi)
             if vertical:
@@ -1451,13 +1491,17 @@ def sci_curve_geometry(spec, el):
                                (fx + 0.6, py + 0.4, 12.0, 4.0)))
         for li, lb in enumerate(lobes):
             c0 = norm_e(lb.get("center", 0.48))
-            raw_w = float(lb.get("width", lb.get("sigma", 0.13 if not phys_e else 0.7)))
-            sig = max(0.04, raw_w / max(1e-6, elim[1] - elim[0]) if (phys_e and "width" not in lb) else raw_w)
-            amp = float(lb.get("amp", 0.72))
+            raw_w = float(lb.get("width", lb.get("sigma", 0.10 if kind == "spectrum" else (0.13 if not phys_e else 0.7))))
+            sig = max(0.03, raw_w / max(1e-6, abs(elim[1] - elim[0])) if (phys_e and "width" not in lb) else raw_w)
+            amp = float(lb.get("amp", 0.78 if kind == "spectrum" else 0.72))
+            peak_shape = str(lb.get("shape", "gaussian")).lower()
             samples = []
-            for k in range(25):
-                u = k / 24.0
-                g = amp * math.exp(-0.5 * ((u - c0) / sig) ** 2)
+            for k in range(33 if kind == "spectrum" else 25):
+                u = k / (32.0 if kind == "spectrum" else 24.0)
+                if peak_shape == "lorentzian":
+                    g = amp / (1.0 + ((u - c0) / sig) ** 2)
+                else:
+                    g = amp * math.exp(-0.5 * ((u - c0) / sig) ** 2)
                 if vertical:
                     samples.append((px + g * pw, py + ph - u * ph))
                 else:
@@ -1607,11 +1651,14 @@ def lattice_geometry(spec, el):
 
 def callout_geometry(spec, el, index, image_rects=None):
     """引出指示线（●───╱─── Label）：给定目标锚点 target 和文字框 [x, y, w, h]，生成圆点锚头 + 45°/水平折线"""
-    pt_target, _, _ = resolve_anchor(el["target"], index, image_rects, f"callout {el['id']} 的 target")
+    pt_target, target_node, target_port = resolve_anchor(el["target"], index, image_rects, f"callout {el['id']} 的 target")
     if pt_target is None:
-        node = index[el["target"]]
-        bx, by, bw, bh = bbox(node)
-        pt_target = (bx + bw / 2, by + bh / 2)
+        node = target_node or index[el["target"]]
+        if target_port:
+            pt_target = side_point(node, target_port)
+        else:
+            bx, by, bw, bh = bbox(node)
+            pt_target = (bx + bw / 2, by + bh / 2)
     tx, ty = pt_target
     x, y, w, h = bbox(el)
     cx_box, cy_box = x + w / 2, y + h / 2

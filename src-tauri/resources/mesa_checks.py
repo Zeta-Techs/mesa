@@ -76,7 +76,7 @@ TEXT_EXT = (".md", ".qmd", ".tex")
 MANUSCRIPT_HELPERS = (
     "citation-check", "citation-style", "review-report", "verification-decisions", "declarations",
     "checklist", "evidence", "section-status", "changelog", "numbers",
-    "revision-notes", "outline", "typeface", "readme", "style-sheet",
+    "revision-notes", "outline", "typeface", "readme", "style-sheet", "voice-profile",
 )
 MANUSCRIPT_HELPER_RE = re.compile("(" + "|".join(MANUSCRIPT_HELPERS) + ")", re.I)
 

@@ -575,3 +575,41 @@ test("extract_figure / figure_sources：支持 a–z 面板参数、可移植相
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("拼板告警增强：--align-width 高矮悬殊报留白率告警，超高退码 3 打印最大可行 --width-cm 与 Quarto 占比", { skip: !ready }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "mesa-asm-warn-"));
+  try {
+    const mk = spawnSync(python, ["-c", [
+      "import sys; from PIL import Image",
+      "Image.new('RGB', (900, 300), (200, 220, 240)).save(sys.argv[1])",  // 3:1 横图
+      "Image.new('RGB', (400, 800), (220, 200, 240)).save(sys.argv[2])",  // 1:2 竖图
+      "Image.new('RGB', (600, 900), (210, 240, 210)).save(sys.argv[3])",  // 2:3 竖图
+    ].join("\n"), join(dir, "wide.png"), join(dir, "tall.png"), join(dir, "mid.png")], { encoding: "utf8" });
+    assert.equal(mk.status, 0, mk.stderr);
+
+    // 1) --align-width 下 3:1 与 1:2 同排：宽高比极值比 6.0x > 1.5x，有效面积占比 < 75%，stderr 告警并写入 fig.json
+    const out1 = join(dir, "fig-warn.png");
+    const r1 = spawnSync(python, [assemble, "--out", out1, "--width-cm", "17", "--align-width", "--inputs", join(dir, "wide.png"), join(dir, "tall.png")], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    assert.equal(r1.status, 0, r1.stderr);
+    assert.match(r1.stderr, /warning:.*--align-width.*有效图像面积占比/);
+    const meta1 = JSON.parse(readFileSync(join(dir, "fig-warn.json"), "utf8"));
+    assert.ok(Array.isArray(meta1.warnings) && meta1.warnings.length === 1);
+    assert.ok(typeof meta1.height_cm === "number" && meta1.height_cm > 0);
+
+    // 2) 3 行竖图按 17 cm 宽必然超 23 cm：退码 3 且打印「最大 --width-cm」与推荐 Quarto width="XX%"
+    const out2 = join(dir, "fig-tall.png");
+    const row = `${join(dir, "mid.png")} ${join(dir, "mid.png")}`;
+    const r2 = spawnSync(python, [assemble, "--out", out2, "--width-cm", "17", "--rows", row, row, row], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONIOENCODING: "utf-8" },
+    });
+    assert.equal(r2.status, 3, r2.stderr);
+    assert.match(r2.stderr, /最大 --width-cm 约为 \d+\.\d cm/);
+    assert.match(r2.stderr, /Quarto width="\d+%"/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

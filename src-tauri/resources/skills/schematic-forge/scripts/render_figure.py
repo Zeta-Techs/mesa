@@ -1357,6 +1357,20 @@ def render(spec_path, root, formats=("svg", "pptx", "png"), pdf=None, dpi=300, f
             made_png = raster.to_png(src_svg, outputs["png"], dpi=dpi)
         except RuntimeError as e:
             notes.add(f"PNG 没出成：{e}")
+        if made_png:
+            # 同步伴生 360 px 宽缩略图，供多模态冷读检查缩印可读性
+            try:
+                from PIL import Image
+                with Image.open(outputs["png"]) as im:
+                    w_px, h_px = im.size
+                    if w_px > 0 and h_px > 0:
+                        thumb = outputs["png"].with_name(f"{outputs['png'].stem}-thumb360.png")
+                        if w_px > 360:
+                            im.resize((360, max(1, round(h_px * 360 / w_px))), Image.Resampling.LANCZOS).save(thumb)
+                        else:
+                            im.copy().save(thumb)
+            except Exception:
+                pass
         if not made_png and not notes:
             notes.add("PNG 没出：没有 MESA_FIGURE_TOOL，也没有 LibreOffice")
     if pdf:

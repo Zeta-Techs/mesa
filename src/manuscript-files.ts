@@ -22,6 +22,7 @@ export const MANUSCRIPT_HELPER_NAMES = [
   "typeface",
   "readme",
   "style-sheet",
+  "voice-profile",
 ] as const;
 
 const HELPER_RE = new RegExp(`(${MANUSCRIPT_HELPER_NAMES.join("|")})`, "i");
