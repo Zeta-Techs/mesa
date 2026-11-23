@@ -221,3 +221,25 @@ test("refs：句中点名的作者对号——整句找、带重音的 bib 也�
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// 2026-11-23 硼化物定稿：year 写在线首发年、卷期却是出刊那期，文献表成了「Small 20(18), 2023」
+test("refs：年份对 Crossref 出刊年——写了卷期取出刊年，未出刊的按在线年，已出刊却没卷期也提示", () => {
+  const code = [
+    "import sys, json, importlib.util",
+    "spec = importlib.util.spec_from_file_location('cc', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "msg = {'published-online': {'date-parts': [[2023, 12, 6]]}, 'published-print': {'date-parts': [[2024, 5]]}, 'volume': '20', 'issue': '18'}",
+    "early = {'published-online': {'date-parts': [[2026, 9, 27]]}}",
+    "rows = [m.year_checks('a', {'year': '2023', 'volume': '20', 'number': '18'}, msg, 'ms.md', 3, 'd'),",
+    "        m.year_checks('b', {'year': '2024', 'volume': '20'}, msg, 'ms.md', 3, 'd'),",
+    "        m.year_checks('c', {'year': '2026'}, early, 'ms.md', 3, 'd'),",
+    "        m.year_checks('d', {'year': '2023'}, msg, 'ms.md', 3, 'd')]",
+    "print(json.dumps([[r['status'], r['title']] for row in rows for r in row], ensure_ascii=False))",
+  ].join("\n");
+  const r = spawnSync(python, ["-c", code, script], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const [mismatch, ok, early, noIssue] = JSON.parse(r.stdout) as [string, string][];
+  assert.deepEqual(mismatch, ["needs_human", "[@a] 年份 2023 与卷期的出刊年 2024 不符"]);
+  assert.equal(ok[0], "passed");
+  assert.equal(early[0], "passed");
+  assert.deepEqual(noIssue, ["needs_human", "[@d] 已正式出刊（卷 20），引文库还没有卷期"]);
+});

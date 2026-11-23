@@ -3,7 +3,7 @@
 
 两个子命令：
   refs    引用键能否在 references.bib 里找到、库里有没有重复键；句中点名的作者（Smith et al.）与所引文献的作者对不对得上（离线也做）；
-          联网时再查 DOI 是否指向这篇、有没有撤稿 / 更正
+          联网时再查 DOI 是否指向这篇、有没有撤稿 / 更正，年份与卷期是否对得上 Crossref 的出刊年
   quotes  逐条核对 manuscript/evidence.json 里 Agent 给出的原文摘录：到该文献 PDF 全文里逐字找这段话
 
 结果写进 <工作目录>/.ccode/checks/cite-refs.jsonl、cite-quotes.jsonl（每次整份重写），一行一条：
@@ -321,6 +321,42 @@ def snippet(text, start, width=80):
     return re.sub(r"\s+", " ", text[start: start + width]).strip()
 
 
+def _crossref_year(parts):
+    try:
+        return int((parts or {}).get("date-parts", [[None]])[0][0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def year_checks(key, record, msg, file, line, doi):
+    """写了卷期时年份应取出刊年。Zotero / 出版社常把在线首发年写进 year，文献表就成了「Small 20(18), 2023」
+    （2026-11-23 硼化物定稿实证 5 条，Crossref 出刊年都晚一年）。"""
+    m = re.search(r"\d{4}", str(record.get("year", "")))
+    if not m:
+        return []
+    year = int(m.group(0))
+    printed = _crossref_year(msg.get("published-print")) or _crossref_year(
+        (msg.get("journal-issue") or {}).get("published-print"))
+    online = _crossref_year(msg.get("published-online"))
+    has_issue = bool(record.get("volume") or record.get("number"))
+    where = f"Crossref：在线 {online or '—'}、出刊 {printed or '—'}，卷 {msg.get('volume') or '—'} 期 {msg.get('issue') or '—'}"
+    if has_issue and printed and year != printed:
+        return [item(f"YEAR-{key}", "citation_metadata", "needs_human",
+                     f"[@{key}] 年份 {year} 与卷期的出刊年 {printed} 不符", file, line, source=f"doi:{doi}",
+                     detail=f"{where}。写了卷期时年份应取出刊年，文献表里卷期和年份才对得上")]
+    if not has_issue and msg.get("volume"):
+        return [item(f"YEAR-{key}", "citation_metadata", "needs_human",
+                     f"[@{key}] 已正式出刊（卷 {msg.get('volume')}），引文库还没有卷期", file, line, source=f"doi:{doi}",
+                     detail=f"{where}。补上卷、期、页码，年份按出刊年")]
+    if not has_issue and year not in {y for y in (online, printed) if y}:
+        if online or printed:
+            return [item(f"YEAR-{key}", "citation_metadata", "needs_human",
+                         f"[@{key}] 年份 {year} 与 Crossref 登记的发表年不符", file, line, source=f"doi:{doi}",
+                         detail=where)]
+    return [item(f"YEAR-{key}", "citation_metadata", "passed", f"[@{key}] 年份与 Crossref 登记一致",
+                 file, line, source=f"doi:{doi}")]
+
+
 def crossref_checks(B, key, record, where):
     """一条引用的 DOI 与撤稿核验；连不上网返回 None（由调用方统一说一句没核）。"""
     import urllib.error
@@ -353,6 +389,7 @@ def crossref_checks(B, key, record, where):
     else:
         out.append(item(f"DOI-{key}", "citation_doi", "passed", f"[@{key}] 的 DOI 存在且指向这篇",
                         file, line, source=f"doi:{doi}", detail=f"Crossref 题名：{got}"))
+        out += year_checks(key, record, msg, file, line, doi)
     try:
         notices = B.http_json("https://api.crossref.org/works?rows=20&filter=updates:" + urllib.parse.quote(doi))
         rows = notices["message"]["items"]
