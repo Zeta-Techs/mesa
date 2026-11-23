@@ -1969,7 +1969,8 @@ fn get_key_locked(id: &str) -> Result<Option<String>, String> {
     Ok(Some(key))
 }
 
-/// helper 进程取密钥（Codex 渠道 auth.command）：只读 keys.json，不碰钥匙串——后台被 Codex 调起时弹授权框没人点
+/// helper 进程取密钥（Codex 渠道 auth.command、Agent 出图）：只读 keys.json，不碰钥匙串——后台被 Codex 调起时弹授权框没人点；
+/// 也不拿配置锁——helper 常跑在 Agent 沙箱里，配置目录不可写（keys.json 整文件原子替换，无锁读不会读到半截）
 pub(crate) fn read_key_file_only(id: &str) -> Result<Option<String>, String> {
     Ok(read_keys_at(&keys_path()?)?.get(id).cloned())
 }

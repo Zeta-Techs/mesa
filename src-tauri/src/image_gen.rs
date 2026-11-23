@@ -1165,10 +1165,12 @@ pub async fn generate(target: &Target, req: &GenRequest) -> Result<GenOutcome, S
     if prompt.is_empty() {
         return Err("出图要一段描述（--prompt）".into());
     }
+    // 只读取钥、不拿配置锁：helper 在 Agent 沙箱里被调起，Windows 上 Codex 沙箱不许写
+    // Mesa 配置目录，开 locks/profiles.lock 就是「拒绝访问 (os error 5)」
     let key = if target.no_auth {
         None
     } else {
-        Some(crate::profiles::get_key(&target.gateway_id)?.ok_or_else(|| {
+        Some(crate::profiles::read_key_file_only(&target.gateway_id)?.ok_or_else(|| {
             format!("网关「{}」没存密钥：到 Mesa 连接页补上", target.gateway_name)
         })?)
     };
@@ -2081,6 +2083,20 @@ mod tests {
         };
         assert_eq!(names(""), ["mesa_helper-422438eb79283cce", "mesa_helper-31a0242152ca0ba9"]);
         assert_eq!(names(".exe"), ["mesa_helper.exe"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 沙箱里配置目录不可写（这里用同名文件占住 locks/ 模拟）：取密钥不能去开锁文件
+    #[test]
+    fn generate_reads_key_without_config_lock() {
+        let dir = tempfile_dir();
+        let _root = crate::storage::redirect_config_root(&dir);
+        std::fs::write(dir.join("locks"), b"").unwrap();
+        std::fs::write(dir.join("keys.json"), b"{}").unwrap();
+        let target = target_from_gateway(&gw("a", &[("gpt-image-1", "ready")]), "gpt-image-1");
+        let req = GenRequest { prompt: "cat".into(), n: 1, ..Default::default() };
+        let err = tauri::async_runtime::block_on(generate(&target, &req)).err().unwrap();
+        assert!(err.contains("没存密钥"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
