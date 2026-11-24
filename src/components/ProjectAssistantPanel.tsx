@@ -19,6 +19,7 @@ import {
   basisGuideHeadings,
   extractAtMentionQuery,
   filterMentionFiles,
+  filterTurnsByQuery,
   INSPECT_AGENTS,
   INSPECT_WAITING,
   INTENT_WAITING,
@@ -40,6 +41,8 @@ import ReworkOrderCard from "./ReworkOrderCard";
 import RememberCard from "./RememberCard";
 import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
+import { Modal } from "./Modal";
+import ProjectMemoryPanel from "./ProjectMemoryPanel";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
 import {
   briefLines,
@@ -59,6 +62,7 @@ import {
   ASSISTANT_CANCELLED,
   assistantConnection,
   gatherBriefInput,
+  invalidateAssistantSnapshot,
   planAsk,
   prefetchSnapshot,
   readonlyInspectFallback,
@@ -66,7 +70,7 @@ import {
   type AssistantTurn,
 } from "../project-assistant-run";
 import type { MapEntry } from "../project-map";
-import type { ProjectDto, RunDto, TaskDto } from "../types";
+import type { KnowledgeForAiDto, ProjectDto, RunDto, TaskDto } from "../types";
 import { samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { saveClipboardImage } from "../clipboard-image";
@@ -656,14 +660,51 @@ export default function ProjectAssistantPanel({
   }, [open, ask]);
 
   const [onlyDispatches, setOnlyDispatches] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryCount, setMemoryCount] = useState<number | null>(null);
+  const [memoryTick, setMemoryTick] = useState(0);
   const hasDispatches = turns.some((t) => !!t.dispatched || !!t.echoOf);
   const openDispatchCount = turns.filter((t) => t.dispatched && t.dispatched.echoed !== "accepted").length;
   useEffect(() => {
     setOnlyDispatches(false);
+    setSearchOpen(false);
+    setSearchQuery("");
+    setMemoryOpen(false);
   }, [projectPath]);
   useEffect(() => {
     if (!hasDispatches && onlyDispatches) setOnlyDispatches(false);
   }, [hasDispatches, onlyDispatches]);
+  useEffect(() => {
+    if (turns.length === 0 && (searchOpen || searchQuery)) {
+      setSearchOpen(false);
+      setSearchQuery("");
+    }
+  }, [turns.length, searchOpen, searchQuery]);
+  useEffect(() => {
+    if (!open || !projectPath) return;
+    let stale = false;
+    invoke<KnowledgeForAiDto>("project_memory_for_ai", { path: projectPath })
+      .then((res) => {
+        if (!stale) setMemoryCount((res?.included ?? 0) + (res?.omitted ?? 0));
+      })
+      .catch(() => {
+        if (!stale) setMemoryCount(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [open, projectPath, echoTick, memoryTick]);
+
+  const indexedTurns = turns.map((turn, i) => ({ turn, i }));
+  const byDispatch = onlyDispatches
+    ? indexedTurns.filter(({ turn }) => !!turn.dispatched || !!turn.echoOf)
+    : indexedTurns;
+  const trimmedSearch = searchQuery.trim();
+  const queryMatched = trimmedSearch ? new Set(filterTurnsByQuery(byDispatch.map((x) => x.turn), trimmedSearch)) : null;
+  const visibleTurns = queryMatched ? byDispatch.filter(({ turn }) => queryMatched.has(turn)) : byDispatch;
 
   async function clear() {
     if (!projectPath) return;
@@ -778,7 +819,16 @@ export default function ProjectAssistantPanel({
             </section>
           )}
           {withMemo.items.map((r) => (
-            <RememberCard key={r.text} text={r.text} source={r.source} projectPath={projectPath} />
+            <RememberCard
+              key={r.text}
+              text={r.text}
+              source={r.source}
+              projectPath={projectPath}
+              onSaved={() => {
+                if (projectPath) invalidateAssistantSnapshot(projectPath);
+                setMemoryTick((n) => n + 1);
+              }}
+            />
           ))}
           {withRework.rework && (
             <ReworkOrderCard
@@ -823,7 +873,7 @@ export default function ProjectAssistantPanel({
               ))}
             </div>
           )}
-          {/* 依据、花费、换个查法并成一行小字（原来各占一行） */}
+          {/* 依据、花费、换个查法与起草派活并成一行小字（原来各占一行） */}
           {(() => {
             const retry =
               i === turns.length - 1 && !busy
@@ -833,7 +883,16 @@ export default function ProjectAssistantPanel({
                     fallbackInspectLabel: inspectFallback ? `借用 ${inspectFallback.agentLabel} 打开文件核对重问` : undefined,
                   })
                 : [];
-            if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
+            const hasDraftRetry = retry.some((r) => r.intent === "request");
+            const canDraftFromTurn =
+              !busy &&
+              !withOrder.order &&
+              !withRework.rework &&
+              !withAsk.ask &&
+              !hasDraftRetry &&
+              Boolean(turn.connection && !turn.connection.startsWith("本地")) &&
+              `${lead}${rest}`.trim().length >= 30;
+            if (!turn.basis && turn.costUsd == null && retry.length === 0 && !canDraftFromTurn) return null;
             const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
             const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
             const dot = <span aria-hidden="true"> · </span>;
@@ -891,6 +950,22 @@ export default function ProjectAssistantPanel({
                         <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
                       </button>
                     ))}
+                  </span>
+                )}
+                {canDraftFromTurn && (
+                  <span>
+                    {(turn.basis || turn.costUsd != null || retry.length > 0) && dot}
+                    <button
+                      type="button"
+                      className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                      title="把这轮分析整理成一张派活单（你核对后点「派出去」才开工）"
+                      onClick={() => {
+                        const excerpt = [lead, rest].filter(Boolean).join("\n").replace(/\s+/g, " ").trim().slice(0, 360);
+                        void send(`按这轮分析起草一张派活单（原问：${turn.question.slice(0, 80)}）：\n${excerpt}`, null, "request");
+                      }}
+                    >
+                      <span className="text-micro">据此起草派活</span>
+                    </button>
                   </span>
                 )}
               </p>
@@ -1106,6 +1181,40 @@ export default function ProjectAssistantPanel({
           )}
         </div>
       )}
+      {searchOpen && turns.length > 0 && (
+        <div className="flex items-center gap-2 rounded-lg border border-hairline bg-inset px-2.5 py-1.5">
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            placeholder="搜历史问答或派活标题（空格分多词）…"
+            aria-label="搜索项目助手历史问答"
+            className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSearchOpen(false);
+                setSearchQuery("");
+              }
+            }}
+          />
+          <span className="shrink-0 text-micro tabular-nums text-l4">
+            {trimmedSearch ? `命中 ${visibleTurns.length} / ${byDispatch.length}` : `共 ${byDispatch.length} 轮`}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 text-l4 hover:text-l1"
+            aria-label="关闭搜索"
+            onClick={() => {
+              setSearchOpen(false);
+              setSearchQuery("");
+            }}
+          >
+            <X size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <form
         className="ccode-assistant-composer flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
         onSubmit={(event) => {
@@ -1219,10 +1328,28 @@ export default function ProjectAssistantPanel({
         </button>
       </form>
       {/* 照对话输入框：下方右侧只写模型；连接全名与「跟随项目默认」进悬停，点了去 Agent 分工换 */}
-      <div className="flex items-center gap-2 text-micro text-l4">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-micro text-l4">
         {turns.length > 0 && (
           <button type="button" className="shrink-0 text-l4 hover:text-l2 disabled:opacity-50" disabled={busy} onClick={() => void clear()}>
             <span className="text-micro">清空记录</span>
+          </button>
+        )}
+        {turns.length > 0 && (
+          <button
+            type="button"
+            className={`shrink-0 ${searchOpen || trimmedSearch ? "font-medium text-l2" : "text-l4 hover:text-l2"}`}
+            aria-pressed={searchOpen}
+            onClick={() => {
+              if (searchOpen) {
+                setSearchOpen(false);
+                setSearchQuery("");
+              } else {
+                setSearchOpen(true);
+                window.requestAnimationFrame(() => searchInputRef.current?.focus());
+              }
+            }}
+          >
+            <span className="text-micro">{searchOpen ? "收起搜索" : "搜记录"}</span>
           </button>
         )}
         {(onlyDispatches || (hasDispatches && turns.some((t) => !t.dispatched && !t.echoOf))) && (
@@ -1233,6 +1360,16 @@ export default function ProjectAssistantPanel({
             onClick={() => setOnlyDispatches((v) => !v)}
           >
             <span className="text-micro">{onlyDispatches ? "看全部记录" : "只看派活"}</span>
+          </button>
+        )}
+        {projectPath && (
+          <button
+            type="button"
+            className="shrink-0 text-l4 hover:text-l2"
+            title="查看或增改这个项目的长期规矩（已定 / 不做），之后开对话与干活的 AI 都会照着办"
+            onClick={() => setMemoryOpen(true)}
+          >
+            <span className="text-micro">项目知识{memoryCount != null && memoryCount > 0 ? ` ${memoryCount}` : ""}</span>
           </button>
         )}
         <button
@@ -1305,10 +1442,10 @@ export default function ProjectAssistantPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {turns
-            .map((turn, i) => ({ turn, i }))
-            .filter(({ turn }) => !onlyDispatches || !!turn.dispatched || !!turn.echoOf)
-            .map(({ turn, i }, vi, visible) => {
+          {visibleTurns.length === 0 && trimmedSearch ? (
+            <p className="py-6 text-center text-xs text-l4">没有匹配「{trimmedSearch}」的历史记录</p>
+          ) : (
+            visibleTurns.map(({ turn, i }, vi, visible) => {
               // 换天时先画一道分隔（本机时区）；同一天的不画
               const prev = vi > 0 ? visible[vi - 1].turn : null;
               const divider =
@@ -1325,7 +1462,8 @@ export default function ProjectAssistantPanel({
                   {renderTurn(turn, i)}
                 </Fragment>
               );
-            })}
+            })
+          )}
           {briefCard}
           {busy && (
             <article className="flex flex-col gap-3">
@@ -1413,6 +1551,32 @@ export default function ProjectAssistantPanel({
       )}
       <div ref={endRefCb} className="h-px" aria-hidden="true" />
       <GuideSectionModal heading={guideHeading} onClose={() => setGuideHeading(null)} />
+      {projectPath && (
+        <Modal
+          open={memoryOpen}
+          onClose={() => setMemoryOpen(false)}
+          size="lg"
+          layer="overlay"
+          title="项目知识"
+          description={`${projectName} · 记在这里的「已定 / 不做」会带给项目助手和干活的 AI`}
+          footer={
+            <button type="button" className={secondaryActionClass} onClick={() => setMemoryOpen(false)}>
+              关闭
+            </button>
+          }
+        >
+          <ProjectMemoryPanel
+            projectPath={projectPath}
+            workMode={project?.workMode}
+            compact
+            defaultOpen
+            onChanged={() => {
+              invalidateAssistantSnapshot(projectPath);
+              setMemoryTick((n) => n + 1);
+            }}
+          />
+        </Modal>
+      )}
     </SettingsDrawerShell>
   );
 }

@@ -352,14 +352,53 @@ export function historyBlock(turns: readonly AssistantHistoryTurn[], keep = 6): 
     .join("\n\n");
 }
 
-/** 问题里的词：英文 / 数字取 3 个字以上的词，中文取相邻两字；常见虚词组合不算 */
-function recallTerms(text: string): Set<string> {
-  const out = new Set<string>();
-  for (const w of text.toLowerCase().match(/[a-z0-9_.-]{3,}/g) ?? []) out.add(w);
+/** 科研双语同义组：跨中英文或换说法追问更早决定时映射到同一概念键（如「审稿意见」↔「rebuttal」） */
+const RECALL_SYNONYM_GROUPS: readonly (readonly string[])[] = [
+  ["审稿", "返修", "审稿人", "审稿意见", "rebuttal", "reviewer", "revision", "response"],
+  ["大纲", "章节", "outline"],
+  ["初稿", "稿件", "终稿", "正文", "draft", "manuscript", "paper", "review-final"],
+  ["引文", "引用", "文献库", "参考文献", "bib", "bibtex", "citation", "endnote", "zotero"],
+  ["图表", "插图", "拼图", "示意图", "figure", "fig", "schematic", "blender", "toc"],
+  ["组会", "汇报", "幻灯片", "讲稿", "slides", "ppt", "pptx", "deck"],
+  ["定时", "雷达", "巡检", "监控", "schedule", "watch", "watchlist"],
+  ["期刊", "投稿", "转载许可", "声明", "journal", "submission", "cover", "highlights", "permission"],
+  ["数据", "统计", "清洗", "异常", "eda", "clean", "stats"],
+];
+
+const RECALL_SYNONYM_MAP = new Map<string, string>();
+RECALL_SYNONYM_GROUPS.forEach((group, idx) => {
+  const tag = `#syn${idx}`;
+  for (const word of group) RECALL_SYNONYM_MAP.set(word.toLowerCase(), tag);
+});
+
+/** 问题里的词与权重：通用中文二字词权重 1；高区分度词（路径、第 N 步、全大写缩写如 EER/DFT、科研双语概念）权重 2 */
+function recallWeightedTerms(text: string): Map<string, number> {
+  const out = new Map<string, number>();
+  const add = (key: string, weight: number) => {
+    const prev = out.get(key) ?? 0;
+    if (weight > prev) out.set(key, weight);
+  };
+  for (const m of text.matchAll(/第\s*([一二三四五六七八九十\d]+)\s*步/g)) {
+    const raw = m[1];
+    const num = /^\d+$/.test(raw) ? raw : String("一二三四五六七八九十".indexOf(raw) + 1);
+    if (num && num !== "0") add(`#step${num}`, 2);
+  }
+  for (const m of text.matchAll(/\b[A-Z][A-Z0-9-]{2,12}\b/g)) {
+    add(`#acr:${m[0].toLowerCase()}`, 2);
+  }
+  for (const w of text.toLowerCase().match(/[a-z0-9_./-]{3,}/g) ?? []) {
+    const isPathOrFile = w.includes("/") || /\.[a-z]{2,5}$/.test(w);
+    add(w, isPathOrFile ? 2 : 1);
+    const syn = RECALL_SYNONYM_MAP.get(w);
+    if (syn) add(syn, 2);
+  }
   for (const run of text.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    for (const [word, syn] of RECALL_SYNONYM_MAP) {
+      if (/[\u4e00-\u9fff]/.test(word) && run.includes(word)) add(syn, 2);
+    }
     for (let i = 0; i + 1 < run.length; i++) {
       const bi = run.slice(i, i + 2);
-      if (!RECALL_STOP.has(bi)) out.add(bi);
+      if (!RECALL_STOP.has(bi)) add(bi, 1);
     }
   }
   return out;
@@ -368,24 +407,44 @@ const RECALL_STOP = new Set(["什么", "怎么", "这个", "那个", "一下", "
 
 /**
  * 更早问答里和这次问题相关的几轮（2026-11-08 用户「全部修复」：只带最近几轮时，更早问过、定过的助手就不记得了）。
- * 不调 AI：按词重合挑，至少共有 2 个词才算，最多 2 轮、按时间排；最近 keep 轮已经整段带着的不重复。
+ * 不调 AI：按词重合与科研双语同义组计分，得分 >= 2 才算命中，最多 2 轮、按时间排；最近 keep 轮已经整段带着的不重复。
  */
 export function recallOlderTurns<T extends AssistantHistoryTurn>(turns: readonly T[], keep: number, question: string, max = 2): T[] {
   const older = turns.slice(0, Math.max(0, turns.length - keep));
-  const q = recallTerms(question);
+  const q = recallWeightedTerms(question);
   if (older.length === 0 || q.size === 0) return [];
   const scored = older
     .map((t, i) => {
-      const terms = recallTerms(`${t.question} ${t.answer.slice(0, 800)}`);
-      let hit = 0;
-      for (const w of q) if (terms.has(w)) hit++;
-      return { t, i, hit };
+      const terms = recallWeightedTerms(`${t.question} ${t.answer.slice(0, 800)}`);
+      let score = 0;
+      for (const [w, qw] of q) {
+        const tw = terms.get(w);
+        if (tw) score += Math.min(qw, tw);
+      }
+      return { t, i, score };
     })
-    .filter((x) => x.hit >= 2)
-    .sort((a, b) => b.hit - a.hit || b.i - a.i)
+    .filter((x) => x.score >= 2)
+    .sort((a, b) => b.score - a.score || b.i - a.i)
     .slice(0, max)
     .sort((a, b) => a.i - b.i);
   return scored.map((x) => x.t);
+}
+
+/** 历史问答关键词检索：支持空格分多词（全部命中才算），匹配提问、回答与派活标题 */
+export function filterTurnsByQuery<T extends { question: string; answer: string; dispatched?: { title?: string } | null }>(
+  turns: readonly T[],
+  query: string,
+): T[] {
+  const tokens = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0) return [...turns];
+  return turns.filter((t) => {
+    const hay = `${t.question}\n${t.answer}\n${t.dispatched?.title ?? ""}`.toLowerCase();
+    return tokens.every((tok) => hay.includes(tok));
+  });
 }
 
 /** 这次带几轮最近的问答：要做事要连着几轮问答才起草得对，多带两轮 */

@@ -30,10 +30,14 @@ export default function ProjectMemoryPanel({
   projectPath,
   workMode,
   compact = false,
+  defaultOpen = false,
+  onChanged,
 }: {
   projectPath: string;
   workMode?: string | null;
   compact?: boolean;
+  defaultOpen?: boolean;
+  onChanged?: () => void;
 }) {
   const isResearch = normalizeWorkMode(workMode) === "research";
   const [doc, setDoc] = useState<Document | null>(null);
@@ -43,7 +47,7 @@ export default function ProjectMemoryPanel({
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   // 提升到研究档案（2026-11-02）：适用于所有项目的条目复制进用户层档案，分类由人选
@@ -78,6 +82,7 @@ export default function ProjectMemoryPanel({
     try {
       setDoc(await invoke<Document>("project_memory_update", { path: projectPath, expectedRevision: doc.revision, id, action, text, reason: effectiveReason }));
       setText(""); setReason(""); setEditing(null);
+      onChanged?.();
     } catch (e) {
       setError(String(e));
     }

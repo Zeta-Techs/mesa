@@ -643,3 +643,60 @@ test("后续对话分流升级、借用只读连接重问与 @ 文件引用补�
     ["output/review-final.pdf"],
   );
 });
+
+test("长期回溯升级：中英文同义概念、缩写、文件路径与步骤号都能跨轮翻出，单泛词不误命中", async () => {
+  const { recallOlderTurns } = await import("../src/project-assistant.ts");
+  const turn = (q: string, a: string) => ({ question: q, answer: a, at: "2026-11-20T00:00:00Z" });
+  const history = [
+    turn("审稿意见里第二条说机理缺原位表征怎么处理？", "先补近三年原位拉曼文献，再逐条回复。"),
+    turn("目标期刊先定 EER 吗？", "是的，摘要和 Highlights 按 EER 字数控制。"),
+    turn("output/endnote.docx 怎么导入？", "把 RIS 文件拖进 EndNote 即可。"),
+    turn("第 3 步综述大纲还要加什么？", "把失活机理拆成独立一节。"),
+    turn("今天天气不错", "是的，适合干活。"),
+    ...Array.from({ length: 4 }, (_, i) => turn(`最近第 ${i} 问`, "答")),
+  ];
+  assert.deepEqual(
+    recallOlderTurns(history, 4, "帮我写 rebuttal").map((t) => t.question),
+    ["审稿意见里第二条说机理缺原位表征怎么处理？"],
+  );
+  assert.deepEqual(
+    recallOlderTurns(history, 4, "EER 换刊要改哪些？").map((t) => t.question),
+    ["目标期刊先定 EER 吗？"],
+  );
+  assert.deepEqual(
+    recallOlderTurns(history, 4, "output/endnote.docx 在哪？").map((t) => t.question),
+    ["output/endnote.docx 怎么导入？"],
+  );
+  assert.deepEqual(
+    recallOlderTurns(history, 4, "第三步当时怎么定的？").map((t) => t.question),
+    ["第 3 步综述大纲还要加什么？"],
+  );
+  assert.deepEqual(
+    recallOlderTurns(history, 4, "天气"),
+    [],
+    "单个通用二字词权重仅 1，不应误召回",
+  );
+});
+
+test("历史问答搜索：支持大小写无关与空格分多词联合过滤，覆盖提问、回答和派活标题", async () => {
+  const { filterTurnsByQuery } = await import("../src/project-assistant.ts");
+  const turns = [
+    { question: "审稿意见怎么回？", answer: "用 rebuttal 模板逐条写", dispatched: { title: "审稿意见回复" } },
+    { question: "EER 投稿材料差什么？", answer: "还差 Cover Letter 和转载许可", dispatched: null },
+    { question: "帮我查 bib 重复", answer: "共发现 2 条重复", dispatched: { title: "核对引文库" } },
+  ];
+  assert.equal(filterTurnsByQuery(turns, "   ").length, 3);
+  assert.deepEqual(
+    filterTurnsByQuery(turns, "rebuttal").map((t) => t.question),
+    ["审稿意见怎么回？"],
+  );
+  assert.deepEqual(
+    filterTurnsByQuery(turns, "eer cover").map((t) => t.question),
+    ["EER 投稿材料差什么？"],
+  );
+  assert.deepEqual(
+    filterTurnsByQuery(turns, "引文库 重复").map((t) => t.question),
+    ["帮我查 bib 重复"],
+  );
+  assert.equal(filterTurnsByQuery(turns, "不存在的词").length, 0);
+});
