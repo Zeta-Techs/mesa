@@ -113,7 +113,8 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   一轮结束后查 image_gen_chat_calls 认出「没调用出图工具」（missedNotice）、图下模型名（captions → ChatImageCaptionContext）、
                              #   斜杠 /image（画图）；ImageGenPill 是输入框「+」旁边的小胶囊（ComposerImageGen.pill，2026-11-24 用户选：不在框上方另起一条），
                              #   换模型复用 ImageModelPicker（note 写连接页默认）、「最近用过」与连接页共用一份；ImageGenIssueLine 只在有问题时框里一行小字；
-                             #   对比几个（compare / pickMulti，最多 MAX_COMPARE，只在前端）：headerAction「对比几个 / 只用一个」，onEditImage 挑中结果回单个模型
+                             #   对比几个（compare / pickMulti，最多 MAX_COMPARE，只在前端，按标签存 localStorage）：headerAction「对比几个 / 只用一个」，onEditImage 挑中结果回单个模型；
+                             #   出图进度 ImageGenProgress（生成中每 2 秒读调用记录，inflightCalls 每条一根估算进度，耗时与连接页共用 ccode.imageGen.durations）
                              #   （tests/chat-image-gen-ui.test.ts）
   components/ImageModelMark.tsx # 聊天出图模式里出图模型的标识：vendorForModel 认得出画 VendorIcon，认不出 / 没选画 Lucide Palette（不用图片图标，
                              #   放「+」旁像附件）；胶囊、「+」菜单「画图」、消息上方「出图 · 模型」三处共用；尺寸只收 12/13/14（Tailwind 类名写死）
@@ -776,7 +777,7 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
   chat-image-gen.ts          # 聊天出图模式纯逻辑（tests/chat-image-gen.test.ts）：发出去那一行 imageGenDirective / splitImageGenDirective
                              #   （与 Rust sessions::strip_image_gen_directive 镜像；chat-relay.ts userSaid 剥掉它）、发前检查 imageGenIssue /
                              #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）、
-                             #   producerOf（这张图是哪次调用出的）；对比时那一行点名几个模型（「A、B 各出一版对比」）
+                             #   producerOf（这张图是哪次调用出的）、inflightCalls / finishedDurations / waitedText（出图进度）；对比时那一行点名几个模型（「A、B 各出一版对比」）
                              #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
@@ -893,7 +894,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   image-view.ts              # 图片预览纯计算：imageFitScale（适应窗口，小图不放大）/ formatBytes（tests/image-view.test.ts）
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
-                             # 聊天图片卡与 md 内嵌图共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）
+                             # 聊天图片卡、md 内嵌图与 ImagePreview（看大图灯箱 / 文件预览）共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）；
+                             # 预解码顺带记宽高与字节数（cachedImageDims / cachedImageBytes）：灯箱首帧按最终尺寸摆，不先按原尺寸铺再缩（2026-11-24）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按连接记住完全访问（rememberChatPermission / profilePermissionMode，只管聊天对话，2026-11-13）；按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；

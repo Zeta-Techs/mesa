@@ -1846,6 +1846,8 @@ export default function ChatSurface({
               </div>
             </div>
           )}
+          {/* 出图进度（ChatImageGen.tsx）：按出图工具的调用记录画，不靠这家 Agent 报状态 */}
+          {imageGen.progress}
           {running && !connIssue && channel?.retry && (
             <p role="status" className="mb-2 text-xs text-caution-text">{channel.retry}</p>
           )}

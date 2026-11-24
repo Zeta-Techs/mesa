@@ -60,6 +60,20 @@ const lru = createImageLru({
 const inflight = new Map<string, Promise<string>>();
 /** 缓存时那一版的磁盘戳（大小 + 修改时间）：重新出图后据此换掉旧图（2026-10-26） */
 const stamps = new Map<string, string | null>();
+/** 预解码时读到的原图宽高：看大图灯箱首帧就按最终尺寸摆，不先按原尺寸铺一下再缩（2026-11-24 用户：点开图闪一下） */
+const dims = new Map<string, { w: number; h: number }>();
+/** 原图大小（字节）：灯箱信息行用 */
+const sizes = new Map<string, number>();
+
+/** 缓存里这张图的宽高（预解码读到的；svg 等读不出为 undefined） */
+export function cachedImageDims(path: string): { w: number; h: number } | undefined {
+  return lru.get(path) ? dims.get(path) : undefined;
+}
+
+/** 缓存里这张图的字节数 */
+export function cachedImageBytes(path: string): number | undefined {
+  return lru.get(path) ? sizes.get(path) : undefined;
+}
 
 /** 已缓存就同步给地址（首帧直接画图），没有返回 undefined */
 export function cachedImageUrl(path: string): string | undefined {
@@ -86,7 +100,10 @@ function fetchImage(path: string, cwdHint: string | null | undefined): Promise<s
     .then(async ([raw, stamp]) => {
       const buf = rawIpcBytes(raw);
       const url = URL.createObjectURL(new Blob([buf], { type: imageMime(path) }));
-      await predecode(url);
+      const size = await predecode(url);
+      if (size) dims.set(path, size);
+      else dims.delete(path);
+      sizes.set(path, buf.byteLength);
       lru.set(path, url, buf.byteLength);
       stamps.set(path, stampKey(stamp));
       return url;
@@ -117,12 +134,13 @@ export function imageMime(path: string): string {
   return "application/octet-stream";
 }
 
-/** 让 WebView 先把图解码进它的图片缓存，<img> 用同一地址上屏时不再同步解码；解不出也照常交地址 */
-async function predecode(url: string): Promise<void> {
-  if (typeof Image === "undefined") return;
+/** 让 WebView 先把图解码进它的图片缓存，<img> 用同一地址上屏时不再同步解码；解不出也照常交地址。顺带交回宽高 */
+async function predecode(url: string): Promise<{ w: number; h: number } | null> {
+  if (typeof Image === "undefined") return null;
   const img = new Image();
   img.src = url;
   await img.decode().catch(() => {});
+  return img.naturalWidth > 0 && img.naturalHeight > 0 ? { w: img.naturalWidth, h: img.naturalHeight } : null;
 }
 
 /**

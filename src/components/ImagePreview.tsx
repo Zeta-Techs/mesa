@@ -1,5 +1,4 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { PenLine } from "lucide-react";
 import { pdfWheelShouldZoom, pdfWheelZoomFactor } from "../reader";
 import { imageEditActionLabel } from "../chat-image";
@@ -8,6 +7,7 @@ import { useFileVersion } from "../file-watch";
 import type { ReviewAnnotate } from "../draft-review";
 import ImageMarkDialog from "./ImageMarkDialog";
 import { formatBytes, imageFitScale } from "../image-view";
+import { cachedImageBytes, cachedImageDims, cachedImageUrl, loadImageUrl, revalidateImageUrl } from "../image-cache";
 
 function basename(p: string): string {
   const parts = p.replace(/[\\/]+$/, "").split(/[\\/]/);
@@ -42,13 +42,15 @@ function ImagePreview({
 }) {
   const [annotating, setAnnotating] = useState(false);
   const [annotateMsg, setAnnotateMsg] = useState<string | null>(null);
-  const [url, setUrl] = useState<string | null>(null);
-  const [bytes, setBytes] = useState(0);
+  // 读图走聊天同一份缓存（image-cache，二进制通道 + 预解码）：聊天里看过的图首帧就有，宽高也已知，
+  // 不再另走 base64 通道重读一遍、先闪「正在加载图片…」（2026-11-24 用户：点开图闪一下再呈现）
+  const [url, setUrl] = useState<string | null>(() => cachedImageUrl(path) ?? null);
+  const [bytes, setBytes] = useState(() => cachedImageBytes(path) ?? 0);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   /** "fit" = 跟着框大小走；数字 = 固定倍率 */
   const [zoom, setZoom] = useState<"fit" | number>("fit");
-  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(() => cachedImageDims(path) ?? null);
   const [box, setBox] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const scrollRef = useRef<HTMLDivElement>(null);
   /** 缩放锚点：缩放前指针下的图片坐标（图片像素）与指针在框内的位置，布局后据此回正滚动 */
@@ -58,11 +60,15 @@ function ImagePreview({
   // 磁盘上换了一版（重新出图）：换图，缩放与滚动不动
   const fileVersion = useFileVersion(path);
 
+  const shownPathRef = useRef(path);
   useEffect(() => {
+    if (shownPathRef.current === path) return;
+    shownPathRef.current = path;
     setAnnotating(false);
     setAnnotateMsg(null);
-    setUrl(null);
-    setNatural(null);
+    setUrl(cachedImageUrl(path) ?? null);
+    setNatural(cachedImageDims(path) ?? null);
+    setBytes(cachedImageBytes(path) ?? 0);
     setZoom("fit");
   }, [path, cwdHint]);
 
@@ -71,13 +77,14 @@ function ImagePreview({
     setError(null);
     void (async () => {
       try {
-        const dto = await invoke<{ mime: string; data: string }>(
-          "read_image_bytes",
-          { path, cwdHint },
-        );
+        // 缓存里有就核一次磁盘戳（重新出图后换新图），没有就读进缓存
+        const fresh = cachedImageUrl(path) ? await revalidateImageUrl(path, cwdHint) : null;
+        const next = fresh ?? cachedImageUrl(path) ?? (await loadImageUrl(path, cwdHint));
         if (cancelled) return;
-        setBytes(Math.floor((dto.data.length * 3) / 4));
-        setUrl(`data:${dto.mime};base64,${dto.data}`);
+        setUrl(next);
+        const d = cachedImageDims(path);
+        if (d) setNatural(d);
+        setBytes(cachedImageBytes(path) ?? 0);
       } catch (e) {
         if (!cancelled) setError(String(e));
       }
@@ -87,8 +94,9 @@ function ImagePreview({
     };
   }, [path, cwdHint, retry, fileVersion]);
 
-  // 框的大小（适应窗口要用；分栏拖动、开窗口都会变）
-  useEffect(() => {
+  // 框的大小（适应窗口要用；分栏拖动、开窗口都会变）。在上屏前量（layout effect）：
+  // 量之前框是 0，适应倍率会按 100% 算，图先按原尺寸画一帧再缩
+  useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
@@ -277,9 +285,10 @@ function ImagePreview({
             setDragging(false);
           }}
         >
-          {/* min-w/h-full + w-max + m-auto：比框小时居中，比框大时从左上角铺开、四边都滚得到 */}
+          {/* min-w/h-full + w-max + m-auto：比框小时居中，比框大时从左上角铺开、四边都滚得到。
+              宽高已知时等框量好再画，首帧就是最终大小；读不出宽高（svg 等）照旧先画再按 onLoad 定 */}
           <div className="flex min-h-full min-w-full w-max p-3">
-            <img
+            {(!natural || box.w > 0) && <img
               src={url}
               alt={basename(path)}
               draggable={false}
@@ -297,7 +306,7 @@ function ImagePreview({
                   ? { width: natural.w * scale, height: natural.h * scale }
                   : { maxWidth: "100%", maxHeight: "100%" }
               }
-            />
+            />}
           </div>
         </div>
       )}

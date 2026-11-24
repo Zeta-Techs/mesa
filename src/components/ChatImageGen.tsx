@@ -4,11 +4,14 @@
 //   选回连接页默认那个 = 跟着默认走。胶囊发完留着，× 退回普通对话
 // - 发之前查：没出图工具 / 没模型拦下，这家没开 image-gen 只提醒并给「打开」——只在有问题时框里多一行小字
 // - 几个模型对比（2026-11-24 用户要）：选择框里「对比几个」进多选（最多 4），胶囊写「N 个模型对比」，那一行点名全部、技能每个各出一版；
-//   点其中一张结果的「改图」，胶囊回到出这张的那个模型（producerOf 查调用记录），对比只在前端、不进 image_gen_chat 记录
+//   点其中一张结果的「改图」，胶囊回到出这张的那个模型（producerOf 查调用记录），对比只在前端、不进 image_gen_chat 记录；
+//   勾着的几个按标签存 localStorage（重启接回这个标签仍是对比）
+// - 出图进度（2026-11-24 用户：生图过程中聊天层没有状态）：生成中每 2 秒读一次调用记录，开始了没出完的每个画一条估算进度，
+//   估算用本机以往耗时（与连接页「试出与对比」共用 ccode.imageGen.durations），不依赖这家 Agent 报不报状态
 // - 发出去由 Mesa 在描述前写一行固定写法（技能认它就必须调出图工具）；这一轮结束时出图工具一次没被调用，框上方说一声
 // - 出图工具每次调用记一条，聊天里的图下面写是哪个模型出的
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, X } from "lucide-react";
 import ImageModelPicker from "./ImageModelPicker";
 import ImageModelMark from "./ImageModelMark";
@@ -18,6 +21,9 @@ import {
   MAX_COMPARE,
   calledSince,
   captionsByPath,
+  finishedDurations,
+  inflightCalls,
+  waitedText,
   imageGenBlocks,
   imageGenDirective,
   imageGenIssue,
@@ -26,7 +32,15 @@ import {
   type ImageGenIssue,
 } from "../chat-image-gen";
 import type { MesaCommand } from "../composer-assist";
-import { gatewayLabel, itemKey, pushRecent, type ImageModelItem } from "../image-models";
+import {
+  estimateSeconds,
+  gatewayLabel,
+  itemKey,
+  progressAt,
+  pushRecent,
+  recordDuration,
+  type ImageModelItem,
+} from "../image-models";
 import { IS_WINDOWS } from "../hotkeys";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { useAppStore } from "../store";
@@ -35,8 +49,13 @@ import type { SkillDto } from "../types";
 type Choice = { gatewayId: string; model: string };
 type CandidateGroup = { gatewayId: string; gatewayName: string; models: string[] };
 
-/** 与连接页出图模型一块共用「最近用过」 */
+/** 与连接页出图模型一块共用「最近用过」与各模型耗时 */
 const LS_RECENT = "ccode.imageGen.recent";
+const LS_DURATIONS = "ccode.imageGen.durations";
+/** 这个标签勾着对比的几个（itemKey 列表） */
+const lsCompare = (tabId: string) => `ccode.imageGen.compare.${tabId}`;
+/** 生成中多久读一次调用记录（画进度用） */
+const POLL_MS = 2000;
 /** 一轮结束后再等一会儿再查：有的 Agent 结束标记比最后一条命令早到 */
 const SETTLE_MS = 2500;
 
@@ -49,6 +68,23 @@ function readRecent(): string[] {
     return [];
   }
 }
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function writeJson(key: string, value: unknown) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* 存不了只影响估时与重启后的对比 */
+  }
+}
+
 function writeRecent(list: string[]) {
   try {
     localStorage.setItem(LS_RECENT, JSON.stringify(list));
@@ -165,6 +201,46 @@ export function useChatImageGen({
     },
     [defaultGateway, defaultModel, sessionId, tabId],
   );
+
+  // 对比跟着标签：选择框读回来后按存的 key 还原（还原在前、写在后，同一次渲染里先读到旧值）
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!tabId || groups === null || restoredRef.current) return;
+    restoredRef.current = true;
+    const keys = readJson<string[]>(lsCompare(tabId), []);
+    const list = keys.map((k) => items.find((i) => itemKey(i) === k)).filter((i): i is ImageModelItem => Boolean(i));
+    if (list.length > 1) setCompare(list);
+  }, [tabId, groups, items]);
+  useEffect(() => {
+    if (!tabId || !restoredRef.current || pickMulti) return;
+    writeJson(lsCompare(tabId), compare && compare.length > 1 ? compare.map(itemKey) : null);
+  }, [tabId, compare, pickMulti]);
+
+  // 生成中（或还有没出完的）每 2 秒读一次调用记录，画进度
+  const inflight = useMemo(() => inflightCalls(calls), [calls]);
+  const polling = generating || inflight.length > 0;
+  useEffect(() => {
+    if (!polling || !tabId) return;
+    const t = window.setInterval(() => void loadCalls(), POLL_MS);
+    return () => window.clearInterval(t);
+  }, [polling, tabId, loadCalls]);
+  // 新出完的几次记进耗时（下次估得更准）；挂上时已有的不重记
+  const timedRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const done = finishedDurations(calls);
+    if (timedRef.current === null) {
+      timedRef.current = new Set(done.map((d) => d.id));
+      return;
+    }
+    const fresh = done.filter((d) => !timedRef.current!.has(d.id));
+    if (fresh.length === 0) return;
+    let store = readJson<Record<string, number[]>>(LS_DURATIONS, {});
+    for (const d of fresh) {
+      timedRef.current.add(d.id);
+      store = recordDuration(store, d.model, d.ms);
+    }
+    writeJson(LS_DURATIONS, store);
+  }, [calls]);
 
   const singleKey = choice
     ? itemKey(choice)
@@ -349,7 +425,9 @@ export function useChatImageGen({
     };
   }
 
-  return { composer, command, captions, missedNotice };
+  const progress: ReactNode = inflight.length > 0 ? <ImageGenProgress calls={inflight} /> : null;
+
+  return { composer, command, captions, missedNotice, progress };
 }
 
 function issueText(issue: ImageGenIssue): string {
@@ -370,6 +448,50 @@ function openProfilesImagePane() {
     // 存不下就只跳到连接页
   }
   useAppStore.getState().setPage("profiles");
+}
+
+/** 聊天里正在出的图：每个模型一条，模型标识 + 名字 + 已等多久 + 估算进度（出图接口不报进度，按本机以往耗时估，出完前不满格） */
+function ImageGenProgress({ calls }: { calls: ImageGenCall[] }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const durations = readJson<Record<string, number[]>>(LS_DURATIONS, {});
+  const now = Date.now();
+  return (
+    <div className="mb-2 flex flex-col gap-2" role="status" aria-live="polite">
+      {calls.map((c) => {
+        const elapsed = Math.max(0, (now - c.at) / 1000);
+        const estimate = estimateSeconds(c.model, durations[c.model]);
+        const pct = Math.round(progressAt(elapsed, estimate) * 100);
+        return (
+          <div key={c.id} className="max-w-sm">
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-l3">
+              <ImageModelMark model={c.model} size={12} className="text-l2" />
+              <span className="shrink-0">正在用</span>
+              <span className="min-w-0 truncate font-mono text-l2">{c.model}</span>
+              <span className="shrink-0">出图</span>
+              <span className="ml-auto shrink-0 tabular-nums text-l4">已等 {waitedText(elapsed)}</span>
+            </div>
+            <div
+              className="mt-1 h-1 overflow-hidden rounded-full bg-hairline"
+              role="progressbar"
+              aria-valuenow={pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`${c.model} 出图进度（估算）`}
+            >
+              <div className="h-full rounded-full bg-cta transition-[width] duration-500" style={{ width: `${Math.max(pct, 3)}%` }} />
+            </div>
+            <p className="mt-0.5 text-micro text-l4">
+              {elapsed <= estimate ? `这个模型在你这里一般约 ${waitedText(estimate)}（估算）` : "比平常久，还在等"}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 输入框里「+」旁边的小胶囊：图标 + 模型名（点开选择框）+ ×（退出出图） */

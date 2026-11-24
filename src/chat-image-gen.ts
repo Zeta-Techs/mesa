@@ -106,6 +106,29 @@ export function producerOf(calls: readonly ImageGenCall[], path: string, isWindo
   return hit;
 }
 
+/** 还在出的（开始了、还没出完也没失败）：聊天里画进度条用。同一次调用的几行按 id 对上 */
+export function inflightCalls(calls: readonly ImageGenCall[]): ImageGenCall[] {
+  const ended = new Set(calls.filter((c) => c.phase !== "start").map((c) => c.id));
+  return calls.filter((c) => c.phase === "start" && !ended.has(c.id));
+}
+
+/** 出完的几次各用了多久（开始 → 出完，毫秒）：喂给进度条的耗时估算（image-models.ts estimateSeconds） */
+export function finishedDurations(calls: readonly ImageGenCall[]): { id: string; model: string; ms: number }[] {
+  const starts = new Map(calls.filter((c) => c.phase === "start").map((c) => [c.id, c.at]));
+  const out: { id: string; model: string; ms: number }[] = [];
+  for (const c of calls) {
+    const begun = starts.get(c.id);
+    if (c.phase === "done" && begun !== undefined && c.at > begun) out.push({ id: c.id, model: c.model, ms: c.at - begun });
+  }
+  return out;
+}
+
+/** 已等多久的写法：「45 秒」「2 分 05 秒」 */
+export function waitedText(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
+}
+
 /** 出好的图 → 用的哪个模型（键 = pathKey；同一路径后出的覆盖先出的） */
 export function captionsByPath(calls: readonly ImageGenCall[], isWindows = false): Map<string, string> {
   const out = new Map<string, string>();

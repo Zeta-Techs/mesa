@@ -6,7 +6,10 @@ import {
   imageGenBlocks,
   imageGenDirective,
   imageGenIssue,
+  finishedDurations,
+  inflightCalls,
   producerOf,
+  waitedText,
   splitImageGenDirective,
   stripImageGenDirective,
   withImageGenDirective,
@@ -135,4 +138,18 @@ test("这张图是哪一次调用出的：取最后一次出成这张的，没�
   assert.equal(producerOf(calls, "/p/figures/cat-gemini.png")?.gatewayName, "Antigravity");
   assert.equal(producerOf(calls, "/p/figures/other.png"), null);
   assert.equal(producerOf([call({ paths: ["C:\\P\\A.png"] })], "c:/p/a.png", true)?.model, "gpt-image-2.5");
+});
+
+test("出图进度：开始了还没出完的算在出；出完的按开始到出完记耗时", () => {
+  const calls = [
+    call({ id: "a", at: 1_000, phase: "start", model: "gpt-image-2.6" }),
+    call({ id: "b", at: 1_000, phase: "start", model: "gemini-nano-banana-2.1" }),
+    call({ id: "a", at: 61_000, phase: "done", model: "gpt-image-2.6", paths: ["/p/a.png"] }),
+    call({ id: "c", at: 2_000, phase: "start", model: "grok-imagine-image" }),
+    call({ id: "c", at: 5_000, phase: "failed", model: "grok-imagine-image" }),
+  ];
+  assert.deepEqual(inflightCalls(calls).map((c) => c.id), ["b"]);
+  assert.deepEqual(finishedDurations(calls), [{ id: "a", model: "gpt-image-2.6", ms: 60_000 }]);
+  assert.equal(waitedText(45.4), "45 秒");
+  assert.equal(waitedText(125), "2 分 05 秒");
 });
