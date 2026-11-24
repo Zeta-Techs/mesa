@@ -108,6 +108,10 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/ImageGenPanel.tsx # 出图模型一块（连接页最下方，唯一编辑处；设置页只显示现状跳过来）：组头 + 一行与连接行同列模板
                              #   （gridClass 由连接页传入）；更换走 ImageModelPicker；「试出与对比」自写描述、1–4 个模型并行出图、
                              #   估算进度条、「用这个」；最近用过 / 各模型耗时存 localStorage；setImageGenModel 供连接行「改作出图模型」
+  components/ChatImageGen.tsx # 聊天「出图」模式（2026-11-24）：useChatImageGen 给 ChatSurface 用——这个对话选的出图模型（image_gen_chat_sync/set，
+                             #   选回连接页默认 = 清掉）、发前检查（没工具 / 没模型拦，没开 image-gen 给「打开」）、发出去那一行（ComposerImageGen.directive）、
+                             #   一轮结束后查 image_gen_chat_calls 认出「没调用出图工具」（missedNotice）、图下模型名（captions → ChatImageCaptionContext）、
+                             #   斜杠 /image（画图）；ImageGenChip 是输入框上方胶囊，换模型复用 ImageModelPicker、「最近用过」与连接页共用一份
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
@@ -763,6 +767,9 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
   chat-image.ts              # 消息里的图片行（tests/chat-image.test.ts）：整行图片路径 imagePathFromLine、改图的「原图：」「标注图：」行
                              # labeledImageFromLine / attachmentLines（Claude Code 只把单独一行的路径升级成图片附件，带前缀不升级）、
                              # 要不要模型看图 composerImageKind（plain / marks / null，ChatModelMenu 据此出看不了图的提示）
+  chat-image-gen.ts          # 聊天出图模式纯逻辑（tests/chat-image-gen.test.ts）：发出去那一行 imageGenDirective / splitImageGenDirective
+                             #   （与 Rust sessions::strip_image_gen_directive 镜像；chat-relay.ts userSaid 剥掉它）、发前检查 imageGenIssue /
+                             #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）
                              #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
@@ -2223,6 +2230,11 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   红线：密钥只在本进程用、下载图片地址不带鉴权头、Target 不派生 Debug；helper_exe 试跑
                              #   `image --probe` 通过才把路径作 MESA_IMAGE_TOOL 注入 PTY（pty.rs spawn_tracked；Codex app-server 经 pty_agent_env 同样拿到）；
                              #   find_bundled_helper 是随包 helper 的唯一查找口（同目录 → deps/ → 上一层），hooks 的原生 hook 也走它
+                             #   resolve_target 顺序 --model > 本对话选的（image_gen_chat）> 连接页默认；--list 首行写本对话选的
+  image_gen_chat.rs          # 聊天出图模式（2026-11-24）：对话里选的出图模型 <配置根>/image-gen-chats.json（按标签 id，带会话 id 供侧栏重开找回，
+                             #   上限 300、config_lock 读改写、原子替换）+ 出图调用记录 image-gen-calls.jsonl（start/done/failed，不记描述与密钥，
+                             #   无标签不记，超 512 KB 滚 .1）；MESA_IMAGE_TAB 由 pty.rs 从 link_claim_id 注入 PTY 与 Codex app-server；
+                             #   命令 image_gen_chat_sync / image_gen_chat_set / image_gen_chat_calls
   svg_render.rs              # 科研做图（2026-11-05，design-research-figures.md §4.3.1）：mesa_helper svg-render 把图纸 SVG 转 PNG（resvg，--dpi 按 mm/in/pt
                              #   物理尺寸换算、写 pHYs；--width-px 出冷读缩略图）与 PDF（svg2pdf，文字嵌子集字体可选中、不转曲，页面即物理尺寸）；
                              #   字体 = --font-dir + 系统字体，去掉 macOS LastResort（否则整行被换成问号方框、缺字也查不出），中文缺字优先回落

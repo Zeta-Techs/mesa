@@ -436,10 +436,31 @@ fn is_generic_greeting(text: &str) -> bool {
 /// Mesa 在项目里开对话时塞在第一句前面的项目上下文包（前端 project-context.ts composeLaunchPrompt / splitLaunchPrompt 镜像）：
 /// 不是人话。列表标题与自动起名只认分隔（单独一行 ----）后面你说的；只有包没有分隔的整条返回空串。
 /// 只认默认包头，自定义模板的包头认不出，照旧当人话。
-/// 接力抬头（relay_brief::RELAY_HEAD，换一家接着做时 Mesa 写在那句话前面）同样不是人话，一并剥掉
+/// 接力抬头（relay_brief::RELAY_HEAD，换一家接着做时 Mesa 写在那句话前面）同样不是人话，一并剥掉；
+/// 聊天出图模式写在那句话前面的一行（点名出图模型）也剥掉
 pub(crate) fn strip_mesa_launch_pack(text: &str) -> &str {
     let text = strip_before_separator(text, "你正在项目「");
-    strip_before_separator(text, crate::relay_brief::RELAY_HEAD)
+    strip_image_gen_directive(strip_before_separator(text, crate::relay_brief::RELAY_HEAD))
+}
+
+/// 聊天出图模式那一行的行首（前端 chat-image-gen.ts imageGenDirective 镜像）
+const IMAGE_GEN_DIRECTIVE_HEADS: [&str; 2] = [
+    "使用 image-gen 技能出图（出图模型 ",
+    "使用 image-gen 技能改图（出图模型 ",
+];
+
+/// 剥掉第一行的出图模式写法（行首对得上、以「）：」收尾才算），只留人说的
+pub(crate) fn strip_image_gen_directive(text: &str) -> &str {
+    let t = text.trim_start();
+    if !IMAGE_GEN_DIRECTIVE_HEADS.iter().any(|h| t.starts_with(h)) {
+        return text;
+    }
+    let (first, rest) = t.split_once('\n').unwrap_or((t, ""));
+    if first.trim_end().ends_with("）：") {
+        rest.trim_start()
+    } else {
+        text
+    }
 }
 
 /// 只剥项目说明，接力抬头留着（relay.rs 认抬头用）

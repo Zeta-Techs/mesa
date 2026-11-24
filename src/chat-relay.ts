@@ -4,6 +4,7 @@
 //! 画成一张「前面由谁做 / 你离开期间谁做了几轮」的卡。两端共读 tests/fixtures/relay-prompts.json。
 
 import { splitLaunchPrompt } from "./project-context.ts";
+import { stripImageGenDirective } from "./chat-image-gen.ts";
 
 export const RELAY_HEAD = "〔Mesa 接力";
 const RELAY_DELTA_HEAD = "〔Mesa 接力 · 补充〕";
@@ -40,9 +41,9 @@ export function splitRelayPrompt(text: string): RelayPrompt | null {
   return { briefName: briefNameIn(head), delta, said, from, roundsBy };
 }
 
-/** 一句话里人说的部分：剥掉项目说明与接力抬头（只有抬头没人话为空） */
+/** 一句话里人说的部分：剥掉项目说明、接力抬头与出图模式那一行（只有抬头没人话为空） */
 export function userSaid(text: string): string {
-  return splitRelayPrompt(text)?.said ?? splitLaunchPrompt(text).said;
+  return stripImageGenDirective(splitRelayPrompt(text)?.said ?? splitLaunchPrompt(text).said);
 }
 
 /** 发送时拼：抬头 +「----」+ 人这句话 */

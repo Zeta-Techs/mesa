@@ -4089,6 +4089,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       <StableChatSurface
                         // 藏着的标签（没在看、也不在阅读区右栏）：记录照常刷新，不重画，露出来那一下再画
                         frozen={!tabVisible && !inReader}
+                        tabId={t.id}
+                        sessionId={statuses[t.id]?.sessionId ?? null}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
                         metaSlots={chatOn && !peek ? (chatMetaSlots[t.id] ?? null) : null}
                         messages={forkChatMessages(

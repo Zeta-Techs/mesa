@@ -1262,6 +1262,12 @@ fn pty_spawn_sync(
     if let Some(id) = opened_id.as_deref() {
         channel_env_full.push((crate::peek::RUN_ENV.to_string(), id.to_string()));
     }
+    // 聊天出图模式（image_gen_chat.rs）：出图工具按标签找这个对话选的出图模型、记调用。
+    // 不复用 CCODE_TAB_ID：那个只在有聊天旁路时注入，这个十家都要
+    let image_tab = link_claim_id.as_deref().and_then(crate::image_gen_chat::clean_tab);
+    if let Some(tab) = &image_tab {
+        channel_env_full.push((crate::image_gen_chat::TAB_ENV.to_string(), tab.clone()));
+    }
     let (channel_env, channel) = crate::chat_channel::prepare(
         &agent_id,
         link_claim_id.as_deref(),
@@ -1295,6 +1301,9 @@ fn pty_spawn_sync(
     }
     for (k, v) in &channel_env {
         cmd.env(k, v);
+    }
+    if let Some(tab) = &image_tab {
+        cmd.env(crate::image_gen_chat::TAB_ENV, tab);
     }
     let pty_id = match spawn_tracked(
         &app,

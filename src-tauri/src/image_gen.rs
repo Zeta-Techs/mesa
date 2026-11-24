@@ -855,14 +855,38 @@ const NOT_CONFIGURED: &str =
     "还没配置出图模型：到 Mesa 连接页左栏「出图模型」选一个（各家网关目录里的出图模型都能选）";
 
 pub fn resolve_target(model_override: Option<&str>) -> Result<Target, String> {
+    let chat = crate::image_gen_chat::current_tab().and_then(|t| crate::image_gen_chat::choice_for_tab(&t));
     let s = crate::settings::read_current();
     let gateways = crate::gateway_store::load_gateways()?;
-    resolve_target_in(
+    resolve_target_for_chat(
         &gateways,
         s.image_gen_gateway_id.as_deref(),
         s.image_gen_model.as_deref(),
+        chat.as_ref(),
         model_override,
     )
+}
+
+/// 顺序 `--model` > 这个对话在输入框胶囊里选的（image_gen_chat.rs）> 连接页默认。
+/// 对话选的网关已删：按模型名去别的网关目录找，不报「设置里选的网关不在了」
+fn resolve_target_for_chat(
+    gateways: &[crate::profiles::Gateway],
+    default_gateway: Option<&str>,
+    default_model: Option<&str>,
+    chat: Option<&crate::image_gen_chat::ChatChoice>,
+    model_override: Option<&str>,
+) -> Result<Target, String> {
+    let overridden = model_override.is_some_and(|m| !m.trim().is_empty());
+    match chat.filter(|c| !overridden && !c.model.trim().is_empty()) {
+        Some(c) => {
+            let gw = gateways
+                .iter()
+                .any(|g| g.id == c.gateway_id)
+                .then_some(c.gateway_id.as_str());
+            resolve_target_in(gateways, gw, Some(c.model.as_str()), None)
+        }
+        None => resolve_target_in(gateways, default_gateway, default_model, model_override),
+    }
 }
 
 // ===== 请求 =====
@@ -1694,12 +1718,27 @@ fn list_text_for(
     gateways: &[crate::profiles::Gateway],
     default_model: Option<&str>,
     default_gateway: Option<&str>,
+    chat: Option<&crate::image_gen_chat::ChatChoice>,
 ) -> String {
+    let gateway_name = |id: &str| {
+        gateways
+            .iter()
+            .find(|x| x.id == id)
+            .map(|x| x.name.clone())
+            .unwrap_or_else(|| "（已删除的网关）".into())
+    };
     let mut lines = Vec::new();
+    // 对话里选过就写在第一行：不加 --model 时用它
+    if let Some(c) = chat.filter(|c| !c.model.trim().is_empty()) {
+        lines.push(format!(
+            "本对话选的出图模型：{}（网关「{}」）——不加 --model 就用它",
+            c.model,
+            gateway_name(&c.gateway_id)
+        ));
+    }
     match (default_model, default_gateway) {
         (Some(m), Some(g)) => {
-            let name = gateways.iter().find(|x| x.id == g).map(|x| x.name.as_str()).unwrap_or("（已删除的网关）");
-            lines.push(format!("默认出图模型：{m}（网关「{name}」）"));
+            lines.push(format!("默认出图模型：{m}（网关「{}」）", gateway_name(g)));
         }
         _ => lines.push(NOT_CONFIGURED.into()),
     }
@@ -1719,7 +1758,13 @@ fn list_text_for(
 fn list_text() -> String {
     let s = crate::settings::read_current();
     let gateways = crate::gateway_store::load_gateways().unwrap_or_default();
-    list_text_for(&gateways, s.image_gen_model.as_deref(), s.image_gen_gateway_id.as_deref())
+    let chat = crate::image_gen_chat::current_tab().and_then(|t| crate::image_gen_chat::choice_for_tab(&t));
+    list_text_for(
+        &gateways,
+        s.image_gen_model.as_deref(),
+        s.image_gen_gateway_id.as_deref(),
+        chat.as_ref(),
+    )
 }
 
 /// `mesa_helper image …` 的实现；返回进程退出码。成功时每张图一行 `saved: 绝对路径`
@@ -1787,10 +1832,30 @@ pub fn helper_image_cli(args: &[String]) -> i32 {
         resolution: a.resolution,
         transparent: a.transparent,
     };
+    // 记这次调用（聊天据此认出「这一轮调用过出图工具」、图下写模型名）；不记描述原文
+    let call_id = uuid::Uuid::new_v4().simple().to_string();
+    let call = |phase: &str, paths: Vec<String>| crate::image_gen_chat::ImageCall {
+        id: call_id.clone(),
+        tab: crate::image_gen_chat::current_tab(),
+        at: crate::image_gen_chat::now_ms(),
+        phase: phase.into(),
+        model: target.model.clone(),
+        gateway_name: target.gateway_name.clone(),
+        paths,
+    };
+    crate::image_gen_chat::record_call(&call("start", Vec::new()));
     let started = Instant::now();
     let result = tauri::async_runtime::block_on(generate(&target, &req));
     match result.and_then(|o| save_images(&o.images, Path::new(&out)).map(|p| (o, p))) {
         Ok((outcome, paths)) => {
+            let saved: Vec<PathBuf> = paths
+                .into_iter()
+                .map(|p| crate::paths::strip_verbatim(std::fs::canonicalize(&p).unwrap_or(p)))
+                .collect();
+            crate::image_gen_chat::record_call(&call(
+                "done",
+                saved.iter().map(|p| p.to_string_lossy().into_owned()).collect(),
+            ));
             println!(
                 "model: {}（网关「{}」，{}，{:.1} 秒）",
                 target.model,
@@ -1801,9 +1866,8 @@ pub fn helper_image_cli(args: &[String]) -> i32 {
             if let Some(note) = outcome.note {
                 println!("note: {note}");
             }
-            for (p, img) in paths.into_iter().zip(&outcome.images) {
-                let abs = std::fs::canonicalize(&p).unwrap_or(p);
-                println!("saved: {}", crate::paths::strip_verbatim(abs).display());
+            for (abs, img) in saved.iter().zip(&outcome.images) {
+                println!("saved: {}", abs.display());
                 if let Some((w, h)) = image_dims(&img.bytes) {
                     println!("size: {w}x{h}");
                 }
@@ -1811,6 +1875,7 @@ pub fn helper_image_cli(args: &[String]) -> i32 {
             0
         }
         Err(e) => {
+            crate::image_gen_chat::record_call(&call("failed", Vec::new()));
             eprintln!("出图失败（{}，网关「{}」）：{e}", target.model, target.gateway_name);
             1
         }
@@ -2168,6 +2233,49 @@ mod tests {
     }
 
     #[test]
+    fn chat_choice_sits_between_explicit_model_and_default() {
+        use crate::image_gen_chat::ChatChoice;
+        let gws = vec![
+            gw("a", &[("gpt-image-2.5", "available")]),
+            gw("b", &[("grok-imagine-image", "available"), ("gpt-image-2.5", "available")]),
+        ];
+        let chat = ChatChoice {
+            gateway_id: "b".into(),
+            model: "gpt-image-2.5".into(),
+            ..Default::default()
+        };
+        // 对话里选了：不加 --model 用它（连同它的网关），连接页默认让位
+        let t = resolve_target_for_chat(&gws, Some("a"), Some("gpt-image-2.5"), Some(&chat), None).unwrap();
+        assert_eq!((t.gateway_id.as_str(), t.model.as_str()), ("b", "gpt-image-2.5"));
+        // 显式 --model 仍最优先
+        let t = resolve_target_for_chat(&gws, Some("a"), Some("gpt-image-2.5"), Some(&chat), Some("grok-imagine-image")).unwrap();
+        assert_eq!((t.gateway_id.as_str(), t.model.as_str()), ("b", "grok-imagine-image"));
+        // 没选：照旧连接页默认
+        let t = resolve_target_for_chat(&gws, Some("a"), Some("gpt-image-2.5"), None, None).unwrap();
+        assert_eq!(t.gateway_id, "a");
+        // 对话选的网关已删：按模型名去别的网关找，不报「设置里选的网关不在了」
+        let gone = ChatChoice { gateway_id: "gone".into(), model: "grok-imagine-image".into(), ..Default::default() };
+        let t = resolve_target_for_chat(&gws, None, None, Some(&gone), None).unwrap();
+        assert_eq!((t.gateway_id.as_str(), t.model.as_str()), ("b", "grok-imagine-image"));
+        // 没配默认、对话里选了：照样能用
+        let t = resolve_target_for_chat(&gws, None, None, Some(&chat), None).unwrap();
+        assert_eq!(t.model, "gpt-image-2.5");
+    }
+
+    #[test]
+    fn list_puts_chat_choice_first() {
+        use crate::image_gen_chat::ChatChoice;
+        let g = gw("b", &[("grok-imagine-image", "available")]);
+        let chat = ChatChoice { gateway_id: "b".into(), model: "grok-imagine-image".into(), ..Default::default() };
+        let txt = list_text_for(std::slice::from_ref(&g), Some("gpt-image-2.5"), Some("a"), Some(&chat));
+        let first = txt.lines().next().unwrap();
+        assert!(first.starts_with("本对话选的出图模型：grok-imagine-image（网关「网关b」）"), "{first}");
+        assert!(txt.lines().nth(1).unwrap().starts_with("默认出图模型：gpt-image-2.5（网关「（已删除的网关）」）"));
+        let plain = list_text_for(&[g], Some("grok-imagine-image"), Some("b"), None);
+        assert!(plain.starts_with("默认出图模型：grok-imagine-image（网关「网关b」）"));
+    }
+
+    #[test]
     fn candidates_list_only_text_to_image_models() {
         let gws = vec![
             gw("a", &[("gpt-6-astra", "available"), ("gpt-image-2.5", "available"), ("qwen-image-edit", "available"), ("sora-2", "available")]),
@@ -2379,7 +2487,7 @@ mod tests {
             openai_url(t.openai_base.as_deref().unwrap(), "images/generations"),
             "https://generativelanguage.googleapis.com/v1beta/openai/images/generations"
         );
-        let txt = list_text_for(&[g], Some("gemini-3-pro-image"), Some("gem"));
+        let txt = list_text_for(&[g], Some("gemini-3-pro-image"), Some("gem"), None);
         assert!(txt.contains("网关「网关gem」可用：gemini-3-pro-image"));
         assert!(txt.contains("仅改图可用（须带 --image）：qwen-image-edit-plus、wan2.6-image"));
     }

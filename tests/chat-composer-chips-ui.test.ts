@@ -2065,3 +2065,54 @@ test("Codex 运行中按当前生效模型动态刷新思考档表，并支持�
     await ui.close();
   }
 });
+
+test("出图模式：框上方挂胶囊、占位字换成描述画面；发出去前面加点名模型那一行，拦下时不发", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    const saids: string[] = [];
+    const toggles: boolean[] = [];
+    let blocked: string | null = null;
+    const imageGen = (on: boolean) => ({
+      on,
+      setOn: (v: boolean) => toggles.push(v),
+      chip: ui.h("div", { "data-testid": "image-chip" }, "出图 · gpt-image-2.5"),
+      directive: (_text: string, edit: boolean) =>
+        blocked
+          ? { error: blocked }
+          : { line: `使用 image-gen 技能${edit ? "改图" : "出图"}（出图模型 gpt-image-2.5，用 $MESA_IMAGE_TOOL 出图工具）：` },
+      onSent: (said: string) => saids.push(said),
+    });
+    const props = { onSend: async (t: string) => (sent.push(t), null), cwd: "/proj" };
+
+    // 没开：不挂胶囊，「+」里是「画图」
+    await ui.render(ui.h(ui.Composer, { ...props, imageGen: imageGen(false) }));
+    assert.equal(ui.el.querySelector('[data-testid="image-chip"]'), null);
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await ui.click("画图");
+    assert.deepEqual(toggles, [true], "「+ → 画图」打开出图模式");
+
+    // 开着：胶囊在、占位字换成描述画面、「+」里换成「退出画图」
+    await ui.render(ui.h(ui.Composer, { ...props, imageGen: imageGen(true) }));
+    assert.ok(ui.el.querySelector('[data-testid="image-chip"]'), "框上方挂出图胶囊");
+    assert.match(ui.el.querySelector("textarea")!.placeholder, /描述想要的画面/);
+    await typeInto(ui, "组会封面，一排试管");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.deepEqual(sent, ["使用 image-gen 技能出图（出图模型 gpt-image-2.5，用 $MESA_IMAGE_TOOL 出图工具）：\n组会封面，一排试管"]);
+    assert.deepEqual(saids, ["组会封面，一排试管"], "发出去后把人写的那句交回去（没调用出图工具时放回输入框用）");
+
+    // 拦下（没模型）：不发、字留在框里、说原因
+    blocked = "还没选出图模型";
+    await typeInto(ui, "再来一张");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.equal(sent.length, 1, "拦下不发");
+    assert.equal(ui.el.querySelector("textarea")!.value, "再来一张");
+    assert.match(ui.el.textContent ?? "", /还没选出图模型/);
+
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
+    await ui.click("退出画图");
+    assert.deepEqual(toggles, [true, false]);
+  } finally {
+    await ui.close();
+  }
+});

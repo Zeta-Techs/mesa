@@ -3138,6 +3138,17 @@ fn mesa_launch_pack_is_not_a_title() {
     assert_eq!(usable_title("你正在项目「测试项目」中工作。\n工作方式：科研"), None);
     // 别的话原样
     assert_eq!(strip_mesa_launch_pack("看看这个\n----\n分隔"), "看看这个\n----\n分隔");
+    // 聊天出图模式写在前面的一行不是人话（前端 chat-image-gen.ts 镜像）
+    assert_eq!(
+        strip_mesa_launch_pack("使用 image-gen 技能出图（出图模型 gpt-image-2.5，用 $MESA_IMAGE_TOOL 出图工具）：\n画一张组会封面"),
+        "画一张组会封面"
+    );
+    assert_eq!(
+        strip_image_gen_directive("使用 image-gen 技能改图（出图模型 doubao-seedream-4-0，用 $MESA_IMAGE_TOOL 出图工具）：\n换成蓝色\n原图：/p/a.png"),
+        "换成蓝色\n原图：/p/a.png"
+    );
+    assert_eq!(strip_image_gen_directive("使用 image-gen 技能：画猫"), "使用 image-gen 技能：画猫");
+    assert_eq!(strip_image_gen_directive("使用 image-gen 技能出图（出图模型 x 没收尾\n画猫"), "使用 image-gen 技能出图（出图模型 x 没收尾\n画猫");
 }
 
 #[test]

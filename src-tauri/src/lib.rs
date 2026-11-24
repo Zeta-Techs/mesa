@@ -79,6 +79,7 @@ pub fn helper_assistant_mcp(args: &[String]) -> i32 {
 }
 mod codex_continuity;
 mod image_gen;
+mod image_gen_chat;
 mod peek;
 mod grant;
 mod svg_render;
@@ -665,6 +666,9 @@ pub fn run() {
             image_gen::image_gen_candidates,
             image_gen::image_gen_status,
             image_gen::image_gen_test,
+            image_gen_chat::image_gen_chat_sync,
+            image_gen_chat::image_gen_chat_set,
+            image_gen_chat::image_gen_chat_calls,
             model_registry::model_db_status,
             model_registry::download_model_db,
             model_aliases::official_model_aliases,

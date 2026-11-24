@@ -21,7 +21,7 @@ import { FileTypeGlyph } from "./FileTypeMark";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { formatBytes } from "../image-view";
 import { useFileVersion } from "../file-watch";
-import { previewRoot } from "../path-utils";
+import { pathKey, previewRoot } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 
 /**
@@ -30,6 +30,8 @@ import { IS_WINDOWS } from "../hotkeys";
  * 只有点灯箱顶栏或图片悬停条上的「标注 / 改图」才触发本回调进入标注台。
  */
 export const ChatImageEditContext = createContext<((absPath: string) => void) | null>(null);
+/** 这个对话里出图工具出过的图 → 用的哪个模型（键 = pathKey，chat-image-gen.ts captionsByPath）：图下面写一行模型名 */
+export const ChatImageCaptionContext = createContext<ReadonlyMap<string, string> | null>(null);
 /** 商量任务书的对话里点「开始」= 去那一步开工确认（ChatSurface 只在商量对话里提供，见 discuss-step-start.ts） */
 export const ChatStepStartContext = createContext<(() => void) | null>(null);
 
@@ -537,8 +539,10 @@ export function ChatImageCard({
 }) {
   const setPreviewReq = useAppStore((s) => s.setPreviewReq);
   const editImage = useContext(ChatImageEditContext);
+  const captions = useContext(ChatImageCaptionContext);
   const abs = path.startsWith("~") || !cwd ? path : resolveMdPath(`${cwd}/_`, path);
   const name = abs.split(/[\\/]/).pop() ?? abs;
+  const madeBy = captions?.get(pathKey(abs, IS_WINDOWS)) ?? null;
   // 读过的图首帧就画（image-cache），切回会话不再先出「图片加载中」
   const [src, setSrc] = useState<string | null>(() => cachedImageUrl(abs) ?? null);
   // 读不出的原因：超大、格式不对照实说，其余（白名单外 / 已删）说「不在可读取范围」
@@ -607,6 +611,11 @@ export function ChatImageCard({
             className="max-h-64 max-w-full rounded-md border border-hairline object-contain"
           />
         </button>
+        {madeBy && (
+          <div className="mt-0.5 truncate font-mono text-micro text-l4" title={`出图工具记下的：这张图由 ${madeBy} 出`}>
+            {madeBy}
+          </div>
+        )}
         {editImage && (
           <button
             type="button"

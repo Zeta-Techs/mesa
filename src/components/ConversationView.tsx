@@ -13,6 +13,7 @@ import {
   FileText,
   FolderOpen,
   GitFork,
+  ImageIcon,
   MessageSquareWarning,
   Globe,
   ListTodo,
@@ -34,6 +35,7 @@ import { rangePlainText } from "../chat-copy";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import { splitLaunchPrompt } from "../project-context";
 import { splitRelayPrompt } from "../chat-relay";
+import { splitImageGenDirective } from "../chat-image-gen";
 import ChatRelayCard from "./ChatRelayCard";
 import { splitFenced } from "../text-fences";
 import { useAppStore } from "../store";
@@ -569,7 +571,10 @@ export default function ConversationView({
     const { pack, said: afterPack } = isUser ? splitLaunchPrompt(b.text) : { pack: null, said: b.text };
     // 接力抬头（换一家接着做时 Mesa 写在这句前面）不当人话：卡画在气泡外面（ChatRelayCard），这里只留人话
     const relay = isUser ? splitRelayPrompt(b.text) : null;
-    const said = relay ? relay.said : afterPack;
+    const afterRelay = relay ? relay.said : afterPack;
+    // 出图模式发的：Mesa 写在前面的那一行（点名出图模型）画成一行小字，不当人话（chat-image-gen.ts）
+    const imageGen = isUser ? splitImageGenDirective(afterRelay) : null;
+    const said = imageGen ? imageGen.said : afterRelay;
     const { text: bodyText, images } = splitImagePaths(said);
     const imageRow = images.map((p) => (
       <ChatImageCard key={p} path={p} cwd={base} />
@@ -592,6 +597,17 @@ export default function ConversationView({
                 {packOpen ? "收起项目说明" : "已附项目说明"}
               </button>
               {packOpen && <div className="mt-1 whitespace-pre-wrap break-words text-l3">{pack}</div>}
+            </div>
+          )}
+          {imageGen && (
+            <div
+              className="mb-1 flex items-center gap-1 ccode-chat-meta text-l4"
+              title="按出图模式发的：Mesa 在这句前面写明了用哪个出图模型，AI 要调出图工具来画"
+            >
+              <ImageIcon size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+              <span>{imageGen.edit ? "改图" : "出图"}</span>
+              <span aria-hidden="true">·</span>
+              <span className="min-w-0 truncate font-mono">{imageGen.model}</span>
             </div>
           )}
           {userText && <UserText text={userText} cwd={base} forceOpen={forceOpen} />}

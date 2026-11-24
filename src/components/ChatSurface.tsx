@@ -6,7 +6,9 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
 import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
-import { ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
+import { ChatImageCaptionContext, ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
+import { useChatImageGen } from "./ChatImageGen";
+import { splitImageGenDirective } from "../chat-image-gen";
 import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
 import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
@@ -202,6 +204,8 @@ export default function ChatSurface({
   onDismissLaunchBlock,
   specialScreen = null,
   metaSlots = null,
+  tabId = null,
+  sessionId = null,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -374,6 +378,10 @@ export default function ChatSurface({
    * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
    */
   metaSlots?: { left: HTMLElement | null; right: HTMLElement | null } | null;
+  /** 这个标签（出图模式按它记这个对话选的出图模型、认出图工具的调用） */
+  tabId?: string | null;
+  /** 已关联的会话：标签从侧栏重开时按它找回这个对话选过的出图模型 */
+  sessionId?: string | null;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1308,6 +1316,22 @@ export default function ChatSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalToken]);
   const recallHistory = useMemo(() => userTextHistory(messages), [messages]);
+  // 出图模式（ChatImageGen.tsx）：输入框胶囊、发前检查、没调用出图工具的提示、图下的模型名
+  const imageGen = useChatImageGen({
+    tabId,
+    sessionId,
+    agentId: agentId ?? null,
+    skills,
+    generating,
+    attention,
+  });
+  const imageMissNotice = imageGen.missedNotice((said) => setSeedInsert({ text: said, paths: [] }));
+  const composerCommands = useMemo(
+    () => (readOnly ? mesaCommands : [...mesaCommands, imageGen.command]),
+    // command 每次渲染重建，只按它的提示字变
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mesaCommands, readOnly, imageGen.command.hint],
+  );
 
   // 项目表（项目芯片弹层、权限菜单拿哪件事举例、「最近用过」标题里的项目名都要）
   const projectsVersion = useAppStore((s) => s.projectsVersion);
@@ -1725,6 +1749,7 @@ export default function ChatSurface({
           ) : (
             // 点对话里的图 = 接着改：放进输入框、展开看图标注台（ChatMarkdown ChatImageEditContext）
             <ChatImageEditContext.Provider value={editImage}>
+            <ChatImageCaptionContext.Provider value={imageGen.captions}>
             <ChatStepStartContext.Provider value={stepStart}>
             <ConversationView
               messages={shownMessages}
@@ -1749,7 +1774,11 @@ export default function ChatSurface({
                 )
               }
               // 消息里整行的图片 / 文档路径还原成附件卡，不当文字塞回输入框
-              onEditResend={(text) => {
+              onEditResend={(raw) => {
+                // 出图模式发的那句：去掉 Mesa 写的那一行，出图胶囊重新打开
+                const gen = splitImageGenDirective(raw);
+                if (gen) imageGen.composer.setOn(true);
+                const text = gen ? gen.said : raw;
                 const split = splitImagePaths(text);
                 const docs = splitDocPaths(split.text);
                 setSeedInsert({ text: docs.text, paths: [...split.images, ...docs.docs] });
@@ -1779,6 +1808,7 @@ export default function ChatSurface({
               }}
             />
             </ChatStepStartContext.Provider>
+            </ChatImageCaptionContext.Provider>
             </ChatImageEditContext.Provider>
           )}
           {livePreview.length > 0 &&
@@ -2050,7 +2080,7 @@ export default function ChatSurface({
         onInterrupt={onInterrupt}
         narrow={emptyLayout}
         cwd={cwd ?? null}
-        mesaCommands={mesaCommands}
+        mesaCommands={composerCommands}
         recallHistory={recallHistory}
         tone={composerTone}
         toneFlash={toneFlash}
@@ -2064,7 +2094,8 @@ export default function ChatSurface({
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId)}
-        notice={relayNotice ?? cutOffNotice ?? cacheNotice}
+        notice={relayNotice ?? cutOffNotice ?? imageMissNotice ?? cacheNotice}
+        imageGen={readOnly ? null : imageGen.composer}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

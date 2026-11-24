@@ -5,6 +5,7 @@ import {
   ArrowUp,
   AtSign,
   BookmarkPlus,
+  ImageIcon,
   Maximize2,
   Minimize2,
   MessageSquareText,
@@ -57,6 +58,20 @@ export interface ComposerSeed {
   /** 点了对话里的图「接着改」（2026-10-25）：这张图成附件后直接展开看图标注台，按改图口径（提示、占位字、发送时附原图） */
   edit?: string;
   quote?: ChatQuote;
+}
+/**
+ * 出图模式（2026-11-24，components/ChatImageGen.tsx useChatImageGen 给）：开着时框上方画胶囊，
+ * 发出去前由 wrap 在描述前加固定写法那一行（拦下时返回原因）
+ */
+export interface ComposerImageGen {
+  on: boolean;
+  setOn: (on: boolean) => void;
+  /** 胶囊本体（模型、换模型、发前检查）；on 时画在框上方 */
+  chip: ReactNode;
+  /** 发之前要那一行固定写法：text = 人写的那句，edit = 带着接着改的图（写「改图」）；拦下时给原因 */
+  directive: (text: string, edit: boolean) => { line: string } | { error: string };
+  /** 发出去了：said = 人写的那句（没调用出图工具时放回输入框用） */
+  onSent: (said: string) => void;
 }
 /** 框上方一行提示：一句话 + 几个小按钮（primary = 推荐的那个，描边） */
 export interface ComposerNotice {
@@ -185,6 +200,7 @@ function AddMenu({
   onPrompt,
   onManagePrompts,
   canSavePrompt,
+  imageGen = null,
 }: {
   skills: SkillDto[];
   mcps: McpServerDto[];
@@ -201,6 +217,8 @@ function AddMenu({
   onPrompt: (p: PromptItem) => void;
   onManagePrompts: (saveCurrent: boolean) => void;
   canSavePrompt: boolean;
+  /** 出图模式开关（没有就不出这一项） */
+  imageGen?: { on: boolean; toggle: () => void } | null;
 }) {
   const [open, setOpen] = useState(false);
   // 菜单开着时提示词首次读盘（之后全应用共用一份）
@@ -277,6 +295,22 @@ function AddMenu({
                 <span className="ml-auto font-mono text-micro text-l4">@</span>
               </button>
             </li>
+            {imageGen && (
+              <li>
+                <button
+                  type="button"
+                  className={row}
+                  onClick={() => {
+                    setOpen(false);
+                    imageGen.toggle();
+                  }}
+                >
+                  <ImageIcon size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                  {imageGen.on ? "退出画图" : "画图"}
+                  <span className="ml-auto text-micro text-l4">{imageGen.on ? "回到普通对话" : "用出图模型画"}</span>
+                </button>
+              </li>
+            )}
             <li className="mx-1 my-1 h-px bg-hairline" aria-hidden="true" />
             {/* 常用提示词：点名字把正文填进输入框（不自动发送），最多列 8 条，多了在输入框打 / 搜 */}
             <li className="flex items-center px-2 pb-0.5 pt-1.5 text-micro text-l4">
@@ -382,6 +416,7 @@ export default function ChatComposer({
   stopTitle = null,
   suggestion = null,
   notice = null,
+  imageGen = null,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -441,6 +476,8 @@ export default function ChatComposer({
   suggestion?: string | null;
   /** 框上方一行提示 + 几个小按钮（缓存过期先压缩，prompt-cache.ts）；不改发送行为 */
   notice?: ComposerNotice | null;
+  /** 出图模式（没有就不出「画图」入口） */
+  imageGen?: ComposerImageGen | null;
 }) {
   const [value, setValue] = useState("");
   const [quote, setQuote] = useState<ChatQuote | null>(null);
@@ -833,6 +870,8 @@ export default function ChatComposer({
         );
         if (!attachmentsRef.current.some((a) => a.path === edit && a.url)) loadThumb(edit);
         setViewing(edit);
+        // 接着改普通的图 = 用出图模型改：出图胶囊一并打开（示意图改图纸、核对图只问问题，不开）
+        if (imageGen && !schematicSourceOf(edit) && !isInspectionImage(edit)) imageGen.setOn(true);
       }
     }
     onSeedConsumed?.();
@@ -904,12 +943,27 @@ export default function ChatComposer({
   const showStop = Boolean(running && onInterrupt && !busy && (agentId == null || escInterruptSafe(agentId)));
 
   const submittingRef = useRef(false);
-  async function submit(override?: string) {
+  // raw：斜杠命令原样写进终端，不套出图那一行
+  async function submit(override?: string, raw = false) {
     const text = (override ?? value).trim();
     if ((!text && attachments.length === 0 && !quote) || disabled || busy || submittingRef.current) return;
     setError(null);
     submittingRef.current = true;
     try {
+      // 出图模式：Mesa 在描述前写一行固定写法（技能 image-gen 认它就必须调出图工具）；没模型 / 没工具先拦下。
+      // 只带示意图的改图走图纸（schematic-forge），不加这一行
+      const editImage = attachments.some((a) => a.edit && !schematicSourceOf(a.path));
+      const schematicOnly = attachments.some((a) => a.edit) && !editImage;
+      const asImage = Boolean(imageGen?.on && !schematicOnly && !raw);
+      let imageHead: string | null = null;
+      if (asImage && imageGen) {
+        const head = imageGen.directive(text, editImage);
+        if ("error" in head) {
+          setError(head.error);
+          return;
+        }
+        imageHead = head.line;
+      }
       // 标了的图这时才生成新图（原图不动），落盘到粘贴区，发出去的是新图路径；
       // 接着改的图写成「原图：」「标注图：」行（attachmentLines），不让 Claude Code 当图片附件发给模型
       let paths: string[];
@@ -931,7 +985,8 @@ export default function ChatComposer({
       }
       // 图片附件按绝对路径追加在正文后（一行一个）：路径文本是九家 CLI 通吃的图片输入方式，
       // 会话文件记下这行路径，回放/聊天层据此渲染内嵌图片卡
-      const payload = [quote ? quotePayload(quote, text) : text, ...paths].filter(Boolean).join("\n");
+      const joined = [quote ? quotePayload(quote, text) : text, ...paths].filter(Boolean).join("\n");
+      const payload = imageHead ? `${imageHead}\n${joined}` : joined;
       // 先清空再发：写进终端要等 CLI 能收键、多行正文粘进去后还要等 0.65 秒才按提交，原先等发完才清空，
       // 字在框里停一下才走（2026-10-25 用户：不够丝滑）。发失败再放回去——人这时已经接着打了字就不覆盖
       const sent = { value, attachments: attachmentsRef.current, quote };
@@ -950,6 +1005,7 @@ export default function ChatComposer({
         return;
       }
       markCounterRef.current = 0;
+      if (asImage) imageGen?.onSent(text);
       sent.attachments.forEach((a) => a.url && URL.revokeObjectURL(a.url));
     } finally {
       submittingRef.current = false;
@@ -1008,7 +1064,7 @@ export default function ChatComposer({
       return;
     }
     if (send) {
-      void submit(cmd);
+      void submit(cmd, true);
     } else {
       setValue(`${cmd} `);
       requestAnimationFrame(() => ref.current?.focus());
@@ -1046,6 +1102,7 @@ export default function ChatComposer({
           <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words">{quote.text}</div>
           {quoteUnavailable && <p role="status" className="mt-1 text-warn-text">来源暂不可定位，引用文字已保留</p>}
         </div>}
+        {imageGen?.on && imageGen.chip}
         <div
           data-tone={tone ?? undefined}
           data-tone-flash={toneFlash || undefined}
@@ -1284,6 +1341,7 @@ export default function ChatComposer({
               onPrompt={(p) => insertPrompt(p, false)}
               onManagePrompts={(saveCurrent) => usePromptStore.getState().openManage(saveCurrent ? value : null)}
               canSavePrompt={Boolean(value.trim())}
+              imageGen={imageGen ? { on: imageGen.on, toggle: () => imageGen.setOn(!imageGen.on) } : null}
             />
           </span>
           <div data-slot="text" className="relative min-w-0">
@@ -1443,7 +1501,11 @@ export default function ChatComposer({
             }}
             // 一行起，随内容长高（2026-10-23 用户：空态两行高太大，一行就行）
             rows={1}
-            placeholder={ghost ?? (viewed?.edit ? "描述修改内容" : placeholder) ?? "输入消息"}
+            placeholder={
+              ghost ??
+              (viewed?.edit ? "描述修改内容" : imageGen?.on && !viewed ? "描述想要的画面，用中文说就行" : placeholder) ??
+              "输入消息"
+            }
             // 插入符是 M▁ 那道琥珀（--color-mesa-amber），光标本身就是品牌。
             // 平时封顶九行，「展开」后至少占四成窗口高（App.css .ccode-composer-text：滚动条滚时才出、上下沿渐隐）
             className={`ccode-composer-text block w-full resize-none bg-transparent px-1.5 pb-[6.5px] pt-[3.5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none focus:outline-none focus-visible:outline-none focus-visible:outline-offset-0 placeholder:text-l3 disabled:cursor-not-allowed disabled:opacity-60 ${

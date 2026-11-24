@@ -11,7 +11,15 @@ Mesa 启动你时在环境变量 `MESA_IMAGE_TOOL` 里放了出图工具的路�
 
 ## 先确认能用
 
-macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& $env:MESA_IMAGE_TOOL image --list`。输出第一行是默认出图模型，后面列出各网关能直接文生图的模型，以及「仅改图可用（须带 `--image`）」的专用改图模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的、当前无头任务未授权联网，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到 Mesa 连接页左栏「出图模型」里选一个，或者用户指定了模型时加 `--model`。
+macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& $env:MESA_IMAGE_TOOL image --list`。输出第一行是这次不加 `--model` 时用的模型（用户在 Mesa 聊天输入框「出图」胶囊里给这个对话选过的写「本对话选的出图模型」，否则是连接页默认），后面列出各网关能直接文生图的模型，以及「仅改图可用（须带 `--image`）」的专用改图模型。`MESA_IMAGE_TOOL` 为空：说明不是在 Mesa 里启动的、当前无头任务未授权联网，或这版 Mesa 还没带出图工具——停下告诉用户，不要改用别的方式绕过。第一行说「还没配置出图模型」：请用户到 Mesa 连接页左栏「出图模型」里选一个，或者用户指定了模型时加 `--model`。
+
+## 聊天里的出图模式
+
+用户那句话第一行是 `使用 image-gen 技能出图（出图模型 X，用 $MESA_IMAGE_TOOL 出图工具）：`（改图写「改图」）时，是用户在 Mesa 输入框打开了「出图」，下面才是描述：
+
+- 这一句**必须**调出图工具出图（改图带 `--image` 原图），不要改用 matplotlib / SVG / HTML 等代码自己画，也不要只回文字；出不来就照实转述工具报错。
+- 模型就用 X：命令里加 `--model X`（工具默认也用这个对话选的，但更新前开的对话读不到），不要自己换。之后「再来一张」「换个颜色」照样用它；用户在胶囊里换了模型，下一句第一行会写新的。
+- X 做不到要求（画幅、分辨率、透明底，见下文「各家能做到什么」）：照样用 X 出，交付时按 `note:` 说清差在哪，建议在输入框胶囊里换哪个模型。
 
 ## 动笔前先定三件事
 
@@ -71,7 +79,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 
 可选参数：
 
-- `--model <模型名>`：用户点名某家（如 `gemini-3-pro-image`、`doubao-seedream-4-0-250828`）或下表说该换模型时才加；工具会去有这个模型的网关找。
+- `--model <模型名>`：用户点名某家（如 `gemini-3-pro-image`、`doubao-seedream-4-0-250828`）或下表说该换模型时才加（出图模式见上文，不自己换）；工具会去有这个模型的网关找。
 - `--size 1536x1024`：画幅。OpenAI 系按尺寸，Gemini 系换成最接近的宽高比；有的模型只出自己支持的尺寸。
 - `--resolution 1k|2k|4k`：分辨率档位，按 `--size` 的比例把长边放到 1024 / 2048 / 4096 像素。4K 一张常要 2 到 4 分钟。
 - `--quality low|medium|high`：画质档位。`low` 出草图快，`high` 用于定稿。
@@ -153,7 +161,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
   # 底图 figures/rainy-seaside.png（改图时写）
   Keep everything else exactly the same. Add one person ...
   ```
-- 交付时说清：用的哪个模型、什么画幅和分辨率、存在哪、自检看了什么（写看图看到的，不要把描述换个说法当结论）、还有哪些拿不准；说明这是 AI 生成的示意图。回复里写出图片的完整路径——Mesa 聊天里会把它直接显示成图，用户点图就能接着标注、接着改。
+- 交付时说清：用的哪个模型、画幅和分辨率、存在哪、自检看到了什么（不要把描述换个说法当结论）、还有哪些拿不准，并说明是 AI 生成的示意图。写出图片完整路径，Mesa 聊天会直接显示成图、点图可接着改。
 
 ## 边界
 

@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-24 · 聊天出图模式：对话里换出图模型、Mesa 写固定行保证调用出图工具
+
+用户问「出图模型只能设一个吗」，要求设计成能在聊天会话里直接切换，且不会出现「用户不知道怎么说、模型没调出图工具」。拍板三点：胶囊发完留着、× 退出；对话里选的模型跟着对话走（重启接回、侧栏重开都还在）；第一期只换模型，不放画幅 / 透明底。落地：输入框 **+ → 画图** / `/画图` 打开「出图 · 模型」胶囊，模型选择复用连接页 `ImageModelPicker`，只写这个对话（`image_gen_chat.rs`，`<配置根>/image-gen-chats.json` 按标签 + 会话记）；PTY 与 Codex app-server 注入 `MESA_IMAGE_TAB`，出图工具每次现读，顺序 `--model` > 本对话 > 连接页默认，Agent 不加 `--model` 也用对。发出去由 Mesa 在描述前加一行 `使用 image-gen 技能出图（出图模型 X，用 $MESA_IMAGE_TOOL 出图工具）：`，技能 image-gen 加「聊天里的出图模式」一节：必须调工具、不换模型、不自己写代码画；这一行在聊天里画成小字、标题 / 历史 / 接力剥掉（前后端镜像）。发前检查（没工具 / 没模型拦，没开技能提醒）；出图工具开始 / 出完 / 失败记 `image-gen-calls.jsonl`（不记描述与密钥），聊天据此在图下写模型名，出图模式那一轮结束却没调用就提示「这一轮没有调用出图工具」并可放回输入框。仍经 Agent 出图，否决 Mesa 在聊天里绕过 Agent 直接调出图模型（2026-10-25 定的，且 Agent 不知道这张图、后续接着改会断）。细则 `profiles.md`「对话里的出图模型」三条。
+
 ### 2026-11-24 · 项目助手重构为真只读持久 Agent（Rust 唯一真源 + 本地 stdio MCP）
 
 用户在反复撞见前端 17 路拼接项目快照导致的状态漂移（已归档步骤的内部 `pipeline_step` 任务冒充失败目标、保存前历史故障混入当前出错等）后提问「项目助手就像一个 Agent 一样不行吗」，审阅四阶段架构方案后拍板「按真 Agent 方案立项重构」。定下四项边界：① **唯一真源下沉 Rust**（`src-tauri/src/assistant_state.rs`）：直读 `app.db` / `project.toml` / 工作区 / 核验 / 人工事项 / 定时任务 / 研讨 / 完结产物 / 近期真实错误，统一过滤 `pipeline_step`、应用异常退出、已保存步骤历史失败与已归档副本目录消失噪点；顶部状态条 / 飞书 / 桌宠统一调单次 `assistant_project_brief`（前端仅叠加实时终端注意力）；② **零依赖本地只读 + 提议 stdio MCP**（`src-tauri/src/assistant_mcp.rs`，经 `mesa_helper assistant-mcp` 暴露 8 个只读工具与 4 个严格 schema / 路径校验的提议工具）：提议只写每轮 0600 临时 `proposals.json`，绝不直接写项目或配置，仍由用户点确认卡走既有执行链路；③ **两档 CLI 分层执行**（`ai::ai_assistant_agent` + `project_assistant_chat`）：第一档 Claude Code / Codex（覆盖其下全部第三方网关）经临时 `--mcp-config` / `-c mcp_servers.mesa` 零污染挂接 MCP、进程级只读（`--tools Read,Glob,Grep --strict-mcp-config` / `-s read-only` 与 `resume` 的 `-c sandbox_mode="read-only"`）、按项目 `session.json` 多轮续接并立标 `internal`，`StreamState` 实时把 MCP 工具调用译为白话中文步骤；第二档其余 CLI 直连 Rust `render_compact_context` + `guide_search` 回落；④ **前端彻底瘦身**：删除 `src/project-snapshot.ts` 与前端快照缓存，`resolveTurnParts` 统一消费 `turn.proposals` 并向下兼容第二档与历史文本块，同步修复 `ReworkOrderCard.tsx` 裸路径比较与已归档步骤漏计。
