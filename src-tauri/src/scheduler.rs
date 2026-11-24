@@ -3932,6 +3932,20 @@ pub fn start_scheduler(app: Option<tauri::AppHandle>) {
     });
 }
 
+/// 只读查询某项目的定时任务（不清理、不写盘，供项目助手真源与 mesa_helper MCP 使用）
+pub(crate) fn list_schedules_readonly_for(project_root: &str) -> Vec<ScheduleDto> {
+    let Ok(path) = schedules_path() else {
+        return Vec::new();
+    };
+    let Ok(list) = read_schedules_at(&path) else {
+        return Vec::new();
+    };
+    list.into_iter()
+        .filter(|s| crate::paths::same_path(&s.project_root, project_root))
+        .map(ScheduleDto::from)
+        .collect()
+}
+
 // ===== Tauri commands =====
 
 #[tauri::command]

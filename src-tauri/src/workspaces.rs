@@ -1484,7 +1484,7 @@ fn conflict_files_from_merge_tree(stdout: &str) -> Vec<String> {
     out
 }
 
-fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
+pub(crate) fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     let w = get_workspace(conn, id)?;
     let wt = PathBuf::from(&w.worktree_path);
     let base = base_ref(&wt, &w.base_branch);
@@ -2306,50 +2306,52 @@ pub async fn create_workspace(repo_path: String, name: String) -> Result<Workspa
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn list_workspaces() -> Result<Vec<WorkspaceDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let conn = db()?;
-        let mut rows = query_workspaces(&conn)?;
-        // active 在前、archived 在后，组内按创建时间倒序
-        rows.sort_by(|a, b| {
-            (b.status != "active")
-                .cmp(&(a.status != "active"))
-                .then(b.created_at.cmp(&a.created_at))
-        });
-        // 上游漂移提醒：按仓库分组读一次 project.toml，逐步骤比对合并时间（启发式，读失败静默跳过）
-        let mut repos: Vec<String> = rows.iter().map(|w| w.repo_path.clone()).collect();
-        repos.sort_unstable();
-        repos.dedup();
-        for repo in repos {
-            let steps = crate::projects::read_config_at(Path::new(&repo))
-                .config
-                .steps;
-            if steps.is_empty() {
+pub(crate) fn list_workspaces_sync() -> Result<Vec<WorkspaceDto>, String> {
+    let conn = db()?;
+    let mut rows = query_workspaces(&conn)?;
+    // active 在前、archived 在后，组内按创建时间倒序
+    rows.sort_by(|a, b| {
+        (b.status != "active")
+            .cmp(&(a.status != "active"))
+            .then(b.created_at.cmp(&a.created_at))
+    });
+    // 上游漂移提醒：按仓库分组读一次 project.toml，逐步骤比对合并时间（启发式，读失败静默跳过）
+    let mut repos: Vec<String> = rows.iter().map(|w| w.repo_path.clone()).collect();
+    repos.sort_unstable();
+    repos.dedup();
+    for repo in repos {
+        let steps = crate::projects::read_config_at(Path::new(&repo))
+            .config
+            .steps;
+        if steps.is_empty() {
+            continue;
+        }
+        let repo_ws: Vec<WorkspaceDto> = rows
+            .iter()
+            .filter(|w| w.repo_path == repo)
+            .cloned()
+            .collect();
+        let followed = crate::step_loop::followed_at(Path::new(&repo));
+        for index in 0..steps.len() {
+            let Some(stale) = stale_upstream_for(&steps, &repo_ws, index, &followed) else {
                 continue;
-            }
-            let repo_ws: Vec<WorkspaceDto> = rows
-                .iter()
-                .filter(|w| w.repo_path == repo)
-                .cloned()
-                .collect();
-            let followed = crate::step_loop::followed_at(Path::new(&repo));
-            for index in 0..steps.len() {
-                let Some(stale) = stale_upstream_for(&steps, &repo_ws, index, &followed) else {
-                    continue;
-                };
-                if let Some(w) = rows
-                    .iter_mut()
-                    .find(|w| w.repo_path == repo && w.name == steps[index].workspace_name)
-                {
-                    w.stale_upstream = Some(stale);
-                }
+            };
+            if let Some(w) = rows
+                .iter_mut()
+                .find(|w| w.repo_path == repo && w.name == steps[index].workspace_name)
+            {
+                w.stale_upstream = Some(stale);
             }
         }
-        Ok(rows)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
+    Ok(rows)
+}
+
+#[tauri::command]
+pub async fn list_workspaces() -> Result<Vec<WorkspaceDto>, String> {
+    tauri::async_runtime::spawn_blocking(list_workspaces_sync)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 归档/删除/合并成功后广播（前端把还留在被移除工作树里的终端标签切回主仓库）

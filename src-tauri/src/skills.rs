@@ -2778,7 +2778,7 @@ pub async fn list_skills() -> Vec<SkillDto> {
         .unwrap_or_default()
 }
 
-fn list_skills_sync() -> Vec<SkillDto> {
+pub(crate) fn list_skills_sync() -> Vec<SkillDto> {
     let Ok(store) = SkillStore::default_paths() else {
         return Vec::new();
     };

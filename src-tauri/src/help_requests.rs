@@ -316,34 +316,36 @@ fn redact_item(mut item: HelpItemDto, secrets: &[String]) -> HelpItemDto {
     item
 }
 
+pub(crate) fn list_help_requests_sync() -> Vec<HelpRequestDto> {
+    let secrets = crate::profiles::stored_secrets();
+    sources()
+        .into_iter()
+        .filter_map(|s| {
+            let text = fs::read_to_string(Path::new(&s.root).join(HELP_WANTED_FILE)).ok()?;
+            let items: Vec<_> =
+                parse_items(&text).into_iter().map(|i| redact_item(i, &secrets)).collect();
+            // 步骤工作区里那份：已提交、没再改、全是 11-02 之前的自由写法（没有 A–D 选项）——是老项目从主仓带过来或早就答完的历史，
+            // 不再列（2026-11-03 用户真实项目核对：综述流程测试 5 个工作区各挂 18–21 条九月的旧问题）。新格式的问题照常列，提交了也列
+            if s.workspace_id.is_some() && legacy_history(&s.root, &items) {
+                return None;
+            }
+            (!items.is_empty()).then_some(HelpRequestDto {
+                root: s.root,
+                workspace_id: s.workspace_id,
+                workspace_name: s.workspace_name,
+                repo_name: s.repo_name,
+                repo_path: s.repo_path,
+                items,
+            })
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn list_help_requests() -> Vec<HelpRequestDto> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let secrets = crate::profiles::stored_secrets();
-        sources()
-            .into_iter()
-            .filter_map(|s| {
-                let text = fs::read_to_string(Path::new(&s.root).join(HELP_WANTED_FILE)).ok()?;
-                let items: Vec<_> =
-                    parse_items(&text).into_iter().map(|i| redact_item(i, &secrets)).collect();
-                // 步骤工作区里那份：已提交、没再改、全是 11-02 之前的自由写法（没有 A–D 选项）——是老项目从主仓带过来或早就答完的历史，
-                // 不再列（2026-11-03 用户真实项目核对：综述流程测试 5 个工作区各挂 18–21 条九月的旧问题）。新格式的问题照常列，提交了也列
-                if s.workspace_id.is_some() && legacy_history(&s.root, &items) {
-                    return None;
-                }
-                (!items.is_empty()).then_some(HelpRequestDto {
-                    root: s.root,
-                    workspace_id: s.workspace_id,
-                    workspace_name: s.workspace_name,
-                    repo_name: s.repo_name,
-                    repo_path: s.repo_path,
-                    items,
-                })
-            })
-            .collect()
-    })
-    .await
-    .unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(list_help_requests_sync)
+        .await
+        .unwrap_or_default()
 }
 
 /// 读-改-写人工请求文件（同一把文件锁；锁只管得住 Mesa 自己，Agent 写文件不拿这把锁：写回前再读一遍，

@@ -98,6 +98,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("launch") {
         std::process::exit(ccode_lib::helper_launch(&args[2..]));
     }
-    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token|launch …");
+    // `mesa_helper assistant-mcp --project <path> [--proposals <file>]`：项目助手专属本地只读/提议 stdio MCP Server
+    if args.get(1).map(String::as_str) == Some("assistant-mcp") {
+        std::process::exit(ccode_lib::helper_assistant_mcp(&args[2..]));
+    }
+    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token|launch|assistant-mcp …");
     std::process::exit(2);
 }

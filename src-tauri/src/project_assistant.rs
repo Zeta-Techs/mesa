@@ -120,7 +120,7 @@ fn truncate(text: &str, cap: usize) -> String {
     out
 }
 
-fn project_dir(project_root: &str) -> Result<PathBuf, String> {
+pub(crate) fn project_dir(project_root: &str) -> Result<PathBuf, String> {
     let root = crate::sessions::expand_tilde(project_root.trim());
     if root.is_empty() {
         return Err("缺少项目路径".into());
@@ -303,29 +303,35 @@ pub async fn mesa_error_record(
     .map_err(|e| e.to_string())?
 }
 
+pub(crate) fn mesa_errors_read_sync(project_root: &str, limit: usize) -> Result<Vec<MesaErrorDto>, String> {
+    let path = project_dir(project_root)?.join(ERRORS_FILE);
+    let rows: Vec<MesaErrorDto> = read_jsonl::<MesaErrorDto>(&path)
+        .into_iter()
+        .filter(|r| r.notice.is_some() || !is_routine_failure(&r.message))
+        .collect();
+    let limit = limit.min(ERRORS_CAP);
+    Ok(rows[rows.len().saturating_sub(limit)..].to_vec())
+}
+
 /// 最近的在后（与文件同序）
 #[tauri::command]
 pub async fn mesa_errors_read(project_root: String, limit: Option<usize>) -> Result<Vec<MesaErrorDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let path = project_dir(&project_root)?.join(ERRORS_FILE);
-        let rows: Vec<MesaErrorDto> = read_jsonl::<MesaErrorDto>(&path)
-            .into_iter()
-            .filter(|r| r.notice.is_some() || !is_routine_failure(&r.message))
-            .collect();
-        let limit = limit.unwrap_or(ERRORS_CAP).min(ERRORS_CAP);
-        Ok(rows[rows.len().saturating_sub(limit)..].to_vec())
+        mesa_errors_read_sync(&project_root, limit.unwrap_or(ERRORS_CAP))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
+pub(crate) fn assistant_log_read_sync(project_root: &str) -> Result<Vec<AssistantTurnDto>, String> {
+    Ok(read_jsonl(&project_dir(project_root)?.join(LOG_FILE)))
+}
+
 #[tauri::command]
 pub async fn assistant_log_read(project_root: String) -> Result<Vec<AssistantTurnDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok(read_jsonl(&project_dir(&project_root)?.join(LOG_FILE)))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || assistant_log_read_sync(&project_root))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn clear_log_sync(project_root: &str, keep_dispatches: bool, now: chrono::DateTime<chrono::FixedOffset>) -> Result<usize, String> {
@@ -615,7 +621,7 @@ pub fn project_assistant_cancel(stream_id: String) -> bool {
     true
 }
 
-fn missing_paths_sync(project_root: &str, paths: Vec<String>) -> Vec<String> {
+pub(crate) fn missing_paths_sync(project_root: &str, paths: Vec<String>) -> Vec<String> {
     let base = PathBuf::from(crate::sessions::expand_tilde(project_root));
     if !base.is_dir() {
         return Vec::new();
@@ -1287,20 +1293,22 @@ fn describe_segment(seg: &[String]) -> Option<CmdKind> {
     }
 }
 
+pub(crate) fn review_notes_sync(worktree_path: &str) -> Option<String> {
+    let path = PathBuf::from(crate::sessions::expand_tilde(worktree_path)).join(".ccode/review-notes.md");
+    let file = fs::File::open(path).ok()?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut std::io::Read::take(file, 16 * 1024), &mut text).ok()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| crate::sessions::redact_sensitive_text(text))
+}
+
 /// 评审退回意见（工作副本里的 `.ccode/review-notes.md`）：快照用，只读、有上限、脱敏
 #[tauri::command]
 pub async fn assistant_review_notes(worktree_path: String) -> Option<String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let path = PathBuf::from(crate::sessions::expand_tilde(&worktree_path)).join(".ccode/review-notes.md");
-        let file = fs::File::open(path).ok()?;
-        let mut text = String::new();
-        std::io::Read::read_to_string(&mut std::io::Read::take(file, 16 * 1024), &mut text).ok()?;
-        let text = text.trim();
-        (!text.is_empty()).then(|| crate::sessions::redact_sensitive_text(text))
-    })
-    .await
-    .ok()
-    .flatten()
+    tauri::async_runtime::spawn_blocking(move || review_notes_sync(&worktree_path))
+        .await
+        .ok()
+        .flatten()
 }
 
 // ===== 项目地图（2026-11-05，docs/design-assistant-intake.md §3.2）=====
@@ -1372,7 +1380,7 @@ fn map_walk(root: &Path, dir: &Path, depth: usize, out: &mut Vec<MapEntryDto>, t
     }
 }
 
-fn project_map_sync(project_root: &str) -> Result<ProjectMapDto, String> {
+pub(crate) fn project_map_sync(project_root: &str) -> Result<ProjectMapDto, String> {
     let root = PathBuf::from(crate::sessions::expand_tilde(project_root));
     if !root.is_dir() {
         return Err(format!("项目目录不存在：{}", crate::paths::strip_verbatim(root).display()));

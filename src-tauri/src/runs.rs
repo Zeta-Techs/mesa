@@ -3058,7 +3058,7 @@ pub async fn task_list(
         .await
         .map_err(|e| e.to_string())?
 }
-fn task_list_sync(
+pub(crate) fn task_list_sync(
     project_root: Option<String>,
     include_archived: Option<bool>,
 ) -> Result<Vec<TaskDto>, String> {

@@ -103,7 +103,7 @@ pub struct AddPackResultDto {
     pub trigger_note: Option<String>,
 }
 
-fn packs_root() -> Result<PathBuf, String> {
+pub(crate) fn packs_root() -> Result<PathBuf, String> {
     // 走 config_root：与 config_dir()/ccode 同一处，单测可重定向
     Ok(crate::storage::config_root().ok_or("无法确定配置目录")?.join("packs"))
 }

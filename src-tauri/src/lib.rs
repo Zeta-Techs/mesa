@@ -72,6 +72,11 @@ pub fn helper_codex_token(args: &[String]) -> i32 {
 pub fn helper_launch(args: &[String]) -> i32 {
     agents::helper_launch_cli(args)
 }
+
+/// helper 项目助手专属只读/提议 MCP Server（`mesa_helper assistant-mcp --project <path> [--proposals <file>]`）
+pub fn helper_assistant_mcp(args: &[String]) -> i32 {
+    assistant_mcp::helper_mcp_cli(args)
+}
 mod codex_continuity;
 mod image_gen;
 mod peek;
@@ -80,6 +85,8 @@ mod svg_render;
 mod project_mail;
 mod split_plan;
 mod project_assistant;
+mod assistant_state;
+mod assistant_mcp;
 mod consult;
 mod ask_aside;
 mod fan_out;
@@ -1050,6 +1057,7 @@ pub fn run() {
             project_assistant::project_file_map,
             project_assistant::assistant_open_dispatches,
             project_assistant::assistant_echo,
+            assistant_state::assistant_project_brief,
             projects::ensure_scratch_dir,
             projects::append_pipeline_steps,
             projects::append_pipeline_steps_with_submission,
