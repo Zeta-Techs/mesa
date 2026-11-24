@@ -156,6 +156,37 @@ export function assistantConnection(project: ProjectDto | null): {
   return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound, agentId: launch.agentId };
 }
 
+/** 当前项目助手连接不支持进程级只读查看（如 agy）时，从已配置的连接里挑一条支持只读查看的备选连接（供用户显式点「借用 … 打开文件核对重问」用） */
+export function readonlyInspectFallback(project: ProjectDto | null): {
+  profileId: string;
+  model: string | null;
+  line: string;
+  agentId: string;
+  agentLabel: string;
+} | null {
+  const { profiles, settings } = useAppStore.getState();
+  const hidden = new Set(settings?.hiddenProfiles ?? []);
+  const eligible = profiles.filter((p) => !hidden.has(p.id) && INSPECT_AGENTS.includes(p.agent));
+  if (eligible.length === 0) return null;
+  // 优先按 INSPECT_AGENTS 顺序（Claude Code → Codex → Kimi → Grok），同家优先取项目默认连接
+  for (const agentId of INSPECT_AGENTS) {
+    const defaultId = project?.defaultProfiles?.[agentId];
+    const picked = (defaultId ? eligible.find((p) => p.id === defaultId) : null) ?? eligible.find((p) => p.agent === agentId);
+    if (!picked) continue;
+    const model =
+      resolveTaskModel({
+        models: picked.models,
+        profileId: picked.id,
+        defaultProfileId: project?.defaultProfiles?.[agentId],
+        defaultModel: project?.defaultModels?.[agentId],
+      }) || null;
+    const agentLabel = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
+    const line = [agentLabel, picked.name, model || "默认模型"].filter(Boolean).join(" · ");
+    return { profileId: picked.id, model, line, agentId, agentLabel };
+  }
+  return null;
+}
+
 function scheduleTriggerLabel(s: ScheduleDto): string {
   if (s.event) {
     if (s.event.kind === "folder") return `目录新文件${s.event.folder ? `（${s.event.folder}）` : ""}`;
@@ -636,12 +667,12 @@ function projectContext(projectPath: string, project: ProjectDto | null, connLin
   ].join("\n");
 }
 
-/** 项目地图（要做事时带）：上次问以来新出现或改过的标「新」；读不到就不带 */
-async function gatherMap(projectPath: string, lastAt: string | undefined): Promise<string | null> {
+/** 项目地图（要做事或连接不能只读看文件时带）：上次问以来新出现或改过的标「新」；读不到就不带 */
+async function gatherMap(projectPath: string, lastAt: string | undefined, maxChars?: number): Promise<string | null> {
   const map = await safe(invoke<{ entries: MapEntry[]; truncated: boolean } | null>("project_file_map", { projectRoot: projectPath }), null);
   if (!map) return null;
   const since = lastAt ? Date.parse(lastAt) : NaN;
-  return renderProjectMap(map.entries, { truncated: map.truncated, sinceMs: Number.isFinite(since) ? since : null });
+  return renderProjectMap(map.entries, { truncated: map.truncated, sinceMs: Number.isFinite(since) ? since : null, ...(maxChars ? { maxChars } : {}) });
 }
 
 /** 一句说明只取第一句、截短：能力清单要的是「什么时候用」，不是整段 */
@@ -838,6 +869,8 @@ export async function askProjectAssistant(input: {
   streamId?: string;
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
+  /** 仅本次临时借用的连接（如当前连接为 agy 不支持只读时，用户显式点「借用 Claude Code 打开文件核对重问」） */
+  overrideConnection?: { profileId: string; model: string | null; line: string } | null;
 }): Promise<AssistantTurn> {
   // 问一轮怎么样：没带重点进来时，按点名的步骤或评审页开着的那一步补上重点（带核验项、只读打开产物）
   const focus = input.focus ?? (isReviewAsk(input.question) ? await reviewAskFocus(input.projectPath, input.question).catch(() => null) : null);
@@ -845,17 +878,22 @@ export async function askProjectAssistant(input: {
   const planned = planAsk(input.question, !!focus, input.project, undefined, input.history);
   const intent = input.intent ?? planned.intent;
   const inspect = input.inspect ?? planned.inspect;
-  const conn = assistantConnection(input.project);
+  const baseConn = assistantConnection(input.project);
+  const conn = input.overrideConnection
+    ? { ...baseConn, profileId: input.overrideConnection.profileId, model: input.overrideConnection.model, line: `${input.overrideConnection.line}（本次借用只读）`, bound: true }
+    : baseConn;
   const needSnapshot = intent === "project" || intent === "mixed" || intent === "request";
   const needGuide = intent === "howto" || intent === "mixed";
   const request = intent === "request";
+  // 不能只读打开文件时（如 agy），问项目也附一份紧凑项目地图，至少知道项目里有哪些文件和刚改过什么
+  const needMap = request || (needSnapshot && !inspect);
   const [snapshot, guide, worktrees, map, catalog] = await Promise.all([
     needSnapshot ? cachedSnapshot(input.projectPath, focus) : Promise.resolve(null),
     needGuide
       ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
       : Promise.resolve([] as { heading: string; text: string }[]),
     inspect ? inspectExtraDirs(input.projectPath) : Promise.resolve([] as string[]),
-    request ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at) : Promise.resolve(null),
+    needMap ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at, request ? undefined : 2500) : Promise.resolve(null),
     request ? gatherCatalog(input.project, input.projectPath) : Promise.resolve(null),
   ]);
   const promptFor = (withInspect: boolean) =>

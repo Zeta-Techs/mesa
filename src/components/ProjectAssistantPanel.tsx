@@ -17,6 +17,8 @@ import { buddyDayPart, buddyMood } from "../buddy-time";
 import {
   assistantErrorText,
   basisGuideHeadings,
+  extractAtMentionQuery,
+  filterMentionFiles,
   INSPECT_AGENTS,
   INSPECT_WAITING,
   INTENT_WAITING,
@@ -59,9 +61,11 @@ import {
   gatherBriefInput,
   planAsk,
   prefetchSnapshot,
+  readonlyInspectFallback,
   type AssistantFocus,
   type AssistantTurn,
 } from "../project-assistant-run";
+import type { MapEntry } from "../project-map";
 import type { ProjectDto, RunDto, TaskDto } from "../types";
 import { samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
@@ -226,6 +230,53 @@ export default function ProjectAssistantPanel({
   const conn = assistantConnection(project);
   // 能只读看文件与看图的是 INSPECT_AGENTS 四家；走「AI 功能」连接时前端不知道是哪家，先不拦，后端会说
   const imageCapable = conn.agentId === null || INSPECT_AGENTS.includes(conn.agentId);
+  const inspectFallback = !imageCapable ? readonlyInspectFallback(project) : null;
+  /** `@` 引用项目文件补全：懒加载项目地图，切项目时清空 */
+  const [mentionFiles, setMentionFiles] = useState<MapEntry[] | null>(null);
+  const [mentionRange, setMentionRange] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  useEffect(() => {
+    setMentionFiles(null);
+    setMentionRange(null);
+    setMentionIdx(0);
+  }, [projectPath]);
+  useEffect(() => {
+    if (!mentionRange || !projectPath || mentionFiles !== null) return;
+    let stale = false;
+    invoke<{ entries: MapEntry[]; truncated: boolean }>("project_file_map", { projectRoot: projectPath })
+      .then((res) => {
+        if (!stale) setMentionFiles(res?.entries ?? []);
+      })
+      .catch(() => {
+        if (!stale) setMentionFiles([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [mentionRange, projectPath, mentionFiles]);
+  const mentionMatches = mentionRange ? filterMentionFiles(mentionFiles ?? [], mentionRange.query, 8) : [];
+  function updateMentionFromInput(value: string, caret: number | null) {
+    const hit = caret != null ? extractAtMentionQuery(value, caret) : null;
+    setMentionRange(hit);
+    setMentionIdx(0);
+  }
+  function pickMention(path: string) {
+    if (!mentionRange) return;
+    const token = `\`${path}\` `;
+    const next = `${draft.slice(0, mentionRange.start)}${token}${draft.slice(mentionRange.end)}`;
+    const nextCaret = mentionRange.start + token.length;
+    setDraft(next);
+    setMentionRange(null);
+    setMentionIdx(0);
+    window.requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(nextCaret, nextCaret);
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    });
+  }
   // 派活单派出去后记到那一轮上（后端问答记录），卡片据此跟进度、不重复派；项目快照据此告诉项目助手派过什么
   async function dispatch(turnAt: string, order: WorkOrder) {
     const result = await onDispatch(order);
@@ -472,7 +523,9 @@ export default function ProjectAssistantPanel({
     forced?: AssistantIntent,
     attached: AssistantImage[] = images,
     forcedInspect?: boolean,
+    overrideConnection?: { profileId: string; model: string | null; line: string } | null,
   ) {
+    setMentionRange(null);
     // 只贴了图没写字：替人补一句最常见的问法
     const q = question.trim() || (attached.length ? "看看这张截图是怎么回事，我该怎么办？" : "");
     if (!q || busy || !projectPath) return;
@@ -555,6 +608,7 @@ export default function ProjectAssistantPanel({
         images: attached.map((img) => img.path),
         where,
         streamId,
+        overrideConnection,
         onStream: (update) => {
           if (update.text !== undefined) setLiveText(update.text);
           if (update.step) setLiveStep(update.step);
@@ -776,6 +830,7 @@ export default function ProjectAssistantPanel({
                 ? retryIntents(turn.basis, turn.connection, {
                     canInspect: imageCapable,
                     allowDraft: !withOrder.order && !withRework.rework,
+                    fallbackInspectLabel: inspectFallback ? `借用 ${inspectFallback.agentLabel} 打开文件核对重问` : undefined,
                   })
                 : [];
             if (!turn.basis && turn.costUsd == null && retry.length === 0) return null;
@@ -819,10 +874,19 @@ export default function ProjectAssistantPanel({
                     {(turn.basis || turn.costUsd != null) && dot}没答到点上？
                     {retry.map((r, ri) => (
                       <button
-                        key={`${r.intent}-${r.inspect ? "inspect" : ""}`}
+                        key={`${r.intent}-${r.inspect ? "inspect" : ""}-${r.useFallbackInspect ? "fb" : ""}`}
                         type="button"
                         className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() => void send(turn.question, null, r.intent, [], r.inspect)}
+                        onClick={() =>
+                          void send(
+                            turn.question,
+                            null,
+                            r.intent,
+                            [],
+                            r.inspect,
+                            r.useFallbackInspect ? inspectFallback : null,
+                          )
+                        }
                       >
                         <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
                       </button>
@@ -992,12 +1056,56 @@ export default function ProjectAssistantPanel({
           ))}
           {!imageCapable && (
             <span className="min-w-0 flex-1 text-micro text-warn-text">
-              现在的连接看不了图：到 Agent 分工给项目助手换成 Claude Code / Codex / Kimi Code / Grok Build，或把图里的字打出来
+              现在的连接看不了图：到 Agent 分工换成 Claude Code / Codex / Kimi Code / Grok Build，或把图里的字打出来
+              {inspectFallback && (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    className="underline decoration-dotted underline-offset-2 hover:text-l1"
+                    disabled={busy}
+                    onClick={() => void send(draft, focus, "mixed", images, true, inspectFallback)}
+                  >
+                    <span className="text-micro">借用 {inspectFallback.agentLabel} 看图发送</span>
+                  </button>
+                </>
+              )}
             </span>
           )}
         </div>
       )}
       {imageNote && <p className="text-micro text-warn-text">{imageNote}</p>}
+      {mentionRange && (
+        <div
+          className="max-h-48 overflow-auto rounded-lg border border-hairline bg-raised p-1 shadow-sm"
+          role="listbox"
+          aria-label="引用项目文件"
+        >
+          {mentionFiles === null ? (
+            <p className="px-2 py-1 text-xs text-l4">正在读取项目文件列表…</p>
+          ) : mentionMatches.length === 0 ? (
+            <p className="px-2 py-1 text-xs text-l4">没有匹配的项目文件</p>
+          ) : (
+            mentionMatches.map((entry, idx) => (
+              <button
+                key={entry.path}
+                type="button"
+                role="option"
+                aria-selected={idx === mentionIdx}
+                className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left font-mono text-xs ${
+                  idx === mentionIdx ? "bg-hover text-l1" : "text-l2 hover:bg-hover hover:text-l1"
+                }`}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  pickMention(entry.path);
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">{entry.path}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
       <form
         className="ccode-assistant-composer flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
         onSubmit={(event) => {
@@ -1005,13 +1113,31 @@ export default function ProjectAssistantPanel({
           void send(draft, focus);
         }}
         onDragOver={(event) => {
-          if (Array.from(event.dataTransfer.items).some((it) => it.type.startsWith("image/"))) event.preventDefault();
+          const items = Array.from(event.dataTransfer.items);
+          if (items.some((it) => it.type.startsWith("image/") || it.kind === "file" || it.type === "text/plain")) {
+            event.preventDefault();
+          }
         }}
         onDrop={(event) => {
-          const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
-          if (files.length === 0) return;
-          event.preventDefault();
-          for (const f of files) void addImageFile(f);
+          const imgFiles = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+          if (imgFiles.length > 0) {
+            event.preventDefault();
+            for (const f of imgFiles) void addImageFile(f);
+            return;
+          }
+          const rawText = event.dataTransfer.getData("text/plain").trim();
+          if (rawText && projectPath) {
+            const normRoot = projectPath.replace(/\\/g, "/").replace(/\/+$/, "");
+            const normRaw = rawText.replace(/^file:\/\//i, "").replace(/\\/g, "/");
+            let rel = normRaw;
+            if (normRaw.toLowerCase().startsWith(`${normRoot.toLowerCase()}/`)) {
+              rel = normRaw.slice(normRoot.length + 1);
+            }
+            if (rel && !rel.startsWith("/") && !rel.includes("..")) {
+              event.preventDefault();
+              setDraft((cur) => `${cur}${cur && !/\s$/.test(cur) ? " " : ""}\`${rel}\` `);
+            }
+          }
         }}
       >
         <textarea
@@ -1020,7 +1146,7 @@ export default function ProjectAssistantPanel({
           rows={1}
           value={draft}
           maxLength={2000}
-          placeholder={mood.restPose === "sleep" ? "问点什么，它就醒…" : "问点什么…（可以粘贴截图）"}
+          placeholder={mood.restPose === "sleep" ? "问点什么，它就醒…" : "问点什么…（可 @ 引用文件或粘贴截图）"}
           aria-label="问项目助手"
           onPaste={(event) => {
             // 剪贴板里有图就接管（存成附图），纯文字照常粘贴
@@ -1032,12 +1158,46 @@ export default function ProjectAssistantPanel({
             if (file) void addImageFile(file);
           }}
           onChange={(event) => {
-            setDraft(event.target.value);
+            const val = event.target.value;
+            setDraft(val);
+            updateMentionFromInput(val, event.target.selectionStart);
             const el = event.target;
             el.style.height = "auto";
             el.style.height = `${el.scrollHeight}px`;
           }}
+          onClick={(event) => updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart)}
+          onKeyUp={(event) => {
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+              updateMentionFromInput(event.currentTarget.value, event.currentTarget.selectionStart);
+            }
+          }}
           onKeyDown={(event) => {
+            if (mentionRange && mentionMatches.length > 0) {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setMentionIdx((i) => (i + 1) % mentionMatches.length);
+                return;
+              }
+              if (event.key === "ArrowUp") {
+                event.preventDefault();
+                setMentionIdx((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+                return;
+              }
+              if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                pickMention(mentionMatches[Math.min(mentionIdx, mentionMatches.length - 1)].path);
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setMentionRange(null);
+                return;
+              }
+            } else if (mentionRange && event.key === "Escape") {
+              event.preventDefault();
+              setMentionRange(null);
+              return;
+            }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               void send(draft, focus);
@@ -1077,11 +1237,18 @@ export default function ProjectAssistantPanel({
         )}
         <button
           type="button"
-          className="ml-auto min-w-0 truncate text-l4 hover:text-l2"
-          title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}\n点了去 Agent 分工换`}
+          className="ml-auto flex min-w-0 items-center gap-1.5 truncate text-l4 hover:text-l2"
+          title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}${
+            !imageCapable
+              ? `\n当前连接暂不支持只读打开项目文件与看图（仅看项目快照与目录）${inspectFallback ? `；回答下可一键借用 ${inspectFallback.agentLabel} 读文件核对` : ""}`
+              : ""
+          }\n点了去 Agent 分工换`}
           onClick={() => onAction({ kind: "agents", step: null, text: "", label: "去 Agent 分工" }, { at: "", question: "", answer: "", connection: "" })}
         >
-          <span className="text-micro">{conn.model ?? (conn.profileId ? "默认模型" : "AI 功能的连接")}</span>
+          {!imageCapable && (
+            <span className="shrink-0 rounded border border-hairline px-1 py-px text-micro text-l3">仅看记录</span>
+          )}
+          <span className="truncate text-micro">{conn.model ?? (conn.profileId ? "默认模型" : "AI 功能的连接")}</span>
         </button>
       </div>
     </div>

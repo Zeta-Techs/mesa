@@ -604,3 +604,42 @@ test("动作直达验收与问答文件路径提取：提取项目内相对路�
     "submission/figure-permissions.md",
   ]);
 });
+
+test("后续对话分流升级、借用只读连接重问与 @ 文件引用补全", async () => {
+  const { extractAtMentionQuery, filterMentionFiles, retryIntents } = await import("../src/project-assistant.ts");
+  // 投后与内容核对类提问命中 project，不再掉进 general
+  assert.equal(classifyQuestion("稿子里图 5 对应哪几篇文献？"), "project");
+  assert.equal(classifyQuestion("目标期刊 EER 对摘要字数要求是什么"), "mixed");
+  assert.equal(classifyQuestion("定时任务和文献雷达现在开着吗"), "project");
+  assert.equal(classifyQuestion("核查一下 `output/review-final.pdf` 里写了什么"), "project");
+  assert.equal(wantsInspectFn("核查一下 `output/review-final.pdf` 里写了什么", "project"), true);
+  assert.equal(wantsInspectFn("稿子里图 5 对应哪几篇文献？", "project"), true);
+  // 当前连接不支持只读查看（如 agy）时给出借用只读连接重问项
+  const fb = retryIntents("这个项目的记录", "Antigravity CLI · gemini-4-neon", {
+    canInspect: false,
+    allowDraft: true,
+    fallbackInspectLabel: "借用 Claude Code 打开文件核对重问",
+  });
+  assert.deepEqual(fb[0], {
+    intent: "project",
+    inspect: true,
+    useFallbackInspect: true,
+    label: "借用 Claude Code 打开文件核对重问",
+  });
+  // @ 引用文件解析（邮箱不误触发）
+  assert.equal(extractAtMentionQuery("foo@bar.com", 11), null);
+  assert.deepEqual(extractAtMentionQuery("帮我看 @review", 11), { start: 4, end: 11, query: "review" });
+  const files = [
+    { path: "papers/included.json", modifiedMs: 100 },
+    { path: "output/review-final.pdf", modifiedMs: 300 },
+    { path: "manuscript/review-final.md", modifiedMs: 200 },
+  ];
+  assert.deepEqual(
+    filterMentionFiles(files, "review").map((f) => f.path),
+    ["output/review-final.pdf", "manuscript/review-final.md"],
+  );
+  assert.deepEqual(
+    filterMentionFiles(files, "out pdf").map((f) => f.path),
+    ["output/review-final.pdf"],
+  );
+});

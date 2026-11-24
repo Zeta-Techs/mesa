@@ -126,7 +126,7 @@ export type AssistantIntent = "howto" | "project" | "mixed" | "chat" | "general"
 
 const CHAT_RE = /^(你好|您好|嗨|哈喽|hi|hello|hey|谢谢|多谢|感谢|thanks|thank you|好的|好|ok|okay|收到|在吗|在不在|辛苦了|早|早上好|晚安|拜拜|再见)[呀啊哦了吧！!。.~～，, ]*$/i;
 const PROJECT_RE =
-  /第\s*[一二三四五六七八九十\d]+\s*步|这一步|这个项目|本项目|项目里|进度|到哪|走到|还剩|下一步|接下来|卡住|卡在|出错|报错|失败|错误|没成|不成功|保存不进|没保存|评审|核验|退回|人工请求|留话|怎么回事|在跑|跑完|做完|产物|交了|花了多少|多少钱|哪里出问题/;
+  /第\s*[一二三四五六七八九十\d]+\s*步|这一步|这个项目|本项目|项目里|进度|到哪|走到|还剩|下一步|接下来|卡住|卡在|出错|报错|失败|错误|没成|不成功|保存不进|没保存|评审|核验|退回|人工请求|留话|怎么回事|在跑|跑完|做完|产物|交了|花了多少|多少钱|哪里出问题|稿件|终稿|初稿|综述|论文|文献|引文|参考文献|审稿|返修|期刊|投稿|完结文件|图表|插图|附表|数据表|目录|文件|定时任务|事件规则|文献雷达|研讨|笔记|大纲|摘要|项目知识|规矩|收尾|转载许可|endnote|zotero|rebuttal|@[A-Za-z0-9._\u4e00-\u9fff-]+\/|[A-Za-z0-9._\u4e00-\u9fff-]+\/[A-Za-z0-9._\u4e00-\u9fff-]+\.[A-Za-z]{1,6}/i;
 const HOWTO_RE =
   /怎么|如何|怎样|在哪|能不能|可不可以|可以.{0,12}吗|是什么|什么意思|啥意思|设置|切换|更换|跟换|换(个|成|一个|一下)?(模型|连接|主题|agent|配置|账号)|快捷键|入口|按钮|教程|用法/i;
 
@@ -191,12 +191,14 @@ export function classifyQuestion(question: string, hasFocus = false, prev?: Prev
  * 才在项目里只读跑一次去打开脚本、日志、产物核对；问进度、问下一步只看记录（快，便宜）。
  */
 const INSPECT_RE = /出错|报错|错误|失败|为什么|怎么回事|卡住|卡在|没成|不成功|保存不进|跑不|不对|异常|bug|问题出在|原因/i;
+/** 指向项目具体内容或显式文件路径的核对提问：触发只读查看，但不把「帮我改某文件」从 request 分流走 */
+const CONTENT_INSPECT_RE = /哪一节|哪几篇|写了什么|查一下|对应哪|缺什么|有什么差异|对比一下|[A-Za-z0-9._\u4e00-\u9fff-]+\/[A-Za-z0-9._\u4e00-\u9fff-]+\.[A-Za-z]{1,6}/i;
 
 export function wantsInspect(question: string, intent: AssistantIntent, hasFocus = false): boolean {
   // 要做事：起草前打开相关文件看一眼，单子才写得出依据（2026-11-05 放宽，原来只用于查错）
   if (intent === "request") return true;
   if (intent !== "project" && intent !== "mixed") return false;
-  return hasFocus || INSPECT_RE.test(question) || REVIEW_RE.test(question);
+  return hasFocus || INSPECT_RE.test(question) || CONTENT_INSPECT_RE.test(question) || REVIEW_RE.test(question);
 }
 
 /** 这一问是不是在问一轮做得怎么样：「这轮怎么样」「有没有问题」，或在评审页只说了句「帮我看看」 */
@@ -968,6 +970,8 @@ export const GUIDE_LIMIT: Record<"howto" | "mixed", number> = { howto: 3, mixed:
 export interface RetryOption {
   intent: AssistantIntent;
   inspect?: boolean;
+  /** 当前连接不支持只读查看时，显式借用本机可用的只读连接重问这一次 */
+  useFallbackInspect?: boolean;
   label: string;
 }
 
@@ -975,7 +979,7 @@ export interface RetryOption {
 export function retryIntents(
   basis: string | undefined,
   connection: string | undefined,
-  opts?: { canInspect?: boolean; allowDraft?: boolean },
+  opts?: { canInspect?: boolean; allowDraft?: boolean; fallbackInspectLabel?: string },
 ): RetryOption[] {
   if (connection?.startsWith("本地")) return [];
   const b = basis ?? "";
@@ -993,12 +997,60 @@ export function retryIntents(
   if (!project) out.push({ intent: "project", label: "看项目记录重问" });
   if (opts.canInspect && project && !inspected && !mapped) {
     out.push({ intent: "project", inspect: true, label: "打开文件核对重问" });
+  } else if (!opts.canInspect && opts.fallbackInspectLabel && project && !inspected) {
+    out.push({ intent: "project", inspect: true, useFallbackInspect: true, label: opts.fallbackInspectLabel });
   }
   if (!guide) out.push({ intent: "howto", label: "翻说明书重问" });
   if (opts.allowDraft && !mapped) {
     out.push({ intent: "request", ...(opts.canInspect ? { inspect: true } : {}), label: "按派活起草重问" });
   }
   return out;
+}
+
+/** 从输入框光标处提取正在输入的 `@文件` 触发段（仅在行首或空白后触发，避免邮箱误触） */
+export function extractAtMentionQuery(
+  text: string,
+  caret: number,
+): { start: number; end: number; query: string } | null {
+  const before = text.slice(0, Math.max(0, Math.min(caret, text.length)));
+  const m = before.match(/(?:^|[\s（(「“【,:：])@([^\s@`]{0,80})$/);
+  if (!m) return null;
+  const query = m[1];
+  const start = before.length - query.length - 1;
+  return { start, end: before.length, query };
+}
+
+/** 按关键词过滤项目地图里的文件供 `@` 补全：路径子串命中优先，再按文件名匹配和最近修改时间排 */
+export function filterMentionFiles<T extends { path: string; modifiedMs?: number }>(
+  entries: readonly T[],
+  query: string,
+  limit = 8,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    return [...entries]
+      .sort((a, b) => (b.modifiedMs ?? 0) - (a.modifiedMs ?? 0) || a.path.localeCompare(b.path))
+      .slice(0, limit);
+  }
+  const scored: { item: T; score: number }[] = [];
+  for (const item of entries) {
+    const lower = item.path.toLowerCase();
+    const base = lower.slice(lower.lastIndexOf("/") + 1);
+    let score = 0;
+    if (base.startsWith(q)) score = 4;
+    else if (base.includes(q)) score = 3;
+    else if (lower.includes(q)) score = 2;
+    else {
+      // 宽松分段匹配（如 `revpdf` 匹配 `output/review-final.pdf`）
+      const parts = q.split(/[/._\s-]+/).filter(Boolean);
+      if (parts.length > 1 && parts.every((p) => lower.includes(p))) score = 1;
+    }
+    if (score > 0) scored.push({ item, score });
+  }
+  return scored
+    .sort((a, b) => b.score - a.score || (b.item.modifiedMs ?? 0) - (a.item.modifiedMs ?? 0) || a.item.path.localeCompare(b.item.path))
+    .slice(0, limit)
+    .map((x) => x.item);
 }
 
 // ===== 话与事实分开（2026-11-06 根源三）=====
