@@ -400,6 +400,7 @@ export function SegTabs<T extends string>({
   className = "",
   variant = "pill",
   size = "md",
+  wrap = false,
 }: {
   items: readonly { id: T; label: ReactNode }[];
   value: T;
@@ -409,11 +410,18 @@ export function SegTabs<T extends string>({
   variant?: "pill" | "boxed";
   /** boxed 的紧凑档：二级栏、表头右侧这类窄处用 */
   size?: "md" | "sm";
+  /** 窄卡片里选项较多时允许换行折行，避免右侧标签被卡片裁掉 */
+  wrap?: boolean;
 }) {
   const selectedIndex = items.findIndex((item) => item.id === value);
   const boxed = variant === "boxed";
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+  const [indicator, setIndicator] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
   useLayoutEffect(() => {
     if (!boxed || selectedIndex < 0) {
@@ -426,7 +434,12 @@ export function SegTabs<T extends string>({
         setIndicator(null);
         return;
       }
-      setIndicator({ left: btn.offsetLeft, width: btn.offsetWidth });
+      setIndicator({
+        left: btn.offsetLeft,
+        top: btn.offsetTop,
+        width: btn.offsetWidth,
+        height: btn.offsetHeight,
+      });
     };
     measure();
     const btn = tabRefs.current[selectedIndex];
@@ -435,13 +448,15 @@ export function SegTabs<T extends string>({
     ro.observe(btn);
     if (btn.parentElement) ro.observe(btn.parentElement);
     return () => ro.disconnect();
-  }, [boxed, selectedIndex, items.length]);
+  }, [boxed, selectedIndex, value, items.length, wrap]);
 
   return (
     <div
       data-sliding={boxed && indicator ? "true" : undefined}
       className={`${
-        boxed ? `ccode-seg-boxed inline-flex items-center ${size === "sm" ? "is-sm" : ""}` : "flex items-center gap-1"
+        boxed
+          ? `ccode-seg-boxed inline-flex items-center ${size === "sm" ? "is-sm" : ""} ${wrap ? "max-w-full flex-wrap" : ""}`
+          : `flex items-center gap-1 ${wrap ? "flex-wrap" : ""}`
       } ${className}`}
       role="tablist"
       onKeyDown={(event) => {
@@ -456,10 +471,20 @@ export function SegTabs<T extends string>({
         <span
           aria-hidden="true"
           className="ccode-seg-indicator"
-          style={{
-            width: indicator.width,
-            transform: `translateX(${indicator.left}px)`,
-          }}
+          style={
+            wrap
+              ? {
+                  top: 0,
+                  bottom: "auto",
+                  width: indicator.width,
+                  height: indicator.height,
+                  transform: `translate3d(${indicator.left}px, ${indicator.top}px, 0)`,
+                }
+              : {
+                  width: indicator.width,
+                  transform: `translateX(${indicator.left}px)`,
+                }
+          }
         />
       )}
       {items.map((item, index) => (
@@ -477,13 +502,13 @@ export function SegTabs<T extends string>({
           onClick={() => onChange(item.id)}
           className={
             boxed
-              ? "ccode-seg-boxed-item flex items-center whitespace-nowrap text-xs transition-colors"
+              ? `ccode-seg-boxed-item flex items-center whitespace-nowrap text-xs transition-colors ${wrap ? "max-w-full" : ""}`
               : `flex h-7 items-center rounded-full px-3 text-xs transition-colors ${
                   value === item.id ? "bg-seg-sel text-l1" : "text-l3 hover:text-l1"
                 }`
           }
         >
-          {item.label}
+          {wrap ? <span className="truncate">{item.label}</span> : item.label}
         </button>
       ))}
     </div>

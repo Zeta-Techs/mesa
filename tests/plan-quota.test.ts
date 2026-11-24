@@ -12,6 +12,8 @@ import {
   gatewayHasPlanQuota,
   planAbsoluteQuotaLine,
   planAbsoluteQuotaPair,
+  planAccountSuffix,
+  planCapsuleLabel,
   planPrimaryWindowIndex,
   planProviderLabel,
   planGatewayNameVisible,
@@ -41,11 +43,58 @@ test("供应商显示名与切换标签", () => {
   assert.equal(planProviderLabel("codex"), "Codex");
   assert.equal(planProviderLabel("agy"), "Antigravity");
   assert.equal(planProviderLabel("other-x"), "other-x");
-  // 同供应商单网关：标签只有供应商名；多网关：追加网关名区分
+  // 同供应商单网关：标签只有供应商名；多网关：追加去重后的区分后缀，不叠写品牌前缀
   assert.equal(planTabLabel({ provider: "kimi", gatewayName: "Kimi 主力" }, 1), "Kimi");
   assert.equal(
     planTabLabel({ provider: "kimi", gatewayName: "Kimi 备用" }, 2),
-    "Kimi · Kimi 备用",
+    "Kimi · 备用",
+  );
+  assert.equal(
+    planTabLabel({ provider: "agy", gatewayName: "Antigravity · tzhong911425" }, 2),
+    "Antigravity · tzhong911425",
+  );
+  assert.equal(
+    planTabLabel({ provider: "claude", gatewayName: "官方账号" }, 2),
+    "Claude · 官方账号",
+  );
+  assert.equal(
+    planTabLabel({ provider: "claude", gatewayName: "个人号" }, 2),
+    "Claude · 个人号",
+  );
+  assert.equal(
+    planTabLabel({ provider: "zhipu", gatewayName: "智谱备用" }, 2),
+    "智谱 · 备用",
+  );
+  assert.equal(planTabLabel({ provider: "agy", gatewayName: "Antigravity" }, 2), "Antigravity");
+});
+
+test("账号后缀提取与卡头胶囊紧凑命名", () => {
+  assert.equal(planAccountSuffix("Antigravity · tzhong911425", "agy"), "tzhong911425");
+  assert.equal(planAccountSuffix("agy - work", "agy"), "work");
+  assert.equal(planAccountSuffix("Kimi 备用", "kimi"), "备用");
+  assert.equal(planAccountSuffix("智谱备用", "zhipu"), "备用");
+  assert.equal(planAccountSuffix("GLM", "zhipu"), null);
+  assert.equal(planAccountSuffix("Glmtech", "zhipu"), "Glmtech");
+  // 带品牌图标时，多账号优先只放区分名，避免把卡头胶囊挤成 `Anti...`
+  assert.equal(
+    planCapsuleLabel({ provider: "agy", gatewayName: "Antigravity · tzhong911425" }, 2, true),
+    "tzhong911425",
+  );
+  assert.equal(
+    planCapsuleLabel({ provider: "agy", gatewayName: "Antigravity · tzhong911425" }, 2, false),
+    "Antigravity · tzhong911425",
+  );
+  assert.equal(
+    planCapsuleLabel({ provider: "agy", gatewayName: "Antigravity · tzhong911425" }, 1, true),
+    "tzhong911425",
+  );
+  assert.equal(
+    planCapsuleLabel({ provider: "agy", gatewayName: "官方账号" }, 1, true),
+    "Antigravity",
+  );
+  assert.equal(
+    planCapsuleLabel({ provider: "zhipu", gatewayName: "智谱备用" }, 1, true),
+    "智谱备用",
   );
 });
 
@@ -65,9 +114,11 @@ test("网关名与供应商同义或固定「官方账号」时不盖掉品牌�
   assert.ok(planGatewayNameVisible("Kimi 主力", "kimi"));
 });
 
-test("套餐等级精简（GLM 前缀与 Plan 后缀剥掉）", () => {
+test("套餐等级精简（GLM / Google AI 前缀与 Plan 后缀剥掉）", () => {
   assert.equal(planLevelLabel("GLM Coding Max"), "Max");
   assert.equal(planLevelLabel("GLM Coding Lite"), "Lite");
+  assert.equal(planLevelLabel("Google AI Pro"), "Pro");
+  assert.equal(planLevelLabel("Google AI Ultra"), "Ultra");
   assert.equal(planLevelLabel("MaxPlan"), "Max");
   assert.equal(planLevelLabel("glm coding pro"), "Pro");
   // 全小写等级首字母大写（智谱实测回 "max"）；已带大写/非纯字母的原样

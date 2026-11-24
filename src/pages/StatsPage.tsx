@@ -31,11 +31,11 @@ import {
   planResetCardHighlight,
   planResetRemain,
   planTabLabel,
+  planCapsuleLabel,
   planWindowCaption,
   planWindowLabel,
   planWindowsByTightness,
   gatewayHasPlanQuota,
-  planGatewayNameVisible,
   planLevelLabel,
   quotaTone,
   resetCardExpiryNote,
@@ -1509,12 +1509,17 @@ export default function StatsPage({ visible }: { visible: boolean }) {
             const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
             const now = Date.now();
             const windows = planWindowsByTightness(row.windows);
-            const sameProviderMulti = (providerCounts[row.provider] ?? 1) > 1;
-            const capsuleLabel = sameProviderMulti
-              ? planTabLabel(row, providerCounts[row.provider] ?? 1)
-              : planGatewayNameVisible(row.gatewayName, row.provider)
-                ? row.gatewayName
-                : planProviderLabel(row.provider);
+            const sameProviderCount = providerCounts[row.provider] ?? 1;
+            const hasProviderIcon =
+              row.provider === "agy" || Boolean(vendorForPlanProvider(row.provider));
+            const capsuleLabel = planCapsuleLabel(row, sameProviderCount, hasProviderIcon);
+            const capsuleTitle = [
+              planTabLabel(row, sameProviderCount),
+              row.planLevel,
+              row.accountHint,
+            ]
+              .filter(Boolean)
+              .join(" · ");
             return (
               <>
                 {/* 卡头恒一行，把服务商与等级收进紧凑身份胶囊，时间戳窄屏收进重查悬浮提示 */}
@@ -1523,7 +1528,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                   <h2 className="shrink-0 text-base font-medium text-l1">订阅余量</h2>
                   <span
                     className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-hairline bg-inset px-2 py-0.5 text-xs text-l2"
-                    title={row.accountHint ?? undefined}
+                    title={capsuleTitle || undefined}
                   >
                     {row.provider === "agy" ? (
                       <AgentIcon agent="agy" label="Antigravity" size={14} />
@@ -1670,6 +1675,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                     <SegTabs
                       variant="boxed"
                       size="sm"
+                      wrap
                       items={planRowsVisible.map((r) => ({
                         id: r.gatewayId,
                         label: planTabLabel(r, providerCounts[r.provider] ?? 1),
@@ -1681,7 +1687,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 )}
                 <div key={row.gatewayId} className="mt-3">
                   {(row.accountHint || row.isActiveSlot != null) && (
-                    <div className="mb-2 flex items-center gap-2 text-micro text-l4">
+                    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-l4">
                       {row.accountHint && <span className="truncate">{row.accountHint}</span>}
                       {row.isActiveSlot === true && (
                         <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hairline bg-inset px-1.5 py-px text-ok-text">
@@ -2075,6 +2081,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       <SegTabs
                         variant="boxed"
                         size="sm"
+                        wrap
                         items={walletGroupsVisible.map((g) => ({
                           id: g.key,
                           label: walletAccountTitle(g, true),

@@ -15,7 +15,7 @@ export function planProviderLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider;
 }
 
-/** 套餐等级精简：剥掉 GLM / GLM Coding 前缀与 Plan 后缀（GLM Coding Max → Max；MaxPlan → Max）；
+/** 套餐等级精简：剥掉 GLM / GLM Coding / Google AI 前缀与 Plan 后缀（GLM Coding Max → Max；Google AI Pro → Pro；MaxPlan → Max）；
  *  全小写的等级首字母大写（智谱实测回 `level: "max"`，原样上屏是「max」——官方写 Max） */
 export function planLevelLabel(level: string | null): string | null {
   if (!level) return null;
@@ -23,6 +23,8 @@ export function planLevelLabel(level: string | null): string | null {
     .trim()
     .replace(/^glm\s+coding\s+/i, "")
     .replace(/^glm\s+/i, "")
+    .replace(/^google\s+ai\s+/i, "")
+    .replace(/^google\s+/i, "")
     .replace(/\s*plan$/i, "")
     .trim();
   if (!s) return null;
@@ -38,6 +40,35 @@ const PROVIDER_NAME_KEYWORDS: Record<string, string[]> = {
   grok: ["grok", "supergrok", "xai"],
   agy: ["antigravity", "agy"],
 };
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** 剥掉账号/网关名开头与供应商重复的品牌前缀（如 `Antigravity · tzhong911425` → `tzhong911425`、`Kimi 备用` → `备用`）；
+ *  剥完为空则返回 null */
+export function planAccountSuffix(
+  name: string | null | undefined,
+  provider: string,
+): string | null {
+  const trimmed = name?.trim() ?? "";
+  if (!trimmed) return null;
+  const label = planProviderLabel(provider);
+  const prefixes = Array.from(
+    new Set([label, ...(PROVIDER_NAME_KEYWORDS[provider] ?? [])].filter(Boolean)),
+  ).sort((a, b) => b.length - a.length);
+  for (const prefix of prefixes) {
+    const isAscii = /^[a-z0-9]+$/i.test(prefix);
+    const re = isAscii
+      ? new RegExp(`^${escapeRegExp(prefix)}(?:[\\s·•\\-_/:]+|(?![a-z0-9]))`, "i")
+      : new RegExp(`^${escapeRegExp(prefix)}[\\s·•\\-_/:]*`, "i");
+    if (re.test(trimmed)) {
+      const rest = trimmed.replace(re, "").trim();
+      return rest || null;
+    }
+  }
+  return trimmed;
+}
 
 /** 网关名是否还值得显示：只剩供应商同义词（可带数字编号，如 "GLM"、"glm 2"）或固定占位「官方账号」时
  *  与供应商徽章重复/盖掉品牌名，不再显示；有实际区分信息（"智谱备用"、"公司号"）才显示 */
@@ -55,13 +86,35 @@ export function planGatewayNameVisible(
   return rest.replace(/[0-9]+/g, "").length > 0;
 }
 
-/** 卡片切换标签：供应商名；同供应商多网关时追加网关名区分 */
+/** 卡片切换标签：供应商名；同供应商多账号时追加去重后的区分后缀（避免 `Antigravity · Antigravity · xxx`） */
 export function planTabLabel(
   row: { provider: string; gatewayName: string },
   sameProviderCount: number,
 ): string {
   const label = planProviderLabel(row.provider);
-  return sameProviderCount > 1 ? `${label} · ${row.gatewayName}` : label;
+  if (sameProviderCount <= 1) return label;
+  const suffix = planAccountSuffix(row.gatewayName, row.provider);
+  return suffix ? `${label} · ${suffix}` : label;
+}
+
+/** 卡头身份胶囊文案：带品牌图标时优先展示账号区分名，避免长品牌名把账号截成 `Anti...` */
+export function planCapsuleLabel(
+  row: { provider: string; gatewayName: string },
+  sameProviderCount: number,
+  hasIcon = false,
+): string {
+  const label = planProviderLabel(row.provider);
+  const suffix = planAccountSuffix(row.gatewayName, row.provider);
+  if (sameProviderCount > 1) {
+    if (hasIcon && suffix) return suffix;
+    return planTabLabel(row, sameProviderCount);
+  }
+  if (!planGatewayNameVisible(row.gatewayName, row.provider)) return label;
+  const trimmed = row.gatewayName.trim();
+  if (hasIcon && suffix && suffix !== trimmed && trimmed.length > 12) {
+    return suffix;
+  }
+  return trimmed;
 }
 
 /** 收起态左右滑动切换（2026-10-31 用户：收起时不放标签，滑动切）：dir 1 = 下一家、-1 = 上一家；
