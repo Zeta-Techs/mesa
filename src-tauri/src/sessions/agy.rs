@@ -412,12 +412,12 @@ pub(crate) fn agy_load_meta_map(agy_root: &Path) -> HashMap<String, AgySummaryEn
                 {
                     entry.step_count = entry.step_count.max(steps);
                 }
-                let meta_ts = agy_max_iso(
-                    summary
-                        .and_then(|s| get_str(s, "UpdatedAt"))
-                        .and_then(agy_normalize_timestamp),
-                    get_str(item, "last_modified_time").and_then(agy_normalize_timestamp),
-                );
+                // 只取 summary.UpdatedAt（真实会话更新时间）；外层 last_modified_time 是
+                // Antigravity 元数据缓存刷新时间，每次打开/同步都会刷成当前时刻，混进来会把
+                // 旧对话顶到侧栏最前并让新对话认领误绑旧会话（2026-11-24 实测）
+                let meta_ts = summary
+                    .and_then(|s| get_str(s, "UpdatedAt"))
+                    .and_then(agy_normalize_timestamp);
                 entry.updated_at = agy_max_iso(entry.updated_at.take(), meta_ts);
             }
         }
@@ -2169,5 +2169,43 @@ mod tests {
         assert!(!default_root.join("brain/ext-fts-1").exists());
         assert!(!default_root.join("conversations/ext-fts-1.db").exists());
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn agy_metadata_ignores_cache_refresh_last_modified_time() {
+        let dir = TempDir::new();
+        let root = dir.path().join("antigravity-cli");
+        let cache = root.join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        // 外层 last_modified_time 是 Antigravity 元数据缓存刷新时间（今天），
+        // summary.UpdatedAt 才是会话真实更新时间（昨天）；不得把昨天会话的 updated_at 刷成今天
+        fs::write(
+            cache.join("conversation_metadata.json"),
+            serde_json::json!({
+                "conversations": {
+                    "old-goku-1": {
+                        "summary": {
+                            "ID": "old-goku-1",
+                            "Title": "Blender 3D Goku Modeling",
+                            "NumSteps": 58,
+                            "UpdatedAt": "2026-11-23T03:05:30.767777Z",
+                            "AppDataDir": "antigravity-cli"
+                        },
+                        "is_internal": false,
+                        "last_modified_time": "2026-11-24T17:42:33.917003515+08:00"
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let map = agy_load_meta_map(&root);
+        let entry = map.get("old-goku-1").expect("应读到旧会话元信息");
+        assert_eq!(
+            entry.updated_at.as_deref(),
+            Some("2026-11-23T03:05:30Z"),
+            "必须只认 summary.UpdatedAt，不取缓存刷新时间 last_modified_time"
+        );
     }
 }

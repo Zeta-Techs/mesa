@@ -2775,6 +2775,33 @@ fn tail_state_impl(agent: &str, file_path: &str) -> String {
 
 /// 扫描结果缓存 10 秒：同步 command 跑在主线程上，列表每 5 秒全量扫几百个文件会卡 UI
 static SCAN_CACHE: OnceLock<Mutex<Option<(Instant, ScanResult)>>> = OnceLock::new();
+/// 最近一次全量扫描已知的 `(agent, project_path, session_id)` 快照：不受 10 秒过期和
+/// `invalidate_scan_cache()` 清除影响，供 `register_session_claim` 在同步启动路径上稳定排除既有旧会话
+static LAST_KNOWN_SESSIONS: OnceLock<Mutex<Vec<(String, String, String)>>> = OnceLock::new();
+
+fn record_known_sessions(sessions: &[SessionMetaDto]) {
+    let snapshot: Vec<(String, String, String)> = sessions
+        .iter()
+        .map(|s| (s.agent.clone(), s.project_path.clone(), s.session_id.clone()))
+        .collect();
+    let m = LAST_KNOWN_SESSIONS.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut g) = m.lock() {
+        *g = snapshot;
+    }
+}
+
+fn known_session_ids_for(agent: &str, project_path: &str) -> HashSet<String> {
+    let Some(m) = LAST_KNOWN_SESSIONS.get() else {
+        return HashSet::new();
+    };
+    let Ok(g) = m.lock() else {
+        return HashSet::new();
+    };
+    g.iter()
+        .filter(|(a, p, _)| a == agent && crate::paths::same_path(p, project_path))
+        .map(|(_, _, id)| id.clone())
+        .collect()
+}
 
 pub(crate) fn cached_scan() -> ScanResult {
     let m = SCAN_CACHE.get_or_init(|| Mutex::new(None));
@@ -2800,15 +2827,9 @@ pub(crate) fn cached_scan() -> ScanResult {
     }
     res.provenance_paths = provenance_paths;
     refresh_scan_live(&mut res);
+    record_known_sessions(&res.sessions);
     *guard = Some((Instant::now(), res.clone()));
     res
-}
-
-fn recent_cached_scan() -> Option<ScanResult> {
-    let cache = SCAN_CACHE.get()?;
-    let guard = cache.lock().ok()?;
-    let (at, result) = guard.as_ref()?;
-    (at.elapsed() < std::time::Duration::from_secs(10)).then(|| result.clone())
 }
 
 /// pin/unpin/删除/改整理数据后立刻失效，下一次列表拿到新结果
@@ -2823,6 +2844,11 @@ pub(crate) fn invalidate_scan_cache() {
 #[cfg(test)]
 pub(crate) fn reset_scan_caches_for_test() {
     invalidate_scan_cache();
+    if let Some(m) = LAST_KNOWN_SESSIONS.get() {
+        if let Ok(mut g) = m.lock() {
+            g.clear();
+        }
+    }
     if let Ok(mut g) = scan_file_cache().lock() {
         *g = ScanFileCache::default();
     }
@@ -3083,16 +3109,9 @@ fn link_project_path(cwd: &str) -> String {
 /// 无固定 session id 的 CLI 在进程启动前登记，记录当时已有会话，避免误绑旧记录。
 pub(crate) fn register_session_claim(claim_id: &str, agent: &str, cwd: &str) {
     let project_path = link_project_path(cwd);
-    // 启动命令是同步路径，只读取已有缓存，禁止为关联声明阻塞扫描数百个历史文件。
-    let excluded = recent_cached_scan()
-        .unwrap_or_default()
-        .sessions
-        .into_iter()
-        .filter(|session| {
-            session.agent == agent && crate::paths::same_path(&session.project_path, &project_path)
-        })
-        .map(|session| session.session_id)
-        .collect();
+    // 启动命令是同步路径，不触发磁盘全量扫描；读取最近一次扫描持久保留的已知会话集合，
+    // 即使超过 10 秒缓存窗口或刚调用过 invalidate_scan_cache，也照常排除启动前已有的旧会话。
+    let excluded = known_session_ids_for(agent, &project_path);
     let mut registry = session_claims().lock().unwrap();
     if let Some(assignment) = registry.assignments.remove(claim_id) {
         registry.used_sessions.insert(assignment);

@@ -1009,6 +1009,8 @@ fn compact_args(input: &Value) -> Option<String> {
 pub(crate) fn map_hook(rec: &crate::hooks::HookRecord) -> Vec<ChannelEvent> {
     let payload = rec.payload.clone().unwrap_or(Value::Null);
     let s = |k: &str| payload.get(k).and_then(|v| v.as_str()).map(String::from);
+    let tc = payload.get("toolCall");
+    let tc_s = |k: &str| tc.and_then(|o| o.get(k)).and_then(|v| v.as_str()).map(String::from);
     let mut out = Vec::new();
     match rec.event.as_str() {
         "sessionstart" => out.push(ChannelEvent::Session {
@@ -1018,9 +1020,13 @@ pub(crate) fn map_hook(rec: &crate::hooks::HookRecord) -> Vec<ChannelEvent> {
         }),
         "userpromptsubmit" | "beforeagent" | "preinvocation" => out.push(ChannelEvent::TurnStart),
         "pretooluse" | "beforetool" => out.push(ChannelEvent::ToolStart {
-            call_id: s("tool_use_id"),
-            name: s("tool_name").unwrap_or_default(),
-            input: payload.get("tool_input").cloned().unwrap_or(Value::Null),
+            call_id: s("tool_use_id").or_else(|| tc_s("id")),
+            name: s("tool_name").or_else(|| tc_s("name")).unwrap_or_default(),
+            input: payload
+                .get("tool_input")
+                .or_else(|| tc.and_then(|o| o.get("args")))
+                .cloned()
+                .unwrap_or(Value::Null),
         }),
         "notification" => {
             let kind = s("notification_type");
@@ -1046,7 +1052,7 @@ pub(crate) fn map_hook(rec: &crate::hooks::HookRecord) -> Vec<ChannelEvent> {
             detail: s("title").or_else(|| s("message")),
         }),
         "posttooluse" | "aftertool" | "posttoolusefailure" => out.push(ChannelEvent::ToolEnd {
-            call_id: s("tool_use_id"),
+            call_id: s("tool_use_id").or_else(|| tc_s("id")),
         }),
         "stop" | "afteragent" => {
             // grok 的 Stop 在会话 teardown 时会以 shutdown / channel_closed 重复 fire
@@ -4652,6 +4658,49 @@ mod tests {
         }
         assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("completed"));
         assert!(t.snap.turn.as_ref().and_then(|x| x.ended_at).is_some());
+    }
+
+    #[test]
+    fn agy_real_hook_envelope_locks_session_and_maps_tool_call() {
+        let mut t = Tracker::new("tab-agy-real", "agy", "hooks");
+        let lines = [
+            r#"1795512445 tab-agy-real {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"SessionStart","transcriptPath":"/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl"}"#,
+            r#"1795512445 tab-agy-real {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"PreInvocation","transcriptPath":"/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl"}"#,
+            r#"1795512446 tab-agy-real {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"PreToolUse","toolCall":{"id":"tc-1","name":"run_command","args":{"CommandLine":"echo ok"}}}"#,
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            for ev in map_hook(&rec(line)) {
+                t.apply(ev, (i as i64 + 1) * 10);
+            }
+        }
+        assert_eq!(
+            t.snap.session_id.as_deref(),
+            Some("6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4")
+        );
+        assert_eq!(
+            t.snap.transcript_path.as_deref(),
+            Some("/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl")
+        );
+        assert_eq!(t.snap.session_seq, 0, "首次 SessionStart 锁定会话，不触发换会话");
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("running"));
+        assert_eq!(
+            t.snap.activity.as_ref().map(|a| a.name.as_str()),
+            Some("run_command")
+        );
+
+        for ev in map_hook(&rec(
+            r#"1795512447 tab-agy-real {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"PostToolUse","toolCall":{"id":"tc-1","name":"run_command","args":{"CommandLine":"echo ok"}}}"#,
+        )) {
+            t.apply(ev, 40);
+        }
+        assert!(t.snap.activity.is_none());
+
+        for ev in map_hook(&rec(
+            r#"1795512452 tab-agy-real {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"Stop","terminationReason":"NO_TOOL_CALL","fullyIdle":true}"#,
+        )) {
+            t.apply(ev, 50);
+        }
+        assert_eq!(t.snap.turn.as_ref().map(|x| x.status), Some("completed"));
     }
 }
 

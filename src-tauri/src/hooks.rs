@@ -1199,7 +1199,7 @@ pub(crate) fn parse_log_records(text: &str) -> Vec<HookRecord> {
             }
         };
         let (Some(sid), Some(ev)) = (
-            get("session_id", "sessionId"),
+            get("session_id", "sessionId").or_else(|| get("conversation_id", "conversationId")),
             get("hook_event_name", "hookEventName"),
         ) else {
             return;
@@ -1213,12 +1213,20 @@ pub(crate) fn parse_log_records(text: &str) -> Vec<HookRecord> {
             reason: get("reason", "reason"),
             // 「在等什么」详情：各家 payload 字段未文档化，按已知形态尽力提取——
             // claude/qwen/codebuddy/gemini Notification 有 message；kimi/codex PermissionRequest
-            // 可能带 tool_name/title；都取不到就 None（横幅退回通用文案）
+            // 可能带 tool_name/title；agy 的 PreToolUse/PostToolUse 把工具名放在 toolCall.name
             detail: ["message", "tool_name", "toolName", "title"]
                 .iter()
                 .find_map(|k| match &payload {
                     Some(v) => v.get(*k).and_then(|x| x.as_str()).map(String::from),
                     None => loose_str_field(body, &[k]),
+                })
+                .or_else(|| {
+                    payload
+                        .as_ref()
+                        .and_then(|v| v.get("toolCall"))
+                        .and_then(|tc| tc.get("name"))
+                        .and_then(|x| x.as_str())
+                        .map(String::from)
                 }),
             payload,
         });
@@ -1307,6 +1315,9 @@ fn read_log_tail(path: &Path) -> String {
 fn session_id_from_file_path(agent: &str, file_path: &str) -> Option<String> {
     let p = Path::new(file_path);
     if agent == "agy" {
+        if let Some((_, cid)) = crate::sessions::agy_split_db_target(file_path) {
+            return Some(cid.to_string());
+        }
         if let Some(id) = p
             .parent() // logs
             .and_then(Path::parent) // .system_generated
@@ -2607,7 +2618,41 @@ mod tests {
             session_id_from_file_path("agy", agy_path).as_deref(),
             Some("e90f428b-5164")
         );
+        assert_eq!(
+            session_id_from_file_path(
+                "agy",
+                "/Users/u/.gemini/antigravity-cli/conversation_summaries.db#e90f428b-5164"
+            )
+            .as_deref(),
+            Some("e90f428b-5164")
+        );
         assert_eq!(event_state(&normalize_event("PreInvocation")), Some("working"));
+
+        // 真实 Antigravity CLI hook payload 使用 conversationId + hookEventName + transcriptPath + toolCall
+        let real_log = concat!(
+            r#"1795512445 tab-agy {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"SessionStart","transcriptPath":"/Users/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl"}"#,
+            "\n",
+            r#"1795512446 tab-agy {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"PreToolUse","toolCall":{"id":"call-1","name":"run_command","args":{"CommandLine":"ls"}},"transcriptPath":"/Users/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl"}"#,
+            "\n",
+            r#"1795512452 tab-agy {"conversationId":"6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4","hookEventName":"Stop","terminationReason":"NO_TOOL_CALL","fullyIdle":true}"#,
+            "\n"
+        );
+        let recs = parse_log_records(real_log);
+        assert_eq!(recs.len(), 3, "必须完整解析 agy 的 conversationId 记录");
+        assert_eq!(recs[0].session_id, "6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4");
+        assert_eq!(recs[0].event, "sessionstart");
+        assert!(recs[0].transcript_path.as_deref().unwrap().ends_with("transcript_full.jsonl"));
+        assert_eq!(recs[1].detail.as_deref(), Some("run_command"));
+        assert_eq!(
+            state_from_text(
+                real_log,
+                "6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4",
+                "/Users/u/.gemini/antigravity-cli/brain/6f4ac1c4-afd5-4faf-8270-39b2c5a3b7b4/.system_generated/logs/transcript_full.jsonl",
+                1795512460
+            )
+            .as_deref(),
+            Some("settled")
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }

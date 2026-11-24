@@ -3474,6 +3474,26 @@ fn claim_successor_follows_clear_only_when_unambiguous() {
 }
 
 #[test]
+fn register_session_claim_keeps_known_exclusions_after_cache_invalidation() {
+    let old = claim_test_session("agy", "old-known-1", "/tmp/claim-known-proj", "2026-11-23T03:05:30Z");
+    record_known_sessions(&[old]);
+    invalidate_scan_cache();
+    register_session_claim("tab-known-excl", "agy", "/tmp/claim-known-proj");
+    let excluded = session_claims()
+        .lock()
+        .unwrap()
+        .contexts
+        .get("tab-known-excl")
+        .map(|c| c.excluded.clone())
+        .unwrap_or_default();
+    release_session_claim_impl("tab-known-excl");
+    assert!(
+        excluded.contains("old-known-1"),
+        "缓存失效后登记新会话认领仍须排除既有旧会话"
+    );
+}
+
+#[test]
 fn sessions_belonging_to_filters_by_card_and_sorts_asc() {
     // 「◈ 融合进任务书」取材范围 = 该卡名下会话（task_id 口径），不碰其他会话
     let mut a = claim_test_session("codex", "s-a", "/p", "2026-07-01T00:00:00Z");
