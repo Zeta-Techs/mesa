@@ -5,6 +5,8 @@
  */
 import { reviewerOptions, type ReviewerProfile } from "./cross-review.ts";
 import type { VendorId } from "./vendor-icon.ts";
+import { isScratchCwd } from "./quick-chat.ts";
+import { samePath } from "./path-utils.ts";
 
 /** 能看项目的 CLI 外壳（与后端 consult.rs INSPECT_AGENTS 镜像）：进程级只读已实证的四家 */
 export const INSPECT_AGENTS: readonly string[] = ["claude-code", "codex", "kimi", "grok"];
@@ -399,6 +401,29 @@ export const REF_NOTE: Record<Exclude<ConsultRef["state"], "ok">, string> = {
   missing: "找不到这处",
   unseen: "它没看到这份文件",
 };
+
+/**
+ * 不放项目的研讨（2026-11-24 用户：随手聊里点研讨不该非得进项目）：记录写在随手聊目录 `~/ccode/scratch` 的
+ * `.ccode/consults/`，研讨页不给记进项目知识、起草派活单、提升到研究档案，结论复制带走
+ */
+export function isScratchConsult(root: string, isWindows = false): boolean {
+  return isScratchCwd(root, isWindows);
+}
+
+/**
+ * 发起弹层打开时预选放哪（2026-11-24 用户：随手聊里点研讨别悄悄选上第一个项目）：工作副本发起的照入口给的；
+ * 入口给的是已添加项目就用它；其余（随手聊、没给、没添加的目录）放随手聊；随手聊目录拿不到才退回第一个项目
+ */
+export function initialConsultRoot(
+  asked: string | null | undefined,
+  readRoot: string | null | undefined,
+  projects: readonly { path: string }[],
+  scratchRoot: string | null,
+  isWindows = false,
+): string {
+  if (asked && (readRoot || projects.some((p) => samePath(p.path, asked, isWindows)))) return asked;
+  return scratchRoot ?? projects[0]?.path ?? "";
+}
 
 /** 研讨的材料：只收项目内相对路径（绝对路径在项目里的转相对，项目外的丢掉） */
 export function toProjectRel(path: string, root: string): string | null {

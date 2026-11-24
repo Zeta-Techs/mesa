@@ -10,6 +10,8 @@ import {
   discussCarrySummaryText,
   discussCarryText,
   estimateCost,
+  initialConsultRoot,
+  isScratchConsult,
   reviewCarrySummaryLines,
   reviewCarryText,
   memberNames,
@@ -347,4 +349,27 @@ test("contrastRows 挂出最新结论消息 latestMsg，批量带回商量 / 退
   assert.equal(lines.length, 2);
   assert.match(lines[0], /Claude/);
   assert.match(lines[1], /交叉更新 B2/);
+});
+
+test("发起弹层预选：已添加项目照入口，随手聊与没给的放随手聊，工作副本照入口（2026-11-24）", () => {
+  const projects = [{ path: "/u/p/a" }, { path: "/u/p/b" }];
+  const scratch = "/u/ccode/scratch";
+  assert.equal(initialConsultRoot("/u/p/b", null, projects, scratch), "/u/p/b");
+  assert.equal(initialConsultRoot("/u/p/b/", null, projects, scratch), "/u/p/b/", "路径尾斜杠也认得是项目");
+  assert.equal(initialConsultRoot(null, null, projects, scratch), scratch, "没给项目不再悄悄选第一个");
+  assert.equal(initialConsultRoot(scratch, null, projects, scratch), scratch);
+  assert.equal(initialConsultRoot("/u/ccode/scratch/sub", null, projects, scratch), scratch, "随手聊子目录归随手聊");
+  assert.equal(initialConsultRoot("/elsewhere", null, projects, scratch), scratch, "没添加的目录也放随手聊");
+  assert.equal(initialConsultRoot("/u/wt/step3", "/u/wt/step3", projects, scratch), "/u/wt/step3", "工作副本发起照入口");
+  assert.equal(initialConsultRoot(null, null, projects, null), "/u/p/a", "随手聊目录拿不到才退回第一个项目");
+  assert.equal(initialConsultRoot(null, null, [], null), "");
+  assert.equal(initialConsultRoot("C:\\Users\\Me\\P\\A", null, [{ path: "c:/users/me/p/a" }], "C:/Users/Me/ccode/scratch", true), "C:\\Users\\Me\\P\\A");
+});
+
+test("随手研讨按随手聊目录认", () => {
+  assert.equal(isScratchConsult("/u/ccode/scratch"), true);
+  assert.equal(isScratchConsult("/u/ccode/scratch/"), true);
+  assert.equal(isScratchConsult("C:\\Users\\Me\\ccode\\scratch", true), true);
+  assert.equal(isScratchConsult("/u/p/a"), false);
+  assert.equal(isScratchConsult("/u/ccode/scratchpad"), false);
 });

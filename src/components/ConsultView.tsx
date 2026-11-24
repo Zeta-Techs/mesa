@@ -12,6 +12,7 @@ import type { VendorId } from "../vendor-icon";
 import {
   contrastRows,
   discussCarrySummaryText,
+  isScratchConsult,
   discussCarryText,
   memberOf,
   reviewCarrySummaryLines,
@@ -34,6 +35,7 @@ import { AGENTS, type ProjectConfigReadDto, type WorkspaceDto } from "../types";
 import { pickStepWorkspace } from "../step-round";
 import { appendStoredNote } from "../review-notes";
 import { CATEGORY_EXAMPLES } from "../research-profile";
+import { IS_WINDOWS } from "../hotkeys";
 
 const agentLabel = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
 
@@ -177,15 +179,19 @@ function Tail({ m, compact = false }: { m: ConsultMessage; compact?: boolean }) 
   );
 }
 
-function TierTag({ member }: { member: ConsultMember }) {
+/** 不放项目的研讨（随手聊）里「能看项目」改说「能看文件」：读的是随手聊目录 */
+function TierTag({ member, scratch }: { member: ConsultMember; scratch: boolean }) {
   return member.canReadProject ? (
-    <span className="rounded-sm border border-hairline px-1 text-micro leading-4 text-l4" title="CLI 外壳能只读打开项目里的文件">
-      能看项目
+    <span
+      className="rounded-sm border border-hairline px-1 text-micro leading-4 text-l4"
+      title={scratch ? "CLI 外壳能只读打开随手聊目录里的文件" : "CLI 外壳能只读打开项目里的文件"}
+    >
+      {scratch ? "能看文件" : "能看项目"}
     </span>
   ) : (
     <span
       className="rounded-sm border border-warn-text/35 px-1 text-micro leading-4 text-warn-text"
-      title="这家 CLI 还不能只读打开项目，只看 Mesa 附上的材料摘录"
+      title={scratch ? "这家 CLI 还不能只读打开文件，只看 Mesa 附上的材料摘录" : "这家 CLI 还不能只读打开项目，只看 Mesa 附上的材料摘录"}
     >
       只看材料
     </span>
@@ -238,6 +244,8 @@ export default function ConsultView({
   // 发起的那一步现在开着工作副本（跑着 / 待评审 / 退回修改）吗：开着时结论「加进退回意见」交给那一轮，
   // 没开工或已保存时「带回商量」改任务书草稿（2026-11-12：开工后商量改的是项目根草稿，那一轮 AI 读不到）
   const metaStep = record?.meta.step ?? null;
+  /** 不放项目的研讨（2026-11-24）：没有项目知识、项目助手、研究记录可接，结论只复制带走 */
+  const scratch = isScratchConsult(projectRoot, IS_WINDOWS);
   const [stepRound, setStepRound] = useState<{ step: string; worktreePath: string | null } | null>(null);
   useEffect(() => {
     if (!metaStep) return;
@@ -311,6 +319,15 @@ export default function ConsultView({
     } catch (reason) {
       toast(String(reason), "error");
     }
+  }
+
+  function copyAll() {
+    const answers = record!.messages
+      .filter((m) => m.role === "member" && m.status === "ok" && !m.pass)
+      .map((m) => copyText(m, nameOf(m.member)) + "\n");
+    void navigator.clipboard
+      .writeText([`# ${record!.meta.title}`, "", record!.meta.question, "", ...answers].join("\n"))
+      .then(() => toast("已复制"));
   }
 
   function draftWorkOrder(m?: ConsultMessage) {
@@ -443,7 +460,7 @@ export default function ConsultView({
           <span className="text-micro">带回商量</span>
         </button>
       )}
-      {m.conclusion && (
+      {m.conclusion && !scratch && (
         <button
           type="button"
           onClick={() => setRemembering(remembering === m.id ? null : m.id)}
@@ -454,16 +471,18 @@ export default function ConsultView({
           <span className="text-micro">记进项目知识</span>
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => draftWorkOrder(m)}
-        className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
-        title="交给项目助手起草派活单；派不派你在项目助手里点"
-      >
-        <Send size={12} strokeWidth={1.8} aria-hidden="true" />
-        <span className="text-micro">起草派活单</span>
-      </button>
-      {m.conclusion && (
+      {!scratch && (
+        <button
+          type="button"
+          onClick={() => draftWorkOrder(m)}
+          className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-micro text-l3 hover:bg-hover hover:text-l1"
+          title="交给项目助手起草派活单；派不派你在项目助手里点"
+        >
+          <Send size={12} strokeWidth={1.8} aria-hidden="true" />
+          <span className="text-micro">起草派活单</span>
+        </button>
+      )}
+      {m.conclusion && !scratch && (
         <button
           type="button"
           onClick={() => setPromoting(promoting === m.id ? null : m.id)}
@@ -515,7 +534,7 @@ export default function ConsultView({
           <span className="truncate text-xs font-medium text-l1">{member.name}</span>
           <span className="min-w-0 truncate text-micro text-l4">{member.model || "默认模型"}</span>
           <span className="flex-1" />
-          <TierTag member={member} />
+          <TierTag member={member} scratch={scratch} />
         </div>
         {run ? (
           <div className="flex flex-1 flex-col text-xs text-l3">
@@ -676,17 +695,19 @@ export default function ConsultView({
                       <ListPlus size={12} strokeWidth={1.8} aria-hidden="true" />
                     </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setRemembering(remembering === rememberKey ? null : rememberKey)}
-                    aria-label={`把 ${r.member.name} 这条记进项目知识`}
-                    title="把这条结论改写成一句，记进项目的「已定 / 不做」"
-                    className={`inline-flex size-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
-                      remembering === rememberKey ? "bg-hover text-l1" : "text-l4"
-                    }`}
-                  >
-                    <BookmarkPlus size={12} strokeWidth={1.8} aria-hidden="true" />
-                  </button>
+                  {!scratch && (
+                    <button
+                      type="button"
+                      onClick={() => setRemembering(remembering === rememberKey ? null : rememberKey)}
+                      aria-label={`把 ${r.member.name} 这条记进项目知识`}
+                      title="把这条结论改写成一句，记进项目的「已定 / 不做」"
+                      className={`inline-flex size-6 items-center justify-center rounded-md hover:bg-hover hover:text-l1 ${
+                        remembering === rememberKey ? "bg-hover text-l1" : "text-l4"
+                      }`}
+                    >
+                      <BookmarkPlus size={12} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -726,7 +747,9 @@ export default function ConsultView({
               ? "带回后填进商量输入框，不自动发送，改好取舍再发。"
               : canReturnNotes
                 ? "加进评审页退回意见栏，「退回修改…」时一起交给干活的 AI。"
-                : "长期口径点各行的书签记进项目知识；要动手交给项目助手起草派活单。"}
+                : scratch
+                  ? "不在项目里：要留的结论复制带走。"
+                  : "长期口径点各行的书签记进项目知识；要动手交给项目助手起草派活单。"}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
             {canCarryDiscuss && (
@@ -764,19 +787,31 @@ export default function ConsultView({
                 </span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => draftWorkOrder()}
-              className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${
-                canCarryDiscuss || canReturnNotes
-                  ? "border border-hairline bg-canvas text-l2 hover:bg-hover hover:text-l1"
-                  : "border border-cta-bd bg-cta font-medium text-cta-text hover:brightness-110"
-              }`}
-              title="交给项目助手按各家结论起草派活单；派不派你在项目助手里点"
-            >
-              <Send size={12} strokeWidth={1.8} aria-hidden="true" />
-              <span>起草派活单</span>
-            </button>
+            {scratch ? (
+              <button
+                type="button"
+                onClick={copyAll}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-canvas px-2.5 text-xs text-l2 transition-colors hover:bg-hover hover:text-l1"
+                title="问题和各家回答复制成 Markdown"
+              >
+                <Copy size={12} strokeWidth={1.8} aria-hidden="true" />
+                <span>复制全部</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => draftWorkOrder()}
+                className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-xs transition-colors ${
+                  canCarryDiscuss || canReturnNotes
+                    ? "border border-hairline bg-canvas text-l2 hover:bg-hover hover:text-l1"
+                    : "border border-cta-bd bg-cta font-medium text-cta-text hover:brightness-110"
+                }`}
+                title="交给项目助手按各家结论起草派活单；派不派你在项目助手里点"
+              >
+                <Send size={12} strokeWidth={1.8} aria-hidden="true" />
+                <span>起草派活单</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -849,7 +884,7 @@ export default function ConsultView({
             <span
               key={m.id}
               className="inline-flex h-6 max-w-[16rem] items-center gap-1.5 rounded-full border border-hairline bg-inset pl-0.5 pr-2.5 text-xs text-l2"
-              title={`${m.name} · ${m.model || "默认模型"} · 经 ${agentLabel(m.agent)}${m.canReadProject ? " · 能看项目" : " · 只看材料"}`}
+              title={`${m.name} · ${m.model || "默认模型"} · 经 ${agentLabel(m.agent)}${m.canReadProject ? (scratch ? " · 能看文件" : " · 能看项目") : " · 只看材料"}`}
             >
               <MemberAvatar member={m} size={18} />
               <span className="shrink-0 font-medium text-l1">{m.name}</span>
@@ -860,7 +895,7 @@ export default function ConsultView({
               {hasImages && !m.seesImages && <span className="shrink-0 text-micro text-l4">图没给它看</span>}
             </span>
           ))}
-          {projectName && <span className="ml-1 truncate text-micro text-l4">{projectName}</span>}
+          {(projectName || scratch) && <span className="ml-1 truncate text-micro text-l4">{projectName || "随手聊"}</span>}
         </div>
       </div>
 
@@ -1038,16 +1073,8 @@ export default function ConsultView({
             ...(canReturnNotes && pickedMsgs.length > 0
               ? [{ label: `把各家结论加进退回意见`, onSelect: () => addToReturnNotes(pickedMsgs) }]
               : []),
-            { label: "按结论起草派活单", onSelect: () => draftWorkOrder() },
-            {
-              label: "复制全部（Markdown）",
-              onSelect: () =>
-                void navigator.clipboard
-                  .writeText(
-                    [`# ${record.meta.title}`, "", record.meta.question, "", ...record.messages.filter((m) => m.role === "member" && m.status === "ok" && !m.pass).map((m) => copyText(m, nameOf(m.member)) + "\n")].join("\n"),
-                  )
-                  .then(() => toast("已复制")),
-            },
+            ...(scratch ? [] : [{ label: "按结论起草派活单", onSelect: () => draftWorkOrder() }]),
+            { label: "复制全部（Markdown）", onSelect: copyAll },
             { label: "重命名", onSelect: () => setRenaming(record.meta.title) },
             { separator: true },
             { label: "删除", danger: true, confirm: { label: "确认删除（移到回收站）" }, onSelect: () => void remove() },

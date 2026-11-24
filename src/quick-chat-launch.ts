@@ -45,6 +45,16 @@ function loadChoice(): QuickChatChoice {
   }
 }
 
+let scratchDirReq: Promise<string | null> | null = null;
+/** 随手聊目录的绝对路径（ensure_scratch_dir，顺手建好）：不放项目的研讨记录也写在这里；拿不到给 null、下回再试 */
+export function scratchDir(): Promise<string | null> {
+  scratchDirReq ??= invoke<string>("ensure_scratch_dir").catch(() => {
+    scratchDirReq = null;
+    return null;
+  });
+  return scratchDirReq;
+}
+
 /** 快速开聊标签发出第一句、Agent 起来之后记下这次的选择（TerminalView launch 调）：下次快速开聊照它开。
  *  不记文件夹（每次都从「随手聊」开始）和权限（完全访问每次都要人确认） */
 export function saveQuickChatChoice(choice: QuickChatChoice): void {

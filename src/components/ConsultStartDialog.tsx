@@ -7,7 +7,6 @@ import { compactFieldClass, fieldClass, primaryActionClass, quietActionClass } f
 import { MemberAvatar } from "./ConsultView";
 import type { SearchResultDto } from "./FileTree";
 import { useAppStore, selectHiddenProfiles } from "../store";
-import { samePath } from "../path-utils";
 import { IS_WINDOWS } from "../hotkeys";
 import { saveClipboardImage } from "../clipboard-image";
 import { imageExtFromMime } from "../terminal-input";
@@ -18,6 +17,8 @@ import {
   MAX_IMAGES,
   familyName,
   INSPECT_AGENTS,
+  initialConsultRoot,
+  isScratchConsult,
   MAX_MATERIALS,
   MAX_MEMBERS,
   MIN_MEMBERS,
@@ -55,12 +56,15 @@ export default function ConsultStartDialog({
   open,
   onClose,
   projects,
+  scratchRoot = null,
   initial,
   onCreated,
 }: {
   open: boolean;
   onClose: () => void;
   projects: { path: string; name: string }[];
+  /** 随手聊目录（不放项目时记录写这里，2026-11-24）；拿不到给 null，只能选项目 */
+  scratchRoot?: string | null;
   initial: {
     projectRoot?: string | null;
     question?: string;
@@ -106,12 +110,16 @@ export default function ConsultStartDialog({
   const qRef = useRef<HTMLTextAreaElement>(null);
   const readRoot = initial?.readRoot || null;
   const fileRoot = readRoot ?? root;
+  /** 不放项目：记录写随手聊目录，材料从那里搜 */
+  const scratch = !readRoot && !!root && isScratchConsult(root, IS_WINDOWS);
+  const where = scratch ? "随手聊目录" : "项目";
   /** 以往研讨每位每次的平均花费（各已添加项目合起来）：打开弹层时读一次 */
   const [costStats, setCostStats] = useState<CostStat[]>([]);
   useEffect(() => {
     if (!open) return;
     let stale = false;
-    void invoke<CostStat[]>("consult_cost_stats", { projectRoots: projects.map((p) => p.path) })
+    const roots = [...projects.map((p) => p.path), ...(scratchRoot ? [scratchRoot] : [])];
+    void invoke<CostStat[]>("consult_cost_stats", { projectRoots: roots })
       .then((s) => {
         if (!stale) setCostStats(s);
       })
@@ -126,11 +134,7 @@ export default function ConsultStartDialog({
   // 打开时按入口预填；成员按上次选的，没有就按默认挑法
   useEffect(() => {
     if (!open) return;
-    // 入口给的目录不是已添加的项目（随手聊一类）时退回第一个项目；工作副本发起的照入口给的
-    const asked = initial?.projectRoot ?? null;
-    const known = asked && (initial?.readRoot || projects.some((p) => samePath(p.path, asked, IS_WINDOWS)));
-    const r = (known ? asked : null) ?? projects[0]?.path ?? "";
-    setRoot(r);
+    setRoot(initialConsultRoot(initial?.projectRoot, initial?.readRoot, projects, scratchRoot, IS_WINDOWS));
     setQuestion(initial?.question ?? "");
     setMaterials(initial?.materials?.slice(0, MAX_MATERIALS) ?? []);
     setCross(DEFAULT_CROSS_ROUNDS);
@@ -218,7 +222,7 @@ export default function ConsultStartDialog({
   function addMaterial(path: string) {
     const rel = toProjectRel(path, fileRoot);
     if (!rel) {
-      setError("材料只能是这个项目里的文件");
+      setError(`材料只能是这个${where}里的文件`);
       return;
     }
     setMaterials((ms) => (ms.some((m) => m.path === rel) || ms.length >= MAX_MATERIALS ? ms : [...ms, { path: rel, range: "" }]));
@@ -317,9 +321,10 @@ export default function ConsultStartDialog({
             看的是 <span className="text-l1">{initial?.readLabel ?? "工作副本"}</span>：这一步交的东西还没带回项目，成员读这一份；记录照样存在项目里。
           </div>
         )}
-        {projects.length > 1 && !readRoot && (
-          <Field label="项目">
+        {projects.length + (scratchRoot ? 1 : 0) > 1 && !readRoot && (
+          <Field label="项目" hint={scratch ? "记录存在随手聊里，结论复制带走" : undefined}>
             <select value={root} onChange={(e) => setRoot(e.target.value)} className={`${compactFieldClass} w-full`}>
+              {scratchRoot && <option value={scratchRoot}>不放项目（随手聊）</option>}
               {projects.map((p) => (
                 <option key={p.path} value={p.path}>
                   {p.name}
@@ -395,7 +400,7 @@ export default function ConsultStartDialog({
                         addMaterial(hits[0].path);
                       }
                     }}
-                    placeholder="＋ 搜项目里的文件加进来"
+                    placeholder={`＋ 搜${where}里的文件加进来`}
                     className={`${compactFieldClass} w-full`}
                   />
                   {hits.length > 0 && (
@@ -477,7 +482,7 @@ export default function ConsultStartDialog({
                 agentNote={(id) =>
                   INSPECT_AGENTS.includes(id)
                     ? null
-                    : { short: "只看材料", long: "只看材料：这家看不到项目，只看上面这几份的摘录", warn: true }
+                    : { short: "只看材料", long: `只看材料：这家看不到${where}里的文件，只看上面这几份的摘录`, warn: true }
                 }
                 ariaLabel="再请一位"
                 triggerClassName="flex min-h-[4.5rem] items-center justify-center gap-1 rounded-lg border border-dashed border-field text-xs text-l3 hover:bg-hover hover:text-l1"

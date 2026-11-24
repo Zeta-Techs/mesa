@@ -52,7 +52,8 @@ const bundle = await build({
           contents: `
             export const openConversation = (...a) => window.__calls.push(["openConversation", ...a]);
             export const openQuickChat = () => window.__calls.push(["openQuickChat"]);
-            export const prefetchConversation = () => {};`,
+            export const prefetchConversation = () => {};
+            export const scratchDir = async () => "/Users/u/ccode/scratch";`,
           loader: "js",
         }));
         b.onLoad({ filter: /^askai$/, namespace: "stub" }, () => ({
@@ -1390,6 +1391,42 @@ test("课题下挂研讨：进行中的在最上面带光标，点了打开研�
     await view.act(async () => view.button("综述流程测试 的更多操作").click());
     await view.act(async () => view.button("请几家研讨…").click());
     assert.deepEqual(asked, [{ projectRoot: PROJECT.path }]);
+  } finally {
+    await view.close();
+  }
+});
+
+test("不放项目的研讨挂在「随手聊」下面，课题下不出现（2026-11-24）", async () => {
+  const now = Date.now();
+  const opened: unknown[] = [];
+  const view = await renderTree(
+    { consultOpen: null, showConsult: (root: string, id: string) => opened.push([root, id]) },
+    undefined,
+    {
+      consults: [
+        {
+          id: "s1",
+          projectRoot: "/Users/u/ccode/scratch",
+          title: "1124|研究|随手问几家",
+          members: [{ id: "m1" }, { id: "m2" }],
+          createdAt: new Date(now - 3600_000).toISOString(),
+          updatedAt: new Date(now - 60_000).toISOString(),
+          messageCount: 2,
+          busy: false,
+        },
+      ],
+    },
+  );
+  try {
+    await view.act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    assert.ok(!view.chatGroup("综述流程测试")?.textContent?.includes("随手问几家"), "不挂到课题下");
+    await view.act(async () => view.button("展开「随手聊」的对话").click());
+    const row = Array.from(view.chatGroup("随手聊")!.querySelectorAll("button")).find((b) => b.textContent?.trim() === "随手问几家");
+    assert.ok(row, "挂在随手聊下面");
+    await view.act(async () => row!.click());
+    assert.deepEqual(opened, [["/Users/u/ccode/scratch", "s1"]]);
   } finally {
     await view.close();
   }

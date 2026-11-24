@@ -4,6 +4,7 @@ import ConsultStartDialog from "./ConsultStartDialog";
 import { useAppStore } from "../store";
 import { toast } from "../toast";
 import type { ConsultMaterial } from "../consult";
+import { scratchDir } from "../quick-chat-launch";
 
 type Initial = {
   projectRoot?: string | null;
@@ -24,6 +25,7 @@ export default function ConsultHost() {
   const showConsult = useAppStore((s) => s.showConsult);
   const [initial, setInitial] = useState<Initial | null>(null);
   const [projects, setProjects] = useState<{ path: string; name: string }[]>([]);
+  const [scratchRoot, setScratchRoot] = useState<string | null>(null);
 
   useEffect(() => {
     if (!req) return;
@@ -36,10 +38,12 @@ export default function ConsultHost() {
       step: req.step,
     };
     clearReq();
-    void invoke<{ path: string; name: string }[]>("list_projects")
-      .then((list) => setProjects(list.map((p) => ({ path: p.path, name: p.name }))))
-      .catch(() => setProjects([]))
-      .finally(() => setInitial(next));
+    void Promise.all([
+      invoke<{ path: string; name: string }[]>("list_projects")
+        .then((list) => setProjects(list.map((p) => ({ path: p.path, name: p.name }))))
+        .catch(() => setProjects([])),
+      scratchDir().then(setScratchRoot),
+    ]).finally(() => setInitial(next));
   }, [req, clearReq]);
 
   return (
@@ -47,6 +51,7 @@ export default function ConsultHost() {
       open={initial !== null}
       onClose={() => setInitial(null)}
       projects={projects}
+      scratchRoot={scratchRoot}
       initial={initial}
       onCreated={(projectRoot, id, members) => {
         setInitial(null);

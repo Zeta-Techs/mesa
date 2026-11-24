@@ -141,7 +141,7 @@ import {
   type SingleAct,
 } from "../coach-tips";
 import { tidySessionTitle } from "../session-title";
-import { openConversation, openQuickChat, prefetchConversation } from "../quick-chat-launch";
+import { openConversation, openQuickChat, prefetchConversation, scratchDir } from "../quick-chat-launch";
 import { projectResumeProfileId } from "../project-agents";
 import { pickResumeProfile } from "../resume-profile";
 import { resumeModelChoice } from "../terminal-resume";
@@ -582,7 +582,12 @@ export default function ProjectTree({
   // （开始 / 答完一位 / 一段结束）重读，不另开轮询；挂哪几场由 sidebarConsults 定
   const consultOpen = useAppStore((s) => s.consultOpen);
   const [consults, setConsults] = useState<ConsultListItem[]>([]);
-  const consultRootsSig = projectPaths.join("\n");
+  // 不放项目的研讨（2026-11-24）记在随手聊目录，挂在「随手聊」下面
+  const [scratchRoot, setScratchRoot] = useState<string | null>(null);
+  useEffect(() => {
+    void scratchDir().then(setScratchRoot);
+  }, []);
+  const consultRootsSig = [...projectPaths, ...(scratchRoot ? [scratchRoot] : [])].join("\n");
   useEffect(() => {
     const roots = consultRootsSig ? consultRootsSig.split("\n") : [];
     if (roots.length === 0) {
@@ -2022,11 +2027,12 @@ export default function ProjectTree({
     // 研讨（进行中的、最近几天的，更早的在对话管理）排在步骤组下面、普通对话上面（2026-11-11 用户：原先挂在最上面，
     // 研讨一出一没就把步骤组整排顶着挪；并进对话按时间排试过，又改回单列一段）
     const projectPath = project?.path;
-    const consultRows = projectPath
+    const consultHome = folderKey === SCRATCH_FOLDER_KEY ? scratchRoot : projectPath;
+    const consultRows = consultHome
       ? sidebarConsults(
-          consults.filter((c) => samePath(c.projectRoot, projectPath, IS_WINDOWS)),
+          consults.filter((c) => samePath(c.projectRoot, consultHome, IS_WINDOWS)),
           Date.now(),
-          consultOpen && samePath(consultOpen.projectRoot, projectPath, IS_WINDOWS) ? consultOpen.id : null,
+          consultOpen && samePath(consultOpen.projectRoot, consultHome, IS_WINDOWS) ? consultOpen.id : null,
         )
       : [];
     // 从某一步发起的研讨挂进那一步的组（2026-11-20 用户），其余照旧单列

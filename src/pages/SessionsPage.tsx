@@ -94,7 +94,7 @@ import RelayPicker from "../components/RelayPicker";
 import AgentIcon from "../components/AgentIcon";
 import type { RelayOptionDto, RelayTarget } from "../chat-relay";
 import { alertDialog, confirmDialog } from "../components/ConfirmDialog";
-import { conversationRestFor, openConversation, openQuickChat } from "../quick-chat-launch";
+import { conversationRestFor, openConversation, openQuickChat, scratchDir } from "../quick-chat-launch";
 import { isScratchCwd } from "../quick-chat";
 import SessionImportModal from "../components/SessionImportModal";
 import SessionSlimDialog from "../components/SessionSlimDialog";
@@ -424,9 +424,13 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     };
   }, [visible]);
 
-  // 研讨列表：已添加项目里的 .ccode/consults；开始 / 答完 / 一段结束时重读
+  // 研讨列表：已添加项目与随手聊目录（不放项目的研讨，2026-11-24）里的 .ccode/consults；开始 / 答完 / 一段结束时重读
+  const [scratchRoot, setScratchRoot] = useState<string | null>(null);
+  useEffect(() => {
+    void scratchDir().then(setScratchRoot);
+  }, []);
   const reloadConsults = useCallback(() => {
-    const roots = [...registeredProjectPaths];
+    const roots = [...registeredProjectPaths, ...(scratchRoot ? [scratchRoot] : [])];
     if (!roots.length) {
       setConsults([]);
       return;
@@ -434,7 +438,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     void invoke<ConsultListItem[]>("consult_list", { projectRoots: roots })
       .then(setConsults)
       .catch(() => {});
-  }, [registeredProjectPaths]);
+  }, [registeredProjectPaths, scratchRoot]);
   useEffect(() => {
     if (!visible) return;
     reloadConsults();
@@ -450,9 +454,11 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     };
   }, [visible, reloadConsults]);
 
-  /** 这段对话属于哪个已添加的项目（研讨记录写项目里，不属于的不给入口） */
+  /** 这段对话的研讨记在哪：已添加的项目；随手聊的记在随手聊目录（2026-11-24）；别的目录不给入口 */
   function consultProjectOf(s: SessionMetaDto): string | null {
-    return [...registeredProjectPaths].find((p) => samePath(p, s.projectPath, IS_WINDOWS)) ?? null;
+    const project = [...registeredProjectPaths].find((p) => samePath(p, s.projectPath, IS_WINDOWS));
+    if (project) return project;
+    return isScratchCwd(s.projectPath, IS_WINDOWS) ? scratchRoot : null;
   }
 
   /** 对话回放 ⋯「请几家研讨这个问题」（研讨二期）：最后一句你说的话作问题，这段对话存成项目里的材料文件；
@@ -937,13 +943,18 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     filter,
   ]);
 
-  // 研讨按范围过滤：全部 → 全部；限定项目 → 只这个项目；Agent / 内部 / 随手聊等范围不列（研讨不属于某一家）
+  // 研讨按范围过滤：全部 → 全部；限定项目 → 只这个项目；随手聊 → 不放项目的那些；Agent / 内部等范围不列（研讨不属于某一家）
   const visibleConsults = useMemo(() => {
     const scoped = projectScopePath(filter);
-    if (filter.kind !== "all" && scoped == null) return [];
+    const scratchScope = filter.kind === "scratch";
+    if (filter.kind !== "all" && scoped == null && !scratchScope) return [];
     if (scopes.length > 0 || quick.size > 0) return [];
     return consults.filter(
-      (c) => (scoped == null || samePath(c.projectRoot, scoped, IS_WINDOWS)) && (!q || c.title.toLowerCase().includes(q)),
+      (c) =>
+        (scratchScope
+          ? isScratchCwd(c.projectRoot, IS_WINDOWS)
+          : scoped == null || samePath(c.projectRoot, scoped, IS_WINDOWS)) &&
+        (!q || c.title.toLowerCase().includes(q)),
     );
   }, [consults, filter, scopes, quick, q]);
 
@@ -3249,7 +3260,7 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                 disabled: !readable || !consultProjectOf(selected),
                 title: consultProjectOf(selected)
                   ? "你最后说的那句作问题、这段对话作材料，请几家不同模型的 AI 只读各给意见"
-                  : "研讨记录存在项目里：这段对话不属于已添加的项目，先在项目页添加它所在的文件夹",
+                  : "研讨记录存在项目或随手聊里：这段对话两边都不属于，先在项目页添加它所在的文件夹",
                 onSelect: () => void consultFromSession(selected),
               },
               { separator: true },

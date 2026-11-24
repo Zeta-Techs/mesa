@@ -46,7 +46,7 @@ export default function ChatEmptyStart({
   onShowScreen?: () => void;
   /** 把这段还没开始的对话换到某个项目目录（不给就不出「接着做」） */
   onPickProject?: (path: string) => void;
-  /** 「请几家研讨」：给的是这段对话所在的已添加项目（不在项目里给 null，弹层里再选）；不给就不出 */
+  /** 「请几家研讨」：给的是这段对话所在的已添加项目（不在项目里给 null，弹层默认「不放项目」，2026-11-24）；不给就不出 */
   onConsult?: (projectRoot: string | null) => void;
 }) {
   const projectsVersion = useAppStore((s) => s.projectsVersion);
@@ -80,7 +80,7 @@ export default function ChatEmptyStart({
     0,
     STARTER_PROMPTS[context].length - projectStarters.length - (showConsult ? 1 : 0),
   );
-  // 研讨记录写在项目里：目录正好是已添加的项目才预选它
+  // 目录正好是已添加的项目才预选它；随手聊给 null，研讨记在随手聊目录
   const consultRoot = projects.find((p) => samePath(p.path, dir, IS_WINDOWS))?.path ?? null;
   const link =
     "rounded-sm px-1 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1";

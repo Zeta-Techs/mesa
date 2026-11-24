@@ -1022,7 +1022,7 @@ model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关
                              # （tests/quick-chat.test.ts；随手聊历史列表 10-23 撤，挂进侧栏 sidebar-chats.ts）
   quick-chat-launch.ts       # 快速开聊派发入口 openQuickChat（不弹窗，四个入口共用；每个标签自带 quickchat:<uuid> 复用键 + reuseBlank）、
                              # openChatWithProfile（连接页行上「新对话」：同一落点但点名要这条连接，reseedBlank 把已有空白标签的输入框改过去）、
-                             # saveQuickChatChoice（随手聊发第一句后记 Agent/连接/模型/思考档，不记文件夹和权限）、
+                             # saveQuickChatChoice（随手聊发第一句后记 Agent/连接/模型/思考档，不记文件夹和权限）、scratchDir（随手聊目录绝对路径，缓存；研讨不放项目时用）、
                              # openConversation（列表里点一段对话：侧栏项目树 / 工作台 / 对话页「继续」——resumeLazy 只看不起进程、
                              # 发第一句才接回，源文件不在的去对话页；split = 右侧分屏）、resumeSessionInTerminal（接着聊一段旧对话的底层派发：
                              # Mesa 标签持着就切过去；连接 / 模型 / 思考档用这段对话上次的（session_resume_config）；Mesa 自己最后写的不弹外部终端提醒）、
@@ -1194,7 +1194,7 @@ components/ReaderParallelPane.tsx   # 沉浸阅读区「双语对照」译文栏
                              #   已完成后上游又保存过（WorkspaceDto.staleUpstream）写橙字「待跟进」，只提醒不阻断；
                              #   ProjectGroup 状态带唯一出处，tests/stepper-status.test.ts）
   cross-review.ts            # 跨厂商复核（2026-11-02）：一等 Agent 名单（镜像 agent_specs.rs TIER1_AGENTS，测试逐字比对）、modelFamily / producerFamilies（按模型族判「另一家」）、reviewerOptions（连接 × 模型全部可选项，标同模型族与维护级）、pickCrossReviewer（默认挑哪一个）、复核标签键与首条指令（tests/cross-review.test.ts）
-  consult.ts                 # 研讨纯逻辑（2026-11-11）：DTO 类型、INSPECT_AGENTS（镜像 consult.rs）、memberOptions（能看项目按 CLI 外壳定）、pickDefaultMembers（先保证模型族不同）、memberNames（按模型族起名，同族加短模型名）、contrastRows / round1Revealed / toProjectRel / estimateCost / adoptionReason（提升到研究档案的依据）/ workbenchLiveConsults + liveConsultState（工作台露出）/ stepConsultQuestion（步骤卡预填问题，列没答的决策项）/ discussCarryText（结论带回商量放进输入框的一段）（tests/consult.test.ts）
+  consult.ts                 # 研讨纯逻辑（2026-11-11）：DTO 类型、INSPECT_AGENTS（镜像 consult.rs）、memberOptions（能看项目按 CLI 外壳定）、pickDefaultMembers（先保证模型族不同）、memberNames（按模型族起名，同族加短模型名）、contrastRows / round1Revealed / toProjectRel / estimateCost / adoptionReason（提升到研究档案的依据）/ workbenchLiveConsults + liveConsultState（工作台露出）/ stepConsultQuestion（步骤卡预填问题，列没答的决策项）/ discussCarryText（结论带回商量放进输入框的一段）/ initialConsultRoot + isScratchConsult（不放项目的研讨记在随手聊目录，2026-11-24）（tests/consult.test.ts）
   research-profile.ts        # 研究档案纯逻辑（有效条目按分类分组、生效状态、分类例句、文献总表筛选，tests/research-profile.test.ts）
   research-record.ts         # 研究记录面板纯逻辑（运行一行的写法、三个导出的按钮与说明，tests/research-record.test.ts）
   research-checks.ts         # 核验清单纯逻辑（research_checks_read 的 DTO、三档分组顺序、按钮文案、位置 / 摘录写法、checkConsultSeed（待你判断一条带进研讨的问题与材料）；不汇总打分，tests/research-checks.test.ts）
