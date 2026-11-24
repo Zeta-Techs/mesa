@@ -178,6 +178,9 @@ export default function FeishuSettingsCard() {
     <div className="mt-7">
       <h3 className="flex items-center gap-1.5 text-base font-semibold text-l1">
         <span>手机上的项目助手（飞书）</span>
+        <span className="shrink-0 rounded-full bg-warn px-1.5 py-0.5 text-micro font-medium text-warn-text">
+          实验功能
+        </span>
         <span
           tabIndex={0}
           role="img"
@@ -188,7 +191,9 @@ export default function FeishuSettingsCard() {
           <Info aria-hidden="true" className="h-3 w-3" />
         </span>
       </h3>
-      <p className="mt-0.5 text-xs leading-5 text-l3">在飞书里跟项目助手说话；会话摘要和问题会经过飞书的服务器</p>
+      <p className="mt-0.5 text-xs leading-5 text-l3">
+        实验功能，仍在持续完善中。在飞书里跟项目助手说话；会话摘要和问题会经过飞书的服务器
+      </p>
       <div className="mt-2 divide-y divide-hairline border-y border-hairline">
         <div className={rowClass}>
           <span className={labelClass}>App ID</span>

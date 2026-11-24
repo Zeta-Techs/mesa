@@ -203,6 +203,9 @@ export default function MobileWorkbenchCard() {
       <h3 className="flex items-center gap-1.5 text-base font-semibold text-l1">
         <Smartphone aria-hidden="true" className="h-4 w-4 text-l3" />
         <span>手机工作台（端到端加密 PWA）</span>
+        <span className="shrink-0 rounded-full bg-warn px-1.5 py-0.5 text-micro font-medium text-warn-text">
+          实验功能
+        </span>
         <span
           tabIndex={0}
           role="img"
@@ -214,7 +217,7 @@ export default function MobileWorkbenchCard() {
         </span>
       </h3>
       <p className="mt-0.5 text-xs leading-5 text-l3">
-        零自建服务器，手机主屏即可看进展、问助手、只读审阅文件与 Diff、跨网传资料；仅监听 127.0.0.1，经加密通道访问（可与下方飞书提醒互补）
+        实验功能，仍在持续完善中。零自建服务器，手机主屏即可看进展、问助手、只读审阅文件与 Diff、跨网传资料；仅监听 127.0.0.1，经加密通道访问（可与下方飞书提醒互补）
       </p>
 
       <div className="mt-2 divide-y divide-hairline border-y border-hairline">
