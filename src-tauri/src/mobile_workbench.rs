@@ -201,12 +201,17 @@ fn new_random_token() -> String {
     format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
 }
 
+/// 5 分钟一次性配对码（128 位熵，降低二维码密度提升手机扫码识别率）
+fn new_pairing_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
 fn qr_svg(url: &str) -> Option<String> {
     use qrcode::render::svg;
-    let code = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M).ok()?;
+    let code = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::L).ok()?;
     Some(
         code.render::<svg::Color>()
-            .min_dimensions(220, 220)
+            .min_dimensions(240, 240)
             .quiet_zone(true)
             .dark_color(svg::Color("#000000"))
             .light_color(svg::Color("#ffffff"))
@@ -1618,7 +1623,13 @@ fn current_status_sync() -> MobileWorkbenchStatusDto {
         Some(p) if Instant::now() < p.expires_at => {
             let left = p.expires_at.saturating_duration_since(Instant::now()).as_secs();
             let url = pair_base.map(|b| format!("{b}/pair?t={}", p.token));
-            let svg = url.as_deref().and_then(qr_svg);
+            // 严禁把 127.0.0.1 编进手机二维码（手机扫 127.0.0.1 指向手机自身，必然连不上）；
+            // 仅在外网加密通道（public_url）就绪后才生成二维码，未就绪时 pairing_url 仅供电脑本机浏览器点击预览
+            let svg = if public_url.is_some() {
+                url.as_deref().and_then(qr_svg)
+            } else {
+                None
+            };
             (url, svg, left)
         }
         _ => (None, None, 0),
@@ -1788,7 +1799,7 @@ pub async fn mobile_workbench_pair_start(app: tauri::AppHandle) -> Result<Mobile
                 }
             }
             rt.pairing = Some(PairingState {
-                token: new_random_token(),
+                token: new_pairing_token(),
                 expires_at: Instant::now() + Duration::from_secs(PAIR_TTL_SECS),
             });
         }

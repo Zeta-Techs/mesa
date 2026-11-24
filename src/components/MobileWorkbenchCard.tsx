@@ -139,7 +139,31 @@ export default function MobileWorkbenchCard() {
     }
   }
 
+  async function openLocalPreview() {
+    if (!st?.running || !st.localUrl) return;
+    // 本机还没配对过时，自动开一次一次性本机配对链直达工作台，避免打开只看到「未配对」
+    if (st.devices.length === 0 && !st.publicUrl) {
+      setBusy(true);
+      try {
+        const next = await invoke<MobileWorkbenchStatusDto>("mobile_workbench_pair_start");
+        applyStatus(next);
+        await openUrl(next.pairingUrl ?? st.localUrl);
+        return;
+      } catch (err) {
+        toast(String(err), "error");
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+    void openUrl(st.localUrl).catch(() => {});
+  }
+
   async function startPairing() {
+    if (!st?.publicUrl) {
+      toast("请先开启上方 Tailscale 通道或保存自定义 HTTPS 地址，再生成手机扫码二维码", "info");
+      return;
+    }
     setBusy(true);
     try {
       const next = await invoke<MobileWorkbenchStatusDto>("mobile_workbench_pair_start");
@@ -263,7 +287,8 @@ export default function MobileWorkbenchCard() {
               <button
                 type="button"
                 className={paneOutlineButtonClass}
-                onClick={() => void openUrl(st.localUrl!).catch(() => {})}
+                disabled={busy}
+                onClick={() => void openLocalPreview()}
               >
                 本机预览
               </button>
@@ -432,7 +457,7 @@ export default function MobileWorkbenchCard() {
                 </span>
                 {st?.enabled && (
                   <span className="flex gap-2">
-                    {st.pairingUrl ? (
+                    {st.pairingUrl && st.publicUrl ? (
                       <button
                         type="button"
                         className={paneOutlineButtonClass}
@@ -445,7 +470,8 @@ export default function MobileWorkbenchCard() {
                       <button
                         type="button"
                         className={paneOutlineButtonClass}
-                        disabled={busy || !st.running || st.devices.length >= MAX_MOBILE_DEVICES}
+                        disabled={busy || !st.running || !st.publicUrl || st.devices.length >= MAX_MOBILE_DEVICES}
+                        title={!st.publicUrl ? "需先开启上方加密通道，才能生成供手机扫码的二维码" : undefined}
                         onClick={() => void startPairing()}
                       >
                         配对新手机
@@ -454,6 +480,12 @@ export default function MobileWorkbenchCard() {
                   </span>
                 )}
               </div>
+
+              {st?.enabled && st.running && !st.publicUrl && (
+                <p className="mt-1 text-xs leading-5 text-l3">
+                  需先开启上方加密通道，才能生成手机扫码二维码（未开通道时 127.0.0.1 仅本机可访问，手机无法连接）
+                </p>
+              )}
 
               {st && st.devices.length > 0 && (
                 <ul className="mt-2 divide-y divide-hairline/60 border-t border-hairline/60">
@@ -480,27 +512,21 @@ export default function MobileWorkbenchCard() {
         )}
       </div>
 
-      {/* 配对二维码条：仅点「配对新手机」后在底部展开，平时完全不占位 */}
-      {st?.pairingUrl && qrSrc && (
+      {/* 配对二维码条：仅在外网加密通道就绪且点击「配对新手机」后展开，杜绝展示 127.0.0.1 假二维码 */}
+      {st?.publicUrl && st.pairingUrl && qrSrc && (
         <div className="mt-2.5 flex flex-wrap items-center gap-4 rounded-lg bg-surface/60 px-3.5 py-3 text-xs">
           <img
             src={qrSrc}
             alt="扫码配对 Mesa 手机工作台"
-            className="size-32 shrink-0 rounded bg-white p-1"
+            className="size-44 shrink-0 rounded-md bg-white p-2.5"
           />
           <div className="min-w-0 flex-1 space-y-1.5">
             <div className="font-medium text-l1">
-              手机扫码配对（剩余 {formatPairingCountdown(pairLeft)}，用一次即废）
+              用手机自带相机扫码配对（剩余 {formatPairingCountdown(pairLeft)}，用一次即废）
             </div>
-            {!st.publicUrl ? (
-              <p className="leading-5 text-warn-text">
-                尚未开启外网 HTTPS 通道，当前二维码为本机测试地址；用手机访问请先在上方开启 Tailscale 或自定义 HTTPS 隧道。
-              </p>
-            ) : (
-              <p className="leading-5 text-l3">
-                打开后在浏览器菜单点「添加到主屏幕」，即可全屏使用。
-              </p>
-            )}
+            <p className="leading-5 text-l3">
+              请使用系统相机（勿用微信扫一扫），并确认手机已连接同一 Tailscale 账号；打开后在浏览器菜单点「添加到主屏幕」即可全屏使用。
+            </p>
             <div className="flex flex-wrap gap-2 pt-0.5">
               <button
                 type="button"
@@ -509,15 +535,6 @@ export default function MobileWorkbenchCard() {
               >
                 复制配对链接
               </button>
-              {!st.publicUrl && (
-                <button
-                  type="button"
-                  className={paneOutlineButtonClass}
-                  onClick={() => void openUrl(st.pairingUrl!).catch(() => {})}
-                >
-                  本机打开测试
-                </button>
-              )}
             </div>
           </div>
         </div>
