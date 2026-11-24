@@ -10,7 +10,6 @@ import { forgetImConfig, type FeishuConfig } from "../im-bridge";
 /** 设置页的输入框口径：细边、透明底、32px（同 SettingsPage 的 fieldFixed） */
 const fieldClass = baseFieldClass.replace("w-full ", "").replace("bg-canvas", "bg-transparent").replace("py-1.5", "h-8");
 const rowClass = "flex flex-wrap items-center gap-x-6 gap-y-2 py-3";
-const labelClass = "w-28 shrink-0 text-base text-l1";
 
 /** 卡头 ⓘ 里的全文：能在手机上做什么、什么仍要回电脑 */
 const INTRO_DETAIL =
@@ -51,7 +50,7 @@ async function copyText(text: string, okMsg: string): Promise<void> {
 }
 
 /**
- * 设置 → AI 与 Agent →「手机上的项目助手（飞书）」（2026-11-06 docs/design-assistant-dispatch-desk.md §1 第 5 条、§3；2026-11-15 体验优化）：
+ * 设置 → AI 与 Agent →「手机上的项目助手（飞书）」（2026-11-06 docs/design-assistant-dispatch-desk.md §1 第 5 条、§3；2026-11-24 对齐通用设置分组卡）：
  * 填自建飞书应用的 App ID / App Secret（Secret 只进 0600 keys.json，不回显）→ 打开 → 测试连接 → 点「绑定」出 6 位码，在飞书里发给机器人。
  * 只听绑定的那一个人；Mesa 开着时才收得到。配对永远要人点开始。
  */
@@ -172,56 +171,86 @@ export default function FeishuSettingsCard() {
 
   const status = cfg ? (STATUS_TEXT[cfg.status] ?? cfg.status) : "读不到";
   const showPrefs = Boolean(cfg?.enabled || cfg?.hasSecret);
-  // 外形同设置页 Card + Row：粗体节标题 + 一句说明（细节进 ⓘ），下面一行一项、行间细线；
-  // 第一次的设置步骤是低频内容，收进折叠
+
   return (
-    <div className="mt-7">
-      <h3 className="flex items-center gap-1.5 text-base font-semibold text-l1">
-        <span>手机上的项目助手（飞书）</span>
-        <span className="shrink-0 rounded-full bg-warn px-1.5 py-0.5 text-micro font-medium text-warn-text">
-          实验功能
-        </span>
-        <span
-          tabIndex={0}
-          role="img"
-          aria-label={INTRO_DETAIL}
-          title={INTRO_DETAIL}
-          className="inline-flex shrink-0 cursor-help rounded-sm text-l4 outline-none hover:text-l2 focus-visible:text-l1 focus-visible:ring-1 focus-visible:ring-field"
-        >
-          <Info aria-hidden="true" className="h-3 w-3" />
-        </span>
-      </h3>
-      <p className="mt-0.5 text-xs leading-5 text-l3">
-        实验功能，仍在持续完善中。在飞书里跟项目助手说话；会话摘要和问题会经过飞书的服务器
-      </p>
-      <div className="mt-2 divide-y divide-hairline border-y border-hairline">
-        <div className={rowClass}>
-          <span className={labelClass}>App ID</span>
-          <input className={`${fieldClass} min-w-0 flex-1`} value={appId} placeholder="cli_…（飞书开放平台 → 自建应用）" onChange={(e) => setAppId(e.target.value)} />
-        </div>
-        <div className={rowClass}>
-          <span className={labelClass}>App Secret</span>
-          <input
-            className={`${fieldClass} min-w-0 flex-1`}
-            type="password"
-            value={secret}
-            placeholder={cfg?.hasSecret ? "已存（不显示）；要换就填新的" : "只存在本机，不显示"}
-            onChange={(e) => setSecret(e.target.value)}
-          />
-        </div>
-        <div className={rowClass}>
-          <span className={labelClass}>状态</span>
-          <span className={`min-w-0 flex-1 text-sm ${cfg?.status === "online" ? "text-ok-text" : cfg?.status === "error" ? "text-err-text" : "text-l3"}`}>
-            {status}
-            {cfg?.lastError ? `：${cfg.lastError}` : ""}
+    <div className="mt-6">
+      <div className="mb-2 px-0.5">
+        <h3 className="flex items-center gap-1.5 text-xs font-semibold tracking-wide text-l2">
+          <span>手机上的项目助手（飞书）</span>
+          <span className="shrink-0 rounded-full bg-warn px-1.5 py-0.5 text-micro font-medium tracking-normal text-warn-text">
+            实验功能
           </span>
-          <span className="flex flex-wrap gap-2">
+          <span
+            tabIndex={0}
+            role="img"
+            aria-label={INTRO_DETAIL}
+            title={INTRO_DETAIL}
+            className="inline-flex shrink-0 cursor-help rounded-sm text-l4 outline-none hover:text-l2 focus-visible:text-l1 focus-visible:ring-1 focus-visible:ring-field"
+          >
+            <Info aria-hidden="true" className="h-3 w-3" />
+          </span>
+        </h3>
+        <p className="mt-0.5 text-xs leading-5 text-l3">
+          实验功能，仍在持续完善中；在飞书里跟项目助手说话，会话摘要和问题会经过飞书服务器
+        </p>
+      </div>
+
+      <div className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4">
+        <div className={rowClass}>
+          <div className="min-w-[12rem] flex-1">
+            <div className="text-sm font-medium text-l1">App ID</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-l3">飞书开放平台 → 企业自建应用</p>
+          </div>
+          <div className="flex min-w-0 max-w-full items-center justify-end">
+            <input
+              className={`${fieldClass} w-72 max-w-full font-mono text-xs`}
+              value={appId}
+              placeholder="cli_…"
+              onChange={(e) => setAppId(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className={rowClass}>
+          <div className="min-w-[12rem] flex-1">
+            <div className="text-sm font-medium text-l1">App Secret</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-l3">只存在本机 0600 密钥文件里，不回显</p>
+          </div>
+          <div className="flex min-w-0 max-w-full items-center justify-end">
+            <input
+              className={`${fieldClass} w-72 max-w-full font-mono text-xs`}
+              type="password"
+              value={secret}
+              placeholder={cfg?.hasSecret ? "已存（不显示）；要换就填新的" : "输入 App Secret"}
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className={rowClass}>
+          <div className="min-w-[12rem] flex-1">
+            <div className="text-sm font-medium text-l1">连接状态</div>
+            <p
+              className={`mt-0.5 max-w-xl text-xs leading-relaxed ${
+                cfg?.status === "online" ? "text-ok-text" : cfg?.status === "error" ? "text-err-text" : "text-l3"
+              }`}
+            >
+              {status}
+              {cfg?.lastError ? `：${cfg.lastError}` : ""}
+            </p>
+          </div>
+          <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
             {cfg?.enabled ? (
               <button type="button" className={paneOutlineButtonClass} disabled={busy} onClick={() => void save(false)}>
                 关掉
               </button>
             ) : (
-              <button type="button" className={primaryActionClass} disabled={busy || !appId.trim() || (!secret.trim() && !cfg?.hasSecret)} onClick={() => void save(true)}>
+              <button
+                type="button"
+                className={primaryActionClass}
+                disabled={busy || !appId.trim() || (!secret.trim() && !cfg?.hasSecret)}
+                onClick={() => void save(true)}
+              >
                 保存并打开
               </button>
             )}
@@ -243,12 +272,17 @@ export default function FeishuSettingsCard() {
                 发测试卡片
               </button>
             )}
-          </span>
+          </div>
         </div>
+
         <div className={rowClass}>
-          <span className={labelClass}>绑定的人</span>
-          <span className="min-w-0 flex-1 text-sm text-l3">{cfg?.boundUser ? `已绑定（${cfg.boundUser}）` : "还没绑定"}</span>
-          <span className="flex gap-2">
+          <div className="min-w-[12rem] flex-1">
+            <div className="text-sm font-medium text-l1">绑定的人</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-l3">
+              {cfg?.boundUser ? `已绑定（${cfg.boundUser}）` : "还没绑定；绑定后只听你一个人的私聊"}
+            </p>
+          </div>
+          <div className="flex min-w-0 max-w-full items-center justify-end gap-2">
             {cfg?.boundUser ? (
               <button type="button" className={paneOutlineButtonClass} disabled={busy} onClick={() => void run("feishu_unbind")}>
                 解绑
@@ -258,51 +292,64 @@ export default function FeishuSettingsCard() {
                 绑定
               </button>
             )}
-          </span>
+          </div>
+          {code && !cfg?.boundUser && (
+            <div className="basis-full pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warn px-3 py-2 text-xs text-l1">
+                <span>
+                  在飞书里打开这个机器人，发一句 <span className="font-mono font-semibold">绑定 {code}</span>
+                  {pairLeft > 0 ? `（剩余 ${formatCountdown(pairLeft)}）` : ""}
+                </span>
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  onClick={() => void copyText(`绑定 ${code}`, "已复制绑定口令")}
+                >
+                  复制口令
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
         {showPrefs && (
           <>
             <div className={rowClass}>
-              <span className={labelClass}>步骤与目标通知</span>
-              <span className="min-w-0 flex-1 text-xs leading-5 text-l3">
-                步骤做完等评审、目标待验收或出错时主动发卡片（能一键让项目助手先看一遍）
-              </span>
-              <Toggle
-                checked={cfg?.notifyMilestones ?? true}
-                onChange={(v) => void updatePrefs(v, cfg?.quietNight ?? false)}
-                label="步骤与目标通知"
-              />
+              <div className="min-w-[12rem] flex-1">
+                <div className="text-sm font-medium text-l1">步骤与目标通知</div>
+                <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-l3">
+                  步骤做完等评审、目标待验收或出错时主动发卡片（能一键让项目助手先看一遍）
+                </p>
+              </div>
+              <div className="flex min-w-0 max-w-full items-center justify-end">
+                <Toggle
+                  checked={cfg?.notifyMilestones ?? true}
+                  onChange={(v) => void updatePrefs(v, cfg?.quietNight ?? false)}
+                  label="步骤与目标通知"
+                />
+              </div>
             </div>
+
             <div className={rowClass}>
-              <span className={labelClass}>夜间免打扰</span>
-              <span className="min-w-0 flex-1 text-xs leading-5 text-l3">
-                23:00–08:00 暂停主动推送（你在飞书里发消息照常回；桌宠勿扰时同步静音）
-              </span>
-              <Toggle
-                checked={cfg?.quietNight ?? false}
-                onChange={(v) => void updatePrefs(cfg?.notifyMilestones ?? true, v)}
-                label="夜间免打扰"
-              />
+              <div className="min-w-[12rem] flex-1">
+                <div className="text-sm font-medium text-l1">夜间免打扰</div>
+                <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-l3">
+                  23:00–08:00 暂停主动推送（你在飞书里发消息照常回；桌宠勿扰时同步静音）
+                </p>
+              </div>
+              <div className="flex min-w-0 max-w-full items-center justify-end">
+                <Toggle
+                  checked={cfg?.quietNight ?? false}
+                  onChange={(v) => void updatePrefs(cfg?.notifyMilestones ?? true, v)}
+                  label="夜间免打扰"
+                />
+              </div>
             </div>
           </>
         )}
       </div>
-      {code && !cfg?.boundUser && (
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-warn px-3 py-2 text-sm text-l1">
-          <span>
-            在飞书里打开这个机器人，发一句 <span className="font-mono font-semibold">绑定 {code}</span>
-            {pairLeft > 0 ? `（剩余 ${formatCountdown(pairLeft)}）` : ""}。绑定后只听你一个人的。
-          </span>
-          <button
-            type="button"
-            className={paneOutlineButtonClass}
-            onClick={() => void copyText(`绑定 ${code}`, "已复制绑定口令")}
-          >
-            复制口令
-          </button>
-        </div>
-      )}
-      <details className="group mt-2 text-xs">
+
+      <details className="group mt-2 px-0.5 text-xs">
         <summary className="-ml-1 inline-flex cursor-pointer list-none items-center gap-1 text-l4 hover:text-l2 [&::-webkit-details-marker]:hidden">
           <ChevronRight aria-hidden="true" className="h-3 w-3 transition-transform group-open:rotate-90" />
           第一次怎么设置
