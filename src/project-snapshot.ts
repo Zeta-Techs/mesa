@@ -135,7 +135,16 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     .filter(Boolean)
     .join("\n");
 
-  const stepLines = input.steps.map((s) => {
+  const savedStepCount = input.steps.filter((s) => s.state.startsWith("已保存进项目") || s.state.startsWith("已完成")).length;
+  const stepSummaryLine =
+    input.steps.length > 0
+      ? savedStepCount === input.steps.length
+        ? `当前总进度：${savedStepCount}/${input.steps.length} 步已全部保存进项目（主流程已完成；下方标记「已保存前」的历史运行记录均为保存前的过程记录，不代表当前未开工或当前失败；已收起临时副本属于正常归档，最终产物均已保留在项目主文件夹）。`
+        : `当前总进度：${savedStepCount}/${input.steps.length} 步已保存进项目。`
+      : "";
+  const stepLines = [
+    ...(stepSummaryLine ? [stepSummaryLine] : []),
+    ...input.steps.map((s) => {
     const parts = [`### 第 ${s.index + 1} 步「${s.name}」：${s.state}`];
     if (s.failure) parts.push(`最近一次运行出错：${s.failure}`);
     if (s.brief) parts.push(`要做：${clip(s.brief, 300)}`);
@@ -168,7 +177,8 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     }
     if (s.reviewNotes) parts.push(`评审退回意见：\n${clip(s.reviewNotes, 800)}`);
     return parts.join("\n");
-  });
+  }),
+  ];
 
   const goalLines = input.goals.map(
     (g) => `- ${g.name}：${g.status}${g.outputPaths?.length ? `（交付：${g.outputPaths.slice(0, 4).join("、")}）` : ""}`,

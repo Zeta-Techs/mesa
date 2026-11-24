@@ -14,6 +14,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { pathWithin, samePath } from "./path-utils";
+import { isDeclaredTask } from "./project-tasks";
 import { answerGrant, answerTrust, loadDesk, replyDesk } from "./assistant-desk";
 import { gatherBriefInput } from "./project-assistant-run";
 import { runAssistantAction } from "./assistant-actions";
@@ -64,7 +65,15 @@ async function activeProjects(): Promise<ProjectDto[]> {
         workspaces.some((w) => w.status !== "archived" && samePath(w.repoPath, p.path, IS_WINDOWS)) ||
         help.some((h) => samePath(h.repoPath, p.path, IS_WINDOWS)) ||
         live.some((r) => r.attention === "confirm" && pathWithin(r.cwd, p.path, IS_WINDOWS)) ||
-        tasks.some((t) => hot.has(t.status) && !!t.projectRoot && samePath(t.projectRoot, p.path, IS_WINDOWS)),
+        tasks.some(
+          (t) =>
+            isDeclaredTask(t) &&
+            t.kind !== "step" &&
+            t.kind !== "pipeline_step" &&
+            hot.has(t.status) &&
+            !!t.projectRoot &&
+            samePath(t.projectRoot, p.path, IS_WINDOWS),
+        ),
     )
     .slice(0, MAX_PROJECTS);
 }

@@ -72,4 +72,30 @@ test("项目快照纳入人工事项、后续建议、完结产物、目标交�
   assert.match(snap, /是否需要补做 DFT/);
   assert.match(snap, /## 项目内其他对话最近内容/);
   assert.match(snap, /图 3 配色改成蓝灰体系/);
+  assert.match(snap, /当前总进度：1\/1 步已全部保存进项目/);
+});
+
+test("全流程已保存并收起临时副本时：快照顶行明确总进度，自动登记的 pipeline_step 不混入目标列表", async () => {
+  const { visibleDeclaredTasks, declaredTaskKindsForMode } = await import("../src/project-tasks.ts");
+  const rawTasks = [
+    { id: "1", kind: "pipeline_step", name: "/Users/me/ccode/workspaces/硼化物析氢/lit-search", status: "stopped", archivedAt: null },
+    { id: "2", kind: "pipeline_step", name: "/Users/me/ccode/workspaces/硼化物析氢/polish", status: "failed", archivedAt: null },
+    { id: "3", kind: "free_research", name: "审稿意见回复", status: "pending_review", declared: true, archivedAt: null },
+  ];
+  const declared = visibleDeclaredTasks(rawTasks, declaredTaskKindsForMode("research"));
+  assert.deepEqual(
+    declared.map((t) => t.name),
+    ["审稿意见回复"],
+    "自动登记的 pipeline_step 任务行不应混进项目助手的目标列表",
+  );
+  const input = makeBase();
+  input.steps = [
+    { ...input.steps[0], index: 0, name: "文献检索与筛选", state: "已保存进项目（已收起临时副本，最终产物均已保留在项目主文件夹）", worktreePath: null },
+    { ...input.steps[0], index: 1, name: "润色与定稿", state: "已保存进项目（已收起临时副本，最终产物均已保留在项目主文件夹）", worktreePath: null },
+  ];
+  input.goals = [];
+  const snap = buildProjectSnapshot(input, 14_000);
+  assert.match(snap, /当前总进度：2\/2 步已全部保存进项目/);
+  assert.match(snap, /已收起临时副本属于正常归档/);
+  assert.doesNotMatch(snap, /## 目标/);
 });

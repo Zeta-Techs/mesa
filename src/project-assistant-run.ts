@@ -48,7 +48,7 @@ import { stepSessionTail } from "./session-tail";
 import type { BriefInput, BriefStep } from "./assistant-brief";
 import { hasKnowledgeSources } from "./assistant-brief";
 import type { DirEntryDto } from "./components/FileTree";
-import { declaredTaskKindsForMode, visibleDeclaredTasks } from "./project-tasks";
+import { declaredTaskKindsForMode, isDeclaredTask, visibleDeclaredTasks } from "./project-tasks";
 import { groupCloseoutFiles } from "./closeout-pack";
 import { parseTargetJournal } from "./citation-style-choice";
 import { nextActionStepSlug, parseStepNextActions, readNextActionChecks } from "./step-next-actions";
@@ -299,6 +299,17 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
   const cfg = read?.config ?? null;
   const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
   const live = state.terminalRunInputs;
+  // 只认用户显式声明的流程外目标（与 gatherBriefInput、项目页同口径）：
+  // 自动登记的 pipeline_step / 绝对路径名称的 Task 不算目标，避免已归档步骤的旧任务行冒充「失败目标」误导回答
+  const declaredGoals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(project?.workMode));
+  const declaredGoalById = new Map(declaredGoals.map((t) => [t.id, t]));
+  // 包含已归档工作副本的路径与保存时间：供运行归属识别与排除非步骤对话，不因归档收起就认不出是哪一步的运行
+  const stepWorkspaceMeta = (cfg?.steps ?? []).map((s, index) => {
+    const active = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
+    const archived = !active ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived") ?? null) : null;
+    const hit = active ?? archived;
+    return { index, worktreePath: hit?.worktreePath ?? null, mergedAt: hit?.mergedAt ?? null };
+  });
 
   const humanSummaryFor = (stepName: string): SnapshotStep["humanTasks"] => {
     const items = humanStates.filter((h) => h.step === stepName);
@@ -332,7 +343,14 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       if (!ws) {
         if (archivedMerged) {
           const pendingNextActions = await readPendingNextActions(projectPath, s.name, s.workspaceName, null);
-          return { ...base, state: "已保存进项目（工作副本已归档）", failure: null, checks: [], reviewNotes: null, pendingNextActions };
+          return {
+            ...base,
+            state: "已保存进项目（已收起临时副本，最终产物均已保留在项目主文件夹）",
+            failure: null,
+            checks: [],
+            reviewNotes: null,
+            pendingNextActions,
+          };
         }
         return { ...base, state: s.seedComplete ? "已完成（示例预置）" : "还没开始", failure: null, checks: [], reviewNotes: null };
       }
@@ -373,8 +391,8 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     )
   ).filter((c): c is { title: string; updatedAt: string; summary: string } => !!c);
 
-  // 项目根对话 / 非步骤目标对话最近内容（最多 2 条）
-  const stepRoots = steps.map((s) => s.worktreePath).filter((p): p is string => !!p);
+  // 项目根对话 / 非步骤目标对话最近内容（最多 2 条；排除所有流程步骤——含已归档收起的工作副本）
+  const stepRoots = stepWorkspaceMeta.map((s) => s.worktreePath).filter((p): p is string => !!p);
   const nonStepRootsSeen = new Set<string>();
   const nonStepRuns = runs
     .filter(
@@ -397,7 +415,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       nonStepRuns.map(async (r) => {
         const tail = await stepSessionTail([r], r.isolationPath).catch(() => null);
         if (!tail) return null;
-        const goal = r.taskId ? tasks.find((t) => t.id === r.taskId && t.kind !== "step") : null;
+        const goal = r.taskId ? (declaredGoalById.get(r.taskId) ?? null) : null;
         const label = goal ? `目标「${goal.name}」` : samePath(r.isolationPath, projectPath, IS_WINDOWS) ? "项目根对话" : "项目内对话";
         return { where: label, text: tail.text };
       }),
@@ -461,16 +479,26 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       return `「${d.title}」交给${to}（${how}，${d.at}）· 现在：${status.text}`;
     }),
   );
+  const stepMetaForRun = (run: RunDto) =>
+    stepWorkspaceMeta.find((s) => s.worktreePath && pathWithin(run.isolationPath, s.worktreePath, IS_WINDOWS)) ?? null;
+  const isBeforeStepSaved = (run: RunDto): boolean => {
+    const meta = stepMetaForRun(run);
+    if (!meta?.mergedAt) return false;
+    const runMs = Date.parse(run.createdAt);
+    const savedMs = Date.parse(meta.mergedAt);
+    return Number.isFinite(runMs) && Number.isFinite(savedMs) ? runMs <= savedMs : run.createdAt <= meta.mergedAt;
+  };
   const where = (run: RunDto): string => {
-    const step = steps.find((s) => s.worktreePath && pathWithin(run.isolationPath, s.worktreePath, IS_WINDOWS));
-    if (step) return `第 ${step.index + 1} 步`;
-    const goal = tasks.find((t) => t.id === run.taskId);
-    if (goal && goal.kind !== "step") return `目标「${goal.name}」`;
+    const meta = stepMetaForRun(run);
+    if (meta) return isBeforeStepSaved(run) ? `第 ${meta.index + 1} 步（已保存前）` : `第 ${meta.index + 1} 步`;
+    const goal = run.taskId ? (declaredGoalById.get(run.taskId) ?? null) : null;
+    if (goal) return `目标「${goal.name}」`;
     return "对话";
   };
   const visibleRuns = runs.filter((r) => !r.internal).slice(0, 20);
   const snapshotRuns: SnapshotRun[] = visibleRuns.map((r) => ({ ...r, where: where(r) }));
-  const failed = visibleRuns.filter((r) => r.status === "failed" && !isAppCrashClose(r)).slice(0, 2);
+  // 已经保存进项目的步骤，保存之前的旧失败运行不再作为当前出错事件塞给 AI，避免误判为当前卡住
+  const failed = visibleRuns.filter((r) => r.status === "failed" && !isAppCrashClose(r) && !isBeforeStepSaved(r)).slice(0, 2);
   const failedRunEvents = await Promise.all(
     failed.map(async (r) => ({
       where: where(r),
@@ -521,8 +549,7 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       defaultAgent: project?.defaultAgent ?? null,
     },
     steps,
-    goals: tasks
-      .filter((t) => t.kind !== "step" && !t.archivedAt)
+    goals: declaredGoals
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, 12)
       .map((t) => ({ name: t.name, status: GOAL_STATUS[t.status] ?? t.status, outputPaths: t.outputPaths })),
@@ -810,7 +837,7 @@ async function inspectExtraDirs(projectPath: string): Promise<string[]> {
     .filter((w) => w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS))
     .map((w) => w.worktreePath);
   for (const t of tasks) {
-    if (t.kind === "step" || t.archivedAt || t.workspaceCleared) continue;
+    if (!isDeclaredTask(t) || t.kind === "step" || t.kind === "pipeline_step" || t.archivedAt || t.workspaceCleared) continue;
     if (!["running", "pending_review", "failed", "stopped"].includes(t.status)) continue;
     const hit = runs
       .filter((r) => !r.internal && r.taskId === t.id && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))

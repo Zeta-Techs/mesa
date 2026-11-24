@@ -834,7 +834,7 @@ export default function ProjectAssistantPanel({
             <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
             <span
               className="text-xs text-l3"
-              title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}${costTitle}`}
+              title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}${turn.basis ? ` · 依据：${turn.basis}` : ""}${costTitle}`}
             >
               项目助手 · {relTime(turn.at)}
             </span>
@@ -991,34 +991,24 @@ export default function ProjectAssistantPanel({
               ))}
             </div>
           )}
-          {/* 回答底部只留极淡的依据一行（说明书小节可点，翻出几轮与花费收进悬停提示） */}
+          {/* 仅引用了说明书小节时留一行可点击的说明书链接；「依据：这个项目的记录」、花费与翻出轮数全部静默收进顶部时间悬停 */}
           {turn.basis && (() => {
             const heads = basisGuideHeadings(turn.basis);
-            const shortBasis = turn.basis.replace(/\s*·\s*翻出 \d+ 轮更早的相关问答/, "").trim();
-            const tail = shortBasis.replace(/^说明书(「[^」]+」)+/, "");
-            const fullTitle = `${turn.basis}${costTitle}`;
+            if (heads.length === 0) return null;
             return (
-              <p className="mt-2 text-micro text-l4" title={fullTitle}>
-                依据：
-                {heads.length === 0 ? (
-                  shortBasis
-                ) : (
-                  <>
-                    说明书
-                    {heads.map((h) => (
-                      <button
-                        key={h}
-                        type="button"
-                        className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        title="在应用里打开说明书这一节"
-                        onClick={() => setGuideHeading(h)}
-                      >
-                        <span className="text-micro">「{h}」</span>
-                      </button>
-                    ))}
-                    {tail}
-                  </>
-                )}
+              <p className="mt-2 text-micro text-l4">
+                参考说明书：
+                {heads.map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                    title="在应用里打开说明书这一节"
+                    onClick={() => setGuideHeading(h)}
+                  >
+                    <span className="text-micro">「{h}」</span>
+                  </button>
+                ))}
               </p>
             );
           })()}
