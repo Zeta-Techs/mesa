@@ -107,12 +107,15 @@ fn prune(f: &mut ChoicesFile) {
     }
 }
 
-/// 标签有记录就用它（会话 id 第一次知道时补上）；没有就按会话找最近一次选择，记到这个标签上
+/// 标签有记录就用它，会话 id 跟着标签现在挂的会话走（第一次知道时补上；换了会话就改记新的——
+/// 2026-11-24 用户实例：标签先挂着一段旧对话时选了模型，Agent 随后新开会话，选择不该留在旧对话名下）；
+/// 标签没记录就按会话找最近一次选择，记到这个标签上
 fn sync_in(f: &mut ChoicesFile, tab: &str, session: Option<&str>, now: u64) -> (Option<ChatChoice>, bool) {
     if let Some(entry) = f.tabs.get_mut(tab) {
         let mut changed = false;
-        if let (Some(s), None) = (session, entry.session_id.as_deref()) {
+        if let Some(s) = session.filter(|s| entry.session_id.as_deref() != Some(*s)) {
             entry.session_id = Some(s.to_string());
+            entry.updated_at = now;
             changed = true;
         }
         return (Some(entry.clone()), changed);
@@ -340,6 +343,13 @@ mod tests {
         assert_eq!(c.unwrap().session_id.as_deref(), Some("s1"));
         let (_, again) = sync_in(&mut f, "t1", Some("s1"), 21);
         assert!(!again, "已记过会话 id 不再写盘");
+        // 标签换了会话（先挂着旧对话、Agent 新开了一段）：改记到新会话，旧会话不再带着这个选择
+        let (c, moved) = sync_in(&mut f, "t1", Some("s-new"), 22);
+        assert!(moved);
+        assert_eq!(c.unwrap().session_id.as_deref(), Some("s-new"));
+        assert_eq!(sync_in(&mut f, "t-old", Some("s0"), 23), (None, false));
+        let (_, back) = sync_in(&mut f, "t1", Some("s1"), 24);
+        assert!(back, "又换回来也跟着改");
         // 从侧栏重开成新标签：按会话找回，记到新标签上
         let (c, changed) = sync_in(&mut f, "t2", Some("s1"), 30);
         assert!(changed);
