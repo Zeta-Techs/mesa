@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  agentConflictState,
   canProbeProfile,
   duplicateNameIds,
   profileStatusCell,
@@ -128,4 +129,108 @@ test("附加环境变量里像密钥的键：值非空才算，注释和空行�
     secretLikeEnvKeys("HTTPS_PROXY=http://x\nOPENAI_API_KEY=sk-1\n# MY_TOKEN=x\nEMPTY_SECRET=\nX_AUTH_HEADER=abc"),
     ["OPENAI_API_KEY", "X_AUTH_HEADER"],
   );
+});
+
+test("连接冲突分档：未添加默认目录官方号时不报冲突（仅隔离目录官方号同样不报）", () => {
+  const conflicts = ["~/.codebuddy/settings.json 中存在 CODEBUDDY_API_KEY"];
+  assert.equal(
+    agentConflictState({
+      agentId: "codebuddy",
+      conflicts,
+      profiles: [{ id: "api-1", accountType: "api", name: "智谱 GLM" }],
+      activeGlobalProfileId: "api-1",
+    }),
+    null,
+  );
+  assert.equal(
+    agentConflictState({
+      agentId: "claude-code",
+      conflicts: ["~/.claude/settings.json 中存在 ANTHROPIC_AUTH_TOKEN"],
+      profiles: [
+        { id: "iso-1", accountType: "official", name: "工作号", officialRef: { mode: "isolatedDir" } },
+      ],
+      activeGlobalProfileId: null,
+    }),
+    null,
+  );
+});
+
+test("连接冲突分档：API 已设为全局时，进程级可覆盖三家静默，盖不过的几家归为 mesa_global_api", () => {
+  const profiles = [
+    { id: "off-1", accountType: "official", name: "官方账号" },
+    { id: "api-1", accountType: "api", name: "智谱 GLM" },
+  ];
+  // CodeBuddy / Claude Code / Qwen：进程级盖过磁盘，API 设为全局本身就是用户意图
+  for (const agentId of ["codebuddy", "claude-code", "qwen"]) {
+    assert.equal(
+      agentConflictState({
+        agentId,
+        conflicts: ["settings.json 中存在 API_KEY"],
+        profiles,
+        activeGlobalProfileId: "api-1",
+      }),
+      null,
+    );
+  }
+  // Gemini / Grok：进程级盖不过，Mesa 内启动官方会被拦，归为 mesa_global_api 并带出连接名
+  const gemini = agentConflictState({
+    agentId: "gemini",
+    conflicts: ["~/.gemini/.env 中存在 GEMINI_API_KEY"],
+    profiles,
+    activeGlobalProfileId: "api-1",
+  });
+  assert.equal(gemini?.kind, "mesa_global_api");
+  assert.equal(gemini?.mesaOverridesOfficial, false);
+  assert.equal(gemini?.officialProfileId, "off-1");
+  assert.equal(gemini?.activeGlobalApiName, "智谱 GLM");
+});
+
+test("连接冲突分档：非 API 全局时的外部残留照常报 residual，且尊重忽略签名", () => {
+  const profiles = [
+    { id: "off-1", accountType: "official", name: "官方账号" },
+    { id: "api-1", accountType: "api", name: "智谱 GLM" },
+  ];
+  const c1 = ["~/.codebuddy/settings.json 中存在 CODEBUDDY_BASE_URL", "~/.codebuddy/settings.json 中存在 CODEBUDDY_API_KEY"];
+  const res = agentConflictState({
+    agentId: "codebuddy",
+    conflicts: c1,
+    profiles,
+    activeGlobalProfileId: null,
+  });
+  assert.equal(res?.kind, "residual");
+  assert.equal(res?.mesaOverridesOfficial, true);
+  assert.equal(res?.officialProfileId, "off-1");
+  assert.equal(res?.activeGlobalApiName, null);
+
+  // 忽略签名命中时隐藏，残留项增减后自动复现
+  assert.equal(
+    agentConflictState({
+      agentId: "codebuddy",
+      conflicts: c1,
+      dismissedSignature: res?.signature,
+      profiles,
+      activeGlobalProfileId: "off-1",
+    }),
+    null,
+  );
+  assert.equal(
+    agentConflictState({
+      agentId: "codebuddy",
+      conflicts: [c1[0]],
+      dismissedSignature: res?.signature,
+      profiles,
+      activeGlobalProfileId: "off-1",
+    })?.kind,
+    "residual",
+  );
+
+  // Antigravity 托管快照官方号属于默认配置作用域，仍检外部残留
+  const agy = agentConflictState({
+    agentId: "agy",
+    conflicts: ["~/.gemini/antigravity-cli/settings.json 中存在 modelProvider"],
+    profiles: [{ id: "agy-1", accountType: "official", name: "Google 主号", officialRef: { mode: "managedSnapshot" } }],
+    activeGlobalProfileId: null,
+  });
+  assert.equal(agy?.kind, "residual");
+  assert.equal(agy?.officialProfileId, "agy-1");
 });

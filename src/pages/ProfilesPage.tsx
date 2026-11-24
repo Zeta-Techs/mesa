@@ -81,6 +81,7 @@ import { applyFieldsToForm, fieldsFromForm, gatewayOwnedChanges, snippetFileTag,
 import { catalogCapabilityNote, zhipuOpenAiSlotBillingHint } from "../gateway-draft";
 import {
   CONNECTION_STATUS_CAPTION,
+  agentConflictState,
   canProbeProfile,
   secretLikeEnvKeys,
   duplicateNameIds,
@@ -2795,10 +2796,6 @@ function fileActionLabel(action: string): string {
   return action;
 }
 
-/** 在 Mesa 里用官方账号启动时，进程级就能盖掉磁盘残留的 Agent（--settings 空串 / --auth-type），
- *  与 agents.rs `official_launch_conflicts` 放行的三家一致 */
-const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
-
 /** 官方账号能「设为全局」（撤掉 API 键、交回 CLI 登录，走预览确认）的 Agent。
  *  与 global_config.rs `official_global_is_patch` 双端镜像；OpenCode 没有官方账号，Cursor 不支持设为全局 */
 const OFFICIAL_GLOBAL_AGENTS = new Set(["codex", "claude-code", "gemini", "qwen", "codebuddy", "kimi", "grok", "agy"]);
@@ -3268,6 +3265,15 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     });
     setConflictPop(null);
   }
+  function conflictNoticeFor(agentId: string) {
+    return agentConflictState({
+      agentId,
+      conflicts: officialStatus[agentId]?.conflicts,
+      dismissedSignature: conflictDismissed[agentId],
+      profiles: profiles.filter((p) => p.agent === agentId),
+      activeGlobalProfileId: settings?.activeGlobalProfiles?.[agentId] ?? null,
+    });
+  }
 
   // 官方账号别名 → 本机 CLI 实测的完整型号（后端查 Claude 状态时按版本后台重测，十几秒内落盘）
   const [officialAliases, setOfficialAliases] = useState<OfficialAliasTable>({});
@@ -3439,7 +3445,16 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       return;
     try {
       const files = await invoke<string[]>("clear_account_conflicts", { agentId });
+      // 若当前全局默认记的是 API 连接，清理会撤掉它写入的键：同步解除全局标记并刷新漂移，避免立刻跳「外部改过」
+      const activeId = settings?.activeGlobalProfiles?.[agentId];
+      const activeProfile = activeId ? profiles.find((p) => p.id === activeId) : null;
+      if (activeProfile && activeProfile.accountType !== "official") {
+        await invoke("forget_active_global", { agent: agentId }).catch(() => {});
+        await loadSettings();
+      }
+      setDriftTick((t) => t + 1);
       await refreshOfficial(agentId);
+      setConflictPop(null);
       setNotice(files.length ? `已清理：${files.join("、")}` : "没有可清理的已识别冲突项");
       setTimeout(() => setNotice(null), 5000);
     } catch (e) {
@@ -4009,6 +4024,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       );
       await refreshGlobalBackups();
       await loadSettings();
+      setDriftTick((t) => t + 1);
+      void refreshOfficial(p.agent);
       mirrorValidation(p, applied.validation);
       rememberValidation(p.id, applied.validation);
       setApplyDialog({ profile: p, running: false, applied, error: null });
@@ -4060,6 +4077,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       await refreshGlobalBackups();
       await loadSettings();
       setDriftTick((t) => t + 1);
+      void refreshOfficial(agent);
       setError(null);
       const name = p.accountType === "official" ? "官方账号" : `「${p.name}」`;
       // Codex 客户端要重启才读新的模型目录：装了客户端就在提示里给「重启客户端」（Mac / Windows）
@@ -4128,6 +4146,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       await refreshGlobalBackups();
       await loadSettings();
       setDriftTick((t) => t + 1);
+      void refreshOfficial(agent);
       toast(`已撤销 ${labelOf(agent)} 的全局写入`, "success");
     } catch (e) {
       toast(`撤销失败：${String(e)}`, "error");
@@ -4286,6 +4305,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       await refreshGlobalBackups();
       // 恢复后全局内容不再是任何连接的快照，后端已清「全局生效」标记，重拉设置刷新徽标
       await loadSettings();
+      setDriftTick((t) => t + 1);
+      void refreshOfficial(agentId);
       await alertDialog(
         files.length
           ? `已恢复完整批次：\n${files.join("\n")}`
@@ -4791,9 +4812,8 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
               {primaryNavAgents.map((agent, navIndex) => {
                 const installed = !!agents.find((x) => x.id === agent.id)?.binaryPath;
                 const count = profiles.filter((p) => p.agent === agent.id && matchProfile(p)).length;
-                const conflicted =
-                  (officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
-                  conflictDismissed[agent.id] !== [...officialStatus[agent.id].conflicts].sort().join("\n");
+                const conflictNotice = conflictNoticeFor(agent.id);
+                const conflicted = conflictNotice !== null;
                 const navState = agentNavUpdateState({
                   agentLabel: agent.label,
                   installed,
@@ -4824,7 +4844,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                           {conflicted && (
                             <span
                               className="size-1.5 shrink-0 rounded-full bg-warn-text"
-                              title="有连接冲突：本地配置里的残留密钥会覆盖官方账号登录"
+                              title={
+                                conflictNotice?.kind === "mesa_global_api"
+                                  ? `当前全局默认是 API 连接「${conflictNotice.activeGlobalApiName}」，在 Mesa 里启动官方账号会被拦下`
+                                  : "有连接冲突：本地配置里的残留密钥会覆盖官方账号登录"
+                              }
                             />
                           )}
                         </span>
@@ -5098,28 +5122,34 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     {agent.label}
                   </h2>
                   {/* 组头不写连接数（2026-10-28 用户拍板去掉）：展开就看得见，常驻只添噪 */}
-                  {/* 连接冲突提升为组头琥珀胶囊（v3.93）：CLI 自读文件里的残留密钥会覆盖官方账号
-                      登录并产生计费——藏在大段灰字里会被忽略；点击弹层列出具体文件/变量 */}
-                  {(officialStatus[agent.id]?.conflicts.length ?? 0) > 0 &&
-                    conflictDismissed[agent.id] !==
-                      [...officialStatus[agent.id].conflicts].sort().join("\n") && (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        const rect =
-                          event.currentTarget.getBoundingClientRect();
-                        setConflictPop({
-                          x: rect.left,
-                          y: rect.bottom + 4,
-                          agentId: agent.id,
-                        });
-                      }}
-                      title="本地配置文件中的残留密钥会覆盖官方账号登录，点击查看明细"
-                      className="flex h-5 shrink-0 items-center gap-1 rounded-full bg-warn px-2 text-micro text-warn-text transition-[filter] hover:brightness-125"
-                    >
-                      ! {officialStatus[agent.id].conflicts.length} 项连接冲突
-                    </button>
-                  )}
+                  {/* 连接冲突提升为组头琥珀胶囊（v3.93；2026-11-24 分档）：只有存在默认目录官方号、且并非
+                      「进程级可覆盖三家自己设的 API 全局默认」时才亮；点击弹层列出具体文件/变量 */}
+                  {(() => {
+                    const notice = conflictNoticeFor(agent.id);
+                    if (!notice) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          const rect =
+                            event.currentTarget.getBoundingClientRect();
+                          setConflictPop({
+                            x: rect.left,
+                            y: rect.bottom + 4,
+                            agentId: agent.id,
+                          });
+                        }}
+                        title={
+                          notice.kind === "mesa_global_api"
+                            ? `当前全局默认是 API 连接「${notice.activeGlobalApiName}」，在 Mesa 里启动官方账号会受影响，点击查看明细`
+                            : "本地配置文件中的残留密钥会覆盖官方账号登录，点击查看明细"
+                        }
+                        className="flex h-5 shrink-0 items-center gap-1 rounded-full bg-warn px-2 text-micro text-warn-text transition-[filter] hover:brightness-125"
+                      >
+                        ! {notice.conflicts.length} 项连接冲突
+                      </button>
+                    );
+                  })()}
                   {!det?.binaryPath && (
                     <span className="text-xs text-l4">未安装</span>
                   )}
@@ -6050,13 +6080,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
       {conflictPop &&
         (() => {
           const st = officialStatus[conflictPop.agentId];
-          if (!st || st.conflicts.length === 0) return null;
-          // 忽略签名命中时也不弹（忽略动作本身会关弹层，这里守住重渲染路径）
-          if (
-            conflictDismissed[conflictPop.agentId] ===
-            [...st.conflicts].sort().join("\n")
-          )
-            return null;
+          const notice = conflictNoticeFor(conflictPop.agentId);
+          if (!st || !notice) return null;
+          const officialProfile =
+            profiles.find((p) => p.id === notice.officialProfileId) ?? null;
+          const canSwitchOfficialGlobal = Boolean(
+            officialProfile && canQuickGlobal(officialProfile),
+          );
           return (
             <div
               className="fixed inset-0 z-20"
@@ -6078,11 +6108,11 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                 }}
               >
                 <div className="mb-1.5 font-medium text-warn-text">
-                  ! {st.conflicts.length} 项连接冲突 ·{" "}
+                  ! {notice.conflicts.length} 项连接冲突 ·{" "}
                   {labelOf(conflictPop.agentId)}
                 </div>
                 <ul className="space-y-1">
-                  {st.conflicts.map((c) => (
+                  {notice.conflicts.map((c) => (
                     <li
                       key={c}
                       className="rounded-sm ccode-well px-1.5 py-1 font-mono text-l2"
@@ -6091,22 +6121,58 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     </li>
                   ))}
                 </ul>
-                <p className="mt-2 leading-5 text-l3">
-                  {MESA_OVERRIDES_OFFICIAL.has(conflictPop.agentId)
-                    ? "这些键只影响 Mesa 外直接敲命令：在 Mesa 里用官方账号启动时会临时盖掉它们，不受影响；外部终端会照它们走 API 计费。"
-                    : "这些键会覆盖官方账号登录并产生 API 计费：在 Mesa 里用官方账号启动会被拦下，外部终端也会照它们走 API。平时用 API 连接不受影响。"}
-                </p>
-                <p className="mt-1.5 leading-5 text-l3">
-                  <span className="text-l2">只用 API 连接</span>：点「忽略」。
-                  <span className="text-l2">外部也要用官方账号</span>
-                  ：在「官方账号」那行点地球图标切回官方（只撤这几项，提示里可撤销），或点「备份后清理已识别项」，
-                  或自行编辑文件后点状态行 ⟳ 重新检测。
-                </p>
-                <div className="mt-2 flex items-center gap-2">
-                  {st.cleanupSupported && (
+                {notice.kind === "mesa_global_api" ? (
+                  <>
+                    <p className="mt-2 leading-5 text-l3">
+                      当前全局默认是 API 连接「{notice.activeGlobalApiName}」，所以本地配置文件里写有这些键。
+                      在 Mesa 里用官方账号启动会受它们影响而被拦下；平时只用 API 连接不受影响。
+                    </p>
+                    <p className="mt-1.5 leading-5 text-l3">
+                      <span className="text-l2">只用 API 连接</span>：点「忽略」。
+                      <span className="text-l2">要用官方账号</span>
+                      {canSwitchOfficialGlobal
+                        ? "：点「将官方账号设为全局」切回官方（只撤这几项，提示里可撤销）。"
+                        : "：在配置文件里撤掉这些键后点状态行 ⟳ 重新检测。"}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-2 leading-5 text-l3">
+                      {notice.mesaOverridesOfficial
+                        ? "这些键只影响 Mesa 外直接敲命令：在 Mesa 里用官方账号启动时会临时盖掉它们，不受影响；外部终端会照它们走 API 计费。"
+                        : "这些键会覆盖官方账号登录并产生 API 计费：在 Mesa 里用官方账号启动会被拦下，外部终端也会照它们走 API。平时用 API 连接不受影响。"}
+                    </p>
+                    <p className="mt-1.5 leading-5 text-l3">
+                      <span className="text-l2">只用 API 连接</span>：点「忽略」。
+                      <span className="text-l2">外部也要用官方账号</span>
+                      {canSwitchOfficialGlobal
+                        ? "：点「将官方账号设为全局」（只撤这几项，提示里可撤销），或点「备份后清理已识别项」，或自行编辑文件后点状态行 ⟳ 重新检测。"
+                        : "：点「备份后清理已识别项」，或自行编辑文件后点状态行 ⟳ 重新检测。"}
+                    </p>
+                  </>
+                )}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {canSwitchOfficialGlobal && officialProfile && (
                     <button
                       type="button"
-                      className="rounded-sm border border-warn-bd bg-warn px-2 py-1 text-xs text-warn-text hover:brightness-110"
+                      disabled={globalBusy !== null}
+                      className="rounded-sm border border-warn-bd bg-warn px-2 py-1 text-xs text-warn-text hover:brightness-110 disabled:opacity-50"
+                      onClick={() => {
+                        setConflictPop(null);
+                        void quickApplyGlobal(officialProfile);
+                      }}
+                    >
+                      将官方账号设为全局
+                    </button>
+                  )}
+                  {notice.kind === "residual" && st.cleanupSupported && (
+                    <button
+                      type="button"
+                      className={
+                        canSwitchOfficialGlobal
+                          ? "rounded-sm border border-field px-2 py-1 text-xs text-l2 hover:bg-hover hover:text-l1"
+                          : "rounded-sm border border-warn-bd bg-warn px-2 py-1 text-xs text-warn-text hover:brightness-110"
+                      }
                       onClick={() => void clearAccountConflicts(conflictPop.agentId)}
                     >
                       备份后清理已识别项
@@ -6116,7 +6182,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                     type="button"
                     className="rounded-sm px-2 py-1 text-xs text-l3 hover:bg-hover hover:text-l1"
                     title="只隐藏这条提醒；官方账号启动拦截仍生效，残留项有变化时提醒自动回来"
-                    onClick={() => dismissConflicts(conflictPop.agentId, st.conflicts)}
+                    onClick={() => dismissConflicts(conflictPop.agentId, [...notice.conflicts])}
                   >
                     忽略
                   </button>

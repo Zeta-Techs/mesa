@@ -1,6 +1,88 @@
-/** 连接行状态列文案、行上测试、「同步目录」是否出现、同组重名。 */
+/** 连接行状态列文案、行上测试、「同步目录」是否出现、同组重名、官方账号连接冲突分档。 */
 
 import { slotForAgent } from "./gateway-slot.ts";
+
+/**
+ * 进程级覆盖层（--settings / --auth-type）启动官方账号时可直接压过磁盘残留密钥的三家
+ * （与 agents.rs::official_launch_conflicts 放行口径一致）。
+ */
+export const MESA_OVERRIDES_OFFICIAL = new Set(["claude-code", "codebuddy", "qwen"]);
+
+export interface AgentConflictNotice {
+  /**
+   * - "mesa_global_api": 当前全局默认是 Mesa 自己写入的 API 连接，且该 CLI 进程级盖不过磁盘键
+   *   （如 gemini / grok），在 Mesa 里启动官方账号会被拦下；应引导将官方账号设为全局，而非裸删文件。
+   * - "residual": 磁盘上存在非当前 Mesa API 全局写入的残留 API 键，会盖过官方账号登录。
+   */
+  kind: "mesa_global_api" | "residual";
+  /** 进程级能盖过（只影响外部终端），还是 Mesa 里启动官方账号也会被拦下 */
+  mesaOverridesOfficial: boolean;
+  /** 可用于切回全局的默认目录官方账号连接 ID */
+  officialProfileId: string;
+  /** 当 kind === "mesa_global_api" 时，当前被设为全局的 API 连接名称 */
+  activeGlobalApiName: string | null;
+  /** 冲突明细条目（与后端 officialStatus.conflicts 一致） */
+  conflicts: readonly string[];
+  /** 忽略签名（排序拼接，用于 conflictDismissed 比对） */
+  signature: string;
+}
+
+/**
+ * 判断某家 Agent 在连接页左栏 / 组头是否应展示「连接冲突」提醒（2026-11-24 拍板）：
+ * 1. 未添加默认目录官方账号连接（含仅添加隔离目录官方号）→ 不报冲突（无官方号可被覆盖）；
+ * 2. 当前全局默认是 Mesa 写入的 API 连接：
+ *    - 进程级可覆盖的三家（claude-code / codebuddy / qwen）→ 不报冲突（Mesa 内官方不受影响，外部走 API 正是全局本意）；
+ *    - 进程级盖不过的几家（gemini / grok 等）→ 标为 mesa_global_api，说明由该全局 API 引起并引导切回官方全局；
+ * 3. 其余情况（未设全局或全局为官方账号却仍有磁盘键）→ 标为 residual，按外部残留处理。
+ */
+export function agentConflictState(input: {
+  agentId: string;
+  conflicts: readonly string[] | null | undefined;
+  dismissedSignature?: string | null;
+  profiles: readonly {
+    id: string;
+    accountType?: string;
+    name: string;
+    officialRef?: { mode?: string } | null;
+  }[];
+  activeGlobalProfileId?: string | null;
+}): AgentConflictNotice | null {
+  const conflicts = input.conflicts;
+  if (!conflicts || conflicts.length === 0) return null;
+  const signature = [...conflicts].sort().join("\n");
+  if (input.dismissedSignature === signature) return null;
+
+  const defaultOfficial =
+    input.profiles.find(
+      (p) => p.accountType === "official" && p.officialRef?.mode !== "isolatedDir",
+    ) ?? null;
+  if (!defaultOfficial) return null;
+
+  const mesaOverridesOfficial = MESA_OVERRIDES_OFFICIAL.has(input.agentId);
+  const activeGlobal = input.activeGlobalProfileId
+    ? (input.profiles.find((p) => p.id === input.activeGlobalProfileId) ?? null)
+    : null;
+  if (activeGlobal && activeGlobal.accountType !== "official") {
+    if (mesaOverridesOfficial) return null;
+    return {
+      kind: "mesa_global_api",
+      mesaOverridesOfficial: false,
+      officialProfileId: defaultOfficial.id,
+      activeGlobalApiName: activeGlobal.name,
+      conflicts,
+      signature,
+    };
+  }
+
+  return {
+    kind: "residual",
+    mesaOverridesOfficial,
+    officialProfileId: defaultOfficial.id,
+    activeGlobalApiName: null,
+    conflicts,
+    signature,
+  };
+}
 
 export type ProfileStatusTone = "ok" | "warn" | "err" | "muted";
 
