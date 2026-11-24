@@ -519,6 +519,37 @@ fn mark_selected_sent_at(root: &Path, items: &[DeliveryAnswer], when: &str) -> R
     Ok(count)
 }
 
+pub(crate) fn answer_known_help_sync(
+    root: &str,
+    item_id: &str,
+    answer: &str,
+    remember: Option<&str>,
+) -> Result<HelpItemDto, String> {
+    let source = known_source(root)?;
+    let project = match remember {
+        Some(_) => Some(crate::projects::ensure_task_project_root(Path::new(&source.repo_path))?),
+        None => None,
+    };
+    let item = answer_remembered_at(
+        Path::new(&source.root),
+        item_id,
+        answer,
+        remember.filter(|_| project.is_some()),
+    )?;
+    let secrets = crate::profiles::stored_secrets();
+    if let (Some(kind), Some(project)) = (remember, project) {
+        let r = |t: &str| crate::sessions::redact_sensitive_text_with(t, &secrets);
+        crate::project_memory::record_human_decision(
+            &project,
+            kind,
+            &r(&item.question),
+            &r(item.answer.as_deref().unwrap_or_default()),
+        )
+        .map_err(|e| format!("回答已记下，但没写进项目知识：{e}"))?;
+    }
+    Ok(redact_item(item, &secrets))
+}
+
 /// 人在卡片上答一条。`remember` = "已定" / "不做"：同时记进项目知识，下一步任务书带上
 #[tauri::command]
 pub async fn help_request_answer(
@@ -528,20 +559,7 @@ pub async fn help_request_answer(
     remember: Option<String>,
 ) -> Result<HelpItemDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let source = known_source(&root)?;
-        let project = match remember.as_deref() {
-            Some(_) => Some(crate::projects::ensure_task_project_root(Path::new(&source.repo_path))?),
-            None => None,
-        };
-        let item = answer_remembered_at(Path::new(&source.root), &item_id, &answer, remember.as_deref().filter(|_| project.is_some()))?;
-        let secrets = crate::profiles::stored_secrets();
-        if let (Some(kind), Some(project)) = (remember.as_deref(), project) {
-            // 问题是 Agent 写的：进项目知识前和出站同一口径脱敏（项目知识原样回到界面、进任务书）
-            let r = |t: &str| crate::sessions::redact_sensitive_text_with(t, &secrets);
-            crate::project_memory::record_human_decision(&project, kind, &r(&item.question), &r(item.answer.as_deref().unwrap_or_default()))
-                .map_err(|e| format!("回答已记下，但没写进项目知识：{e}"))?;
-        }
-        Ok(redact_item(item, &secrets))
+        answer_known_help_sync(&root, &item_id, &answer, remember.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?

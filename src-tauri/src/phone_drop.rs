@@ -1386,6 +1386,84 @@ fn receive_text(
     json_reply(200, serde_json::json!({ "ok": true }))
 }
 
+/// 供手机工作台（127.0.0.1 + 加密隧道）复用同一个 `phone-inbox/` 暂存区落盘文件，并通知桌面端收件栏
+pub(crate) fn stage_external_file(
+    app: Option<&tauri::AppHandle>,
+    raw_name: &str,
+    bytes: &[u8],
+) -> Result<PhoneItemDto, String> {
+    let len = bytes.len() as u64;
+    if len == 0 {
+        return Err("文件为空".into());
+    }
+    if len > MAX_FILE_BYTES {
+        return Err("文件超过 100 MB 上限".into());
+    }
+    let stage = ensure_stage_dir()?;
+    let display = display_name(raw_name);
+    if let Some(a) = app {
+        let _ = a.emit("phone-drop-incoming", serde_json::json!({ "name": display }));
+    }
+    let part = stage.join(format!(".{}.part", uuid::Uuid::new_v4().simple()));
+    let write_res = (|| -> Result<(), String> {
+        let mut f = open_private(&part).map_err(|e| format!("写入暂存区失败: {e}"))?;
+        f.write_all(bytes).map_err(|e| format!("写入暂存区失败: {e}"))?;
+        Ok(())
+    })();
+    if let Err(e) = write_res {
+        let _ = fs::remove_file(&part);
+        return Err(e);
+    }
+    let head = &bytes[..bytes.len().min(16)];
+    let display = with_sniffed_ext(display, head);
+    let kind = classify(&display, head);
+    let file_name = unique_stage_name(&stage, &display);
+    if let Err(e) = fs::rename(&part, stage.join(&file_name)) {
+        let _ = fs::remove_file(&part);
+        return Err(format!("暂存文件落盘失败: {e}"));
+    }
+    let mut item = new_item(kind, display, len);
+    item.file = Some(file_name.clone());
+    let dto = to_dto(&stage, &item);
+    if let Err(e) = with_index(&stage, |idx| {
+        idx.items.push(item);
+        Ok(())
+    }) {
+        let _ = fs::remove_file(stage.join(&file_name));
+        return Err(e);
+    }
+    if let Some(a) = app {
+        let _ = a.emit("phone-drop-item", dto.clone());
+    }
+    Ok(dto)
+}
+
+/// 供手机工作台复用同一个 `phone-inbox/` 暂存区投递灵感/文字，并通知桌面端收件栏
+pub(crate) fn stage_external_text(
+    app: Option<&tauri::AppHandle>,
+    raw_text: &str,
+) -> Result<PhoneItemDto, String> {
+    let text = raw_text.trim().to_string();
+    if text.is_empty() {
+        return Err("内容不能为空".into());
+    }
+    if text.len() as u64 > MAX_TEXT_BYTES || text.chars().count() > MAX_TEXT_CHARS {
+        return Err("文字超过长度上限".into());
+    }
+    let stage = ensure_stage_dir()?;
+    let mut item = new_item("text", text_title(&text), text.len() as u64);
+    item.text = Some(text);
+    let dto = to_dto(&stage, &item);
+    with_index(&stage, |idx| {
+        idx.items.push(item);
+        Ok(())
+    })?;
+    if let Some(a) = app {
+        let _ = a.emit("phone-drop-item", dto.clone());
+    }
+    Ok(dto)
+}
+
 // ===== 命令层 =====
 
 #[derive(Debug, Clone, Serialize)]

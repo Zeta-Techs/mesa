@@ -92,6 +92,7 @@ mod consult;
 mod ask_aside;
 mod fan_out;
 mod feishu;
+mod mobile_workbench;
 
 mod capability_golden;
 mod capability_manifest;
@@ -191,6 +192,7 @@ fn shutdown_for_exit(app: &tauri::AppHandle) {
     chat_channel::shutdown_all();
     phone_drop::shutdown();
     feishu::shutdown();
+    mobile_workbench::shutdown();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while process::capture_count() > 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -286,6 +288,8 @@ pub fn run() {
             download_inbox::ensure_watcher_at_startup(app.handle());
             // 飞书机器人：开着就在后台连上长连接（读配置也在后台线程）
             feishu::start_at_setup(app.handle().clone());
+            // 手机工作台（127.0.0.1 本地加密 PWA 服务）：开着就按配置自启
+            mobile_workbench::start_at_setup(app.handle().clone());
             // 桌宠：设置里开着就建小窗（desk_pet.rs）
             desk_pet::setup(app.handle());
             // 托盘菜单要逐个连接比对磁盘配置（开发版实测 2.5 秒）。Windows 上放后台线程建：setup 占着主线程时
@@ -1300,6 +1304,13 @@ pub fn run() {
             feishu::feishu_update_card,
             feishu::feishu_send_test_card,
             feishu::feishu_test,
+            mobile_workbench::mobile_workbench_status,
+            mobile_workbench::mobile_workbench_set_config,
+            mobile_workbench::mobile_workbench_tailscale_serve,
+            mobile_workbench::mobile_workbench_pair_start,
+            mobile_workbench::mobile_workbench_pair_cancel,
+            mobile_workbench::mobile_workbench_remove_device,
+            mobile_workbench::mobile_workbench_bridge_reply,
             prepare_app_exit,
         ])
         .build(tauri::generate_context!())

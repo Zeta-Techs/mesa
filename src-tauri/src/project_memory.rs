@@ -291,6 +291,11 @@ pub(crate) fn append_confirmed(
     append_entry(root, goal, text, version, "验收时人工确认")
 }
 
+/// 手机工作台等经人点击确认后记入「已定」长期项目知识
+pub(crate) fn add_project_rule(root: &Path, text: &str, source_note: &str) -> Result<(), String> {
+    append_entry(root, "已定", text, None, source_note)
+}
+
 /// 人在人工请求卡片上勾「以后同类照此办」：分类「已定」或「不做」（goal_name 当分类，同研究档案），
 /// 依据是那条问题与人的回答。仍是人确认的条目，Agent 不能写。
 pub(crate) fn append_human_decision(root: &Path, kind: &str, text: &str) -> Result<(), String> {

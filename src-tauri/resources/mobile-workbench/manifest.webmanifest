@@ -1,0 +1,17 @@
+{
+  "name": "Mesa 手机工作台",
+  "short_name": "Mesa",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111214",
+  "theme_color": "#111214",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -103,6 +103,7 @@ export const SETTINGS_SEARCH_INDEX: readonly SettingsSearchEntry[] = [
       "沙箱", "Windows 沙箱", "Codex 沙箱", "定时任务",
       "出图", "出图模型", "画图", "生图", "图片生成", "gpt-image", "image",
       "飞书", "手机", "机器人", "bot", "feishu", "lark", "手机上指挥", "项目助手",
+      "手机工作台", "PWA", "Tailscale", "加密通道", "手机看文件", "远程", "mobile", "workbench",
       "integration", "agent",
     ],
   },

@@ -22,6 +22,7 @@ import appIconLight from "../assets/app-icon/light.png";
 import { searchSettings, type SettingSectionId } from "../settings-search.ts";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import FeishuSettingsCard from "../components/FeishuSettingsCard";
+import MobileWorkbenchCard from "../components/MobileWorkbenchCard";
 import MesaBuddy from "../components/MesaBuddy";
 import { normalizeBuddyStyle, type BuddyStyle } from "../buddy-sprite";
 import RouteCheckCard from "../components/RouteCheckCard";
@@ -4087,6 +4088,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             }}
           />
         </Row>
+        <MobileWorkbenchCard />
         <FeishuSettingsCard />
       </Section>
 

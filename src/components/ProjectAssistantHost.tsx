@@ -21,6 +21,7 @@ import { ECHO_POLL_MS, pollAssistantEchoes, seeAssistantEchoes } from "../assist
 import { invalidateAssistantSnapshot } from "../project-assistant-run";
 import { pushMilestones, pushNewGrants, pushNewHelp, pushStuck, reconnectImIfNeeded, startImBridge } from "../im-bridge";
 import { startDeskPetHost } from "../desk-pet-host";
+import { startMobileWorkbenchBridge } from "../mobile-workbench-bridge";
 import type { ProjectConfigReadDto, ProjectDto } from "../types";
 
 function savedWidth(): number {
@@ -85,6 +86,12 @@ export default function ProjectAssistantHost() {
       if (cancelled) off();
       else stopPet = off;
     });
+    // 手机工作台（2026-11-24）：收手机点「派出去」与刷新信号；没开时零开销
+    let stopMobile: (() => void) | null = null;
+    void startMobileWorkbenchBridge().then((off) => {
+      if (cancelled) off();
+      else stopMobile = off;
+    });
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -92,6 +99,7 @@ export default function ProjectAssistantHost() {
       window.removeEventListener("online", onOnline);
       stop?.();
       stopPet?.();
+      stopMobile?.();
     };
   }, []);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
