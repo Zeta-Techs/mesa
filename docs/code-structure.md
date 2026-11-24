@@ -112,11 +112,13 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   选回连接页默认 = 清掉）、发前检查（没工具 / 没模型拦，没开 image-gen 给「打开」）、发出去那一行（ComposerImageGen.directive）、
                              #   一轮结束后查 image_gen_chat_calls 认出「没调用出图工具」（missedNotice）、图下模型名（captions → ChatImageCaptionContext）、
                              #   斜杠 /image（画图）；ImageGenPill 是输入框「+」旁边的小胶囊（ComposerImageGen.pill，2026-11-24 用户选：不在框上方另起一条），
-                             #   换模型复用 ImageModelPicker（note 写连接页默认）、「最近用过」与连接页共用一份；ImageGenIssueLine 只在有问题时框里一行小字
+                             #   换模型复用 ImageModelPicker（note 写连接页默认）、「最近用过」与连接页共用一份；ImageGenIssueLine 只在有问题时框里一行小字；
+                             #   对比几个（compare / pickMulti，最多 MAX_COMPARE，只在前端）：headerAction「对比几个 / 只用一个」，onEditImage 挑中结果回单个模型
+                             #   （tests/chat-image-gen-ui.test.ts）
   components/ImageModelMark.tsx # 聊天出图模式里出图模型的标识：vendorForModel 认得出画 VendorIcon，认不出 / 没选画 Lucide Palette（不用图片图标，
                              #   放「+」旁像附件）；胶囊、「+」菜单「画图」、消息上方「出图 · 模型」三处共用；尺寸只收 12/13/14（Tailwind 类名写死）
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方；
-                             #   多网关时行尾写 gatewayLabel（「Codex 网关」，网关名常与 Agent 同名）；note = 搜索框下一行说明
+                             #   多网关时行尾写 gatewayLabel（「Codex 网关」，网关名常与 Agent 同名）；note / headerAction = 搜索框下一行说明与右侧小按钮
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下（过程行文件名经 `onOpenFile` 开右侧预览，只聊天层传），
@@ -773,7 +775,8 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              # 要不要模型看图 composerImageKind（plain / marks / null，ChatModelMenu 据此出看不了图的提示）
   chat-image-gen.ts          # 聊天出图模式纯逻辑（tests/chat-image-gen.test.ts）：发出去那一行 imageGenDirective / splitImageGenDirective
                              #   （与 Rust sessions::strip_image_gen_directive 镜像；chat-relay.ts userSaid 剥掉它）、发前检查 imageGenIssue /
-                             #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）
+                             #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）、
+                             #   producerOf（这张图是哪次调用出的）；对比时那一行点名几个模型（「A、B 各出一版对比」）
                              #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、

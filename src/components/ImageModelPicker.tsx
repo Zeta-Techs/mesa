@@ -1,7 +1,7 @@
 // 出图模型选择器（2026-10-24 用户：「筛选框太长了，常用的、最新的放在前面」）。
 // 锚在按钮下沿的浮层：搜索框 → 最近用过 → 推荐（各家最新一个）→ 按家族折叠的全部。
 // single = 选一个就关；multi = 勾选多个（对比用），点外面或 Esc 关。
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Check, RefreshCw } from "lucide-react";
 import { FoldMark, searchFieldClass } from "./PageFrame";
@@ -27,6 +27,7 @@ export default function ImageModelPicker({
   onRefresh,
   refreshing = false,
   note,
+  headerAction,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   open: boolean;
@@ -45,6 +46,8 @@ export default function ImageModelPicker({
   refreshing?: boolean;
   /** 搜索框下一行说明（聊天出图胶囊：只管这个对话、连接页默认是哪个） */
   note?: string;
+  /** 说明那一行右边的小按钮（聊天出图胶囊：「对比几个」/「只用一个」） */
+  headerAction?: ReactNode;
 }) {
   const { box, exiting, closeNow } = useDownMenu(open, anchorRef, 380);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -164,11 +167,13 @@ export default function ImageModelPicker({
             </button>
           )}
         </div>
-        {note && <p className="truncate px-1 pt-1 text-micro text-l3" title={note}>{note}</p>}
-        {multi && maxSelected !== undefined && (
-          <p className="px-1 pt-1 text-micro text-l3">
-            已选 {selected.length} / {maxSelected}，一起出图对比
-          </p>
+        {(note || headerAction || (multi && maxSelected !== undefined)) && (
+          <div className="flex min-h-6 items-center gap-2 px-1 pt-1">
+            <p className="min-w-0 flex-1 truncate text-micro text-l3" title={note}>
+              {multi && maxSelected !== undefined ? `已选 ${selected.length} / ${maxSelected}，一起出图对比` : note}
+            </p>
+            {headerAction}
+          </div>
         )}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-1">

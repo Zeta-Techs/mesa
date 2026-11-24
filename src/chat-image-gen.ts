@@ -6,30 +6,47 @@
 import { pathKey } from "./path-utils.ts";
 
 export const IMAGE_GEN_SKILL = "image-gen";
+/** 对比时最多几个模型（同连接页「试出与对比」） */
+export const MAX_COMPARE = 4;
 
 /** 固定写法的行首（Rust sessions.rs IMAGE_GEN_DIRECTIVE_HEADS 镜像） */
 const HEAD = "使用 image-gen 技能";
 const DIRECTIVE = /^使用 image-gen 技能(出图|改图)（出图模型 ([^\s，,）)]+)[^）)]*[）)][：:]\s*$/;
 
-/** 发出去的第一行：点名出图模型，并写明经 MESA_IMAGE_TOOL 调用（技能没装上时 Agent 也知道该调哪个工具） */
-export function imageGenDirective(model: string, edit: boolean): string {
-  return `${HEAD}${edit ? "改图" : "出图"}（出图模型 ${model.trim()}，用 $MESA_IMAGE_TOOL 出图工具）：`;
+/**
+ * 发出去的第一行：点名出图模型，并写明经 MESA_IMAGE_TOOL 调用（技能没装上时 Agent 也知道该调哪个工具）。
+ * 几个模型对比（2026-11-24）：「出图模型 A、B、C 各出一版对比」，技能按它每个模型各调一次
+ */
+export function imageGenDirective(models: string | readonly string[], edit: boolean): string {
+  const list = (typeof models === "string" ? [models] : [...models]).map((m) => m.trim()).filter(Boolean);
+  const named = list.length > 1 ? `${list.join("、")} 各出一版对比` : (list[0] ?? "");
+  return `${HEAD}${edit ? "改图" : "出图"}（出图模型 ${named}，用 $MESA_IMAGE_TOOL 出图工具）：`;
 }
 
 /** 输入框里写的话前面加上固定写法那一行 */
-export function withImageGenDirective(text: string, model: string, edit: boolean): string {
-  return `${imageGenDirective(model, edit)}\n${text}`;
+export function withImageGenDirective(text: string, models: string | readonly string[], edit: boolean): string {
+  return `${imageGenDirective(models, edit)}\n${text}`;
 }
 
-/** 一条消息是不是出图模式发的：是就拆出点名的模型与人说的话 */
-export function splitImageGenDirective(text: string): { model: string; edit: boolean; said: string } | null {
+/** 一条消息是不是出图模式发的：是就拆出点名的模型（对比时几个）与人说的话 */
+export function splitImageGenDirective(
+  text: string,
+): { model: string; models: string[]; compare: boolean; edit: boolean; said: string } | null {
   if (!text.trimStart().startsWith(HEAD)) return null;
   const body = text.trimStart();
   const nl = body.indexOf("\n");
   const first = nl < 0 ? body : body.slice(0, nl);
   const m = DIRECTIVE.exec(first.trim());
   if (!m) return null;
-  return { edit: m[1] === "改图", model: m[2], said: nl < 0 ? "" : body.slice(nl + 1).trim() };
+  const models = m[2].split("、").filter(Boolean);
+  if (models.length === 0) return null;
+  return {
+    edit: m[1] === "改图",
+    model: models[0],
+    models,
+    compare: models.length > 1,
+    said: nl < 0 ? "" : body.slice(nl + 1).trim(),
+  };
 }
 
 /** 去掉固定写法那一行，只留人说的（取回历史、列表标题用） */
@@ -76,6 +93,17 @@ export interface ImageGenCall {
 /** 发出那一刻之后有没有调过出图工具（开始就算，图要几分钟才回来；留 2 秒给两边时钟与落盘的先后） */
 export function calledSince(calls: readonly ImageGenCall[], sentAt: number): boolean {
   return calls.some((c) => c.at >= sentAt - 2000);
+}
+
+/** 这张图是哪一次调用出的（对比后点其中一张接着改：胶囊回到出这张的那个模型）；记录里没有为 null */
+export function producerOf(calls: readonly ImageGenCall[], path: string, isWindows = false): ImageGenCall | null {
+  const key = pathKey(path, isWindows);
+  let hit: ImageGenCall | null = null;
+  for (const c of calls) {
+    if (c.phase !== "done" || !c.paths.some((p) => pathKey(p, isWindows) === key)) continue;
+    if (!hit || c.at >= hit.at) hit = c;
+  }
+  return hit;
 }
 
 /** 出好的图 → 用的哪个模型（键 = pathKey；同一路径后出的覆盖先出的） */

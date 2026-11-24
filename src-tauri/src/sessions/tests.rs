@@ -3147,6 +3147,11 @@ fn mesa_launch_pack_is_not_a_title() {
         strip_image_gen_directive("使用 image-gen 技能改图（出图模型 doubao-seedream-4-0，用 $MESA_IMAGE_TOOL 出图工具）：\n换成蓝色\n原图：/p/a.png"),
         "换成蓝色\n原图：/p/a.png"
     );
+    // 几个模型对比的写法同样剥掉
+    assert_eq!(
+        strip_mesa_launch_pack("使用 image-gen 技能出图（出图模型 gpt-image-2.5、gemini-3-pro-image 各出一版对比，用 $MESA_IMAGE_TOOL 出图工具）：\n画猫"),
+        "画猫"
+    );
     assert_eq!(strip_image_gen_directive("使用 image-gen 技能：画猫"), "使用 image-gen 技能：画猫");
     assert_eq!(strip_image_gen_directive("使用 image-gen 技能出图（出图模型 x 没收尾\n画猫"), "使用 image-gen 技能出图（出图模型 x 没收尾\n画猫");
 }

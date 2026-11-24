@@ -3,6 +3,8 @@
 //   只管这个对话（后端 image_gen_chat.rs 按标签记，出图工具每次现读，顺序 --model > 本对话选的 > 连接页默认）；
 //   选回连接页默认那个 = 跟着默认走。胶囊发完留着，× 退回普通对话
 // - 发之前查：没出图工具 / 没模型拦下，这家没开 image-gen 只提醒并给「打开」——只在有问题时框里多一行小字
+// - 几个模型对比（2026-11-24 用户要）：选择框里「对比几个」进多选（最多 4），胶囊写「N 个模型对比」，那一行点名全部、技能每个各出一版；
+//   点其中一张结果的「改图」，胶囊回到出这张的那个模型（producerOf 查调用记录），对比只在前端、不进 image_gen_chat 记录
 // - 发出去由 Mesa 在描述前写一行固定写法（技能认它就必须调出图工具）；这一轮结束时出图工具一次没被调用，框上方说一声
 // - 出图工具每次调用记一条，聊天里的图下面写是哪个模型出的
 import { invoke } from "@tauri-apps/api/core";
@@ -13,11 +15,13 @@ import ImageModelMark from "./ImageModelMark";
 import type { ComposerImageGen, ComposerNotice } from "./ChatComposer";
 import {
   IMAGE_GEN_SKILL,
+  MAX_COMPARE,
   calledSince,
   captionsByPath,
   imageGenBlocks,
   imageGenDirective,
   imageGenIssue,
+  producerOf,
   type ImageGenCall,
   type ImageGenIssue,
 } from "../chat-image-gen";
@@ -82,6 +86,9 @@ export function useChatImageGen({
   const [calls, setCalls] = useState<ImageGenCall[]>([]);
   const [missed, setMissed] = useState<{ sentAt: number; said: string } | null>(null);
   const [pickOpen, setPickOpen] = useState(false);
+  // 对比：选中的几个（null = 只用一个）；pickMulti = 选择框正处在多选
+  const [compare, setCompare] = useState<ImageModelItem[] | null>(null);
+  const [pickMulti, setPickMulti] = useState(false);
   const pendingRef = useRef<{ sentAt: number; said: string } | null>(null);
 
   // 这个对话选过的出图模型：标签开着就按标签找；标签是从侧栏重开的，按会话找回来（后端顺手记到新标签上）
@@ -159,6 +166,40 @@ export function useChatImageGen({
     [defaultGateway, defaultModel, sessionId, tabId],
   );
 
+  const singleKey = choice
+    ? itemKey(choice)
+    : defaultModel
+      ? itemKey({ gatewayId: defaultGateway, model: defaultModel })
+      : null;
+  const comparing = compare !== null && compare.length > 1;
+
+  /** 「对比几个」：从现在这个模型起步进多选 */
+  function startCompare() {
+    const current = singleKey ? items.find((i) => itemKey(i) === singleKey) : undefined;
+    setCompare(current ? [current] : []);
+    setPickMulti(true);
+  }
+  function toggleCompare(item: ImageModelItem) {
+    setCompare((cur) => {
+      const list = cur ?? [];
+      const k = itemKey(item);
+      if (list.some((i) => itemKey(i) === k)) return list.filter((i) => itemKey(i) !== k);
+      return list.length >= MAX_COMPARE ? list : [...list, item];
+    });
+  }
+  /** 多选收起：选了两个以上才算对比；只剩一个就当换成它；一个没选回到原来的 */
+  function settleCompare() {
+    if (compare && compare.length === 1) pick(compare[0]);
+    if (!compare || compare.length < 2) setCompare(null);
+    setPickMulti(false);
+  }
+  /** 「只用一个」：留第一个，选择框回到单选 */
+  function singleOnly() {
+    if (compare && compare.length > 0) pick(compare[0]);
+    setCompare(null);
+    setPickMulti(false);
+  }
+
   async function enableSkill() {
     if (!agentId || enabling) return;
     setEnabling(true);
@@ -222,10 +263,22 @@ export function useChatImageGen({
       setOn(next);
       if (!next) setMissed(null);
     },
+    // 点图「改图」：打开出图；对比后挑中其中一张（是对比里某个模型出的），胶囊回到那个模型
+    onEditImage: (path) => {
+      setOn(true);
+      if (!comparing) return;
+      const made = producerOf(calls, path, IS_WINDOWS);
+      if (!made || !compare!.some((i) => i.model === made.model)) return;
+      const item =
+        compare!.find((i) => i.model === made.model && i.gatewayName === made.gatewayName) ??
+        compare!.find((i) => i.model === made.model);
+      if (item) pick(item);
+      setCompare(null);
+    },
     directive: (text, edit) => {
       if (!text.trim()) return { error: edit ? "写一句要怎么改" : "写一句要画什么" };
       if (imageGenBlocks(issue)) return { error: issueText(issue!) };
-      return { line: imageGenDirective(model!, edit) };
+      return { line: imageGenDirective(comparing ? compare!.map((i) => i.model) : model!, edit) };
     },
     onSent: (said) => {
       setMissed(null);
@@ -234,9 +287,14 @@ export function useChatImageGen({
     pill: (
       <ImageGenPill
         model={model}
-        selectedKey={
-          choice ? itemKey(choice) : defaultModel ? itemKey({ gatewayId: defaultGateway, model: defaultModel }) : null
-        }
+        selectedKey={singleKey}
+        compare={comparing ? compare : null}
+        compareKeys={(compare ?? []).map(itemKey)}
+        pickMulti={pickMulti}
+        onStartCompare={startCompare}
+        onToggleCompare={toggleCompare}
+        onSettleCompare={settleCompare}
+        onSingleOnly={singleOnly}
         followsDefault={followsDefault}
         defaultText={defaultText}
         items={items}
@@ -247,6 +305,8 @@ export function useChatImageGen({
         onClose={() => {
           setOn(false);
           setPickOpen(false);
+          setPickMulti(false);
+          setCompare(null);
           setMissed(null);
         }}
       />
@@ -316,6 +376,13 @@ function openProfilesImagePane() {
 function ImageGenPill({
   model,
   selectedKey,
+  compare,
+  compareKeys,
+  pickMulti,
+  onStartCompare,
+  onToggleCompare,
+  onSettleCompare,
+  onSingleOnly,
   followsDefault,
   defaultText,
   items,
@@ -328,6 +395,15 @@ function ImageGenPill({
   model: string | null;
   /** 选择框里打勾的那一项（网关 + 模型） */
   selectedKey: string | null;
+  /** 正在对比的几个（两个以上；不对比为 null） */
+  compare: ImageModelItem[] | null;
+  /** 多选里勾着的（可能还不到两个） */
+  compareKeys: string[];
+  pickMulti: boolean;
+  onStartCompare: () => void;
+  onToggleCompare: (item: ImageModelItem) => void;
+  onSettleCompare: () => void;
+  onSingleOnly: () => void;
   followsDefault: boolean;
   /** 连接页默认「模型（某某网关）」；没设为 null */
   defaultText: string | null;
@@ -343,9 +419,12 @@ function ImageGenPill({
   useEffect(() => {
     if (pickOpen) setRecent(readRecent());
   }, [pickOpen]);
-  const title = model
-    ? `出图：这一句用 ${model} 画（${followsDefault ? "连接页默认" : "这个对话选的"}）。点这里换一个，只管这个对话`
-    : "出图：还没选出图模型，点这里选一个";
+  const title = compare
+    ? `出图对比：${compare.map((i) => i.model).join("、")} 各出一版。点这里改选，或换回只用一个`
+    : model
+      ? `出图：这一句用 ${model} 画（${followsDefault ? "连接页默认" : "这个对话选的"}）。点这里换一个或对比几个，只管这个对话`
+      : "出图：还没选出图模型，点这里选一个";
+  const actionCls = "shrink-0 rounded px-1 text-micro text-l2 hover:bg-hover hover:text-l1";
   return (
     <span
       data-testid="image-gen-pill"
@@ -361,8 +440,21 @@ function ImageGenPill({
         title={title}
         className="inline-flex h-full min-w-0 items-center gap-1 rounded-l-full pl-2 pr-1 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta"
       >
-        <ImageModelMark model={model} className="text-l2" />
-        <span className={`min-w-0 truncate font-mono ${model ? "" : "text-l3"}`}>{model ?? "选出图模型"}</span>
+        {compare ? (
+          <>
+            <span className="flex shrink-0 items-center gap-0.5">
+              {compare.map((i) => (
+                <ImageModelMark key={itemKey(i)} model={i.model} size={12} className="text-l2" />
+              ))}
+            </span>
+            <span className="min-w-0 truncate">{compare.length} 个模型对比</span>
+          </>
+        ) : (
+          <>
+            <ImageModelMark model={model} className="text-l2" />
+            <span className={`min-w-0 truncate font-mono ${model ? "" : "text-l3"}`}>{model ?? "选出图模型"}</span>
+          </>
+        )}
         <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
       </button>
       <button
@@ -377,12 +469,33 @@ function ImageGenPill({
       <ImageModelPicker
         anchorRef={anchorRef}
         open={pickOpen && !loading}
-        onClose={() => onPickOpen(false)}
+        onClose={() => {
+          onPickOpen(false);
+          if (pickMulti) onSettleCompare();
+        }}
         items={items}
         recent={recent}
-        selected={selectedKey ? [selectedKey] : []}
-        note={`只管这个对话 · 连接页默认：${defaultText ?? "还没设"}`}
-        onPick={onPick}
+        multi={pickMulti}
+        maxSelected={pickMulti ? MAX_COMPARE : undefined}
+        selected={pickMulti ? compareKeys : selectedKey ? [selectedKey] : []}
+        note={pickMulti ? undefined : `只管这个对话 · 连接页默认：${defaultText ?? "还没设"}`}
+        headerAction={
+          pickMulti ? (
+            <button type="button" className={actionCls} onClick={onSingleOnly} title="回到只用一个模型（留第一个）">
+              只用一个
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={actionCls}
+              onClick={onStartCompare}
+              title={`勾 2–${MAX_COMPARE} 个模型，这一句每个各出一版，放在一起对比`}
+            >
+              对比几个
+            </button>
+          )
+        }
+        onPick={pickMulti ? onToggleCompare : onPick}
       />
     </span>
   );

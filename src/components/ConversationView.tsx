@@ -601,13 +601,21 @@ export default function ConversationView({
           )}
           {imageGen && (
             <div
-              className="mb-1 flex items-center gap-1 ccode-chat-meta text-l4"
-              title="按出图模式发的：Mesa 在这句前面写明了用哪个出图模型，AI 要调出图工具来画"
+              className="mb-1 flex flex-wrap items-center gap-x-1 ccode-chat-meta text-l4"
+              title={
+                imageGen.compare
+                  ? "按出图模式发的对比：这几个出图模型各出一版，AI 每个都要调出图工具"
+                  : "按出图模式发的：Mesa 在这句前面写明了用哪个出图模型，AI 要调出图工具来画"
+              }
             >
-              <ImageModelMark model={imageGen.model} size={12} />
-              <span>{imageGen.edit ? "改图" : "出图"}</span>
-              <span aria-hidden="true">·</span>
-              <span className="min-w-0 truncate font-mono">{imageGen.model}</span>
+              <span className="shrink-0">{imageGen.edit ? "改图" : "出图"}{imageGen.compare ? "对比" : ""}</span>
+              {imageGen.models.map((m) => (
+                <span key={m} className="flex min-w-0 items-center gap-1">
+                  <span aria-hidden="true">·</span>
+                  <ImageModelMark model={m} size={12} />
+                  <span className="min-w-0 truncate font-mono">{m}</span>
+                </span>
+              ))}
             </div>
           )}
           {userText && <UserText text={userText} cwd={base} forceOpen={forceOpen} />}

@@ -6,6 +6,7 @@ import {
   imageGenBlocks,
   imageGenDirective,
   imageGenIssue,
+  producerOf,
   splitImageGenDirective,
   stripImageGenDirective,
   withImageGenDirective,
@@ -26,11 +27,15 @@ test("拆回模型与人说的话；改图带原图行照样留在人话里", ()
   const sent = withImageGenDirective("一只在实验台上的猫\n原图：/p/figures/cat.png", "doubao-seedream-4-0-250828", true);
   assert.deepEqual(splitImageGenDirective(sent), {
     model: "doubao-seedream-4-0-250828",
+    models: ["doubao-seedream-4-0-250828"],
+    compare: false,
     edit: true,
     said: "一只在实验台上的猫\n原图：/p/figures/cat.png",
   });
   assert.deepEqual(splitImageGenDirective(withImageGenDirective("封面", "vendor/flux-1.1", false)), {
     model: "vendor/flux-1.1",
+    models: ["vendor/flux-1.1"],
+    compare: false,
     edit: false,
     said: "封面",
   });
@@ -99,4 +104,35 @@ test("图 → 模型：只认出成功的，同一路径后出的覆盖；Window
   assert.equal(map.get("/p/figures/b.png"), "gpt-image-2.5");
   const win = captionsByPath([call({ paths: ["C:\\P\\Figures\\A.png"] })], true);
   assert.equal(win.get("c:/p/figures/a.png"), "gpt-image-2.5");
+});
+
+test("几个模型对比：一行点名全部，写明各出一版；拆回来是模型列表", () => {
+  const line = imageGenDirective(["gpt-image-2.5", " gemini-3-pro-image ", "doubao-seedream-4-0"], true);
+  assert.equal(
+    line,
+    "使用 image-gen 技能改图（出图模型 gpt-image-2.5、gemini-3-pro-image、doubao-seedream-4-0 各出一版对比，用 $MESA_IMAGE_TOOL 出图工具）：",
+  );
+  const got = splitImageGenDirective(`${line}\n帽子换成蓝色\n原图：/p/a.png`);
+  assert.deepEqual(got, {
+    model: "gpt-image-2.5",
+    models: ["gpt-image-2.5", "gemini-3-pro-image", "doubao-seedream-4-0"],
+    compare: true,
+    edit: true,
+    said: "帽子换成蓝色\n原图：/p/a.png",
+  });
+  assert.equal(userSaid(`${line}\n帽子换成蓝色`), "帽子换成蓝色");
+  // 只给一个就是平常写法
+  assert.equal(imageGenDirective(["gpt-image-2.5"], false), imageGenDirective("gpt-image-2.5", false));
+});
+
+test("这张图是哪一次调用出的：取最后一次出成这张的，没出成或没记录为 null", () => {
+  const calls = [
+    call({ id: "a", at: 1, model: "gpt-image-2.5", gatewayName: "Codex", paths: ["/p/figures/cat-gpt.png"] }),
+    call({ id: "b", at: 2, model: "gemini-3-pro-image", gatewayName: "Antigravity", paths: ["/p/figures/cat-gemini.png"] }),
+    call({ id: "c", at: 3, phase: "failed", model: "grok-imagine-image", paths: ["/p/figures/cat-gemini.png"] }),
+  ];
+  assert.equal(producerOf(calls, "/p/figures/cat-gemini.png")?.model, "gemini-3-pro-image");
+  assert.equal(producerOf(calls, "/p/figures/cat-gemini.png")?.gatewayName, "Antigravity");
+  assert.equal(producerOf(calls, "/p/figures/other.png"), null);
+  assert.equal(producerOf([call({ paths: ["C:\\P\\A.png"] })], "c:/p/a.png", true)?.model, "gpt-image-2.5");
 });

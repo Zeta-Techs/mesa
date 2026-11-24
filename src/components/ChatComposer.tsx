@@ -68,6 +68,8 @@ export interface ComposerImageGen {
   /** 这一句会用的出图模型（对话里选的，否则连接页默认；没有为 null）：「+」菜单「画图」按它画厂商标识 */
   model: string | null;
   setOn: (on: boolean) => void;
+  /** 点对话里一张普通图「改图」进来：打开出图；对比后挑中其中一张时胶囊回到出它的那个模型 */
+  onEditImage: (path: string) => void;
   /** 「+」旁边的小胶囊（模型、换模型、退出）；on 时画进输入框那一排（2026-11-24 用户选：不在框上方另起一条） */
   pill: ReactNode;
   /** 有问题时框里一行小字（缺模型、没开技能等）；没问题为 null */
@@ -875,7 +877,7 @@ export default function ChatComposer({
         if (!attachmentsRef.current.some((a) => a.path === edit && a.url)) loadThumb(edit);
         setViewing(edit);
         // 接着改普通的图 = 用出图模型改：出图胶囊一并打开（示意图改图纸、核对图只问问题，不开）
-        if (imageGen && !schematicSourceOf(edit) && !isInspectionImage(edit)) imageGen.setOn(true);
+        if (imageGen && !schematicSourceOf(edit) && !isInspectionImage(edit)) imageGen.onEditImage(edit);
       }
     }
     onSeedConsumed?.();

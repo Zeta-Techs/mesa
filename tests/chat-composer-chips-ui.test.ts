@@ -2077,6 +2077,7 @@ test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述�
       on,
       model: "gpt-image-2.5",
       setOn: (v: boolean) => toggles.push(v),
+      onEditImage: () => toggles.push(true),
       pill: ui.h("span", { "data-testid": "image-pill" }, "gpt-image-2.5"),
       issue: blocked ? ui.h("p", { "data-testid": "image-issue" }, blocked) : null,
       directive: (_text: string, edit: boolean) =>
