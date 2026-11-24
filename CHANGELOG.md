@@ -4,6 +4,7 @@
 
 ## 未发布
 
+- 改进：**用量页「订阅余量 / 网关余额」首屏秒出与 GPU 连续滑切重构**——① **消除首屏延迟**：打开用量页立即从进程内状态与本地快照渲染上次余量（冷启动骨架亦覆盖 Claude / Codex / Grok / Kimi / Antigravity 官方账号），后端 `official_quota` 取消启动期串行读取 Keychain 与磁盘凭据、改为各账号全并发读取并缓存前置命中，同时通过 `plan-quota-partial` 事件按完成顺序渐进推送（快的不等慢的），切换时间范围（今日 / 7 天 / 30 天 / 全部）亦不再重复重查余量；② **丝滑左右滑切**：将 `PlanQuotaCard` 与 `WalletBalanceCard` 拆为独立 `React.memo` 组件隔离切换状态（滑切不再触发整页图表与热力图重绘），收起态改为同构 `translate3d` GPU 连续轮播轨道（取消 `opacity: 0` 闪灭与跳帧），挂载原生非被动 `wheel` 监听拦截横向轻扫防止与 macOS WKWebView 原生回弹打架，并在多账号收起态补齐轻分页指示点与左右轻切按钮。
 - 改进：**设置页风格全面统一并精简小字说明**——全部十二个分区统一采用「小节标题 + `.ccode-well` 圆角分组卡 + 左标题状态 / 右控件」布局，补齐 **研究档案**、**诊断 → 后台任务**、**数据与存储**（本机占用、Mesa 内部对话、卸载）、**外观 → 主题**、**关于 → 身份卡** 及 **终端 / 更新** 分组断层（`groupRows` 展开 Fragment 并合并 `TerminalShellRow`）；同时删去各分区标题下方与设置行里复述控件含义的冗余小字，仅保留实时状态、快捷键提示与悬停 `ⓘ` 详情。
 - 修复：使用 Antigravity CLI 发起新对话时偶发闪退/消失并冒出「已切到新的会话」的问题——① `agy_load_meta_map` 不再把 `cache/conversation_metadata.json` 外层的缓存刷新时间 `last_modified_time` 混作会话更新时间（仅取真实的 `summary.UpdatedAt`），避免旧对话被刷成最新、既顶到侧栏最前又被新对话误认领，随后被真正的新会话挤掉；② `hooks.rs` 与 `chat_channel.rs` 补齐 Antigravity CLI 真实 hook 字段（`conversationId` 与 `toolCall.{id, name, args}`），开启精确注意力时 `SessionStart` 即可直接锁定新会话与日志文件；③ `register_session_claim` 改从持久保留的最近扫描快照生成既有会话排除集，不再因 10 秒扫描缓存过期或缓存失效而放空。
 

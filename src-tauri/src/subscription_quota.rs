@@ -1074,18 +1074,63 @@ pub(crate) fn cache_invalidate(gateway_id: &str) {
     }
 }
 
+/// 渐进式推送槽：任一供应商或官方账号查完即按固定槽序合入并推送 `plan-quota-partial`，
+/// 避免最慢一家（如 CLI 子进程或超时代理）拖住整张订阅余量卡的首屏展示。
+pub(crate) struct QuotaPartialSink {
+    app: Option<tauri::AppHandle>,
+    slots: std::sync::Mutex<std::collections::BTreeMap<usize, PlanQuotaDto>>,
+}
+
+impl QuotaPartialSink {
+    pub(crate) fn new(app: Option<tauri::AppHandle>) -> Self {
+        Self {
+            app,
+            slots: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+        }
+    }
+
+    pub(crate) fn insert_silent(&self, order: usize, dto: PlanQuotaDto) {
+        if let Ok(mut g) = self.slots.lock() {
+            g.insert(order, dto);
+        }
+    }
+
+    pub(crate) fn flush(&self) {
+        let Some(ref app) = self.app else { return };
+        let rows: Vec<PlanQuotaDto> = match self.slots.lock() {
+            Ok(g) if !g.is_empty() => g.values().cloned().collect(),
+            _ => return,
+        };
+        use tauri::Emitter;
+        let _ = app.emit("plan-quota-partial", rows);
+    }
+
+    pub(crate) fn push(&self, order: usize, dto: PlanQuotaDto) {
+        self.insert_silent(order, dto);
+        self.flush();
+    }
+}
+
 /// 用量页「订阅余量」总览：扫全部网关，套餐网关命中才出卡；命中行 2 分钟缓存（对齐前端轮询）。
 ///
-/// 多网关并发（与 gateway_balance_overview 同口径）：先 spawn 全部再按序收，
-/// 等待 ≈ 最慢的一家，不是各家相加（配了智谱 + Kimi + MiniMax 时差别明显）。
+/// 多网关 + 五家官方账号全并发；每家完成后即经 `plan-quota-partial` 渐进推送，
+/// 最慢的一家不再阻塞其余账号上屏。
 #[tauri::command]
-pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
+pub async fn plan_quota_overview(app: tauri::AppHandle, force: Option<bool>) -> Vec<PlanQuotaDto> {
     let force = force.unwrap_or(false);
-    // 官方账号（Claude / Codex）与网关行并发查，排在网关行后面
-    let official = tauri::async_runtime::spawn(crate::official_quota::official_rows(force));
     let gateways = crate::gateway_store::load_gateways().unwrap_or_default();
+    let official_base = gateways.len() + 1;
+    let sink = std::sync::Arc::new(QuotaPartialSink::new(Some(app)));
+    // 官方账号（Claude / Codex / Grok / Kimi / Antigravity）与网关行并发查，排在网关行后面
+    let official_sink = sink.clone();
+    let official = tauri::async_runtime::spawn(crate::official_quota::official_rows_streaming(
+        force,
+        official_base,
+        Some(official_sink),
+    ));
     let mut rows: Vec<Option<PlanQuotaDto>> = (0..gateways.len()).map(|_| None).collect();
     let mut jobs: Vec<(usize, Gateway, PlanCtx)> = Vec::new();
+    let mut any_immediate = false;
     let mut cursor = 0usize;
     for gateway in gateways {
         let idx = cursor;
@@ -1096,7 +1141,7 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
             Ok(None) => continue,
             Err(e) => {
                 // keys.json 读失败：出错行，不静默隐藏（用户加了套餐网关就该看到为什么没数据）
-                rows[idx] = Some(PlanQuotaDto {
+                let dto = PlanQuotaDto {
                     gateway_id: gateway.id.clone(),
                     gateway_name: gateway.name.clone(),
                     provider: detected.as_ref().map(|p| p.id().to_string()).unwrap_or_default(),
@@ -1112,12 +1157,15 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                     binding_id: None,
                     account_hint: None,
                     is_active_slot: None,
-                });
+                };
+                sink.insert_silent(idx, dto.clone());
+                rows[idx] = Some(dto);
+                any_immediate = true;
                 continue;
             }
         };
         if ctx.key.is_empty() {
-            rows[idx] = Some(PlanQuotaDto {
+            let dto = PlanQuotaDto {
                 gateway_id: gateway.id.clone(),
                 gateway_name: gateway.name.clone(),
                 provider: ctx.provider.id().into(),
@@ -1133,23 +1181,33 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
                 binding_id: None,
                 account_hint: None,
                 is_active_slot: None,
-            });
+            };
+            sink.insert_silent(idx, dto.clone());
+            rows[idx] = Some(dto);
+            any_immediate = true;
             continue;
         }
         if !force {
             if let Some(hit) = cache_get(&gateway.id, now_ms()) {
+                sink.insert_silent(idx, hit.clone());
                 rows[idx] = Some(hit);
+                any_immediate = true;
                 continue;
             }
         }
         jobs.push((idx, gateway, ctx));
     }
+    if any_immediate {
+        sink.flush();
+    }
 
     let handles: Vec<_> = jobs
         .into_iter()
         .map(|(idx, gateway, ctx)| {
+            let job_sink = sink.clone();
             tauri::async_runtime::spawn(async move {
-                let dto = refresh_gateway(&gateway, &ctx).await;
+                let dto = settle_fresh(refresh_gateway(&gateway, &ctx).await);
+                job_sink.push(idx, dto.clone());
                 (idx, dto)
             })
         })
@@ -1159,7 +1217,7 @@ pub async fn plan_quota_overview(force: Option<bool>) -> Vec<PlanQuotaDto> {
         let Ok((idx, dto)) = handle.await else {
             continue;
         };
-        rows[idx] = Some(settle_fresh(dto));
+        rows[idx] = Some(dto);
     }
     let mut out: Vec<PlanQuotaDto> = rows.into_iter().flatten().collect();
     if let Ok(official) = official.await {

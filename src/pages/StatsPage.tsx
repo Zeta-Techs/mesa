@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { AGENTS } from "../types";
 import { useAppStore } from "../store";
 import type {
+  Gateway,
   GatewayBalanceDto,
   GatewayUsageRow,
   PlanQuotaDto,
@@ -67,7 +69,7 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { ArrowDown, ArrowUp, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { toast } from "../toast";
 import {
   barWidthPct,
@@ -80,7 +82,7 @@ import {
 import AgentIcon from "../components/AgentIcon";
 import VendorIcon from "../components/VendorIcon";
 import { vendorForGateway, vendorForPlanProvider, type VendorId } from "../vendor-icon";
-import { useQuotaSwipe } from "../quota-swipe";
+import { mergePartialPlanRows, useQuotaSwipe } from "../quota-swipe";
 import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
 import { showFloatingCoach } from "../components/CoachTip";
 import {
@@ -591,17 +593,21 @@ function QuotaSummary({
   items,
   empty,
   onOpen,
+  inactive,
 }: {
   items: { label: string; value: string; tone: QuotaTone; ring: { pct: number; tone: QuotaTone; label: string } | null }[];
   empty: string;
   onOpen: () => void;
+  inactive?: boolean;
 }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className="mt-3 flex w-full flex-wrap items-center gap-x-8 gap-y-3 rounded-md text-left"
-      title="展开看详情"
+      onClick={inactive ? undefined : onOpen}
+      tabIndex={inactive ? -1 : undefined}
+      aria-hidden={inactive || undefined}
+      className={`mt-3 flex w-full flex-wrap items-center gap-x-8 gap-y-3 rounded-md text-left ${inactive ? "pointer-events-none" : ""}`}
+      title={inactive ? undefined : "展开看详情"}
     >
       {items.length === 0 ? (
         <span className="text-sm text-l3">{empty}</span>
@@ -625,6 +631,1087 @@ function QuotaSummary({
     </button>
   );
 }
+
+/** 收起态多账号轮播的轻分页指示条（圆点 + 左右轻切钮），不抢视觉也不放标签 */
+function QuotaPager({
+  count,
+  activeIdx,
+  labels,
+  onPrev,
+  onNext,
+  onSelect,
+}: {
+  count: number;
+  activeIdx: number;
+  labels: string[];
+  onPrev: () => void;
+  onNext: () => void;
+  onSelect: (idx: number) => void;
+}) {
+  if (count <= 1) return null;
+  return (
+    <div className="mt-2.5 flex items-center justify-between gap-2">
+      <div className="flex items-center gap-1" role="tablist" aria-label="切换账号">
+        {labels.map((label, i) => {
+          const selected = i === activeIdx;
+          return (
+            <button
+              key={`${i}-${label}`}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              aria-label={label}
+              title={label}
+              onClick={() => onSelect(i)}
+              className="flex h-4 items-center px-0.5"
+            >
+              <span
+                className={`block h-1 rounded-full transition-all duration-200 ${
+                  selected ? "w-3.5 bg-l2" : "w-1 bg-l4/50 hover:bg-l3"
+                }`}
+              />
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-0.5 text-micro tabular-nums text-l4">
+        <button
+          type="button"
+          disabled={activeIdx <= 0}
+          onClick={onPrev}
+          aria-label="上一项"
+          title="上一项"
+          className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+        >
+          <ChevronLeft aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+        <span className="px-0.5">
+          {activeIdx + 1} / {count}
+        </span>
+        <button
+          type="button"
+          disabled={activeIdx >= count - 1}
+          onClick={onNext}
+          aria-label="下一项"
+          title="下一项"
+          className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+        >
+          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
+const WALLET_CACHE_KEY = "ccode.stats.walletRowsCache";
+const OFFICIAL_QUOTA_AGENTS = new Set(["claude-code", "codex", "grok", "kimi", "agy"]);
+
+/** 首屏秒出：优先读进程内 store，其次回落上次落盘快照（仅含余量数值，不含任何凭据） */
+function loadCachedPlanRows(): PlanQuotaDto[] {
+  const mem = useAppStore.getState().planQuotaRows;
+  if (mem.length > 0) return mem;
+  try {
+    const raw = localStorage.getItem(PLAN_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is PlanQuotaDto => Boolean(r && typeof r === "object" && typeof r.gatewayId === "string"))
+      .map((r) => ({ ...r, fromCache: true }));
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedPlanRows(rows: PlanQuotaDto[]) {
+  try {
+    if (rows.length === 0) localStorage.removeItem(PLAN_CACHE_KEY);
+    else localStorage.setItem(PLAN_CACHE_KEY, JSON.stringify(rows));
+  } catch {
+    // 本地配额满时忽略，不影响主流程
+  }
+}
+
+function loadCachedWalletRows(): GatewayBalanceDto[] {
+  try {
+    const raw = localStorage.getItem(WALLET_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is GatewayBalanceDto => Boolean(r && typeof r === "object" && typeof r.gatewayId === "string"))
+      .map((r) => ({ ...r, fromCache: true }));
+  } catch {
+    return [];
+  }
+}
+
+function saveCachedWalletRows(rows: GatewayBalanceDto[]) {
+  try {
+    if (rows.length === 0) localStorage.removeItem(WALLET_CACHE_KEY);
+    else localStorage.setItem(WALLET_CACHE_KEY, JSON.stringify(rows));
+  } catch {
+    // 忽略存储异常
+  }
+}
+
+interface PlanQuotaCardProps {
+  visible: boolean;
+  rows: PlanQuotaDto[];
+  loading: boolean;
+  usingKey: string | null;
+  error: string | null;
+  onRefresh: () => void;
+  onUseResetCard: (row: PlanQuotaDto, type: "five_hour" | "weekly" | "general") => void;
+  onOpenConsole: (url: string) => void;
+}
+
+/** 独立 memo 化的订阅余量卡：将 active / open / swipe 状态关在卡片内部，左右滑切不再牵连整页图表与热力图重绘 */
+const PlanQuotaCard = memo(function PlanQuotaCard({
+  visible,
+  rows,
+  loading,
+  usingKey,
+  error,
+  onRefresh,
+  onUseResetCard,
+  onOpenConsole,
+}: PlanQuotaCardProps) {
+  const [planActive, setPlanActive] = useState<string | null>(null);
+  const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
+  const [planPrefs, setPlanPrefs] = useState<QuotaDisplayPrefs>(() =>
+    loadQuotaDisplayPrefs("ccode.stats.planPrefs"),
+  );
+  const [planFilterOpen, setPlanFilterOpen] = useState(false);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const closePlanTip = useRef<(() => void) | null>(null);
+
+  const planRowsVisible = useMemo(
+    () => applyQuotaDisplayPrefs(rows, (r) => r.gatewayId, planPrefs),
+    [rows, planPrefs],
+  );
+  const planIds = useMemo(() => planRowsVisible.map((r) => r.gatewayId), [planRowsVisible]);
+
+  const updatePlanPrefs = useCallback((next: QuotaDisplayPrefs) => {
+    setPlanPrefs(next);
+    saveQuotaDisplayPrefs("ccode.stats.planPrefs", next);
+  }, []);
+
+  const togglePlanOpen = useCallback(() => {
+    setPlanOpen((v) => {
+      localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+
+  const onSwiped = useCallback(() => {
+    markCoachTipSeen("planSwipe");
+    closePlanTip.current?.();
+  }, []);
+
+  const planSwipe = useQuotaSwipe({
+    ids: planIds,
+    active: planActive,
+    disabled: planOpen,
+    onChange: setPlanActive,
+    onSwiped,
+  });
+
+  const onPlanSummaryOpen = useCallback(() => {
+    if (planSwipe.swallowClick()) return;
+    togglePlanOpen();
+  }, [planSwipe, togglePlanOpen]);
+
+  const planTipKey = planIds.join("|");
+  useEffect(() => {
+    if (!visible || planOpen || planRowsVisible.length < 2 || !canShowCoachTip("planSwipe")) return;
+    const timer = setTimeout(() => {
+      const el = summaryRef.current;
+      if (!el || !canShowCoachTip("planSwipe")) return;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.bottom < 0 || r.top > window.innerHeight) return;
+      const names = [...new Set(planRowsVisible.map((row) => planProviderLabel(row.provider)))].join("、");
+      markCoachTipShown("planSwipe");
+      closePlanTip.current = showFloatingCoach({
+        anchor: { left: r.left, top: r.top, right: r.left + Math.min(r.width, 160), bottom: r.bottom },
+        place: "below",
+        title: "可以左右滑动",
+        body: `在这张卡上两指左右轻扫（或按住拖），在 ${names} 之间切换；展开后上面也有切换标签。`,
+        actions: [{ label: "知道了", onClick: () => {} }],
+        scrollRoot: scrollParent(el),
+      });
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, planOpen, planTipKey]);
+  useEffect(() => () => closePlanTip.current?.(), []);
+
+  const providerCounts = useMemo(
+    () =>
+      planRowsVisible.reduce<Record<string, number>>(
+        (acc, r) => ({ ...acc, [r.provider]: (acc[r.provider] ?? 0) + 1 }),
+        {},
+      ),
+    [planRowsVisible],
+  );
+  const allProviderCounts = useMemo(
+    () =>
+      rows.reduce<Record<string, number>>(
+        (acc, r) => ({ ...acc, [r.provider]: (acc[r.provider] ?? 0) + 1 }),
+        {},
+      ),
+    [rows],
+  );
+  const orderedAllPlanRows = useMemo(
+    () =>
+      applyQuotaDisplayPrefs(rows, (r) => r.gatewayId, {
+        hiddenIds: [],
+        orderIds: planPrefs.orderIds,
+      }),
+    [rows, planPrefs.orderIds],
+  );
+
+  if (rows.length === 0) {
+    return (
+      <section
+        ref={planSwipe.containerRef}
+        className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+        aria-label="订阅余量"
+      >
+        <div className="flex min-h-8 items-center gap-2">
+          <h2 className="text-base font-medium text-l1">订阅余量</h2>
+          <button
+            type="button"
+            className="ml-auto flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+            disabled={loading}
+            title="强制重查"
+            onClick={onRefresh}
+          >
+            <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+        {error && (
+          <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
+        )}
+        <div className="mt-3 space-y-2">
+          <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-l4/50" />
+        </div>
+      </section>
+    );
+  }
+
+  const row = planRowsVisible[planSwipe.activeIdx] ?? planRowsVisible[0];
+  const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
+  const now = Date.now();
+  const windows = planWindowsByTightness(row.windows);
+  const sameProviderCount = providerCounts[row.provider] ?? 1;
+  const hasProviderIcon =
+    row.provider === "agy" || Boolean(vendorForPlanProvider(row.provider));
+  const capsuleLabel = planCapsuleLabel(row, sameProviderCount, hasProviderIcon);
+  const capsuleTitle = [
+    planTabLabel(row, sameProviderCount),
+    row.planLevel,
+    row.accountHint,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <section
+      ref={planSwipe.containerRef}
+      className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+      aria-label="订阅余量"
+    >
+      {/* 卡头恒一行，把服务商与等级收进紧凑身份胶囊，时间戳窄屏收进重查悬浮提示 */}
+      <div className="flex min-h-8 items-center gap-2">
+        <QuotaFold open={planOpen} onToggle={togglePlanOpen} label="订阅余量" />
+        <h2 className="shrink-0 text-base font-medium text-l1">订阅余量</h2>
+        <span
+          className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-hairline bg-inset px-2 py-0.5 text-xs text-l2"
+          title={capsuleTitle || undefined}
+        >
+          {row.provider === "agy" ? (
+            <AgentIcon agent="agy" label="Antigravity" size={14} />
+          ) : (
+            vendorForPlanProvider(row.provider) && (
+              <VendorIcon
+                vendor={vendorForPlanProvider(row.provider)}
+                name={planProviderLabel(row.provider)}
+                className="h-3.5 w-3.5 shrink-0"
+              />
+            )
+          )}
+          <span className="truncate">{capsuleLabel}</span>
+          {planLevelLabel(row.planLevel) && (
+            <span className="shrink-0 font-medium text-l3">· {planLevelLabel(row.planLevel)}</span>
+          )}
+        </span>
+        {dataAt && <span className="hidden shrink-0 whitespace-nowrap text-micro text-l4 sm:inline">{dataAt}</span>}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {planOpen && rows.length > 1 && (
+            <button
+              type="button"
+              className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${planFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
+              title="筛选和调整账号显示顺序"
+              onClick={() => setPlanFilterOpen((v) => !v)}
+            >
+              <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+            disabled={loading}
+            title={dataAt ? `强制重查（${dataAt}）` : "强制重查"}
+            onClick={onRefresh}
+          >
+            <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          {Boolean(row.consoleUrl) && (
+            <button
+              type="button"
+              className={ghostActionClass}
+              onClick={() => onOpenConsole(row.consoleUrl)}
+              title="在系统浏览器打开这家平台的控制台"
+            >
+              去控制台 ↗
+            </button>
+          )}
+        </div>
+      </div>
+      {error && (
+        <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
+      )}
+      {/* 收起时只看各窗已用（5 小时 / 本周…），多家时 GPU 连续轨道左右滑动切换、不放标签；
+          展开才有大数字、进度条、重置卡、多家切换标签 */}
+      {!planOpen ? (
+        <>
+          <div
+            ref={summaryRef}
+            className="overflow-hidden select-none touch-pan-y"
+            {...planSwipe.areaHandlers}
+            tabIndex={planRowsVisible.length > 1 ? 0 : undefined}
+            title={planRowsVisible.length > 1 ? `左右滑动切换（${planSwipe.activeIdx + 1} / ${planRowsVisible.length}）` : undefined}
+          >
+            <div ref={planSwipe.trackRef} className="flex items-start will-change-transform">
+              {planRowsVisible.map((item, idx) => (
+                <div key={item.gatewayId} className="w-full shrink-0">
+                  <QuotaSummary
+                    inactive={idx !== planSwipe.activeIdx}
+                    items={item.windows.map((w) => {
+                      const tone: QuotaTone = w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null;
+                      const label = `${planWindowLabel(w.window)}已用`;
+                      return {
+                        label,
+                        value: `${Math.round(w.usedPercent)}%`,
+                        tone,
+                        ring: { pct: w.usedPercent, tone, label: `${label} ${Math.round(w.usedPercent)}%` },
+                      };
+                    })}
+                    empty={item.error && !item.ok ? item.error : "暂无数据"}
+                    onOpen={onPlanSummaryOpen}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          <QuotaPager
+            count={planRowsVisible.length}
+            activeIdx={planSwipe.activeIdx}
+            labels={planRowsVisible.map((r) => planTabLabel(r, providerCounts[r.provider] ?? 1))}
+            onPrev={() => planSwipe.go(-1)}
+            onNext={() => planSwipe.go(1)}
+            onSelect={(idx) => planSwipe.goToIndex(idx)}
+          />
+        </>
+      ) : (
+        <>
+          {planFilterOpen && rows.length > 1 && (
+            <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
+              <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
+                <span>勾选要在卡片中轮播的账号并调整顺序（至少保留一项）</span>
+                <button
+                  type="button"
+                  className="text-l3 hover:text-l1"
+                  onClick={() => setPlanFilterOpen(false)}
+                >
+                  完成
+                </button>
+              </div>
+              <ul className="space-y-1">
+                {orderedAllPlanRows.map((item, idx) => {
+                  const checked = !planPrefs.hiddenIds.includes(item.gatewayId);
+                  const allIds = orderedAllPlanRows.map((x) => x.gatewayId);
+                  return (
+                    <li
+                      key={item.gatewayId}
+                      className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          updatePlanPrefs(toggleQuotaHidden(planPrefs, item.gatewayId))
+                        }
+                      />
+                      <span className="min-w-0 flex-1 truncate text-l2">
+                        {planTabLabel(item, allProviderCounts[item.provider] ?? 1)}
+                        {item.accountHint ? (
+                          <span className="ml-1.5 text-micro text-l4">{item.accountHint}</span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+                        title="上移"
+                        onClick={() =>
+                          updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, -1))
+                        }
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === orderedAllPlanRows.length - 1}
+                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+                        title="下移"
+                        onClick={() =>
+                          updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, 1))
+                        }
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {planRowsVisible.length > 1 && (
+            <div className="mt-3">
+              <SegTabs
+                variant="boxed"
+                size="sm"
+                wrap
+                items={planRowsVisible.map((r) => ({
+                  id: r.gatewayId,
+                  label: planTabLabel(r, providerCounts[r.provider] ?? 1),
+                }))}
+                value={row.gatewayId}
+                onChange={setPlanActive}
+              />
+            </div>
+          )}
+          <div key={row.gatewayId} className="mt-3">
+            {(row.accountHint || row.isActiveSlot != null) && (
+              <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-l4">
+                {row.accountHint && <span className="truncate">{row.accountHint}</span>}
+                {row.isActiveSlot === true && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hairline bg-inset px-1.5 py-px text-ok-text">
+                    当前激活
+                  </span>
+                )}
+                {row.isActiveSlot === false && (
+                  <span className="shrink-0 text-l4">未激活槽位（启动或切换时自动切号）</span>
+                )}
+              </div>
+            )}
+            {row.error && !row.ok && (
+              <p className="text-xs text-err-text">{row.error}</p>
+            )}
+            <div className="space-y-3">
+              {windows.map((w, i) => (
+                <PlanWindowBlock
+                  key={w.window}
+                  win={w}
+                  now={now}
+                  primary={i === 0}
+                  lastReset={
+                    w.window === "weekly"
+                      ? row.resetCards.lastWeekResetAt
+                      : w.window === "five_hour"
+                        ? row.resetCards.lastFiveHourResetAt
+                        : null
+                  }
+                />
+              ))}
+            </div>
+            {row.resetCardsSupported && row.resetCards.ok && (
+              row.resetCards.fiveHour + row.resetCards.weekly + row.resetCards.general === 0 ? (
+                <p className="mt-5 text-xs text-l3">重置卡无可用（已用完或套餐不含）</p>
+              ) : (
+                <div
+                  className="mt-5 grid gap-x-6 gap-y-3"
+                  style={{
+                    gridTemplateColumns:
+                      "repeat(auto-fit, minmax(min(16rem, 100%), 1fr))",
+                  }}
+                >
+                  {(row.resetCards.general > 0
+                    ? [
+                        // Codex：一张卡重置当下卡住你的窗口；只在被限额卡住时能用
+                        {
+                          key: "general" as const,
+                          label: "重置卡",
+                          count: row.resetCards.general,
+                          expiresAt: row.resetCards.generalExpiresAt,
+                        },
+                      ]
+                    : [
+                        {
+                          key: "five_hour" as const,
+                          label: "5 小时重置卡",
+                          count: row.resetCards.fiveHour,
+                          expiresAt: row.resetCards.fiveHourExpiresAt,
+                        },
+                        {
+                          key: "weekly" as const,
+                          label: "周重置卡",
+                          count: row.resetCards.weekly,
+                          expiresAt: row.resetCards.weeklyExpiresAt,
+                        },
+                      ]
+                  ).map((c) => {
+                    const soon = resetCardExpiryNote(c.expiresAt, now);
+                    const general = c.key === "general";
+                    const blocked = general && row.resetCards.generalApplicable === 0;
+                    const idle = !general && planWindowUnused(row.windows, c.key);
+                    const highlight = general
+                      ? (row.resetCards.generalApplicable ?? 0) > 0
+                      : planResetCardHighlight(row.windows, c.key);
+                    const cardTitle = [
+                      soon?.title,
+                      idle
+                        ? `${planWindowLabel(c.key)}窗口一点没用（0%），现在用卡不会腾出任何额度`
+                        : null,
+                      blocked ? "额度还没被卡住，Codex 现在不让用重置卡；用满被限额后再点" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <div
+                        key={c.key}
+                        className="flex items-center gap-3"
+                        title={cardTitle || undefined}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs text-l2">{c.label}</span>
+                            <span className="rounded-sm bg-hover px-1 py-px text-micro tabular-nums text-l3">
+                              ×{c.count}
+                            </span>
+                          </div>
+                          {c.count > 0 && (
+                            <span
+                              className={`tabular-nums text-micro ${soon?.urgent ? "text-warn-text" : "text-l4"}`}
+                            >
+                              {soon?.text ?? "无期限数据"}
+                            </span>
+                          )}
+                        </div>
+                        {c.count > 0 && (
+                          <button
+                            type="button"
+                            className={
+                              highlight
+                                ? compactPrimaryActionClass
+                                : `${ghostActionClass} h-7 border border-field px-2 text-l2`
+                            }
+                            disabled={usingKey != null || blocked}
+                            onClick={() => onUseResetCard(row, c.key)}
+                          >
+                            {usingKey === row.gatewayId + c.key
+                              ? "使用中…"
+                              : blocked
+                                ? "卡住后可用"
+                                : "用一张"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )
+            )}
+            {row.resetCardsSupported && !row.resetCards.ok && row.resetCards.error && (
+              <p className="mt-5 text-micro text-l4" title={row.resetCards.error}>
+                重置卡查询失败
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+});
+
+interface WalletBalanceCardProps {
+  rows: GatewayBalanceDto[];
+  gateways: Gateway[];
+  loading: boolean;
+  error: string | null;
+  onRefresh: () => void;
+  onOpenWallet: (origin: string) => void;
+}
+
+/** 独立 memo 化的网关余额卡：滑切与隐私遮盖局部更新，不牵连主统计页 */
+const WalletBalanceCard = memo(function WalletBalanceCard({
+  rows,
+  gateways,
+  loading,
+  error,
+  onRefresh,
+  onOpenWallet,
+}: WalletBalanceCardProps) {
+  const [walletActive, setWalletActive] = useState<string | null>(null);
+  const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
+  const [walletPrefs, setWalletPrefs] = useState<QuotaDisplayPrefs>(() =>
+    loadQuotaDisplayPrefs("ccode.stats.walletPrefs"),
+  );
+  const [walletFilterOpen, setWalletFilterOpen] = useState(false);
+  const [hideQuota, setHideQuota] = useState(
+    () => localStorage.getItem("ccode.stats.hideQuota") === "1",
+  );
+
+  const updateWalletPrefs = useCallback((next: QuotaDisplayPrefs) => {
+    setWalletPrefs(next);
+    saveQuotaDisplayPrefs("ccode.stats.walletPrefs", next);
+  }, []);
+
+  const toggleWalletOpen = useCallback(() => {
+    setWalletOpen((v) => {
+      localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+
+  const toggleHideQuota = useCallback(() => {
+    setHideQuota((v) => {
+      const next = !v;
+      localStorage.setItem("ccode.stats.hideQuota", next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  const walletGroups = useMemo(() => groupWalletAccounts(rows), [rows]);
+  const walletGroupsVisible = useMemo(
+    () => applyQuotaDisplayPrefs(walletGroups, (g) => g.key, walletPrefs),
+    [walletGroups, walletPrefs],
+  );
+  const walletIds = useMemo(() => walletGroupsVisible.map((g) => g.key), [walletGroupsVisible]);
+
+  const walletSwipe = useQuotaSwipe({
+    ids: walletIds,
+    active: walletActive,
+    disabled: walletOpen,
+    onChange: setWalletActive,
+  });
+
+  const onWalletSummaryOpen = useCallback(() => {
+    if (walletSwipe.swallowClick()) return;
+    toggleWalletOpen();
+  }, [walletSwipe, toggleWalletOpen]);
+
+  const orderedAllWallets = useMemo(
+    () =>
+      applyQuotaDisplayPrefs(walletGroups, (g) => g.key, {
+        hiddenIds: [],
+        orderIds: walletPrefs.orderIds,
+      }),
+    [walletGroups, walletPrefs.orderIds],
+  );
+
+  if (walletGroups.length === 0) {
+    return (
+      <section
+        ref={walletSwipe.containerRef}
+        className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+        aria-label="网关余额"
+      >
+        <div className="flex min-h-8 items-center gap-2">
+          <h2 className="text-base font-medium text-l1">网关余额</h2>
+          <div className="ml-auto flex items-center">
+            <button
+              type="button"
+              className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+              title={hideQuota ? "显示额度" : "隐藏额度"}
+              onClick={toggleHideQuota}
+            >
+              {hideQuota ? (
+                <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              disabled={loading}
+              title="强制重查"
+              onClick={onRefresh}
+            >
+              <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
+          </div>
+        </div>
+        {error && (
+          <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
+        )}
+        <div className="mt-3 space-y-2">
+          <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
+          <div className="h-3 w-2/3 animate-pulse rounded bg-l4/50" />
+        </div>
+      </section>
+    );
+  }
+
+  const group = walletGroupsVisible[walletSwipe.activeIdx] ?? walletGroupsVisible[0];
+  const row = group.head;
+  const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
+  const usedPct = walletUsedPercent(row.used, row.total);
+  const hasAmount = row.remaining != null || row.total != null;
+  const amount = splitBalanceAmount(row.remaining ?? row.total ?? NaN, row.currency);
+  const balanceBar = walletBalanceBar(row.used, row.total);
+  const walletAbs =
+    row.used != null && row.total != null
+      ? hideQuota
+        ? `${formatBalanceAmountMasked(row.currency)} / ${formatBalanceAmountMasked(row.currency)}`
+        : `${formatBalanceAmount(row.used, row.currency)} / ${formatBalanceAmount(row.total, row.currency)}`
+      : null;
+  const multi = group.members.length > 1;
+  const expiringSoon = group.members.filter((m) =>
+    walletExpirySoon(m.expiresAt, Date.now()),
+  );
+  const hintOf = (id: string) =>
+    gateways.find((g) => g.id === id)?.keyHint ?? null;
+
+  return (
+    <section
+      ref={walletSwipe.containerRef}
+      className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+      aria-label="网关余额"
+    >
+      {/* 卡头恒一行：站点名可截断，其余不缩 */}
+      <div className="flex min-h-8 items-center gap-2">
+        <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
+        <h2 className="shrink-0 text-base font-medium text-l1">网关余额</h2>
+        {(walletGroupsVisible.length === 1 || !walletOpen) && (
+          <span
+            className="min-w-0 truncate text-xs text-l2"
+            title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
+          >
+            {walletAccountTitle(group)}
+          </span>
+        )}
+        {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
+        <div className="ml-auto flex shrink-0 items-center">
+          {walletOpen && walletGroups.length > 1 && (
+            <button
+              type="button"
+              className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${walletFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
+              title="筛选和调整账户显示顺序"
+              onClick={() => setWalletFilterOpen((v) => !v)}
+            >
+              <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
+            title={hideQuota ? "显示额度" : "隐藏额度"}
+            onClick={toggleHideQuota}
+          >
+            {hideQuota ? (
+              <Eye aria-hidden="true" className="h-3.5 w-3.5" />
+            ) : (
+              <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
+            )}
+          </button>
+          <button
+            type="button"
+            className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
+            disabled={loading}
+            title="强制重查"
+            onClick={onRefresh}
+          >
+            <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+          <button
+            type="button"
+            className={ghostActionClass}
+            onClick={() => onOpenWallet(row.origin)}
+            title="在系统浏览器打开这个网关的钱包页"
+          >
+            去钱包 ↗
+          </button>
+        </div>
+      </div>
+      {error && (
+        <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
+      )}
+      {!walletOpen ? (
+        <>
+          <div
+            className="overflow-hidden select-none touch-pan-y"
+            {...walletSwipe.areaHandlers}
+            tabIndex={walletGroupsVisible.length > 1 ? 0 : undefined}
+            title={walletGroupsVisible.length > 1 ? `左右滑动切换（${walletSwipe.activeIdx + 1} / ${walletGroupsVisible.length}）` : undefined}
+          >
+            <div ref={walletSwipe.trackRef} className="flex items-start will-change-transform">
+              {walletGroupsVisible.map((g, idx) => {
+                const gUsedPct = walletUsedPercent(g.head.used, g.head.total);
+                const gLabel = walletAmountCaption(g.head.source);
+                return (
+                  <div key={g.key} className="w-full shrink-0">
+                    <QuotaSummary
+                      inactive={idx !== walletSwipe.activeIdx}
+                      items={[
+                        {
+                          label: gLabel,
+                          ring:
+                            gUsedPct == null
+                              ? null
+                              : {
+                                  pct: 100 - gUsedPct,
+                                  tone: (gUsedPct >= 90 ? "err" : gUsedPct >= 80 ? "warn" : null) as QuotaTone,
+                                  label: `${gLabel}：剩余 ${Math.round(100 - gUsedPct)}%`,
+                                },
+                          value: hideQuota
+                            ? formatBalanceAmountMasked(g.head.currency)
+                            : g.head.remaining != null || g.head.total != null
+                              ? formatBalanceAmount(g.head.remaining ?? g.head.total ?? NaN, g.head.currency)
+                              : g.head.tokenUnlimited || g.head.unlimited
+                                ? "不限"
+                                : "—",
+                          tone: null,
+                        },
+                      ]}
+                      empty="暂无数据"
+                      onOpen={onWalletSummaryOpen}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <QuotaPager
+            count={walletGroupsVisible.length}
+            activeIdx={walletSwipe.activeIdx}
+            labels={walletGroupsVisible.map((g) => walletAccountTitle(g, true))}
+            onPrev={() => walletSwipe.go(-1)}
+            onNext={() => walletSwipe.go(1)}
+            onSelect={(idx) => walletSwipe.goToIndex(idx)}
+          />
+        </>
+      ) : (
+        <>
+          {walletFilterOpen && walletGroups.length > 1 && (
+            <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
+              <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
+                <span>勾选要在卡片中显示的钱包账户并调整顺序（至少保留一项）</span>
+                <button
+                  type="button"
+                  className="text-l3 hover:text-l1"
+                  onClick={() => setWalletFilterOpen(false)}
+                >
+                  完成
+                </button>
+              </div>
+              <ul className="space-y-1">
+                {orderedAllWallets.map((item, idx) => {
+                  const checked = !walletPrefs.hiddenIds.includes(item.key);
+                  const allIds = orderedAllWallets.map((x) => x.key);
+                  return (
+                    <li
+                      key={item.key}
+                      className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          updateWalletPrefs(toggleQuotaHidden(walletPrefs, item.key))
+                        }
+                      />
+                      <span className="min-w-0 flex-1 truncate text-l2">
+                        {walletAccountTitle(item, true)}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+                        title="上移"
+                        onClick={() =>
+                          updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, -1))
+                        }
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={idx === orderedAllWallets.length - 1}
+                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
+                        title="下移"
+                        onClick={() =>
+                          updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, 1))
+                        }
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+          {walletGroupsVisible.length > 1 && (
+            <div className="mt-3">
+              <SegTabs
+                variant="boxed"
+                size="sm"
+                wrap
+                items={walletGroupsVisible.map((g) => ({
+                  id: g.key,
+                  label: walletAccountTitle(g, true),
+                }))}
+                value={group.key}
+                onChange={setWalletActive}
+              />
+            </div>
+          )}
+          <div key={group.key} className="mt-3">
+            {row.error && (
+              <p className={`text-xs ${row.ok ? "text-l4" : "text-err-text"}`}>
+                {row.error}
+              </p>
+            )}
+            <div className="text-xs font-medium tracking-wider text-l3">
+              {walletAmountCaption(row.source)}
+            </div>
+            <div className="mt-0.5 flex items-baseline gap-2">
+              <div className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
+                {hideQuota ? (
+                  formatBalanceAmountMasked(row.currency)
+                ) : hasAmount ? (
+                  <>
+                    {amount.prefix && (
+                      <span className="text-base text-l3">{amount.prefix}</span>
+                    )}
+                    {amount.number}
+                    {amount.unit && (
+                      <span className="ml-1 text-sm text-l3">{amount.unit}</span>
+                    )}
+                  </>
+                ) : row.tokenUnlimited || row.unlimited ? (
+                  "不限"
+                ) : (
+                  "—"
+                )}
+              </div>
+              {row.source === "wallet" && walletAbs && (
+                <span className="font-mono text-xs tabular-nums text-l4">{walletAbs}</span>
+              )}
+            </div>
+            {row.source === "wallet" && balanceBar && (
+              <>
+                <div className="mt-2 h-2 overflow-hidden rounded bg-l4/20">
+                  <div
+                    className={`h-full rounded ${balanceBar.bar}`}
+                    style={{ width: `${Math.min(100, Math.max(0, balanceBar.remainPct))}%` }}
+                  />
+                </div>
+                {usedPct != null && (
+                  <div className="mt-1 text-micro tabular-nums text-l4">
+                    已消耗 {usedPct.toFixed(0)}%
+                  </div>
+                )}
+              </>
+            )}
+            {group.members.length > 0 && (
+              <div className="mt-5">
+                <div className="text-xs font-medium tracking-wider text-l3">
+                  密钥额度
+                </div>
+                <div className="mt-3 space-y-2">
+                  {group.members.map((member) => {
+                    const quota = walletTokenQuota(member);
+                    const peers = group.members.map(
+                      (m) => walletTokenQuota(m)?.used ?? null,
+                    );
+                    const keyHint = hintOf(member.gatewayId);
+                    const note = [
+                      member.gatewayName,
+                      member.tokenName && member.tokenName !== member.gatewayName
+                        ? `站点令牌 ${member.tokenName}`
+                        : null,
+                      keyHint ? `尾号 ${keyHint}` : null,
+                      member.expiresAt != null
+                        ? `${formatPlanTimestamp(member.expiresAt, Date.now())} 到期`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    if (!quota) {
+                      return (
+                        <WalletKeyRow
+                          key={member.gatewayId}
+                          name={member.gatewayName}
+                          title={note}
+                          usedPct={null}
+                          used={null}
+                          total={null}
+                          currency={member.currency}
+                          empty={member.error ?? "无数据"}
+                          peers={peers}
+                        />
+                      );
+                    }
+                    return (
+                      <WalletKeyRow
+                        key={member.gatewayId}
+                        name={member.gatewayName}
+                        title={note}
+                        unlimited={quota.unlimited}
+                        usedPct={quota.pct}
+                        used={quota.used}
+                        total={quota.total}
+                        currency={member.currency}
+                        hideAmount={hideQuota}
+                        peers={peers}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {expiringSoon.length > 0 && (
+              <p className="mt-2 text-micro text-warn-text">
+                {expiringSoon
+                  .map(
+                    (m) =>
+                      `${multi ? m.gatewayName : "密钥"} ${
+                        m.expiresAt == null
+                          ? ""
+                          : formatPlanTimestamp(m.expiresAt, Date.now())
+                      } 到期`,
+                  )
+                  .join("；")}
+              </p>
+            )}
+            {row.source === "token" && (
+              <p className="mt-2 text-xs text-l3">
+                {walletMissingHint(row.hasWalletToken)}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+});
 
 function StatLine({
   label,
@@ -803,101 +1890,29 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   /** 活跃度区块的独立刷新信号：页级「刷新」重建索引后一并重拉（与 range 无关，不进 load） */
   const [activityRefresh, setActivityRefresh] = useState(0);
 
-  // 订阅余量卡（智谱/Kimi/MiniMax 网关 + Claude/Codex/Antigravity 官方多账号，一张卡切换）：进页查 + 可见期 2 分钟自动轮询，手动刷新才 force
-  const [planRows, setPlanRows] = useState<PlanQuotaDto[]>([]);
-  const [planActive, setPlanActive] = useState<string | null>(null);
+  // 订阅余量卡（智谱/Kimi/MiniMax 网关 + Claude/Codex/Grok/Kimi/Antigravity 官方多账号）：
+  // 首屏从 store / 本地快照秒出，后台并发渐进刷新（plan-quota-partial），可见期 2 分钟自动轮询，手动刷新才 force
+  const [planRows, setPlanRows] = useState<PlanQuotaDto[]>(loadCachedPlanRows);
   const [planLoading, setPlanLoading] = useState(false);
   const [planUsing, setPlanUsing] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
-  const [planPrefs, setPlanPrefs] = useState<QuotaDisplayPrefs>(() =>
-    loadQuotaDisplayPrefs("ccode.stats.planPrefs"),
-  );
-  const [planFilterOpen, setPlanFilterOpen] = useState(false);
   const planSeq = useRef(0);
   const gateways = useAppStore((s2) => s2.gateways);
+  const profiles = useAppStore((s2) => s2.profiles);
+  const agents = useAppStore((s2) => s2.agents);
   const setPlanQuotaRows = useAppStore((s2) => s2.setPlanQuotaRows);
-  const hasPlanGateway = useMemo(
-    () => gateways.some((g) => gatewayHasPlanQuota(g)),
-    [gateways],
+  const hasPlanSource = useMemo(
+    () =>
+      gateways.some((g) => gatewayHasPlanQuota(g)) ||
+      profiles.some((p) => p.accountType === "official" && OFFICIAL_QUOTA_AGENTS.has(p.agent)) ||
+      agents.some((a) => Boolean(a.binaryPath) && OFFICIAL_QUOTA_AGENTS.has(a.id)),
+    [gateways, profiles, agents],
   );
-  const planRowsVisible = useMemo(
-    () => applyQuotaDisplayPrefs(planRows, (r) => r.gatewayId, planPrefs),
-    [planRows, planPrefs],
-  );
-  const updatePlanPrefs = (next: QuotaDisplayPrefs) => {
-    setPlanPrefs(next);
-    saveQuotaDisplayPrefs("ccode.stats.planPrefs", next);
-  };
 
-  // 网关余额卡（New API 钱包，与订阅余量并列）：进页查 + 可见期 2 分钟轮询
-  const [walletRows, setWalletRows] = useState<GatewayBalanceDto[]>([]);
-  const [walletActive, setWalletActive] = useState<string | null>(null);
+  // 网关余额卡（New API 钱包，与订阅余量并列）：同样首屏秒出 + 可见期 2 分钟轮询
+  const [walletRows, setWalletRows] = useState<GatewayBalanceDto[]>(loadCachedWalletRows);
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
-  const [walletPrefs, setWalletPrefs] = useState<QuotaDisplayPrefs>(() =>
-    loadQuotaDisplayPrefs("ccode.stats.walletPrefs"),
-  );
-  const [walletFilterOpen, setWalletFilterOpen] = useState(false);
-  const updateWalletPrefs = (next: QuotaDisplayPrefs) => {
-    setWalletPrefs(next);
-    saveQuotaDisplayPrefs("ccode.stats.walletPrefs", next);
-  };
-  // 余量 / 余额卡默认收起（2026-10-29 用户：信息太多），各自记在本机
-  const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
-  const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
-  // 收起态左右滑动切换供应商（跟手、滑进、弹回都在 quota-swipe.ts）；滑过之后吞掉随之而来的那次点击（否则会顺手展开）
-  const closePlanTip = useRef<(() => void) | null>(null);
-  const planSwipe = useQuotaSwipe({
-    ids: planRowsVisible.map((r) => r.gatewayId),
-    active: planActive,
-    onChange: setPlanActive,
-    onSwiped: () => {
-      // 会滑了：提示不用再出，开着的收掉
-      markCoachTipSeen("planSwipe");
-      closePlanTip.current?.();
-    },
-  });
-  const onPlanSummaryOpen = () => {
-    if (planSwipe.swallowClick()) return;
-    togglePlanOpen();
-  };
-  // 第一次出现多家、卡片收着时，挂一个气泡告诉能左右滑（2026-10-31 用户点名要；只出一次，滑过一次也算会了）
-  const planTipKey = planRowsVisible.map((r) => r.gatewayId).join("|");
-  useEffect(() => {
-    if (!visible || planOpen || planRowsVisible.length < 2 || !canShowCoachTip("planSwipe")) return;
-    const timer = setTimeout(() => {
-      const el = planSwipe.areaRef.current;
-      if (!el || !canShowCoachTip("planSwipe")) return;
-      const r = el.getBoundingClientRect();
-      if (r.width === 0 || r.bottom < 0 || r.top > window.innerHeight) return;
-      const names = [...new Set(planRowsVisible.map((row) => planProviderLabel(row.provider)))].join("、");
-      markCoachTipShown("planSwipe");
-      closePlanTip.current = showFloatingCoach({
-        anchor: { left: r.left, top: r.top, right: r.left + Math.min(r.width, 160), bottom: r.bottom },
-        place: "below",
-        title: "可以左右滑动",
-        body: `在这张卡上两指左右轻扫（或按住拖），在 ${names} 之间切换；展开后上面也有切换标签。`,
-        actions: [{ label: "知道了", onClick: () => {} }],
-        scrollRoot: scrollParent(el),
-      });
-    }, 700);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, planOpen, planTipKey]);
-  useEffect(() => () => closePlanTip.current?.(), []);
-  const togglePlanOpen = () =>
-    setPlanOpen((v) => {
-      localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
-      return !v;
-    });
-  const toggleWalletOpen = () =>
-    setWalletOpen((v) => {
-      localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
-      return !v;
-    });
-  const [hideQuota, setHideQuota] = useState(
-    () => localStorage.getItem("ccode.stats.hideQuota") === "1",
-  );
   const walletSeq = useRef(0);
   const hasWalletGateway = useMemo(
     () => gateways.some((g) => gatewayHasWallet(g)),
@@ -909,30 +1924,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     const known = new Set(gateways.map((g) => g.id));
     return walletRows.filter((r) => known.has(r.gatewayId));
   }, [walletRows, gateways]);
-  /**
-   * 同站同账户合并成一张卡：几个网关共用同一个系统访问令牌时，钱包余额本来就是同一个数字，
-   * 逐个摆成标签页会出现「三个标签页一模一样」。合并后钱包数字只出现一次，密钥额度按网关列明细。
-   */
-  const walletGroups = useMemo(
-    () => groupWalletAccounts(walletRowsShown),
-    [walletRowsShown],
-  );
-  const walletGroupsVisible = useMemo(
-    () => applyQuotaDisplayPrefs(walletGroups, (g) => g.key, walletPrefs),
-    [walletGroups, walletPrefs],
-  );
-  // 网关余额卡收起时同样左右滑动切换账户（2026-10-31 用户：「网关余额也把这个滑动加上」）
-  const walletSwipe = useQuotaSwipe({
-    ids: walletGroupsVisible.map((g) => g.key),
-    active: walletActive,
-    onChange: setWalletActive,
-  });
-  const onWalletSummaryOpen = () => {
-    if (walletSwipe.swallowClick()) return;
-    toggleWalletOpen();
-  };
 
-  async function loadWallets(force: boolean) {
+  const loadWallets = useCallback(async (force: boolean) => {
     const seq = ++walletSeq.current;
     setWalletLoading(true);
     try {
@@ -941,95 +1934,130 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       });
       if (seq !== walletSeq.current) return;
       setWalletRows(rows);
+      saveCachedWalletRows(rows);
       setWalletError(null);
     } catch (e) {
       if (seq === walletSeq.current) setWalletError(String(e));
     } finally {
       if (seq === walletSeq.current) setWalletLoading(false);
     }
-  }
+  }, []);
 
-  async function loadPlans(force: boolean) {
-    const seq = ++planSeq.current;
-    setPlanLoading(true);
-    try {
-      const rows = await invoke<PlanQuotaDto[]>("plan_quota_overview", { force });
-      if (seq !== planSeq.current) return;
-      setPlanRows(rows);
-      setPlanQuotaRows(rows);
-      setPlanError(null);
-    } catch (e) {
-      if (seq === planSeq.current) setPlanError(String(e));
-    } finally {
-      if (seq === planSeq.current) setPlanLoading(false);
-    }
-  }
+  const loadPlans = useCallback(
+    async (force: boolean) => {
+      const seq = ++planSeq.current;
+      setPlanLoading(true);
+      try {
+        const rows = await invoke<PlanQuotaDto[]>("plan_quota_overview", { force });
+        if (seq !== planSeq.current) return;
+        setPlanRows(rows);
+        setPlanQuotaRows(rows);
+        saveCachedPlanRows(rows);
+        setPlanError(null);
+      } catch (e) {
+        if (seq === planSeq.current) setPlanError(String(e));
+      } finally {
+        if (seq === planSeq.current) setPlanLoading(false);
+      }
+    },
+    [setPlanQuotaRows],
+  );
 
   /** 用一张重置卡：消费性写操作，先确认再触发；成功后整行换成刷新后的余量 */
-  async function useResetCard(row: PlanQuotaDto, type: "five_hour" | "weekly" | "general") {
-    if (type === "general") {
-      const exp = row.resetCards.generalExpiresAt;
+  const useResetCard = useCallback(
+    async (row: PlanQuotaDto, type: "five_hour" | "weekly" | "general") => {
+      if (type === "general") {
+        const exp = row.resetCards.generalExpiresAt;
+        const ok = await confirmDialog(
+          `用一张 ${planProviderLabel(row.provider)} 重置卡，立刻重置现在卡住你的额度？消费后不可撤销。${
+            exp != null ? `将优先使用最早过期的一张（${formatPlanTimestamp(exp, Date.now())} 过期）。` : "将优先使用最早过期的一张。"
+          }`,
+          { danger: true, confirmText: "重置", focusCancel: true },
+        );
+        if (!ok) return;
+        setPlanUsing(row.gatewayId + type);
+        try {
+          const fresh = await invoke<PlanQuotaDto>("plan_use_reset_card", { gatewayId: row.gatewayId, resetType: type });
+          setPlanRows((cur) => {
+            const next = cur.map((r) => (r.gatewayId === fresh.gatewayId ? fresh : r));
+            setPlanQuotaRows(next);
+            saveCachedPlanRows(next);
+            return next;
+          });
+          setPlanError(null);
+        } catch (e) {
+          setPlanError(String(e));
+        } finally {
+          setPlanUsing(null);
+        }
+        return;
+      }
+      const label = planWindowLabel(type);
+      const expiry =
+        type === "five_hour"
+          ? row.resetCards.fiveHourExpiresAt
+          : row.resetCards.weeklyExpiresAt;
+      const expiryAt = expiry != null ? formatPlanTimestamp(expiry, Date.now()) : null;
+      // 把「这个窗口现在用了多少」写进确认文案：这是不可撤销的消费，
+      // 确认前该看到自己按的是哪个数。**0% 时明说会白费但不拦**（2026-09-21 用户：「看着劝退吧 不拦截」）
+      const used = row.windows.find((w) => w.window === type)?.usedPercent;
+      const usedNote =
+        used == null
+          ? ""
+          : used <= 0
+            ? `该窗口当前已用 0%，重置不会腾出任何额度，这张卡会白费。`
+            : `该窗口当前已用 ${used.toFixed(0)}%。`;
       const ok = await confirmDialog(
-        `用一张 ${planProviderLabel(row.provider)} 重置卡，立刻重置现在卡住你的额度？消费后不可撤销。${
-          exp != null ? `将优先使用最早过期的一张（${formatPlanTimestamp(exp, Date.now())} 过期）。` : "将优先使用最早过期的一张。"
+        `立即重置「${label}」窗口的额度？${usedNote}将消耗一张重置卡，消费后不可撤销。${
+          expiryAt ? `将优先使用最早过期的一张（${expiryAt} 过期）。` : "将优先使用最早过期的一张。"
         }`,
-        { danger: true, confirmText: "重置", focusCancel: true },
+        { danger: true, confirmText: used != null && used <= 0 ? "仍要用" : "重置", focusCancel: true },
       );
       if (!ok) return;
       setPlanUsing(row.gatewayId + type);
       try {
-        const fresh = await invoke<PlanQuotaDto>("plan_use_reset_card", { gatewayId: row.gatewayId, resetType: type });
-        setPlanRows((cur) => cur.map((r) => (r.gatewayId === fresh.gatewayId ? fresh : r)));
+        const fresh = await invoke<PlanQuotaDto>("plan_use_reset_card", {
+          gatewayId: row.gatewayId,
+          resetType: type,
+        });
+        setPlanRows((cur) => {
+          const next = cur.map((r) => (r.gatewayId === fresh.gatewayId ? fresh : r));
+          setPlanQuotaRows(next);
+          saveCachedPlanRows(next);
+          return next;
+        });
         setPlanError(null);
       } catch (e) {
         setPlanError(String(e));
       } finally {
         setPlanUsing(null);
       }
-      return;
-    }
-    const label = planWindowLabel(type);
-    const expiry =
-      type === "five_hour"
-        ? row.resetCards.fiveHourExpiresAt
-        : row.resetCards.weeklyExpiresAt;
-    const expiryAt = expiry != null ? formatPlanTimestamp(expiry, Date.now()) : null;
-    // 把「这个窗口现在用了多少」写进确认文案：这是不可撤销的消费，
-    // 确认前该看到自己按的是哪个数。**0% 时明说会白费但不拦**（2026-09-21 用户：「看着劝退吧 不拦截」）
-    const used = row.windows.find((w) => w.window === type)?.usedPercent;
-    const usedNote =
-      used == null
-        ? ""
-        : used <= 0
-          ? `该窗口当前已用 0%，重置不会腾出任何额度，这张卡会白费。`
-          : `该窗口当前已用 ${used.toFixed(0)}%。`;
-    const ok = await confirmDialog(
-      `立即重置「${label}」窗口的额度？${usedNote}将消耗一张重置卡，消费后不可撤销。${
-        expiryAt ? `将优先使用最早过期的一张（${expiryAt} 过期）。` : "将优先使用最早过期的一张。"
-      }`,
-      { danger: true, confirmText: used != null && used <= 0 ? "仍要用" : "重置", focusCancel: true },
-    );
-    if (!ok) return;
-    setPlanUsing(row.gatewayId + type);
-    try {
-      const fresh = await invoke<PlanQuotaDto>("plan_use_reset_card", {
-        gatewayId: row.gatewayId,
-        resetType: type,
-      });
-      setPlanRows((cur) =>
-        cur.map((r) => (r.gatewayId === fresh.gatewayId ? fresh : r)),
-      );
-      setPlanError(null);
-    } catch (e) {
-      setPlanError(String(e));
-    } finally {
-      setPlanUsing(null);
-    }
-  }
+    },
+    [setPlanQuotaRows],
+  );
 
-  function openPlanConsole(url: string) {
+  const handleRefreshPlan = useCallback(() => {
+    void loadPlans(true);
+  }, [loadPlans]);
+
+  const handleRefreshWallet = useCallback(() => {
+    void loadWallets(true);
+  }, [loadWallets]);
+
+  const handleUseResetCard = useCallback(
+    (row: PlanQuotaDto, type: "five_hour" | "weekly" | "general") => {
+      void useResetCard(row, type);
+    },
+    [useResetCard],
+  );
+
+  const handleOpenPlanConsole = useCallback((url: string) => {
     void openUrl(url).catch(() => setPlanError("无法打开外部链接"));
-  }
+  }, []);
+
+  const handleOpenWallet = useCallback((origin: string) => {
+    void openUrl(walletUrl(origin)).catch(() => setWalletError("无法打开外部链接"));
+  }, []);
 
   // 并发守卫：快速切换范围时旧响应不得覆盖新范围
   const loadSeq = useRef(0);
@@ -1076,20 +2104,44 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     }
   }
 
-  // 订阅余量 / 网关余额自动轮询：页面开着每 2 分钟刷一次（与后端缓存 TTL 对齐）；不可见即停
+  // 订阅余量渐进推送：每家厂商查完即推送，快的不等慢的（例如 Keychain / 慢节点）
   useEffect(() => {
     if (!visible) return;
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listen<PlanQuotaDto[]>("plan-quota-partial", (ev) => {
+      if (disposed || !Array.isArray(ev.payload) || ev.payload.length === 0) return;
+      setPlanRows((cur) => {
+        const merged = mergePartialPlanRows(cur, ev.payload);
+        saveCachedPlanRows(merged);
+        return merged;
+      });
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [visible]);
+
+  // 订阅余量 / 网关余额拉取与自动轮询：与时间范围 range 彻底解耦，切换「今日 / 7 天 / 30 天」不再白查余量
+  useEffect(() => {
+    if (!visible) return;
+    void loadPlans(false);
+    void loadWallets(false);
     return pollEvery(() => {
       void loadPlans(false);
       void loadWallets(false);
     }, 120_000);
-  }, [visible]);
+  }, [visible, loadPlans, loadWallets]);
 
   useEffect(() => {
     if (visible) {
       void load(range);
-      void loadPlans(false);
-      void loadWallets(false);
       setSessionsLoadError(null);
       void loadSessions().catch((reason) => {
         setSessionsLoadError(`会话明细加载失败：${String(reason)}`);
@@ -1458,774 +2510,32 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       )}
       {notice && <NoticeBar className="mb-3" onDismiss={() => setNotice(null)}>{notice}</NoticeBar>}
 
-      {((planRows.length > 0 || (planLoading && hasPlanGateway)) ||
+      {((planRows.length > 0 || (planLoading && hasPlanSource)) ||
         (hasWalletGateway && (walletRowsShown.length > 0 || walletLoading))) && (
-      <div className="mb-4 grid items-start gap-4 lg:grid-cols-2">
-      {(planRows.length > 0 || (planLoading && hasPlanGateway)) && (
-        <section
-          className="ccode-well ccode-card overflow-hidden p-4"
-          aria-label="订阅余量"
-          onWheel={planOpen ? undefined : planSwipe.onWheel}
-        >
-          {planRows.length === 0 ? (
-            <>
-              <div className="flex min-h-8 items-center gap-2">
-                <h2 className="text-base font-medium text-l1">订阅余量</h2>
-                <button
-                  type="button"
-                  className="ml-auto flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                  disabled={planLoading}
-                  title="强制重查"
-                  onClick={() => void loadPlans(true)}
-                >
-                  <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${planLoading ? "animate-spin" : ""}`} />
-                </button>
-              </div>
-              {planError && (
-                <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
-              )}
-              <div className="mt-3 space-y-2">
-                <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
-                <div className="h-3 w-2/3 animate-pulse rounded bg-l4/50" />
-              </div>
-            </>
-          ) : (
-            (() => {
-            const active =
-              planRowsVisible.find((r) => r.gatewayId === planActive) ?? planRowsVisible[0];
-            const providerCounts = planRowsVisible.reduce<Record<string, number>>(
-              (acc, r) => ({ ...acc, [r.provider]: (acc[r.provider] ?? 0) + 1 }),
-              {},
-            );
-            const allProviderCounts = planRows.reduce<Record<string, number>>(
-              (acc, r) => ({ ...acc, [r.provider]: (acc[r.provider] ?? 0) + 1 }),
-              {},
-            );
-            const orderedAllPlanRows = applyQuotaDisplayPrefs(planRows, (r) => r.gatewayId, {
-              hiddenIds: [],
-              orderIds: planPrefs.orderIds,
-            });
-            const row = active;
-            const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
-            const now = Date.now();
-            const windows = planWindowsByTightness(row.windows);
-            const sameProviderCount = providerCounts[row.provider] ?? 1;
-            const hasProviderIcon =
-              row.provider === "agy" || Boolean(vendorForPlanProvider(row.provider));
-            const capsuleLabel = planCapsuleLabel(row, sameProviderCount, hasProviderIcon);
-            const capsuleTitle = [
-              planTabLabel(row, sameProviderCount),
-              row.planLevel,
-              row.accountHint,
-            ]
-              .filter(Boolean)
-              .join(" · ");
-            return (
-              <>
-                {/* 卡头恒一行，把服务商与等级收进紧凑身份胶囊，时间戳窄屏收进重查悬浮提示 */}
-                <div className="flex min-h-8 items-center gap-2">
-                  <QuotaFold open={planOpen} onToggle={togglePlanOpen} label="订阅余量" />
-                  <h2 className="shrink-0 text-base font-medium text-l1">订阅余量</h2>
-                  <span
-                    className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-hairline bg-inset px-2 py-0.5 text-xs text-l2"
-                    title={capsuleTitle || undefined}
-                  >
-                    {row.provider === "agy" ? (
-                      <AgentIcon agent="agy" label="Antigravity" size={14} />
-                    ) : (
-                      vendorForPlanProvider(row.provider) && (
-                        <VendorIcon
-                          vendor={vendorForPlanProvider(row.provider)}
-                          name={planProviderLabel(row.provider)}
-                          className="h-3.5 w-3.5 shrink-0"
-                        />
-                      )
-                    )}
-                    <span className="truncate">{capsuleLabel}</span>
-                    {planLevelLabel(row.planLevel) && (
-                      <span className="shrink-0 font-medium text-l3">· {planLevelLabel(row.planLevel)}</span>
-                    )}
-                  </span>
-                  {dataAt && <span className="hidden shrink-0 whitespace-nowrap text-micro text-l4 sm:inline">{dataAt}</span>}
-                  <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                    {planOpen && planRows.length > 1 && (
-                      <button
-                        type="button"
-                        className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${planFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
-                        title="筛选和调整账号显示顺序"
-                        onClick={() => setPlanFilterOpen((v) => !v)}
-                      >
-                        <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                      disabled={planLoading}
-                      title={dataAt ? `强制重查（${dataAt}）` : "强制重查"}
-                      onClick={() => void loadPlans(true)}
-                    >
-                      <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${planLoading ? "animate-spin" : ""}`} />
-                    </button>
-                    {Boolean(row.consoleUrl) && (
-                      <button
-                        type="button"
-                        className={ghostActionClass}
-                        onClick={() => openPlanConsole(row.consoleUrl)}
-                        title="在系统浏览器打开这家平台的控制台"
-                      >
-                        去控制台 ↗
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {planError && (
-                  <InlineNotice tone="err" className="mt-2">{planError}</InlineNotice>
-                )}
-                {/* 收起时只看各窗已用（5 小时 / 本周…），多家时左右滑动切换、不放标签（2026-10-31 用户）；
-                    展开才有大数字、进度条、重置卡、多家切换标签 */}
-                {!planOpen ? (
-                  <div
-                    ref={planSwipe.areaRef}
-                    className="select-none"
-                    {...planSwipe.areaHandlers}
-                    title={planRowsVisible.length > 1 ? `左右滑动切换（${planRowsVisible.findIndex((r) => r.gatewayId === row.gatewayId) + 1} / ${planRowsVisible.length}）` : undefined}
-                  >
-                  <QuotaSummary
-                    items={row.windows.map((w) => {
-                      const tone: QuotaTone = w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null;
-                      const label = `${planWindowLabel(w.window)}已用`;
-                      return {
-                        label,
-                        value: `${Math.round(w.usedPercent)}%`,
-                        tone,
-                        ring: { pct: w.usedPercent, tone, label: `${label} ${Math.round(w.usedPercent)}%` },
-                      };
-                    })}
-                    empty={row.error && !row.ok ? row.error : "暂无数据"}
-                    onOpen={onPlanSummaryOpen}
-                  />
-                  </div>
-                ) : (
-                <>
-                {planFilterOpen && planRows.length > 1 && (
-                  <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
-                    <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
-                      <span>勾选要在卡片中轮播的账号并调整顺序（至少保留一项）</span>
-                      <button
-                        type="button"
-                        className="text-l3 hover:text-l1"
-                        onClick={() => setPlanFilterOpen(false)}
-                      >
-                        完成
-                      </button>
-                    </div>
-                    <ul className="space-y-1">
-                      {orderedAllPlanRows.map((item, idx) => {
-                        const checked = !planPrefs.hiddenIds.includes(item.gatewayId);
-                        const allIds = orderedAllPlanRows.map((x) => x.gatewayId);
-                        return (
-                          <li
-                            key={item.gatewayId}
-                            className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={() =>
-                                updatePlanPrefs(toggleQuotaHidden(planPrefs, item.gatewayId))
-                              }
-                            />
-                            <span className="min-w-0 flex-1 truncate text-l2">
-                              {planTabLabel(item, allProviderCounts[item.provider] ?? 1)}
-                              {item.accountHint ? (
-                                <span className="ml-1.5 text-micro text-l4">{item.accountHint}</span>
-                              ) : null}
-                            </span>
-                            <button
-                              type="button"
-                              disabled={idx === 0}
-                              className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                              title="上移"
-                              onClick={() =>
-                                updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, -1))
-                              }
-                            >
-                              <ArrowUp className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={idx === orderedAllPlanRows.length - 1}
-                              className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                              title="下移"
-                              onClick={() =>
-                                updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, 1))
-                              }
-                            >
-                              <ArrowDown className="h-3 w-3" />
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
-                {planRowsVisible.length > 1 && (
-                  <div className="mt-3">
-                    <SegTabs
-                      variant="boxed"
-                      size="sm"
-                      wrap
-                      items={planRowsVisible.map((r) => ({
-                        id: r.gatewayId,
-                        label: planTabLabel(r, providerCounts[r.provider] ?? 1),
-                      }))}
-                      value={row.gatewayId}
-                      onChange={setPlanActive}
-                    />
-                  </div>
-                )}
-                <div key={row.gatewayId} className="mt-3">
-                  {(row.accountHint || row.isActiveSlot != null) && (
-                    <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-micro text-l4">
-                      {row.accountHint && <span className="truncate">{row.accountHint}</span>}
-                      {row.isActiveSlot === true && (
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hairline bg-inset px-1.5 py-px text-ok-text">
-                          当前激活
-                        </span>
-                      )}
-                      {row.isActiveSlot === false && (
-                        <span className="shrink-0 text-l4">未激活槽位（启动或切换时自动切号）</span>
-                      )}
-                    </div>
-                  )}
-                  {row.error && !row.ok && (
-                    <p className="text-xs text-err-text">{row.error}</p>
-                  )}
-                  <div className="space-y-3">
-                    {windows.map((w, i) => (
-                      <PlanWindowBlock
-                        key={w.window}
-                        win={w}
-                        now={now}
-                        primary={i === 0}
-                        lastReset={
-                          w.window === "weekly"
-                            ? row.resetCards.lastWeekResetAt
-                            : w.window === "five_hour"
-                              ? row.resetCards.lastFiveHourResetAt
-                              : null
-                        }
-                      />
-                    ))}
-                  </div>
-                  {row.resetCardsSupported && row.resetCards.ok && (
-                    row.resetCards.fiveHour + row.resetCards.weekly + row.resetCards.general === 0 ? (
-                      <p className="mt-5 text-xs text-l3">重置卡无可用（已用完或套餐不含）</p>
-                    ) : (
-                      <div
-                        className="mt-5 grid gap-x-6 gap-y-3"
-                        style={{
-                          gridTemplateColumns:
-                            "repeat(auto-fit, minmax(min(16rem, 100%), 1fr))",
-                        }}
-                      >
-                        {(row.resetCards.general > 0
-                          ? [
-                              // Codex：一张卡重置当下卡住你的窗口；只在被限额卡住时能用
-                              {
-                                key: "general" as const,
-                                label: "重置卡",
-                                count: row.resetCards.general,
-                                expiresAt: row.resetCards.generalExpiresAt,
-                              },
-                            ]
-                          : [
-                              {
-                                key: "five_hour" as const,
-                                label: "5 小时重置卡",
-                                count: row.resetCards.fiveHour,
-                                expiresAt: row.resetCards.fiveHourExpiresAt,
-                              },
-                              {
-                                key: "weekly" as const,
-                                label: "周重置卡",
-                                count: row.resetCards.weekly,
-                                expiresAt: row.resetCards.weeklyExpiresAt,
-                              },
-                            ]
-                        ).map((c) => {
-                          const soon = resetCardExpiryNote(c.expiresAt, now);
-                          const general = c.key === "general";
-                          const blocked = general && row.resetCards.generalApplicable === 0;
-                          const idle = !general && planWindowUnused(row.windows, c.key);
-                          const highlight = general
-                            ? (row.resetCards.generalApplicable ?? 0) > 0
-                            : planResetCardHighlight(row.windows, c.key);
-                          const cardTitle = [
-                            soon?.title,
-                            idle
-                              ? `${planWindowLabel(c.key)}窗口一点没用（0%），现在用卡不会腾出任何额度`
-                              : null,
-                            blocked ? "额度还没被卡住，Codex 现在不让用重置卡；用满被限额后再点" : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ");
-                          return (
-                            <div
-                              key={c.key}
-                              className="flex items-center gap-3"
-                              title={cardTitle || undefined}
-                            >
-                              <div className="min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
-                                  <span className="text-xs text-l2">{c.label}</span>
-                                  <span className="rounded-sm bg-hover px-1 py-px text-micro tabular-nums text-l3">
-                                    ×{c.count}
-                                  </span>
-                                </div>
-                                {c.count > 0 && (
-                                  <span
-                                    className={`tabular-nums text-micro ${soon?.urgent ? "text-warn-text" : "text-l4"}`}
-                                  >
-                                    {soon?.text ?? "无期限数据"}
-                                  </span>
-                                )}
-                              </div>
-                              {c.count > 0 && (
-                                <button
-                                  type="button"
-                                  className={
-                                    highlight
-                                      ? compactPrimaryActionClass
-                                      : `${ghostActionClass} h-7 border border-field px-2 text-l2`
-                                  }
-                                  disabled={planUsing != null || blocked}
-                                  onClick={() => void useResetCard(row, c.key)}
-                                >
-                                  {planUsing === row.gatewayId + c.key
-                                    ? "使用中…"
-                                    : blocked
-                                      ? "卡住后可用"
-                                      : "用一张"}
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )
-                  )}
-                  {row.resetCardsSupported && !row.resetCards.ok && row.resetCards.error && (
-                    <p className="mt-5 text-micro text-l4" title={row.resetCards.error}>
-                      重置卡查询失败
-                    </p>
-                  )}
-                </div>
-                </>
-                )}
-              </>
-            );
-            })()
+        <div className="mb-4 grid items-start gap-4 lg:grid-cols-2">
+          {(planRows.length > 0 || (planLoading && hasPlanSource)) && (
+            <PlanQuotaCard
+              visible={visible}
+              rows={planRows}
+              loading={planLoading}
+              usingKey={planUsing}
+              error={planError}
+              onRefresh={handleRefreshPlan}
+              onUseResetCard={handleUseResetCard}
+              onOpenConsole={handleOpenPlanConsole}
+            />
           )}
-        </section>
-      )}
-
-      {hasWalletGateway &&
-        (walletRowsShown.length > 0 || walletLoading) && (
-        <section
-          className="ccode-well ccode-card overflow-hidden p-4"
-          aria-label="网关余额"
-          onWheel={walletOpen ? undefined : walletSwipe.onWheel}
-        >
-          {walletGroups.length === 0 ? (
-            <>
-              <div className="flex min-h-8 items-center gap-2">
-                <h2 className="text-base font-medium text-l1">网关余额</h2>
-                <div className="ml-auto flex items-center">
-                  <button
-                    type="button"
-                    className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
-                    title={hideQuota ? "显示额度" : "隐藏额度"}
-                    onClick={() => {
-                      setHideQuota((v) => {
-                        const next = !v;
-                        localStorage.setItem("ccode.stats.hideQuota", next ? "1" : "0");
-                        return next;
-                      });
-                    }}
-                  >
-                    {hideQuota ? (
-                      <Eye aria-hidden="true" className="h-3.5 w-3.5" />
-                    ) : (
-                      <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                    disabled={walletLoading}
-                    title="强制重查"
-                    onClick={() => void loadWallets(true)}
-                  >
-                    <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${walletLoading ? "animate-spin" : ""}`} />
-                  </button>
-                </div>
-              </div>
-              {walletError && (
-                <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
-              )}
-              <div className="mt-3 space-y-2">
-                <div className="h-3 w-3/4 animate-pulse rounded bg-l4/50" />
-                <div className="h-3 w-2/3 animate-pulse rounded bg-l4/50" />
-              </div>
-            </>
-          ) : (
-            (() => {
-              const group =
-                walletGroupsVisible.find((g) => g.key === walletActive) ?? walletGroupsVisible[0];
-              const orderedAllWallets = applyQuotaDisplayPrefs(walletGroups, (g) => g.key, {
-                hiddenIds: [],
-                orderIds: walletPrefs.orderIds,
-              });
-              const row = group.head;
-              const dataAt = planQuotaDataAt(row.queriedAt, row.fromCache);
-              const usedPct = walletUsedPercent(row.used, row.total);
-              const hasAmount = row.remaining != null || row.total != null;
-              const amount = splitBalanceAmount(row.remaining ?? row.total ?? NaN, row.currency);
-              // 条画剩余（与大数字同向，满条 = 钱还多）；告警档仍按已消耗判
-              const balanceBar = walletBalanceBar(row.used, row.total);
-              const walletAbs =
-                row.used != null && row.total != null
-                  ? hideQuota
-                    ? `${formatBalanceAmountMasked(row.currency)} / ${formatBalanceAmountMasked(row.currency)}`
-                    : `${formatBalanceAmount(row.used, row.currency)} / ${formatBalanceAmount(row.total, row.currency)}`
-                  : null;
-              const multi = group.members.length > 1;
-              const expiringSoon = group.members.filter((m) =>
-                walletExpirySoon(m.expiresAt, Date.now()),
-              );
-              const hintOf = (id: string) =>
-                gateways.find((g) => g.id === id)?.keyHint ?? null;
-              return (
-                <>
-                  {/* 卡头恒一行（2026-10-31 用户：窗口一窄按钮掉到第二行、卡片变高）：站点名可截断，其余不缩 */}
-                  <div className="flex min-h-8 items-center gap-2">
-                    <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
-                    <h2 className="shrink-0 text-base font-medium text-l1">网关余额</h2>
-                    {/* 单账户、或收着（一次只摆一个账户）时写这是哪个站 */}
-                    {(walletGroupsVisible.length === 1 || !walletOpen) && (
-                      <span
-                        className="min-w-0 truncate text-xs text-l2"
-                        title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
-                      >
-                        {walletAccountTitle(group)}
-                      </span>
-                    )}
-                    {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
-                    <div className="ml-auto flex shrink-0 items-center">
-                      {walletOpen && walletGroups.length > 1 && (
-                        <button
-                          type="button"
-                          className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${walletFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
-                          title="筛选和调整账户显示顺序"
-                          onClick={() => setWalletFilterOpen((v) => !v)}
-                        >
-                          <SlidersHorizontal aria-hidden="true" className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
-                        title={hideQuota ? "显示额度" : "隐藏额度"}
-                        onClick={() => {
-                          setHideQuota((v) => {
-                            const next = !v;
-                            localStorage.setItem("ccode.stats.hideQuota", next ? "1" : "0");
-                            return next;
-                          });
-                        }}
-                      >
-                        {hideQuota ? (
-                          <Eye aria-hidden="true" className="h-3.5 w-3.5" />
-                        ) : (
-                          <EyeOff aria-hidden="true" className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-50"
-                        disabled={walletLoading}
-                        title="强制重查"
-                        onClick={() => void loadWallets(true)}
-                      >
-                        <RefreshCw aria-hidden="true" className={`h-3.5 w-3.5 ${walletLoading ? "animate-spin" : ""}`} />
-                      </button>
-                      <button
-                        type="button"
-                        className={ghostActionClass}
-                        onClick={() => {
-                          void openUrl(walletUrl(row.origin)).catch(() =>
-                            setWalletError("无法打开外部链接"),
-                          );
-                        }}
-                        title="在系统浏览器打开这个网关的钱包页"
-                      >
-                        去钱包 ↗
-                      </button>
-                    </div>
-                  </div>
-                  {walletError && (
-                    <InlineNotice tone="err" className="mt-2">{walletError}</InlineNotice>
-                  )}
-                  {/* 收起时只看当前这个账户的余额，多个账户左右滑动切换（同订阅余量卡）；展开才有进度条、密钥额度、切换标签 */}
-                  {!walletOpen ? (
-                    <div
-                      ref={walletSwipe.areaRef}
-                      className="select-none"
-                      {...walletSwipe.areaHandlers}
-                      title={walletGroupsVisible.length > 1 ? `左右滑动切换（${walletGroupsVisible.findIndex((g) => g.key === group.key) + 1} / ${walletGroupsVisible.length}）` : undefined}
-                    >
-                    <QuotaSummary
-                      items={[group].map((g) => {
-                        // 圆环画剩余比例；没有总量（不限额度 / 缺数据）就不画，不拿空圈冒充
-                        const usedPct = walletUsedPercent(g.head.used, g.head.total);
-                        const label = walletAmountCaption(g.head.source);
-                        return {
-                          label,
-                          ring:
-                            usedPct == null
-                              ? null
-                              : {
-                                  pct: 100 - usedPct,
-                                  tone: (usedPct >= 90 ? "err" : usedPct >= 80 ? "warn" : null) as QuotaTone,
-                                  label: `${label}：剩余 ${Math.round(100 - usedPct)}%`,
-                                },
-                          value: hideQuota
-                            ? formatBalanceAmountMasked(g.head.currency)
-                            : g.head.remaining != null || g.head.total != null
-                              ? formatBalanceAmount(g.head.remaining ?? g.head.total ?? NaN, g.head.currency)
-                              : g.head.tokenUnlimited || g.head.unlimited
-                                ? "不限"
-                                : "—",
-                          tone: null,
-                        };
-                      })}
-                      empty="暂无数据"
-                      onOpen={onWalletSummaryOpen}
-                    />
-                    </div>
-                  ) : (
-                  <>
-                  {walletFilterOpen && walletGroups.length > 1 && (
-                    <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
-                      <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
-                        <span>勾选要在卡片中显示的钱包账户并调整顺序（至少保留一项）</span>
-                        <button
-                          type="button"
-                          className="text-l3 hover:text-l1"
-                          onClick={() => setWalletFilterOpen(false)}
-                        >
-                          完成
-                        </button>
-                      </div>
-                      <ul className="space-y-1">
-                        {orderedAllWallets.map((item, idx) => {
-                          const checked = !walletPrefs.hiddenIds.includes(item.key);
-                          const allIds = orderedAllWallets.map((x) => x.key);
-                          return (
-                            <li
-                              key={item.key}
-                              className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={() =>
-                                  updateWalletPrefs(toggleQuotaHidden(walletPrefs, item.key))
-                                }
-                              />
-                              <span className="min-w-0 flex-1 truncate text-l2">
-                                {walletAccountTitle(item, true)}
-                              </span>
-                              <button
-                                type="button"
-                                disabled={idx === 0}
-                                className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                                title="上移"
-                                onClick={() =>
-                                  updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, -1))
-                                }
-                              >
-                                <ArrowUp className="h-3 w-3" />
-                              </button>
-                              <button
-                                type="button"
-                                disabled={idx === orderedAllWallets.length - 1}
-                                className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                                title="下移"
-                                onClick={() =>
-                                  updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, 1))
-                                }
-                              >
-                                <ArrowDown className="h-3 w-3" />
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                  {walletGroupsVisible.length > 1 && (
-                    <div className="mt-3">
-                      <SegTabs
-                        variant="boxed"
-                        size="sm"
-                        wrap
-                        items={walletGroupsVisible.map((g) => ({
-                          id: g.key,
-                          label: walletAccountTitle(g, true),
-                        }))}
-                        value={group.key}
-                        onChange={setWalletActive}
-                      />
-                    </div>
-                  )}
-                  <div key={group.key} className="mt-3">
-                    {row.error && (
-                      <p className={`text-xs ${row.ok ? "text-l4" : "text-err-text"}`}>
-                        {row.error}
-                      </p>
-                    )}
-                    <div className="text-xs font-medium tracking-wider text-l3">
-                      {walletAmountCaption(row.source)}
-                    </div>
-                    <div className="mt-0.5 flex items-baseline gap-2">
-                      <div className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
-                        {hideQuota ? (
-                          formatBalanceAmountMasked(row.currency)
-                        ) : hasAmount ? (
-                          <>
-                            {amount.prefix && (
-                              <span className="text-base text-l3">{amount.prefix}</span>
-                            )}
-                            {amount.number}
-                            {amount.unit && (
-                              <span className="ml-1 text-sm text-l3">{amount.unit}</span>
-                            )}
-                          </>
-                        ) : row.tokenUnlimited || row.unlimited ? (
-                          "不限"
-                        ) : (
-                          "—"
-                        )}
-                      </div>
-                      {row.source === "wallet" && walletAbs && (
-                        <span className="font-mono text-xs tabular-nums text-l4">{walletAbs}</span>
-                      )}
-                    </div>
-                    {row.source === "wallet" && balanceBar && (
-                      <>
-                        <div className="mt-2 h-2 overflow-hidden rounded bg-l4/20">
-                          <div
-                            className={`h-full rounded ${balanceBar.bar}`}
-                            style={{ width: `${Math.min(100, Math.max(0, balanceBar.remainPct))}%` }}
-                          />
-                        </div>
-                        {/* 「已消耗」是事实不是告警——条已经用颜色说话了，这里不上色说第二遍 */}
-                        {usedPct != null && (
-                          <div className="mt-1 text-micro tabular-nums text-l4">
-                            已消耗 {usedPct.toFixed(0)}%
-                          </div>
-                        )}
-                      </>
-                    )}
-                    {group.members.length > 0 && (
-                      <div className="mt-5">
-                        <div className="text-xs font-medium tracking-wider text-l3">
-                          密钥额度
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          {group.members.map((member) => {
-                            const quota = walletTokenQuota(member);
-                            const peers = group.members.map(
-                              (m) => walletTokenQuota(m)?.used ?? null,
-                            );
-                            const keyHint = hintOf(member.gatewayId);
-                            const note = [
-                              member.gatewayName,
-                              member.tokenName && member.tokenName !== member.gatewayName
-                                ? `站点令牌 ${member.tokenName}`
-                                : null,
-                              keyHint ? `尾号 ${keyHint}` : null,
-                              member.expiresAt != null
-                                ? `${formatPlanTimestamp(member.expiresAt, Date.now())} 到期`
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ");
-                            if (!quota) {
-                              return (
-                                <WalletKeyRow
-                                  key={member.gatewayId}
-                                  name={member.gatewayName}
-                                  title={note}
-                                  usedPct={null}
-                                  used={null}
-                                  total={null}
-                                  currency={member.currency}
-                                  empty={member.error ?? "无数据"}
-                                  peers={peers}
-                                />
-                              );
-                            }
-                            return (
-                              <WalletKeyRow
-                                key={member.gatewayId}
-                                name={member.gatewayName}
-                                title={note}
-                                unlimited={quota.unlimited}
-                                usedPct={quota.pct}
-                                used={quota.used}
-                                total={quota.total}
-                                currency={member.currency}
-                                hideAmount={hideQuota}
-                                peers={peers}
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                    {expiringSoon.length > 0 && (
-                      <p className="mt-2 text-micro text-warn-text">
-                        {expiringSoon
-                          .map(
-                            (m) =>
-                              `${multi ? m.gatewayName : "密钥"} ${
-                                m.expiresAt == null
-                                  ? ""
-                                  : formatPlanTimestamp(m.expiresAt, Date.now())
-                              } 到期`,
-                          )
-                          .join("；")}
-                      </p>
-                    )}
-                    {row.source === "token" && (
-                      <p className="mt-2 text-xs text-l3">
-                        {walletMissingHint(row.hasWalletToken)}
-                      </p>
-                    )}
-                  </div>
-                  </>
-                  )}
-                </>
-              );
-            })()
+          {hasWalletGateway && (walletRowsShown.length > 0 || walletLoading) && (
+            <WalletBalanceCard
+              rows={walletRowsShown}
+              gateways={gateways}
+              loading={walletLoading}
+              error={walletError}
+              onRefresh={handleRefreshWallet}
+              onOpenWallet={handleOpenWallet}
+            />
           )}
-        </section>
-      )}
-      </div>
+        </div>
       )}
 
       {!stats ? (

@@ -1061,9 +1061,10 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   walletUnlimitedLine（不限额度也要把已用说出来）+
                              #   walletUnlimitedFill（开口条：同卡已用的 log1p 比，最长停在 95，已用 ≤ 0 不画）
                              #   （tests/gateway-balance.test.ts；与 gateway_balance.rs WALLET_HOSTS 双端镜像）
-  quota-swipe.ts             # 订阅余量 / 网关余额卡收起态左右切换（useQuotaSwipe，2026-10-31；网关余额切的是账户分组）：整卡收触控板横扫、摘要区收拖动与 ← →；
-                             #   手势判定在 plan-quota planWheelStep（一次手势最多切一家、反向即新手势、惯性抖动看平滑幅度）；
-                             #   跟手位移 / 滑进 / 弹回直接写 areaRef 的 style（不进 React 状态，免整页每帧重渲染），减弱动态效果时只切不动
+  quota-swipe.ts             # 订阅余量 / 网关余额卡收起态 GPU 连续轮播滑切（useQuotaSwipe，2026-10-31；2026-11-25 流畅度重构）：
+                             #   containerRef 挂原生非被动 wheel 监听（{ passive: false } + preventDefault 防 WKWebView 横向回弹打架），
+                             #   trackRef 为全量收起卡片横排轨道，rAF 合并写同构 translate3d(calc(-idx*100% + px))，零 opacity 闪灭；
+                             #   手势判定在 plan-quota planWheelStep；含 mergePartialPlanRows（渐进结果原地刷新缓存行）与 carouselDragOffset；减弱动态效果时只切不动
   plan-quota.ts              # 订阅余量卡纯逻辑（用量页，与 gateway-balance.ts 并排的第二张卡）：
                              #   供应商显示名/切换标签/窗口名/重置倒计时/重置卡；
                              #   含本机轻量筛选与排序偏好（QuotaDisplayPrefs / applyQuotaDisplayPrefs / toggleQuotaHidden / moveQuotaOrder，全部隐藏时防呆保留）；
@@ -1704,15 +1705,16 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   2 分钟进程内缓存（对齐用量页可见期自动轮询，页面不可见即停）+ 瞬时失败回落上次成功值
                              #   标 fromCache；无后台轮询；不注出网代理；
                              #   复用 reqwest Client（连接池，勿退回每请求新建 Client = 每次重新握手）；
-                             #   plan_quota_overview 多网关并发（spawn 全部再按序收），等待 ≈ 最慢一家不是相加
+                             #   plan_quota_overview 网关与官方账号全并发，经 QuotaPartialSink 按完成顺序渐进发 `plan-quota-partial` 事件（快的不等慢的）
   official_accounts.rs       # 多官方账号管理（2026-11-21，docs/design-multi-official-accounts.md）：OfficialAccountMode（Default / IsolatedDir / ManagedSnapshot）
                              #   与 OfficialAccountRef；Claude Code（CLAUDE_CONFIG_DIR）与 Codex（CODEX_HOME）独立隔离目录创建/探测/删除与会话根枚举；
                              #   Antigravity（agy）0600 本地凭证快照库（official-accounts/agy-accounts.json，绝不进导出/诊断包）、macOS security -i 钥匙串切换
                              #   （切前必收回当前登录防丢号）、非激活副本刷新查余量、以及进程内单活并发护栏（official_agy_check_conflicts / register / unregister）
-  official_quota.rs          # 订阅余量卡的官方账号行（2026-10-31，2026-11-21 升级多官方号并发查询）：Claude（默认 + 全部隔离 CLAUDE_CONFIG_DIR）、
+  official_quota.rs          # 订阅余量卡的官方账号行（2026-10-31，2026-11-21 升级多官方号并发，2026-11-25 拆为逐账号独立并发任务 + 缓存前置 + 流式推送）：
+                             #   Claude（默认 + 全部隔离 CLAUDE_CONFIG_DIR，缓存命中免调 Keychain）、
                              #   Codex（默认 + 全部隔离 CODEX_HOME，重置卡 use_codex_reset_card 按行 ID 定向消费对应目录 auth.json）、
-                             #   Antigravity（默认走 `agy --print /usage`，收录托管多号时走 daily-cloudcode-pa 仅映射自家 Gemini 桶过滤 3p-*）；
-                             #   Claude/Codex 严格只读凭证绝不刷新回写；Antigravity 非激活副本仅在本地副本刷新 access_token 不回写钥匙串；
+                             #   Grok / Kimi（默认 + 隔离）与 Antigravity（默认 `agy --print /usage` / 托管号 daily-cloudcode-pa 仅映射自家 Gemini 桶过滤 3p-*）；
+                             #   Claude/Codex/Grok/Kimi 严格只读凭证绝不刷新回写；Antigravity 非激活副本仅在本地副本刷新 access_token 不回写钥匙串；
                              #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）
   gateway_balance.rs         # 网关余额查询（用量页「网关余额」卡，与订阅余量并列，2026-09-20）：
                              #   New API 兼容预付钱包，出卡零配置（槽 URL 主机命中 zetatechs.com 即出；加站点 = WALLET_HOSTS 加一条）；

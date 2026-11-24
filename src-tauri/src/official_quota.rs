@@ -1767,6 +1767,16 @@ async fn query_kimi_official_named(
 /// 五家官方账号的行（Claude Code / Codex / Grok Build / Kimi Code / Antigravity CLI）：
 /// 并发查询本机默认槽位 + 连接页里全部附加隔离账号 / 托管快照账号；没登录不出行（已显式加号的附加号除外，会在卡面提示未登录）
 pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
+    official_rows_streaming(force, 0, None).await
+}
+
+/// 并发探查并渐进回报全部官方账号余量：每家账号的凭证读取与网络请求在独立任务内执行
+/// （避免 Claude 钥匙串等慢探针阻塞 Codex / Kimi / Grok / Antigravity），命中 2 分钟缓存时 0ms 直接回报。
+pub(crate) async fn official_rows_streaming(
+    force: bool,
+    order_base: usize,
+    sink: Option<std::sync::Arc<crate::subscription_quota::QuotaPartialSink>>,
+) -> Vec<PlanQuotaDto> {
     if cfg!(test) {
         return Vec::new();
     }
@@ -1839,7 +1849,302 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
         }
     }
 
-    // 1) Antigravity 任务集合
+    let mut next_order = order_base;
+    let mut alloc_order = || {
+        let o = next_order;
+        next_order += 1;
+        o
+    };
+
+    let mut tasks: Vec<tauri::async_runtime::JoinHandle<Option<PlanQuotaDto>>> = Vec::new();
+
+    // 1) Claude 默认 + 隔离目录（各自独立任务，钥匙串探针不再阻塞其他家）
+    {
+        let order = alloc_order();
+        let name = claude_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = claude_default.as_ref().map(|b| b.id.clone());
+        let hint = claude_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(CLAUDE_ROW_ID, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let creds = tauri::async_runtime::spawn_blocking(read_claude_creds)
+                .await
+                .ok()
+                .flatten()?;
+            let dto = settle_fresh(query_claude_named(CLAUDE_ROW_ID, &name, bid, hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+    for b in claude_isolated {
+        let order = alloc_order();
+        let dir = b
+            .official_ref
+            .as_ref()
+            .and_then(|r| r.local_dir_id.as_deref())
+            .and_then(|id| crate::official_accounts::isolated_dir_path("claude-code", id).ok());
+        let bid = b.id.clone();
+        let row_id = format!("{CLAUDE_ROW_PREFIX}{bid}");
+        let name = if b.name.trim().is_empty() { ROW_NAME.to_string() } else { b.name.clone() };
+        let preset_hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let Some(dir) = dir else { return None };
+            let (creds, hint) = tauri::async_runtime::spawn_blocking(move || {
+                let c = read_claude_creds_for_dir(Some(&dir));
+                let h = preset_hint.or_else(|| crate::official_accounts::read_claude_account_hint(&dir));
+                (c, h)
+            })
+            .await
+            .ok()?;
+            let creds = creds?;
+            let dto = settle_fresh(query_claude_named(&row_id, &name, Some(bid), hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+
+    // 2) Codex 默认 + 隔离目录
+    {
+        let order = alloc_order();
+        let name = codex_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = codex_default.as_ref().map(|b| b.id.clone());
+        let hint = codex_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(CODEX_ROW_ID, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let creds = tauri::async_runtime::spawn_blocking(read_codex_creds)
+                .await
+                .ok()
+                .flatten()?;
+            let dto = settle_fresh(query_codex_named(CODEX_ROW_ID, &name, bid, hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+    for b in codex_isolated {
+        let order = alloc_order();
+        let dir = b
+            .official_ref
+            .as_ref()
+            .and_then(|r| r.local_dir_id.as_deref())
+            .and_then(|id| crate::official_accounts::isolated_dir_path("codex", id).ok());
+        let bid = b.id.clone();
+        let row_id = format!("{CODEX_ROW_PREFIX}{bid}");
+        let name = if b.name.trim().is_empty() { ROW_NAME.to_string() } else { b.name.clone() };
+        let preset_hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let Some(dir) = dir else { return None };
+            let (creds, hint) = tauri::async_runtime::spawn_blocking(move || {
+                let c = read_codex_creds_for_dir(Some(&dir));
+                let h = preset_hint.or_else(|| crate::official_accounts::probe_isolated_codex(&dir).1);
+                (c, h)
+            })
+            .await
+            .ok()?;
+            let creds = creds?;
+            let dto = settle_fresh(query_codex_named(&row_id, &name, Some(bid), hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+
+    // 3) Grok 默认 + 隔离目录
+    {
+        let order = alloc_order();
+        let name = grok_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = grok_default.as_ref().map(|b| b.id.clone());
+        let hint = grok_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(GROK_ROW_ID, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let creds = tauri::async_runtime::spawn_blocking(|| read_grok_creds_for_dir(None))
+                .await
+                .ok()
+                .flatten()?;
+            let dto = settle_fresh(query_grok_named(GROK_ROW_ID, &name, bid, hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+    for b in grok_isolated {
+        let order = alloc_order();
+        let dir = b
+            .official_ref
+            .as_ref()
+            .and_then(|r| r.local_dir_id.as_deref())
+            .and_then(|id| crate::official_accounts::isolated_dir_path("grok", id).ok());
+        let bid = b.id.clone();
+        let row_id = format!("{GROK_ROW_PREFIX}{bid}");
+        let name = if b.name.trim().is_empty() { ROW_NAME.to_string() } else { b.name.clone() };
+        let preset_hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let Some(dir) = dir else { return None };
+            let (creds, hint) = tauri::async_runtime::spawn_blocking(move || {
+                let c = read_grok_creds_for_dir(Some(&dir));
+                let h = preset_hint.or_else(|| crate::official_accounts::probe_isolated_grok(&dir).1);
+                (c, h)
+            })
+            .await
+            .ok()?;
+            let creds = creds?;
+            let dto = settle_fresh(query_grok_named(&row_id, &name, Some(bid), hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+
+    // 4) Kimi 默认 + 隔离目录
+    {
+        let order = alloc_order();
+        let name = kimi_default
+            .as_ref()
+            .map(|b| b.name.clone())
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| ROW_NAME.to_string());
+        let bid = kimi_default.as_ref().map(|b| b.id.clone());
+        let hint = kimi_default
+            .as_ref()
+            .and_then(|b| b.official_ref.as_ref())
+            .and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(KIMI_ROW_ID, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let creds = tauri::async_runtime::spawn_blocking(|| read_kimi_creds_for_dir(None))
+                .await
+                .ok()
+                .flatten()?;
+            let dto = settle_fresh(query_kimi_official_named(KIMI_ROW_ID, &name, bid, hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+    for b in kimi_isolated {
+        let order = alloc_order();
+        let dir = b
+            .official_ref
+            .as_ref()
+            .and_then(|r| r.local_dir_id.as_deref())
+            .and_then(|id| crate::official_accounts::isolated_dir_path("kimi", id).ok());
+        let bid = b.id.clone();
+        let row_id = format!("{KIMI_ROW_PREFIX}{bid}");
+        let name = if b.name.trim().is_empty() { ROW_NAME.to_string() } else { b.name.clone() };
+        let hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
+        let s = sink.clone();
+        tasks.push(tauri::async_runtime::spawn(async move {
+            if !force {
+                if let Some(hit) = cache_get(&row_id, now) {
+                    if let Some(ref sk) = s {
+                        sk.push(order, hit.clone());
+                    }
+                    return Some(hit);
+                }
+            }
+            let Some(dir) = dir else { return None };
+            let creds = tauri::async_runtime::spawn_blocking(move || read_kimi_creds_for_dir(Some(&dir)))
+                .await
+                .ok()
+                .flatten()?;
+            let dto = settle_fresh(query_kimi_official_named(&row_id, &name, Some(bid), hint, creds).await);
+            if let Some(ref sk) = s {
+                sk.push(order, dto.clone());
+            }
+            Some(dto)
+        }));
+    }
+
+    // 5) Antigravity（托管多号或本机默认）
+    let agy_base = alloc_order();
+    let agy_sink = sink.clone();
     let agy_task = tauri::async_runtime::spawn(async move {
         if agy_managed.is_empty() {
             let mut row = query_agy_row(force, now).await?;
@@ -1850,6 +2155,9 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
                 row.binding_id = Some(b.id);
                 row.account_hint = b.official_ref.and_then(|r| r.account_hint);
             }
+            if let Some(ref sk) = agy_sink {
+                sk.push(agy_base, row.clone());
+            }
             return Some(vec![row]);
         }
         let active_sid = tauri::async_runtime::spawn_blocking(
@@ -1859,7 +2167,8 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
         .ok()
         .flatten();
         let mut handles = Vec::new();
-        for b in agy_managed {
+        for (i, b) in agy_managed.into_iter().enumerate() {
+            let slot_order = agy_base + i;
             let row_id = format!("{AGY_ROW_PREFIX}{}", b.id);
             let row_name = if b.name.trim().is_empty() {
                 ROW_NAME.to_string()
@@ -1876,14 +2185,37 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
                 .and_then(|r| r.account_hint.clone());
             let is_active = sid.is_some() && active_sid == sid;
             let bid = b.id.clone();
+            let s = agy_sink.clone();
             handles.push(tauri::async_runtime::spawn(async move {
-                if !force {
+                let dto = if !force {
                     if let Some(mut hit) = cache_get(&row_id, now) {
                         hit.is_active_slot = Some(is_active);
-                        return hit;
+                        hit
+                    } else if let Some(snapshot_id) = sid {
+                        settle_fresh(
+                            query_agy_snapshot_api(&row_id, &row_name, Some(bid), hint, &snapshot_id, is_active)
+                                .await,
+                        )
+                    } else {
+                        let mut dto = blank_official_row(
+                            &row_id,
+                            &row_name,
+                            "agy",
+                            None,
+                            AGY_CONSOLE_URL,
+                            Some(bid),
+                            hint,
+                            Some(false),
+                        );
+                        dto.error = Some("该 Antigravity 账号尚未收录凭证，请到连接页收录".into());
+                        dto
                     }
-                }
-                let Some(snapshot_id) = sid else {
+                } else if let Some(snapshot_id) = sid {
+                    settle_fresh(
+                        query_agy_snapshot_api(&row_id, &row_name, Some(bid), hint, &snapshot_id, is_active)
+                            .await,
+                    )
+                } else {
                     let mut dto = blank_official_row(
                         &row_id,
                         &row_name,
@@ -1895,12 +2227,12 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
                         Some(false),
                     );
                     dto.error = Some("该 Antigravity 账号尚未收录凭证，请到连接页收录".into());
-                    return dto;
+                    dto
                 };
-                settle_fresh(
-                    query_agy_snapshot_api(&row_id, &row_name, Some(bid), hint, &snapshot_id, is_active)
-                        .await,
-                )
+                if let Some(ref sk) = s {
+                    sk.push(slot_order, dto.clone());
+                }
+                dto
             }));
         }
         let mut rows = Vec::new();
@@ -1912,290 +2244,9 @@ pub async fn official_rows(force: bool) -> Vec<PlanQuotaDto> {
         Some(rows)
     });
 
-    // 2) 阻塞读取 Claude / Codex 全部本地凭证（默认 + 隔离目录）
-    let claude_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
-        claude_isolated
-            .iter()
-            .map(|b| {
-                let dir = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.local_dir_id.as_deref())
-                    .and_then(|id| crate::official_accounts::isolated_dir_path("claude-code", id).ok());
-                let hint = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.account_hint.clone())
-                    .or_else(|| dir.as_deref().and_then(crate::official_accounts::read_claude_account_hint));
-                (b.id.clone(), b.name.clone(), hint, dir)
-            })
-            .collect();
-    let codex_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
-        codex_isolated
-            .iter()
-            .map(|b| {
-                let dir = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.local_dir_id.as_deref())
-                    .and_then(|id| crate::official_accounts::isolated_dir_path("codex", id).ok());
-                let hint = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.account_hint.clone())
-                    .or_else(|| {
-                        dir.as_deref()
-                            .and_then(|d| crate::official_accounts::probe_isolated_codex(d).1)
-                    });
-                (b.id.clone(), b.name.clone(), hint, dir)
-            })
-            .collect();
-
-    let grok_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
-        grok_isolated
-            .iter()
-            .map(|b| {
-                let dir = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.local_dir_id.as_deref())
-                    .and_then(|id| crate::official_accounts::isolated_dir_path("grok", id).ok());
-                let hint = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.account_hint.clone())
-                    .or_else(|| {
-                        dir.as_deref()
-                            .and_then(|d| crate::official_accounts::probe_isolated_grok(d).1)
-                    });
-                (b.id.clone(), b.name.clone(), hint, dir)
-            })
-            .collect();
-    let kimi_iso_specs: Vec<(String, String, Option<String>, Option<std::path::PathBuf>)> =
-        kimi_isolated
-            .iter()
-            .map(|b| {
-                let dir = b
-                    .official_ref
-                    .as_ref()
-                    .and_then(|r| r.local_dir_id.as_deref())
-                    .and_then(|id| crate::official_accounts::isolated_dir_path("kimi", id).ok());
-                let hint = b.official_ref.as_ref().and_then(|r| r.account_hint.clone());
-                (b.id.clone(), b.name.clone(), hint, dir)
-            })
-            .collect();
-
-    let claude_iso_dirs: Vec<Option<std::path::PathBuf>> =
-        claude_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
-    let codex_iso_dirs: Vec<Option<std::path::PathBuf>> =
-        codex_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
-    let grok_iso_dirs: Vec<Option<std::path::PathBuf>> =
-        grok_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
-    let kimi_iso_dirs: Vec<Option<std::path::PathBuf>> =
-        kimi_iso_specs.iter().map(|(_, _, _, d)| d.clone()).collect();
-
-    let (
-        claude_def_creds,
-        codex_def_creds,
-        grok_def_creds,
-        kimi_def_creds,
-        claude_iso_creds,
-        codex_iso_creds,
-        grok_iso_creds,
-        kimi_iso_creds,
-    ) = tauri::async_runtime::spawn_blocking(move || {
-        let cd = read_claude_creds();
-        let xd = read_codex_creds();
-        let gd = read_grok_creds_for_dir(None);
-        let kd = read_kimi_creds_for_dir(None);
-        let ci: Vec<Option<ClaudeCreds>> = claude_iso_dirs
-            .iter()
-            .map(|d| d.as_deref().and_then(|p| read_claude_creds_for_dir(Some(p))))
-            .collect();
-        let xi: Vec<Option<CodexCreds>> = codex_iso_dirs
-            .iter()
-            .map(|d| d.as_deref().and_then(|p| read_codex_creds_for_dir(Some(p))))
-            .collect();
-        let gi: Vec<Option<GrokCreds>> = grok_iso_dirs
-            .iter()
-            .map(|d| d.as_deref().and_then(|p| read_grok_creds_for_dir(Some(p))))
-            .collect();
-        let ki: Vec<Option<KimiOfficialCreds>> = kimi_iso_dirs
-            .iter()
-            .map(|d| d.as_deref().and_then(|p| read_kimi_creds_for_dir(Some(p))))
-            .collect();
-        (cd, xd, gd, kd, ci, xi, gi, ki)
-    })
-    .await
-    .unwrap_or((
-        None,
-        None,
-        None,
-        None,
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    ));
-
-    // 3) 并发查询所有 Claude + Codex + Grok + Kimi 官方账号
-    let mut tasks: Vec<tauri::async_runtime::JoinHandle<PlanQuotaDto>> = Vec::new();
-
-    if let Some(creds) = claude_def_creds {
-        let name = claude_default
-            .as_ref()
-            .map(|b| b.name.clone())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| ROW_NAME.to_string());
-        let bid = claude_default.as_ref().map(|b| b.id.clone());
-        let hint = claude_default
-            .as_ref()
-            .and_then(|b| b.official_ref.as_ref())
-            .and_then(|r| r.account_hint.clone());
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(CLAUDE_ROW_ID, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_claude_named(CLAUDE_ROW_ID, &name, bid, hint, creds).await)
-        }));
-    }
-    for ((bid, bname, hint, _), creds_opt) in claude_iso_specs.into_iter().zip(claude_iso_creds) {
-        let Some(creds) = creds_opt else { continue };
-        let row_id = format!("{CLAUDE_ROW_PREFIX}{bid}");
-        let name = if bname.trim().is_empty() {
-            ROW_NAME.to_string()
-        } else {
-            bname
-        };
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(&row_id, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_claude_named(&row_id, &name, Some(bid), hint, creds).await)
-        }));
-    }
-
-    if let Some(creds) = codex_def_creds {
-        let name = codex_default
-            .as_ref()
-            .map(|b| b.name.clone())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| ROW_NAME.to_string());
-        let bid = codex_default.as_ref().map(|b| b.id.clone());
-        let hint = codex_default
-            .as_ref()
-            .and_then(|b| b.official_ref.as_ref())
-            .and_then(|r| r.account_hint.clone());
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(CODEX_ROW_ID, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_codex_named(CODEX_ROW_ID, &name, bid, hint, creds).await)
-        }));
-    }
-    for ((bid, bname, hint, _), creds_opt) in codex_iso_specs.into_iter().zip(codex_iso_creds) {
-        let Some(creds) = creds_opt else { continue };
-        let row_id = format!("{CODEX_ROW_PREFIX}{bid}");
-        let name = if bname.trim().is_empty() {
-            ROW_NAME.to_string()
-        } else {
-            bname
-        };
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(&row_id, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_codex_named(&row_id, &name, Some(bid), hint, creds).await)
-        }));
-    }
-
-    if let Some(creds) = grok_def_creds {
-        let name = grok_default
-            .as_ref()
-            .map(|b| b.name.clone())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| ROW_NAME.to_string());
-        let bid = grok_default.as_ref().map(|b| b.id.clone());
-        let hint = grok_default
-            .as_ref()
-            .and_then(|b| b.official_ref.as_ref())
-            .and_then(|r| r.account_hint.clone());
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(GROK_ROW_ID, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_grok_named(GROK_ROW_ID, &name, bid, hint, creds).await)
-        }));
-    }
-    for ((bid, bname, hint, _), creds_opt) in grok_iso_specs.into_iter().zip(grok_iso_creds) {
-        let Some(creds) = creds_opt else { continue };
-        let row_id = format!("{GROK_ROW_PREFIX}{bid}");
-        let name = if bname.trim().is_empty() {
-            ROW_NAME.to_string()
-        } else {
-            bname
-        };
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(&row_id, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_grok_named(&row_id, &name, Some(bid), hint, creds).await)
-        }));
-    }
-
-    if let Some(creds) = kimi_def_creds {
-        let name = kimi_default
-            .as_ref()
-            .map(|b| b.name.clone())
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| ROW_NAME.to_string());
-        let bid = kimi_default.as_ref().map(|b| b.id.clone());
-        let hint = kimi_default
-            .as_ref()
-            .and_then(|b| b.official_ref.as_ref())
-            .and_then(|r| r.account_hint.clone());
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(KIMI_ROW_ID, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_kimi_official_named(KIMI_ROW_ID, &name, bid, hint, creds).await)
-        }));
-    }
-    for ((bid, bname, hint, _), creds_opt) in kimi_iso_specs.into_iter().zip(kimi_iso_creds) {
-        let Some(creds) = creds_opt else { continue };
-        let row_id = format!("{KIMI_ROW_PREFIX}{bid}");
-        let name = if bname.trim().is_empty() {
-            ROW_NAME.to_string()
-        } else {
-            bname
-        };
-        tasks.push(tauri::async_runtime::spawn(async move {
-            if !force {
-                if let Some(hit) = cache_get(&row_id, now) {
-                    return hit;
-                }
-            }
-            settle_fresh(query_kimi_official_named(&row_id, &name, Some(bid), hint, creds).await)
-        }));
-    }
-
     let mut out = Vec::new();
     for t in tasks {
-        if let Ok(dto) = t.await {
+        if let Ok(Some(dto)) = t.await {
             out.push(dto);
         }
     }
