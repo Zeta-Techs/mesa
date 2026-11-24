@@ -864,7 +864,9 @@ export default function ChatComposer({
     requestAnimationFrame(() => ref.current?.focus());
   }
 
-  useEffect(() => {
+  // 在上屏前处理（layout effect）：灯箱里点「标注 / 改图」时灯箱收起与标注台挂出落在同一帧。
+  // 原先 useEffect 在第一帧画完后才跑，实测（2026-11-24 逐帧打点）中间有一帧灯箱已拆、台子没挂，露出后面的对话
+  useLayoutEffect(() => {
     if (!seedInsert) return;
     if (typeof seedInsert === "string") insertResourceText(seedInsert);
     else {

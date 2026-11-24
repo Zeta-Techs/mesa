@@ -500,8 +500,10 @@ export default function ChatImageStage({
           setDragging(false);
         }}
       >
+        {/* 原图宽高已知、区域还没量好（上屏前那一下）时先不画图：按原尺寸画会撑出滚动条，量到的区域少几像素，
+            下一帧滚动条消失再量，图跟着变大一点（2026-11-24 逐帧打点：1256×707 → 1262×710） */}
         <div className="flex min-h-full min-w-full w-max px-4 py-2">
-          {!shown || !current ? (
+          {natural && !shown ? null : !shown || !current ? (
             <img
               src={url}
               alt={name}

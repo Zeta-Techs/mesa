@@ -149,7 +149,8 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
                              #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）；
-                             #   size = 已知原图宽高（借聊天图片缓存时给），区域在上屏前量（随台子高度重量），不淡入——灯箱里点「标注 / 改图」同一帧接上
+                             #   size = 已知原图宽高（借聊天图片缓存时给），区域在上屏前量（随台子高度重量）、量好前不画图（免得撑出滚动条量错），不淡入；
+                             #   输入框收「改这张图」用 layout effect，灯箱里点「标注 / 改图」与灯箱收起同一帧（2026-11-24 逐帧打点核实）
 components/ImageMarkDialog.tsx  # 审阅给一张图加意见的弹层（2026-11-13）：在图上拖红框（可多个）+ 一句话，加入意见时带红框的图经 exportMarkup + saveClipboardImage 存盘、路径随意见交给 AI（拼图出错这类划不了字的问题）；几何与导出沿用聊天标注同一套 image-markup.ts；审阅态点正文图（FilePreviewEditor）或图片预览「框选加意见」（ImagePreview）进
   pages/ConsultPage.tsx      # 研讨页（2026-11-11）：不在导航里的主区页，只放 store.consultOpen 那一场的 ConsultView；showConsult（侧栏研讨行、「去看看」、工作台进行中的研讨）打开它；没打开的给空态与「请几家研讨…」
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
