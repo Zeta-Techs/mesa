@@ -775,6 +775,32 @@ fn port_blocks_reuse_freed_slots() {
     archive_impl(&fx.conn, &a.id).unwrap();
     let c = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "c").unwrap();
     assert_eq!(c.port_base, 4000);
+    // 恢复 a 时原 4000 已被 c 占走，必须顺延分配新端口段而不与 c 冲突
+    restore_impl(&fx.conn, &a.id).unwrap();
+    let a_restored = get_workspace(&fx.conn, &a.id).unwrap();
+    assert_eq!(a_restored.status, "active");
+    assert_eq!(a_restored.port_base, 4020);
+}
+
+#[test]
+fn alloc_port_base_supports_more_than_31_active_workspaces() {
+    let dir = std::env::temp_dir().join(format!("ccode-ws-ports-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let conn = db_at(&dir.join("app.db")).unwrap();
+    // 模拟已占满原先 4000..=4300 的 31 个槽位（约 6 个 5 步项目）
+    for i in 0..=30 {
+        let port = 4000 + i * 10;
+        conn.execute(
+            "INSERT INTO workspaces(id, repo_path, name, branch, worktree_path, base_branch, port_base, status, created_at)
+             VALUES (?1, '/tmp/r', ?2, ?3, ?4, 'main', ?5, 'active', '2026-11-24T00:00:00Z')",
+            params![format!("w-{i}"), format!("step-{i}"), format!("ccode/step-{i}"), format!("/tmp/wt-{i}"), port],
+        )
+        .unwrap();
+    }
+    let next = alloc_port_base(&conn).unwrap();
+    assert_eq!(next, 4310);
+    drop(conn);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

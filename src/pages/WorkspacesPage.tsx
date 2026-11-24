@@ -660,6 +660,39 @@ function formatDiagError(err: unknown): string {
 const WORKSPACE_DRIFT_CONCURRENCY = 4;
 const WORKSPACE_HEALTH_CONCURRENCY = 3;
 
+/**
+ * 筛选本轮常规刷新需要跑 drift / health 诊断的工作区：
+ * - 当前打开项目的全部工作区（确保当前页面立即拿到最新状态）
+ * - 任一项目中尚未保存进项目（!mergedAt）或非 active（如 creating）的工作区（收件箱待评审/冲突不漏报）
+ * - 当前有活跃终端落在该工作树内的工作区（已保存步骤若刚被继续改动也能及时察觉）
+ * 其他未选中老项目里「已保存且无活跃终端」的工作区延后到点进该项目时按需检查，
+ * 避免开多个已完结项目后每次刷新触发数百次 git 子进程。
+ */
+export function selectWorkspacesForRefresh<
+  T extends {
+    repoPath: string;
+    worktreePath: string;
+    status: string;
+    mergedAt?: string | null;
+  },
+>(
+  list: readonly T[],
+  selectedRepoPath: string | null,
+  activeTerminalCwds: readonly string[],
+  isWindows: boolean,
+): T[] {
+  return list.filter((w) => {
+    if (selectedRepoPath && samePathKey(w.repoPath, selectedRepoPath, isWindows)) {
+      return true;
+    }
+    if (w.status === "archived") return false;
+    if (w.status !== "active" || !w.mergedAt) return true;
+    return activeTerminalCwds.some((cwd) =>
+      samePathKey(cwd, w.worktreePath, isWindows),
+    );
+  });
+}
+
 export function workspaceState(
   workspace: WorkspaceDto,
   health: WorkspaceHealthDto | undefined,
@@ -696,11 +729,21 @@ export function workspaceState(
     };
   }
   if (workspace.status === "archived") {
+    if (workspace.mergedAt) {
+      return {
+        label: "已保存 · 已收起",
+        dotClass: "bg-ok-text",
+        textClass: "text-l3",
+        details: [
+          "成果已保存进项目主文件夹；临时工作副本已收起释放空间，历史分支仍保留，需要返工随时可恢复。",
+        ],
+      };
+    }
     return {
       label: "已归档",
       dotClass: "bg-l4",
       textClass: "text-l3",
-      details: ["工作树已移除，分支仍保留，可恢复后继续工作。"],
+      details: ["临时工作副本已收起，历史分支仍保留，可恢复后继续工作。"],
     };
   }
   if (!health) {
@@ -977,6 +1020,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [projectsRefreshSeq, setProjectsRefreshSeq] = useState(0);
   const refreshCallIdRef = useRef(0);
+  const repoProbeCallIdRef = useRef(0);
+  const selectedRepoPathRef = useRef<string | null>(null);
+  const lastProbedRepoRef = useRef<string | null>(null);
+  const terminalCwdsRef = useRef<string[]>([]);
   const selectRetryRef = useRef<{ path: string; afterSeq: number } | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [homeDir, setHomeDir] = useState("");
@@ -1007,6 +1054,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     x: number;
     y: number;
     ws: WorkspaceDto;
+    label?: string;
   } | null>(null);
   const [detailsPopover, setDetailsPopover] = useState<{
     x: number;
@@ -1136,6 +1184,123 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inboxLive, liveSig]);
 
+  /** 对指定工作区集合跑 drift / settings / health 探测，按 ID 增量合并回 state（不抹掉未探测项目的缓存）。 */
+  async function probeWorkspaces(
+    targets: WorkspaceDto[],
+    liveIds: Set<string> | null,
+    isStale: () => boolean,
+  ): Promise<string[]> {
+    const targetIds = new Set(targets.map((w) => w.id));
+    const driftFailures: Record<string, string> = {};
+    const driftEntries = await mapWithConcurrency(
+      targets,
+      WORKSPACE_DRIFT_CONCURRENCY,
+      async (workspace) => {
+        try {
+          return [
+            workspace.id,
+            await invoke<WorkspaceDriftDto>("workspace_drift", {
+              id: workspace.id,
+            }),
+          ] as const;
+        } catch (e) {
+          driftFailures[workspace.id] = formatDiagError(e);
+          return null;
+        }
+      },
+    );
+    if (isStale()) return [];
+    setDrift((prev) => {
+      const next: Record<string, WorkspaceDriftDto> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if ((!liveIds || liveIds.has(k)) && !targetIds.has(k)) next[k] = v;
+      }
+      for (const e of driftEntries) {
+        if (e) next[e[0]] = e[1];
+      }
+      return next;
+    });
+    setDriftFailed((prev) => {
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if ((!liveIds || liveIds.has(k)) && !targetIds.has(k)) next[k] = v;
+      }
+      return { ...next, ...driftFailures };
+    });
+    // 活跃工作区所在仓库的 settings（按 repoPath 缓存，不重复拉取）
+    const repos = [
+      ...new Set(
+        targets.filter((w) => w.status === "active").map((w) => w.repoPath),
+      ),
+    ];
+    const settingsFailures: string[] = [];
+    const entries = await Promise.all(
+      repos.map(async (r) => {
+        try {
+          return [
+            r,
+            await invoke<WsSettingsDto>("workspace_settings", {
+              repoPath: r,
+            }),
+          ] as const;
+        } catch {
+          settingsFailures.push(r);
+          return null; // 无 settings.toml 仍允许工作区列表继续展示
+        }
+      }),
+    );
+    if (isStale()) return [];
+    setSettings((prev) => {
+      const next = { ...prev };
+      for (const e of entries) {
+        // 每次刷新无条件覆盖：settings.toml 新建/修改后回到本页即生效
+        if (e) next[e[0]] = e[1];
+      }
+      return next;
+    });
+    // 活跃工作区的健康度（每次刷新覆盖，ReadyToMerge 判定随提交/合并变化）；
+    // 每个 workspace_health 内部并行 9 路 git，这里限并发防多工作区同时扇出撞文件描述符上限
+    const activeIds = targets
+      .filter((w) => w.status === "active")
+      .map((w) => w.id);
+    const activeIdSet = new Set(activeIds);
+    const healthFailures: Record<string, string> = {};
+    const healthEntries = await mapWithConcurrency(
+      activeIds,
+      WORKSPACE_HEALTH_CONCURRENCY,
+      async (id) => {
+        try {
+          return [
+            id,
+            await invoke<WorkspaceHealthDto>("workspace_health", { id }),
+          ] as const;
+        } catch (e) {
+          healthFailures[id] = formatDiagError(e);
+          return null;
+        }
+      },
+    );
+    if (isStale()) return [];
+    setHealth((prev) => {
+      const next: Record<string, WorkspaceHealthDto> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (!liveIds || liveIds.has(k)) next[k] = v;
+      }
+      for (const e of healthEntries) {
+        if (e) next[e[0]] = e[1];
+      }
+      return next;
+    });
+    setHealthFailed((prev) => {
+      const next: Record<string, string> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if ((!liveIds || liveIds.has(k)) && !activeIdSet.has(k)) next[k] = v;
+      }
+      return { ...next, ...healthFailures };
+    });
+    return settingsFailures;
+  }
+
   async function refresh() {
     const callId = ++refreshCallIdRef.current;
     try {
@@ -1151,8 +1316,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       const list = wsResult.value;
       setWorkspaces(list);
       // 项目注册表：失败不阻断工作区列表，分组退化为仅按 repo 归组
+      let projList: ProjectDto[] = [];
       if (projResult.status === "fulfilled") {
-        const projList = projResult.value;
+        projList = projResult.value;
         setProjects(projList);
         useAppStore.getState().setProjectPaths(projList.map((p) => p.path));
         for (const p of projList) {
@@ -1166,90 +1332,32 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       setProjectsLoaded(true);
       setProjectsRefreshSeq((s) => s + 1);
       setRefreshToken((t) => t + 1);
-      const driftFailures: Record<string, string> = {};
-      const driftEntries = await mapWithConcurrency(
+      const req = useAppStore.getState().selectProjectReq;
+      const focusRepoPath =
+        (req
+          ? (projList.find((p) => samePath(p.path, req))?.path ??
+              list.find(
+                (w) => samePath(w.repoPath, req) || samePath(w.worktreePath, req),
+              )?.repoPath ??
+              req)
+          : null) ??
+        selectedRepoPathRef.current ??
+        projList[0]?.path ??
+        list[0]?.repoPath ??
+        null;
+      lastProbedRepoRef.current = focusRepoPath;
+      const targets = selectWorkspacesForRefresh(
         list,
-        WORKSPACE_DRIFT_CONCURRENCY,
-        async (workspace) => {
-          try {
-            return [
-              workspace.id,
-              await invoke<WorkspaceDriftDto>("workspace_drift", {
-                id: workspace.id,
-              }),
-            ] as const;
-          } catch (e) {
-            driftFailures[workspace.id] = formatDiagError(e);
-            return null;
-          }
-        },
+        focusRepoPath,
+        terminalCwdsRef.current,
+        IS_WINDOWS,
+      );
+      const settingsFailures = await probeWorkspaces(
+        targets,
+        new Set(list.map((w) => w.id)),
+        () => callId !== refreshCallIdRef.current,
       );
       if (callId !== refreshCallIdRef.current) return;
-      setDrift(
-        Object.fromEntries(driftEntries.filter((entry) => entry !== null)),
-      );
-      setDriftFailed(driftFailures);
-      // 活跃工作区所在仓库的 settings（按 repoPath 缓存，不重复拉取）
-      const repos = [
-        ...new Set(
-          list.filter((w) => w.status === "active").map((w) => w.repoPath),
-        ),
-      ];
-      const settingsFailures: string[] = [];
-      const entries = await Promise.all(
-        repos.map(async (r) => {
-          try {
-            return [
-              r,
-              await invoke<WsSettingsDto>("workspace_settings", {
-                repoPath: r,
-              }),
-            ] as const;
-          } catch {
-            settingsFailures.push(r);
-            return null; // 无 settings.toml 仍允许工作区列表继续展示
-          }
-        }),
-      );
-      if (callId !== refreshCallIdRef.current) return;
-      setSettings((prev) => {
-        const next = { ...prev };
-        for (const e of entries) {
-          // 每次刷新无条件覆盖：settings.toml 新建/修改后回到本页即生效
-          if (e) next[e[0]] = e[1];
-        }
-        return next;
-      });
-      // 活跃工作区的健康度（每次刷新覆盖，ReadyToMerge 判定随提交/合并变化）；
-      // 每个 workspace_health 内部并行 9 路 git，这里限并发防多工作区同时扇出撞文件描述符上限
-      const activeIds = list
-        .filter((w) => w.status === "active")
-        .map((w) => w.id);
-      const healthFailures: Record<string, string> = {};
-      const healthEntries = await mapWithConcurrency(
-        activeIds,
-        WORKSPACE_HEALTH_CONCURRENCY,
-        async (id) => {
-          try {
-            return [
-              id,
-              await invoke<WorkspaceHealthDto>("workspace_health", { id }),
-            ] as const;
-          } catch (e) {
-            healthFailures[id] = formatDiagError(e);
-            return null;
-          }
-        },
-      );
-      if (callId !== refreshCallIdRef.current) return;
-      setHealth((prev) => {
-        const next = { ...prev };
-        for (const e of healthEntries) {
-          if (e) next[e[0]] = e[1];
-        }
-        return next;
-      });
-      setHealthFailed(healthFailures);
       // 产物待核验：与健康度同频次（页可见刷新/事件驱动），失败静默（下轮重试）
       invoke<PendingArtifactDto[]>("pending_artifact_checks")
         .then(setArtifactReady)
@@ -1394,6 +1502,93 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     };
   }, []);
 
+  const [archivingSaved, setArchivingSaved] = useState(false);
+
+  function pendingHelpCountFor(worktreePath: string): number {
+    const activeReqs = helpNotDismissed(helpRequests, helpDismissed);
+    const byRoot = helpPendingByRoot(activeReqs);
+    for (const [root, count] of Object.entries(byRoot)) {
+      if (samePath(root, worktreePath)) return count;
+    }
+    return 0;
+  }
+
+  /** 对已保存进项目的单个工作区直接做无损归档（收起临时副本目录，保留主仓成果与分支）。 */
+  async function onArchiveSavedWorkspace(ws: WorkspaceDto, displayName?: string) {
+    if (archivingSaved) return;
+    const label = displayName || ws.name;
+    const openHelp = pendingHelpCountFor(ws.worktreePath);
+    const helpWarn =
+      openHelp > 0
+        ? `\n\n注意：该副本里还有 ${openHelp} 条未回答的人工请求，收起后收件箱将不再列出。`
+        : "";
+    if (
+      !(await confirmDialog(
+        `收起「${label}」的临时工作副本以释放空间？\n\n• 仅移除临时工作副本目录，减少磁盘占用与后台检查\n• 已保存进项目的成果与历史分支全部保留，以后要返工随时可恢复${helpWarn}`,
+      ))
+    ) {
+      return;
+    }
+    setArchivingSaved(true);
+    try {
+      await invoke("archive_workspace", { id: ws.id });
+      setNotice(`已收起「${label}」的临时工作副本，项目里的成果与历史均完整保留`);
+      setError(null);
+      await refresh();
+    } catch (e) {
+      setError(`暂无法收起「${label}」：${String(e)}`);
+    } finally {
+      setArchivingSaved(false);
+    }
+  }
+
+  /** 完结项目一键收起所有已保存步骤的临时工作副本（逐个走后端无损归档守卫，有未提交或运行中任务的自动跳过并说明）。 */
+  async function onArchiveSavedWorkspaces(
+    targets: { ws: WorkspaceDto; label: string }[],
+  ) {
+    if (archivingSaved || targets.length === 0) return;
+    const openHelp = targets.reduce(
+      (sum, t) => sum + pendingHelpCountFor(t.ws.worktreePath),
+      0,
+    );
+    const helpWarn =
+      openHelp > 0
+        ? `\n\n注意：这些副本里还有 ${openHelp} 条未回答的人工请求，收起后收件箱将不再列出。`
+        : "";
+    if (
+      !(await confirmDialog(
+        `收起本项目的 ${targets.length} 个已保存步骤临时工作副本？\n\n• 仅移除临时工作副本目录，释放磁盘空间并减少后台检查\n• 项目主文件夹里的成稿、文献、笔记与历史记录全部保留\n• 以后要返工任一步骤时，点「恢复副本」随时可恢复${helpWarn}`,
+      ))
+    ) {
+      return;
+    }
+    setArchivingSaved(true);
+    try {
+      const done: string[] = [];
+      const failed: string[] = [];
+      for (const target of targets) {
+        try {
+          await invoke("archive_workspace", { id: target.ws.id });
+          done.push(target.label);
+        } catch (e) {
+          failed.push(`${target.label}（${String(e)}）`);
+        }
+      }
+      if (done.length > 0 && failed.length === 0) {
+        setNotice(`已收起 ${done.length} 个临时工作副本，项目成稿与历史记录均完整保留`);
+        setError(null);
+      } else if (done.length > 0) {
+        setNotice(`已收起 ${done.length} 个临时工作副本；另有 ${failed.length} 个已保留不动`);
+        setError(`以下副本暂未收起：${failed.join("；")}`);
+      } else if (failed.length > 0) {
+        setError(`暂无法收起临时副本：${failed.join("；")}`);
+      }
+      await refresh();
+    } finally {
+      setArchivingSaved(false);
+    }
+  }
+
   async function onRestore(ws: WorkspaceDto) {
     try {
       await invoke("restore_workspace", { id: ws.id });
@@ -1523,6 +1718,34 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     groups[0] ??
     null;
   const selectedProjectPath = selectedGroup?.project?.path ?? null;
+  const selectedRepoPath = selectedGroup?.repoPath ?? null;
+  selectedRepoPathRef.current = selectedRepoPath;
+  terminalCwdsRef.current = terminalRunInputs.map((i) => i.cwd);
+  // 切到另一个项目时按需补探该项目的工作区（此前常规刷新跳过了未选中老项目的已保存工作区）
+  useEffect(() => {
+    if (!inboxLive || !selectedRepoPath) return;
+    if (
+      lastProbedRepoRef.current &&
+      samePath(lastProbedRepoRef.current, selectedRepoPath)
+    ) {
+      return;
+    }
+    const repoWorkspaces = workspaces.filter((w) =>
+      samePath(w.repoPath, selectedRepoPath),
+    );
+    if (repoWorkspaces.length === 0) return;
+    lastProbedRepoRef.current = selectedRepoPath;
+    const probeId = ++repoProbeCallIdRef.current;
+    const refreshIdAtStart = refreshCallIdRef.current;
+    void probeWorkspaces(
+      repoWorkspaces,
+      null,
+      () =>
+        probeId !== repoProbeCallIdRef.current ||
+        refreshIdAtStart !== refreshCallIdRef.current,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inboxLive, selectedRepoPath, workspaces]);
   const assistantOn = !!selectedProjectPath && !!assistantPath && samePath(assistantPath, selectedProjectPath);
   const selectedSurfaceTab: ProjectSurfaceTab =
     selectedProjectPath && selectedGroup?.project
@@ -2069,7 +2292,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [helpKeysSig, notificationsEnabled]);
 
-  function workspaceMenuItems(workspace: WorkspaceDto) {
+  function workspaceMenuItems(workspace: WorkspaceDto, displayLabel?: string) {
     const workspaceHealth = health[workspace.id];
     const workspaceDrift = drift[workspace.id];
     // drift 诊断失败时降级按 healthy 处理，行内另有「诊断失败」提示与重试
@@ -2130,11 +2353,25 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         });
       }
       if (!workspaceHealth?.conflict) {
-        items.push({
-          icon: Archive,
-          label: "在评审中归档",
-          onSelect: () => openReview(workspace, "archive"),
-        });
+        if (
+          merged &&
+          !workspaceHealth?.uncommitted &&
+          !workspaceHealth?.ledgerPending
+        ) {
+          items.push({
+            icon: Archive,
+            label: "收起临时副本",
+            title:
+              "移除该步临时工作副本以释放空间；已保存进项目的成果与历史分支全部保留，随时可恢复",
+            onSelect: () => void onArchiveSavedWorkspace(workspace, displayLabel),
+          });
+        } else {
+          items.push({
+            icon: Archive,
+            label: "在评审中归档",
+            onSelect: () => openReview(workspace, "archive"),
+          });
+        }
       }
     }
 
@@ -2527,6 +2764,10 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                   }
                 : undefined
             }
+            onArchiveSavedWorkspaces={(targets) =>
+              void onArchiveSavedWorkspaces(targets)
+            }
+            archivingSaved={archivingSaved}
           >
             {(wsView) => {
             // 步骤工作区与「流程之外」严格分离（纯逻辑 src/workspace-visibility.ts）：
@@ -2662,15 +2903,19 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 const boundStep = wsView.steps.find(
                   (step) => step.workspaceName === workspace.name,
                 );
+                const savedArchived =
+                  workspace.status === "archived" && !!workspace.mergedAt;
+                const canViewArtifacts =
+                  workspace.status === "active" || savedArchived;
                 const isArtOpen =
-                  artifactsOpen.has(workspace.id) &&
-                  workspace.status === "active";
+                  artifactsOpen.has(workspace.id) && canViewArtifacts;
                 const artSummary = isArtOpen
                   ? artifactMeta[workspace.id]
                   : undefined;
-                const artRootLabel = merged
-                  ? REVIEW_SAVE.artifactRootMerged
-                  : "工作区";
+                const artRootLabel =
+                  merged || savedArchived
+                    ? REVIEW_SAVE.artifactRootMerged
+                    : "工作区";
                 return (
                   <li
                     key={workspace.id}
@@ -2819,8 +3064,19 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                             />
                           </button>
                         )}
-                        {/* 本步文件：活跃工作区常驻，行内手风琴就地展开 */}
-                        {workspace.status === "active" && (
+                        {workspace.status === "archived" &&
+                          workspaceDrift?.healthy !== false && (
+                            <button
+                              type="button"
+                              onClick={() => void onRestore(workspace)}
+                              title="重新展开这一步的工作副本，以便继续修改或返工"
+                              className={rowActionClass}
+                            >
+                              恢复副本
+                            </button>
+                          )}
+                        {/* 本步文件：活跃工作区或已保存并收起的工作区均可展开（后者直读项目主文件夹） */}
+                        {canViewArtifacts && (
                           <button
                             type="button"
                             onClick={() => toggleArtifacts(workspace.id)}
@@ -2842,6 +3098,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                               x: rect.right,
                               y: rect.bottom + 4,
                               ws: workspace,
+                              label: boundStep?.name,
                             });
                           }}
                           title="更多操作"
@@ -2862,7 +3119,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                         projectPath={selectedGroup.repoPath}
                         workspaceName={workspace.name}
                         root={
-                          merged
+                          merged || savedArchived
                             ? selectedGroup.repoPath
                             : workspace.worktreePath
                         }
@@ -3082,7 +3339,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           y={workspaceMenu.y}
           alignRight
           onClose={() => setWorkspaceMenu(null)}
-          items={workspaceMenuItems(workspaceMenu.ws)}
+          items={workspaceMenuItems(workspaceMenu.ws, workspaceMenu.label)}
         />
       )}
       {detailsPopover && (() => {

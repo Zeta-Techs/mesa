@@ -4552,6 +4552,8 @@ function LiveWorkspaceReviewView({
                         {
                           icon: Archive,
                           label: REVIEW_SAVE.saveAndArchive,
+                          title:
+                            "保存进项目后收起本步临时工作副本以释放空间；项目里的成果与历史分支全部保留，随时可恢复",
                           onSelect: () => void finish("merge-archive"),
                         },
                       ]

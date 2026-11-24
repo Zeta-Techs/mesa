@@ -48,7 +48,11 @@ async function harness() {
       contents: `
         export { createElement, act } from 'react';
         export { createRoot } from 'react-dom/client';
-        export { default as WorkspacesPage, workspaceState } from './src/pages/WorkspacesPage';
+        export {
+          default as WorkspacesPage,
+          workspaceState,
+          selectWorkspacesForRefresh,
+        } from './src/pages/WorkspacesPage';
         export { useAppStore } from './src/store';
       `,
       resolveDir: process.cwd(),
@@ -349,6 +353,134 @@ test("多活跃工作区刷新时限制 drift 与 health 并发上限，并把�
       failedState.details.some((d: string) => d.includes("Too many open files")),
       `失败详情应包含具体错误原因，实际：${failedState.details.join(" | ")}`,
     );
+
+    // 已保存并收起的归档步骤应给白话绿点状态
+    const savedArchived = ui.workspaceState(
+      { ...workspaces[0], status: "archived", mergedAt: "2026-11-22T02:25:02Z" },
+      undefined,
+      { healthy: true, canRemount: false, canRelocate: false, canMarkArchived: false, canCleanRecord: true, canResolveMerge: false, issues: [] },
+      undefined,
+      false,
+    );
+    assert.equal(savedArchived.label, "已保存 · 已收起");
+    assert.equal(savedArchived.dotClass, "bg-ok-text");
+  } finally {
+    await ui.close();
+  }
+});
+
+test("常规刷新跳过其他老项目已保存的工作区，切到该项目时按需即时探测", async () => {
+  const ui = await harness();
+  const curPath = "/tmp/boride-her";
+  const oldPath = "/tmp/old-her";
+  const workspaces = [
+    {
+      id: "ws-cur-1",
+      name: "lit-search",
+      repoPath: curPath,
+      repoName: "硼化物析氢",
+      worktreePath: "/tmp/wt/boride/lit-search",
+      branch: "ccode/lit-search",
+      baseBranch: "master",
+      portBase: 4000,
+      status: "active",
+      createdAt: "2026-11-20T00:00:00Z",
+      mergedAt: "2026-11-22T00:00:00Z",
+    },
+    {
+      id: "ws-old-saved",
+      name: "lit-search",
+      repoPath: oldPath,
+      repoName: "HER催化综述",
+      worktreePath: "/tmp/wt/old/lit-search",
+      branch: "ccode/lit-search",
+      baseBranch: "master",
+      portBase: 4010,
+      status: "active",
+      createdAt: "2026-11-10T00:00:00Z",
+      mergedAt: "2026-11-11T00:00:00Z",
+    },
+    {
+      id: "ws-old-unsaved",
+      name: "draft",
+      repoPath: oldPath,
+      repoName: "HER催化综述",
+      worktreePath: "/tmp/wt/old/draft",
+      branch: "ccode/draft",
+      baseBranch: "master",
+      portBase: 4020,
+      status: "active",
+      createdAt: "2026-11-12T00:00:00Z",
+      mergedAt: null,
+    },
+  ];
+  // 纯函数筛选断言：当前项目全查、其他项目仅查未保存或有活跃终端的
+  const picked = ui.selectWorkspacesForRefresh(workspaces, curPath, [], false);
+  assert.deepEqual(
+    picked.map((w: any) => w.id),
+    ["ws-cur-1", "ws-old-unsaved"],
+  );
+  const pickedWithTerm = ui.selectWorkspacesForRefresh(
+    workspaces,
+    curPath,
+    ["/tmp/wt/old/lit-search"],
+    false,
+  );
+  assert.deepEqual(
+    pickedWithTerm.map((w: any) => w.id),
+    ["ws-cur-1", "ws-old-saved", "ws-old-unsaved"],
+  );
+
+  const healthChecked: string[] = [];
+  Object.assign(ui.dom.window, {
+    __TAURI_INTERNALS__: {
+      invoke: async (cmd: string, args?: any) => {
+        if (cmd === "list_workspaces") return workspaces;
+        if (cmd === "list_projects") {
+          return [
+            { id: "p1", name: "硼化物析氢", path: curPath, workMode: "research" },
+            { id: "p2", name: "HER催化综述", path: oldPath, workMode: "research" },
+          ];
+        }
+        if (cmd === "home_dir") return "/tmp";
+        if (cmd === "list_schedules") return [];
+        if (cmd === "list_help_requests") return [];
+        if (cmd === "pending_artifact_checks") return [];
+        if (cmd === "read_project_config") return { config: { steps: [], resources: [], settings: [] }, warnings: [] };
+        if (cmd === "workspace_settings") return { setup: [], teardown: [], run: [], env: [] };
+        if (cmd === "workspace_drift") {
+          return { healthy: true, canRemount: false, canRelocate: false, canMarkArchived: false, canCleanRecord: true, canResolveMerge: false, issues: [] };
+        }
+        if (cmd === "workspace_health") {
+          healthChecked.push(args.id);
+          return { uncommitted: false, ahead: 0, behind: 0, conflict: false, conflictFiles: [], mainOffBase: false, mainDirty: false, staleBase: false, readyToMerge: false, gitdirDetached: false, ledgerPending: false, staleLock: false, mainBranch: "master" };
+        }
+        return [];
+      },
+    },
+  });
+
+  try {
+    ui.useAppStore.setState({ page: "workspaces", selectProjectReq: null });
+    await ui.act(async () => {
+      ui.root.render(ui.createElement(ui.WorkspacesPage, { visible: true }));
+    });
+    await ui.act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    // 首轮仅探测当前项目与跨项目未保存工作区，不碰老项目已保存工作区
+    assert.ok(healthChecked.includes("ws-cur-1"));
+    assert.ok(healthChecked.includes("ws-old-unsaved"));
+    assert.ok(!healthChecked.includes("ws-old-saved"), `首轮不应检查未选中老项目已保存工作区，实际：${healthChecked}`);
+
+    // 切到老项目后，按需即时探测其已保存工作区
+    await ui.act(async () => {
+      ui.useAppStore.getState().setSelectProjectReq(oldPath);
+    });
+    await ui.act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+    assert.ok(healthChecked.includes("ws-old-saved"), `切到老项目后应按需探测其工作区，实际：${healthChecked}`);
   } finally {
     await ui.close();
   }

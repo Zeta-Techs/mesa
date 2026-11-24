@@ -133,7 +133,7 @@ pub(crate) const FILES_TO_COPY: [&str; 4] =
     [".env", ".env.local", ".env.development.local", ".envrc"];
 
 const PORT_LOW: i64 = 4000;
-const PORT_HIGH: i64 = 4300; // 块起点上限，每块 10 个端口
+const PORT_HIGH: i64 = 24_000; // 块起点上限，每块 10 个端口（共 2001 个活跃槽位，低于三平台临时端口段）
 
 // ===== 路径与 DB =====
 
@@ -569,7 +569,7 @@ fn alloc_port_base(conn: &Connection) -> Result<i64, String> {
         }
         candidate += 10;
     }
-    Err("活跃工作区过多，端口段（4000-4300）已用尽".into())
+    Err("活跃工作区过多，端口段（4000-24000）已用尽，请先收起已完结项目的临时工作副本".into())
 }
 
 fn validate_copy_paths(files: &[String]) -> Result<(), String> {
@@ -1072,6 +1072,19 @@ fn archive_impl_with_guard(
 
 fn restore_impl(conn: &Connection, id: &str) -> Result<(), String> {
     let w = get_workspace(conn, id)?;
+    // 归档期间原端口段可能已被其它活跃工作区领走：恢复前检查冲突并按需重新分配，避免两个活跃工作区撞同一段端口
+    let port_taken = w.port_base < PORT_LOW
+        || w.port_base > PORT_HIGH
+        || query_workspaces(conn)?.into_iter().any(|other| {
+            other.id != w.id
+                && (other.status == "active" || other.status == "creating")
+                && other.port_base == w.port_base
+        });
+    let next_port_base = if port_taken {
+        alloc_port_base(conn)?
+    } else {
+        w.port_base
+    };
     if !Path::new(&w.worktree_path).exists() {
         // 归档只移除 worktree 不删分支，恢复 = 从分支重新 worktree add。先清掉目录已不在的登记：
         // 人在 Mesa 外删了工作副本文件夹时登记还在，add 会报「已登记」失败（2026-11-18 场景普查）
@@ -1098,8 +1111,8 @@ fn restore_impl(conn: &Connection, id: &str) -> Result<(), String> {
     // 不清 merged_at（2026-11-05）：恢复工作副本不等于撤销保存——原先清掉后，保存过的步骤一恢复就成了
     // 没有 AI 在跑的「进行中」、还冒出没东西可审的「去评审」；有没有新的待保存改动由 ahead / 未提交改动判断
     conn.execute(
-        "UPDATE workspaces SET status='active', archived_at=NULL WHERE id=?1",
-        params![id],
+        "UPDATE workspaces SET status='active', archived_at=NULL, port_base=?2 WHERE id=?1",
+        params![id, next_port_base],
     )
     .map_err(|e| format!("更新 workspaces 失败: {e}"))?;
     Ok(())

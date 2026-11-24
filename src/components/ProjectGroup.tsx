@@ -1,5 +1,6 @@
 import { doctorGate } from "./DoctorDialog";
 import {
+  Archive,
   Copy,
   Files,
   MoreHorizontal,
@@ -388,6 +389,8 @@ export default function ProjectGroup({
   onOpenSchedules,
   onChromeConsumed,
   onPickTemplate,
+  onArchiveSavedWorkspaces,
+  archivingSaved = false,
 }: {
   /** null = 未注册分组（仅按工作区 repo 归组） */
   project: ProjectDto | null;
@@ -440,6 +443,9 @@ export default function ProjectGroup({
   onChromeConsumed?: () => void;
   /** 无流程科研项目的目标空态「套一整套流程…」：打开页面层的选模板弹层（带全局设定屏） */
   onPickTemplate?: () => void;
+  /** 完结区一键收起已保存步骤的临时工作副本 */
+  onArchiveSavedWorkspaces?: (targets: { ws: WorkspaceDto; label: string }[]) => void;
+  archivingSaved?: boolean;
 }) {
   const registered = project !== null;
   const projectPath = project?.path ?? repoPath;
@@ -2477,16 +2483,46 @@ export default function ProjectGroup({
         })}
 
       {/* 完结文件紧跟在当前步骤与工作区之后：项目级最终交付物在此收口；聚焦在定稿步时默认展开 */}
-      {cfg && closeoutVisible && (
-        <CloseoutPack
-          projectRoot={projectPath}
-          worktrees={workspaces
-            .filter((workspace) => workspace.status === "active")
-            .map((workspace) => workspace.worktreePath)}
-          entries={closeoutScanEntries(cfg.steps)}
-          defaultOpen={Boolean(focusDesc && isCloseoutStep(focusDesc.step))}
-        />
-      )}
+      {cfg && closeoutVisible && (() => {
+        const savedActiveStepWorkspaces = cfg.steps.flatMap((step) => {
+          if (!step.workspaceName) return [];
+          const ws = workspaces.find(
+            (w) =>
+              w.name === step.workspaceName &&
+              w.status === "active" &&
+              Boolean(w.mergedAt),
+          );
+          return ws ? [{ ws, label: step.name }] : [];
+        });
+        return (
+          <CloseoutPack
+            projectRoot={projectPath}
+            worktrees={workspaces
+              .filter((workspace) => workspace.status === "active")
+              .map((workspace) => workspace.worktreePath)}
+            entries={closeoutScanEntries(cfg.steps)}
+            defaultOpen={Boolean(focusDesc && isCloseoutStep(focusDesc.step))}
+            headerActions={
+              onArchiveSavedWorkspaces && savedActiveStepWorkspaces.length > 0 ? (
+                <button
+                  type="button"
+                  disabled={archivingSaved}
+                  onClick={() => onArchiveSavedWorkspaces(savedActiveStepWorkspaces)}
+                  title="收起已保存步骤的临时工作副本以释放磁盘空间并减少后台检查；项目里的所有成稿、文献、笔记与历史记录完整保留，需要返工随时可恢复"
+                  className="inline-flex h-6 items-center gap-1 rounded-md border border-hairline px-2 text-micro text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  <Archive size={12} strokeWidth={1.8} aria-hidden="true" />
+                  <span>
+                    {archivingSaved
+                      ? "收起中…"
+                      : `收起临时副本（${savedActiveStepWorkspaces.length}）`}
+                  </span>
+                </button>
+              ) : undefined
+            }
+          />
+        );
+      })()}
 
       {/* 套流程前记的目标（2026-11-08 新科研项目先落在目标上）、项目助手派出的新目标、流程外的事，连同未绑定步骤的独立工作区：
           有流程时折进「流程之外」一行（2026-11-11 项目页减法；步骤自身工作区已归回上方当前步骤，不与目标混放）。
