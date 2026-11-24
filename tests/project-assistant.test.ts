@@ -258,34 +258,6 @@ test("提速：寒暄本地回、按类型压低思考档", async () => {
   assert.equal(intentEffort("mixed"), null);
 });
 
-test("换个查法：按依据给另一种，两样都看过 / 本地现答的不给；带能力选项时支持打开文件核对与按派活起草重问", async () => {
-  const { retryIntents } = await import("../src/project-assistant.ts");
-  assert.deepEqual(retryIntents("说明书「9.7 思考档位」", "x").map((r) => r.intent), ["project"]);
-  assert.deepEqual(retryIntents("这个项目的记录", "x").map((r) => r.intent), ["howto"]);
-  assert.deepEqual(retryIntents("", "x").map((r) => r.intent), ["project", "howto"]);
-  assert.deepEqual(retryIntents("说明书「x」 · 这个项目的记录", "x"), []);
-  assert.deepEqual(retryIntents("", "本地直接回答（没调 AI）"), []);
-
-  const snapOnly = retryIntents("这个项目的记录", "x", { canInspect: true, allowDraft: true });
-  assert.deepEqual(snapOnly, [
-    { intent: "project", inspect: true, label: "打开文件核对重问" },
-    { intent: "howto", label: "翻说明书重问" },
-    { intent: "request", inspect: true, label: "按派活起草重问" },
-  ]);
-  const inspected = retryIntents("这个项目的记录与文件（只读查看）", "x", { canInspect: true, allowDraft: true });
-  assert.deepEqual(inspected, [
-    { intent: "howto", label: "翻说明书重问" },
-    { intent: "request", inspect: true, label: "按派活起草重问" },
-  ]);
-  const noInspect = retryIntents("这个项目的记录", "x", { canInspect: false, allowDraft: true });
-  assert.deepEqual(noInspect, [
-    { intent: "howto", label: "翻说明书重问" },
-    { intent: "request", label: "按派活起草重问" },
-  ]);
-  const drafted = retryIntents("项目地图 · 这个项目的记录与文件（只读查看）", "x", { canInspect: true, allowDraft: false });
-  assert.deepEqual(drafted, [{ intent: "howto", label: "翻说明书重问" }]);
-});
-
 test("提问时附上用户正在看哪一页；没有就不写这一段", async () => {
   const { buildAssistantPrompt } = await import("../src/project-assistant.ts");
   const withWhere = buildAssistantPrompt({ intent: "mixed", history: [], question: "这个提示什么意思", where: "项目页 · 「HER」 · 「定时任务」页签" });
@@ -605,8 +577,8 @@ test("动作直达验收与问答文件路径提取：提取项目内相对路�
   ]);
 });
 
-test("后续对话分流升级、借用只读连接重问与 @ 文件引用补全", async () => {
-  const { extractAtMentionQuery, filterMentionFiles, retryIntents } = await import("../src/project-assistant.ts");
+test("后续对话分流升级与 @ 文件引用补全", async () => {
+  const { extractAtMentionQuery, filterMentionFiles } = await import("../src/project-assistant.ts");
   // 投后与内容核对类提问命中 project，不再掉进 general
   assert.equal(classifyQuestion("稿子里图 5 对应哪几篇文献？"), "project");
   assert.equal(classifyQuestion("目标期刊 EER 对摘要字数要求是什么"), "mixed");
@@ -614,18 +586,6 @@ test("后续对话分流升级、借用只读连接重问与 @ 文件引用补�
   assert.equal(classifyQuestion("核查一下 `output/review-final.pdf` 里写了什么"), "project");
   assert.equal(wantsInspectFn("核查一下 `output/review-final.pdf` 里写了什么", "project"), true);
   assert.equal(wantsInspectFn("稿子里图 5 对应哪几篇文献？", "project"), true);
-  // 当前连接不支持只读查看（如 agy）时给出借用只读连接重问项
-  const fb = retryIntents("这个项目的记录", "Antigravity CLI · gemini-4-neon", {
-    canInspect: false,
-    allowDraft: true,
-    fallbackInspectLabel: "借用 Claude Code 打开文件核对重问",
-  });
-  assert.deepEqual(fb[0], {
-    intent: "project",
-    inspect: true,
-    useFallbackInspect: true,
-    label: "借用 Claude Code 打开文件核对重问",
-  });
   // @ 引用文件解析（邮箱不误触发）
   assert.equal(extractAtMentionQuery("foo@bar.com", 11), null);
   assert.deepEqual(extractAtMentionQuery("帮我看 @review", 11), { start: 4, end: 11, query: "review" });

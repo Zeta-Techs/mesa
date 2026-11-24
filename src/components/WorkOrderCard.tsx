@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Send, X } from "lucide-react";
-import { compactFieldClass, ghostActionClass, primaryActionClass, secondaryActionClass } from "./PageFrame";
+import { compactFieldClass, FoldMark, ghostActionClass, primaryActionClass, secondaryActionClass } from "./PageFrame";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
 import { relTime } from "../rel-time";
 import { useAppStore } from "../store";
@@ -73,6 +73,7 @@ export default function WorkOrderCard({
   // 依据材料按一行一个改，存回时同一套规则拆（绝对路径、.. 一律去掉）
   const [inputsText, setInputsText] = useState((order.inputs ?? []).join("\n"));
   const [editing, setEditing] = useState(false);
+  const [moreEditOpen, setMoreEditOpen] = useState(false);
   // 默认只露标题、要做的前三行和一行「还有哪几栏」，点开看全部（2026-11-08：一条回答里卡片太长，主次看不出）
   const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -87,7 +88,11 @@ export default function WorkOrderCard({
   const to = shown.target === "step" ? `第 ${shown.step} 步${stepName ? `「${stepName}」` : ""}的 AI` : "新目标（隔离副本里做，做完验收）";
 
   useEffect(() => {
-    if (!editing || record || (availableSkills !== null && availablePacks !== null)) return;
+    if (!editing) setMoreEditOpen(false);
+  }, [editing]);
+
+  useEffect(() => {
+    if (!editing || !moreEditOpen || record || (availableSkills !== null && availablePacks !== null)) return;
     let stale = false;
     void Promise.all([
       invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[]),
@@ -273,97 +278,121 @@ export default function WorkOrderCard({
               </span>
             )}
           </label>
-          {TEXT_FIELDS.map((f) => (
-            <label key={f.key} className="block">
-              <span className="mb-1 block text-xs text-l3">{f.label}</span>
-              <textarea
-                className={`${compactFieldClass} min-h-12 w-full resize-y py-1.5`}
-                value={draft[f.key] ?? ""}
-                maxLength={2000}
-                onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
-              />
-            </label>
-          ))}
-          <label className="block">
-            <span className="mb-1 block text-xs text-l3">按任务（可省）</span>
-            <select
-              className={`${compactFieldClass} w-full`}
-              aria-label="按任务"
-              value={draft.basedOn ?? ""}
-              onChange={(e) => setDraft({ ...draft, basedOn: e.target.value || undefined })}
-            >
-              <option value="">不按固定任务（通用做法）</option>
-              {draft.basedOn &&
-                !BUILTIN_TASKS.some((t) => t.name === draft.basedOn) &&
-                !(availablePacks ?? []).includes(draft.basedOn) && (
-                  <option value={draft.basedOn}>{draft.basedOn}</option>
+          {(() => {
+            const filledMore =
+              TEXT_FIELDS.filter((f) => Boolean(draft[f.key]?.trim())).length +
+              (draft.basedOn ? 1 : 0) +
+              (draft.skills?.length ? 1 : 0);
+            return (
+              <div className="pt-0.5">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1.5 text-left text-xs text-l3 hover:text-l1"
+                  aria-expanded={moreEditOpen}
+                  onClick={() => setMoreEditOpen((v) => !v)}
+                >
+                  <FoldMark open={moreEditOpen} />
+                  <span>更多合同项（交付物、验收标准、任务与技能）</span>
+                  {filledMore > 0 && <span className="ml-auto text-micro text-l4">已填 {filledMore} 项</span>}
+                </button>
+                {moreEditOpen && (
+                  <div className="mt-2 space-y-2 border-l border-hairline pl-2.5">
+                    {TEXT_FIELDS.map((f) => (
+                      <label key={f.key} className="block">
+                        <span className="mb-1 block text-xs text-l3">{f.label}</span>
+                        <textarea
+                          className={`${compactFieldClass} min-h-12 w-full resize-y py-1.5`}
+                          value={draft[f.key] ?? ""}
+                          maxLength={2000}
+                          onChange={(e) => setDraft({ ...draft, [f.key]: e.target.value })}
+                        />
+                      </label>
+                    ))}
+                    <label className="block">
+                      <span className="mb-1 block text-xs text-l3">按任务（可省）</span>
+                      <select
+                        className={`${compactFieldClass} w-full`}
+                        aria-label="按任务"
+                        value={draft.basedOn ?? ""}
+                        onChange={(e) => setDraft({ ...draft, basedOn: e.target.value || undefined })}
+                      >
+                        <option value="">不按固定任务（通用做法）</option>
+                        {draft.basedOn &&
+                          !BUILTIN_TASKS.some((t) => t.name === draft.basedOn) &&
+                          !(availablePacks ?? []).includes(draft.basedOn) && (
+                            <option value={draft.basedOn}>{draft.basedOn}</option>
+                          )}
+                        <optgroup label="内置科研任务">
+                          {BUILTIN_TASKS.map((t) => (
+                            <option key={t.id} value={t.name}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                        {(availablePacks ?? []).length > 0 && (
+                          <optgroup label="我的任务">
+                            {(availablePacks ?? []).map((name) => (
+                              <option key={name} value={name}>
+                                {name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </label>
+                    <div className="block">
+                      <span className="mb-1 block text-xs text-l3">用到的技能（可省）</span>
+                      {(draft.skills ?? []).length > 0 && (
+                        <div className="mb-1.5 flex flex-wrap gap-1.5">
+                          {(draft.skills ?? []).map((sk) => (
+                            <span
+                              key={sk}
+                              className="inline-flex items-center gap-1 rounded-full border border-hairline bg-inset px-2 py-0.5 text-micro text-l2"
+                            >
+                              {sk}
+                              <button
+                                type="button"
+                                className="text-l4 hover:text-l1"
+                                aria-label={`移除技能 ${sk}`}
+                                onClick={() => {
+                                  const next = (draft.skills ?? []).filter((x) => x !== sk);
+                                  setDraft({ ...draft, skills: next.length ? next : undefined });
+                                }}
+                              >
+                                <X size={10} strokeWidth={2} aria-hidden="true" />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <select
+                        className={`${compactFieldClass} w-full`}
+                        aria-label="添加技能"
+                        value=""
+                        onChange={(e) => {
+                          const picked = e.target.value;
+                          if (!picked) return;
+                          const cur = draft.skills ?? [];
+                          if (!cur.includes(picked)) setDraft({ ...draft, skills: [...cur, picked].slice(0, 8) });
+                        }}
+                      >
+                        <option value="">
+                          {availableSkills === null ? "正在读取已装技能…" : "＋ 从已装技能添加…"}
+                        </option>
+                        {(availableSkills ?? [])
+                          .filter((sk) => !(draft.skills ?? []).includes(sk))
+                          .map((sk) => (
+                            <option key={sk} value={sk}>
+                              {sk}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  </div>
                 )}
-              <optgroup label="内置科研任务">
-                {BUILTIN_TASKS.map((t) => (
-                  <option key={t.id} value={t.name}>
-                    {t.name}
-                  </option>
-                ))}
-              </optgroup>
-              {(availablePacks ?? []).length > 0 && (
-                <optgroup label="我的任务">
-                  {(availablePacks ?? []).map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-          </label>
-          <div className="block">
-            <span className="mb-1 block text-xs text-l3">用到的技能（可省）</span>
-            {(draft.skills ?? []).length > 0 && (
-              <div className="mb-1.5 flex flex-wrap gap-1.5">
-                {(draft.skills ?? []).map((sk) => (
-                  <span
-                    key={sk}
-                    className="inline-flex items-center gap-1 rounded-full border border-hairline bg-inset px-2 py-0.5 text-micro text-l2"
-                  >
-                    {sk}
-                    <button
-                      type="button"
-                      className="text-l4 hover:text-l1"
-                      aria-label={`移除技能 ${sk}`}
-                      onClick={() => {
-                        const next = (draft.skills ?? []).filter((x) => x !== sk);
-                        setDraft({ ...draft, skills: next.length ? next : undefined });
-                      }}
-                    >
-                      <X size={10} strokeWidth={2} aria-hidden="true" />
-                    </button>
-                  </span>
-                ))}
               </div>
-            )}
-            <select
-              className={`${compactFieldClass} w-full`}
-              aria-label="添加技能"
-              value=""
-              onChange={(e) => {
-                const picked = e.target.value;
-                if (!picked) return;
-                const cur = draft.skills ?? [];
-                if (!cur.includes(picked)) setDraft({ ...draft, skills: [...cur, picked].slice(0, 8) });
-              }}
-            >
-              <option value="">
-                {availableSkills === null ? "正在读取已装技能…" : "＋ 从已装技能添加…"}
-              </option>
-              {(availableSkills ?? [])
-                .filter((sk) => !(draft.skills ?? []).includes(sk))
-                .map((sk) => (
-                  <option key={sk} value={sk}>
-                    {sk}
-                  </option>
-                ))}
-            </select>
-          </div>
+            );
+          })()}
         </div>
       ) : !expanded ? (
         <div className="space-y-1 text-sm leading-6">

@@ -5,14 +5,43 @@ import { toast } from "../toast";
 import { optionAnswer } from "../help-requests";
 import { deskSummary, dismissDeskQuestion, type DeskItem } from "../assistant-queue";
 import { answerGrant, answerTrust, focusConfirm, loadDesk, replyDesk } from "../assistant-desk";
+import { absTime, relTime } from "../rel-time";
+import type { BriefLine } from "../assistant-brief";
+import type { AssistantAction } from "../project-assistant";
+
+const BRIEF_TONE: Record<BriefLine["tone"], string> = {
+  err: "bg-err-text",
+  warn: "bg-mesa-amber",
+  ok: "bg-ok-text",
+};
+/** 上次打开离现在不到这么久就不写「上次打开是…」（刚刚 / 几分钟前不带信息） */
+const BRIEF_SINCE_QUIET_MS = 30 * 60 * 1000;
 
 /**
- * 项目助手顶上的「等你的事」（调度台，2026-11-06 docs/design-assistant-dispatch-desk.md §2）：
- * 人工请求、AI 在对话里问你的话、等你确认的命令，一个地方看齐、就地回；Mesa 原路原话转达，不经 AI 改写。
- * 等确认的命令只带路去对话里确认。没有等你的事时整块不出现。
- * 2026-11-08：钉在滚动区顶上的一条横条，默认收成「等你的事 N 件：…」一行，点开才展开（限高、内部滚动），不再把对话推到下面。
+ * 项目助手顶部唯一的状态条（合并「等你的事」调度台与「现在的情况」简报，2026-11-24 简化）：
+ * - 有必须你回应的事（人工请求、AI 发问、等确认、信任文件夹、卡住、扩权）或项目动态（出错、待评审、待跟进、待验收、刚保存）时，
+ *   收成顶部一行紧凑摘要，不占用对话区；没事时整块隐藏。
+ * - 点「展开」后分区处理：上半区原话转达回复，下半区查看项目动态与一键跳转/追问。
  */
-export default function AssistantDesk({ projectPath }: { projectPath: string }) {
+export default function AssistantDesk({
+  projectPath,
+  briefLines = [],
+  briefSince = null,
+  assistantBusy = false,
+  onBriefAction,
+  onBriefAsk,
+  onDismissBrief,
+  onDismissKnowledgeDraft,
+}: {
+  projectPath: string;
+  briefLines?: readonly BriefLine[];
+  briefSince?: string | null;
+  assistantBusy?: boolean;
+  onBriefAction?: (action: AssistantAction) => void;
+  onBriefAsk?: (line: BriefLine) => void;
+  onDismissBrief?: () => void;
+  onDismissKnowledgeDraft?: () => void;
+}) {
   const [items, setItems] = useState<DeskItem[]>([]);
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -20,6 +49,10 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
   const [busy, setBusy] = useState<string | null>(null);
   const echoTick = useAppStore((s) => s.assistantEchoTick);
   const helpTick = useAppStore((s) => s.helpRefreshTick);
+
+  useEffect(() => {
+    setOpen(false);
+  }, [projectPath]);
 
   const load = useCallback(() => {
     void loadDesk(projectPath)
@@ -53,18 +86,35 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
     }
   }
 
-  if (items.length === 0) return null;
+  const hasDesk = items.length > 0;
+  const hasBrief = briefLines.length > 0;
+  if (!hasDesk && !hasBrief) return null;
+
+  const hasErr = briefLines.some((l) => l.tone === "err");
+  const hasWarn = hasDesk || briefLines.some((l) => l.tone === "warn");
+  const dotClass = hasErr ? "bg-err-text" : hasWarn ? "bg-mesa-amber" : "bg-ok-text";
+  const summaryText = hasDesk
+    ? hasBrief
+      ? `${deskSummary(items)} · 另有 ${briefLines.length} 条动态`
+      : deskSummary(items)
+    : briefLines.length === 1
+      ? briefLines[0].text
+      : `项目动态 ${briefLines.length} 条：${briefLines[0].text}`;
+
   return (
-    // 滚动区有 px-5 pt-4：横条拉满宽、贴顶，背景与抽屉同色，滚动时对话从它下面过
-    <section className="sticky top-0 z-10 -mx-5 -mt-4 mb-1 border-b border-hairline bg-canvas px-5 py-2" aria-label="等你的事">
+    <section className="border-b border-hairline bg-canvas px-5 py-2" aria-label="项目状态与待办">
       <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="h-2 w-2 shrink-0 rounded-full bg-warn-text" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-l1" title={deskSummary(items)}>{deskSummary(items)}</span>
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-l1" title={summaryText}>
+          {summaryText}
+        </span>
         <span className="shrink-0 text-xs text-l4">{open ? "收起" : "展开"}</span>
       </button>
       {open && (
-        <ol className="mt-2 max-h-[45vh] space-y-3 overflow-auto pb-1">
-          {items.map((item) => {
+        <div className="mt-2 max-h-[48vh] space-y-3 overflow-auto pb-1">
+          {hasDesk && (
+            <ol className="space-y-3">
+              {items.map((item) => {
             const draft = drafts[item.key] ?? "";
             const disabled = busy !== null;
             return (
@@ -215,7 +265,82 @@ export default function AssistantDesk({ projectPath }: { projectPath: string }) 
               </li>
             );
           })}
-        </ol>
+            </ol>
+          )}
+          {hasBrief && (
+            <div className="border-t border-hairline pt-2.5" aria-label="现在的情况">
+              <div className="mb-1.5 flex items-baseline gap-2">
+                <span className="text-xs font-medium text-l3" title="Mesa 按项目记录整理，不经 AI">
+                  现在的情况
+                </span>
+                <span className="min-w-0 flex-1 truncate text-micro text-l4" title={briefSince ? absTime(briefSince) : undefined}>
+                  {briefSince && Date.now() - Date.parse(briefSince) > BRIEF_SINCE_QUIET_MS ? `上次打开是${relTime(briefSince)}` : ""}
+                </span>
+                {onDismissBrief && (
+                  <button
+                    type="button"
+                    className="shrink-0 text-l4 hover:text-l2"
+                    onClick={() => {
+                      onDismissBrief();
+                      if (!hasDesk) setOpen(false);
+                    }}
+                  >
+                    <span className="text-micro">知道了</span>
+                  </button>
+                )}
+              </div>
+              <ul className="space-y-1.5">
+                {briefLines.map((line) => (
+                  <li key={line.text} className="flex items-start gap-2 text-xs leading-5">
+                    <span className={`mt-2 size-1.5 shrink-0 rounded-full ${BRIEF_TONE[line.tone]}`} aria-hidden="true" />
+                    <span className="min-w-0 flex-1 break-words text-l1">
+                      {line.text}
+                      {(line.action || line.ask || line.kind === "knowledge-draft") && (
+                        <span className="mt-0.5 flex flex-wrap gap-x-3">
+                          {line.action && onBriefAction && (
+                            <button
+                              type="button"
+                              className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                              onClick={() => {
+                                setOpen(false);
+                                onBriefAction(line.action!);
+                              }}
+                            >
+                              <span className="text-xs">{line.action.label}</span>
+                            </button>
+                          )}
+                          {line.ask && onBriefAsk && (
+                            <button
+                              type="button"
+                              className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
+                              disabled={assistantBusy}
+                              onClick={() => {
+                                setOpen(false);
+                                onBriefAsk(line);
+                              }}
+                            >
+                              <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
+                            </button>
+                          )}
+                          {line.kind === "knowledge-draft" && onDismissKnowledgeDraft && (
+                            <button
+                              type="button"
+                              className="shrink-0 text-l4 hover:text-l2"
+                              title="这个项目不再提议起草；以后照样可以在回答下面点「记进项目知识」"
+                              onClick={onDismissKnowledgeDraft}
+                            >
+                              <span className="text-xs">不用了</span>
+                            </button>
+                          )}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
     </section>
   );

@@ -1026,46 +1026,6 @@ export function localReply(question: string, hour: number): string | null {
 export const SNAPSHOT_MAX_CHARS = 14_000;
 export const GUIDE_LIMIT: Record<"howto" | "mixed", number> = { howto: 3, mixed: 2 };
 
-export interface RetryOption {
-  intent: AssistantIntent;
-  inspect?: boolean;
-  /** 当前连接不支持只读查看时，显式借用本机可用的只读连接重问这一次 */
-  useFallbackInspect?: boolean;
-  label: string;
-}
-
-/** 「换个查法」（分流靠字面会判错）：按这一轮的依据给出另一种查法，人点了按那一类重问；寒暄、本地现答的不给 */
-export function retryIntents(
-  basis: string | undefined,
-  connection: string | undefined,
-  opts?: { canInspect?: boolean; allowDraft?: boolean; fallbackInspectLabel?: string },
-): RetryOption[] {
-  if (connection?.startsWith("本地")) return [];
-  const b = basis ?? "";
-  const guide = b.includes("说明书");
-  const project = b.includes("项目的记录");
-  const inspected = b.includes("文件（只读查看）");
-  const mapped = b.includes("项目地图");
-  if (!opts) {
-    const out: RetryOption[] = [];
-    if (!project) out.push({ intent: "project", label: "看项目记录重问" });
-    if (!guide) out.push({ intent: "howto", label: "翻说明书重问" });
-    return guide && project ? [] : out;
-  }
-  const out: RetryOption[] = [];
-  if (!project) out.push({ intent: "project", label: "看项目记录重问" });
-  if (opts.canInspect && project && !inspected && !mapped) {
-    out.push({ intent: "project", inspect: true, label: "打开文件核对重问" });
-  } else if (!opts.canInspect && opts.fallbackInspectLabel && project && !inspected) {
-    out.push({ intent: "project", inspect: true, useFallbackInspect: true, label: opts.fallbackInspectLabel });
-  }
-  if (!guide) out.push({ intent: "howto", label: "翻说明书重问" });
-  if (opts.allowDraft && !mapped) {
-    out.push({ intent: "request", ...(opts.canInspect ? { inspect: true } : {}), label: "按派活起草重问" });
-  }
-  return out;
-}
-
 /** 从输入框光标处提取正在输入的 `@文件` 触发段（仅在行首或空白后触发，避免邮箱误触） */
 export function extractAtMentionQuery(
   text: string,

@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowDown, ArrowRight, ArrowUp, Square, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, BookMarked, MoreHorizontal, Search, Sparkles, Square, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { confirmDialog } from "./ConfirmDialog";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
@@ -24,7 +24,6 @@ import {
   INSPECT_WAITING,
   INTENT_WAITING,
   localReply,
-  retryIntents,
   parseAssistantAnswer,
   guardClaims,
   parseClarify,
@@ -104,14 +103,6 @@ function draftDismissed(path: string): boolean {
     return false;
   }
 }
-
-const BRIEF_TONE: Record<BriefLine["tone"], string> = {
-  err: "bg-err-text",
-  warn: "bg-mesa-amber",
-  ok: "bg-ok-text",
-};
-/** 上次打开离现在不到这么久就不写「上次打开是…」（刚刚 / 几分钟前不带信息） */
-const BRIEF_SINCE_QUIET_MS = 30 * 60 * 1000;
 
 /** 用户问的话：右侧小气泡 */
 function QuestionBubble({ text, at }: { text: string; at?: string }) {
@@ -666,14 +657,51 @@ export default function ProjectAssistantPanel({
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [memoryCount, setMemoryCount] = useState<number | null>(null);
   const [memoryTick, setMemoryTick] = useState(0);
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [turnMenuKey, setTurnMenuKey] = useState<string | null>(null);
+  const [quickAsksOpen, setQuickAsksOpen] = useState(false);
   const hasDispatches = turns.some((t) => !!t.dispatched || !!t.echoOf);
   const openDispatchCount = turns.filter((t) => t.dispatched && t.dispatched.echoed !== "accepted").length;
+  const dueForSummary = !busy && summaryDue(turns, summarizedAt);
   useEffect(() => {
     setOnlyDispatches(false);
     setSearchOpen(false);
     setSearchQuery("");
     setMemoryOpen(false);
+    setHeaderMenuOpen(false);
+    setTurnMenuKey(null);
+    setQuickAsksOpen(false);
   }, [projectPath]);
+  useEffect(() => {
+    if (!open) {
+      setHeaderMenuOpen(false);
+      setTurnMenuKey(null);
+      setQuickAsksOpen(false);
+    }
+  }, [open]);
+  useEffect(() => {
+    if (!headerMenuOpen && !turnMenuKey && !quickAsksOpen) return;
+    const onMouseDown = (event: MouseEvent) => {
+      const el = event.target as HTMLElement | null;
+      if (el?.closest("[data-assistant-menu]")) return;
+      setHeaderMenuOpen(false);
+      setTurnMenuKey(null);
+      setQuickAsksOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setHeaderMenuOpen(false);
+      setTurnMenuKey(null);
+      setQuickAsksOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [headerMenuOpen, turnMenuKey, quickAsksOpen]);
   useEffect(() => {
     if (!hasDispatches && onlyDispatches) setOnlyDispatches(false);
   }, [hasDispatches, onlyDispatches]);
@@ -785,15 +813,105 @@ export default function ProjectAssistantPanel({
     const openAsk = i === turns.length - 1 ? withAsk.ask : null;
     // 话与事实分开：它声称自己做了动作的句子换成如实说明（根源三，2026-11-06）
     const { lead, rest } = splitAnswerLead(guardClaims(parsed.text).text);
+    const turnKey = `${turn.at}-${i}`;
+    const isLocal = !turn.connection || turn.connection.startsWith("本地");
+    const alreadyInspected = Boolean(turn.basis?.includes("文件（只读查看）"));
+    const canDraftFromTurn =
+      !busy &&
+      !isLocal &&
+      !withOrder.order &&
+      !withRework.rework &&
+      !withAsk.ask &&
+      `${lead}${rest}`.trim().length >= 30;
+    const canInspectTurn = !busy && !isLocal && !alreadyInspected && (imageCapable || !!inspectFallback);
+    const costTitle =
+      turn.costUsd != null ? ` · $${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}` : "";
     return (
-      <article key={`${turn.at}-${i}`} className="flex flex-col gap-3">
+      <article key={turnKey} className="group/turn flex flex-col gap-3">
         <QuestionBubble text={turn.question} at={turn.at} />
         <div>
           <div className="mb-1.5 flex items-center gap-2">
             <span className="h-[3px] w-2.5 shrink-0 rounded-sm bg-mesa-amber" aria-hidden="true" />
-            <span className="text-xs text-l3" title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}`}>
+            <span
+              className="text-xs text-l3"
+              title={`${absTime(turn.at)}${turn.connection ? ` · ${turn.connection}` : ""}${costTitle}`}
+            >
               项目助手 · {relTime(turn.at)}
             </span>
+            {/* 悬停露出的极轻 ⋯ 菜单：复制回答 / 据此起草派活 / 进文件核对（不再铺一排「没答到点上？」） */}
+            <div className="relative ml-auto" data-assistant-menu>
+              <button
+                type="button"
+                aria-label="这条回答的更多操作"
+                aria-expanded={turnMenuKey === turnKey}
+                className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-l4 transition-opacity hover:bg-hover hover:text-l1 ${
+                  turnMenuKey === turnKey
+                    ? "bg-hover text-l1 opacity-100"
+                    : "opacity-0 group-hover/turn:opacity-100 focus-visible:opacity-100"
+                }`}
+                onClick={() => setTurnMenuKey((cur) => (cur === turnKey ? null : turnKey))}
+              >
+                <MoreHorizontal size={14} strokeWidth={1.8} aria-hidden="true" />
+              </button>
+              {turnMenuKey === turnKey && (
+                <div
+                  role="menu"
+                  className="ccode-float-surface absolute right-0 top-7 z-30 min-w-44 rounded-lg border border-field p-1 shadow-md"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-l1 hover:bg-hover"
+                    onClick={() => {
+                      setTurnMenuKey(null);
+                      const raw = [lead, rest].filter(Boolean).join("\n\n") || turn.answer;
+                      void navigator.clipboard.writeText(raw).then(
+                        () => toast("已复制回答", "success"),
+                        () => toast("复制失败", "error"),
+                      );
+                    }}
+                  >
+                    复制回答
+                  </button>
+                  {canDraftFromTurn && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={busy}
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-l1 hover:bg-hover disabled:opacity-50"
+                      onClick={() => {
+                        setTurnMenuKey(null);
+                        const excerpt = [lead, rest].filter(Boolean).join("\n").replace(/\s+/g, " ").trim().slice(0, 360);
+                        void send(`按这轮分析起草一张派活单（原问：${turn.question.slice(0, 80)}）：\n${excerpt}`, null, "request");
+                      }}
+                    >
+                      据此起草派活
+                    </button>
+                  )}
+                  {canInspectTurn && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={busy}
+                      className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-l1 hover:bg-hover disabled:opacity-50"
+                      onClick={() => {
+                        setTurnMenuKey(null);
+                        void send(
+                          turn.question,
+                          null,
+                          "project",
+                          [],
+                          true,
+                          imageCapable ? null : inspectFallback,
+                        );
+                      }}
+                    >
+                      {imageCapable ? "进文件核对" : `借用 ${inspectFallback!.agentLabel} 查文件`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {lead && (
             <p className="mb-2 border-l-2 border-mesa-amber pl-3 text-sm font-medium leading-6 text-l1">{lead}</p>
@@ -873,100 +991,33 @@ export default function ProjectAssistantPanel({
               ))}
             </div>
           )}
-          {/* 依据、花费、换个查法与起草派活并成一行小字（原来各占一行） */}
-          {(() => {
-            const retry =
-              i === turns.length - 1 && !busy
-                ? retryIntents(turn.basis, turn.connection, {
-                    canInspect: imageCapable,
-                    allowDraft: !withOrder.order && !withRework.rework,
-                    fallbackInspectLabel: inspectFallback ? `借用 ${inspectFallback.agentLabel} 打开文件核对重问` : undefined,
-                  })
-                : [];
-            const hasDraftRetry = retry.some((r) => r.intent === "request");
-            const canDraftFromTurn =
-              !busy &&
-              !withOrder.order &&
-              !withRework.rework &&
-              !withAsk.ask &&
-              !hasDraftRetry &&
-              Boolean(turn.connection && !turn.connection.startsWith("本地")) &&
-              `${lead}${rest}`.trim().length >= 30;
-            if (!turn.basis && turn.costUsd == null && retry.length === 0 && !canDraftFromTurn) return null;
-            const heads = turn.basis ? basisGuideHeadings(turn.basis) : [];
-            const tail = turn.basis ? turn.basis.replace(/^说明书(「[^」]+」)+/, "") : "";
-            const dot = <span aria-hidden="true"> · </span>;
+          {/* 回答底部只留极淡的依据一行（说明书小节可点，翻出几轮与花费收进悬停提示） */}
+          {turn.basis && (() => {
+            const heads = basisGuideHeadings(turn.basis);
+            const shortBasis = turn.basis.replace(/\s*·\s*翻出 \d+ 轮更早的相关问答/, "").trim();
+            const tail = shortBasis.replace(/^说明书(「[^」]+」)+/, "");
+            const fullTitle = `${turn.basis}${costTitle}`;
             return (
-              <p className="mt-2 flex flex-wrap items-center gap-x-1 text-micro text-l4">
-                {turn.basis && (
-                  <span>
-                    依据：
-                    {heads.length === 0 ? (
-                      turn.basis
-                    ) : (
-                      <>
-                        说明书
-                        {heads.map((h) => (
-                          <button
-                            key={h}
-                            type="button"
-                            className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                            title="在应用里打开说明书这一节"
-                            onClick={() => setGuideHeading(h)}
-                          >
-                            <span className="text-micro">「{h}」</span>
-                          </button>
-                        ))}
-                        {tail}
-                      </>
-                    )}
-                  </span>
-                )}
-                {/* 这次调用花了多少（只有 Claude Code / Codex、模型查得到价时有；同用量页口径） */}
-                {turn.costUsd != null && (
-                  <span title="这次问答的花费（用量页同一口径，记在内部活动里）">
-                    {turn.basis && dot}${turn.costUsd < 0.1 ? turn.costUsd.toFixed(3) : turn.costUsd.toFixed(2)}
-                  </span>
-                )}
-                {retry.length > 0 && (
-                  <span>
-                    {(turn.basis || turn.costUsd != null) && dot}没答到点上？
-                    {retry.map((r, ri) => (
+              <p className="mt-2 text-micro text-l4" title={fullTitle}>
+                依据：
+                {heads.length === 0 ? (
+                  shortBasis
+                ) : (
+                  <>
+                    说明书
+                    {heads.map((h) => (
                       <button
-                        key={`${r.intent}-${r.inspect ? "inspect" : ""}-${r.useFallbackInspect ? "fb" : ""}`}
+                        key={h}
                         type="button"
                         className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() =>
-                          void send(
-                            turn.question,
-                            null,
-                            r.intent,
-                            [],
-                            r.inspect,
-                            r.useFallbackInspect ? inspectFallback : null,
-                          )
-                        }
+                        title="在应用里打开说明书这一节"
+                        onClick={() => setGuideHeading(h)}
                       >
-                        <span className="text-micro">{ri > 0 ? " / " : ""}{r.label}</span>
+                        <span className="text-micro">「{h}」</span>
                       </button>
                     ))}
-                  </span>
-                )}
-                {canDraftFromTurn && (
-                  <span>
-                    {(turn.basis || turn.costUsd != null || retry.length > 0) && dot}
-                    <button
-                      type="button"
-                      className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                      title="把这轮分析整理成一张派活单（你核对后点「派出去」才开工）"
-                      onClick={() => {
-                        const excerpt = [lead, rest].filter(Boolean).join("\n").replace(/\s+/g, " ").trim().slice(0, 360);
-                        void send(`按这轮分析起草一张派活单（原问：${turn.question.slice(0, 80)}）：\n${excerpt}`, null, "request");
-                      }}
-                    >
-                      <span className="text-micro">据此起草派活</span>
-                    </button>
-                  </span>
+                    {tail}
+                  </>
                 )}
               </p>
             );
@@ -976,115 +1027,114 @@ export default function ProjectAssistantPanel({
     );
   }
 
-  // 「现在的情况」：Mesa 按记录写，不经 AI；没有要看的事、也没有变化就不出现
-  const briefCard =
-    brief && brief.lines.length > 0 && !briefOff ? (
-      <section className="ccode-well rounded-lg px-3 py-2.5" aria-label="现在的情况">
-        <div className="mb-1.5 flex items-baseline gap-2">
-          <span className="text-xs font-medium text-l2" title="Mesa 按项目记录整理，不经 AI">
-            现在的情况
-          </span>
-          {/* 「上次打开是刚刚」不带信息：隔了一阵才写 */}
-          <span className="min-w-0 flex-1 truncate text-micro text-l4" title={brief.since ? absTime(brief.since) : undefined}>
-            {brief.since && Date.now() - Date.parse(brief.since) > BRIEF_SINCE_QUIET_MS ? `上次打开是${relTime(brief.since)}` : ""}
-          </span>
+  const activeBriefLines = brief && !briefOff ? brief.lines : [];
+
+  // 顶栏右侧安静的图标工具：搜索/筛选、项目知识、更多（整理定下的事 / 清空记录），不再铺在输入框下面
+  const headerTools = (
+    <div className="flex shrink-0 items-center gap-0.5">
+      {dockSwitch}
+      {turns.length > 0 && (
+        <button
+          type="button"
+          className={`inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+            searchOpen || trimmedSearch || onlyDispatches
+              ? "bg-hover text-l1"
+              : "text-l3 hover:bg-hover hover:text-l1"
+          }`}
+          aria-label="搜索或筛选记录"
+          aria-pressed={searchOpen}
+          title="搜索历史问答或仅看派活"
+          onClick={() => {
+            if (searchOpen) {
+              setSearchOpen(false);
+              setSearchQuery("");
+              setOnlyDispatches(false);
+            } else {
+              setSearchOpen(true);
+              window.requestAnimationFrame(() => searchInputRef.current?.focus());
+            }
+          }}
+        >
+          <Search size={14} strokeWidth={1.8} aria-hidden="true" />
+        </button>
+      )}
+      {projectPath && (
+        <button
+          type="button"
+          className="relative inline-flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+          aria-label={memoryCount ? `项目知识（${memoryCount} 条）` : "项目知识"}
+          title={memoryCount ? `项目知识（${memoryCount} 条）— 查看或修改这个项目的长期规矩` : "项目知识 — 查看或新增这个项目的长期规矩"}
+          onClick={() => setMemoryOpen(true)}
+        >
+          <BookMarked size={14} strokeWidth={1.8} aria-hidden="true" />
+          {memoryCount != null && memoryCount > 0 && (
+            <span className="pointer-events-none absolute -right-0.5 top-0.5 min-w-3.5 rounded-full bg-inset px-1 text-center text-[9px] font-medium leading-3.5 text-l2 ring-1 ring-hairline">
+              {memoryCount > 99 ? "99+" : memoryCount}
+            </span>
+          )}
+        </button>
+      )}
+      {turns.length > 0 && (
+        <div className="relative" data-assistant-menu>
           <button
             type="button"
-            className="shrink-0 text-l4 hover:text-l2"
-            onClick={() => {
-              markSeenNow(projectPath);
-              setBriefOff(true);
-            }}
+            className={`relative inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+              headerMenuOpen ? "bg-hover text-l1" : "text-l3 hover:bg-hover hover:text-l1"
+            }`}
+            aria-label="更多操作"
+            aria-expanded={headerMenuOpen}
+            title={dueForSummary ? "更多操作（聊了一阵了，可整理定下的事）" : "更多操作"}
+            onClick={() => setHeaderMenuOpen((v) => !v)}
           >
-            <span className="text-micro">知道了</span>
+            <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+            {dueForSummary && (
+              <span className="pointer-events-none absolute right-1 top-1 size-1.5 rounded-full bg-mesa-amber" aria-hidden="true" />
+            )}
           </button>
+          {headerMenuOpen && (
+            <div
+              role="menu"
+              className="ccode-float-surface absolute right-0 top-8 z-30 min-w-44 rounded-lg border border-field p-1 shadow-md"
+            >
+              {turns.length >= 2 && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={busy}
+                  className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-l1 hover:bg-hover disabled:opacity-50"
+                  title="把最近这阵聊定下的长期规矩整理出来，你逐条确认才记进项目知识"
+                  onClick={() => {
+                    setHeaderMenuOpen(false);
+                    const f = summaryFocus(turns, summarizedAt);
+                    markSummarized();
+                    void send(SUMMARY_QUESTION, f, "project");
+                  }}
+                >
+                  <span>整理定下的事</span>
+                  {dueForSummary && <span className="size-1.5 rounded-full bg-mesa-amber" aria-hidden="true" />}
+                </button>
+              )}
+              <button
+                type="button"
+                role="menuitem"
+                disabled={busy}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-l2 hover:bg-hover hover:text-err-text disabled:opacity-50"
+                onClick={() => {
+                  setHeaderMenuOpen(false);
+                  void clear();
+                }}
+              >
+                清空记录
+              </button>
+            </div>
+          )}
         </div>
-        <ul className="space-y-1">
-          {brief.lines.map((line) => (
-            <li key={line.text} className="flex items-start gap-2 text-xs leading-5">
-              <span className={`mt-2 size-1.5 shrink-0 rounded-full ${BRIEF_TONE[line.tone]}`} aria-hidden="true" />
-              {/* 按钮跟在句子后面另起一行，不挤在右边把正文压成窄列 */}
-              <span className="min-w-0 flex-1 break-words text-l1">
-                {line.text}
-                {(line.action || line.ask || line.kind === "knowledge-draft") && (
-                  <span className="mt-0.5 flex flex-wrap gap-x-3">
-                    {line.action && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                        onClick={() => onAction(line.action!, { at: "", question: "", answer: "", connection: "" })}
-                      >
-                        <span className="text-xs">{line.action.label}</span>
-                      </button>
-                    )}
-                    {line.ask && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-l3 underline decoration-dotted underline-offset-2 hover:text-l1 disabled:opacity-50"
-                        disabled={busy}
-                        onClick={() => {
-                          // 起草项目知识问过一次就收起（2026-11-09 HER 实测：答完「一条也没找到」这行还挂着）；起草出的在回答里逐条点「记下」
-                          if (line.kind === "knowledge-draft" && projectPath) {
-                            try {
-                              localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
-                            } catch {
-                              /* 存不了就只是这次收起 */
-                            }
-                            setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
-                          }
-                          void send(line.ask!.question, line.ask!.focus, line.ask!.intent);
-                        }}
-                      >
-                        <span className="text-xs">{line.ask.label ?? "问问为什么"}</span>
-                      </button>
-                    )}
-                    {line.kind === "knowledge-draft" && projectPath && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-l4 hover:text-l2"
-                        title="这个项目不再提议起草；以后照样可以在回答下面点「记进项目知识」"
-                        onClick={() => {
-                          try {
-                            localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
-                          } catch {
-                            /* 存不了就只是这次收起 */
-                          }
-                          setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
-                        }}
-                      >
-                        <span className="text-xs">不用了</span>
-                      </button>
-                    )}
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
-    ) : null;
+      )}
+    </div>
+  );
 
   const composer = (
     <div className="space-y-2">
-      {!busy && summaryDue(turns, summarizedAt) && (
-        <p className="flex flex-wrap items-center gap-x-2 text-xs text-l3">
-          <span title="值得以后照办的会起草出来，你逐条点了才记进项目知识">聊了一阵了，要不要整理一下定下的事？</span>
-          <button
-            type="button"
-            className="text-l2 underline decoration-dotted underline-offset-2 hover:text-l1"
-            onClick={() => {
-              const f = summaryFocus(turns, summarizedAt);
-              markSummarized();
-              void send(SUMMARY_QUESTION, f, "project");
-            }}
-          >
-            <span className="text-xs">整理一下</span>
-          </button>
-          <button type="button" className="text-l4 hover:text-l2" onClick={markSummarized}>
-            <span className="text-xs">不用</span>
-          </button>
-        </p>
-      )}
       {focus && (
         <p className="text-xs text-l3">
           这次重点：{focus.title}
@@ -1093,19 +1143,27 @@ export default function ProjectAssistantPanel({
           </button>
         </p>
       )}
-      {!empty && (
-        <div className="flex flex-wrap gap-1.5">
+      {!empty && quickAsksOpen && (
+        <div
+          data-assistant-menu
+          className="rounded-xl border border-hairline bg-raised p-1.5 shadow-sm"
+          aria-label="推荐问题"
+        >
+          <p className="px-2 pb-1 pt-0.5 text-micro text-l4">推荐问题</p>
           {asks.map((a) => (
             <button
               key={a.q}
               type="button"
-              className="h-6 max-w-full truncate rounded-full border border-hairline px-2.5 text-l2 hover:bg-hover hover:text-l1 disabled:opacity-50"
+              className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-l1 hover:bg-hover disabled:opacity-50"
               disabled={busy}
               title={a.hint}
-              onClick={() => void send(a.q, a.focus ?? focus)}
+              onClick={() => {
+                setQuickAsksOpen(false);
+                void send(a.q, a.focus ?? focus);
+              }}
             >
-              {/* 字号写内层：全站 button { font: inherit } 会吞掉按钮上的 text-* */}
-              <span className="text-xs">{a.q}</span>
+              <span className="min-w-0 truncate">{a.q}</span>
+              <ArrowRight size={12} className="shrink-0 text-l4" aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -1181,40 +1239,6 @@ export default function ProjectAssistantPanel({
           )}
         </div>
       )}
-      {searchOpen && turns.length > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-hairline bg-inset px-2.5 py-1.5">
-          <input
-            ref={searchInputRef}
-            type="search"
-            value={searchQuery}
-            placeholder="搜历史问答或派活标题（空格分多词）…"
-            aria-label="搜索项目助手历史问答"
-            className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.preventDefault();
-                setSearchOpen(false);
-                setSearchQuery("");
-              }
-            }}
-          />
-          <span className="shrink-0 text-micro tabular-nums text-l4">
-            {trimmedSearch ? `命中 ${visibleTurns.length} / ${byDispatch.length}` : `共 ${byDispatch.length} 轮`}
-          </span>
-          <button
-            type="button"
-            className="shrink-0 text-l4 hover:text-l1"
-            aria-label="关闭搜索"
-            onClick={() => {
-              setSearchOpen(false);
-              setSearchQuery("");
-            }}
-          >
-            <X size={13} strokeWidth={1.8} aria-hidden="true" />
-          </button>
-        </div>
-      )}
       <form
         className="ccode-assistant-composer flex items-end gap-2 rounded-xl border border-hairline bg-inset px-3 py-2 focus-within:border-l4"
         onSubmit={(event) => {
@@ -1249,6 +1273,22 @@ export default function ProjectAssistantPanel({
           }
         }}
       >
+        {!empty && (
+          <button
+            type="button"
+            data-assistant-menu
+            className={`mb-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors ${
+              quickAsksOpen ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l1"
+            }`}
+            aria-label="推荐问题"
+            aria-expanded={quickAsksOpen}
+            title="推荐问题"
+            disabled={busy}
+            onClick={() => setQuickAsksOpen((v) => !v)}
+          >
+            <Sparkles size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        )}
         <textarea
           ref={inputRef}
           className="max-h-40 min-h-[1.5rem] flex-1 resize-none bg-transparent py-0.5 text-sm leading-6 text-l1 outline-none placeholder:text-l4"
@@ -1327,64 +1367,18 @@ export default function ProjectAssistantPanel({
           <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" className="ccode-send-stop" />
         </button>
       </form>
-      {/* 照对话输入框：下方右侧只写模型；连接全名与「跟随项目默认」进悬停，点了去 Agent 分工换 */}
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-micro text-l4">
-        {turns.length > 0 && (
-          <button type="button" className="shrink-0 text-l4 hover:text-l2 disabled:opacity-50" disabled={busy} onClick={() => void clear()}>
-            <span className="text-micro">清空记录</span>
-          </button>
-        )}
-        {turns.length > 0 && (
-          <button
-            type="button"
-            className={`shrink-0 ${searchOpen || trimmedSearch ? "font-medium text-l2" : "text-l4 hover:text-l2"}`}
-            aria-pressed={searchOpen}
-            onClick={() => {
-              if (searchOpen) {
-                setSearchOpen(false);
-                setSearchQuery("");
-              } else {
-                setSearchOpen(true);
-                window.requestAnimationFrame(() => searchInputRef.current?.focus());
-              }
-            }}
-          >
-            <span className="text-micro">{searchOpen ? "收起搜索" : "搜记录"}</span>
-          </button>
-        )}
-        {(onlyDispatches || (hasDispatches && turns.some((t) => !t.dispatched && !t.echoOf))) && (
-          <button
-            type="button"
-            className={`shrink-0 ${onlyDispatches ? "font-medium text-l2" : "text-l4 hover:text-l2"}`}
-            aria-pressed={onlyDispatches}
-            onClick={() => setOnlyDispatches((v) => !v)}
-          >
-            <span className="text-micro">{onlyDispatches ? "看全部记录" : "只看派活"}</span>
-          </button>
-        )}
-        {projectPath && (
-          <button
-            type="button"
-            className="shrink-0 text-l4 hover:text-l2"
-            title="查看或增改这个项目的长期规矩（已定 / 不做），之后开对话与干活的 AI 都会照着办"
-            onClick={() => setMemoryOpen(true)}
-          >
-            <span className="text-micro">项目知识{memoryCount != null && memoryCount > 0 ? ` ${memoryCount}` : ""}</span>
-          </button>
-        )}
+      {/* 输入框下方只留右侧模型入口；搜索、项目知识与清空统一收进顶栏图标 */}
+      <div className="flex items-center justify-end text-micro text-l4">
         <button
           type="button"
-          className="ml-auto flex min-w-0 items-center gap-1.5 truncate text-l4 hover:text-l2"
+          className="flex min-w-0 items-center gap-1.5 truncate text-l4 hover:text-l2"
           title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}${
             !imageCapable
-              ? `\n当前连接暂不支持只读打开项目文件与看图（仅看项目快照与目录）${inspectFallback ? `；回答下可一键借用 ${inspectFallback.agentLabel} 读文件核对` : ""}`
+              ? `\n当前连接仅看项目记录与目录，暂不支持直接读文件与看图${inspectFallback ? `；回答右上角 ⋯ 可借用 ${inspectFallback.agentLabel} 查文件` : ""}`
               : ""
           }\n点了去 Agent 分工换`}
           onClick={() => onAction({ kind: "agents", step: null, text: "", label: "去 Agent 分工" }, { at: "", question: "", answer: "", connection: "" })}
         >
-          {!imageCapable && (
-            <span className="shrink-0 rounded border border-hairline px-1 py-px text-micro text-l3">仅看记录</span>
-          )}
           <span className="truncate text-micro">{conn.model ?? (conn.profileId ? "默认模型" : "AI 功能的连接")}</span>
         </button>
       </div>
@@ -1402,10 +1396,95 @@ export default function ProjectAssistantPanel({
       titleIcon={empty ? <></> : <MesaBuddy size={28} pose={headPose} prop={busy || error || cheer ? null : mood.prop} />}
       footer={composer}
       docked={docked}
-      headerExtra={dockSwitch}
+      headerExtra={headerTools}
     >
-      {/* 调度台：这个项目里等你的事，就地回、原路转达（2026-11-06） */}
-      {projectPath && <AssistantDesk projectPath={projectPath} />}
+      {/* 顶部唯一粘滞区：合并「等你的事」与「现在的情况」，以及按需展开的历史搜索条；都为空时 empty:hidden 不占位 */}
+      <div className="sticky top-0 z-10 -mx-5 -mt-4 mb-2 bg-canvas empty:hidden">
+        {projectPath && (
+          <AssistantDesk
+            projectPath={projectPath}
+            briefLines={activeBriefLines}
+            briefSince={brief?.since ?? null}
+            assistantBusy={busy}
+            onBriefAction={(action) => onAction(action, { at: "", question: "", answer: "", connection: "" })}
+            onBriefAsk={(line) => {
+              if (line.kind === "knowledge-draft" && projectPath) {
+                try {
+                  localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
+                } catch {
+                  /* 存不了就只是这次收起 */
+                }
+                setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
+              }
+              void send(line.ask!.question, line.ask!.focus, line.ask!.intent);
+            }}
+            onDismissBrief={() => {
+              markSeenNow(projectPath);
+              setBriefOff(true);
+            }}
+            onDismissKnowledgeDraft={() => {
+              if (!projectPath) return;
+              try {
+                localStorage.setItem(NO_DRAFT_KEY(projectPath), "1");
+              } catch {
+                /* 存不了就只是这次收起 */
+              }
+              setBrief((b) => (b ? { ...b, lines: b.lines.filter((l) => l.kind !== "knowledge-draft") } : b));
+            }}
+          />
+        )}
+        {searchOpen && turns.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-hairline bg-canvas px-5 py-2">
+            <input
+              ref={searchInputRef}
+              type="search"
+              value={searchQuery}
+              placeholder="搜历史问答或派活标题…"
+              aria-label="搜索项目助手历史问答"
+              className="min-w-0 flex-1 bg-transparent text-xs text-l1 outline-none placeholder:text-l4"
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSearchOpen(false);
+                  setSearchQuery("");
+                  setOnlyDispatches(false);
+                }
+              }}
+            />
+            {(onlyDispatches || (hasDispatches && turns.some((t) => !t.dispatched && !t.echoOf))) && (
+              <button
+                type="button"
+                className={`shrink-0 rounded-full border px-2 py-0.5 text-micro transition-colors ${
+                  onlyDispatches
+                    ? "border-cta-bd bg-hover font-medium text-l1"
+                    : "border-hairline text-l3 hover:text-l1"
+                }`}
+                aria-pressed={onlyDispatches}
+                onClick={() => setOnlyDispatches((v) => !v)}
+              >
+                <span className="text-micro">仅派活</span>
+              </button>
+            )}
+            <span className="shrink-0 text-micro tabular-nums text-l4">
+              {trimmedSearch || onlyDispatches ? `${visibleTurns.length}/${turns.length}` : `${turns.length} 轮`}
+            </span>
+            <button
+              type="button"
+              className="shrink-0 text-l4 hover:text-l1"
+              aria-label="关闭搜索"
+              onClick={() => {
+                setSearchOpen(false);
+                setSearchQuery("");
+                setOnlyDispatches(false);
+              }}
+            >
+              <X size={13} strokeWidth={1.8} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </div>
       {empty ? (
         <div className="px-1 pt-8">
           <MesaBuddy size={72} pose={mood.greetPose} prop={mood.prop} />
@@ -1416,7 +1495,6 @@ export default function ProjectAssistantPanel({
           >
             问项目里的事，或交代要做的事。
           </p>
-          {briefCard && <div className="mt-6">{briefCard}</div>}
           {/* 建议问题：行间留白 + 悬停整行浅底，不画横线；记号是淡灰 M▁ 横光标，悬停才亮成琥珀（琥珀只表示「你在这里写 / 轮到你」，常亮会读成三件事在等你） */}
           <ul className="-mx-2 mt-8 space-y-0.5">
             {asks.map((a) => (
@@ -1442,8 +1520,10 @@ export default function ProjectAssistantPanel({
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {visibleTurns.length === 0 && trimmedSearch ? (
-            <p className="py-6 text-center text-xs text-l4">没有匹配「{trimmedSearch}」的历史记录</p>
+          {visibleTurns.length === 0 && (trimmedSearch || onlyDispatches) ? (
+            <p className="py-6 text-center text-xs text-l4">
+              {trimmedSearch ? `没有匹配「${trimmedSearch}」的历史记录` : "暂无派活记录"}
+            </p>
           ) : (
             visibleTurns.map(({ turn, i }, vi, visible) => {
               // 换天时先画一道分隔（本机时区）；同一天的不画
@@ -1464,7 +1544,6 @@ export default function ProjectAssistantPanel({
               );
             })
           )}
-          {briefCard}
           {busy && (
             <article className="flex flex-col gap-3">
               {pending && <QuestionBubble text={pending} />}
