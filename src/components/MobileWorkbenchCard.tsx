@@ -258,9 +258,6 @@ export default function MobileWorkbenchCard() {
             <Info aria-hidden="true" className="h-3 w-3" />
           </span>
         </h3>
-        <p className="mt-0.5 text-xs leading-5 text-l3">
-          实验功能，仍在持续完善中；经加密通道在手机主屏看进展、问助手、只读看文件与传资料
-        </p>
       </div>
 
       <div className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4">
@@ -305,9 +302,6 @@ export default function MobileWorkbenchCard() {
           <div className={rowClass}>
             <div className="min-w-[12rem] flex-1">
               <div className="text-sm font-medium text-l1">加密通道</div>
-              <p className="mt-0.5 max-w-xl text-xs leading-relaxed text-l3">
-                外网访问强制走 HTTPS 加密隧道；局域网「从手机添加」仍保持只收不出
-              </p>
             </div>
             <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
               <SegTabs

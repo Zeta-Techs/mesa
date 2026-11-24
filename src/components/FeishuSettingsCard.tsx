@@ -190,22 +190,18 @@ export default function FeishuSettingsCard() {
             <Info aria-hidden="true" className="h-3 w-3" />
           </span>
         </h3>
-        <p className="mt-0.5 text-xs leading-5 text-l3">
-          实验功能，仍在持续完善中；在飞书里跟项目助手说话，会话摘要和问题会经过飞书服务器
-        </p>
       </div>
 
       <div className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4">
         <div className={rowClass}>
           <div className="min-w-[12rem] flex-1">
             <div className="text-sm font-medium text-l1">App ID</div>
-            <p className="mt-0.5 text-xs leading-relaxed text-l3">飞书开放平台 → 企业自建应用</p>
           </div>
           <div className="flex min-w-0 max-w-full items-center justify-end">
             <input
               className={`${fieldClass} w-72 max-w-full font-mono text-xs`}
               value={appId}
-              placeholder="cli_…"
+              placeholder="cli_…（飞书开放平台 → 自建应用）"
               onChange={(e) => setAppId(e.target.value)}
             />
           </div>
@@ -214,14 +210,13 @@ export default function FeishuSettingsCard() {
         <div className={rowClass}>
           <div className="min-w-[12rem] flex-1">
             <div className="text-sm font-medium text-l1">App Secret</div>
-            <p className="mt-0.5 text-xs leading-relaxed text-l3">只存在本机 0600 密钥文件里，不回显</p>
           </div>
           <div className="flex min-w-0 max-w-full items-center justify-end">
             <input
               className={`${fieldClass} w-72 max-w-full font-mono text-xs`}
               type="password"
               value={secret}
-              placeholder={cfg?.hasSecret ? "已存（不显示）；要换就填新的" : "输入 App Secret"}
+              placeholder={cfg?.hasSecret ? "已存（不显示）；要换就填新的" : "只存在本机，不显示"}
               onChange={(e) => setSecret(e.target.value)}
             />
           </div>

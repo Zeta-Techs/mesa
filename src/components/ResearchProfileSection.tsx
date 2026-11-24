@@ -19,14 +19,11 @@ const fieldFixed = fieldClass
   .replace("bg-canvas", "bg-transparent")
   .replace("py-1.5", "h-8");
 const selectSm = `${fieldFixed} w-40 max-w-full`;
-/** 小折叠（同设置页低频折叠）：chevron + 小灰字 */
-//（全站 button { font: inherit } 会吞掉按钮上的 text-* / font-*，字号字重写在内层 span）
 const foldLinkClass = "-ml-1 inline-flex items-center text-l4 hover:text-l2";
-/** 可折叠的节标题（同设置页 Card 头：粗体标题，下面一句说明） */
-const foldHeadClass = "-ml-1 inline-flex items-center gap-0.5 text-l1";
+const foldHeadClass = "-ml-1 inline-flex items-center gap-0.5 text-l2 hover:text-l1";
 
 /** 设置「研究档案」分区：跨项目的研究背景（只收你确认的条目）+ 跨项目文献总表。
- *  外形同设置页其他分区（2026-11-08）：状态一行 + 开关、条目按分类成组、行间细线，不套卡；按钮细边、输入框同设置页 */
+ *  统一采用设置页圆角分组卡语言（SubHeading + .ccode-well rounded-xl）。 */
 export default function ResearchProfileSection() {
   const [profile, setProfile] = useState<ResearchProfileDto | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,11 +104,11 @@ export default function ResearchProfileSection() {
 
   return (
     <div>
-      {/* 生效状态：回答「AI 现在拿不拿得到、拿到的是什么」——一行设置项：状态 + 一句说明，开关靠右 */}
-      <div className="mt-2 border-y border-hairline">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2.5 py-3.5">
+      {/* 生效状态卡 */}
+      <div className="ccode-well overflow-hidden rounded-xl border border-hairline px-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
           <div className="min-w-[12rem] flex-1">
-            <div className="flex items-center gap-2 text-base text-l1">
+            <div className="flex items-center gap-2 text-sm font-medium text-l1">
               <span
                 aria-hidden="true"
                 className={`h-2 w-2 shrink-0 rounded-full ${status.tone === "on" ? "bg-ok-text" : "bg-l4"}`}
@@ -124,7 +121,6 @@ export default function ResearchProfileSection() {
                     : "还没有条目：AI 现在什么也拿不到"}
               </span>
             </div>
-            <p className="mt-0.5 max-w-2xl text-sm leading-relaxed text-l3">开对话、流程步骤开工、项目助手都会带上，只当偏好参考</p>
           </div>
           <Toggle label="附给 AI" checked={profile.settings.inject} onChange={(on) => void setInject(on)} />
           {profile.context && (
@@ -148,7 +144,7 @@ export default function ResearchProfileSection() {
         </div>
       </div>
 
-      <div className="mt-2">
+      <div className="mt-2 px-0.5">
         <button
           type="button"
           aria-expanded={compareOpen}
@@ -174,10 +170,10 @@ export default function ResearchProfileSection() {
         <div className="mt-6 space-y-5">
           {groups.map((group) => (
             <div key={group.category}>
-              <h4 className="mb-1 text-xs font-medium text-l3">{group.category}</h4>
-              <ul className="divide-y divide-hairline border-y border-hairline">
+              <h4 className="mb-2 px-0.5 text-xs font-semibold tracking-wide text-l2">{group.category}</h4>
+              <ul className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4">
                 {group.entries.map((entry) => (
-                  <li key={entry.meta.id} className="py-2">
+                  <li key={entry.meta.id} className="py-2.5">
                     {editing?.id === entry.meta.id ? (
                       <div className="space-y-2">
                         <textarea
@@ -266,24 +262,26 @@ export default function ResearchProfileSection() {
       )}
 
       {suggestions.length > 0 && (
-        <div className="mt-7">
-          <button
-            type="button"
-            aria-expanded={suggestOpen}
-            onClick={() => setSuggestOpen((v) => !v)}
-            className={foldHeadClass}
-          >
-            <FoldMark open={suggestOpen} />
-            <span className="text-base font-semibold">建议记下</span>
-            <span className="ml-1 text-sm font-normal text-l4">{suggestions.length}</span>
-          </button>
+        <div className="mt-6">
+          <div className="mb-2 px-0.5">
+            <button
+              type="button"
+              aria-expanded={suggestOpen}
+              onClick={() => setSuggestOpen((v) => !v)}
+              className={foldHeadClass}
+            >
+              <FoldMark open={suggestOpen} />
+              <span className="text-xs font-semibold tracking-wide">建议记下</span>
+              <span className="ml-1 text-xs font-normal text-l4">{suggestions.length}</span>
+            </button>
+          </div>
           {suggestOpen && (
-            <p className="mt-0.5 text-xs leading-5 text-l3">在你几个项目里反复出现的意见，只是建议；记之前可以改，依据要你写</p>
-          )}
-          {suggestOpen && (
-            <ul aria-label="建议记下" className="mt-2 divide-y divide-hairline border-y border-hairline">
+            <ul
+              aria-label="建议记下"
+              className="ccode-well divide-y divide-hairline overflow-hidden rounded-xl border border-hairline px-4"
+            >
               {suggestions.map((s) => (
-                <li key={s.id} className="flex min-h-12 min-w-0 items-center gap-2 py-2">
+                <li key={s.id} className="flex min-h-12 min-w-0 items-center gap-2 py-2.5">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-l1">{s.text}</p>
                     <p className="mt-0.5 text-xs leading-4 text-l3">{suggestionReason(s)}</p>
@@ -322,59 +320,66 @@ export default function ResearchProfileSection() {
         </div>
       )}
 
-      {/* 新增栏：不套框，上下细线收边（同设置页行组） */}
-      <div className="mt-6 space-y-2 border-y border-hairline py-3">
-        <div className="flex gap-2">
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            aria-label="分类"
-            className={`${selectSm} shrink-0`}
-          >
-            {profile.categories.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={CATEGORY_EXAMPLES[category] ?? "写一句"}
-            className={`${fieldFixed} min-w-0 flex-1`}
-          />
+      {/* 新增条目卡 */}
+      <div className="mt-6">
+        <div className="mb-2 px-0.5">
+          <h3 className="text-xs font-semibold tracking-wide text-l2">记一条新习惯</h3>
         </div>
-        <div className="flex gap-2">
-          <input
-            value={editing || revoking ? "" : reason}
-            disabled={!!editing || !!revoking}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="依据（必填）：为什么这么做，例如「导师在组会上要求」"
-            className={`${fieldFixed} min-w-0 flex-1 disabled:opacity-50`}
-          />
-          <button
-            type="button"
-            disabled={busy || !!editing || !!revoking || !text.trim() || !reason.trim()}
-            onClick={() => void update("add", null, category, text, reason)}
-            className={`${primaryActionClass} shrink-0`}
-          >
-            记下
-          </button>
+        <div className="ccode-well space-y-2 rounded-xl border border-hairline p-4">
+          <div className="flex gap-2">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              aria-label="分类"
+              className={`${selectSm} shrink-0`}
+            >
+              {profile.categories.map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={CATEGORY_EXAMPLES[category] ?? "写一句"}
+              className={`${fieldFixed} min-w-0 flex-1`}
+            />
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={editing || revoking ? "" : reason}
+              disabled={!!editing || !!revoking}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="依据（必填）：为什么这么做，例如「导师在组会上要求」"
+              className={`${fieldFixed} min-w-0 flex-1 disabled:opacity-50`}
+            />
+            <button
+              type="button"
+              disabled={busy || !!editing || !!revoking || !text.trim() || !reason.trim()}
+              onClick={() => void update("add", null, category, text, reason)}
+              className={`${primaryActionClass} shrink-0`}
+            >
+              记下
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="mt-7">
-        <button
-          type="button"
-          aria-expanded={papersOpen}
-          onClick={() => setPapersOpen((v) => !v)}
-          className={foldHeadClass}
-        >
-          <FoldMark open={papersOpen} />
-          <span className="text-base font-semibold">跨项目文献总表</span>
-          {papers && <span className="ml-1 text-sm font-normal text-l4">{papers.length}</span>}
-        </button>
-        <p className="mt-0.5 text-xs leading-5 text-l3">各项目读过的文献合在一起，只给你查，不附给 AI</p>
+      <div className="mt-6">
+        <div className="mb-2 px-0.5">
+          <button
+            type="button"
+            aria-expanded={papersOpen}
+            onClick={() => setPapersOpen((v) => !v)}
+            className={foldHeadClass}
+          >
+            <FoldMark open={papersOpen} />
+            <span className="text-xs font-semibold tracking-wide">跨项目文献总表</span>
+            {papers && <span className="ml-1 text-xs font-normal text-l4">{papers.length}</span>}
+          </button>
+          <p className="mt-0.5 text-xs leading-5 text-l3">只给你查，不附给 AI</p>
+        </div>
         {papersOpen && (
-          <div className="mt-2 border-t border-hairline pt-3">
+          <div className="ccode-well overflow-hidden rounded-xl border border-hairline p-4">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -382,11 +387,11 @@ export default function ResearchProfileSection() {
               className={`${fieldFixed} w-full`}
             />
             {papers === null ? (
-              <p className="py-2 text-xs text-l4">读取中…</p>
+              <p className="pt-3 text-xs text-l4">读取中…</p>
             ) : shown.length === 0 ? (
-              <p className="py-2 text-xs text-l4">没有符合的文献（只汇总各项目已纳入的文献）</p>
+              <p className="pt-3 text-xs text-l4">没有符合的文献（只汇总各项目已纳入的文献）</p>
             ) : (
-              <ul className="mt-2 max-h-72 divide-y divide-hairline overflow-auto border-y border-hairline">
+              <ul className="mt-2 max-h-72 divide-y divide-hairline overflow-auto border-t border-hairline">
                 {shown.slice(0, 300).map((paper) => (
                   <li key={(paper.doi || paper.title) + paper.projects.join()} className="flex min-w-0 items-baseline gap-3 py-2">
                     <span className="min-w-0 flex-1 truncate text-sm text-l1" title={paper.doi || paper.title}>

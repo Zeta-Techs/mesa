@@ -664,7 +664,6 @@ function Section({
     <section>
       <header className="mb-4 px-0.5">
         <h2 className="text-base font-semibold text-l1">{nav?.label}</h2>
-        {nav?.description && <p className="mt-0.5 text-xs leading-5 text-l3">{nav.description}</p>}
       </header>
       <div>{groupRows(children)}</div>
     </section>
@@ -806,9 +805,19 @@ function RowGroup({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Section 的直接子元素里，相邻的 Row 合成一个 RowGroup；其余（SubHeading / Card / 自定义块）原样。
- *  只认直接子元素：包在 Fragment / div 里的 Row 不会被合并，保持自身内边距、不带外框 */
+/** 展开 Fragment 后，把相邻的 Row / TerminalShellRow 合成一个 RowGroup；其余（SubHeading / Card / 自定义块）原样。 */
 function groupRows(children: React.ReactNode): React.ReactNode[] {
+  const flat: React.ReactNode[] = [];
+  const collect = (nodes: React.ReactNode) => {
+    React.Children.forEach(nodes, (child) => {
+      if (React.isValidElement<{ children?: React.ReactNode }>(child) && child.type === React.Fragment) {
+        collect(child.props.children);
+      } else if (child !== null && child !== undefined && typeof child !== "boolean") {
+        flat.push(child);
+      }
+    });
+  };
+  collect(children);
   const out: React.ReactNode[] = [];
   let run: React.ReactElement[] = [];
   const flush = () => {
@@ -816,14 +825,14 @@ function groupRows(children: React.ReactNode): React.ReactNode[] {
     out.push(<RowGroup key={`rows-${out.length}`}>{run}</RowGroup>);
     run = [];
   };
-  React.Children.toArray(children).forEach((child) => {
-    if (React.isValidElement(child) && child.type === Row) {
+  for (const child of flat) {
+    if (React.isValidElement(child) && (child.type === Row || child.type === TerminalShellRow)) {
       run.push(child);
     } else {
       flush();
       out.push(child);
     }
-  });
+  }
   flush();
   return out;
 }
@@ -1231,7 +1240,7 @@ function HotkeysSection({
         </div>
       </Card>
       {/* 改不了的几个也列出来（Ctrl+Tab 换对话、侧栏里 ↑↓ 等），免得只能在说明书里找 */}
-      <Card title="固定快捷键" hint="不能改，列在这里方便查">
+      <Card title="固定快捷键">
         <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
           {FIXED_HOTKEYS.map((k) => (
             <CardRow key={k.label} label={k.label} title={k.hint}>
@@ -1340,12 +1349,12 @@ function UninstallRow() {
     }
   }
   return (
-    <div className="mt-2 border-y border-hairline py-3.5">
+    <div className="ccode-well mt-2 rounded-xl border border-hairline px-4 py-3">
       <div className="flex items-center gap-3">
         <span className="min-w-0 flex-1">
-          <span className="block text-base text-l1">卸载 Mesa</span>
-          <span className="mt-0.5 block text-sm leading-relaxed text-l3">
-            本机数据移入回收站。课题文件夹保留。完成后应用退出。
+          <span className="block text-sm font-medium text-l1">卸载 Mesa</span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-l3">
+            本机数据移入回收站，课题文件夹保留
           </span>
         </span>
         <button
@@ -2659,19 +2668,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       <Section id="appearance" active={activeSection}>
         {/* 主题卡（2026-10-17 细化）：内置十四套七列深浅成对 →「我的配色」同一网格（另存色卡 +
             自定义入口）→ 选中自定义或某张色卡时才展开调色条。 */}
-        <div className="ccode-well mb-4 rounded-xl border border-hairline p-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className="text-sm font-semibold text-l1">主题</h3>
-              <p className="mt-0.5 text-xs leading-5 text-l3">
-                {followSystem
-                  ? isCustomThemeId(settings?.theme)
-                    ? "自定义配色不随系统切换深浅"
-                    : "点任一张只选配色，深浅随系统切换"
-                  : "上排深色，下排同名浅色"}
-              </p>
-            </div>
-            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-l2">
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between gap-3 px-0.5">
+            <h3 className="text-xs font-semibold tracking-wide text-l2">主题</h3>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-l2">
               跟随系统深浅
               <Toggle
                 label="主题跟随系统深浅"
@@ -2680,6 +2680,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               />
             </label>
           </div>
+          <div className="ccode-well rounded-xl border border-hairline p-4">
           <div className="grid grid-cols-[repeat(7,minmax(4.5rem,1fr))] gap-2 overflow-x-auto">
             {themeSwatches.map((t) => (
               <ThemeTile
@@ -2853,6 +2854,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               )}
             </div>
           )}
+          </div>
         </div>
 
         <Row
@@ -2894,7 +2896,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="聊天字号"
-          hint="立即生效"
           labelTitle="管聊天层和对话回放里的正文（你的提问与 AI 回复）。标题、行内代码跟着按比例变；终端字号在「终端」里单独调"
         >
           <SegTabs
@@ -2936,7 +2937,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="行内代码颜色"
-          hint="文件名、命令、变量名这类反引号包着的字"
           labelTitle="给对话里的行内代码上一个字色，底是一层淡灰，和正文、链接一眼分开；深浅主题各有一套保证看得清。墨色 = 不上色，只用正文最亮的颜色稍加粗。代码块不受影响"
         >
           <SegTabs
@@ -2952,7 +2952,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="聊天滚动条"
-          hint="闲置淡出：鼠标进入或滚动时才显现"
           labelTitle="两种都较宽、好抓，悬停到滚动条上还会再粗一点。选「常显」则一直显示"
         >
           <SegTabs
@@ -2968,7 +2967,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
-        <Row label="聊天预览" align="start" hint="上面四项改了这里当场变">
+        <Row label="聊天预览" align="start">
           <div className="md-body md-chat max-w-md rounded-md border border-hairline bg-inset px-3 py-2">
             <p>
               已把结果写进 <code>notes/clips.md</code>，可以用 <code>npm test</code>{" "}
@@ -3000,7 +2999,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="打开对话时先显示"
-          hint="之后每段对话还能自己切"
           labelTitle="问 AI、开始、商量、继续、精读都按这个。「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
         >
           <SegTabs
@@ -3018,7 +3016,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="底部状态栏"
-          hint="关掉后终端底下那条消失"
           labelTitle="聊天里只收掉分支、改动和用量，权限与模型仍在输入框下面"
         >
           <Toggle
@@ -3060,7 +3057,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           onChange={(next) => patch({ terminalShell: next })}
         />
 
-        <Row label="终端字号" hint="立即生效（11–18）">
+        <Row label="终端字号" hint="11–18">
           <input
             type="number"
             min={11}
@@ -3089,7 +3086,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="终端字体"
-          hint="立即生效；未安装可一键装"
           extra={
             fontInstallTarget &&
             fontInstallTarget === INSTALLABLE_FONTS[fontFamily] &&
@@ -3252,7 +3248,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           );
         })()}
 
-        <Row label="滚动缓冲行数" hint="之后新起的终端生效（1000–20000）">
+        <Row label="滚动缓冲行数" hint="1000–20000，新终端生效">
           <input
             type="number"
             min={1000}
@@ -3297,7 +3293,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <SubHeading title="外部终端与运行时" />
         <Row
           label="外部终端"
-          hint="对话页「在外部终端继续」、连接页外部启动用哪个终端；立即生效"
           labelTitle={IS_WINDOWS ? "cmd 不经过 PowerShell，通常更快" : undefined}
         >
           <select
@@ -3358,7 +3353,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="默认导航形态"
-          hint="下次启动生效；运行中可临时切换"
+          hint="下次启动生效"
         >
           <select
             className={selectMd}
@@ -3415,11 +3410,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
 
         {/* 项目助手与桌宠（2026-11-20：支持桌角黑猫 / Monolith 切换，同步到项目助手抽屉、顶栏图标与桌宠） */}
-        <SubHeading title="项目助手与桌宠" hint="选择项目助手形象；开启桌宠后，哪个项目有事等你、哪一步跑完了，它来告诉你" />
-        <Row
-          label="助手形象"
-          hint="项目助手、顶栏图标与桌面桌宠同步切换"
-        >
+        <SubHeading title="项目助手与桌宠" />
+        <Row label="助手形象">
           <div className="flex flex-wrap items-center gap-2 text-xs" role="radiogroup" aria-label="助手形象">
             {(
               [
@@ -3464,7 +3456,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             onChange={(checked) => patch({ deskPetEnabled: checked })}
           />
         </Row>
-        <Row label="小桌说话" hint="新来一件事时在旁边冒一句，几秒后自己收起" disabled={!(settings?.deskPetEnabled ?? false)}>
+        <Row label="小桌说话" disabled={!(settings?.deskPetEnabled ?? false)}>
           <select
             className={selectMd}
             disabled={!(settings?.deskPetEnabled ?? false)}
@@ -3511,13 +3503,12 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           title="顶部灵动岛"
           hint={
             (settings?.hotkeyHideChrome ?? "mod+\\")
-              ? `侧栏隐藏时顶部出现的导航岛；按 ${comboLabel(settings?.hotkeyHideChrome ?? "mod+\\")} 临时隐藏侧栏`
-              : "侧栏隐藏时顶部出现的导航岛"
+              ? `按 ${comboLabel(settings?.hotkeyHideChrome ?? "mod+\\")} 临时隐藏侧栏`
+              : undefined
           }
         />
         <Row
           label="自动收起"
-          hint="鼠标移开后多久收起展开的岛"
           labelTitle="完全隐藏时，岛始终停在顶部，只留「恢复侧栏」；鼠标移入或键盘聚焦展开完整导航，移开后按此延时收起。选「立即」适合只借岛点一下就走，不留停在半开的岛"
         >
           <select
@@ -3545,10 +3536,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             onChange={(v) => void patch({ navCapsuleRunAnnounce: v })}
           />
         </Row>
-        <Row
-          label="展开内容"
-          hint="岛展开后的导航显示符号、文字还是两者；立即生效"
-        >
+        <Row label="展开内容">
           <select
             className={selectSm}
             value={normalizeNavCapsuleDisplayMode(settings?.navCapsuleDisplayMode)}
@@ -3858,10 +3846,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
       <Section id="integration" active={activeSection}>
         {/* 两件事分两节（2026-10-17）：内置 AI 功能用哪份配置 / Mesa 对各家 Agent 加的约束。
             「会话自动命名」挪到配置卡后面，紧挨它用到的「会话摘要 / 起名」槽 */}
-        <SubHeading title="内置 AI 功能" hint="Mesa 自己发起的 AI 调用：起提交说明、给对话起名、翻译等" />
+        <SubHeading title="内置 AI 功能" />
         <Row
           label="AI 专用配置"
-          hint="留空自动用最近使用的配置"
           labelTitle="同一配置的每个模型各占一条"
         >
           <select
@@ -3920,7 +3907,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
 
         <Row
           label="会话自动命名"
-          hint="Agent 聊完自动给对话起标题；关掉后不再起名"
           labelTitle="起名跟上方「AI 专用配置」走，「会话摘要 / 起名」行可单独换。聊完起名、打开对话页补名去重；关掉后已有标题与你手改的标题都不受影响"
         >
           <Toggle
@@ -3948,7 +3934,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         )}
 
         {/* 出图模型的编辑处在连接页（2026-10-24 用户「连接这里配置生图模型」）；这里只说现状并跳过去，不留第二个编辑入口 */}
-        <SubHeading title="出图" hint="Agent 要画图时用的模型，和对话模型分开配" />
+        <SubHeading title="出图" />
         <Row
           label="出图模型"
           hint={
@@ -3974,7 +3960,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </button>
         </Row>
 
-        <SubHeading title="共用环境变量" hint="Mesa 启动每家 Agent 时都带上，不用每条连接各填一遍" />
+        <SubHeading title="共用环境变量" />
         <Row
           label="环境变量"
           align="start"
@@ -4008,7 +3994,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           </div>
         </Row>
 
-        <SubHeading title="对 Agent 的标记" hint="Mesa 启动各家 Agent 时额外带上的标记" />
+        <SubHeading title="对 Agent 的标记" />
 
         {hookSupportError && (
           <div className="mt-3 flex items-center gap-2 text-xs text-err-text">
@@ -4578,7 +4564,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <BackgroundTasksPanel />
         <Card
           title="应用日志"
-          hint="最近 100 条；重启 Mesa 后清空"
+          hint="最近 100 条"
           action={
             <>
               <button onClick={loadLogs} className={rowActionClass}>
@@ -4664,10 +4650,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             : "~/ccode";
           return (
             <>
-              <SubHeading
-                title="工作副本位置"
-                hint="工作副本都放在这里，用得越多占得越大"
-              />
+              <SubHeading title="工作副本位置" />
               <RowGroup>
                 <Row
                   label="存放位置"
@@ -4695,11 +4678,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 </Row>
               </RowGroup>
 
-              <SubHeading
-                title="本机占用"
-                hint="Mesa 在本机的目录与大小；配置、索引和备份别手动删"
-              />
-              <div className="mt-2 border-y border-hairline py-3.5">
+              <SubHeading title="本机占用" />
+              <div className="ccode-well mt-2 rounded-xl border border-hairline px-4 py-3.5">
                 {storageError ? (
                   <p className="py-2 text-xs text-err-text">{storageError}</p>
                 ) : summary === null ? (
@@ -4822,7 +4802,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         {/* 关于页二次收拢（2026-10-17 用户「看着有点乱」）：只回答两件事——我装的是什么（身份卡）、
             出了事找谁（反馈）。GitHub 主页与开源许可降为身份卡右侧两个轻链接；致谢与数据来源是
             「用了谁的东西」，与第三方许可同一类，并进许可浮层；隐私压成页脚一句，全文挂悬浮 */}
-        <div className="mt-1 flex flex-wrap items-center gap-4 rounded-xl bg-chat-bubble p-4">
+        <div className="ccode-well flex flex-wrap items-center gap-4 rounded-xl border border-hairline p-4">
           <img
             src={settings?.appIconStyle === "light" ? appIconLight : appIconDark}
             alt=""
@@ -4884,7 +4864,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </div>
         <Row
           label="反馈与提需求"
-          hint="遇到问题或想要的功能，直接告诉开发者"
           labelTitle="别贴密钥或 token。诊断包已脱敏；自己复制的终端输出可能还带着密钥，发送前留意"
         >
           <button
