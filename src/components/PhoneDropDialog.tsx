@@ -143,7 +143,11 @@ export default function PhoneDropDialog() {
       .then((list) => {
         if (stale) return;
         setProjects(list);
-        setPlaceRoot(pickPlaceProject(list, target?.cwd ?? null, IS_WINDOWS) ?? "");
+        const hintedPath =
+          !target?.cwd
+            ? items.find((it) => it.status === "new" && it.targetProjectPath)?.targetProjectPath ?? null
+            : null;
+        setPlaceRoot(pickPlaceProject(list, target?.cwd ?? hintedPath, IS_WINDOWS) ?? "");
       })
       .catch(() => {
         if (!stale) setProjects([]);
@@ -498,6 +502,7 @@ export default function PhoneDropDialog() {
                             {[
                               item.kind === "text" ? null : formatPhoneSize(item.size),
                               timeLabel(item.receivedAt),
+                              item.status === "new" && item.targetProject ? `发往「${item.targetProject}」` : null,
                               note || null,
                             ]
                               .filter(Boolean)

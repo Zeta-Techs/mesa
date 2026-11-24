@@ -17,15 +17,59 @@
     files: [],
     fileQuery: "",
     diffText: "",
+    diffSources: [],
+    diffScope: "",
     streaming: false,
     streamId: "",
-    streamStep: "",
+    streamSteps: [],
     streamText: "",
     pendingQuestion: "",
     sseOnline: false,
     es: null,
     sheet: null, // { type: "drop" | "step" | "file", ... }
+    dropProject: "",
+    overviewPendingRender: false,
   };
+
+  let activeBlobUrl = null;
+  function revokeBlobUrl() {
+    if (activeBlobUrl) {
+      try { URL.revokeObjectURL(activeBlobUrl); } catch {}
+      activeBlobUrl = null;
+    }
+  }
+
+  function closeSheet() {
+    revokeBlobUrl();
+    state.sheet = null;
+    state.overviewPendingRender = false;
+    render();
+  }
+
+  function isUserTyping() {
+    const el = document.activeElement;
+    if (!el || !appEl.contains(el)) return false;
+    const tag = el.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
+  function briefStateMeta(code) {
+    switch (code) {
+      case "saved": return { label: "已保存", cls: "ok" };
+      case "review": return { label: "待评审", cls: "warn" };
+      case "working": return { label: "运行中", cls: "info" };
+      case "confirm": return { label: "等确认", cls: "warn" };
+      case "failed": return { label: "出错", cls: "err" };
+      case "open": return { label: "已开副本", cls: "muted" };
+      case "idle": return { label: "未开始", cls: "muted" };
+      default: return { label: code || "进行中", cls: "muted" };
+    }
+  }
+
+  function totalPendingCount(ov) {
+    if (!ov) return 0;
+    return (ov.helpItems?.length || 0) + (ov.grantItems?.length || 0);
+  }
 
   let toastTimer = null;
   function showToast(msg) {
@@ -92,7 +136,17 @@
       if (inOl) { out.push("</ol>"); inOl = false; }
     };
 
-    for (const line of lines) {
+    const splitRow = (row) =>
+      row
+        .trim()
+        .replace(/^\|/, "")
+        .replace(/\|$/, "")
+        .split("|")
+        .map((c) => c.trim());
+    const isTableSep = (line) => /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?$/.test(line.trim());
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
       const cb = line.match(/^\u0000CB(\d+)\u0000$/);
       if (cb) {
         closeLists();
@@ -102,6 +156,23 @@
       const trimmed = line.trim();
       if (!trimmed) {
         closeLists();
+        continue;
+      }
+      if (trimmed.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        closeLists();
+        const headers = splitRow(trimmed);
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].trim().includes("|") && !/^\u0000CB\d+\u0000$/.test(lines[i])) {
+          rows.push(splitRow(lines[i]));
+          i += 1;
+        }
+        i -= 1;
+        const thead = `<thead><tr>${headers.map((h) => `<th>${inlineFmt(h)}</th>`).join("")}</tr></thead>`;
+        const tbody = rows.length
+          ? `<tbody>${rows.map((r) => `<tr>${headers.map((_, ci) => `<td>${inlineFmt(r[ci] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody>`
+          : "";
+        out.push(`<table>${thead}${tbody}</table>`);
         continue;
       }
       const h = trimmed.match(/^(#{1,4})\s+(.+)$/);
@@ -257,12 +328,16 @@
     }
   }
 
-  async function loadFiles() {
+  async function loadFiles(scopeOverride) {
     if (!state.currentProject) return;
     try {
       if (state.filesMode === "diff") {
-        const data = await apiGet(`/api/files/diff?project=${encodeURIComponent(state.currentProject)}`);
+        const reqScope = scopeOverride !== undefined ? scopeOverride : state.diffScope;
+        const qs = reqScope ? `&scope=${encodeURIComponent(reqScope)}` : "";
+        const data = await apiGet(`/api/files/diff?project=${encodeURIComponent(state.currentProject)}${qs}`);
         state.diffText = data.diff || "";
+        state.diffSources = Array.isArray(data.sources) ? data.sources : [];
+        state.diffScope = data.activeSource || reqScope || "main";
       } else {
         const q = state.fileQuery.trim();
         const url = `/api/files/list?project=${encodeURIComponent(state.currentProject)}${q ? `&query=${encodeURIComponent(q)}` : ""}`;
@@ -296,14 +371,19 @@
     es.addEventListener("overview", (ev) => {
       try {
         state.overview = JSON.parse(ev.data);
-        if (state.tab === "overview") render();
-        else updateTabBadges();
+        if (state.tab === "overview" && !state.sheet && !isUserTyping()) {
+          state.overviewPendingRender = false;
+          render();
+        } else {
+          if (state.tab === "overview") state.overviewPendingRender = true;
+          updateTabBadges();
+        }
       } catch {}
     });
   }
 
   function updateTabBadges() {
-    const count = state.overview?.helpItems?.length || 0;
+    const count = totalPendingCount(state.overview);
     const badge = document.querySelector("[data-help-badge]");
     if (badge) {
       badge.textContent = String(count);
@@ -320,11 +400,14 @@
 
   async function selectProject(path) {
     state.currentProject = path;
+    state.dropProject = path;
     try { localStorage.setItem("mesa.mw.project", path); } catch {}
     state.overview = null;
     state.history = [];
     state.files = [];
     state.diffText = "";
+    state.diffSources = [];
+    state.diffScope = "";
     render();
     connectEvents();
     await Promise.all([loadOverview(), loadHistory()]);
@@ -338,7 +421,7 @@
     state.streaming = true;
     state.streamId = sid;
     state.pendingQuestion = q;
-    state.streamStep = "正在查看项目…";
+    state.streamSteps = ["正在查看项目…"];
     state.streamText = "";
     render();
     scrollChatBottom();
@@ -384,8 +467,15 @@
           let payload = null;
           try { payload = JSON.parse(payloadStr); } catch { continue; }
           if (evName === "step" && payload.step) {
-            state.streamStep = payload.step;
-            updateStreamDom();
+            const label = String(payload.step).trim();
+            if (label && state.streamSteps[state.streamSteps.length - 1] !== label) {
+              if (state.streamSteps.length === 1 && state.streamSteps[0] === "正在查看项目…") {
+                state.streamSteps = [label];
+              } else {
+                state.streamSteps = [...state.streamSteps.slice(-11), label];
+              }
+              updateStreamDom();
+            }
           } else if (evName === "text" && payload.text !== undefined) {
             state.streamText = payload.text;
             updateStreamDom();
@@ -402,16 +492,28 @@
       state.streaming = false;
       state.streamId = "";
       state.pendingQuestion = "";
-      state.streamStep = "";
+      state.streamSteps = [];
       state.streamText = "";
       render();
       scrollChatBottom();
     }
   }
 
+  function renderStreamTrailHtml() {
+    const steps = state.streamSteps.length ? state.streamSteps : ["正在思考…"];
+    const lastIdx = steps.length - 1;
+    return steps
+      .map((s, idx) =>
+        idx === lastIdx
+          ? `<div class="stream-trail-item now"><span class="pulse-dot"></span><span>${esc(s)}</span></div>`
+          : `<div class="stream-trail-item done"><span>✓</span><span>${esc(s)}</span></div>`,
+      )
+      .join("");
+  }
+
   function updateStreamDom() {
-    const stepEl = document.getElementById("stream-step-label");
-    if (stepEl) stepEl.textContent = state.streamStep || "正在思考…";
+    const trailEl = document.getElementById("stream-trail");
+    if (trailEl) trailEl.innerHTML = renderStreamTrailHtml();
     const textEl = document.getElementById("stream-md");
     if (textEl) {
       textEl.innerHTML = renderMarkdown(state.streamText);
@@ -434,13 +536,41 @@
   }
 
   async function openFileSheet(relPath) {
+    revokeBlobUrl();
     const ext = (relPath.split(".").pop() || "").toLowerCase();
     const isImg = ["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext);
     const isPdf = ext === "pdf";
     const rawUrl = `/api/files/raw?project=${encodeURIComponent(state.currentProject)}&path=${encodeURIComponent(relPath)}`;
-    if (isImg || isPdf) {
-      state.sheet = { type: "file", path: relPath, kind: isPdf ? "pdf" : "image", rawUrl, loading: false };
+    if (isImg) {
+      state.sheet = { type: "file", path: relPath, kind: "image", rawUrl, loading: false };
       render();
+      return;
+    }
+    if (isPdf) {
+      state.sheet = { type: "file", path: relPath, kind: "pdf", rawUrl, blobUrl: "", loading: true };
+      render();
+      try {
+        // iOS 主屏独立 PWA 下 target="_blank" 会切到无 Cookie 的 SafariViewController 导致 401；
+        // 先同源带 Cookie 拉成 Blob URL，在页内嵌预览并提供离线下载/系统打开入口
+        const res = await fetch(rawUrl, { credentials: "same-origin" });
+        if (res.status === 401) {
+          state.authed = false;
+          state.sheet = null;
+          render();
+          throw new Error("需要重新扫码配对");
+        }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `读取 PDF 失败 (${res.status})`);
+        }
+        const blob = await res.blob();
+        activeBlobUrl = URL.createObjectURL(blob);
+        state.sheet = { type: "file", path: relPath, kind: "pdf", rawUrl, blobUrl: activeBlobUrl, loading: false };
+        render();
+      } catch (e) {
+        closeSheet();
+        showToast(String(e.message || e));
+      }
       return;
     }
     state.sheet = { type: "file", path: relPath, kind: "text", loading: true, text: "", truncated: false };
@@ -457,16 +587,25 @@
       };
       render();
     } catch (e) {
-      state.sheet = null;
-      render();
+      closeSheet();
       showToast(String(e.message || e));
     }
+  }
+
+  function formatCheckItem(c) {
+    if (typeof c === "string") return `<li>${esc(c)}</li>`;
+    if (!c || typeof c !== "object") return "";
+    const mark = c.status === "blocked" ? "✕" : c.status === "needs_human" ? "⚠" : "✓";
+    const meta = [c.source, c.location].filter(Boolean).join(" · ");
+    return `<li><strong>${mark} ${esc(c.title || "核验项")}</strong>${meta ? `<div class="check-meta">${esc(meta)}</div>` : ""}${c.detail ? `<div class="check-meta">${esc(c.detail)}</div>` : ""}</li>`;
   }
 
   function renderOverviewTab() {
     const ov = state.overview;
     if (!ov) return `<div class="empty-note">正在读取项目状态…</div>`;
     const helpItems = ov.helpItems || [];
+    const grantItems = ov.grantItems || [];
+    const pendingTotal = helpItems.length + grantItems.length;
     const steps = ov.steps || [];
     const goals = ov.goals || [];
     const closeout = ov.closeout || null;
@@ -475,7 +614,7 @@
     let html = "";
     html += `<div class="summary-banner">
       <div>
-        <div class="summary-title">${esc(ov.projectName || "项目")}</div>
+        <div class="summary-title">${esc(ov.name || ov.projectName || "项目")}</div>
         <div class="summary-sub">${esc(ov.progressSummary || (steps.length ? `${savedCount}/${steps.length} 步已保存` : "自由目标模式"))}</div>
       </div>
       <span class="pill ${steps.length && savedCount === steps.length ? "ok" : "warn"}">${
@@ -483,14 +622,31 @@
       }</span>
     </div>`;
 
-    if (helpItems.length > 0) {
-      html += `<div class="section-label"><span>等你的事 · ${helpItems.length}</span></div>`;
+    if (pendingTotal > 0) {
+      html += `<div class="section-label"><span>等你的事 · ${pendingTotal}</span></div>`;
+      for (const g of grantItems) {
+        const blockedList = Array.isArray(g.blocked) && g.blocked.length
+          ? `<div class="md mt-8"><ul>${g.blocked.slice(0, 6).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`
+          : "";
+        html += `<div class="card card-warn" data-grant-card="${esc(g.scheduleId)}">
+          <div class="help-where">定时任务被授权拦下 · ${esc(g.scheduleName)}</div>
+          <p class="help-q">这次运行因联网/权限受限被拦下，是否放宽重跑这一次？</p>
+          ${blockedList}
+          <div class="btn-row mt-10">
+            <button class="btn primary" data-grant-resolve="once" data-grant-id="${esc(g.scheduleId)}">放宽重跑这一次</button>
+            <button class="btn" data-grant-resolve="dismiss" data-grant-id="${esc(g.scheduleId)}">不用</button>
+          </div>
+        </div>`;
+      }
       for (const h of helpItems) {
         html += `<div class="card card-warn" data-help-card="${esc(h.itemId)}" data-help-root="${esc(h.root)}">
           <div class="help-where">${esc(h.whereLabel || "人工请求")}</div>
           <p class="help-q">${esc(h.question)}</p>
           ${h.options && h.options.length ? `<div class="btn-row">${h.options
-            .map((o) => `<button class="btn" data-help-opt="${esc(o.key)}" data-help-label="${esc(o.label)}">${esc(o.key)} · ${esc(o.label)}</button>`)
+            .map((o) => {
+              const isRec = h.recommend && h.recommend === o.key;
+              return `<button class="btn ${isRec ? "primary" : ""}" data-help-opt="${esc(o.key)}" data-help-label="${esc(o.label)}">${esc(o.key)} · ${esc(o.label)}${isRec ? "（建议）" : ""}</button>`;
+            })
             .join("")}</div>` : ""}
           <div class="btn-row mt-10">
             <input class="input flex-1" data-help-input placeholder="或者直接写一句回复…">
@@ -506,6 +662,7 @@
       html += `<div class="list-card">`;
       for (const s of steps) {
         const cls = s.saved ? "saved" : s.failure ? "failed" : "";
+        const bm = briefStateMeta(s.briefState);
         const badge = s.failure
           ? `<span class="pill err">出错</span>`
           : s.checksBlocked > 0
@@ -514,7 +671,7 @@
               ? `<span class="pill warn">待判 ${s.checksNeedsHuman}</span>`
               : s.saved
                 ? `<span class="pill ok">已保存</span>`
-                : `<span class="pill muted">${esc(s.briefState || "进行中")}</span>`;
+                : `<span class="pill ${bm.cls}">${esc(bm.label)}</span>`;
         html += `<button class="step-row" data-open-step="${s.n}">
           <span class="step-num ${cls}">${s.n}</span>
           <div class="step-body">
@@ -541,13 +698,46 @@
     if (goals.length > 0) {
       html += `<div class="section-label"><span>流程外目标</span></div><div class="list-card">`;
       for (const g of goals) {
-        const tone = g.status === "completed" ? "ok" : g.status === "failed" ? "err" : g.status === "pending_review" ? "warn" : "muted";
+        const tone = g.status === "completed" ? "ok" : g.status === "failed" ? "err" : g.status === "pending_review" ? "warn" : g.status === "running" ? "info" : "muted";
         html += `<div class="file-row"><div><div class="step-name">${esc(g.name)}</div></div><span class="pill ${tone}">${esc(g.statusLabel || g.status)}</span></div>`;
       }
       html += `</div>`;
     }
 
     return html;
+  }
+
+  function parseLegacyProposals(answerText) {
+    const src = String(answerText || "");
+    let workOrder = null;
+    const memories = [];
+    const woMatch = src.match(/:::\s*派活\s*\n([\s\S]*?)\n\s*:::/);
+    if (woMatch) {
+      const lines = woMatch[1].split("\n");
+      const map = {};
+      for (const ln of lines) {
+        const m = ln.match(/^([^：:]+)[：:]\s*(.*)$/);
+        if (m) map[m[1].trim()] = m[2].trim();
+      }
+      const targetStr = map["交给"] || "";
+      const stepMatch = targetStr.match(/第\s*(\d+)\s*步/);
+      if (map["要做"] || map["标题"]) {
+        workOrder = {
+          title: map["标题"] || (map["要做"] || "派活任务").slice(0, 32),
+          target: stepMatch ? "step" : "goal",
+          step: stepMatch ? Number(stepMatch[1]) : null,
+          task: map["要做"] || "",
+          deliver: map["交付"] || map["交付物"] || "",
+        };
+      }
+    }
+    const memRe = /:::\s*记下\s*\n([\s\S]*?)\n\s*:::/g;
+    let mm;
+    while ((mm = memRe.exec(src)) !== null) {
+      const txt = mm[1].trim();
+      if (txt) memories.push({ text: txt });
+    }
+    return { workOrder, memories };
   }
 
   function renderTurnCard(turn) {
@@ -561,11 +751,19 @@
       .replace(/:::\s*(派活|补料|记下|问)\s*\n[\s\S]*?\n\s*:::/g, "")
       .replace(/\[\[[^\]\n]{1,600}\]\]/g, "")
       .trim();
-    const p = turn.proposals || {};
+    const rawP = turn.proposals || {};
+    const legacy = !rawP.workOrder && !(rawP.memories && rawP.memories.length)
+      ? parseLegacyProposals(turn.answer)
+      : { workOrder: null, memories: [] };
+    const workOrder = rawP.workOrder || legacy.workOrder;
+    const memories = Array.isArray(rawP.memories) && rawP.memories.length ? rawP.memories : legacy.memories;
+
     let extra = "";
-    if (p.workOrder) {
-      const wo = p.workOrder;
-      const doneNote = turn.dispatched ? `<span class="pill ok">已派：${esc(turn.dispatched.note || "已发出")}</span>` : `<button class="btn primary" data-dispatch-at="${esc(turn.at)}">派出去</button>`;
+    if (workOrder) {
+      const wo = workOrder;
+      const doneNote = turn.dispatched
+        ? `<span class="pill ok">已派：${esc(turn.dispatched.note || "已发出")}</span>`
+        : `<button class="btn primary" data-dispatch-at="${esc(turn.at)}">派出去</button>`;
       extra += `<div class="proposal-card">
         <div class="proposal-title">派活单 · ${esc(wo.title)}</div>
         <div class="proposal-meta">${wo.target === "step" ? `交给第 ${wo.step} 步` : "另起新目标"}${wo.deliver ? ` · 交付：${esc(wo.deliver)}` : ""}</div>
@@ -573,14 +771,14 @@
         <div class="btn-row">${doneNote}</div>
       </div>`;
     }
-    if (p.reworkOrder) {
+    if (rawP.reworkOrder) {
       extra += `<div class="proposal-card">
-        <div class="proposal-title">补料单 · 退回第 ${p.reworkOrder.toStep} 步</div>
+        <div class="proposal-title">补料单 · 退回第 ${rawP.reworkOrder.toStep} 步</div>
         <div class="proposal-meta">补料单需回电脑端 Mesa 确认并核对下游跟进</div>
       </div>`;
     }
-    if (Array.isArray(p.memories) && p.memories.length) {
-      for (const m of p.memories) {
+    if (memories.length) {
+      for (const m of memories) {
         extra += `<div class="proposal-card">
           <div class="proposal-title">以后照这样办</div>
           <div class="md">${renderMarkdown(m.text)}</div>
@@ -589,9 +787,10 @@
       }
     }
 
+    const headMeta = [relTime(turn.at), turn.connection].filter(Boolean).join(" · ");
     return `<div class="q-bubble">${esc(turn.question)}</div>
       <div class="a-block">
-        <div class="a-head"><span class="a-mark"></span><span>项目助手 · ${esc(relTime(turn.at))}</span></div>
+        <div class="a-head"><span class="a-mark"></span><span>项目助手${headMeta ? ` · ${esc(headMeta)}` : ""}</span></div>
         <div class="md">${renderMarkdown(cleanText)}</div>
         ${extra}
       </div>`;
@@ -615,7 +814,7 @@
     if (state.streaming) {
       body += `<div class="q-bubble">${esc(state.pendingQuestion)}</div>
         <div class="a-block">
-          <div class="stream-status"><span class="pulse-dot"></span><span id="stream-step-label">${esc(state.streamStep || "正在思考…")}</span></div>
+          <div id="stream-trail" class="stream-trail">${renderStreamTrailHtml()}</div>
           <div id="stream-md" class="md">${renderMarkdown(state.streamText)}</div>
         </div>`;
     }
@@ -638,12 +837,17 @@
     </div>`;
 
     if (state.filesMode === "diff") {
-      if (!state.diffText.trim()) return `${seg}<div class="empty-note">当前主仓库暂无未提交改动，也无最近差异可预览。</div>`;
+      const srcBar = state.diffSources.length > 1
+        ? `<div class="diff-sources">${state.diffSources
+            .map((s) => `<button class="diff-src-btn ${s.id === state.diffScope ? "active" : ""}" data-diff-scope="${esc(s.id)}">${esc(s.label)}${s.hasChanges ? " ●" : ""}</button>`)
+            .join("")}</div>`
+        : "";
+      if (!state.diffText.trim()) return `${seg}${srcBar}<div class="empty-note">当前范围暂无未提交改动，也无最近差异可预览。</div>`;
       const lines = state.diffText.split("\n").map((l) => {
         const cls = l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : "";
         return `<div class="diff-line ${cls}">${esc(l)}</div>`;
       }).join("");
-      return `${seg}<div class="diff-box">${lines}</div>`;
+      return `${seg}${srcBar}<div class="diff-box">${lines}</div>`;
     }
 
     let listHtml = "";
@@ -681,8 +885,18 @@
     let body = "";
     if (sh.type === "drop") {
       title = "传资料到电脑 Mesa";
+      const targetProj = state.dropProject || state.currentProject || "";
+      const dropOpts = state.projects.length
+        ? `<option value="">不指定课题（进通用暂存区）</option>${state.projects
+            .map((p) => `<option value="${esc(p.path)}" ${p.path === targetProj ? "selected" : ""}>${esc(p.name)}</option>`)
+            .join("")}`
+        : `<option value="">通用暂存区</option>`;
       body = `
-        <p class="auth-desc mb-12">拍照、选文件或写一段灵感，经加密通道直达电脑端「从手机添加」暂存区（任意网络可用）。</p>
+        <p class="auth-desc mb-12">拍照、选文件或写一段灵感，经加密通道直达电脑端「从手机添加」暂存区（4G/5G 或任意 Wi-Fi 均可）。</p>
+        <div class="mb-12">
+          <label class="field-label" for="drop-project">目标课题</label>
+          <select id="drop-project" class="project-select">${dropOpts}</select>
+        </div>
         <div class="btn-row mt-0 mb-14">
           <label class="btn primary inline-flex-center">
             拍照上传
@@ -712,7 +926,7 @@
             ${d.brief ? `<div class="md mt-8">${renderMarkdown(d.brief)}</div>` : ""}
           </div>
           ${d.reviewNotes ? `<div class="card card-warn"><div class="proposal-title">评审退回意见</div><div class="md">${renderMarkdown(d.reviewNotes)}</div></div>` : ""}
-          ${(d.checks && d.checks.length) ? `<div class="card"><div class="proposal-title">核验提醒 (${d.checks.length})</div><div class="md"><ul>${d.checks.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div></div>` : ""}
+          ${(d.checks && d.checks.length) ? `<div class="card"><div class="proposal-title">核验提醒 (${d.checks.length})</div><div class="md"><ul>${d.checks.map(formatCheckItem).join("")}</ul></div></div>` : ""}
           ${(d.humanPending && d.humanPending.length) ? `<div class="card"><div class="proposal-title">待办人工事项</div><div class="md"><ul>${d.humanPending.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div></div>` : ""}
           ${(d.pendingNextActions && d.pendingNextActions.length) ? `<div class="card"><div class="proposal-title">后续建议</div><div class="md"><ul>${d.pendingNextActions.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div></div>` : ""}`;
       }
@@ -723,10 +937,12 @@
       } else if (sh.kind === "image") {
         body = `<img class="img-preview" src="${esc(sh.rawUrl)}" alt="${esc(sh.path)}">`;
       } else if (sh.kind === "pdf") {
-        body = `<div class="empty-note">
-          <p>PDF 文件支持直接用手机浏览器原生预览。</p>
-          <a class="btn primary inline-flex-center no-underline" href="${esc(sh.rawUrl)}" target="_blank" rel="noopener">打开 PDF 原文</a>
-        </div>`;
+        const fileName = sh.path.split("/").pop() || "document.pdf";
+        body = `
+          <iframe class="pdf-frame" src="${esc(sh.blobUrl)}" title="${esc(fileName)}"></iframe>
+          <div class="btn-row mt-10">
+            <a class="btn primary flex-1 inline-flex-center justify-center no-underline" href="${esc(sh.blobUrl)}" download="${esc(fileName)}">下载 / 用系统打开 PDF</a>
+          </div>`;
       } else if (sh.kind === "markdown") {
         body = `${sh.truncated ? `<p class="auth-desc">文件较大，仅展示前 512 KB 预览（已脱敏）。</p>` : ""}<div class="md">${renderMarkdown(sh.text)}</div>`;
       } else {
@@ -749,7 +965,7 @@
       renderUnauthed();
       return;
     }
-    const helpCount = state.overview?.helpItems?.length || 0;
+    const pendingCount = totalPendingCount(state.overview);
     const projectOpts = state.projects.length
       ? state.projects.map((p) => `<option value="${esc(p.path)}" ${p.path === state.currentProject ? "selected" : ""}>${esc(p.name)}${p.helpCount ? ` (${p.helpCount} 待办)` : ""}</option>`).join("")
       : `<option value="">暂无项目</option>`;
@@ -772,7 +988,7 @@
       ${content}
       <nav class="tabbar" aria-label="主导航">
         <button class="tab-btn ${state.tab === "overview" ? "active" : ""}" data-tab="overview">
-          概览 <span class="badge ${helpCount ? "" : "hidden"}" data-help-badge>${helpCount}</span>
+          概览 <span class="badge ${pendingCount ? "" : "hidden"}" data-help-badge>${pendingCount}</span>
         </button>
         <button class="tab-btn ${state.tab === "assistant" ? "active" : ""}" data-tab="assistant">助手</button>
         <button class="tab-btn ${state.tab === "files" ? "active" : ""}" data-tab="files">文件</button>
@@ -786,17 +1002,21 @@
     const files = Array.from(fileList || []);
     if (!files.length) return;
     const statusEl = document.getElementById("drop-status");
+    const targetProj = state.dropProject || "";
+    const targetName = state.projects.find((p) => p.path === targetProj)?.name || "";
     let ok = 0;
     for (const f of files) {
       if (statusEl) statusEl.textContent = `正在上传 ${f.name} (${formatBytes(f.size)})…`;
       try {
+        const headers = {
+          "X-Mesa-CSRF": state.csrfToken,
+          "X-Mesa-Name": encodeURIComponent(f.name || "photo.jpg"),
+        };
+        if (targetProj) headers["X-Mesa-Project"] = encodeURIComponent(targetProj);
         const res = await fetch("/api/drop/file", {
           method: "POST",
           credentials: "same-origin",
-          headers: {
-            "X-Mesa-CSRF": state.csrfToken,
-            "X-Mesa-Name": encodeURIComponent(f.name || "photo.jpg"),
-          },
+          headers,
           body: f,
         });
         const data = await res.json().catch(() => ({}));
@@ -806,14 +1026,22 @@
         showToast(`${f.name} 没传上：${e.message || e}`);
       }
     }
-    if (statusEl) statusEl.textContent = ok ? `已送达电脑暂存区 ${ok} 份文件` : "";
-    if (ok) showToast(`已送达电脑 ${ok} 份文件`);
+    const suffix = targetName ? `（目标课题：${targetName}）` : "";
+    if (statusEl) statusEl.textContent = ok ? `已送达电脑暂存区 ${ok} 份文件${suffix}` : "";
+    if (ok) showToast(`已送达电脑 ${ok} 份文件${suffix}`);
   }
 
   function bindEvents() {
     const sel = document.getElementById("project-select");
     if (sel) {
       sel.addEventListener("change", () => void selectProject(sel.value));
+    }
+
+    const dropProj = document.getElementById("drop-project");
+    if (dropProj) {
+      dropProj.addEventListener("change", () => {
+        state.dropProject = dropProj.value;
+      });
     }
 
     const chatForm = document.getElementById("chat-form");
@@ -867,9 +1095,11 @@
         if (!text) return;
         dropTextBtn.disabled = true;
         try {
-          await apiPost("/api/drop/text", { text });
+          const targetProj = state.dropProject || "";
+          await apiPost("/api/drop/text", targetProj ? { text, projectRoot: targetProj } : { text });
           if (box) box.value = "";
-          showToast("已送到电脑端暂存区");
+          const targetName = state.projects.find((p) => p.path === targetProj)?.name || "";
+          showToast(targetName ? `已送到电脑暂存区（${targetName}）` : "已送到电脑端暂存区");
         } catch (e) {
           showToast(String(e.message || e));
         } finally {
@@ -879,18 +1109,28 @@
     }
   }
 
+  appEl.addEventListener("focusout", () => {
+    if (!state.overviewPendingRender) return;
+    setTimeout(() => {
+      if (state.overviewPendingRender && state.tab === "overview" && !state.sheet && !isUserTyping()) {
+        state.overviewPendingRender = false;
+        render();
+      }
+    }, 120);
+  });
+
   appEl.addEventListener("click", async (e) => {
     const target = e.target.closest("button, [data-close-sheet]");
     if (!target) return;
 
     if (target.hasAttribute("data-close-sheet")) {
       if (target.classList.contains("sheet-backdrop") && e.target !== target) return;
-      state.sheet = null;
-      render();
+      closeSheet();
       return;
     }
 
     if (target.hasAttribute("data-open-drop")) {
+      state.dropProject = state.currentProject || "";
       state.sheet = { type: "drop" };
       render();
       return;
@@ -900,6 +1140,7 @@
       const next = target.getAttribute("data-tab");
       if (next && next !== state.tab) {
         state.tab = next;
+        state.overviewPendingRender = false;
         render();
         if (next === "files") await loadFiles();
         if (next === "assistant") scrollChatBottom();
@@ -911,6 +1152,15 @@
       state.filesMode = target.getAttribute("data-fmode");
       render();
       if (state.filesMode !== "closeout") await loadFiles();
+      return;
+    }
+
+    if (target.hasAttribute("data-diff-scope")) {
+      const nextScope = target.getAttribute("data-diff-scope") || "";
+      if (nextScope !== state.diffScope) {
+        state.diffScope = nextScope;
+        await loadFiles(nextScope);
+      }
       return;
     }
 
@@ -926,6 +1176,26 @@
 
     if (target.hasAttribute("data-quick-ask")) {
       await sendChat(target.getAttribute("data-quick-ask"));
+      return;
+    }
+
+    if (target.hasAttribute("data-grant-resolve")) {
+      const mode = target.getAttribute("data-grant-resolve");
+      const scheduleId = target.getAttribute("data-grant-id");
+      if (!scheduleId) return;
+      target.disabled = true;
+      try {
+        const res = await apiPost("/api/grant/resolve", {
+          projectRoot: state.currentProject,
+          scheduleId,
+          allowOnce: mode === "once",
+        });
+        showToast(res.message || "已处理授权请求");
+        await loadOverview();
+      } catch (err) {
+        showToast(String(err.message || err));
+        target.disabled = false;
+      }
       return;
     }
 
@@ -989,13 +1259,24 @@
     }
   });
 
+  function readDeepLinkParams() {
+    const hashParams = new URLSearchParams(location.hash.replace(/^#\/?/, "").split("?")[1] || "");
+    const searchParams = new URLSearchParams(location.search || "");
+    const project = hashParams.get("project") || searchParams.get("project") || "";
+    const tab = hashParams.get("tab") || searchParams.get("tab") || "";
+    return { project, tab };
+  }
+
   async function bootAuthed() {
     const projectsData = await apiGet("/api/projects");
     state.projects = projectsData.projects || [];
     const saved = (() => { try { return localStorage.getItem("mesa.mw.project"); } catch { return ""; } })();
-    const hashProj = new URLSearchParams(location.hash.replace(/^#\/?/, "").split("?")[1] || "").get("project");
+    const link = readDeepLinkParams();
+    if (link.tab === "overview" || link.tab === "assistant" || link.tab === "files") {
+      state.tab = link.tab;
+    }
     const picked =
-      state.projects.find((p) => p.path === hashProj)?.path ||
+      state.projects.find((p) => p.path === link.project)?.path ||
       state.projects.find((p) => p.path === saved)?.path ||
       state.projects[0]?.path ||
       "";

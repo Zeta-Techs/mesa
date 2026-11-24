@@ -1305,6 +1305,7 @@ pub fn run() {
             feishu::feishu_send_test_card,
             feishu::feishu_test,
             mobile_workbench::mobile_workbench_status,
+            mobile_workbench::mobile_workbench_public_url,
             mobile_workbench::mobile_workbench_set_config,
             mobile_workbench::mobile_workbench_tailscale_serve,
             mobile_workbench::mobile_workbench_pair_start,

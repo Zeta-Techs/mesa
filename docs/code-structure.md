@@ -2050,10 +2050,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
-  mobile_workbench.rs        # 手机工作台本地加密 PWA 服务（2026-11-24，资源内嵌 resources/mobile-workbench/）：物理隔离于 phone_drop，仅绑 127.0.0.1；支持 Tailscale CLI 探查与专属端口 serve 开关（默认 8443，永不 reset）及自定义 HTTPS 隧道；
-                             #   0600 mobile-workbench.json 仅存设备令牌 SHA-256（≤8 台）、5 分钟一次性配对码换 HttpOnly Cookie、POST 强验 X-Mesa-CSRF 与 Origin、无内联严格 CSP；
-                             #   直连 Rust 真源提供项目列表 / 概览与 SSE / 步骤详情 / 人工请求答复 / 流式项目助手问答 / 项目知识保存 / 只读文件与脱敏 Git Diff / 跨网传资料（复用 phone-inbox/），仅派活经桌面事件桥；
-                             #   命令 mobile_workbench_status / _set_config / _tailscale_serve / _pair_start / _pair_cancel / _remove_device / _bridge_reply
+  mobile_workbench.rs        # 手机工作台本地加密 PWA 服务（2026-11-24，资源内嵌 resources/mobile-workbench/ + 真 PNG 主屏图标）：物理隔离于 phone_drop，仅绑 127.0.0.1；支持 Tailscale CLI 探查、专属端口 serve 开关（默认 8443，永不 reset，退出清理、重启自动恢复）及自定义 HTTPS 隧道；
+                             #   0600 mobile-workbench.json 仅存设备令牌 SHA-256（≤8 台）、5 分钟一次性配对码换 HttpOnly Cookie、POST 强验 X-Mesa-CSRF 与 Origin、无内联严格 CSP（放行同源 Blob PDF 预览）；
+                             #   直连 Rust 真源提供项目列表 / 概览与 SSE / 步骤详情 / 人工请求与定时任务授权审批 / 流式项目助手问答 / 项目知识保存 / 只读文件与主仓+活跃工作副本脱敏 Git Diff / 跨网按课题传资料（复用 phone-inbox/），仅派活经桌面事件桥；
+                             #   命令 mobile_workbench_status / _public_url（供飞书卡片零阻塞附「在手机工作台打开」直跳链接） / _set_config / _tailscale_serve / _pair_start / _pair_cancel / _remove_device / _bridge_reply
   feishu.rs                  # 飞书机器人通道（2026-11-06，design-assistant-dispatch-desk.md；2026-11-15 体验与重连加固）：只出不进的长连接（同步 tungstenite 跑在 feishu-ws 线程，手写 pbbp2 帧编解码、
                              #   45s 上限心跳、2s→5s→15s 阶梯快重连、分片重组 / ack 照官方 Go SDK ws 客户端），兼容 text 与 post 富文本（剥 @_user_N）及 parent_id 引用回复，6 秒前端回执看门狗防静默丢消息；
                              #   REST 取 tenant token、发文字与卡片、PATCH 原地更新卡片（is_safe_message_id 校验）；配置 feishu.json（App ID / 开关 / 绑定的 open_id / notify_milestones / quiet_night，0600），

@@ -84,6 +84,11 @@ struct StoredItem {
     status: String,
     #[serde(default)]
     placed_to: Option<String>,
+    /// 手机工作台选中的目标课题名与路径（可选提示，供桌面「从手机添加」一键入库预选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_project_path: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -105,6 +110,10 @@ pub struct PhoneItemDto {
     pub received_at: String,
     pub status: String,
     pub placed_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_project_path: Option<String>,
 }
 
 fn to_dto(dir: &Path, it: &StoredItem) -> PhoneItemDto {
@@ -121,6 +130,8 @@ fn to_dto(dir: &Path, it: &StoredItem) -> PhoneItemDto {
         received_at: it.received_at.clone(),
         status: it.status.clone(),
         placed_to: it.placed_to.clone(),
+        target_project: it.target_project.clone(),
+        target_project_path: it.target_project_path.clone(),
     }
 }
 
@@ -1255,6 +1266,8 @@ fn new_item(kind: &str, name: String, size: u64) -> StoredItem {
         received_secs: now_secs(),
         status: "new".into(),
         placed_to: None,
+        target_project: None,
+        target_project_path: None,
     }
 }
 
@@ -1391,6 +1404,7 @@ pub(crate) fn stage_external_file(
     app: Option<&tauri::AppHandle>,
     raw_name: &str,
     bytes: &[u8],
+    target_project: Option<(String, String)>,
 ) -> Result<PhoneItemDto, String> {
     let len = bytes.len() as u64;
     if len == 0 {
@@ -1424,6 +1438,10 @@ pub(crate) fn stage_external_file(
     }
     let mut item = new_item(kind, display, len);
     item.file = Some(file_name.clone());
+    if let Some((proj_name, proj_path)) = target_project {
+        item.target_project = Some(proj_name);
+        item.target_project_path = Some(proj_path);
+    }
     let dto = to_dto(&stage, &item);
     if let Err(e) = with_index(&stage, |idx| {
         idx.items.push(item);
@@ -1442,6 +1460,7 @@ pub(crate) fn stage_external_file(
 pub(crate) fn stage_external_text(
     app: Option<&tauri::AppHandle>,
     raw_text: &str,
+    target_project: Option<(String, String)>,
 ) -> Result<PhoneItemDto, String> {
     let text = raw_text.trim().to_string();
     if text.is_empty() {
@@ -1453,6 +1472,10 @@ pub(crate) fn stage_external_text(
     let stage = ensure_stage_dir()?;
     let mut item = new_item("text", text_title(&text), text.len() as u64);
     item.text = Some(text);
+    if let Some((proj_name, proj_path)) = target_project {
+        item.target_project = Some(proj_name);
+        item.target_project_path = Some(proj_path);
+    }
     let dto = to_dto(&stage, &item);
     with_index(&stage, |idx| {
         idx.items.push(item);

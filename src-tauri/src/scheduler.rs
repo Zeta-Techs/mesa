@@ -3577,30 +3577,112 @@ fn take_grant_once(id: &str) -> Option<crate::grant::Grant> {
     taken
 }
 
+/// 手机工作台等只读概览用的待审批定时任务授权请求
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingGrantDto {
+    pub schedule_id: String,
+    pub schedule_name: String,
+    pub project_root: String,
+    pub at: String,
+    pub blocked: Vec<String>,
+}
+
+/// 列出所有带待处理授权请求的定时任务（可按项目过滤）
+pub(crate) fn list_grant_requests_sync(project_root: Option<&str>) -> Vec<PendingGrantDto> {
+    let Ok(path) = schedules_path() else {
+        return Vec::new();
+    };
+    let Ok(list) = read_schedules_at(&path) else {
+        return Vec::new();
+    };
+    list.into_iter()
+        .filter_map(|s| {
+            let req = s.grant_request?;
+            if let Some(root) = project_root {
+                if !crate::paths::same_path(&s.project_root, root) {
+                    return None;
+                }
+            }
+            Some(PendingGrantDto {
+                schedule_id: s.id,
+                schedule_name: s.name,
+                project_root: s.project_root,
+                at: req.at,
+                blocked: req.blocked,
+            })
+        })
+        .collect()
+}
+
+/// 放宽重跑这一次（供 Tauri 命令与手机工作台共用；校验 project_root 时防止越权操作他项目任务）
+pub(crate) fn resolve_grant_once_sync(
+    app: tauri::AppHandle,
+    id: &str,
+    expected_project_root: Option<&str>,
+) -> Result<String, String> {
+    let name = mutate_schedule(id, |t| {
+        if let Some(root) = expected_project_root {
+            if !crate::paths::same_path(&t.project_root, root) {
+                return;
+            }
+        }
+        let base = t.grant.clone().unwrap_or_default();
+        t.grant_once = Some(crate::grant::Grant {
+            network: crate::grant::Network::Open,
+            budget_usd: base.budget_usd,
+        });
+        t.grant_request = None;
+    })?;
+    if let Some(root) = expected_project_root {
+        if !crate::paths::same_path(&name.project_root, root) {
+            return Err("定时任务不属于当前项目".into());
+        }
+    }
+    run_schedule_now_sync(
+        app,
+        id.to_string(),
+        Some("你点了「放宽重跑这一次」：这一次联网不限".into()),
+    )?;
+    Ok(name.name)
+}
+
+/// 忽略本次授权请求（授权本身不变）
+pub(crate) fn dismiss_grant_sync(
+    id: &str,
+    expected_project_root: Option<&str>,
+) -> Result<String, String> {
+    let task = mutate_schedule(id, |t| {
+        if let Some(root) = expected_project_root {
+            if !crate::paths::same_path(&t.project_root, root) {
+                return;
+            }
+        }
+        t.grant_request = None;
+    })?;
+    if let Some(root) = expected_project_root {
+        if !crate::paths::same_path(&task.project_root, root) {
+            return Err("定时任务不属于当前项目".into());
+        }
+    }
+    Ok(task.name)
+}
+
 /// 「放宽重跑这一次」：下一次运行联网不限（预算照原授权），清掉这条请求并立刻跑一次。
 /// 人点的那一下就是批准（桌面或手机的「点一下就生效」档，assistant-ops.ts grant_once）；以后都放宽只在桌面改授权
 #[tauri::command]
 pub async fn schedule_grant_once(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        mutate_schedule(&id, |t| {
-            let base = t.grant.clone().unwrap_or_default();
-            t.grant_once = Some(crate::grant::Grant { network: crate::grant::Network::Open, budget_usd: base.budget_usd });
-            t.grant_request = None;
-        })?;
-        run_schedule_now_sync(app, id, Some("你点了「放宽重跑这一次」：这一次联网不限".into()))
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || resolve_grant_once_sync(app, &id, None).map(|_| ()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 「不用」：清掉这条授权请求，授权不变
 #[tauri::command]
 pub async fn schedule_grant_dismiss(id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        mutate_schedule(&id, |t| t.grant_request = None).map(|_| ())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || dismiss_grant_sync(&id, None).map(|_| ()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 授权范围的一句（2026-11-08）：告诉 Agent 这次能做到哪、被拦了怎么办——不绕、记进简报

@@ -10,6 +10,7 @@ import {
   projectListCard,
   projectPickCard,
   projectStatusCard,
+  pwaOpenUrl,
   replyPickCard,
   selfTestDoneCard,
   thinkingCard,
@@ -238,4 +239,54 @@ test("项目切换卡、零 Token 状态卡、里程碑通知卡与多目标选�
   const echo: any = echoCard(project, "t0", "停下了", true);
   assert.deepEqual(buttons(echo)[0].value, { op: "resume", p: "/p/a", t: "t0" });
   assert.equal(buttons(echoCard(project, "t0", "停下了", true, "已接回继续做")).length, 0);
+});
+
+test("飞书卡片联动手机工作台 PWA：仅对 https:// 基址附加直跳按钮并带项目与页签深链", () => {
+  assert.equal(pwaOpenUrl(null, "/p/a", "overview"), null);
+  assert.equal(pwaOpenUrl("http://127.0.0.1:57086", "/p/a", "overview"), null);
+  assert.equal(
+    pwaOpenUrl("https://mac.tail123.ts.net:8443/", "/p/a", "assistant"),
+    "https://mac.tail123.ts.net:8443/#/?project=%2Fp%2Fa&tab=assistant",
+  );
+
+  const pwa = "https://mac.tail123.ts.net:8443";
+  const ans: any = answerCard({
+    project,
+    turnAt: "t1",
+    text: "已整理完。",
+    ask: null,
+    order: null,
+    desktopOnly: [],
+    pwaBaseUrl: pwa,
+  });
+  const ansLink = buttons(ans).find((b: any) => b.multi_url);
+  assert.equal(ansLink?.text?.content, "在手机工作台打开 ↗");
+  assert.equal(ansLink?.multi_url?.url, "https://mac.tail123.ts.net:8443/#/?project=%2Fp%2Fa&tab=assistant");
+
+  const mile: any = milestoneCard(
+    [
+      {
+        key: "/p/a|step-review:5:润色",
+        kind: "review",
+        projectPath: "/p/a",
+        projectName: "药物毒性",
+        where: "第 5 步",
+        text: "第 5 步做完了",
+        detail: null,
+        options: [],
+        recommend: null,
+        tap: null,
+        open: { kind: "assistant", projectPath: "/p/a" },
+      },
+    ],
+    pwa,
+  );
+  const mileLink = buttons(mile).find((b: any) => b.multi_url);
+  assert.equal(mileLink?.multi_url?.url, "https://mac.tail123.ts.net:8443/#/?project=%2Fp%2Fa&tab=overview");
+
+  const status: any = projectStatusCard(project, { hasFlow: false, steps: [], goals: [], since: null }, 0, pwa);
+  assert.ok(buttons(status).some((b: any) => b.multi_url?.url?.includes("tab=overview")));
+
+  const echo: any = echoCard(project, "t0", "做完了", false, null, pwa);
+  assert.ok(buttons(echo).some((b: any) => b.multi_url?.url?.includes("tab=assistant")));
 });

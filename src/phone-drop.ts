@@ -21,6 +21,8 @@ export interface PhoneItem {
   receivedAt: string;
   status: PhoneItemStatus;
   placedTo: string | null;
+  targetProject?: string | null;
+  targetProjectPath?: string | null;
 }
 
 export interface PhoneAddr {

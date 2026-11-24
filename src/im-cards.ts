@@ -73,6 +73,30 @@ function button(text: string, value: CardValue, primary = false) {
   return { tag: "button", text: plain(text.slice(0, 40)), type: primary ? "primary" : "default", value };
 }
 
+/** 构造飞书卡片跳进手机工作台 PWA 的直达链接（仅放行 https://，严禁把 127.0.0.1 发出） */
+export function pwaOpenUrl(
+  baseUrl: string | null | undefined,
+  projectPath?: string | null,
+  tab?: "overview" | "assistant" | "files",
+): string | null {
+  const base = (baseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!/^https:\/\/\S+$/i.test(base)) return null;
+  const qs = new URLSearchParams();
+  if (projectPath) qs.set("project", projectPath);
+  if (tab) qs.set("tab", tab);
+  const query = qs.toString();
+  return query ? `${base}/#/?${query}` : `${base}/`;
+}
+
+function urlButton(text: string, url: string) {
+  return {
+    tag: "button",
+    text: plain(text.slice(0, 40)),
+    type: "default",
+    multi_url: { url, pc_url: url, android_url: url, ios_url: url },
+  };
+}
+
 function actionRows(btns: unknown[]): unknown[] {
   const rows: unknown[] = [];
   for (let i = 0; i < btns.length; i += ACTIONS_PER_ROW) {
@@ -132,6 +156,8 @@ export function answerCard(input: {
   /** 回答里只能在电脑上点的按钮（跳页、商量、报告…）的名字 */
   desktopOnly: readonly string[];
   settled?: AnswerCardSettled;
+  /** 手机工作台加密 HTTPS 根地址；开启时在卡片底部附「在手机工作台打开 ↗」直达按钮 */
+  pwaBaseUrl?: string | null;
 }): object {
   const p = input.project.path;
   const els: unknown[] = [];
@@ -177,6 +203,10 @@ export function answerCard(input: {
     }
   });
   if (input.desktopOnly.length) els.push(note(`在电脑上还可以：${input.desktopOnly.join("、")}`));
+  const openUrl = pwaOpenUrl(input.pwaBaseUrl, p, "assistant");
+  if (openUrl) {
+    els.push({ tag: "action", actions: [urlButton("在手机工作台打开 ↗", openUrl)] });
+  }
   return card(`项目助手 · ${input.project.name}`, els.length ? els : [{ tag: "markdown", content: "（没有回答内容）" }]);
 }
 
@@ -184,6 +214,7 @@ export function answerCard(input: {
 export function deskCard(
   groups: readonly { project: RouteProject; items: readonly DeskItem[] }[],
   settled?: ReadonlyMap<string, DeskItemSettled>,
+  pwaBaseUrl?: string | null,
 ): object {
   const els: unknown[] = [];
   const total = groups.reduce((n, g) => n + g.items.length, 0);
@@ -289,6 +320,11 @@ export function deskCard(
     }
     if (g.items.length > 8) els.push(note(`还有 ${g.items.length - 8} 件，在电脑上的项目助手里看`));
   }
+  const firstProject = groups.find((g) => g.items.length > 0)?.project.path ?? null;
+  const openUrl = pwaOpenUrl(pwaBaseUrl, firstProject, "overview");
+  if (openUrl) {
+    els.push({ tag: "action", actions: [urlButton("在手机工作台打开 ↗", openUrl)] });
+  }
   const allSettled =
     settled &&
     total > 0 &&
@@ -320,13 +356,26 @@ export function replyPickCard(choices: readonly ReplyTargetChoice[], replyBody: 
 }
 
 /** 派活进展（停了 / 失败带「接着做」，2026-11-06；点后可原地置为已接回） */
-export function echoCard(project: RouteProject, turnAt: string, text: string, resumable: boolean, settledNote?: string | null): object {
+export function echoCard(
+  project: RouteProject,
+  turnAt: string,
+  text: string,
+  resumable: boolean,
+  settledNote?: string | null,
+  pwaBaseUrl?: string | null,
+): object {
   const els: unknown[] = [{ tag: "markdown", content: text }];
+  const openUrl = pwaOpenUrl(pwaBaseUrl, project.path, "assistant");
   if (settledNote) {
     els.push(note(`✓ ${settledNote}`));
+    if (openUrl) els.push({ tag: "action", actions: [urlButton("在手机工作台打开 ↗", openUrl)] });
   } else if (resumable) {
-    els.push({ tag: "action", actions: [button("接着做", { op: "resume", p: project.path, t: turnAt }, true)] });
+    const actions: unknown[] = [button("接着做", { op: "resume", p: project.path, t: turnAt }, true)];
+    if (openUrl) actions.push(urlButton("在手机工作台打开 ↗", openUrl));
+    els.push({ tag: "action", actions });
     els.push(note("接回上次的隔离副本和对话接着做；也可以直接回一句「接着做」"));
+  } else if (openUrl) {
+    els.push({ tag: "action", actions: [urlButton("在手机工作台打开 ↗", openUrl)] });
   }
   return card(`派活进展 · ${project.name}`, els, resumable && !settledNote ? "orange" : "green");
 }
@@ -396,7 +445,12 @@ function formatStepLine(s: BriefStep): string {
 }
 
 /** 发「进展 / 状态」时的零 Token 秒回卡片：直接按本机记录列出步骤、目标与待办 */
-export function projectStatusCard(project: RouteProject, brief: BriefInput, deskCount: number): object {
+export function projectStatusCard(
+  project: RouteProject,
+  brief: BriefInput,
+  deskCount: number,
+  pwaBaseUrl?: string | null,
+): object {
   const sections: string[] = [];
   if (brief.steps.length > 0) {
     sections.push(`**流程步骤**\n${brief.steps.map(formatStepLine).join("\n")}`);
@@ -425,6 +479,10 @@ export function projectStatusCard(project: RouteProject, brief: BriefInput, desk
     btns.push(button(`先帮我看一遍第 ${reviewStep.n} 步`, { op: "preread", p: project.path, v: String(reviewStep.n) }));
   }
   btns.push(button("详细问项目助手", { op: "clarify", p: project.path, v: "现在到哪了？我下一步该做什么？" }));
+  const openUrl = pwaOpenUrl(pwaBaseUrl, project.path, "overview");
+  if (openUrl) {
+    btns.push(urlButton("在手机工作台打开 ↗", openUrl));
+  }
   return card(
     `项目进展 · ${project.name}`,
     [{ tag: "markdown", content: sections.join("\n\n") }, ...actionRows(btns), note("由 Mesa 按本机记录即时汇总，不消耗模型额度")],
@@ -433,7 +491,7 @@ export function projectStatusCard(project: RouteProject, brief: BriefInput, desk
 }
 
 /** 步骤 / 目标做完待评审或出错的主动提醒卡片（复用桌宠 PetItem 取数，只报信 + 可让项目助手只读预审 / 查错） */
-export function milestoneCard(items: readonly PetItem[]): object {
+export function milestoneCard(items: readonly PetItem[], pwaBaseUrl?: string | null): object {
   const hasFailed = items.some((i) => i.kind === "failed");
   const els: unknown[] = [];
   for (const item of items.slice(0, 6)) {
@@ -452,6 +510,10 @@ export function milestoneCard(items: readonly PetItem[]): object {
         actions: [button("问问为什么出错", { op: "clarify", p: item.projectPath, v: `${item.where}为什么出错或停下了？我该怎么办？` })],
       });
     }
+  }
+  const openUrl = pwaOpenUrl(pwaBaseUrl, items[0]?.projectPath ?? null, "overview");
+  if (openUrl) {
+    els.push({ tag: "action", actions: [urlButton("在手机工作台打开 ↗", openUrl)] });
   }
   els.push(note("评审采纳、写回项目请回到电脑上的 Mesa 处理"));
   return card(hasFailed ? "运行异常提醒" : "步骤 / 目标已完成", els, hasFailed ? "red" : "green");

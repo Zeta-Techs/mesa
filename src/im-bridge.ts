@@ -210,6 +210,15 @@ async function patchOrFallback(messageId: string | null | undefined, card: objec
 }
 
 let configCache: { at: number; cfg: FeishuConfig | null } | null = null;
+let pwaUrlCache: { at: number; url: string | null } | null = null;
+
+async function getPwaBaseUrl(): Promise<string | null> {
+  if (!pwaUrlCache || Date.now() - pwaUrlCache.at > 15_000) {
+    const url = await invoke<string | null>("mobile_workbench_public_url").catch(() => null);
+    pwaUrlCache = { at: Date.now(), url: url || null };
+  }
+  return pwaUrlCache.url;
+}
 
 async function getImConfig(): Promise<FeishuConfig | null> {
   if (!configCache || Date.now() - configCache.at > 30_000) {
@@ -248,6 +257,7 @@ async function imPushAllowed(): Promise<FeishuConfig | null> {
 
 export function forgetImConfig(): void {
   configCache = null;
+  pwaUrlCache = null;
 }
 
 let lastAutoReconnectAt = 0;
@@ -277,6 +287,7 @@ function buildAnswerInputFromTurn(
   project: ProjectDto,
   turn: AssistantTurn,
   steps: number,
+  pwaBaseUrl: string | null,
 ): Parameters<typeof answerCard>[0] {
   const resolved = resolveTurnParts(turn, steps);
   const desktopOnly = resolved.actions
@@ -295,6 +306,7 @@ function buildAnswerInputFromTurn(
     order: codingGoalBlocked ? null : resolved.order,
     remembers: resolved.remembers,
     desktopOnly,
+    pwaBaseUrl,
   };
 }
 
@@ -318,7 +330,8 @@ function recordDeskCard(messageId: string, groups: { project: RouteProject; item
 }
 
 async function sendTrackedDeskCard(groups: { project: RouteProject; items: DeskItem[] }[]): Promise<boolean> {
-  const msgId = await sendCardWithId(deskCard(groups));
+  const pwaBaseUrl = await getPwaBaseUrl();
+  const msgId = await sendCardWithId(deskCard(groups, undefined, pwaBaseUrl));
   if (!msgId) return false;
   recordDeskCard(msgId, groups);
   return true;
@@ -338,6 +351,7 @@ async function ask(
     if (canned) {
       await invoke("assistant_log_append", { projectRoot: project.path, question: q, answer: canned }).catch(() => {});
       useAppStore.getState().bumpAssistantEchoTick();
+      const pwaBaseUrl = await getPwaBaseUrl();
       const input: Parameters<typeof answerCard>[0] = {
         project: asRoute(project),
         turnAt: new Date().toISOString(),
@@ -346,6 +360,7 @@ async function ask(
         order: null,
         remembers: [],
         desktopOnly: [],
+        pwaBaseUrl,
       };
       await patchOrFallback(prePlaceholderId, answerCard(input));
       return;
@@ -391,8 +406,8 @@ async function ask(
     return;
   }
   useAppStore.getState().bumpAssistantEchoTick();
-  const steps = await stepCount(project.path);
-  const input = buildAnswerInputFromTurn(project, turn, steps);
+  const [steps, pwaBaseUrl] = await Promise.all([stepCount(project.path), getPwaBaseUrl()]);
+  const input = buildAnswerInputFromTurn(project, turn, steps, pwaBaseUrl);
   const settledState = { clarify: null, dispatched: null, remembered: new Set<number>() };
   if (placeholderId) {
     const patched = await invoke("feishu_update_card", {
@@ -446,11 +461,12 @@ async function busyProjects(list: ProjectDto[]): Promise<ProjectDto[]> {
 
 async function sendStatus(project: ProjectDto): Promise<void> {
   writeCurrent(project.path);
-  const [brief, desk] = await Promise.all([
+  const [brief, desk, pwaBaseUrl] = await Promise.all([
     gatherBriefInput(project.path, null).catch(() => ({ hasFlow: false, steps: [], goals: [], since: null })),
     loadDesk(project.path).catch(() => [] as DeskItem[]),
+    getPwaBaseUrl(),
   ]);
-  await sendCard(projectStatusCard(asRoute(project), brief, desk.length));
+  await sendCard(projectStatusCard(asRoute(project), brief, desk.length, pwaBaseUrl));
 }
 
 async function sendProjectList(list: ProjectDto[], current: ProjectDto | null): Promise<void> {
@@ -478,9 +494,10 @@ async function markDeskCardSettled(
   const rec = deskCards.get(cardMessageId);
   if (!rec) return false;
   rec.settled.set(itemKey, settled);
+  const pwaBaseUrl = await getPwaBaseUrl();
   return invoke("feishu_update_card", {
     messageId: cardMessageId,
-    card: deskCard(rec.groups, rec.settled),
+    card: deskCard(rec.groups, rec.settled, pwaBaseUrl),
   })
     .then(() => true)
     .catch(() => false);
@@ -723,7 +740,8 @@ export async function imPushEcho(projectRoot: string, turnAt: string, text: stri
   const p = list.find((x) => samePath(x.path, projectRoot, IS_WINDOWS));
   const route = p ? asRoute(p) : { path: projectRoot, name: projectRoot.split(/[\\/]/).filter(Boolean).pop() ?? projectRoot };
   const clean = phoneText(text);
-  const msgId = await sendCardWithId(echoCard(route, turnAt, clean, resumable));
+  const pwaBaseUrl = await getPwaBaseUrl();
+  const msgId = await sendCardWithId(echoCard(route, turnAt, clean, resumable, null, pwaBaseUrl));
   if (msgId) putBounded(miscCards, msgId, { kind: "echo", project: route, turnAt, text: clean, resumable });
 }
 
@@ -741,8 +759,8 @@ async function ensureAnswerRecord(
   if (openMessageId && answerCards.has(openMessageId)) return answerCards.get(openMessageId)!;
   const turn = await turnAnswer(project.path, turnAt);
   if (!turn) return null;
-  const steps = await stepCount(project.path);
-  const input = buildAnswerInputFromTurn(project, turn, steps);
+  const [steps, pwaBaseUrl] = await Promise.all([stepCount(project.path), getPwaBaseUrl()]);
+  const input = buildAnswerInputFromTurn(project, turn, steps, pwaBaseUrl);
   const rec: AnswerCardRecord = {
     input,
     settled: { clarify: null, dispatched: turn.dispatched ? `${turn.dispatched.note}` : null, remembered: new Set() },
@@ -888,9 +906,10 @@ async function handleCard(value: CardValue, openMessageId?: string): Promise<voi
         const msg = await resumeDispatchedGoal(project.path, project, taskId);
         const misc = openMessageId ? miscCards.get(openMessageId) : undefined;
         if (misc?.kind === "echo" && openMessageId) {
+          const pwaBaseUrl = await getPwaBaseUrl();
           const ok = await invoke("feishu_update_card", {
             messageId: openMessageId,
-            card: echoCard(misc.project, misc.turnAt, misc.text, misc.resumable, msg),
+            card: echoCard(misc.project, misc.turnAt, misc.text, misc.resumable, msg, pwaBaseUrl),
           })
             .then(() => true)
             .catch(() => false);
@@ -1088,7 +1107,8 @@ export async function pushMilestones(): Promise<void> {
   const retained = new Set([...seen].filter((k) => currentKeys.has(k)));
   const arrivals = currentItems.filter((i) => !retained.has(i.key));
   if (arrivals.length > 0) {
-    if (!(await sendCard(milestoneCard(arrivals)))) return;
+    const pwaBaseUrl = await getPwaBaseUrl();
+    if (!(await sendCard(milestoneCard(arrivals, pwaBaseUrl)))) return;
     for (const a of arrivals) retained.add(a.key);
   }
   try {
@@ -1183,9 +1203,13 @@ export async function startImBridge(): Promise<() => void> {
     enqueue(() => handleCard(e.payload.value, e.payload.openMessageId));
   });
   const offStatus = await listen("feishu-status", () => forgetImConfig());
+  const offMobileStatus = await listen("mobile-workbench-status", () => {
+    pwaUrlCache = null;
+  });
   return () => {
     offMessage();
     offCard();
     offStatus();
+    offMobileStatus();
   };
 }

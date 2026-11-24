@@ -36,8 +36,10 @@ const PAGE_JS: &str = include_str!("../resources/mobile-workbench/app.js");
 const PAGE_CSS: &str = include_str!("../resources/mobile-workbench/app.css");
 const PAGE_MANIFEST: &str = include_str!("../resources/mobile-workbench/manifest.webmanifest");
 const PAGE_ICON: &str = include_str!("../resources/mobile-workbench/icon.svg");
+const PAGE_APPLE_ICON_PNG: &[u8] = include_bytes!("../icons/ios/AppIcon-60x60@3x.png");
+const PAGE_ICON_PNG: &[u8] = include_bytes!("../icons/icon.png");
 
-const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; manifest-src 'self'; frame-src 'self' blob:; object-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 // ===== 持久化配置与设备簿 =====
 
@@ -63,6 +65,9 @@ struct StoredConfig {
     tunnel_mode: String,
     #[serde(default = "default_ts_port")]
     tailscale_https_port: u16,
+    /// 用户是否开启了 Tailscale Serve 通道：退出时清理端口，下次重启自动恢复映射
+    #[serde(default)]
+    tailscale_serve_wanted: bool,
     #[serde(default)]
     custom_base_url: String,
     #[serde(default)]
@@ -84,6 +89,7 @@ impl Default for StoredConfig {
             port: 0,
             tunnel_mode: default_tunnel_mode(),
             tailscale_https_port: default_ts_port(),
+            tailscale_serve_wanted: false,
             custom_base_url: String::new(),
             devices: Vec::new(),
         }
@@ -491,6 +497,8 @@ struct Runtime {
     running: Option<Arc<RunningServer>>,
     pairing: Option<PairingState>,
     last_error: Option<String>,
+    /// 最近一次探测到的有效 Tailscale Serve 公网地址（供飞书通知零阻塞读取）
+    last_serve_url: Option<String>,
 }
 
 impl Runtime {
@@ -499,6 +507,7 @@ impl Runtime {
             running: None,
             pairing: None,
             last_error: None,
+            last_serve_url: None,
         }
     }
 }
@@ -821,26 +830,49 @@ fn build_overview_payload(project_root: &str) -> Result<serde_json::Value, Strin
             }));
         }
     }
+    let grant_items: Vec<serde_json::Value> =
+        crate::scheduler::list_grant_requests_sync(Some(project_root))
+            .into_iter()
+            .map(|g| {
+                serde_json::json!({
+                    "scheduleId": g.schedule_id,
+                    "scheduleName": g.schedule_name,
+                    "at": g.at,
+                    "blocked": g.blocked,
+                })
+            })
+            .collect();
     let mut val = serde_json::to_value(&ov).map_err(|e| e.to_string())?;
     if let Some(obj) = val.as_object_mut() {
         obj.insert("helpItems".to_string(), serde_json::Value::Array(help_items));
+        obj.insert("grantItems".to_string(), serde_json::Value::Array(grant_items));
     }
     Ok(val)
 }
 
-fn read_project_git_diff(project_root: &str) -> Result<String, String> {
-    let git_bin = crate::agents::resolve_binary("git").unwrap_or_else(|| PathBuf::from("git"));
-    let mut cmd = crate::process::background_command(&git_bin);
-    cmd.current_dir(project_root)
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiffSourceDto {
+    id: String,
+    label: String,
+    has_changes: bool,
+}
+
+fn git_diff_for_dir(git_bin: &Path, dir: &Path, fallback_last_commit: bool) -> (String, bool) {
+    let mut cmd = crate::process::background_command(git_bin);
+    cmd.current_dir(dir)
         .args(["diff", "--no-color", "--stat=80", "-p", "HEAD"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let output = cmd.output().map_err(|e| format!("读取 Git 差异失败: {e}"))?;
-    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-    if text.trim().is_empty() {
-        // 若主仓工作树干净，退回展示最近一次提交的差异摘要
-        let mut cmd2 = crate::process::background_command(&git_bin);
-        cmd2.current_dir(project_root)
+    let mut text = cmd
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    let has_uncommitted = !text.trim().is_empty();
+    if !has_uncommitted && fallback_last_commit {
+        let mut cmd2 = crate::process::background_command(git_bin);
+        cmd2.current_dir(dir)
             .args(["show", "--no-color", "--stat=80", "-p", "HEAD"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -850,8 +882,88 @@ fn read_project_git_diff(project_root: &str) -> Result<String, String> {
             }
         }
     }
-    let clipped: String = text.chars().take(MAX_DIFF_CHARS).collect();
-    Ok(crate::sessions::redact_sensitive_text(&clipped))
+    (text, has_uncommitted)
+}
+
+fn git_worktree_has_changes(git_bin: &Path, dir: &Path) -> bool {
+    let mut cmd = crate::process::background_command(git_bin);
+    cmd.current_dir(dir)
+        .args(["status", "--porcelain", "-uno"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    cmd.output()
+        .ok()
+        .is_some_and(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+}
+
+/// 读取主仓或活跃步骤/目标工作副本的 Git Diff（脱敏后返回），默认优先落到有改动的活跃工作副本
+fn read_project_git_diff(
+    project_root: &str,
+    scope: Option<&str>,
+) -> Result<(String, Vec<DiffSourceDto>, String), String> {
+    let git_bin = crate::agents::resolve_binary("git").unwrap_or_else(|| PathBuf::from("git"));
+    let main_dir = PathBuf::from(project_root);
+    let mut candidates: Vec<(String, String, PathBuf, bool)> = vec![(
+        "main".into(),
+        "主仓库".into(),
+        main_dir.clone(),
+        git_worktree_has_changes(&git_bin, &main_dir),
+    )];
+
+    if let Ok(ov) = crate::assistant_state::project_overview(project_root) {
+        for step in ov.steps {
+            if let Some(wt) = step.worktree_path {
+                let p = PathBuf::from(&wt);
+                if p.is_dir() && !crate::paths::same_path(&wt, project_root) {
+                    let id = format!("step:{}", step.n);
+                    let label = format!("第 {} 步 · {}", step.n, step.name);
+                    let dirty = git_worktree_has_changes(&git_bin, &p);
+                    candidates.push((id, label, p, dirty));
+                }
+            }
+        }
+        for goal in ov.goals {
+            if let Some(iso) = goal.isolation_path {
+                let p = PathBuf::from(&iso);
+                if p.is_dir() && !crate::paths::same_path(&iso, project_root) {
+                    let id = format!("goal:{}", goal.id);
+                    let label = format!("目标 · {}", goal.name);
+                    let dirty = git_worktree_has_changes(&git_bin, &p);
+                    candidates.push((id, label, p, dirty));
+                }
+            }
+        }
+    }
+
+    let picked_idx = if let Some(req_scope) = scope.map(str::trim).filter(|s| !s.is_empty()) {
+        candidates
+            .iter()
+            .position(|(id, _, _, _)| id == req_scope)
+            .unwrap_or(0)
+    } else {
+        // 默认优先挑有未提交改动的步骤/目标工作副本，其次主仓库
+        candidates
+            .iter()
+            .skip(1)
+            .position(|(_, _, _, dirty)| *dirty)
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    };
+
+    let active_id = candidates[picked_idx].0.clone();
+    let target_dir = candidates[picked_idx].2.clone();
+    let (raw_text, _) = git_diff_for_dir(&git_bin, &target_dir, true);
+    let clipped: String = raw_text.chars().take(MAX_DIFF_CHARS).collect();
+    let redacted = crate::sessions::redact_sensitive_text(&clipped);
+    let sources = candidates
+        .into_iter()
+        .map(|(id, label, _, has_changes)| DiffSourceDto {
+            id,
+            label,
+            has_changes,
+        })
+        .collect();
+    Ok((redacted, sources, active_id))
 }
 
 fn is_https_request(rq: &tiny_http::Request) -> bool {
@@ -900,6 +1012,26 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
             }
             "/icon.svg" => {
                 let _ = rq.respond(reply_bytes(200, "image/svg+xml", PAGE_ICON.as_bytes().to_vec(), Some("default-src 'none'"), &[]));
+                return;
+            }
+            "/apple-touch-icon.png" => {
+                let _ = rq.respond(reply_bytes(
+                    200,
+                    "image/png",
+                    PAGE_APPLE_ICON_PNG.to_vec(),
+                    None,
+                    &[("Cache-Control", "public, max-age=86400")],
+                ));
+                return;
+            }
+            "/icon-512.png" => {
+                let _ = rq.respond(reply_bytes(
+                    200,
+                    "image/png",
+                    PAGE_ICON_PNG.to_vec(),
+                    None,
+                    &[("Cache-Control", "public, max-age=86400")],
+                ));
                 return;
             }
             _ => {}
@@ -1030,6 +1162,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
             let mut list = registered_projects();
             list.sort_by(|a, b| b.last_opened_at.cmp(&a.last_opened_at));
             let all_help = crate::help_requests::list_help_requests_sync();
+            let all_grants = crate::scheduler::list_grant_requests_sync(None);
             let projects: Vec<serde_json::Value> = list
                 .into_iter()
                 .map(|p| {
@@ -1039,11 +1172,15 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                         .flat_map(|h| h.items.iter())
                         .filter(|it| it.answer.is_none())
                         .count();
+                    let grant_count: usize = all_grants
+                        .iter()
+                        .filter(|g| crate::paths::same_path(&g.project_root, &p.path))
+                        .count();
                     serde_json::json!({
                         "path": p.path,
                         "name": p.name,
                         "workMode": p.work_mode,
-                        "helpCount": help_count,
+                        "helpCount": help_count + grant_count,
                     })
                 })
                 .collect();
@@ -1218,6 +1355,48 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                 }
             }
         }
+        ("POST", "/api/grant/resolve") => {
+            let body = match read_json_body(&mut rq) {
+                Ok(b) => b,
+                Err(e) => {
+                    let _ = rq.respond(reply_err(400, &e));
+                    return;
+                }
+            };
+            let proj = body.get("projectRoot").and_then(|v| v.as_str()).unwrap_or("");
+            let schedule_id = body.get("scheduleId").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let allow_once = body.get("allowOnce").and_then(|v| v.as_bool()).unwrap_or(false);
+            let Ok(p) = verify_registered_project(proj) else {
+                let _ = rq.respond(reply_err(403, "未登记的项目"));
+                return;
+            };
+            if schedule_id.is_empty() {
+                let _ = rq.respond(reply_err(400, "缺少定时任务标识"));
+                return;
+            }
+            let res = if allow_once {
+                let Some(ref app) = sess.app else {
+                    let _ = rq.respond(reply_err(503, "桌面主窗口未就绪，无法重跑定时任务"));
+                    return;
+                };
+                crate::scheduler::resolve_grant_once_sync(app.clone(), schedule_id, Some(&p.path))
+                    .map(|name| format!("已批准「{name}」本次放宽并开始重跑"))
+            } else {
+                crate::scheduler::dismiss_grant_sync(schedule_id, Some(&p.path))
+                    .map(|name| format!("已忽略「{name}」本次授权请求"))
+            };
+            match res {
+                Ok(message) => {
+                    if let Some(ref app) = sess.app {
+                        let _ = app.emit("mobile-workbench-help-updated", ());
+                    }
+                    let _ = rq.respond(reply_json(200, serde_json::json!({ "ok": true, "message": message })));
+                }
+                Err(e) => {
+                    let _ = rq.respond(reply_err(400, &e));
+                }
+            }
+        }
         ("POST", "/api/memory/add") => {
             let body = match read_json_body(&mut rq) {
                 Ok(b) => b,
@@ -1309,6 +1488,10 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
             let raw_name = header_val(&rq, "X-Mesa-Name")
                 .map(|v| percent_decode(&v))
                 .unwrap_or_else(|| "upload.bin".into());
+            let target_project = header_val(&rq, "X-Mesa-Project")
+                .map(|v| percent_decode(&v))
+                .and_then(|proj| verify_registered_project(&proj).ok())
+                .map(|p| (p.name, p.path));
             let mut bytes = Vec::with_capacity((len as usize).min(1024 * 1024));
             if rq
                 .as_reader()
@@ -1320,7 +1503,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                 let _ = rq.respond(reply_err(400, "上传中断或长度不符"));
                 return;
             }
-            match crate::phone_drop::stage_external_file(sess.app.as_ref(), &raw_name, &bytes) {
+            match crate::phone_drop::stage_external_file(sess.app.as_ref(), &raw_name, &bytes, target_project) {
                 Ok(dto) => {
                     let _ = rq.respond(reply_json(200, serde_json::json!({ "ok": true, "item": dto })));
                 }
@@ -1338,7 +1521,12 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                 }
             };
             let text = body.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            match crate::phone_drop::stage_external_text(sess.app.as_ref(), text) {
+            let target_project = body
+                .get("projectRoot")
+                .and_then(|v| v.as_str())
+                .and_then(|proj| verify_registered_project(proj).ok())
+                .map(|p| (p.name, p.path));
+            match crate::phone_drop::stage_external_text(sess.app.as_ref(), text, target_project) {
                 Ok(dto) => {
                     let _ = rq.respond(reply_json(200, serde_json::json!({ "ok": true, "item": dto })));
                 }
@@ -1468,9 +1656,17 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                 let _ = rq.respond(reply_err(403, "未登记的项目"));
                 return;
             };
-            match read_project_git_diff(&p.path) {
-                Ok(diff) => {
-                    let _ = rq.respond(reply_json(200, serde_json::json!({ "diff": diff })));
+            let scope = query.get("scope").map(String::as_str);
+            match read_project_git_diff(&p.path, scope) {
+                Ok((diff, sources, active_source)) => {
+                    let _ = rq.respond(reply_json(
+                        200,
+                        serde_json::json!({
+                            "diff": diff,
+                            "sources": sources,
+                            "activeSource": active_source,
+                        }),
+                    ));
                 }
                 Err(e) => {
                     let _ = rq.respond(reply_err(500, &e));
@@ -1600,16 +1796,18 @@ fn stop_server_locked(rt: &mut Runtime) {
         }
     }
     rt.pairing = None;
+    rt.last_serve_url = None;
 }
 
 fn current_status_sync() -> MobileWorkbenchStatusDto {
     let cfg = load_config();
     let ts = inspect_tailscale(cfg.tailscale_https_port);
-    let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+    let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
     let (running, actual_port) = match rt.running.as_ref() {
         Some(s) => (true, s.port),
         None => (false, cfg.port),
     };
+    rt.last_serve_url = if ts.serve_active { ts.serve_url.clone() } else { None };
     let local_url = (running && actual_port > 0).then(|| format!("http://127.0.0.1:{actual_port}"));
     let public_url = if cfg.tunnel_mode == "custom" {
         (!cfg.custom_base_url.is_empty()).then(|| cfg.custom_base_url.clone())
@@ -1662,25 +1860,81 @@ fn current_status_sync() -> MobileWorkbenchStatusDto {
     }
 }
 
-/// 应用启动时若用户开启了手机工作台，则在后台启动 `127.0.0.1` 本地监听
+/// 若用户上次开启了 Tailscale Serve，则按当前本机端口自动恢复映射并刷新缓存的公网地址（不持 Runtime 锁跑子进程）
+fn maybe_restore_tailscale_serve(
+    sess: &Arc<RunningServer>,
+    cfg: &StoredConfig,
+    actual_port: u16,
+) {
+    if cfg.tunnel_mode != "tailscale" || !cfg.tailscale_serve_wanted || actual_port == 0 {
+        return;
+    }
+    match apply_tailscale_serve(true, cfg.tailscale_https_port, actual_port) {
+        Ok(()) => {
+            if let Ok(mut mg) = sess.managed_ts_port.lock() {
+                *mg = Some(cfg.tailscale_https_port);
+            }
+            let ts = inspect_tailscale(cfg.tailscale_https_port);
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            rt.last_serve_url = if ts.serve_active { ts.serve_url } else { None };
+            rt.last_error = None;
+        }
+        Err(e) => {
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            rt.last_error = Some(e);
+        }
+    }
+}
+
+/// 零阻塞获取当前可用的加密公网地址（供飞书通知卡片一键附带「在手机工作台打开」按钮）
+fn current_public_url_fast() -> Option<String> {
+    let cfg = load_config();
+    if !cfg.enabled {
+        return None;
+    }
+    let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+    rt.running.as_ref()?;
+    if cfg.tunnel_mode == "custom" {
+        (!cfg.custom_base_url.is_empty()).then_some(cfg.custom_base_url)
+    } else {
+        rt.last_serve_url.clone()
+    }
+}
+
+/// 应用启动时若用户开启了手机工作台，则在后台启动 `127.0.0.1` 本地监听，并自动恢复上次开启的 Tailscale 加密通道
 pub(crate) fn start_at_setup(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let cfg = load_config();
         if !cfg.enabled {
             return;
         }
-        let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
-        match start_server_locked(&mut rt, Some(app.clone()), cfg.port) {
-            Ok(port) => {
-                if cfg.port == 0 {
-                    let _ = with_config_mut(|c| {
-                        c.port = port;
-                        Ok(())
-                    });
+        let started: Option<(Arc<RunningServer>, u16)> = {
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            match start_server_locked(&mut rt, Some(app.clone()), cfg.port) {
+                Ok(port) => {
+                    if cfg.port == 0 {
+                        let _ = with_config_mut(|c| {
+                            c.port = port;
+                            Ok(())
+                        });
+                    }
+                    rt.running.clone().map(|s| (s, port))
+                }
+                Err(e) => {
+                    rt.last_error = Some(e);
+                    None
                 }
             }
-            Err(e) => {
-                rt.last_error = Some(e);
+        };
+        if let Some((sess, port)) = started {
+            if cfg.tunnel_mode == "tailscale" && cfg.tailscale_serve_wanted {
+                maybe_restore_tailscale_serve(&sess, &cfg, port);
+                let _ = app.emit("mobile-workbench-status", ());
+            } else if cfg.tunnel_mode == "tailscale" {
+                // 即使本次非 Mesa 托管，也顺带探测一次已有 serve 地址供飞书卡片直跳
+                let ts = inspect_tailscale(cfg.tailscale_https_port);
+                let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+                rt.last_serve_url = if ts.serve_active { ts.serve_url } else { None };
             }
         }
     });
@@ -1701,6 +1955,15 @@ pub async fn mobile_workbench_status() -> Result<MobileWorkbenchStatusDto, Strin
         .map_err(|e| e.to_string())
 }
 
+/// 零阻塞返回当前手机工作台加密访问地址（未开启或隧道未就绪时为 None）
+#[tauri::command]
+pub async fn mobile_workbench_public_url() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(current_public_url_fast)
+        .await
+        .ok()
+        .flatten()
+}
+
 #[tauri::command]
 pub async fn mobile_workbench_set_config(
     app: tauri::AppHandle,
@@ -1714,7 +1977,7 @@ pub async fn mobile_workbench_set_config(
             Some(ref raw) => Some(normalize_custom_url(raw)?),
             None => None,
         };
-        let desired_port = with_config_mut(|cfg| {
+        let cfg_after = with_config_mut(|cfg| {
             cfg.enabled = enabled;
             if let Some(ref mode) = tunnel_mode {
                 cfg.tunnel_mode = if mode == "custom" { "custom".into() } else { "tailscale".into() };
@@ -1727,21 +1990,26 @@ pub async fn mobile_workbench_set_config(
             if let Some(ref u) = norm_custom {
                 cfg.custom_base_url = u.clone();
             }
-            Ok(cfg.port)
+            Ok(cfg.clone())
         })?;
-        {
+        let started: Option<(Arc<RunningServer>, u16)> = {
             let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
             if enabled {
-                let port = start_server_locked(&mut rt, Some(app.clone()), desired_port)?;
-                if desired_port == 0 {
+                let port = start_server_locked(&mut rt, Some(app.clone()), cfg_after.port)?;
+                if cfg_after.port == 0 {
                     let _ = with_config_mut(|c| {
                         c.port = port;
                         Ok(())
                     });
                 }
+                rt.running.clone().map(|s| (s, port))
             } else {
                 stop_server_locked(&mut rt);
+                None
             }
+        };
+        if let Some((sess, port)) = started {
+            maybe_restore_tailscale_serve(&sess, &cfg_after, port);
         }
         let _ = app.emit("mobile-workbench-status", ());
         Ok(current_status_sync())
@@ -1768,6 +2036,10 @@ pub async fn mobile_workbench_tailscale_serve(
             return Err("请先开启手机工作台本机服务，再开启 Tailscale 通道".into());
         }
         apply_tailscale_serve(enable, cfg.tailscale_https_port, local_port)?;
+        let _ = with_config_mut(|c| {
+            c.tailscale_serve_wanted = enable;
+            Ok(())
+        });
         if let Some(sess) = sess_opt {
             if let Ok(mut mg) = sess.managed_ts_port.lock() {
                 *mg = enable.then_some(cfg.tailscale_https_port);
@@ -1998,7 +2270,30 @@ mod tests {
         ));
         assert!(r_evil.starts_with("HTTP/1.1 403"), "cross-site origin must 403: {r_evil}");
 
-        // 7. 移除设备后旧 Cookie 立即失效（401）
+        // 7. PNG 主屏图标正常返回（iOS apple-touch-icon 必须为真 PNG）
+        let mut s_icon = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s_icon.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        s_icon
+            .write_all(format!("GET /apple-touch-icon.png HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n").as_bytes())
+            .unwrap();
+        let mut icon_bytes = Vec::new();
+        let _ = s_icon.read_to_end(&mut icon_bytes);
+        let split = icon_bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        let head = String::from_utf8_lossy(&icon_bytes[..split]);
+        assert!(head.starts_with("HTTP/1.1 200") && head.to_lowercase().contains("image/png"), "got: {head}");
+        assert_eq!(&icon_bytes[split + 4..split + 8], b"\x89PNG");
+
+        // 8. current_public_url_fast 零阻塞读取已启用公网地址，停用后立即返回 None
+        with_config_mut(|c| {
+            c.enabled = true;
+            c.tunnel_mode = "custom".into();
+            c.custom_base_url = "https://mesa.example.com".into();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(current_public_url_fast().as_deref(), Some("https://mesa.example.com"));
+
+        // 9. 移除设备后旧 Cookie 立即失效（401）
         with_config_mut(|c| {
             c.devices.clear();
             Ok(())
@@ -2013,6 +2308,7 @@ mod tests {
             let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
             stop_server_locked(&mut rt);
         }
+        assert_eq!(current_public_url_fast(), None);
         let _ = fs::remove_dir_all(&tmp);
     }
 }
