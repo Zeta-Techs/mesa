@@ -2066,7 +2066,7 @@ test("Codex 运行中按当前生效模型动态刷新思考档表，并支持�
   }
 });
 
-test("出图模式：框上方挂胶囊、占位字换成描述画面；发出去前面加点名模型那一行，拦下时不发", async () => {
+test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述画面；发出去前面加点名模型那一行，拦下时不发", async () => {
   const ui = await mount();
   try {
     const sent: string[] = [];
@@ -2076,7 +2076,8 @@ test("出图模式：框上方挂胶囊、占位字换成描述画面；发出�
     const imageGen = (on: boolean) => ({
       on,
       setOn: (v: boolean) => toggles.push(v),
-      chip: ui.h("div", { "data-testid": "image-chip" }, "出图 · gpt-image-2.5"),
+      pill: ui.h("span", { "data-testid": "image-pill" }, "gpt-image-2.5"),
+      issue: blocked ? ui.h("p", { "data-testid": "image-issue" }, blocked) : null,
       directive: (_text: string, edit: boolean) =>
         blocked
           ? { error: blocked }
@@ -2087,14 +2088,17 @@ test("出图模式：框上方挂胶囊、占位字换成描述画面；发出�
 
     // 没开：不挂胶囊，「+」里是「画图」
     await ui.render(ui.h(ui.Composer, { ...props, imageGen: imageGen(false) }));
-    assert.equal(ui.el.querySelector('[data-testid="image-chip"]'), null);
+    assert.equal(ui.el.querySelector('[data-testid="image-pill"]'), null);
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="添加"]')!.click());
     await ui.click("画图");
     assert.deepEqual(toggles, [true], "「+ → 画图」打开出图模式");
 
     // 开着：胶囊在、占位字换成描述画面、「+」里换成「退出画图」
     await ui.render(ui.h(ui.Composer, { ...props, imageGen: imageGen(true) }));
-    assert.ok(ui.el.querySelector('[data-testid="image-chip"]'), "框上方挂出图胶囊");
+    const pill = ui.el.querySelector('[data-testid="image-pill"]');
+    assert.ok(pill, "出图胶囊挂进输入框");
+    assert.ok(pill!.closest('[data-slot="add"]'), "在「+」那一格里，不在框上方另起一条");
+    assert.ok(pill!.closest(".ccode-composer-box"), "在输入框里面");
     assert.match(ui.el.querySelector("textarea")!.placeholder, /描述想要的画面/);
     await typeInto(ui, "组会封面，一排试管");
     await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());

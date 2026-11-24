@@ -111,8 +111,10 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
   components/ChatImageGen.tsx # 聊天「出图」模式（2026-11-24）：useChatImageGen 给 ChatSurface 用——这个对话选的出图模型（image_gen_chat_sync/set，
                              #   选回连接页默认 = 清掉）、发前检查（没工具 / 没模型拦，没开 image-gen 给「打开」）、发出去那一行（ComposerImageGen.directive）、
                              #   一轮结束后查 image_gen_chat_calls 认出「没调用出图工具」（missedNotice）、图下模型名（captions → ChatImageCaptionContext）、
-                             #   斜杠 /image（画图）；ImageGenChip 是输入框上方胶囊，换模型复用 ImageModelPicker、「最近用过」与连接页共用一份
-  components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方
+                             #   斜杠 /image（画图）；ImageGenPill 是输入框「+」旁边的小胶囊（ComposerImageGen.pill，2026-11-24 用户选：不在框上方另起一条），
+                             #   换模型复用 ImageModelPicker（note 写连接页默认）、「最近用过」与连接页共用一份；ImageGenIssueLine 只在有问题时框里一行小字
+  components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方；
+                             #   多网关时行尾写 gatewayLabel（「Codex 网关」，网关名常与 Agent 同名）；note = 搜索框下一行说明
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理
   components/InsertMenuItems.tsx # 「插入技能/MCP」菜单条目：运行页收缩行、标签栏 ✦（仅终端层）、聊天输入框 ＋ 三处共用（只画 <li>，浮层由调用方定位）
   components/ConversationView.tsx # 对话渲染（聊天层 / 对话页回放 / 项目对话预览共用）：气泡与正文、一轮过程收在「已工作 X 分 Y 秒」下（过程行文件名经 `onOpenFile` 开右侧预览，只聊天层传），
@@ -954,7 +956,7 @@ session-refresh.ts         # 会话列表刷新协调器 createSessionRefreshCoo
                              # 红线：滚动容器 [overflow-anchor:none]，不按 scrollHeight 差值补，不交回浏览器自带锚定）
   model-history.ts           # 「这份连接能选哪些模型」：连接名单 + 按 Agent+连接记的手填历史；开聊前选择器、启动栏、模型芯片同源
 model-vendors.ts           # 获取模型下拉按厂商分组折叠（大网关 400+ 模型平铺没法选；GatewayLibrary 与连接编辑弹层消费）：vendorOf 从模型 id 推断厂商（openrouter 风格取斜杠前段，否则取开头「字母+数字」段——宁粗勿错，仅用于展示分组）、组内按名排序、「其他」恒末，visibleVendorGroups 支持按厂商筛选＋子串过滤（tests/model-vendors.test.ts）
-  image-models.ts            # 出图模型的家族归类、「最新在前」排序、各家推荐、耗时估算与进度（到结果前不满格）；纯逻辑
+  image-models.ts            # 出图模型的家族归类、「最新在前」排序、各家推荐、耗时估算与进度（到结果前不满格）、gatewayLabel；纯逻辑
   model-kinds.ts             # 模型分类（出图/视频/向量/重排/语音/审核 = 不能对话）+ isImageGenModel；与 image_gen.rs 镜像，
                              #   两侧测试共读 tests/fixtures/model-kinds.json。连接目录面板隐藏、对话菜单置灰、启动栏过滤都用它
   tui-menu.ts                # 认屏上的 TUI 选择菜单（parseTuiMenu / menuAnswerKeys / sameTuiMenu / menuEchoesText）：切换命令后 5 秒、启动后 20 秒、

@@ -78,6 +78,13 @@ export function compareImageModels(a: string, b: string): number {
   return a.localeCompare(b);
 }
 
+/** 选择框里网关那一列的写法：网关名常和 Agent 同名（「Codex」「Antigravity」），后面补「网关」免得看成 Agent */
+export function gatewayLabel(name: string): string {
+  const n = name.trim();
+  if (!n) return "网关";
+  return /网关$/.test(n) ? n : `${n} 网关`;
+}
+
 export const itemKey = (i: { gatewayId: string; model: string }) => `${i.gatewayId}\u0001${i.model}`;
 
 /** 按家族分组（家族按常用度排，组内按 compareImageModels）；filter 为子串筛选 */

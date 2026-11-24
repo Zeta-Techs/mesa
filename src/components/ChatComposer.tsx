@@ -66,8 +66,10 @@ export interface ComposerSeed {
 export interface ComposerImageGen {
   on: boolean;
   setOn: (on: boolean) => void;
-  /** 胶囊本体（模型、换模型、发前检查）；on 时画在框上方 */
-  chip: ReactNode;
+  /** 「+」旁边的小胶囊（模型、换模型、退出）；on 时画进输入框那一排（2026-11-24 用户选：不在框上方另起一条） */
+  pill: ReactNode;
+  /** 有问题时框里一行小字（缺模型、没开技能等）；没问题为 null */
+  issue: ReactNode | null;
   /** 发之前要那一行固定写法：text = 人写的那句，edit = 带着接着改的图（写「改图」）；拦下时给原因 */
   directive: (text: string, edit: boolean) => { line: string } | { error: string };
   /** 发出去了：said = 人写的那句（没调用出图工具时放回输入框用） */
@@ -1102,7 +1104,6 @@ export default function ChatComposer({
           <div className="max-h-24 overflow-auto whitespace-pre-wrap break-words">{quote.text}</div>
           {quoteUnavailable && <p role="status" className="mt-1 text-warn-text">来源暂不可定位，引用文字已保留</p>}
         </div>}
-        {imageGen?.on && imageGen.chip}
         <div
           data-tone={tone ?? undefined}
           data-tone-flash={toneFlash || undefined}
@@ -1287,6 +1288,7 @@ export default function ChatComposer({
               ))}
             </div>
           )}
+          {imageGen?.on && imageGen.issue}
           {imageWarning && imageKind && (
             <p className="flex items-start gap-1.5 px-4 pt-2 text-micro text-caution-text">
               <span className="ccode-icon-line">
@@ -1327,7 +1329,7 @@ export default function ChatComposer({
             data-stacked={stacked || undefined}
             className={`ccode-composer-row px-2 ${stacked ? "pb-1.5 pt-2" : "py-1.5"}`}
           >
-          <span data-slot="add" className="flex h-[34px] shrink-0 items-center">
+          <span data-slot="add" className="flex h-[34px] min-w-0 shrink-0 items-center gap-1">
             <AddMenu
               skills={skills}
               mcps={mcps}
@@ -1343,6 +1345,7 @@ export default function ChatComposer({
               canSavePrompt={Boolean(value.trim())}
               imageGen={imageGen ? { on: imageGen.on, toggle: () => imageGen.setOn(!imageGen.on) } : null}
             />
+            {imageGen?.on && imageGen.pill}
           </span>
           <div data-slot="text" className="relative min-w-0">
           <textarea

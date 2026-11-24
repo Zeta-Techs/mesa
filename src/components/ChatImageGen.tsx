@@ -1,7 +1,8 @@
 // 聊天里的「出图」模式（2026-11-24 用户拍板，纯逻辑在 chat-image-gen.ts）：
-// - 输入框上方一个胶囊「出图 · 模型 ▾」：点模型换一个，只管这个对话（后端 image_gen_chat.rs 按标签记，出图工具每次现读，
-//   顺序 --model > 本对话选的 > 连接页默认）；选回连接页默认那个 = 跟着默认走。胶囊发完留着，× 退回普通对话
-// - 发之前查：没出图工具 / 没模型拦下，这家没开 image-gen 只提醒并给「打开」
+// - 输入框里「+」旁边一个小胶囊「图标 模型 ⌄ ×」（2026-11-24 用户选：收进输入框，不在框上方另起一条）：点模型换一个，
+//   只管这个对话（后端 image_gen_chat.rs 按标签记，出图工具每次现读，顺序 --model > 本对话选的 > 连接页默认）；
+//   选回连接页默认那个 = 跟着默认走。胶囊发完留着，× 退回普通对话
+// - 发之前查：没出图工具 / 没模型拦下，这家没开 image-gen 只提醒并给「打开」——只在有问题时框里多一行小字
 // - 发出去由 Mesa 在描述前写一行固定写法（技能认它就必须调出图工具）；这一轮结束时出图工具一次没被调用，框上方说一声
 // - 出图工具每次调用记一条，聊天里的图下面写是哪个模型出的
 import { invoke } from "@tauri-apps/api/core";
@@ -20,7 +21,7 @@ import {
   type ImageGenIssue,
 } from "../chat-image-gen";
 import type { MesaCommand } from "../composer-assist";
-import { itemKey, pushRecent, type ImageModelItem } from "../image-models";
+import { gatewayLabel, itemKey, pushRecent, type ImageModelItem } from "../image-models";
 import { IS_WINDOWS } from "../hotkeys";
 import { PROFILES_PANE_REQ_KEY } from "../profiles-pane";
 import { useAppStore } from "../store";
@@ -79,6 +80,7 @@ export function useChatImageGen({
   const [enabling, setEnabling] = useState(false);
   const [calls, setCalls] = useState<ImageGenCall[]>([]);
   const [missed, setMissed] = useState<{ sentAt: number; said: string } | null>(null);
+  const [pickOpen, setPickOpen] = useState(false);
   const pendingRef = useRef<{ sentAt: number; said: string } | null>(null);
 
   // 这个对话选过的出图模型：标签开着就按标签找；标签是从侧栏重开的，按会话找回来（后端顺手记到新标签上）
@@ -205,6 +207,13 @@ export function useChatImageGen({
 
   const captions = useMemo(() => captionsByPath(calls, IS_WINDOWS), [calls]);
 
+  const defaultGatewayName = items.find((i) => i.gatewayId === defaultGateway)?.gatewayName;
+  const defaultText = defaultModel
+    ? defaultGatewayName
+      ? `${defaultModel}（${gatewayLabel(defaultGatewayName)}）`
+      : defaultModel
+    : null;
+
   const composer: ComposerImageGen = {
     on,
     setOn: (next) => {
@@ -220,25 +229,34 @@ export function useChatImageGen({
       setMissed(null);
       pendingRef.current = { sentAt: Date.now(), said };
     },
-    chip: (
-      <ImageGenChip
+    pill: (
+      <ImageGenPill
         model={model}
         selectedKey={
           choice ? itemKey(choice) : defaultModel ? itemKey({ gatewayId: defaultGateway, model: defaultModel }) : null
         }
         followsDefault={followsDefault}
+        defaultText={defaultText}
         items={items}
         loading={groups === null}
-        issue={issue}
-        enabling={enabling}
+        pickOpen={pickOpen}
+        onPickOpen={setPickOpen}
         onPick={pick}
-        onEnableSkill={() => void enableSkill()}
         onClose={() => {
           setOn(false);
+          setPickOpen(false);
           setMissed(null);
         }}
       />
     ),
+    issue: issue ? (
+      <ImageGenIssueLine
+        issue={issue}
+        enabling={enabling}
+        onEnableSkill={() => void enableSkill()}
+        onPickModel={() => setPickOpen(true)}
+      />
+    ) : null,
   };
 
   const command: MesaCommand = {
@@ -292,101 +310,119 @@ function openProfilesImagePane() {
   useAppStore.getState().setPage("profiles");
 }
 
-function ImageGenChip({
+/** 输入框里「+」旁边的小胶囊：图标 + 模型名（点开选择框）+ ×（退出出图） */
+function ImageGenPill({
   model,
   selectedKey,
   followsDefault,
+  defaultText,
   items,
   loading,
-  issue,
-  enabling,
+  pickOpen,
+  onPickOpen,
   onPick,
-  onEnableSkill,
   onClose,
 }: {
   model: string | null;
   /** 选择框里打勾的那一项（网关 + 模型） */
   selectedKey: string | null;
   followsDefault: boolean;
+  /** 连接页默认「模型（某某网关）」；没设为 null */
+  defaultText: string | null;
   items: ImageModelItem[];
   loading: boolean;
-  issue: ImageGenIssue | null;
-  enabling: boolean;
+  pickOpen: boolean;
+  onPickOpen: (open: boolean) => void;
   onPick: (item: ImageModelItem) => void;
-  onEnableSkill: () => void;
   onClose: () => void;
 }) {
   const anchorRef = useRef<HTMLButtonElement>(null);
-  const [pickOpen, setPickOpen] = useState(false);
   const [recent, setRecent] = useState<string[]>(readRecent);
-  const action =
-    issue?.kind === "no-model"
-      ? issue.candidates === 0
-        ? { label: "去连接页", onClick: openProfilesImagePane }
-        : { label: "选模型", onClick: () => setPickOpen(true) }
-      : issue?.kind === "no-skill"
-        ? { label: enabling ? "正在打开…" : "打开", onClick: onEnableSkill }
-        : null;
+  useEffect(() => {
+    if (pickOpen) setRecent(readRecent());
+  }, [pickOpen]);
+  const title = model
+    ? `出图：这一句用 ${model} 画（${followsDefault ? "连接页默认" : "这个对话选的"}）。点这里换一个，只管这个对话`
+    : "出图：还没选出图模型，点这里选一个";
   return (
-    <div className="mb-2 rounded-md bg-inset px-2 py-1 text-xs text-l2" aria-label="出图模式">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <ImageIcon size={13} strokeWidth={1.8} aria-hidden="true" className="ml-1 shrink-0 text-l3" />
-        <span className="shrink-0">出图</span>
-        <button
-          ref={anchorRef}
-          type="button"
-          onClick={() => {
-            setRecent(readRecent());
-            setPickOpen((v) => !v);
-          }}
-          aria-haspopup="listbox"
-          aria-expanded={pickOpen}
-          title="换一个出图模型：只管这个对话，连接页的默认不变"
-          className="inline-flex min-h-7 min-w-0 items-center gap-1 rounded-md px-1.5 hover:bg-hover focus-visible:outline-2 focus-visible:outline-cta"
-        >
-          <span className={`min-w-0 truncate font-mono ${model ? "text-l1" : "text-l3"}`}>{model ?? "选出图模型"}</span>
-          <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
-        </button>
-        {followsDefault && <span className="shrink-0 text-micro text-l4">连接页默认</span>}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="退出出图"
-          title="退出出图，回到普通对话"
-          className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta"
-        >
-          <X size={14} aria-hidden="true" />
-        </button>
-      </div>
-      {issue && (
-        <p
-          role="status"
-          className={`flex items-center gap-2 px-1 pb-0.5 text-micro ${
-            imageGenBlocks(issue) ? "text-caution-text" : "text-l3"
-          }`}
-        >
-          <span className="min-w-0 flex-1">{issueText(issue)}</span>
-          {action && (
-            <button
-              type="button"
-              disabled={enabling}
-              onClick={action.onClick}
-              className="shrink-0 cursor-pointer rounded border border-field px-1.5 py-0.5 text-l1 hover:bg-hover disabled:opacity-50"
-            >
-              {action.label}
-            </button>
-          )}
-        </p>
-      )}
+    <span
+      data-testid="image-gen-pill"
+      aria-label="出图模式"
+      className="inline-flex h-7 min-w-0 max-w-[13rem] items-center rounded-full border border-field text-xs text-l2"
+    >
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => onPickOpen(!pickOpen)}
+        aria-haspopup="listbox"
+        aria-expanded={pickOpen}
+        title={title}
+        className="inline-flex h-full min-w-0 items-center gap-1 rounded-l-full pl-2 pr-1 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta"
+      >
+        <ImageIcon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+        <span className={`min-w-0 truncate font-mono ${model ? "" : "text-l3"}`}>{model ?? "选出图模型"}</span>
+        <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+      </button>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="退出出图"
+        title="退出出图，回到普通对话"
+        className="flex h-full w-6 shrink-0 items-center justify-center rounded-r-full text-l3 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta"
+      >
+        <X size={12} aria-hidden="true" />
+      </button>
       <ImageModelPicker
         anchorRef={anchorRef}
         open={pickOpen && !loading}
-        onClose={() => setPickOpen(false)}
+        onClose={() => onPickOpen(false)}
         items={items}
         recent={recent}
         selected={selectedKey ? [selectedKey] : []}
+        note={`只管这个对话 · 连接页默认：${defaultText ?? "还没设"}`}
         onPick={onPick}
       />
-    </div>
+    </span>
+  );
+}
+
+/** 只在有问题时框里多一行小字：缺什么 + 一个处理按钮 */
+function ImageGenIssueLine({
+  issue,
+  enabling,
+  onEnableSkill,
+  onPickModel,
+}: {
+  issue: ImageGenIssue;
+  enabling: boolean;
+  onEnableSkill: () => void;
+  onPickModel: () => void;
+}) {
+  const action =
+    issue.kind === "no-model"
+      ? issue.candidates === 0
+        ? { label: "去连接页", onClick: openProfilesImagePane }
+        : { label: "选模型", onClick: onPickModel }
+      : issue.kind === "no-skill"
+        ? { label: enabling ? "正在打开…" : "打开", onClick: onEnableSkill }
+        : null;
+  return (
+    <p
+      role="status"
+      className={`flex items-center gap-2 px-4 pt-2 text-micro ${imageGenBlocks(issue) ? "text-caution-text" : "text-l3"}`}
+    >
+      <ImageIcon size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+      <span className="min-w-0 flex-1">{issueText(issue)}</span>
+      {action && (
+        <button
+          type="button"
+          disabled={enabling}
+          onClick={action.onClick}
+          className="shrink-0 cursor-pointer rounded border border-field px-1.5 py-0.5 text-l1 hover:bg-hover disabled:opacity-50"
+        >
+          {action.label}
+        </button>
+      )}
+    </p>
   );
 }

@@ -7,6 +7,7 @@ import { Check, RefreshCw } from "lucide-react";
 import { FoldMark, searchFieldClass } from "./PageFrame";
 import { useDownMenu } from "./LaunchMenu";
 import {
+  gatewayLabel,
   groupImageModels,
   itemKey,
   recommendedImageModels,
@@ -25,6 +26,7 @@ export default function ImageModelPicker({
   onPick,
   onRefresh,
   refreshing = false,
+  note,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   open: boolean;
@@ -41,6 +43,8 @@ export default function ImageModelPicker({
   /** 从已配置网关重新拉取最新模型目录 */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** 搜索框下一行说明（聊天出图胶囊：只管这个对话、连接页默认是哪个） */
+  note?: string;
 }) {
   const { box, exiting, closeNow } = useDownMenu(open, anchorRef, 380);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -112,7 +116,7 @@ export default function ImageModelPicker({
         }`}
       >
         <span className="min-w-0 flex-1 truncate font-mono text-xs">{it.model}</span>
-        {multiGateway && <span className="shrink-0 truncate text-micro text-l3">{it.gatewayName}</span>}
+        {multiGateway && <span className="shrink-0 truncate text-micro text-l3">{gatewayLabel(it.gatewayName)}</span>}
         <Check size={14} strokeWidth={2} aria-hidden="true" className={on ? "shrink-0 text-l2" : "invisible shrink-0"} />
       </button>
     );
@@ -160,6 +164,7 @@ export default function ImageModelPicker({
             </button>
           )}
         </div>
+        {note && <p className="truncate px-1 pt-1 text-micro text-l3" title={note}>{note}</p>}
         {multi && maxSelected !== undefined && (
           <p className="px-1 pt-1 text-micro text-l3">
             已选 {selected.length} / {maxSelected}，一起出图对比

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compareImageModels,
+  gatewayLabel,
   imageGenCaption,
   estimateSeconds,
   familyOf,
@@ -78,4 +79,11 @@ test("出图说明行：技能还没读回来时不报「还没打开」，读�
   assert.equal(imageGenCaption(true, {}, 2), null);
   assert.match(imageGenCaption(true, null, 0)?.text ?? "", /还没进技能库/);
   assert.match(imageGenCaption(false, undefined, 0)?.text ?? "", /没找到随包的出图工具/);
+});
+
+test("选择框网关列补「网关」：网关名常和 Agent 同名，免得看成是哪家 Agent", () => {
+  assert.equal(gatewayLabel("Codex"), "Codex 网关");
+  assert.equal(gatewayLabel(" Antigravity "), "Antigravity 网关");
+  assert.equal(gatewayLabel("Zeta 网关"), "Zeta 网关");
+  assert.equal(gatewayLabel(""), "网关");
 });
