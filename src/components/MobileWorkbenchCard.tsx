@@ -2,15 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { ChevronRight, Copy, ExternalLink, Info, RefreshCw, Smartphone, Trash2 } from "lucide-react";
-import { fieldClass as baseFieldClass, paneOutlineButtonClass, primaryActionClass, Toggle } from "./PageFrame";
+import { ChevronRight, Info } from "lucide-react";
+import { fieldClass as baseFieldClass, paneOutlineButtonClass, SegTabs, Toggle } from "./PageFrame";
 import { toast } from "../toast";
 import { relTime } from "../rel-time";
 import {
   DEFAULT_TAILSCALE_HTTPS_PORT,
   MAX_MOBILE_DEVICES,
   formatPairingCountdown,
-  mobileWorkbenchSummary,
   tailscaleServeCommand,
   tailscaleStateLabel,
   validateCustomBaseUrl,
@@ -23,8 +22,13 @@ const fieldClass = baseFieldClass.replace("w-full ", "").replace("bg-canvas", "b
 const rowClass = "flex flex-wrap items-center gap-x-6 gap-y-2 py-3";
 const labelClass = "w-28 shrink-0 text-base text-l1";
 
+const TUNNEL_ITEMS: readonly { id: MobileTunnelMode; label: string }[] = [
+  { id: "tailscale", label: "Tailscale（推荐）" },
+  { id: "custom", label: "自定义 HTTPS" },
+];
+
 const INTRO_DETAIL =
-  "本地服务只监听 127.0.0.1 回环，不向局域网明文开放（普通 Wi-Fi 的「从手机添加」仍保持只收不出）。经 Tailscale HTTPS 或自定义 HTTPS 隧道加密访问后，手机主屏即可看项目进展、答人工请求、与项目助手多轮流式对话、点「派出去」、只读浏览 Markdown/图片/PDF 与脱敏 Git Diff、随时 4G/5G 传资料。确认命令、评审采纳、写回与删除仍留在电脑端执行。";
+  "本地服务只监听 127.0.0.1 回环，不向局域网明文开放（普通 Wi-Fi 的「从手机添加」仍保持只收不出）。经 Tailscale HTTPS 或自定义 HTTPS 隧道加密访问后，手机主屏即可看进展、答人工请求、与项目助手流式对话、点「派出去」、只读审阅文件与脱敏 Diff、跨网传资料。每台手机独立配对（HttpOnly 加密 Cookie，本机 0600 文件仅存 SHA-256，最多 8 台随时移除）。确认命令、评审采纳、写回与删除仍留在电脑端执行。";
 
 async function copyText(text: string, okMsg: string): Promise<void> {
   try {
@@ -36,10 +40,12 @@ async function copyText(text: string, okMsg: string): Promise<void> {
 }
 
 /**
- * 设置 → AI 与 Agent →「手机工作台（端到端加密 PWA）」（2026-11-24）：
- * - 127.0.0.1 本机服务开关 + 本机浏览器预览；
- * - 可插拔加密通道：Tailscale Serve HTTPS（默认 8443，只操作 Mesa 专属端口）或自定义 HTTPS 隧道；
- * - 5 分钟一次性二维码配对 + 最多 8 台设备管理与一键踢出。
+ * 设置 → AI 与 Agent →「手机工作台（PWA）」（2026-11-24）：
+ * 与下方 FeishuSettingsCard 保持同一套平铺细线行语言（无嵌套卡片、无竞争主蓝钮、少字干净）：
+ * - 开启服务 + 本机预览
+ * - 访问通道（SegTabs：Tailscale / 自定义 HTTPS）与单行状态/输入
+ * - 已配对手机（列表平铺 + 配对二维码按需在底部展开）
+ * - 首次配置与 Tailscale HTTPS 端口收进底部折叠
  */
 export default function MobileWorkbenchCard() {
   const [st, setSt] = useState<MobileWorkbenchStatusDto | null>(null);
@@ -64,7 +70,7 @@ export default function MobileWorkbenchCard() {
     try {
       const next = await invoke<MobileWorkbenchStatusDto>("mobile_workbench_status");
       applyStatus(next);
-      if (!silent) toast("已刷新手机工作台状态", "info");
+      if (!silent) toast("已刷新状态", "info");
     } catch (err) {
       if (!silent) toast(String(err), "error");
     }
@@ -162,7 +168,7 @@ export default function MobileWorkbenchCard() {
     try {
       const next = await invoke<MobileWorkbenchStatusDto>("mobile_workbench_remove_device", { deviceId });
       applyStatus(next);
-      toast(`已移除「${name}」，其登录凭证已立即失效`, "info");
+      toast(`已移除「${name}」，其登录凭证已失效`, "info");
     } catch (err) {
       toast(String(err), "error");
     } finally {
@@ -177,7 +183,9 @@ export default function MobileWorkbenchCard() {
       return;
     }
     if (st && port === st.tailscaleHttpsPort) return;
-    void saveConfig({ tailscaleHttpsPort: port });
+    void saveConfig({ tailscaleHttpsPort: port }).then(() => {
+      toast(`已保存 Tailscale HTTPS 端口 ${port}`, "info");
+    });
   }
 
   function handleSaveCustomUrl() {
@@ -194,15 +202,27 @@ export default function MobileWorkbenchCard() {
   const tsInfo = st?.tailscale;
   const tsBadge = tsInfo ? tailscaleStateLabel(tsInfo) : { text: "检测中…", tone: "muted" as const };
   const qrSrc = st?.pairingQrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(st.pairingQrSvg)}` : null;
-  const summary = st ? mobileWorkbenchSummary(st) : "读取中…";
   const localUpstream = st?.localUrl ?? (st?.port ? `http://127.0.0.1:${st.port}` : "http://127.0.0.1:<端口>");
   const cmdPreview = tailscaleServeCommand(st?.tailscaleHttpsPort ?? DEFAULT_TAILSCALE_HTTPS_PORT, st?.port ?? 0);
+  const showDetail = Boolean(st?.enabled);
+  const showDevices = Boolean(st?.enabled || (st?.devices.length ?? 0) > 0);
+
+  const serviceStatusText = !st
+    ? "读取中…"
+    : !st.enabled
+      ? "未开启"
+      : !st.running
+        ? st.lastError
+          ? `启动失败：${st.lastError}`
+          : "正在启动…"
+        : st.publicUrl
+          ? `已就绪 · ${st.publicUrl}`
+          : `运行中 · 127.0.0.1:${st.port}`;
 
   return (
     <div className="mt-7">
       <h3 className="flex items-center gap-1.5 text-base font-semibold text-l1">
-        <Smartphone aria-hidden="true" className="h-4 w-4 text-l3" />
-        <span>手机工作台（端到端加密 PWA）</span>
+        <span>手机工作台（PWA）</span>
         <span className="shrink-0 rounded-full bg-warn px-1.5 py-0.5 text-micro font-medium text-warn-text">
           实验功能
         </span>
@@ -217,45 +237,37 @@ export default function MobileWorkbenchCard() {
         </span>
       </h3>
       <p className="mt-0.5 text-xs leading-5 text-l3">
-        实验功能，仍在持续完善中。零自建服务器，手机主屏即可看进展、问助手、只读审阅文件与 Diff、跨网传资料；仅监听 127.0.0.1，经加密通道访问（可与下方飞书提醒互补）
+        实验功能，仍在持续完善中。手机主屏看进展、问助手、只读看文件与传资料；只监听本机回环，经加密通道访问
       </p>
 
       <div className="mt-2 divide-y divide-hairline border-y border-hairline">
-        {/* 行 1：总开关与运行状态 */}
+        {/* 行 1：开关与状态 */}
         <div className={rowClass}>
-          <span className={labelClass}>本机服务</span>
+          <span className={labelClass}>开启服务</span>
           <span
-            className={`min-w-0 flex-1 text-sm ${
+            className={`min-w-0 flex-1 truncate text-sm ${
               st?.running && st.publicUrl
                 ? "text-ok-text"
                 : st?.lastError
                   ? "text-err-text"
-                  : "text-l3"
+                  : st?.running
+                    ? "text-l2"
+                    : "text-l3"
             }`}
+            title={serviceStatusText}
           >
-            {summary}
+            {serviceStatusText}
           </span>
-          <span className="flex flex-wrap items-center gap-2">
+          <span className="flex shrink-0 items-center gap-2">
             {st?.running && st.localUrl && (
               <button
                 type="button"
                 className={paneOutlineButtonClass}
                 onClick={() => void openUrl(st.localUrl!).catch(() => {})}
               >
-                <ExternalLink aria-hidden="true" className="mr-1 inline h-3 w-3" />
                 本机预览
               </button>
             )}
-            <button
-              type="button"
-              className={paneOutlineButtonClass}
-              disabled={busy}
-              onClick={() => void refresh(false)}
-              title="重新检测本机与 Tailscale 状态"
-            >
-              <RefreshCw aria-hidden="true" className="mr-1 inline h-3 w-3" />
-              刷新
-            </button>
             <Toggle
               label="开启手机工作台本机服务"
               checked={Boolean(st?.enabled)}
@@ -264,283 +276,283 @@ export default function MobileWorkbenchCard() {
           </span>
         </div>
 
-        {/* 行 2：加密通道模式 */}
-        <div className={`${rowClass} items-start`}>
-          <span className={`${labelClass} pt-1`}>加密通道</span>
-          <div className="min-w-0 flex-1 space-y-2.5">
-            <div className="flex flex-wrap gap-2">
+        {/* 行 2：加密通道切换 */}
+        {showDetail && (
+          <div className={rowClass}>
+            <span className={labelClass}>加密通道</span>
+            <div className="min-w-0 flex-1">
+              <SegTabs
+                variant="boxed"
+                size="sm"
+                items={TUNNEL_ITEMS}
+                value={st?.tunnelMode ?? "tailscale"}
+                onChange={(mode) => void saveConfig({ tunnelMode: mode })}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* 行 3：通道详情（Tailscale 状态行 或 自定义 HTTPS 输入行） */}
+        {showDetail && st?.tunnelMode !== "custom" && (
+          <div className={rowClass}>
+            <span className={labelClass}>Tailscale</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                <span
+                  className={
+                    tsBadge.tone === "ok"
+                      ? "text-ok-text"
+                      : tsBadge.tone === "warn"
+                        ? "text-warn-text"
+                        : "text-l3"
+                  }
+                >
+                  {tsBadge.text}
+                </span>
+                {tsInfo?.serveActive && tsInfo.serveUrl ? (
+                  <code className="truncate font-mono text-xs text-l2">{tsInfo.serveUrl}</code>
+                ) : tsInfo?.dnsName ? (
+                  <span className="truncate font-mono text-xs text-l4">{tsInfo.dnsName}</span>
+                ) : null}
+              </div>
+              {!tsInfo?.serveActive && tsInfo?.hint && (
+                <p className="mt-0.5 text-xs leading-5 text-l3">{tsInfo.hint}</p>
+              )}
+            </div>
+            <span className="flex shrink-0 flex-wrap items-center gap-2">
               <button
                 type="button"
+                className={paneOutlineButtonClass}
                 disabled={busy}
-                className={st?.tunnelMode === "custom" ? paneOutlineButtonClass : primaryActionClass}
-                onClick={() => void saveConfig({ tunnelMode: "tailscale" })}
+                onClick={() => void refresh(false)}
               >
-                Tailscale HTTPS（推荐）
+                刷新
               </button>
-              <button
-                type="button"
-                disabled={busy}
-                className={st?.tunnelMode === "custom" ? primaryActionClass : paneOutlineButtonClass}
-                onClick={() => void saveConfig({ tunnelMode: "custom" })}
-              >
-                自定义 HTTPS 隧道
-              </button>
-            </div>
-
-            {st?.tunnelMode !== "custom" ? (
-              <div className="space-y-2 rounded-lg border border-hairline bg-surface/40 p-3 text-xs">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span
-                    className={`font-medium ${
-                      tsBadge.tone === "ok"
-                        ? "text-ok-text"
-                        : tsBadge.tone === "warn"
-                          ? "text-warn-text"
-                          : "text-l3"
-                    }`}
-                  >
-                    {tsBadge.text}
-                    {tsInfo?.dnsName ? ` · ${tsInfo.dnsName}` : ""}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!tsInfo?.installed && (
+              {!tsInfo?.installed && (
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  onClick={() => void openUrl("https://tailscale.com/download").catch(() => {})}
+                >
+                  下载 Tailscale
+                </button>
+              )}
+              {tsInfo?.installed && tsInfo.backendState === "Running" && !tsInfo.httpsReady && (
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  onClick={() => void openUrl("https://login.tailscale.com/admin/dns").catch(() => {})}
+                >
+                  打开 DNS 设置
+                </button>
+              )}
+              {tsInfo?.installed && tsInfo.httpsReady && st?.running && (
+                tsInfo.serveActive ? (
+                  <>
+                    {tsInfo.serveUrl && (
                       <button
                         type="button"
                         className={paneOutlineButtonClass}
-                        onClick={() => void openUrl("https://tailscale.com/download").catch(() => {})}
+                        onClick={() => void copyText(tsInfo.serveUrl!, "已复制访问地址")}
                       >
-                        下载 Tailscale
+                        复制地址
                       </button>
                     )}
-                    {tsInfo?.installed && tsInfo.backendState === "Running" && !tsInfo.httpsReady && (
-                      <button
-                        type="button"
-                        className={paneOutlineButtonClass}
-                        onClick={() => void openUrl("https://login.tailscale.com/admin/dns").catch(() => {})}
-                      >
-                        打开 Tailscale DNS 设置
-                      </button>
-                    )}
-                    {tsInfo?.installed && tsInfo.httpsReady && st?.running && (
-                      tsInfo.serveActive ? (
-                        <button
-                          type="button"
-                          className={paneOutlineButtonClass}
-                          disabled={busy}
-                          onClick={() => void toggleTailscaleServe(false)}
-                        >
-                          关闭 Tailscale 通道
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className={primaryActionClass}
-                          disabled={busy}
-                          onClick={() => void toggleTailscaleServe(true)}
-                        >
-                          一键开启 Tailscale 通道
-                        </button>
-                      )
-                    )}
-                  </div>
-                </div>
-                {tsInfo?.hint && <p className="leading-5 text-l3">{tsInfo.hint}</p>}
-
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <span className="text-l3">HTTPS 端口</span>
-                  <input
-                    className={`${fieldClass} w-24 font-mono text-xs`}
-                    value={tsPortInput}
-                    onChange={(e) => setTsPortInput(e.target.value)}
-                    onBlur={handleSaveTsPort}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSaveTsPort();
-                    }}
-                    aria-label="Tailscale HTTPS 端口"
-                  />
-                  <span className="truncate font-mono text-micro text-l4" title={cmdPreview}>
-                    将执行：{cmdPreview}
-                  </span>
-                </div>
-
-                {tsInfo?.serveActive && tsInfo.serveUrl && (
-                  <div className="flex flex-wrap items-center gap-2 pt-0.5 text-xs">
-                    <span className="text-l3">访问地址：</span>
-                    <code className="rounded bg-canvas px-1.5 py-0.5 font-mono text-l1">{tsInfo.serveUrl}</code>
-                    <button
-                      type="button"
-                      className={paneOutlineButtonClass}
-                      onClick={() => void copyText(tsInfo.serveUrl!, "已复制手机工作台地址")}
-                    >
-                      <Copy aria-hidden="true" className="mr-1 inline h-3 w-3" />
-                      复制
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2 rounded-lg border border-hairline bg-surface/40 p-3 text-xs">
-                <p className="leading-5 text-l3">
-                  适合你自备 Cloudflare Tunnel / FRP / WireGuard / Nginx 反向代理：先将隧道上游指向本机{" "}
-                  <code className="rounded bg-canvas px-1 py-0.5 font-mono text-l1">{localUpstream}</code>
-                  <button
-                    type="button"
-                    className="ml-1.5 inline-flex items-center text-l2 underline-offset-2 hover:underline"
-                    onClick={() => void copyText(localUpstream, "已复制本机上游地址")}
-                  >
-                    复制上游
-                  </button>
-                  ，再把外部 HTTPS 地址填到下方：
-                </p>
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
-                    placeholder="https://mesa.example.com"
-                    value={customUrlInput}
-                    onChange={(e) => setCustomUrlInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleSaveCustomUrl();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className={primaryActionClass}
-                    disabled={busy}
-                    onClick={handleSaveCustomUrl}
-                  >
-                    保存地址
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 行 3：配对新手机 */}
-        <div className={`${rowClass} items-start`}>
-          <span className={`${labelClass} pt-1`}>手机配对</span>
-          <div className="min-w-0 flex-1 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs leading-5 text-l3">
-                扫码后自动签发长期设备凭证（HttpOnly 加密 Cookie，本机仅存 SHA-256 哈希）；每张二维码 5 分钟内有效且用一次即废
-              </span>
-              <div className="flex gap-2">
-                {st?.pairingUrl ? (
-                  <button
-                    type="button"
-                    className={paneOutlineButtonClass}
-                    disabled={busy}
-                    onClick={() => void cancelPairing()}
-                  >
-                    取消配对
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className={primaryActionClass}
-                    disabled={busy || !st?.running || (st?.devices.length ?? 0) >= MAX_MOBILE_DEVICES}
-                    onClick={() => void startPairing()}
-                  >
-                    配对新手机
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {st?.pairingUrl && qrSrc && (
-              <div className="flex flex-wrap items-start gap-4 rounded-lg border border-hairline bg-surface/60 p-3">
-                <img
-                  src={qrSrc}
-                  alt="扫码配对 Mesa 手机工作台"
-                  className="size-36 shrink-0 rounded-md bg-white p-1.5"
-                />
-                <div className="min-w-0 flex-1 space-y-2 text-xs">
-                  <div className="font-medium text-l1">
-                    用手机相机扫码配对（剩余 {formatPairingCountdown(pairLeft)}）
-                  </div>
-                  {!st.publicUrl && (
-                    <p className="rounded bg-warn px-2 py-1 text-l1">
-                      当前未开启外网 HTTPS 通道，二维码指向本机回环地址，仅可在当前电脑浏览器测试；外网用手机扫码请先开启上方 Tailscale 或自定义 HTTPS 隧道。
-                    </p>
-                  )}
-                  <p className="leading-5 text-l3">
-                    手机打开后：iOS Safari 点底部「分享 → 添加到主屏幕」，Android Chrome 点菜单「添加到主屏幕」，即可全屏使用。
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className={paneOutlineButtonClass}
-                      onClick={() => void copyText(st.pairingUrl!, "已复制一次性配对链接")}
-                    >
-                      <Copy aria-hidden="true" className="mr-1 inline h-3 w-3" />
-                      复制配对链接
-                    </button>
-                    {!st.publicUrl && (
-                      <button
-                        type="button"
-                        className={paneOutlineButtonClass}
-                        onClick={() => void openUrl(st.pairingUrl!).catch(() => {})}
-                      >
-                        <ExternalLink aria-hidden="true" className="mr-1 inline h-3 w-3" />
-                        在本机浏览器打开测试
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 行 4：已配对设备 */}
-        <div className={`${rowClass} items-start`}>
-          <span className={`${labelClass} pt-0.5`}>
-            已配对设备
-            <span className="ml-1 text-xs text-l4">
-              ({st?.devices.length ?? 0}/{MAX_MOBILE_DEVICES})
-            </span>
-          </span>
-          <div className="min-w-0 flex-1">
-            {!st || st.devices.length === 0 ? (
-              <span className="text-sm text-l3">暂无已配对手机</span>
-            ) : (
-              <ul className="space-y-1.5">
-                {st.devices.map((dev) => (
-                  <li
-                    key={dev.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-hairline px-2.5 py-1.5 text-xs"
-                  >
-                    <div className="min-w-0">
-                      <span className="font-medium text-l1">{dev.name}</span>
-                      <span className="ml-2 text-l4">最近活跃：{relTime(dev.lastSeenAt)}</span>
-                    </div>
                     <button
                       type="button"
                       className={paneOutlineButtonClass}
                       disabled={busy}
-                      onClick={() => void removeDevice(dev.id, dev.name)}
+                      onClick={() => void toggleTailscaleServe(false)}
                     >
-                      <Trash2 aria-hidden="true" className="mr-1 inline h-3 w-3" />
-                      移除
+                      关闭通道
                     </button>
-                  </li>
-                ))}
-              </ul>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className={paneOutlineButtonClass}
+                    disabled={busy}
+                    onClick={() => void toggleTailscaleServe(true)}
+                  >
+                    开启通道
+                  </button>
+                )
+              )}
+            </span>
+          </div>
+        )}
+
+        {showDetail && st?.tunnelMode === "custom" && (
+          <div className={rowClass}>
+            <span className={labelClass}>隧道地址</span>
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex items-center gap-2">
+                <input
+                  className={`${fieldClass} min-w-0 flex-1 font-mono text-xs`}
+                  placeholder="https://mesa.example.com"
+                  value={customUrlInput}
+                  onChange={(e) => setCustomUrlInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveCustomUrl();
+                  }}
+                />
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  disabled={busy}
+                  onClick={handleSaveCustomUrl}
+                >
+                  保存
+                </button>
+              </div>
+              <p className="text-xs text-l3">
+                反代上游指向 <code className="font-mono text-l2">{localUpstream}</code>
+                <button
+                  type="button"
+                  className="ml-2 text-l2 underline-offset-2 hover:underline"
+                  onClick={() => void copyText(localUpstream, "已复制本机上游地址")}
+                >
+                  复制上游
+                </button>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 行 4：已配对手机（与下方飞书「绑定的人」对齐） */}
+        {showDevices && (
+          <div className={`${rowClass} items-start`}>
+            <span className={`${labelClass} pt-0.5`}>已配对手机</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm text-l3">
+                  {st && st.devices.length > 0
+                    ? `已配对 ${st.devices.length} / ${MAX_MOBILE_DEVICES} 台`
+                    : "暂无已配对手机"}
+                </span>
+                {st?.enabled && (
+                  <span className="flex gap-2">
+                    {st.pairingUrl ? (
+                      <button
+                        type="button"
+                        className={paneOutlineButtonClass}
+                        disabled={busy}
+                        onClick={() => void cancelPairing()}
+                      >
+                        取消配对
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className={paneOutlineButtonClass}
+                        disabled={busy || !st.running || st.devices.length >= MAX_MOBILE_DEVICES}
+                        onClick={() => void startPairing()}
+                      >
+                        配对新手机
+                      </button>
+                    )}
+                  </span>
+                )}
+              </div>
+
+              {st && st.devices.length > 0 && (
+                <ul className="mt-2 divide-y divide-hairline/60 border-t border-hairline/60">
+                  {st.devices.map((dev) => (
+                    <li key={dev.id} className="flex items-center justify-between gap-3 py-1.5 text-xs">
+                      <span className="min-w-0 truncate">
+                        <span className="font-medium text-l1">{dev.name}</span>
+                        <span className="ml-2 text-l4">最近活跃 {relTime(dev.lastSeenAt)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className="shrink-0 text-xs text-l3 transition-colors hover:text-err-text disabled:opacity-45"
+                        disabled={busy}
+                        onClick={() => void removeDevice(dev.id, dev.name)}
+                      >
+                        移除
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 配对二维码条：仅点「配对新手机」后在底部展开，平时完全不占位 */}
+      {st?.pairingUrl && qrSrc && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-4 rounded-lg bg-surface/60 px-3.5 py-3 text-xs">
+          <img
+            src={qrSrc}
+            alt="扫码配对 Mesa 手机工作台"
+            className="size-32 shrink-0 rounded bg-white p-1"
+          />
+          <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="font-medium text-l1">
+              手机扫码配对（剩余 {formatPairingCountdown(pairLeft)}，用一次即废）
+            </div>
+            {!st.publicUrl ? (
+              <p className="leading-5 text-warn-text">
+                尚未开启外网 HTTPS 通道，当前二维码为本机测试地址；用手机访问请先在上方开启 Tailscale 或自定义 HTTPS 隧道。
+              </p>
+            ) : (
+              <p className="leading-5 text-l3">
+                打开后在浏览器菜单点「添加到主屏幕」，即可全屏使用。
+              </p>
             )}
+            <div className="flex flex-wrap gap-2 pt-0.5">
+              <button
+                type="button"
+                className={paneOutlineButtonClass}
+                onClick={() => void copyText(st.pairingUrl!, "已复制一次性配对链接")}
+              >
+                复制配对链接
+              </button>
+              {!st.publicUrl && (
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  onClick={() => void openUrl(st.pairingUrl!).catch(() => {})}
+                >
+                  本机打开测试
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <details className="group mt-2 text-xs">
         <summary className="-ml-1 inline-flex cursor-pointer list-none items-center gap-1 text-l4 hover:text-l2 [&::-webkit-details-marker]:hidden">
           <ChevronRight aria-hidden="true" className="h-3 w-3 transition-transform group-open:rotate-90" />
-          第一次怎么配置（3 步）
+          第一次怎么配置与端口设置
         </summary>
-        <ol className="mt-1.5 max-w-2xl list-decimal space-y-1 pl-4 leading-5 text-l3">
-          <li>电脑和手机都安装免费版 Tailscale 并登录同一账号；在 Tailscale 网页后台「DNS」页开启 MagicDNS 和 HTTPS Certificates（仅需一次）。</li>
-          <li>在上方打开「本机服务」，点击「一键开启 Tailscale 通道」（Mesa 仅映射自己的专属端口，默认 8443，不动你已有的其他服务）。</li>
-          <li>点「配对新手机」，用手机相机扫码并在浏览器选择「添加到主屏幕」。如已有 Cloudflare Tunnel / FRP 等自备 HTTPS 隧道，也可切到「自定义 HTTPS 隧道」填入地址。</li>
-        </ol>
+        <div className="mt-1.5 max-w-2xl space-y-2.5 leading-5 text-l3">
+          <ol className="list-decimal space-y-1 pl-4">
+            <li>电脑和手机安装免费版 Tailscale 并登录同一账号；在 Tailscale 网页后台「DNS」页开启 MagicDNS 与 HTTPS Certificates（仅需一次）。</li>
+            <li>打开上方「开启服务」，点击「开启通道」（仅映射 Mesa 专属 HTTPS 端口，不动你已有的其他服务）。</li>
+            <li>点「配对新手机」扫码并在浏览器选「添加到主屏幕」。自备 Cloudflare Tunnel / FRP 等隧道时可切到「自定义 HTTPS」。</li>
+          </ol>
+          {st?.tunnelMode !== "custom" && (
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <span>Tailscale HTTPS 端口</span>
+              <input
+                className={`${fieldClass} w-20 font-mono text-xs`}
+                value={tsPortInput}
+                onChange={(e) => setTsPortInput(e.target.value)}
+                onBlur={handleSaveTsPort}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveTsPort();
+                }}
+                aria-label="Tailscale HTTPS 端口"
+              />
+              <span className="truncate font-mono text-micro text-l4" title={cmdPreview}>
+                {cmdPreview}
+              </span>
+            </div>
+          )}
+        </div>
       </details>
     </div>
   );
