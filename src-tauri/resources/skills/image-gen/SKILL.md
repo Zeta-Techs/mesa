@@ -20,7 +20,7 @@ macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& 
 - 这一句**必须**调出图工具出图（改图带 `--image` 原图），不要改用 matplotlib / SVG / HTML 等代码自己画，也不要只回文字；出不来就照实转述工具报错。
 - 模型就用 X：命令里加 `--model X`（工具默认也用这个对话选的，但更新前开的对话读不到），不要自己换。之后「再来一张」「换个颜色」照样用它；用户在胶囊里换了模型，下一句第一行会写新的。
 - X 做不到要求（画幅、分辨率、透明底，见下文「各家能做到什么」）：照样用 X 出，交付时按 `note:` 说清差在哪，建议在输入框胶囊里换哪个模型。
-- 写成 `出图模型 A、B、C 各出一版对比` 时：每个模型各调一次，`--model` 分别写 A、B、C，描述和参数完全一样（描述写进一个 `--prompt-file` 共用；改图都用同一张原图）。能同时跑就同时跑（macOS / Linux 每条命令输出重定向到各自的日志、末尾加 `&`，最后 `wait` 再读日志），总耗时约等于最慢的那个；文件名带模型短名（如 `cover-gpt-image-2.5.png`），不互相覆盖。回复里按模型逐行写出每张图的完整路径和各自的 `note:`，某个失败照实写、不影响其余几张；不替用户挑，问要哪张。
+- 写成 `出图模型 A、B、C 各出一版对比` 时：每个模型各调一次，`--model` 分别写 A、B、C，意思和参数完全一样（同一家族共用一份 `--prompt-file`，家族不同按下文「描述怎么写」各写一份；改图都用同一张原图）。能同时跑就同时跑（macOS / Linux 每条命令输出重定向到各自的日志、末尾加 `&`，最后 `wait` 再读日志），总耗时约等于最慢的那个；文件名带模型短名（如 `cover-gpt-image-2.5.png`），不互相覆盖。回复里按模型逐行写出每张图的完整路径和各自的 `note:`，某个失败照实写、不影响其余几张；不替用户挑，问要哪张。
 
 ## 动笔前先定三件事
 
@@ -42,13 +42,16 @@ macOS / Linux 跑 `"$MESA_IMAGE_TOOL" image --list`，Windows PowerShell 跑 `& 
 
 ## 描述怎么写
 
-描述用英文写，效果通常更稳；用户说中文时由你翻译。按这个顺序写成一段话，每项一两个短语，不要堆砌形容词：
+先保住用户的意思：人名、作品名、风格词、用途原样带上，不替用户换成别的；用户给的已经是完整的出图提示词（细节齐全）时原样用，只补画幅相关的话。不管哪家都写清**主体**（画什么、数量、相互位置）、**构图**（视角、主体在画面哪里、留白）、**风格**（挑一种，不混写）、**配色与光线**，用途（封面、海报、组会配图）也写进去。再按 `--model` 的家族写成它最吃得透的样子：
 
-1. **主体**：画什么，数量和相互位置写清（「three cells in a row, the middle one larger」）。
-2. **构图**：视角、主体在画面哪里、留白（「centered, top-down view, generous white space on the right」）。
-3. **风格**：flat vector illustration / isometric diagram / watercolor / photorealistic 等，挑一个，不要混写。
-4. **配色与光线**：给两三个具体颜色或色系（「muted blue and orange palette」），写实图再写光线。
-5. **不要什么**：「no text, no watermark, no extra objects」——这样写比单独列一串负面词更管用。
+| 模型家族 | 语言 | 怎么写 |
+|---|---|---|
+| Gemini 系（gemini-*-image、nano-banana、imagen） | 英文 | 写成连贯的叙事段落，像给插画师或摄影师讲这张图，不要堆关键词；越具体越好（材质、动作、表情、镜头、光线）；不想要的改成正面描述（写 an empty street，不写 no cars），排除项最多一句 no text, no watermark |
+| gpt-image 系 | 英文 | 可以写长写细，按主体 → 环境 → 风格 → 光线分句；图里要出现的字原样放进引号；排除项一句带过 |
+| 豆包 Seedream、通义 / 万相 / qwen-image、CogView | 中文 | 直接用中文写，作品名、成语、地名这类中文语境不要翻译；同样按主体 → 构图 → 风格 → 光线写清 |
+| 其他（Grok、Flux 等） | 英文 | 按上面的顺序写成一段，每项写具体，不堆形容词；排除项一句 no text, no watermark |
+
+对比时几个模型家族不同：各写一份（同一个意思），分别存成 `<图名>-<模型短名>.prompt.txt`。
 
 科研无字插画 / `schematic-forge` 主视觉底图的写法示例：
 
@@ -140,7 +143,7 @@ Windows PowerShell：`& $env:MESA_IMAGE_TOOL image --prompt "…" --out figures/
 "$MESA_IMAGE_TOOL" image --image 原图.jpg --prompt "Keep everything else the same, change the straw hat to a blue baseball cap" --out figures/cover-v2.png
 ```
 
-- 描述只写要改的地方，并写明其余保持不变；用户说中文时照样可以翻成英文描述。
+- 描述只写要改的地方，并写明其余保持不变；用哪种语言照「描述怎么写」按模型家族来（中文模型直接写中文）。
 - 「去背景」「擦掉某处」「换画幅」也走这条：分别写成 remove the background / remove the … / extend to 16:9 等。要真正透明的底，用 gpt-image 系加 `--transparent`。
 - 新图另存一个名字（`-v2`、`-blue-cap`），不覆盖原图；`--image` 最多 4 张（比如「把这两张合成一张」）。
 - 改完同样走「画完自检」，额外核对没要改的地方确实没变：原图和新图各缩小一份，两张都打开对照着看（只看新图看不出哪里变了），交付时说清对照看到的——要加的加在了哪、其余哪些部分和原图一致、哪里有出入。
