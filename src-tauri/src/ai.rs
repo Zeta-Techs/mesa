@@ -1762,6 +1762,357 @@ pub(crate) fn ai_inspect_readonly(
     result
 }
 
+/// 项目助手「真 Agent 模式」不支持该 CLI 时返回的标记前缀（调用方自动切到同源 Rust 精简上下文回落模式）
+pub(crate) const ASSISTANT_AGENT_UNSUPPORTED: &str = "ASSISTANT_AGENT_UNSUPPORTED";
+
+pub(crate) struct AssistantAgentReq {
+    pub profiles: Vec<Profile>,
+    pub profile_id: Option<String>,
+    pub model: Option<String>,
+    pub project_root: std::path::PathBuf,
+    pub extra_dirs: Vec<String>,
+    pub system_prompt: String,
+    pub user_prompt: String,
+    pub resume_session_id: Option<String>,
+    pub helper_path: std::path::PathBuf,
+    pub proposals_path: std::path::PathBuf,
+    pub images: Vec<String>,
+}
+
+pub(crate) struct AssistantAgentRes {
+    pub text: String,
+    pub session_id: Option<String>,
+    pub agent: String,
+    pub profile_id: String,
+    pub model: Option<String>,
+    pub cost_usd: Option<f64>,
+}
+
+struct TempConfigGuard(std::path::PathBuf);
+impl Drop for TempConfigGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn write_assistant_mcp_config(
+    helper: &std::path::Path,
+    project_root: &std::path::Path,
+    proposals_path: &std::path::Path,
+) -> Result<TempConfigGuard, String> {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("mesa-assistant-mcp-{}.json", uuid::Uuid::new_v4()));
+    let cfg = serde_json::json!({
+        "mcpServers": {
+            "mesa": {
+                "command": helper.to_string_lossy(),
+                "args": [
+                    "assistant-mcp",
+                    "--project",
+                    project_root.to_string_lossy(),
+                    "--proposals",
+                    proposals_path.to_string_lossy()
+                ]
+            }
+        }
+    });
+    let bytes = serde_json::to_vec(&cfg).map_err(|e| e.to_string())?;
+    crate::storage::atomic_write(&path, &bytes, true)?;
+    Ok(TempConfigGuard(path))
+}
+
+/// 组装第一档项目助手持久只读 Agent 参数（Claude Code / Codex；其余 CLI 返回 None 走同源回落）
+pub(crate) fn assistant_agent_args(
+    agent: &str,
+    plan_args: &[String],
+    system_prompt: &str,
+    user_prompt: &str,
+    resume_session_id: Option<&str>,
+    new_session_id: Option<&str>,
+    mcp_config_path: Option<&std::path::Path>,
+    helper_path: &std::path::Path,
+    project_root: &std::path::Path,
+    proposals_path: &std::path::Path,
+    extra_dirs: &[String],
+    images: &[String],
+) -> Option<Vec<String>> {
+    match agent {
+        "claude-code" => {
+            let mcp_path = mcp_config_path?;
+            let mut out = plan_args.to_vec();
+            out.extend([
+                "-p".to_string(),
+                user_prompt.to_string(),
+                "--output-format".into(),
+                "stream-json".into(),
+                "--verbose".into(),
+                "--include-partial-messages".into(),
+                "--permission-mode".into(),
+                "default".into(),
+                "--tools".into(),
+                CLAUDE_INSPECT_TOOLS.into(),
+                "--strict-mcp-config".into(),
+                "--mcp-config".into(),
+                mcp_path.to_string_lossy().into_owned(),
+                "--allowedTools".into(),
+                format!("{CLAUDE_INSPECT_TOOLS},mcp__mesa__*"),
+                "--append-system-prompt".into(),
+                system_prompt.to_string(),
+            ]);
+            if let Some(sid) = resume_session_id {
+                out.extend(["--resume".into(), sid.to_string()]);
+            } else if let Some(sid) = new_session_id {
+                out.extend(["--session-id".into(), sid.to_string()]);
+            }
+            for d in extra_dirs {
+                out.push("--add-dir".into());
+                out.push(d.clone());
+            }
+            Some(out)
+        }
+        "codex" => {
+            let helper_str = serde_json::to_string(&helper_path.to_string_lossy().into_owned()).ok()?;
+            let mcp_args_vec = vec![
+                "assistant-mcp".to_string(),
+                "--project".into(),
+                project_root.to_string_lossy().into_owned(),
+                "--proposals".into(),
+                proposals_path.to_string_lossy().into_owned(),
+            ];
+            let mcp_args_toml = serde_json::to_string(&mcp_args_vec).ok()?;
+            let mut out = Vec::new();
+            if let Some(sid) = resume_session_id {
+                out.extend(["exec".to_string(), "resume".into(), "--skip-git-repo-check".into()]);
+                out.extend(strip_sandbox_args(plan_args));
+                out.extend([
+                    "--json".into(),
+                    "-c".into(),
+                    r#"sandbox_mode="read-only""#.into(),
+                    "-c".into(),
+                    r#"approval_policy="never""#.into(),
+                    "-c".into(),
+                    format!("mcp_servers.mesa.command={helper_str}"),
+                    "-c".into(),
+                    format!("mcp_servers.mesa.args={mcp_args_toml}"),
+                ]);
+                for img in images {
+                    out.push("-i".into());
+                    out.push(img.clone());
+                }
+                out.push(sid.to_string());
+                out.push(user_prompt.to_string());
+            } else {
+                out.extend(["exec".to_string(), "--skip-git-repo-check".into()]);
+                out.extend(strip_sandbox_args(plan_args));
+                out.extend([
+                    "--json".into(),
+                    "-s".into(),
+                    "read-only".into(),
+                    "-c".into(),
+                    r#"approval_policy="never""#.into(),
+                    "-c".into(),
+                    format!("mcp_servers.mesa.command={helper_str}"),
+                    "-c".into(),
+                    format!("mcp_servers.mesa.args={mcp_args_toml}"),
+                ]);
+                for img in images {
+                    out.push("-i".into());
+                    out.push(img.clone());
+                }
+                out.push(format!("{system_prompt}\n\n---\n用户问题：\n{user_prompt}"));
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// 项目助手第一档持久只读 Agent 调用（Claude Code / Codex）：
+/// 挂接临时 0600 `mesa_helper assistant-mcp`（不污染用户任何 CLI 配置），进程级只读，会话落盘并立刻标 `internal` 以便多轮续接。
+pub(crate) fn ai_assistant_agent(
+    req: AssistantAgentReq,
+    on_line: Option<&mut dyn FnMut(&str)>,
+) -> Result<AssistantAgentRes, String> {
+    if !req.project_root.is_dir() {
+        return Err("项目文件夹不在了".into());
+    }
+    let settings = crate::settings::read_current_checked()?;
+    let fn_profile = settings
+        .ai_profiles
+        .as_ref()
+        .and_then(|m| m.get("project-assistant").cloned());
+    let profile = resolve_profile_from(
+        req.profiles,
+        req.profile_id.clone().filter(|v| !v.trim().is_empty()),
+        fn_profile,
+        settings.ai_profile_id.clone(),
+        &settings.hidden_profiles.unwrap_or_default().into_iter().collect(),
+    )?;
+    if !matches!(profile.agent.as_str(), "claude-code" | "codex") {
+        return Err(format!("{ASSISTANT_AGENT_UNSUPPORTED}: {}", profile.agent));
+    }
+    let mut dirs: Vec<String> = req
+        .extra_dirs
+        .iter()
+        .filter(|d| std::path::Path::new(d.as_str()).is_dir())
+        .take(8)
+        .cloned()
+        .collect();
+    for img in &req.images {
+        if let Some(parent) = std::path::Path::new(img)
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+        {
+            if !dirs.contains(&parent) {
+                dirs.push(parent);
+            }
+        }
+    }
+    let user_prompt = format!("{}{}", image_prompt_note(&profile.agent, &req.images), req.user_prompt);
+    let binary = agents::binary_for(&profile.agent)
+        .ok_or_else(|| format!("profile 所属 agent 不支持无头调用: {}", profile.agent))?;
+    let binary_path = agents::resolve_binary(binary)
+        .ok_or_else(|| format!("未找到 {binary}（PATH 与常见安装目录均无）"))?;
+    let key = profiles::get_key_for_profile(&profile)?;
+    agents::ensure_launch_credentials(&profile, key.as_deref())?;
+    let mut profile = profile;
+    let selected = pick_listed_model(&profile.models, req.model.as_deref());
+    crate::combo::apply_to_profile(&mut profile, selected.as_deref());
+    agents::validate_launch_compatibility(&profile, selected.as_deref())?;
+    let mut plan = agents::launch_plan(&profile, key, selected.as_deref())?;
+    plan.args
+        .extend(agents::codex_headless_catalog_args(&profile, selected.as_deref())?);
+
+    let mcp_guard = if profile.agent == "claude-code" {
+        Some(write_assistant_mcp_config(
+            &req.helper_path,
+            &req.project_root,
+            &req.proposals_path,
+        )?)
+    } else {
+        None
+    };
+
+    let new_sid = if profile.agent == "claude-code" && req.resume_session_id.is_none() {
+        let sid = uuid::Uuid::new_v4().to_string();
+        let _ = crate::sessions::mark_session_internal(&profile.agent, &sid);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            &sid,
+            &profile.id,
+            selected.as_deref().map(|m| (m, "")),
+        );
+        Some(sid)
+    } else {
+        None
+    };
+
+    let Some(full_args) = assistant_agent_args(
+        &profile.agent,
+        &plan.args,
+        &req.system_prompt,
+        &user_prompt,
+        req.resume_session_id.as_deref(),
+        new_sid.as_deref(),
+        mcp_guard.as_ref().map(|g| g.0.as_path()),
+        &req.helper_path,
+        &req.project_root,
+        &req.proposals_path,
+        &dirs,
+        &req.images,
+    ) else {
+        return Err(format!("{ASSISTANT_AGENT_UNSUPPORTED}: {}", profile.agent));
+    };
+
+    let mut cmd = crate::process::background_command(&binary_path);
+    for a in full_args {
+        cmd.arg(a);
+    }
+    for (k, v) in &plan.env {
+        cmd.env(k, v);
+    }
+    for k in &plan.env_remove {
+        cmd.env_remove(k);
+    }
+    for (k, v) in crate::mcp::spawn_env_secrets() {
+        cmd.env(k, v);
+    }
+    cmd.current_dir(&req.project_root);
+
+    let host = endpoint_host(profile.base_url.as_deref());
+    let root_text = req.project_root.to_string_lossy().into_owned();
+    let run = crate::runs::open_headless_with_root(
+        Some(&root_text),
+        &profile.agent,
+        &profile.id,
+        &root_text,
+        "headless:ai-prompt:project-assistant-agent",
+        false,
+        "discuss",
+    )?;
+    if let Err(error) = crate::runs::claim_start(&run.id).and_then(|_| crate::runs::mark_started(&run.id)) {
+        let _ = crate::runs::close_run_with_result(&run.id, None, "failed", None, Some("项目助手 Agent Run 登记失败"));
+        return Err(error);
+    }
+    notify_run_started(&run.id);
+    let streaming = on_line.is_some();
+    let mut on_line = on_line;
+    let mut pending: Vec<u8> = Vec::new();
+    let mut feed = |bytes: &[u8]| {
+        if let Some(cb) = on_line.as_mut() {
+            feed_lines(&mut pending, bytes, *cb);
+        }
+    };
+    let mut captured_sid: Option<String> = None;
+    let raw_result = run_capture_with(
+        Some(&profile.agent),
+        host.as_deref(),
+        &mut cmd,
+        if streaming { WATCHED_CAP } else { INSPECT_TIMEOUT },
+        streaming.then_some(INSPECT_TIMEOUT),
+        Some(&run.id),
+        &mut captured_sid,
+        Some(&mut feed),
+    );
+    drop(mcp_guard);
+
+    let final_sid = new_sid.or(captured_sid).or(req.resume_session_id);
+    if let Some(ref sid) = final_sid {
+        let _ = crate::sessions::mark_session_internal(&profile.agent, sid);
+        let _ = crate::sessions::set_session_profile(
+            &profile.agent,
+            sid,
+            &profile.id,
+            selected.as_deref().map(|m| (m, "")),
+        );
+    }
+
+    let mut cost_usd: Option<f64> = None;
+    let result = raw_result.and_then(|raw| {
+        let today = crate::usage::today_local();
+        let (text, events) = parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &today)?;
+        cost_usd = crate::usage::events_cost_usd(&events);
+        Ok(text)
+    });
+    let status = if result.is_ok() { "completed" } else { "failed" };
+    let _ = crate::runs::close_run_with_result(
+        &run.id,
+        None,
+        status,
+        None,
+        result.is_err().then_some("项目助手 Agent 调用失败"),
+    );
+    let text = result?;
+    Ok(AssistantAgentRes {
+        text,
+        session_id: final_sid,
+        agent: profile.agent,
+        profile_id: profile.id,
+        model: selected,
+        cost_usd,
+    })
+}
+
 /// 定时任务执行段（scheduler 用）：与 ai_prompt_impl 同一注入链路，但 cwd 是传入的
 /// 项目目录——不建/删临时目录，也不登记 usage_provenance.internal（那会把该 Agent
 /// 在此项目的交互会话一并标成内部）。会话按 session id 标 internal，不进本项目会话。

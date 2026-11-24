@@ -1234,6 +1234,8 @@ pub struct AssistantBriefStepDto {
     pub name: String,
     pub state: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merged_at: Option<String>,
@@ -1289,6 +1291,7 @@ pub async fn assistant_project_brief(
                 n: s.n,
                 name: s.name,
                 state: s.brief_state,
+                worktree_path: s.worktree_path,
                 failure: s.failure,
                 merged_at: s.merged_at,
                 needs_human: s.checks_needs_human,

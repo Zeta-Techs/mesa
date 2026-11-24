@@ -19,6 +19,7 @@ use std::sync::{Mutex, OnceLock};
 const DIR: &str = "project-assistant";
 const ERRORS_FILE: &str = "mesa-errors.jsonl";
 const LOG_FILE: &str = "assistant.jsonl";
+const SESSION_FILE: &str = "session.json";
 /// 出错记录只留 30 天、最多 500 条；同一处错 10 分钟内再犯只加次数
 const ERRORS_KEEP_DAYS: i64 = 30;
 const ERRORS_CAP: usize = 500;
@@ -79,6 +80,9 @@ pub struct AssistantTurnDto {
     /// 派活回音（2026-11-05）：这一条是项目助手为哪一轮派出去的活补的进展（那一轮的 at）；问题为空
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub echo_of: Option<String>,
+    /// 真 Agent 模式下通过 MCP 提议工具生成的结构化卡片（派活单 / 补料单 / 记忆 / 跳转按钮 / 引用的说明书小节）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposals: Option<crate::assistant_mcp::AssistantProposalsDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -354,10 +358,14 @@ fn clear_log_sync(project_root: &str, keep_dispatches: bool, now: chrono::DateTi
                 .into_iter()
                 .filter(|r| open_ats.contains(&r.at) || r.echo_of.as_ref().is_some_and(|t| open_ats.contains(t)))
                 .collect();
+            // 清空对话记录时同时重置持久 Agent 会话，下一次提问开全新会话
+            let _ = fs::remove_file(dir.join(SESSION_FILE));
             if !kept.is_empty() {
                 write_jsonl(&path, &kept)?;
                 return Ok(kept.len());
             }
+        } else {
+            let _ = fs::remove_file(dir.join(SESSION_FILE));
         }
         match fs::remove_file(&path) {
             Ok(()) => Ok(0),
@@ -412,6 +420,7 @@ pub async fn assistant_log_append(project_root: String, question: String, answer
             cost_usd: None,
             dispatched: None,
             echo_of: None,
+            proposals: None,
         };
         append_turn(&project_root, turn.clone())?;
         Ok(turn)
@@ -507,6 +516,7 @@ fn echo_sync(project_root: &str, turn_at: &str, state: &str, text: &str) -> Resu
             cost_usd: None,
             dispatched: None,
             echo_of: Some(turn_at.to_string()),
+            proposals: None,
         });
         if let Some(e) = &echo {
             rows.push(e.clone());
@@ -794,8 +804,512 @@ pub async fn project_assistant_ask(
             cost_usd: cost,
             dispatched: None,
             echo_of: None,
+            proposals: None,
         };
         // 记不下不挡回答：这次照样给人看
+        let _ = append_turn(&project_root, turn.clone());
+        Ok(turn)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantSessionState {
+    session_id: String,
+    agent: String,
+    profile_id: String,
+    model: Option<String>,
+    updated_at: String,
+}
+
+fn load_matching_session(
+    project_root: &str,
+    agent: &str,
+    profile_id: &str,
+    model: Option<&str>,
+) -> Option<String> {
+    let path = project_dir(project_root).ok()?.join(SESSION_FILE);
+    let raw = fs::read_to_string(path).ok()?;
+    let st: AssistantSessionState = serde_json::from_str(&raw).ok()?;
+    if st.agent == agent
+        && st.profile_id == profile_id
+        && st.model.as_deref() == model
+        && !st.session_id.trim().is_empty()
+    {
+        Some(st.session_id)
+    } else {
+        None
+    }
+}
+
+fn save_session_state(
+    project_root: &str,
+    session_id: &str,
+    agent: &str,
+    profile_id: &str,
+    model: Option<&str>,
+) {
+    let Ok(dir) = project_dir(project_root) else {
+        return;
+    };
+    let _ = fs::create_dir_all(&dir);
+    let st = AssistantSessionState {
+        session_id: session_id.to_string(),
+        agent: agent.to_string(),
+        profile_id: profile_id.to_string(),
+        model: model.map(str::to_string),
+        updated_at: now_fixed().to_rfc3339(),
+    };
+    if let Ok(bytes) = serde_json::to_vec(&st) {
+        let _ = crate::storage::atomic_write(&dir.join(SESSION_FILE), &bytes, true);
+    }
+}
+
+fn clear_session_state(project_root: &str) {
+    if let Ok(dir) = project_dir(project_root) {
+        let _ = fs::remove_file(dir.join(SESSION_FILE));
+    }
+}
+
+fn collect_active_extra_dirs(project_root: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let workspaces = crate::workspaces::list_workspaces_sync().unwrap_or_default();
+    for w in workspaces {
+        if w.status != "archived"
+            && crate::paths::same_path(&w.repo_path, project_root)
+            && Path::new(&w.worktree_path).is_dir()
+            && !out.iter().any(|p: &String| crate::paths::same_path(p, &w.worktree_path))
+        {
+            out.push(w.worktree_path);
+        }
+    }
+    let work_mode = crate::workspaces::db()
+        .ok()
+        .and_then(|c| crate::projects::list_projects_in(&c).ok())
+        .and_then(|list| list.into_iter().find(|p| crate::paths::same_path(&p.path, project_root)))
+        .map(|p| p.work_mode)
+        .unwrap_or_else(|| "research".into());
+    let tasks = crate::runs::task_list_sync(Some(project_root.to_string()), Some(false)).unwrap_or_default();
+    let runs = crate::runs::run_list_sync(Some(project_root.to_string())).unwrap_or_default();
+    for t in tasks {
+        if !crate::assistant_state::is_declared_goal(&t, &work_mode) || t.workspace_cleared {
+            continue;
+        }
+        if !matches!(t.status.as_str(), "running" | "pending_review" | "failed" | "stopped") {
+            continue;
+        }
+        if let Some(hit) = runs
+            .iter()
+            .filter(|r| {
+                !r.internal
+                    && r.task_id == t.id
+                    && !r.isolation_path.is_empty()
+                    && !crate::paths::same_path(&r.isolation_path, project_root)
+            })
+            .max_by(|a, b| a.created_at.cmp(&b.created_at))
+        {
+            if Path::new(&hit.isolation_path).is_dir()
+                && !out.iter().any(|p| crate::paths::same_path(p, &hit.isolation_path))
+            {
+                out.push(hit.isolation_path.clone());
+            }
+        }
+    }
+    out
+}
+
+fn assistant_agent_system_prompt(project_name: &str, project_root: &str) -> String {
+    format!(
+        "你是 Mesa 科研/编程工作台的「项目助手」，服务于当前项目「{project_name}」（目录：{project_root}）。\n\
+你是严格只读的项目总管：拥有 Mesa 只读/提议 MCP 工具（mcp__mesa__*）和只读读文件工具，绝不能直接修改项目文件、运行命令或擅自执行操作。\n\
+工作原则：\n\
+1. 回答任何关于项目进度、步骤状态、目标、人工请求、完结产物、定时任务的问题前，先调用 `project_overview` 获取最新权威事实；不要凭记忆猜进度。\n\
+2. 追问某一步的具体核验、任务简报、人工事项或评审意见时，调用 `step_detail`；排查错误时调用 `recent_errors`；需要看项目文件列表或具体内容时用 `list_files` 与只读 `Read`/`Grep`/`Glob`；查 Mesa 功能用法时调用 `search_guide` / `read_guide`；查长期规矩时调用 `project_knowledge`；寒暄直接简短回复，不必调工具。\n\
+3. 真要动手改文件、写报告、画图、返修、补产物时，调用 `propose_work_order` 起草派活单（回头补/改前面步骤调用 `propose_rework`）；用户说出长期规矩时调用 `propose_memory`；需要带用户跳去某页或某步时调用 `suggest_actions`。这些工具只生成待用户点击确认的卡片，严禁在回答里声称自己已经派出、启动、修改或保存了任何东西。\n\
+4. 回答用简洁克制的中文，第一句直接给核心结论，再展开关键依据与下一步；读了具体文件时标清相对路径与位置；不编造数据、文献或结论。"
+    )
+}
+
+fn looks_like_session_expired(err: &str) -> bool {
+    let low = err.to_lowercase();
+    low.contains("session")
+        && (low.contains("not found")
+            || low.contains("no conversation")
+            || low.contains("expired")
+            || low.contains("invalid")
+            || low.contains("unknown")
+            || low.contains("does not exist"))
+}
+
+fn build_tier2_prompt(
+    project_root: &str,
+    question: &str,
+    where_label: Option<&str>,
+    focus_title: Option<&str>,
+    focus_detail: Option<&str>,
+) -> (String, Vec<String>) {
+    let ctx = crate::assistant_state::render_compact_context(project_root)
+        .unwrap_or_else(|_| format!("项目目录：{project_root}"));
+    let guide_hits = guide_search(question, 3);
+    let guide_headings: Vec<String> = guide_hits.iter().map(|g| g.heading.clone()).collect();
+    let history = assistant_log_read_sync(project_root).unwrap_or_default();
+    let recent: Vec<String> = history
+        .into_iter()
+        .filter(|t| t.echo_of.is_none())
+        .rev()
+        .take(6)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|t| format!("用户：{}\n助手：{}", truncate(&t.question, 300), truncate(&t.answer, 600)))
+        .collect();
+    let mut parts = vec![
+        "你是 Mesa 的只读项目助手：只解释、分析与起草建议，绝不声称自己已修改文件或已派活。用简洁中文回答，第一句先给结论。\n\
+如需起草待用户确认的派活单，可在回答末尾附（标「可省」的没有就不写）：\n\
+:::派活\n交给：新目标（或 第N步）\n标题：简短标题\n要做：具体要求\n依据材料：相对路径（可省）\n交付物：产出路径（可省）\n怎样算做完：验收标准\n:::\n\
+如需记长期规矩，可附：\n:::记下\n一句以后每步都照办的规矩\n:::\n\
+如需退回前面步骤补料/返修，可附：\n:::补料\n退回到：第N步\n要补：一行一条待补/待改项\n为什么：原因\n:::\n\
+如需给页面跳转按钮，可附 [[项目页]] / [[Agent分工]] / [[连接页]] / [[设置]] / [[看这一步:N]] / [[去评审:N]] / [[商量|问题]] / [[研讨|问题]] / [[报告|标题]]（最多 3 个）。"
+            .to_string(),
+        ctx,
+    ];
+    if !guide_hits.is_empty() {
+        let mut g_lines = vec!["## 参考说明书节选（按需引用，勿编造）".to_string()];
+        for g in &guide_hits {
+            g_lines.push(format!("### {}\n{}", g.heading, truncate(&g.text, 900)));
+        }
+        parts.push(g_lines.join("\n\n"));
+    }
+    if let Some(w) = where_label.filter(|s| !s.trim().is_empty()) {
+        parts.push(format!("## 用户提问时正在看\n{w}"));
+    }
+    if let Some(ft) = focus_title.filter(|s| !s.trim().is_empty()) {
+        let fd = focus_detail.unwrap_or("").trim();
+        parts.push(if fd.is_empty() {
+            format!("## 这次重点问的\n{ft}")
+        } else {
+            format!("## 这次重点问的\n{ft}\n{fd}")
+        });
+    }
+    if !recent.is_empty() {
+        parts.push(format!("## 最近几轮问答\n{}", recent.join("\n\n")));
+    }
+    parts.push(format!("## 用户本次提问\n{question}"));
+    (parts.join("\n\n"), guide_headings)
+}
+
+/// 真 Agent 架构统一问答入口（2026-11-24）：
+/// - 第一档（Claude Code / Codex 且找到随包 `mesa_helper assistant-mcp`）：持久只读 Agent 会话 + 按需 MCP 工具 + 结构化提议卡；
+/// - 第二档（其余 CLI）：直连 Rust 唯一真源 `assistant_state::render_compact_context` 单轮回落，告别前端 17 路拼装快照。
+#[tauri::command]
+pub async fn project_assistant_chat(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, crate::profiles::ProfileStore>,
+    project_root: String,
+    profile_id: Option<String>,
+    model: Option<String>,
+    connection: Option<String>,
+    question: String,
+    where_label: Option<String>,
+    focus_title: Option<String>,
+    focus_detail: Option<String>,
+    stream_id: Option<String>,
+    images: Option<Vec<String>>,
+    force_readonly: Option<bool>,
+) -> Result<AssistantTurnDto, String> {
+    let profiles = store.list()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let question = question.trim().to_string();
+        if question.is_empty() {
+            return Err("先写要问什么".into());
+        }
+        let root_text = crate::sessions::expand_tilde(&project_root);
+        let root_path = PathBuf::from(&root_text);
+        if !root_path.is_dir() {
+            return Err("项目文件夹不在了".into());
+        }
+        let model = model.filter(|m| !m.trim().is_empty());
+        let asked = images.unwrap_or_default();
+        let images: Vec<String> = asked
+            .iter()
+            .filter(|p| crate::clipboard::is_pasted_image(std::path::Path::new(p.as_str())))
+            .take(MAX_IMAGES)
+            .cloned()
+            .collect();
+        if !asked.is_empty() && images.is_empty() {
+            return Err("附的截图找不到了（粘贴的图存 7 天），重新粘贴一次再问".into());
+        }
+
+        let valid_stream_id = stream_id
+            .filter(|id| !id.is_empty() && id.len() <= 80 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        if let Some(id) = &valid_stream_id {
+            active_streams()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id.clone(), ActiveStream::Pending);
+        }
+        let _stream_guard = StreamGuard(valid_stream_id.clone());
+        let mut stream = valid_stream_id
+            .as_ref()
+            .map(|id| (format!("assistant-stream-{id}"), StreamState::new(root_text.clone())));
+        let mut on_line = |line: &str| {
+            use tauri::Emitter;
+            if let Some((event, state)) = stream.as_mut() {
+                if let Some(update) = state.handle_line(line) {
+                    let _ = app.emit(event, update);
+                }
+            }
+        };
+        let hook_id = valid_stream_id.clone();
+        let hook: Box<dyn Fn(&str)> = Box::new(move |run_id: &str| {
+            let Some(id) = &hook_id else { return };
+            let should_cancel = {
+                let mut map = active_streams().lock().unwrap_or_else(|e| e.into_inner());
+                match map.get(id) {
+                    Some(ActiveStream::Cancelled) => true,
+                    Some(_) => {
+                        map.insert(id.clone(), ActiveStream::Running(run_id.to_string()));
+                        false
+                    }
+                    None => false,
+                }
+            };
+            if should_cancel {
+                let _ = crate::process::cancel_capture(run_id);
+            }
+        });
+
+        let settings = crate::settings::read_current_checked().ok();
+        let fn_profile = settings
+            .as_ref()
+            .and_then(|s| s.ai_profiles.as_ref())
+            .and_then(|m| m.get("project-assistant").cloned());
+        let resolved_profile = crate::ai::resolve_profile_from(
+            profiles.clone(),
+            profile_id.clone().filter(|v| !v.trim().is_empty()),
+            fn_profile,
+            settings.as_ref().and_then(|s| s.ai_profile_id.clone()),
+            &settings
+                .as_ref()
+                .and_then(|s| s.hidden_profiles.clone())
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        )
+        .ok();
+
+        let helper = crate::image_gen::find_bundled_helper("assistant-mcp");
+        let use_tier1 = helper.is_some()
+            && resolved_profile
+                .as_ref()
+                .is_some_and(|p| matches!(p.agent.as_str(), "claude-code" | "codex"));
+
+        let project_name = crate::workspaces::db()
+            .ok()
+            .and_then(|c| crate::projects::list_projects_in(&c).ok())
+            .and_then(|list| list.into_iter().find(|p| crate::paths::same_path(&p.path, &root_text)))
+            .map(|p| p.name)
+            .unwrap_or_else(|| {
+                root_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| root_text.clone())
+            });
+
+        let (raw_answer, cost, proposals, basis) = if use_tier1 {
+            let helper_path = helper.unwrap();
+            let p_info = resolved_profile.as_ref().unwrap();
+            let selected_model = crate::ai::pick_listed_model(&p_info.models, model.as_deref());
+            let dir = project_dir(&root_text)?;
+            let _ = fs::create_dir_all(&dir);
+            let proposals_path = dir.join(format!("turn-{}.proposals.json", uuid::Uuid::new_v4()));
+            let extra_dirs = collect_active_extra_dirs(&root_text);
+            let system_prompt = assistant_agent_system_prompt(&project_name, &root_text);
+            let mut user_msg_parts = Vec::new();
+            if let Some(w) = where_label.as_deref().filter(|s| !s.trim().is_empty()) {
+                user_msg_parts.push(format!("[当前页面：{w}]"));
+            }
+            if let Some(ft) = focus_title.as_deref().filter(|s| !s.trim().is_empty()) {
+                let fd = focus_detail.as_deref().unwrap_or("").trim();
+                user_msg_parts.push(if fd.is_empty() {
+                    format!("[重点：{ft}]")
+                } else {
+                    format!("[重点：{ft}]\n{fd}")
+                });
+            }
+            user_msg_parts.push(crate::sessions::redact_sensitive_text(&question));
+            let user_prompt = user_msg_parts.join("\n\n");
+
+            let resume_sid = load_matching_session(
+                &root_text,
+                &p_info.agent,
+                &p_info.id,
+                selected_model.as_deref(),
+            );
+            let make_req = |resume: Option<String>| crate::ai::AssistantAgentReq {
+                profiles: profiles.clone(),
+                profile_id: profile_id.clone(),
+                model: model.clone(),
+                project_root: root_path.clone(),
+                extra_dirs: extra_dirs.clone(),
+                system_prompt: system_prompt.clone(),
+                user_prompt: user_prompt.clone(),
+                resume_session_id: resume,
+                helper_path: helper_path.clone(),
+                proposals_path: proposals_path.clone(),
+                images: images.clone(),
+            };
+
+            let res = crate::ai::with_run_hook(hook, || {
+                let first = crate::ai::ai_assistant_agent(make_req(resume_sid.clone()), Some(&mut on_line));
+                match first {
+                    Err(ref e) if resume_sid.is_some() && looks_like_session_expired(e) => {
+                        clear_session_state(&root_text);
+                        let _ = fs::remove_file(&proposals_path);
+                        crate::ai::ai_assistant_agent(make_req(None), Some(&mut on_line))
+                    }
+                    other => other,
+                }
+            });
+            if valid_stream_id.as_ref().is_some_and(|id| {
+                matches!(
+                    active_streams().lock().unwrap_or_else(|e| e.into_inner()).get(id),
+                    Some(ActiveStream::Cancelled)
+                )
+            }) {
+                let _ = fs::remove_file(&proposals_path);
+                return Err(ASSISTANT_CANCELLED.into());
+            }
+            let agent_res = res.inspect_err(|_| {
+                let _ = fs::remove_file(&proposals_path);
+            })?;
+            if let Some(ref sid) = agent_res.session_id {
+                save_session_state(
+                    &root_text,
+                    sid,
+                    &agent_res.agent,
+                    &agent_res.profile_id,
+                    agent_res.model.as_deref(),
+                );
+            }
+            let parsed_proposals: Option<crate::assistant_mcp::AssistantProposalsDto> =
+                fs::read_to_string(&proposals_path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .filter(|p: &crate::assistant_mcp::AssistantProposalsDto| !p.is_empty());
+            let _ = fs::remove_file(&proposals_path);
+            let guide_basis = parsed_proposals
+                .as_ref()
+                .filter(|p| !p.guide_headings.is_empty())
+                .map(|p| {
+                    format!(
+                        "说明书{}",
+                        p.guide_headings
+                            .iter()
+                            .map(|h| format!("「{h}」"))
+                            .collect::<String>()
+                    )
+                });
+            let basis = match guide_basis {
+                Some(g) => format!("{g} · 项目助手 Agent（只读 + Mesa 工具）"),
+                None => "项目助手 Agent（只读 + Mesa 工具）".to_string(),
+            };
+            (agent_res.text, agent_res.cost_usd, parsed_proposals, basis)
+        } else {
+            // 第二档：非 Claude Code / Codex 或未找到 helper 时，直接由 Rust 唯一真源渲染精简上下文
+            let (raw_prompt, tier2_guides) = build_tier2_prompt(
+                &root_text,
+                &question,
+                where_label.as_deref(),
+                focus_title.as_deref(),
+                focus_detail.as_deref(),
+            );
+            let prompt = crate::sessions::redact_sensitive_text(&raw_prompt);
+            let mut cost: Option<f64> = None;
+            let extra_dirs = collect_active_extra_dirs(&root_text);
+            let call_res = crate::ai::with_run_hook(hook, || {
+                if force_readonly.unwrap_or(false) || !images.is_empty() {
+                    crate::ai::ai_inspect_readonly(
+                        profiles,
+                        profile_id,
+                        model,
+                        &root_path,
+                        &extra_dirs,
+                        prompt,
+                        None,
+                        Some(&mut on_line),
+                        Some(&mut cost),
+                        &images,
+                    )
+                    .map_err(|e| {
+                        if !images.is_empty() && e.starts_with(crate::ai::INSPECT_UNSUPPORTED) {
+                            "看截图要项目助手用 Claude Code、Codex、Kimi Code 或 Grok Build 的连接：到项目「Agent 分工 → 专属绑定 → 项目助手」换一条，或者把截图里的字打出来再问".to_string()
+                        } else {
+                            e
+                        }
+                    })
+                } else {
+                    crate::ai::ai_prompt_impl_full(
+                        profiles,
+                        profile_id,
+                        model,
+                        Some("project-assistant"),
+                        prompt,
+                        None,
+                        Some(&mut on_line),
+                        Some(&mut cost),
+                    )
+                }
+            });
+            if valid_stream_id.as_ref().is_some_and(|id| {
+                matches!(
+                    active_streams().lock().unwrap_or_else(|e| e.into_inner()).get(id),
+                    Some(ActiveStream::Cancelled)
+                )
+            }) {
+                return Err(ASSISTANT_CANCELLED.into());
+            }
+            let raw = call_res?;
+            let core_basis = if force_readonly.unwrap_or(false) || !images.is_empty() {
+                "这个项目的记录与文件（只读查看）"
+            } else {
+                "这个项目的记录"
+            };
+            let basis = if tier2_guides.is_empty() {
+                core_basis.to_string()
+            } else {
+                format!(
+                    "说明书{} · {core_basis}",
+                    tier2_guides.iter().map(|h| format!("「{h}」")).collect::<String>()
+                )
+            };
+            (raw, cost, None, basis)
+        };
+
+        let answer = truncate(crate::sessions::redact_sensitive_text(raw_answer.trim()).as_str(), ANSWER_CAP);
+        if answer.is_empty() {
+            return Err("AI 没有回答，换个说法再问一次".into());
+        }
+        let turn = AssistantTurnDto {
+            at: now_fixed().to_rfc3339(),
+            question: truncate(
+                &crate::sessions::redact_sensitive_text(&if images.is_empty() {
+                    question
+                } else {
+                    format!("{question}（附图 {} 张）", images.len())
+                }),
+                FIELD_CAP,
+            ),
+            answer,
+            connection: connection.unwrap_or_default().chars().take(200).collect(),
+            basis,
+            cost_usd: cost,
+            dispatched: None,
+            echo_of: None,
+            proposals,
+        };
         let _ = append_turn(&project_root, turn.clone());
         Ok(turn)
     })
@@ -863,7 +1377,30 @@ impl StreamState {
             "Bash" | "run_terminal_command" | "run_command" => {
                 self.command_step(&pick(&["command", "CommandLine"]))
             }
-            other => format!("用 {other}"),
+            other => {
+                let norm = other
+                    .strip_prefix("mcp__mesa__")
+                    .or_else(|| other.strip_prefix("mcp_mesa_"))
+                    .or_else(|| other.strip_prefix("mesa."))
+                    .unwrap_or(other);
+                match norm {
+                    "project_overview" => "查看项目总览".to_string(),
+                    "step_detail" => match input.get("step").and_then(|v| v.as_u64()) {
+                        Some(n) => format!("查看第 {n} 步详情"),
+                        None => "查看步骤详情".to_string(),
+                    },
+                    "list_files" => "列项目文件".to_string(),
+                    "recent_errors" => "排查近期报错".to_string(),
+                    "project_knowledge" => "查看项目知识".to_string(),
+                    "recent_consults" => "查看多模型研讨".to_string(),
+                    "search_guide" | "read_guide" => "查阅 Mesa 说明书".to_string(),
+                    "propose_work_order" => "起草派活单".to_string(),
+                    "propose_rework" => "起草补料单".to_string(),
+                    "propose_memory" => "整理项目知识".to_string(),
+                    "suggest_actions" => "准备跳转入口".to_string(),
+                    _ => format!("用 {other}"),
+                }
+            }
         }
     }
 
@@ -966,6 +1503,20 @@ impl StreamState {
                     Some("command_execution") => {
                         let cmd = item.get("command").and_then(|t| t.as_str()).unwrap_or("");
                         step = Some(self.command_step(cmd));
+                    }
+                    Some("mcp_tool_call") => {
+                        let tool = item
+                            .get("tool")
+                            .or_else(|| item.get("name"))
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("");
+                        let args = item
+                            .get("arguments")
+                            .or_else(|| item.get("input"))
+                            .unwrap_or(&serde_json::Value::Null);
+                        if !tool.is_empty() {
+                            step = Some(self.tool_step(tool, args));
+                        }
                     }
                     Some("reasoning") if kind == "item.completed" => {
                         let t = item.get("text").and_then(|t| t.as_str()).unwrap_or("");
@@ -1907,7 +2458,7 @@ mod tests {
         assert_eq!(one[0].notice.as_deref(), Some("保存进项目失败：boom"));
         assert!(!project_dir("/p/one").unwrap().starts_with("/p/one"), "不写进项目目录");
         assert!(record_error_sync("/p/one", "weird", "", "x", None).is_err());
-        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new(), cost_usd: None, dispatched: None, echo_of: None }).unwrap();
+        append_turn("/p/one", AssistantTurnDto { at: at(0), question: "q".into(), answer: "a".into(), connection: String::new(), basis: String::new(), cost_usd: None, dispatched: None, echo_of: None, proposals: None }).unwrap();
         let rec = DispatchRecordDto {
             at: at(0),
             target: "step".into(),
@@ -1950,6 +2501,7 @@ mod tests {
             cost_usd: None,
             dispatched: None,
             echo_of: None,
+            proposals: None,
         };
         // 上限裁剪：派过活的那一轮最旧也留着
         let mut rows: Vec<AssistantTurnDto> = (0..5).map(turn).collect();
@@ -2005,6 +2557,7 @@ mod tests {
             cost_usd: None,
             dispatched,
             echo_of: echo_of.map(Into::into),
+            proposals: None,
         };
         let mk_rec = |echoed: Option<&str>| DispatchRecordDto {
             at: now.to_rfc3339(),
@@ -2072,5 +2625,117 @@ mod tests {
         ));
         drop(guard);
         assert!(!active_streams().lock().unwrap().contains_key(&id));
+    }
+
+    #[test]
+    fn agent_args_and_mcp_stream_steps_and_session_lifecycle() {
+        let helper = Path::new("/app/mesa_helper");
+        let root = Path::new("/p/demo");
+        let props = Path::new("/tmp/p.json");
+        let mcp = Path::new("/tmp/mcp.json");
+
+        // Claude Code 首轮与续轮参数
+        let c1 = crate::ai::assistant_agent_args(
+            "claude-code",
+            &[],
+            "sys",
+            "现在到哪了",
+            None,
+            Some("sid-1"),
+            Some(mcp),
+            helper,
+            root,
+            props,
+            &["/w/s1".into()],
+            &[],
+        )
+        .unwrap();
+        assert!(c1.contains(&"--strict-mcp-config".to_string()));
+        assert!(c1.contains(&"--session-id".to_string()));
+        assert!(c1.contains(&"sid-1".to_string()));
+        assert!(c1.contains(&"--add-dir".to_string()));
+        assert!(!c1.contains(&"--no-session-persistence".to_string()));
+
+        let c2 = crate::ai::assistant_agent_args(
+            "claude-code",
+            &[],
+            "sys",
+            "接着查第 3 步",
+            Some("sid-1"),
+            None,
+            Some(mcp),
+            helper,
+            root,
+            props,
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert!(c2.contains(&"--resume".to_string()));
+        assert!(c2.contains(&"sid-1".to_string()));
+
+        // Codex 首轮与续轮参数（续轮用 -c sandbox_mode="read-only"，不传无效的 -s）
+        let x1 = crate::ai::assistant_agent_args(
+            "codex",
+            &["-s".into(), "workspace-write".into(), "-m".into(), "gpt-5".into()],
+            "sys",
+            "q1",
+            None,
+            None,
+            None,
+            helper,
+            root,
+            props,
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(&x1[0..2], &["exec", "--skip-git-repo-check"]);
+        assert!(x1.contains(&"read-only".to_string()));
+        assert!(!x1.contains(&"workspace-write".to_string()));
+
+        let x2 = crate::ai::assistant_agent_args(
+            "codex",
+            &["-m".into(), "gpt-5".into()],
+            "sys",
+            "q2",
+            Some("codex-sid"),
+            None,
+            None,
+            helper,
+            root,
+            props,
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(&x2[0..3], &["exec", "resume", "--skip-git-repo-check"]);
+        assert!(x2.contains(&r#"sandbox_mode="read-only""#.to_string()));
+        assert!(x2.contains(&"codex-sid".to_string()));
+
+        // 非第一档 CLI 返回 None 走同源回落
+        assert!(crate::ai::assistant_agent_args("agy", &[], "s", "q", None, None, None, helper, root, props, &[], &[]).is_none());
+
+        // StreamState 识别 Claude & Codex MCP 工具名
+        let mut st = StreamState::new("/p/demo".into());
+        let u1 = st
+            .handle_line(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__mesa__project_overview","input":{}}]}}"#)
+            .unwrap();
+        assert_eq!(u1.step.as_deref(), Some("查看项目总览"));
+        let u2 = st
+            .handle_line(r#"{"type":"item.started","item":{"type":"mcp_tool_call","tool":"step_detail","arguments":{"step":3}}}"#)
+            .unwrap();
+        assert_eq!(u2.step.as_deref(), Some("查看第 3 步详情"));
+
+        // session.json 持久化、切模型失效与清空日志重置
+        let tmp = std::env::temp_dir().join(format!("mesa-sess-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let _g = crate::storage::redirect_config_root(&tmp);
+        save_session_state("/p/s", "s-100", "claude-code", "p1", Some("m1"));
+        assert_eq!(load_matching_session("/p/s", "claude-code", "p1", Some("m1")).as_deref(), Some("s-100"));
+        assert_eq!(load_matching_session("/p/s", "claude-code", "p1", Some("m2")), None);
+        clear_log_sync("/p/s", false, now_fixed()).unwrap();
+        assert_eq!(load_matching_session("/p/s", "claude-code", "p1", Some("m1")), None);
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

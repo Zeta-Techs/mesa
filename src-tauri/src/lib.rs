@@ -1028,6 +1028,7 @@ pub fn run() {
             project_assistant::assistant_log_read,
             project_assistant::assistant_log_clear,
             project_assistant::project_assistant_ask,
+            project_assistant::project_assistant_chat,
             project_assistant::project_assistant_cancel,
             project_assistant::assistant_missing_paths,
             consult::consult_create,

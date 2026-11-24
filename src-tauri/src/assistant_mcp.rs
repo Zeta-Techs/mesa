@@ -694,6 +694,10 @@ fn tool_definitions() -> Value {
 
 /// `mesa_helper assistant-mcp --project <path> [--proposals <file>]` 入口
 pub(crate) fn helper_mcp_cli(args: &[String]) -> i32 {
+    if args.first().map(String::as_str) == Some("--probe") {
+        println!("ok");
+        return 0;
+    }
     let mut project_root: Option<String> = None;
     let mut proposals_path: Option<PathBuf> = None;
     let mut i = 0;
