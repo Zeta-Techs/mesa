@@ -889,7 +889,7 @@ def main():
         for agent in agents:
             fp = probe_agent(agent, gw, out, args.skip_screen, deps)
             bp = baseline_path(agent)
-            base = json.load(open(bp, encoding="utf-8")) if os.path.exists(bp) else None
+            base = saved = json.load(open(bp, encoding="utf-8")) if os.path.exists(bp) else None
             failed = [k for k, v in fp["checks"].items() if not v]
             compare = {k: v for k, v in fp.items() if k not in ("version", "checks")}
             if base and fp.get("screen") is None:
@@ -906,18 +906,21 @@ def main():
             if notes:
                 report += ["", "### 更新日志里可能相关的条目", ""] + [f"  - {n}" for n in notes]
             report.append("")
+            # 指纹没变时只挪版本与检查、原指纹逐字保留：比较时不算的差异（一闪而过的 running、这次没抓屏）写进去，
+            # 装好的 Mesa 按指纹逐字比（cli_verified.rs），就再也前移不了（2026-11-24 Grok 1.0.92 先例）
+            record = fp if changes or not saved else {**saved, "version": fp["version"], "checks": fp["checks"]}
             if args.accept:
                 if failed:
                     report.append(f"> 没记成基线：检查没全过（{'、'.join(failed)}）"); bad = True
                 else:
                     os.makedirs(os.path.dirname(bp), exist_ok=True)
-                    json.dump(fp, open(bp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
+                    json.dump(record, open(bp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
                     open(bp, "a", encoding="utf-8", newline="\n").write("\n")
                     report.append(f"> 已记成新基线：{os.path.relpath(bp, ROOT)}")
                 report.append("")
             elif args.accept_unchanged and base and not failed and not changes and fp["version"] != base.get("version"):
                 os.makedirs(os.path.dirname(bp), exist_ok=True)
-                json.dump(fp, open(bp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
+                json.dump(record, open(bp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1, sort_keys=True)
                 open(bp, "a", encoding="utf-8", newline="\n").write("\n")
                 report += [f"> 指纹没变，核对版本前移到 {fp['version']}：{os.path.relpath(bp, ROOT)}", ""]
             elif failed or changes or not base:

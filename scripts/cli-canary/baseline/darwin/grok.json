@@ -9,6 +9,7 @@
    "-",
    "running",
    "awaiting_approval",
+   "running",
    "completed"
   ]
  },
