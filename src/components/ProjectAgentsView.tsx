@@ -899,7 +899,7 @@ export default function ProjectAgentsView({
             agents={agents}
             defaultProfiles={defaultProfiles}
             presetMode="assistant"
-            note="推荐使用 Claude Code / Codex：查错时可以打开项目文件核对"
+            note="推荐 Claude Code / Codex：持久只读 Agent，可自主查状态、读文件；其余按项目摘要作答"
             disabled={saving}
             onPick={(pid, mid) => void saveSlotBinding(ASSISTANT_BINDING_SLOT, pid, mid)}
             onClear={() => void saveSlotBinding(ASSISTANT_BINDING_SLOT, "", "")}
