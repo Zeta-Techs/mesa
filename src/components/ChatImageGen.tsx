@@ -7,8 +7,9 @@
 // - 出图工具每次调用记一条，聊天里的图下面写是哪个模型出的
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ImageIcon, X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import ImageModelPicker from "./ImageModelPicker";
+import ImageModelMark from "./ImageModelMark";
 import type { ComposerImageGen, ComposerNotice } from "./ChatComposer";
 import {
   IMAGE_GEN_SKILL,
@@ -216,6 +217,7 @@ export function useChatImageGen({
 
   const composer: ComposerImageGen = {
     on,
+    model,
     setOn: (next) => {
       setOn(next);
       if (!next) setMissed(null);
@@ -359,7 +361,7 @@ function ImageGenPill({
         title={title}
         className="inline-flex h-full min-w-0 items-center gap-1 rounded-l-full pl-2 pr-1 hover:bg-hover hover:text-l1 focus-visible:outline-2 focus-visible:outline-cta"
       >
-        <ImageIcon size={13} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+        <ImageModelMark model={model} className="text-l2" />
         <span className={`min-w-0 truncate font-mono ${model ? "" : "text-l3"}`}>{model ?? "选出图模型"}</span>
         <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
       </button>
@@ -411,7 +413,7 @@ function ImageGenIssueLine({
       role="status"
       className={`flex items-center gap-2 px-4 pt-2 text-micro ${imageGenBlocks(issue) ? "text-caution-text" : "text-l3"}`}
     >
-      <ImageIcon size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+      <ImageModelMark model={null} size={12} />
       <span className="min-w-0 flex-1">{issueText(issue)}</span>
       {action && (
         <button

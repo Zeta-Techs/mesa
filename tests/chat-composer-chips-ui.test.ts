@@ -25,7 +25,7 @@ const bundle = await build({
   format: "cjs",
   platform: "node",
   jsx: "automatic",
-  loader: { ".css": "empty", ".png": "dataurl" },
+  loader: { ".css": "empty", ".png": "dataurl", ".svg": "empty" },
   external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
   plugins: [
     {
@@ -2075,6 +2075,7 @@ test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述�
     let blocked: string | null = null;
     const imageGen = (on: boolean) => ({
       on,
+      model: "gpt-image-2.5",
       setOn: (v: boolean) => toggles.push(v),
       pill: ui.h("span", { "data-testid": "image-pill" }, "gpt-image-2.5"),
       issue: blocked ? ui.h("p", { "data-testid": "image-issue" }, blocked) : null,

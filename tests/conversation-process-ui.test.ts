@@ -18,7 +18,7 @@ const bundle = await build({
   format: "cjs",
   platform: "node",
   jsx: "automatic",
-  loader: { ".css": "empty", ".png": "dataurl" },
+  loader: { ".css": "empty", ".png": "dataurl", ".svg": "empty" },
   external: ["react", "react-dom", "react-dom/client", "react/jsx-runtime"],
   plugins: [
     {

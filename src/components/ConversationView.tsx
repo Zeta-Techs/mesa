@@ -13,7 +13,6 @@ import {
   FileText,
   FolderOpen,
   GitFork,
-  ImageIcon,
   MessageSquareWarning,
   Globe,
   ListTodo,
@@ -31,6 +30,7 @@ import type { BlockDto, ChatMessageDto } from "../types";
 import { Collapse, FoldMark } from "./PageFrame";
 import ChatMarkdown, { ChatCodeBlock, ChatFileCard, ChatImageCard } from "./ChatMarkdown";
 import ChatSelectionBar from "./ChatSelectionBar";
+import ImageModelMark from "./ImageModelMark";
 import { rangePlainText } from "../chat-copy";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import { splitLaunchPrompt } from "../project-context";
@@ -604,7 +604,7 @@ export default function ConversationView({
               className="mb-1 flex items-center gap-1 ccode-chat-meta text-l4"
               title="按出图模式发的：Mesa 在这句前面写明了用哪个出图模型，AI 要调出图工具来画"
             >
-              <ImageIcon size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0" />
+              <ImageModelMark model={imageGen.model} size={12} />
               <span>{imageGen.edit ? "改图" : "出图"}</span>
               <span aria-hidden="true">·</span>
               <span className="min-w-0 truncate font-mono">{imageGen.model}</span>

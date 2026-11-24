@@ -113,6 +113,8 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   一轮结束后查 image_gen_chat_calls 认出「没调用出图工具」（missedNotice）、图下模型名（captions → ChatImageCaptionContext）、
                              #   斜杠 /image（画图）；ImageGenPill 是输入框「+」旁边的小胶囊（ComposerImageGen.pill，2026-11-24 用户选：不在框上方另起一条），
                              #   换模型复用 ImageModelPicker（note 写连接页默认）、「最近用过」与连接页共用一份；ImageGenIssueLine 只在有问题时框里一行小字
+  components/ImageModelMark.tsx # 聊天出图模式里出图模型的标识：vendorForModel 认得出画 VendorIcon，认不出 / 没选画 Lucide Palette（不用图片图标，
+                             #   放「+」旁像附件）；胶囊、「+」菜单「画图」、消息上方「出图 · 模型」三处共用；尺寸只收 12/13/14（Tailwind 类名写死）
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方；
                              #   多网关时行尾写 gatewayLabel（「Codex 网关」，网关名常与 Agent 同名）；note = 搜索框下一行说明
   components/InternalSessionsCard.tsx # 设置「数据与存储」→ Mesa 内部对话：条数/体积/最早、自动清理开关、保留天数、立即清理

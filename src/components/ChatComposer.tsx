@@ -5,7 +5,6 @@ import {
   ArrowUp,
   AtSign,
   BookmarkPlus,
-  ImageIcon,
   Maximize2,
   Minimize2,
   MessageSquareText,
@@ -36,6 +35,7 @@ import {
 import { imeBlocksEnter } from "../ime-guard";
 import { escInterruptSafe } from "../agent-caps";
 import InsertMenuItems from "./InsertMenuItems";
+import ImageModelMark from "./ImageModelMark";
 import { usePhoneDropStore } from "../phone-drop-store";
 import type { PhoneItem } from "../phone-drop";
 import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
@@ -65,6 +65,8 @@ export interface ComposerSeed {
  */
 export interface ComposerImageGen {
   on: boolean;
+  /** 这一句会用的出图模型（对话里选的，否则连接页默认；没有为 null）：「+」菜单「画图」按它画厂商标识 */
+  model: string | null;
   setOn: (on: boolean) => void;
   /** 「+」旁边的小胶囊（模型、换模型、退出）；on 时画进输入框那一排（2026-11-24 用户选：不在框上方另起一条） */
   pill: ReactNode;
@@ -220,7 +222,7 @@ function AddMenu({
   onManagePrompts: (saveCurrent: boolean) => void;
   canSavePrompt: boolean;
   /** 出图模式开关（没有就不出这一项） */
-  imageGen?: { on: boolean; toggle: () => void } | null;
+  imageGen?: { on: boolean; model: string | null; toggle: () => void } | null;
 }) {
   const [open, setOpen] = useState(false);
   // 菜单开着时提示词首次读盘（之后全应用共用一份）
@@ -307,7 +309,7 @@ function AddMenu({
                     imageGen.toggle();
                   }}
                 >
-                  <ImageIcon size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                  <ImageModelMark model={imageGen.model} size={14} className="text-l3" />
                   {imageGen.on ? "退出画图" : "画图"}
                   <span className="ml-auto text-micro text-l4">{imageGen.on ? "回到普通对话" : "用出图模型画"}</span>
                 </button>
@@ -1343,7 +1345,9 @@ export default function ChatComposer({
               onPrompt={(p) => insertPrompt(p, false)}
               onManagePrompts={(saveCurrent) => usePromptStore.getState().openManage(saveCurrent ? value : null)}
               canSavePrompt={Boolean(value.trim())}
-              imageGen={imageGen ? { on: imageGen.on, toggle: () => imageGen.setOn(!imageGen.on) } : null}
+              imageGen={
+                imageGen ? { on: imageGen.on, model: imageGen.model, toggle: () => imageGen.setOn(!imageGen.on) } : null
+              }
             />
             {imageGen?.on && imageGen.pill}
           </span>
