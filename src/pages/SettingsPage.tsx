@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookUser,
   ChartColumn,
+  Check,
   Download,
   Globe,
   HardDrive,
@@ -42,7 +43,6 @@ import {
   PaneSearch,
   paneOutlineButtonClass,
   primaryActionClass,
-  Checkbox,
   SegTabs,
   Toggle,
   InlineNotice,
@@ -173,6 +173,7 @@ import {
   type CustomThemeSeeds,
 } from "../custom-theme";
 import { NAV_GROUPS, NAV_BOTTOM } from "../navigation";
+import { NAV_ICONS } from "../navigation-icons";
 import {
   CHROME_OPACITIES,
   chromeOpacityLabel,
@@ -457,16 +458,19 @@ const START_PAGE_HINT: Record<StartPageId, string> = {
 };
 
 /** 顺序同岛上：新对话插在工作台后面（2026-10-24 侧栏改版同步）；「运行」不上岛，这里也不列 */
-const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string }[] = [
+const NAV_CAPSULE_SETTING_ITEMS: { id: NavCapsuleItemId; label: string; Icon: LucideIcon }[] = [
   ...NAV_GROUPS.flatMap((group) =>
     group.items.filter((item) => item.id !== "terminal").flatMap((item) => [
-      { id: item.id as NavCapsuleItemId, label: item.label },
-      ...(item.id === "workbench" ? [{ id: "quick-chat" as NavCapsuleItemId, label: "新对话" }] : []),
+      { id: item.id as NavCapsuleItemId, label: item.label, Icon: item.Icon },
+      ...(item.id === "workbench"
+        ? [{ id: "quick-chat" as NavCapsuleItemId, label: "新对话", Icon: NAV_ICONS.quickChat }]
+        : []),
     ]),
   ),
   ...NAV_BOTTOM.map((item) => ({
     id: item.id as NavCapsuleItemId,
     label: item.label,
+    Icon: item.Icon,
   })),
 ];
 
@@ -965,8 +969,26 @@ function HotkeyCapture({
   return (
     <span
       ref={rootRef}
-      className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs"
+      className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs"
     >
+      {conflict && <span className="text-err-text">与其他快捷键冲突</span>}
+      {!conflict && clashWith && !listening && (
+        <span className="text-err-text">和「{clashWith}」重复</span>
+      )}
+      {/* 「恢复」放在按键左侧占位，「禁用」紧贴按键右侧：既保证各行按键竖向对齐，又避免未修改行在按键与「禁用」之间裂出大段空隙 */}
+      <button
+        type="button"
+        tabIndex={value !== defaultValue ? undefined : -1}
+        aria-hidden={value !== defaultValue ? undefined : true}
+        onClick={() => {
+          setCapturing(null);
+          onSave(defaultValue);
+        }}
+        className={`${ghostActionClass} shrink-0 ${value !== defaultValue ? "" : "invisible"}`}
+        title={`恢复默认 ${comboLabel(defaultValue)}`}
+      >
+        恢复
+      </button>
       <button
         type="button"
         onClick={() => setCapturing(id)}
@@ -982,26 +1004,6 @@ function HotkeyCapture({
         title={clashWith && !listening ? `和「${clashWith}」重复，按下去只会到排在前面的那一个；点这里换一个，或点「恢复」` : undefined}
       >
         {listening ? "按下新快捷键…" : comboLabel(value)}
-      </button>
-      {conflict && <span className="text-err-text">与其他快捷键冲突</span>}
-      {!conflict && clashWith && !listening && (
-        <span className="text-err-text">和「{clashWith}」重复</span>
-      )}
-      {/* 「恢复」「禁用」两格固定占位（不适用时 invisible）：条件渲染会让改过默认值的行
-          把快捷键钮往左挤，与同列其他行对不齐（2026-10-17 截图实证 ⌘L 比 ⌘9 左移一截）。
-          「禁用」低频，悬停行才显现 */}
-      <button
-        type="button"
-        tabIndex={value !== defaultValue ? undefined : -1}
-        aria-hidden={value !== defaultValue ? undefined : true}
-        onClick={() => {
-          setCapturing(null);
-          onSave(defaultValue);
-        }}
-        className={`${ghostActionClass} shrink-0 ${value !== defaultValue ? "" : "invisible"}`}
-        title={`恢复默认 ${comboLabel(defaultValue)}`}
-      >
-        恢复
       </button>
       <button
         type="button"
@@ -1080,7 +1082,7 @@ function HotkeysSection({
         }
       >
         {/* 总开关关闭时整组弱化示意（仍可编辑，方便先配好再开） */}
-        <div className={`grid grid-cols-1 gap-1 lg:grid-cols-2 ${pageSwitchOn ? "" : "opacity-50"}`}>
+        <div className={`grid grid-cols-1 gap-x-8 lg:grid-cols-2 ${pageSwitchOn ? "" : "opacity-50"}`}>
           {PAGE_HOTKEY_DEFS.map((p) => (
             <CardRow key={p.id} label={p.label} title={p.hint}>
               <HotkeyCapture
@@ -1117,7 +1119,7 @@ function HotkeysSection({
         </div>
       </Card>
       <Card title="全局快捷键" hint="在任何页面都生效；「聊天 / 终端」只在运行页">
-        <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-2">
           <CardRow
             label="新对话"
             title={
@@ -1241,16 +1243,15 @@ function HotkeysSection({
       </Card>
       {/* 改不了的几个也列出来（Ctrl+Tab 换对话、侧栏里 ↑↓ 等），免得只能在说明书里找 */}
       <Card title="固定快捷键">
-        <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-2">
           {FIXED_HOTKEYS.map((k) => (
             <CardRow key={k.label} label={k.label} title={k.hint}>
-              {/* 只读：同绑定钮的高度与等宽字，但不铺底、不带边框色，看得出点不了；
-                  后面留「恢复」「禁用」两格的空位，和上面两张卡的绑定钮对齐 */}
-              <span className="flex shrink-0 items-center gap-1 whitespace-nowrap text-xs">
+              {/* 只读：左右镜像「恢复 / 禁用」占位，与上方两张卡的绑定钮竖向对齐 */}
+              <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs">
+                <span className={`${ghostActionClass} invisible shrink-0`} aria-hidden="true">恢复</span>
                 <kbd className="inline-flex h-7 min-w-14 items-center justify-center rounded-md border border-hairline px-2 font-mono text-l3">
                   {IS_MAC ? k.mac : k.other}
                 </kbd>
-                <span className={`${ghostActionClass} invisible shrink-0`} aria-hidden="true">恢复</span>
                 <span className={`${ghostActionClass} invisible shrink-0`} aria-hidden="true">禁用</span>
               </span>
             </CardRow>
@@ -3556,7 +3557,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Card
           title="岛上显示的入口"
-          hint="「恢复侧栏」始终保留；隐藏了当前所在页面时会临时保留它的入口"
+          hint="「恢复侧栏」始终保留"
           action={
             <button
               type="button"
@@ -3567,31 +3568,46 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           }
         >
-          {/* 密集短项固定五列对齐（design-system）：max-content 轨在整宽卡里右侧留死空间，
-              等宽 1fr 轨填满卡宽（2026-10-03 用户反馈「右边空一块」） */}
-          <div className="grid grid-cols-[repeat(5,minmax(0,1fr))] gap-2">
+          {/* 9 个入口按 3×3 图标卡片排布（无尾行空洞，与上方「助手形象」统一选中态语言） */}
+          <div className="grid grid-cols-3 gap-2 py-2">
             {NAV_CAPSULE_SETTING_ITEMS.map((item) => {
               const selected = normalizeNavCapsuleVisibleItems(
                 settings?.navCapsuleVisibleItems,
               ).includes(item.id);
+              const Icon = item.Icon;
               return (
-                <Checkbox
+                <button
                   key={item.id}
-                  className={`h-8 rounded-md px-2 text-xs hover:bg-hover ${
-                    selected ? "text-l1" : "text-l3"
-                  }`}
-                  checked={selected}
-                  label={item.label}
-                  onChange={(checked) => {
+                  type="button"
+                  role="checkbox"
+                  aria-checked={selected}
+                  onClick={() => {
                     const current = normalizeNavCapsuleVisibleItems(
                       settings?.navCapsuleVisibleItems,
                     );
-                    const next = checked
+                    const next = !selected
                       ? [...new Set([...current, item.id])]
                       : current.filter((id) => id !== item.id);
                     void patch({ navCapsuleVisibleItems: next });
                   }}
-                />
+                  className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
+                    selected
+                      ? "border-cta/50 bg-cta/10 text-l1"
+                      : "border-hairline bg-transparent text-l3 hover:bg-hover hover:text-l2"
+                  }`}
+                >
+                  <Icon
+                    aria-hidden="true"
+                    className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-cta" : "text-l4"}`}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                  <Check
+                    aria-hidden="true"
+                    className={`h-3.5 w-3.5 shrink-0 transition-opacity ${
+                      selected ? "text-cta opacity-100" : "opacity-0"
+                    }`}
+                  />
+                </button>
               );
             })}
           </div>
@@ -3874,7 +3890,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           {AI_FN_GROUPS.map((group) => (
             <div key={group.title} className="mt-2 first:mt-0">
               <p className="mb-0.5 px-2 text-micro font-medium text-l4">{group.title}</p>
-              <div className="grid grid-cols-1 gap-x-3 gap-y-0.5 xl:grid-cols-2">
+              <div className="grid grid-cols-1 gap-x-8 gap-y-0.5 xl:grid-cols-2">
                 {group.rows.map((fn) => {
                   const value = selectedAiProfileChoice(
                     settings?.aiProfiles?.[fn.key],
@@ -4020,20 +4036,15 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           return (
             <Card
               title="精确注意力标记"
-              hint="由 Agent 自己报告进度和何时等你确认，比读终端画面准"
-              hintTitle="审批卡上还能看到要运行的命令和要改的内容"
+              hint="由 Agent 自己报告进度与等待确认"
+              hintTitle="审批卡上还能看到要运行的命令和要改的内容；写入 CLI 配置前会自动备份"
             >
               {auto.length > 0 && (
-                <p className="mb-2 px-2 text-xs leading-5 text-l3">
-                  {auto.map((h) => labelOf(h.agent)).join("、")}：在 Mesa 里启动时自动带上，不改你的配置。
+                <p className="border-b border-hairline py-2.5 text-xs leading-5 text-l3">
+                  已自动启用：{auto.map((h) => labelOf(h.agent)).join("、")}（不改本机配置）
                 </p>
               )}
-              {supported.length > 0 && (
-                <p className="mb-1 px-2 text-micro text-l4">
-                  下面几家要写进它自己的配置文件才有，写前自动备份
-                </p>
-              )}
-              <div className="grid grid-cols-1 gap-1 lg:grid-cols-2">
+              <div>
                 {supported.map((h) => {
                   const label = labelOf(h.agent);
                   return (
@@ -4053,7 +4064,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                 })}
               </div>
               {unsupported.length > 0 && (
-                <p className="mt-2 px-2 text-micro text-l4">
+                <p className="border-t border-hairline py-2 text-micro text-l4">
                   暂不支持：{unsupported.map((h) => labelOf(h.agent)).join("、")}
                 </p>
               )}
