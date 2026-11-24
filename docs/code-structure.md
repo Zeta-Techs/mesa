@@ -144,7 +144,7 @@ components/PreviewErrorState.tsx  # 文件预览统一失败态（Pdf/Docx/Xlsx/
   components/MdFrontmatterCard.tsx # md 阅读态开头 YAML 头小卡（只展示，超 6 项折叠，双击回编辑态第 1 行）
 components/MdToc.tsx  # md 阅读态浮动目录（FilePreviewEditor）：顶部 28px sticky 条（子 layout 父 ref 未挂，自己取 parent 当滚动容器），≥3 标题才出，MutationObserver 跟正文变化；扫描与定位在 md-toc.ts
 components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePreviewEditor 唯一消费者，lazy chunk——无围栏不加载，检测在 mermaid-blocks.ts）：securityLevel strict + sanitizeMermaidSvg 二次清洗、主题随亮暗、点开 Lightbox 缩放；渲染失败留原文回退不吞源码
-  components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview 可缩放）：随手聊没有右栏预览时用
+  components/ChatImageViewer.tsx # 对话图片看大图弹层（Modal + ImagePreview variant="lightbox"：标题「文件名 · 尺寸 · 大小」经 onMeta，不套内层面板，缩放在底部浮条）：随手聊没有右栏预览时用
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
@@ -895,7 +895,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   file-draft-handoff.ts      # 预览换宿主（侧栏 ⇄ 窗口 ⇄ 窄屏）带上没保存的修改：arm 5 秒内卸载才寄存，取一次即清（tests/image-view.test.ts）
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
                              # 聊天图片卡、md 内嵌图与 ImagePreview（看大图灯箱 / 文件预览）共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）；
-                             # 预解码顺带记宽高与字节数（cachedImageDims / cachedImageBytes）：灯箱首帧按最终尺寸摆，不先按原尺寸铺再缩（2026-11-24）
+                             # 预解码顺带记宽高、字节数与有没有透明像素（cachedImageDims / cachedImageBytes / cachedImageAlpha，缩成 64px 数 alpha）：
+                             # 灯箱首帧按最终尺寸摆，不先按原尺寸铺再缩；棋盘格只垫在有透明的图下面（2026-11-24）
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按连接记住完全访问（rememberChatPermission / profilePermissionMode，只管聊天对话，2026-11-13）；按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；

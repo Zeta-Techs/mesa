@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { PanelRight, PenLine } from "lucide-react";
 import { Modal } from "./Modal";
@@ -10,6 +11,7 @@ import { imageEditActionLabel, schematicSourceOf } from "../chat-image";
  * 读图走 ImagePreview（5%–800% 滚轮/捏合缩放、拖拽平移、双击 100%/适应），
  * 顶栏提供显式「标注 / 改图」（或「改示意图」「标出来问 AI」）与「在右栏打开」入口。
  * 输入框里还没发出的附件缩略图不走这里，直接走输入框上方的看图标注台（ChatImageStage）。
+ * 2026-11-24 改成灯箱：标题一行「文件名 · 尺寸 · 大小」，图直接放在弹窗面上（不再套一层带边框的面板），缩放在底部浮条。
  */
 export default function ChatImageViewer({
   path,
@@ -27,6 +29,7 @@ export default function ChatImageViewer({
   onOpenSidebar?: () => void;
 }) {
   const name = path.split(/[\\/]/).pop() || path;
+  const [meta, setMeta] = useState<string | null>(null);
   const editLabel = imageEditActionLabel(path);
   const editHint = schematicSourceOf(path)
     ? "在标注台框出要改的字、框或图标，由 AI 改图纸重渲"
@@ -35,12 +38,17 @@ export default function ChatImageViewer({
   const modal = (
     <Modal
       open
-      title={name}
+      title={
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 truncate">{name}</span>
+          {meta && <span className="shrink-0 text-xs font-normal tabular-nums text-l3">{meta}</span>}
+        </span>
+      }
       onClose={onClose}
       size="full"
       overflow="hidden"
       panelClassName="h-[88vh]"
-      contentClassName="flex flex-1 flex-col overflow-hidden rounded-md border border-hairline bg-canvas"
+      contentClassName="flex flex-1 flex-col overflow-hidden"
       headerActions={
         <>
           {onOpenSidebar && (
@@ -74,7 +82,7 @@ export default function ChatImageViewer({
         </>
       }
     >
-      <ImagePreview path={path} cwdHint={cwdHint} hideName />
+      <ImagePreview path={path} cwdHint={cwdHint} hideName variant="lightbox" onMeta={setMeta} />
     </Modal>
   );
 

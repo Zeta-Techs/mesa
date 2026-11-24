@@ -61,13 +61,19 @@ const inflight = new Map<string, Promise<string>>();
 /** 缓存时那一版的磁盘戳（大小 + 修改时间）：重新出图后据此换掉旧图（2026-10-26） */
 const stamps = new Map<string, string | null>();
 /** 预解码时读到的原图宽高：看大图灯箱首帧就按最终尺寸摆，不先按原尺寸铺一下再缩（2026-11-24 用户：点开图闪一下） */
-const dims = new Map<string, { w: number; h: number }>();
+const dims = new Map<string, { w: number; h: number; alpha: boolean | null }>();
 /** 原图大小（字节）：灯箱信息行用 */
 const sizes = new Map<string, number>();
 
 /** 缓存里这张图的宽高（预解码读到的；svg 等读不出为 undefined） */
 export function cachedImageDims(path: string): { w: number; h: number } | undefined {
-  return lru.get(path) ? dims.get(path) : undefined;
+  const d = lru.get(path) ? dims.get(path) : undefined;
+  return d ? { w: d.w, h: d.h } : undefined;
+}
+
+/** 这张图有没有透明像素（预解码时缩成小图数过；读不出为 null）：看图只在有透明时垫棋盘格 */
+export function cachedImageAlpha(path: string): boolean | null | undefined {
+  return lru.get(path) ? dims.get(path)?.alpha : undefined;
 }
 
 /** 缓存里这张图的字节数 */
@@ -100,7 +106,7 @@ function fetchImage(path: string, cwdHint: string | null | undefined): Promise<s
     .then(async ([raw, stamp]) => {
       const buf = rawIpcBytes(raw);
       const url = URL.createObjectURL(new Blob([buf], { type: imageMime(path) }));
-      const size = await predecode(url);
+      const size = await predecode(url, imageMime(path));
       if (size) dims.set(path, size);
       else dims.delete(path);
       sizes.set(path, buf.byteLength);
@@ -134,13 +140,34 @@ export function imageMime(path: string): string {
   return "application/octet-stream";
 }
 
-/** 让 WebView 先把图解码进它的图片缓存，<img> 用同一地址上屏时不再同步解码；解不出也照常交地址。顺带交回宽高 */
-async function predecode(url: string): Promise<{ w: number; h: number } | null> {
+/** 让 WebView 先把图解码进它的图片缓存，<img> 用同一地址上屏时不再同步解码；解不出也照常交地址。顺带交回宽高与有没有透明 */
+async function predecode(url: string, mime: string): Promise<{ w: number; h: number; alpha: boolean | null } | null> {
   if (typeof Image === "undefined") return null;
   const img = new Image();
   img.src = url;
   await img.decode().catch(() => {});
-  return img.naturalWidth > 0 && img.naturalHeight > 0 ? { w: img.naturalWidth, h: img.naturalHeight } : null;
+  if (!(img.naturalWidth > 0 && img.naturalHeight > 0)) return null;
+  return { w: img.naturalWidth, h: img.naturalHeight, alpha: mime === "image/jpeg" ? false : hasAlpha(img) };
+}
+
+/** 缩成不超过 64 像素见方数一遍 alpha：有一处不到 250 就算有透明。画不了（测试环境、跨域）返回 null */
+function hasAlpha(img: HTMLImageElement): boolean | null {
+  try {
+    const scale = Math.min(1, 64 / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i] < 250) return true;
+    return false;
+  } catch {
+    return null;
+  }
 }
 
 /**
