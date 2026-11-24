@@ -629,11 +629,42 @@ type WorkspaceState = {
   details: string[];
 };
 
-function workspaceState(
+/** 并发上限版 map：避免多工作区同时拉起几十个 git 子进程，撞文件描述符或 CPU 尖峰。 */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, limit), items.length) },
+    async () => {
+      while (true) {
+        const idx = next++;
+        if (idx >= items.length) return;
+        results[idx] = await worker(items[idx]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function formatDiagError(err: unknown): string {
+  const text = (err instanceof Error ? err.message : String(err ?? "")).trim();
+  return text || "未知错误";
+}
+
+const WORKSPACE_DRIFT_CONCURRENCY = 4;
+const WORKSPACE_HEALTH_CONCURRENCY = 3;
+
+export function workspaceState(
   workspace: WorkspaceDto,
   health: WorkspaceHealthDto | undefined,
   drift: WorkspaceDriftDto | undefined,
-  healthFailed = false,
+  healthError?: string,
   agentBusy = false,
 ): WorkspaceState {
   if (workspace.status === "creating") {
@@ -673,12 +704,15 @@ function workspaceState(
     };
   }
   if (!health) {
-    if (healthFailed) {
+    if (healthError) {
       return {
         label: "检查失败",
         dotClass: "bg-warn-text",
         textClass: "text-warn-text",
-        details: ["无法读取工作区与主仓库状态，请重试。"],
+        details: [
+          "无法读取工作区与主仓库状态，请重试。",
+          `原因：${healthError}`,
+        ],
       };
     }
     return {
@@ -785,6 +819,7 @@ function WorkspaceDetailsPopover({
   health,
   state,
   diagFailed,
+  diagErrors,
   onRetry,
   onClose,
 }: {
@@ -795,6 +830,8 @@ function WorkspaceDetailsPopover({
   state: WorkspaceState;
   /** 漂移诊断/健康检查失败：行内不再放重试按钮，收进本详情层 */
   diagFailed: boolean;
+  /** 未包含在 state.details 里的诊断失败原因（如 drift 失败或有旧健康快照时刷新失败） */
+  diagErrors?: string[];
   onRetry: () => void;
   onClose: () => void;
 }) {
@@ -872,10 +909,17 @@ function WorkspaceDetailsPopover({
             </div>
           ))}
         </dl>
-        {state.details.length > 0 && (
+        {(state.details.length > 0 || (diagErrors && diagErrors.length > 0)) && (
           <ul className="mt-2 space-y-1 border-t border-hairline pt-2 text-l3">
             {state.details.map((detail) => (
-              <li key={detail}>• {detail}</li>
+              <li key={detail} className="break-words">
+                • {detail}
+              </li>
+            ))}
+            {diagErrors?.map((detail) => (
+              <li key={detail} className="break-words text-warn-text">
+                • {detail}
+              </li>
             ))}
           </ul>
         )}
@@ -903,11 +947,9 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   const [settings, setSettings] = useState<Record<string, WsSettingsDto>>({});
   const [health, setHealth] = useState<Record<string, WorkspaceHealthDto>>({});
   const [drift, setDrift] = useState<Record<string, WorkspaceDriftDto>>({});
-  // 逐工作区记录诊断/健康检查失败：失败时降级展示并给出重试入口，不静默吞掉
-  const [driftFailed, setDriftFailed] = useState<Record<string, boolean>>({});
-  const [healthFailed, setHealthFailed] = useState<Record<string, boolean>>(
-    {},
-  );
+  // 逐工作区记录诊断/健康检查失败原因：失败时降级展示并给出重试入口与具体报错，不静默吞掉
+  const [driftFailed, setDriftFailed] = useState<Record<string, string>>({});
+  const [healthFailed, setHealthFailed] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   // 一般操作成功提示（清除 Mesa 痕迹等）：10s 自动消退
   const [notice, setNotice] = useState<string | null>(null);
@@ -1124,9 +1166,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       setProjectsLoaded(true);
       setProjectsRefreshSeq((s) => s + 1);
       setRefreshToken((t) => t + 1);
-      const driftFailures: Record<string, boolean> = {};
-      const driftEntries = await Promise.all(
-        list.map(async (workspace) => {
+      const driftFailures: Record<string, string> = {};
+      const driftEntries = await mapWithConcurrency(
+        list,
+        WORKSPACE_DRIFT_CONCURRENCY,
+        async (workspace) => {
           try {
             return [
               workspace.id,
@@ -1134,12 +1178,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 id: workspace.id,
               }),
             ] as const;
-          } catch {
-            driftFailures[workspace.id] = true;
+          } catch (e) {
+            driftFailures[workspace.id] = formatDiagError(e);
             return null;
           }
-        }),
+        },
       );
+      if (callId !== refreshCallIdRef.current) return;
       setDrift(
         Object.fromEntries(driftEntries.filter((entry) => entry !== null)),
       );
@@ -1166,6 +1211,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           }
         }),
       );
+      if (callId !== refreshCallIdRef.current) return;
       setSettings((prev) => {
         const next = { ...prev };
         for (const e of entries) {
@@ -1174,24 +1220,28 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         }
         return next;
       });
-      // 活跃工作区的健康度（每次刷新覆盖，ReadyToMerge 判定随提交/合并变化）
+      // 活跃工作区的健康度（每次刷新覆盖，ReadyToMerge 判定随提交/合并变化）；
+      // 每个 workspace_health 内部并行 9 路 git，这里限并发防多工作区同时扇出撞文件描述符上限
       const activeIds = list
         .filter((w) => w.status === "active")
         .map((w) => w.id);
-      const healthFailures: Record<string, boolean> = {};
-      const healthEntries = await Promise.all(
-        activeIds.map(async (id) => {
+      const healthFailures: Record<string, string> = {};
+      const healthEntries = await mapWithConcurrency(
+        activeIds,
+        WORKSPACE_HEALTH_CONCURRENCY,
+        async (id) => {
           try {
             return [
               id,
               await invoke<WorkspaceHealthDto>("workspace_health", { id }),
             ] as const;
-          } catch {
-            healthFailures[id] = true;
+          } catch (e) {
+            healthFailures[id] = formatDiagError(e);
             return null;
           }
-        }),
+        },
       );
+      if (callId !== refreshCallIdRef.current) return;
       setHealth((prev) => {
         const next = { ...prev };
         for (const e of healthEntries) {
@@ -2575,12 +2625,13 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
                 const workspaceHealth = health[workspace.id];
                 const workspaceDrift = drift[workspace.id];
                 const isDriftFailed = !!driftFailed[workspace.id];
-                const isHealthFailed = !!healthFailed[workspace.id];
+                const healthError = healthFailed[workspace.id];
+                const isHealthFailed = !!healthError;
                 const state = workspaceState(
                   workspace,
                   workspaceHealth,
                   workspaceDrift,
-                  isHealthFailed,
+                  healthError,
                   workspaceAgentBusy(
                     workspace.worktreePath,
                     terminalRunInputs,
@@ -3034,31 +3085,39 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
           items={workspaceMenuItems(workspaceMenu.ws)}
         />
       )}
-      {detailsPopover && (
-        <WorkspaceDetailsPopover
-          x={detailsPopover.x}
-          y={detailsPopover.y}
-          workspace={detailsPopover.ws}
-          health={health[detailsPopover.ws.id]}
-          state={workspaceState(
-            detailsPopover.ws,
-            health[detailsPopover.ws.id],
-            drift[detailsPopover.ws.id],
-            !!healthFailed[detailsPopover.ws.id],
-            workspaceAgentBusy(
-              detailsPopover.ws.worktreePath,
-              terminalRunInputs,
-              IS_WINDOWS,
-            ),
-          )}
-          diagFailed={
-            !!driftFailed[detailsPopover.ws.id] ||
-            !!healthFailed[detailsPopover.ws.id]
-          }
-          onRetry={() => void refresh()}
-          onClose={() => setDetailsPopover(null)}
-        />
-      )}
+      {detailsPopover && (() => {
+        const popHealth = health[detailsPopover.ws.id];
+        const popDriftErr = driftFailed[detailsPopover.ws.id];
+        const popHealthErr = healthFailed[detailsPopover.ws.id];
+        const popState = workspaceState(
+          detailsPopover.ws,
+          popHealth,
+          drift[detailsPopover.ws.id],
+          popHealthErr,
+          workspaceAgentBusy(
+            detailsPopover.ws.worktreePath,
+            terminalRunInputs,
+            IS_WINDOWS,
+          ),
+        );
+        const extraDiagErrors = [
+          ...(popDriftErr ? [`漂移诊断失败：${popDriftErr}`] : []),
+          ...(popHealth && popHealthErr ? [`最近一次状态检查失败：${popHealthErr}`] : []),
+        ];
+        return (
+          <WorkspaceDetailsPopover
+            x={detailsPopover.x}
+            y={detailsPopover.y}
+            workspace={detailsPopover.ws}
+            health={popHealth}
+            state={popState}
+            diagFailed={!!popDriftErr || !!popHealthErr}
+            diagErrors={extraDiagErrors}
+            onRetry={() => void refresh()}
+            onClose={() => setDetailsPopover(null)}
+          />
+        );
+      })()}
         </PageFrame>
       </div>
     </div>

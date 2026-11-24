@@ -48,7 +48,7 @@ async function harness() {
       contents: `
         export { createElement, act } from 'react';
         export { createRoot } from 'react-dom/client';
-        export { default as WorkspacesPage } from './src/pages/WorkspacesPage';
+        export { default as WorkspacesPage, workspaceState } from './src/pages/WorkspacesPage';
         export { useAppStore } from './src/store';
       `,
       resolveDir: process.cwd(),
@@ -261,6 +261,94 @@ test("确实不存在的项目路径在补拉一轮后静默清空，不会死�
     });
     assert.equal(ui.useAppStore.getState().selectProjectReq, null);
     assert.equal(listCalls, before + 1);
+  } finally {
+    await ui.close();
+  }
+});
+
+test("多活跃工作区刷新时限制 drift 与 health 并发上限，并把健康检查失败原因放进状态详情", async () => {
+  const ui = await harness();
+  const repoPath = "/tmp/boride-her";
+  const workspaces = Array.from({ length: 8 }, (_, i) => ({
+    id: `ws-${i + 1}`,
+    name: `step-${i + 1}`,
+    repoPath,
+    repoName: "硼化物析氢",
+    worktreePath: `/tmp/wt/step-${i + 1}`,
+    branch: `ccode/step-${i + 1}`,
+    baseBranch: "master",
+    portBase: 4000 + i * 10,
+    status: "active",
+    createdAt: "2026-11-20T00:00:00Z",
+  }));
+  let driftInFlight = 0;
+  let maxDrift = 0;
+  let driftDone = 0;
+  let healthInFlight = 0;
+  let maxHealth = 0;
+  let healthDone = 0;
+
+  Object.assign(ui.dom.window, {
+    __TAURI_INTERNALS__: {
+      invoke: async (cmd: string) => {
+        if (cmd === "list_workspaces") return workspaces;
+        if (cmd === "list_projects") {
+          return [{ id: "p1", name: "硼化物析氢", path: repoPath, workMode: "research" }];
+        }
+        if (cmd === "home_dir") return "/tmp";
+        if (cmd === "list_schedules") return [];
+        if (cmd === "list_help_requests") return [];
+        if (cmd === "pending_artifact_checks") return [];
+        if (cmd === "read_project_config") return { config: { steps: [], resources: [], settings: [] }, warnings: [] };
+        if (cmd === "workspace_settings") return { setup: [], teardown: [], run: [], env: [] };
+        if (cmd === "workspace_drift") {
+          driftInFlight += 1;
+          maxDrift = Math.max(maxDrift, driftInFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          driftInFlight -= 1;
+          driftDone += 1;
+          return { healthy: true, canRemount: false, canRelocate: false, canMarkArchived: false, canCleanRecord: true, canResolveMerge: false, issues: [] };
+        }
+        if (cmd === "workspace_health") {
+          healthInFlight += 1;
+          maxHealth = Math.max(maxHealth, healthInFlight);
+          await new Promise((r) => setTimeout(r, 5));
+          healthInFlight -= 1;
+          healthDone += 1;
+          return { uncommitted: false, ahead: 0, behind: 0, conflict: false, conflictFiles: [], mainOffBase: false, mainDirty: false, staleBase: false, readyToMerge: false, gitdirDetached: false, ledgerPending: false, staleLock: false, mainBranch: "master" };
+        }
+        return [];
+      },
+    },
+  });
+
+  try {
+    ui.useAppStore.setState({ page: "workspaces", selectProjectReq: null });
+    await ui.act(async () => {
+      ui.root.render(ui.createElement(ui.WorkspacesPage, { visible: true }));
+    });
+    for (let i = 0; i < 40 && healthDone < workspaces.length; i += 1) {
+      await ui.act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+    }
+    assert.equal(driftDone, workspaces.length);
+    assert.equal(healthDone, workspaces.length);
+    assert.ok(maxDrift > 0 && maxDrift <= 4, `workspace_drift 并发应不超过 4，实际 ${maxDrift}`);
+    assert.ok(maxHealth > 0 && maxHealth <= 3, `workspace_health 并发应不超过 3，实际 ${maxHealth}`);
+
+    const failedState = ui.workspaceState(
+      workspaces[0],
+      undefined,
+      { healthy: true, canRemount: false, canRelocate: false, canMarkArchived: false, canCleanRecord: true, canResolveMerge: false, issues: [] },
+      "启动进程失败: Too many open files (os error 24)",
+      false,
+    );
+    assert.equal(failedState.label, "检查失败");
+    assert.ok(
+      failedState.details.some((d: string) => d.includes("Too many open files")),
+      `失败详情应包含具体错误原因，实际：${failedState.details.join(" | ")}`,
+    );
   } finally {
     await ui.close();
   }

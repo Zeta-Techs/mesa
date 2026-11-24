@@ -485,6 +485,8 @@ pub async fn background_core_set(enabled: bool) -> Result<CoreStatus, String> {
 }
 
 pub fn run() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    crate::process::raise_nofile_limit();
     CORE.store(true, Ordering::Release);
     let file = path("core.lock")?;
     fs::create_dir_all(file.parent().ok_or("没有配置目录")?).map_err(|error| error.to_string())?;

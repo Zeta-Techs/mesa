@@ -59,6 +59,7 @@
   **macOS / Linux 同一入口**（2026-10-30 合入 Windows 修复时补）：启动时 `extend_process_path` 只补**当时已存在**的候选目录，Mesa 开着时
   一键补齐装出来的新目录（`/Applications/quarto/bin`、`Python.framework`、`~/Library/TinyTeX/bin/…`）不在 PATH 上；`child_path` 在 unix 上
   按 `binary_candidate_dirs` 再补一次（全是固定路径，十几次 stat）。新增依赖的默认落点进候选目录，两个平台就都不用重启。
+- **macOS GUI 应用默认软文件描述符上限只有 256**（2026-11-24 打包版实证：`launchctl limit maxfiles` 为 `256 unlimited`，而终端启动的开发版 `ulimit -Sn` 为 `1048575`）。Mesa 常驻 WebKit/Tauri/SQLite/PTY 已占约 70 个 FD，遇到多个活跃工作区并发跑 9 路并行 `git` 的 `workspace_health` 会撞 `Too many open files (os error 24)`（`EMFILE`），导致工作区偶发显示「检查失败」且重试仍失败。启动起线程前由 `process::raise_nofile_limit()`（`lib.rs::run` 与 `background_core::run`）把软上限抬到 `min(rlim_max, 10240)`（已在目标之上不动），前端 `WorkspacesPage` 同步给 `workspace_drift` / `workspace_health` 设并发上限（4 / 3），并在详情弹窗透出真实失败原因。
 - **macOS GUI 应用也没有 LANG**（2026-10-27 本机实证：打包版 Mesa 与它起的 Codex 进程环境里只有短 PATH 和 `__CF_USER_TEXT_ENCODING`）。
   子进程都跑在 C 语言环境：`lsof` 把中文路径转义成 `\xe7…`、`ls` 显示 `????`、zsh 里打中文变 `<e7>`。启动时最先
   调 `process::ensure_utf8_locale`（再读 shell 环境，rc 里自己设了 LANG 的以 rc 为准）：LANG / LC_ALL / LC_CTYPE 都没有才补 `LANG=<系统地区>.UTF-8`（NSLocale，本机无该 locale 回落 en_US.UTF-8），

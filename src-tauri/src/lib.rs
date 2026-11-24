@@ -205,11 +205,14 @@ async fn prepare_app_exit(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 从访达 / 程序坞打开时环境是 launchd 给的最小一份，以下三步都必须在起任何线程之前：
-    // 先补 UTF-8 的 LANG（shell 也要看到它，见 process::ensure_utf8_locale），
+    // 从访达 / 程序坞打开时环境是 launchd 给的最小一份，以下几步都必须在起任何线程之前：
+    // 先把 launchd 默认 256 的软文件描述符上限抬到 10240（防多工作区并发 git 撞 EMFILE，见 process::raise_nofile_limit），
+    // 再补 UTF-8 的 LANG（shell 也要看到它，见 process::ensure_utf8_locale），
     // 再读一次登录 shell 的环境（conda、Homebrew、PATH 顺序与终端一致，凭据不带，见 shell_env），
     // 去掉继承的 conda「已激活」状态，子进程的 shell 才会重新激活（见 shell_env::clear_conda_activation），
     // 最后把 shell PATH 里没有的候选目录补在末尾兜底（见 agents::extend_process_path）
+    #[cfg(target_os = "macos")]
+    process::raise_nofile_limit();
     #[cfg(target_os = "macos")]
     process::ensure_utf8_locale();
     #[cfg(unix)]

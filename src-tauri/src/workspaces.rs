@@ -167,19 +167,58 @@ fn db_at(path: &Path) -> Result<Connection, String> {
 
 // 幂等建表：delete_workspaces_for_repo 可能拿到只建过 projects 表的连接（同一 app.db）
 fn ensure_workspaces_table(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS workspaces(
-          id TEXT PRIMARY KEY, repo_path TEXT, name TEXT, branch TEXT,
-          worktree_path TEXT, base_branch TEXT, port_base INTEGER,
-          status TEXT NOT NULL DEFAULT 'active', created_at TEXT, archived_at TEXT);",
-    )
-    .map_err(|e| format!("初始化 workspaces 表失败: {e}"))?;
-    // 轻量迁移：老库补 merged_at 列（已存在则忽略错误）
-    let _ = conn.execute_batch("ALTER TABLE workspaces ADD COLUMN merged_at TEXT;");
-    let _ = conn.execute_batch("ALTER TABLE workspaces ADD COLUMN project_id TEXT;");
-    let _ = conn.execute_batch(
-        "UPDATE workspaces SET project_id=(SELECT id FROM projects WHERE projects.path=workspaces.repo_path) WHERE project_id IS NULL AND repo_path IS NOT NULL",
-    );
+    let has_table: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspaces')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("检查 workspaces 表失败: {e}"))?;
+    if !has_table {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS workspaces(
+              id TEXT PRIMARY KEY, repo_path TEXT, name TEXT, branch TEXT,
+              worktree_path TEXT, base_branch TEXT, port_base INTEGER,
+              status TEXT NOT NULL DEFAULT 'active', created_at TEXT, archived_at TEXT);",
+        )
+        .map_err(|e| format!("初始化 workspaces 表失败: {e}"))?;
+    }
+    // 轻量迁移：先只读检查表结构与待回填行，已就绪的库不再发 ALTER / UPDATE 抢写锁（同 runs::backfill_project_ids）
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(workspaces)")
+        .map_err(|e| format!("读取 workspaces 表结构失败: {e}"))?
+        .query_map([], |r| r.get(1))
+        .map_err(|e| format!("读取 workspaces 表结构失败: {e}"))?
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("读取 workspaces 表结构失败: {e}"))?;
+    if !columns.iter().any(|c| c == "merged_at") {
+        let _ = conn.execute_batch("ALTER TABLE workspaces ADD COLUMN merged_at TEXT;");
+    }
+    if !columns.iter().any(|c| c == "project_id") {
+        let _ = conn.execute_batch("ALTER TABLE workspaces ADD COLUMN project_id TEXT;");
+    }
+    let has_projects: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if has_projects {
+        let pending: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE project_id IS NULL AND repo_path IS NOT NULL \
+                 AND EXISTS(SELECT 1 FROM projects WHERE projects.path=workspaces.repo_path))",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
+        if pending {
+            let _ = conn.execute_batch(
+                "UPDATE workspaces SET project_id=(SELECT id FROM projects WHERE projects.path=workspaces.repo_path) WHERE project_id IS NULL AND repo_path IS NOT NULL",
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1410,8 +1449,8 @@ fn health_impl(conn: &Connection, id: &str) -> Result<WsHealthDto, String> {
     let w = get_workspace(conn, id)?;
     let wt = PathBuf::from(&w.worktree_path);
     let base = base_ref(&wt, &w.base_branch);
-    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错
-    let repo = live_repo_for(&w);
+    // 主仓库状态也是本地合并的前置条件：提前暴露，别等点了「合并」才报错；复用当前连接免得再开一遍 app.db
+    let repo = live_repo_in(Some(conn), &w);
     // 八次 git 互不依赖，并行跑：Windows 上每起一个 git 要 100–150ms，串行近 1 秒，
     // 打开评审要等它（2026-10-24 HER 初稿实测：串行 ~950ms → 并行 ~320ms）
     fn joined<T>(r: std::thread::Result<T>) -> Result<T, String> {

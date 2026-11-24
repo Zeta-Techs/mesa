@@ -103,6 +103,60 @@ fn python_io_env_for(windows: bool, existing: Option<&OsStr>) -> Option<(&'stati
     }
 }
 
+/// 从访达 / 程序坞启动的 macOS GUI 应用由 launchd 拉起，默认软文件描述符上限（RLIMIT_NOFILE）只有 256，
+/// 而从终端启动的开发版是 1048575。Mesa 常驻 WebKit/Tauri/SQLite/PTY 已占约 70 个 FD，
+/// 遇到多工作区并发跑 git 诊断（每工作区并行 9 路 git 管道）就会撞上 EMFILE（Too many open files），
+/// 表现为步骤工作区偶发「检查失败」且重试反复失败（2026-11-24 打包版实证）。
+/// 起线程前把软上限抬到 OPEN_MAX（10240，且不超过当前硬上限）；已在目标之上时不动。
+#[cfg(target_os = "macos")]
+pub fn raise_nofile_limit() {
+    #[repr(C)]
+    struct Rlimit {
+        rlim_cur: u64,
+        rlim_max: u64,
+    }
+    const RLIMIT_NOFILE: std::ffi::c_int = 8;
+    const TARGETS: [u64; 3] = [10_240, 4_096, 2_048];
+    extern "C" {
+        fn getrlimit(resource: std::ffi::c_int, rlp: *mut Rlimit) -> std::ffi::c_int;
+        fn setrlimit(resource: std::ffi::c_int, rlp: *const Rlimit) -> std::ffi::c_int;
+    }
+    let mut lim = Rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    if unsafe { getrlimit(RLIMIT_NOFILE, &mut lim) } != 0 {
+        return;
+    }
+    for target in nofile_candidates(lim.rlim_cur, lim.rlim_max, &TARGETS) {
+        let next = Rlimit {
+            rlim_cur: target,
+            rlim_max: lim.rlim_max,
+        };
+        if unsafe { setrlimit(RLIMIT_NOFILE, &next) } == 0 {
+            crate::logbuf::record(
+                "info",
+                "process",
+                &format!("已提高文件描述符上限: {} -> {}", lim.rlim_cur, target),
+            );
+            return;
+        }
+    }
+}
+
+/// 按降序候选目标计算应尝试的新软上限：不越硬上限、不把已高于目标的软上限调低，并去重
+#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+fn nofile_candidates(cur: u64, max: u64, targets: &[u64]) -> Vec<u64> {
+    let mut out = Vec::new();
+    for &raw in targets {
+        let clamped = raw.min(max);
+        if clamped > cur && !out.contains(&clamped) {
+            out.push(clamped);
+        }
+    }
+    out
+}
+
 /// 从访达 / 程序坞启动的 Mesa 没有 LANG（只有短 PATH 和 `__CF_USER_TEXT_ENCODING`），之后起的 shell、Agent、
 /// ls / lsof 都跑在 C 语言环境里：中文文件名显示成 `????` 或 `\xe7…`，zsh 里打中文变 `<e7>`
 /// （2026-10-27 本机：打包版 Codex 子进程无 LANG）。启动时照「终端」App 的做法补 `LANG=<系统地区>.UTF-8`，
@@ -1690,6 +1744,27 @@ endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_
             js_entry_from_shim("SET \"X_JS=%~dp0\\a.js\"\r\n\"%NODE_EXE%\" %*"),
             None
         );
+    }
+
+    #[test]
+    fn nofile_candidates_raise_without_exceeding_hard_or_lowering_soft() {
+        const TARGETS: [u64; 3] = [10_240, 4_096, 2_048];
+        // launchd 常见：软 256，硬无限
+        assert_eq!(
+            nofile_candidates(256, u64::MAX, &TARGETS),
+            vec![10_240, 4_096, 2_048]
+        );
+        // 硬上限卡在 5000：第一档按硬上限夹紧，去重不重复尝试
+        assert_eq!(
+            nofile_candidates(256, 5_000, &TARGETS),
+            vec![5_000, 4_096, 2_048]
+        );
+        assert_eq!(nofile_candidates(256, 1_024, &TARGETS), vec![1_024]);
+        // 终端启动：软上限已在目标之上，不调低也不再发系统调用
+        assert!(nofile_candidates(1_048_575, u64::MAX, &TARGETS).is_empty());
+        assert!(nofile_candidates(10_240, 10_240, &TARGETS).is_empty());
+        // 软上限已等于硬上限，无提升空间
+        assert!(nofile_candidates(512, 512, &TARGETS).is_empty());
     }
 
     /// 本机真实 Node 安装（C:\Program Files\nodejs）：npx.cmd 必须深化成 node + npx-cli.js，

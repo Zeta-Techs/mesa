@@ -3409,3 +3409,27 @@ fn e2e_research_loop_worktree_sync_catchup_and_merge() {
         "合并后主仓不应残留非豁免脏文件: {main_status}"
     );
 }
+
+#[test]
+fn ensure_workspaces_table_is_read_only_once_migrated() {
+    let dir = std::env::temp_dir().join(format!("ccode-ws-db-ro-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("app.db");
+    let writer = db_at(&path).unwrap();
+    writer
+        .execute_batch(
+            "PRAGMA journal_mode=WAL;
+             CREATE TABLE projects(path TEXT PRIMARY KEY, id TEXT);",
+        )
+        .unwrap();
+    // 另一连接持写事务期间，已初始化的库走 ensure_workspaces_table 不能再申请写锁
+    writer.execute_batch("BEGIN IMMEDIATE;").unwrap();
+    let reader = Connection::open(&path).unwrap();
+    reader.busy_timeout(Duration::from_millis(0)).unwrap();
+    let res = ensure_workspaces_table(&reader);
+    let _ = writer.execute_batch("ROLLBACK;");
+    drop(reader);
+    drop(writer);
+    let _ = fs::remove_dir_all(&dir);
+    res.unwrap();
+}
