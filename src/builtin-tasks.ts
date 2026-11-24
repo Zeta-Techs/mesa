@@ -103,6 +103,61 @@ export const BUILTIN_TASKS: readonly BuiltinTask[] = [
     ],
     skills: ["endnote-bridge", "review-writing", "bib-check"],
   },
+  {
+    id: "rebuttal",
+    name: "审稿意见回复",
+    summary: "把审稿意见逐条编号分级，起草回复信（Response Letter）与修改对照表；未经明确要求不直接改原稿",
+    clarify: [
+      "审稿意见原件在项目里的哪个文件（或直接贴在消息里）",
+      "这次是大修还是小修、返修截止日期",
+      "有没有明确不能补做或准备礼貌反驳的条目",
+      "本轮先只出回复信草稿与修改对照表，还是同步改一份稿件副本",
+    ],
+    method: [
+      "先把全部审稿人与编辑意见逐条编号（R1-1、R1-2…）并按类别和严重度分级，一条不漏，先定大修/小修应对策略。",
+      "每条明确归为「接受修改 / 部分接受 / 礼貌反驳」三型之一；审稿人漏看的按正文呈现不够清晰处理，不带情绪，反驳只用项目已有数据与文献证据。",
+      "产出逐条修改对照表与 Response Letter 草稿，核对回复信里的每一句承诺与对照表双向一致，写清需要改动的原稿章节与具体改法。",
+      "除非用户明确要求同步改稿，否则不直接修改项目原稿；若需新增引用，先查实并记进 references.bib，收尾跑引用闭环检查。",
+    ],
+    deliverables: [
+      "output/rebuttal/<日期>-response-letter.md（逐条回复信草稿）",
+      "output/rebuttal/<日期>-revision-matrix.md（审稿意见分级与修改对照表）",
+    ],
+    done: [
+      "所有审稿人及编辑意见逐条编号覆盖，无遗漏",
+      "回复信承诺与修改对照表逐条双向核对一致",
+      "未擅自改动项目原稿，反驳与补充依据均可回溯到项目文件或引文库",
+    ],
+    skills: ["rebuttal-crafter", "review-writing", "bib-check"],
+  },
+  {
+    id: "submission-pack",
+    name: "换刊适配与投稿材料",
+    summary: "基于项目已有终稿，按目标期刊要求整理 Cover Letter、Highlights、投稿声明与格式核对清单，不覆盖原稿",
+    clarify: [
+      "目标期刊名称（及字数、图表数、摘要或参考文献格式限制）",
+      "基于项目里哪一份终稿来整理",
+      "通讯作者、基金号、利益冲突或推荐审稿人有哪些要补进去",
+      "要不要同时按新期刊样式另导出阅读版 PDF / Word",
+    ],
+    method: [
+      "先核对已有终稿的字数、摘要长度、图表数量、引用格式与目标期刊要求之间的差距，列成逐项投稿核对清单。",
+      "基于终稿内容起草 Cover Letter 与 Highlights（每条卖点和数字均回对终稿与数据，不夸大、不编造新结果）。",
+      "整理作者、单位、基金、利益冲突、数据与 AI 使用声明等投稿必备材料；项目里还没填的真实信息显式标 `[待填]`，不代填。",
+      "原稿只读：如需按新期刊调整格式或重渲，另存到 `output/submission/` 下，并做一次引用与参考文献闭环核对。",
+    ],
+    deliverables: [
+      "output/submission/<期刊>-cover-letter.md",
+      "output/submission/<期刊>-highlights.md",
+      "output/submission/<期刊>-checklist.md（格式差距与投稿前待办清单）",
+    ],
+    done: [
+      "Cover Letter 与 Highlights 中的数字与核心结论和终稿一致",
+      "缺失的作者/基金/许可信息明确标 `[待填]`，无编造内容",
+      "项目原稿未被覆盖，格式与篇幅差距逐条列出",
+    ],
+    skills: ["review-writing", "bib-check", "quarto-render"],
+  },
 ];
 
 export function findBuiltinTask(name: string): BuiltinTask | null {

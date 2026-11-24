@@ -216,3 +216,22 @@ test("上游待跟进按真实上游名提示：第 1 步和运行中步骤不�
     ],
   );
 });
+
+test("全部流程步骤都已保存时，常用问题切换到投后与衍生场景；待验收目标带 id 时直达验收", () => {
+  const asks = quickAsks({
+    ...base,
+    steps: [
+      { n: 1, name: "检索", state: "saved", needsHuman: 0 },
+      { n: 2, name: "定稿", state: "saved", needsHuman: 0 },
+    ],
+  });
+  assert.equal(asks.length, 3);
+  assert.match(asks[0].q, /投稿前还差哪些收尾/);
+  assert.match(asks[1].q, /返修回复或组会汇报/);
+
+  const lines = briefLines({
+    ...base,
+    goals: [{ id: "task-99", name: "组会 PPT", status: "pending_review", updatedAt: "2026-11-24T00:00:00Z" }],
+  });
+  assert.deepEqual(lines[0].action, { kind: "project", step: null, text: "goal:task-99", label: "去验收" });
+});

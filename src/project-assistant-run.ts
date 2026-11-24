@@ -49,11 +49,16 @@ import type { BriefInput, BriefStep } from "./assistant-brief";
 import { hasKnowledgeSources } from "./assistant-brief";
 import type { DirEntryDto } from "./components/FileTree";
 import { declaredTaskKindsForMode, visibleDeclaredTasks } from "./project-tasks";
+import { groupCloseoutFiles } from "./closeout-pack";
+import { parseTargetJournal } from "./citation-style-choice";
+import { nextActionStepSlug, parseStepNextActions, readNextActionChecks } from "./step-next-actions";
+import type { ConsultDto, ConsultListItem } from "./consult";
 import type { DepCheckDto } from "./dep-check";
 import type { MesaErrorRecord } from "./mesa-errors";
 import type {
   AgentCapabilitiesDto,
   DetectResult,
+  HumanTaskStateDto,
   ModelCapabilityDto,
   HelpRequestDto,
   ProjectConfigReadDto,
@@ -151,23 +156,111 @@ export function assistantConnection(project: ProjectDto | null): {
   return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound, agentId: launch.agentId };
 }
 
+function scheduleTriggerLabel(s: ScheduleDto): string {
+  if (s.event) {
+    if (s.event.kind === "folder") return `目录新文件${s.event.folder ? `（${s.event.folder}）` : ""}`;
+    if (s.event.kind === "lit_watch") return "文献雷达新命中";
+    if (s.event.kind === "phone_drop") return "从手机添加";
+    return `事件：${s.event.kind}`;
+  }
+  if (s.frequency === "manual") return "仅手动";
+  if (s.frequency === "hourly") return `每 ${s.intervalHours ?? 1} 小时`;
+  if (s.frequency === "weekdays") return `工作日 ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
+  if (s.frequency === "weekly") return `每周${["", "一", "二", "三", "四", "五", "六", "日"][s.weekday ?? 1] ?? ""} ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
+  return `每天 ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
+}
+
+function scheduleStatusText(s: ScheduleDto): string {
+  const parts: string[] = [];
+  if (s.runningRunId) parts.push(s.stalledMinutes ? `运行中（已 ${s.stalledMinutes} 分钟无动静）` : "正在运行");
+  else if (s.queued) parts.push("排队中");
+  if (s.followupState === "uncertain") parts.push("后台跟进结果不明已暂停，等你核对");
+  if (s.pausedReason) parts.push(`已暂停：${s.pausedReason}`);
+  if (s.grantRequest?.blocked.length) parts.push(`被授权范围拦下（${s.grantRequest.blocked.slice(0, 2).join("、")}）`);
+  if ((s.pendingEvents ?? 0) > 0) parts.push(`待处理事件 ${s.pendingEvents} 批`);
+  if ((s.missedEvents ?? 0) > 0) parts.push(`漏掉 ${s.missedEvents} 批事件待补跑`);
+  if (parts.length === 0) {
+    if (s.lastRunAt) parts.push(`上次 ${s.lastRunAt.slice(0, 16).replace("T", " ")} · ${s.lastStatus || "完成"}`);
+    else parts.push("还没跑过");
+  }
+  return parts.join("；");
+}
+
+function consultSummary(dto: ConsultDto): string {
+  const msgs = dto.consult.messages.filter((m) => m.status === "ok" && !m.pass && (m.conclusion?.trim() || m.text.trim()));
+  if (msgs.length === 0) return `问题：${dto.consult.meta.question.slice(0, 140)}（暂无有效结论）`;
+  const lastRound = Math.max(...msgs.map((m) => m.round));
+  const picks = msgs
+    .filter((m) => m.round === lastRound)
+    .slice(0, 3)
+    .map((m) => {
+      const member = dto.consult.meta.members.find((x) => x.id === m.member)?.name ?? m.member;
+      const body = (m.conclusion?.trim() || m.text.trim()).replace(/\s+/g, " ").slice(0, 110);
+      return `${member}：${body}`;
+    });
+  return `问题「${dto.consult.meta.question.slice(0, 60)}」→ ${picks.join(" | ")}`;
+}
+
+async function readPendingNextActions(
+  projectPath: string,
+  stepName: string,
+  workspaceName: string,
+  worktreePath: string | null,
+): Promise<string[]> {
+  const slug = nextActionStepSlug(workspaceName || stepName);
+  const candidates = [
+    ...(worktreePath ? [{ root: worktreePath, path: `${worktreePath}/.ccode/next-actions.json` }] : []),
+    ...(slug ? [{ root: projectPath, path: `${projectPath}/.ccode/step-next/${slug}.json` }] : []),
+  ];
+  for (const c of candidates) {
+    const file = await safe(invoke<{ text: string } | null>("read_file_preview", { root: c.root, path: c.path, requireWithinRoot: true }), null);
+    if (!file?.text) continue;
+    const parsed = parseStepNextActions(file.text);
+    if (!parsed?.optional.length) return [];
+    const checked = readNextActionChecks(projectPath, stepName);
+    return parsed.optional.filter((o) => !checked.has(o.id)).map((o) => o.label);
+  }
+  return [];
+}
+
 export async function gatherSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
-  const [projects, read, workspaces, runs, tasks, help, mail, memory, mesaErrors, appLog, detected, version, profile] =
-    await Promise.all([
-      safe(invoke<ProjectDto[]>("list_projects"), []),
-      safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
-      safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-      safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
-      safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
-      safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
-      safe(invoke<ProjectMailDto[]>("mail_list", { projectRoot: projectPath }), []),
-      safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
-      safe(invoke<MesaErrorRecord[]>("mesa_errors_read", { projectRoot: projectPath, limit: 30 }), []),
-      safe(invoke<{ ts: string; level: string; source: string; message: string }[]>("get_app_log", { limit: 300 }), []),
-      safe(invoke<DetectResult[]>("detect_agents"), []),
-      safe(getVersion(), ""),
-      safe(invoke<string>("research_profile_context"), ""),
-    ]);
+  const [
+    projects,
+    read,
+    workspaces,
+    runs,
+    tasks,
+    help,
+    mail,
+    memory,
+    mesaErrors,
+    appLog,
+    detected,
+    version,
+    profile,
+    humanStates,
+    schedules,
+    consultList,
+    fileMap,
+  ] = await Promise.all([
+    safe(invoke<ProjectDto[]>("list_projects"), []),
+    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
+    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
+    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
+    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
+    safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
+    safe(invoke<ProjectMailDto[]>("mail_list", { projectRoot: projectPath }), []),
+    safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
+    safe(invoke<MesaErrorRecord[]>("mesa_errors_read", { projectRoot: projectPath, limit: 30 }), []),
+    safe(invoke<{ ts: string; level: string; source: string; message: string }[]>("get_app_log", { limit: 300 }), []),
+    safe(invoke<DetectResult[]>("detect_agents"), []),
+    safe(getVersion(), ""),
+    safe(invoke<string>("research_profile_context"), ""),
+    safe(invoke<HumanTaskStateDto[]>("list_human_task_states", { projectRoot: projectPath }), [] as HumanTaskStateDto[]),
+    safe(invoke<ScheduleDto[]>("list_schedules"), [] as ScheduleDto[]),
+    safe(invoke<ConsultListItem[]>("consult_list", { projectRoots: [projectPath] }), [] as ConsultListItem[]),
+    safe(invoke<{ entries: MapEntry[]; truncated: boolean } | null>("project_file_map", { projectRoot: projectPath }), null),
+  ]);
   const state = useAppStore.getState();
   const deps: DepCheckDto | null =
     state.depCheck ?? (await safe(invoke<DepCheckDto>("check_dependencies"), null as DepCheckDto | null));
@@ -176,12 +269,26 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
   const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
   const live = state.terminalRunInputs;
 
+  const humanSummaryFor = (stepName: string): SnapshotStep["humanTasks"] => {
+    const items = humanStates.filter((h) => h.step === stepName);
+    if (items.length === 0) return null;
+    const mandatory = items.filter((h) => !h.optional);
+    const optional = items.filter((h) => h.optional);
+    return {
+      done: mandatory.filter((h) => h.done).length,
+      total: mandatory.length,
+      pending: mandatory.filter((h) => !h.done).map((h) => h.title),
+      optionalPending: optional.filter((h) => !h.done).map((h) => h.title),
+    };
+  };
+
   const steps: SnapshotStep[] = await Promise.all(
     (cfg?.steps ?? []).map(async (s, index) => {
       const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
       const archivedMerged = !ws
         ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived" && !!w.mergedAt) ?? null)
         : null;
+      const humanTasks = humanSummaryFor(s.name);
       const base = {
         index,
         name: s.name,
@@ -189,17 +296,20 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
         expectedArtifacts: s.expectedArtifacts,
         acceptanceCriteria: s.acceptanceCriteria ?? [],
         worktreePath: ws?.worktreePath ?? null,
+        humanTasks,
       };
       if (!ws) {
         if (archivedMerged) {
-          return { ...base, state: "已保存进项目（工作副本已归档）", failure: null, checks: [], reviewNotes: null };
+          const pendingNextActions = await readPendingNextActions(projectPath, s.name, s.workspaceName, null);
+          return { ...base, state: "已保存进项目（工作副本已归档）", failure: null, checks: [], reviewNotes: null, pendingNextActions };
         }
         return { ...base, state: s.seedComplete ? "已完成（示例预置）" : "还没开始", failure: null, checks: [], reviewNotes: null };
       }
-      const [health, checks, reviewNotes] = await Promise.all([
+      const [health, checks, reviewNotes, pendingNextActions] = await Promise.all([
         safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
         stepChecks(s, ws.worktreePath, projectPath),
         safe(invoke<string | null>("assistant_review_notes", { worktreePath: ws.worktreePath }), null),
+        readPendingNextActions(projectPath, s.name, s.workspaceName, ws.mergedAt ? null : ws.worktreePath),
       ]);
       const attention = stepAttention(ws, live, IS_WINDOWS);
       const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
@@ -215,9 +325,86 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       if (ws.staleUpstream && attention !== "working" && attention !== "confirm" && !health?.conflict && stateText !== "出错了") {
         stateText += `（上游「${ws.staleUpstream}」有新保存的内容待跟进）`;
       }
-      return { ...base, state: stateText, failure, checks, reviewNotes };
+      return { ...base, state: stateText, failure, checks, reviewNotes, pendingNextActions };
     }),
   );
+
+  // 最近的多模型研讨结论（最多 2 场，供项目助手衔接讨论结果起草派活单或记规矩）
+  const recentConsults = (
+    await Promise.all(
+      [...consultList]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 2)
+        .map(async (c) => {
+          const detail = await safe(invoke<ConsultDto | null>("consult_read", { projectRoot: projectPath, id: c.id }), null);
+          return detail ? { title: c.title, updatedAt: c.updatedAt, summary: consultSummary(detail) } : null;
+        }),
+    )
+  ).filter((c): c is { title: string; updatedAt: string; summary: string } => !!c);
+
+  // 项目根对话 / 非步骤目标对话最近内容（最多 2 条）
+  const stepRoots = steps.map((s) => s.worktreePath).filter((p): p is string => !!p);
+  const nonStepRootsSeen = new Set<string>();
+  const nonStepRuns = runs
+    .filter(
+      (r) =>
+        !r.internal &&
+        !!r.sessionId &&
+        !!r.isolationPath &&
+        !stepRoots.some((sr) => pathWithin(r.isolationPath, sr, IS_WINDOWS)),
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .filter((r) => {
+      const k = IS_WINDOWS ? r.isolationPath.toLowerCase() : r.isolationPath;
+      if (nonStepRootsSeen.has(k)) return false;
+      nonStepRootsSeen.add(k);
+      return true;
+    })
+    .slice(0, 2);
+  const recentChats = (
+    await Promise.all(
+      nonStepRuns.map(async (r) => {
+        const tail = await stepSessionTail([r], r.isolationPath).catch(() => null);
+        if (!tail) return null;
+        const goal = r.taskId ? tasks.find((t) => t.id === r.taskId && t.kind !== "step") : null;
+        const label = goal ? `目标「${goal.name}」` : samePath(r.isolationPath, projectPath, IS_WINDOWS) ? "项目根对话" : "项目内对话";
+        return { where: label, text: tail.text };
+      }),
+    )
+  ).filter((c): c is { where: string; text: string } => !!c);
+
+  // 完结产物与目标期刊：从项目地图的已有文件按完结清单同口径汇总
+  const mapEntries = fileMap?.entries ?? [];
+  const closeoutGroups = mapEntries.length
+    ? groupCloseoutFiles(mapEntries.map((e) => ({ rel: e.path, name: "", abs: "", label: "" })))
+    : [];
+  const finalFiles = (closeoutGroups.find((g) => g.id === "final")?.files ?? []).map((f) => `${f.label}（${f.rel}）`);
+  const checkFiles = (closeoutGroups.find((g) => g.id === "checks")?.files ?? []).map((f) => `${f.label}（${f.rel}）`);
+  const hasTargetJournalFile = mapEntries.some((e) => e.path.replace(/\\/g, "/") === "submission/target-journal.md");
+  const targetJournal = hasTargetJournalFile
+    ? await safe(
+        invoke<{ text: string } | null>("read_file_preview", {
+          root: projectPath,
+          path: `${projectPath}/submission/target-journal.md`,
+          requireWithinRoot: true,
+        }),
+        null,
+      ).then((f) => (f?.text ? parseTargetJournal(f.text) : null))
+    : null;
+  const closeout =
+    finalFiles.length || targetJournal || (steps.length > 0 && steps.every((s) => s.state.startsWith("已保存进项目")) && checkFiles.length)
+      ? { finalFiles, targetJournal, pendingChecks: checkFiles }
+      : null;
+
+  const projectSchedules = schedules
+    .filter((s) => samePath(s.projectRoot, projectPath, IS_WINDOWS))
+    .map((s) => ({
+      name: s.name,
+      enabled: s.enabled,
+      trigger: scheduleTriggerLabel(s),
+      skill: s.skill,
+      status: scheduleStatusText(s),
+    }));
 
   // 交互对话里的出错不进运行记录：各步最近那段对话里 AI 最后说的话（只读最后一页）
   const stepTails = (
@@ -305,8 +492,9 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     steps,
     goals: tasks
       .filter((t) => t.kind !== "step" && !t.archivedAt)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, 12)
-      .map((t) => ({ name: t.name, status: GOAL_STATUS[t.status] ?? t.status })),
+      .map((t) => ({ name: t.name, status: GOAL_STATUS[t.status] ?? t.status, outputPaths: t.outputPaths })),
     runs: snapshotRuns,
     focus: focus ? { title: focus.title, detail: focus.detail, events: focusEvents } : null,
     failedRunEvents,
@@ -320,6 +508,10 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
     profile,
     dispatched,
     stepTails,
+    closeout,
+    schedules: projectSchedules,
+    consults: recentConsults,
+    recentChats,
   };
   return buildProjectSnapshot(input, SNAPSHOT_MAX_CHARS);
 }
@@ -389,6 +581,7 @@ export async function gatherBriefInput(projectPath: string, since: string | null
     return hit?.isolationPath ?? null;
   };
   const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({
+    id: t.id,
     name: t.name,
     status: t.status,
     updatedAt: t.updatedAt,

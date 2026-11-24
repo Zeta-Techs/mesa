@@ -25,6 +25,8 @@ export interface BriefStep {
 }
 
 export interface BriefGoal {
+  /** 目标 id（有则「去验收」直达该目标的验收弹层，不再只跳到项目页） */
+  id?: string;
   name: string;
   status: string;
   updatedAt: string;
@@ -211,7 +213,13 @@ export function briefLines(input: BriefInput): BriefLine[] {
   }
   for (const g of input.goals) {
     if (g.status === "pending_review") {
-      now.push({ tone: "warn", text: `目标「${g.name}」做完了，等你验收`, action: { kind: "project", step: null, text: "", label: "去项目页" } });
+      now.push({
+        tone: "warn",
+        text: `目标「${g.name}」做完了，等你验收`,
+        action: g.id
+          ? { kind: "project", step: null, text: `goal:${g.id}`, label: "去验收" }
+          : { kind: "project", step: null, text: "", label: "去项目页" },
+      });
     } else if (g.status === "failed" || g.status === "stopped") {
       now.push({
         tone: "err",
@@ -272,6 +280,13 @@ const FLOW_DEFAULTS: QuickAsk[] = [
   { q: "我下一步该做什么？", hint: "接下来该点哪里" },
 ];
 
+/** 全部流程步骤都已保存进项目后的默认问题：面向投稿收尾、返修与衍生汇报 */
+const POST_FLOW_DEFAULTS: QuickAsk[] = [
+  { q: "投稿前还差哪些收尾或待核对的事？", hint: "核对人工事项、后续建议、完结文件与引用状态" },
+  { q: "基于这份终稿，帮我起草返修回复或组会汇报", hint: "说清用途，直接起草带交付标准的派活单" },
+  { q: "这个项目里定下了哪些规矩和最终文件？", hint: "汇总项目知识、定时任务与终稿去处" },
+];
+
 const GOAL_DEFAULTS: QuickAsk[] = [
   { q: "目标都做到哪了？", hint: "进行中、等你验收、没做成的各有哪些" },
   { q: "哪里出问题了？", hint: "出错、卡住的地方，是谁的问题" },
@@ -301,7 +316,14 @@ export function quickAsks(input: BriefInput, limit = 3): QuickAsk[] {
       focus: goalReviewPrereadFocus(goalReview.name, { isolationPath: goalReview.isolationPath, outputs: goalReview.outputPaths }),
     });
   }
-  const defaults = input.hasFlow ? FLOW_DEFAULTS : input.goals.length > 0 ? GOAL_DEFAULTS : FRESH_DEFAULTS;
+  const allStepsSaved = input.hasFlow && input.steps.length > 0 && input.steps.every((s) => s.state === "saved");
+  const defaults = allStepsSaved
+    ? POST_FLOW_DEFAULTS
+    : input.hasFlow
+      ? FLOW_DEFAULTS
+      : input.goals.length > 0
+        ? GOAL_DEFAULTS
+        : FRESH_DEFAULTS;
   for (const d of defaults) {
     if (out.length >= limit) break;
     if (!out.some((o) => o.q === d.q)) out.push(d);

@@ -19,6 +19,10 @@ export interface SnapshotStep {
   failure: string | null;
   checks: readonly CheckItem[];
   reviewNotes: string | null;
+  /** 这一步的人工事项完成情况（必做已完成/总数 + 没勾的项，另列可选未勾项） */
+  humanTasks?: { done: number; total: number; pending: readonly string[]; optionalPending?: readonly string[] } | null;
+  /** 这一步收尾「后续建议」里还没勾选处理的条目 */
+  pendingNextActions?: readonly string[];
 }
 
 export interface SnapshotRun extends RunFailureInput {
@@ -56,7 +60,7 @@ export interface SnapshotInput {
     defaultAgent: string | null;
   };
   steps: readonly SnapshotStep[];
-  goals: readonly { name: string; status: string }[];
+  goals: readonly { name: string; status: string; outputPaths?: readonly string[] }[];
   runs: readonly SnapshotRun[];
   /** 重点那次运行的最后若干条事件（「问问为什么」带进来） */
   focus: { title: string; detail: string; events: readonly string[] } | null;
@@ -74,6 +78,14 @@ export interface SnapshotInput {
   dispatched?: readonly string[];
   /** 各步最近那段对话里 AI 最后说的话（交互对话出错不进运行记录，靠这里补；第几步 → 末尾一段） */
   stepTails?: readonly { where: string; text: string; flagged: boolean }[];
+  /** 全部流程完成后的完结产物、目标期刊与待核对清单 */
+  closeout?: { finalFiles: readonly string[]; targetJournal?: string | null; pendingChecks?: readonly string[] } | null;
+  /** 这个项目配置的定时任务与事件规则（含文献雷达） */
+  schedules?: readonly { name: string; enabled: boolean; trigger: string; skill: string; status: string }[];
+  /** 最近的多模型研讨结论（项目内研讨，方便接着起草派活单或记规矩） */
+  consults?: readonly { title: string; updatedAt: string; summary: string }[];
+  /** 项目根或非步骤目标对话里最近 AI 说的要点 */
+  recentChats?: readonly { where: string; text: string }[];
 }
 
 const RUN_STATUS: Record<string, string> = {
@@ -143,11 +155,41 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       if (flagged.length > shown.length) shown.push(`另有 ${flagged.length - shown.length} 项`);
       parts.push(`核验：\n${shown.map((l) => `- ${l}`).join("\n")}`);
     }
+    if (s.humanTasks && (s.humanTasks.total > 0 || (s.humanTasks.optionalPending?.length ?? 0) > 0)) {
+      const h = s.humanTasks;
+      const bits: string[] = [];
+      if (h.total > 0) bits.push(`已完成 ${h.done}/${h.total}`);
+      if (h.pending.length) bits.push(`待做：${h.pending.slice(0, 6).join("、")}`);
+      if (h.optionalPending?.length) bits.push(`可选未勾：${h.optionalPending.slice(0, 4).join("、")}`);
+      parts.push(`人工事项：${bits.join("；")}`);
+    }
+    if (s.pendingNextActions?.length) {
+      parts.push(`未处理后续建议：${s.pendingNextActions.slice(0, 6).map((a) => clip(a, 100)).join("；")}`);
+    }
     if (s.reviewNotes) parts.push(`评审退回意见：\n${clip(s.reviewNotes, 800)}`);
     return parts.join("\n");
   });
 
-  const goalLines = input.goals.map((g) => `- ${g.name}：${g.status}`);
+  const goalLines = input.goals.map(
+    (g) => `- ${g.name}：${g.status}${g.outputPaths?.length ? `（交付：${g.outputPaths.slice(0, 4).join("、")}）` : ""}`,
+  );
+  const closeoutLines: string[] = [];
+  if (input.closeout) {
+    if (input.closeout.targetJournal) closeoutLines.push(`- 目标期刊：${clip(input.closeout.targetJournal, 120)}`);
+    if (input.closeout.finalFiles.length) closeoutLines.push(`- 最终稿：${input.closeout.finalFiles.slice(0, 8).join("、")}`);
+    if (input.closeout.pendingChecks?.length) {
+      closeoutLines.push(`- 核对与投稿材料：${input.closeout.pendingChecks.slice(0, 8).join("、")}`);
+    }
+  }
+  const scheduleLines = (input.schedules ?? []).slice(0, 10).map(
+    (s) => `- ${s.name}（${s.enabled ? "已启用" : "已暂停"} · ${s.trigger}${s.skill ? ` · 技能 ${s.skill}` : ""}）：${clip(s.status, 120)}`,
+  );
+  const consultLines = (input.consults ?? []).slice(0, 3).map(
+    (c) => `- ${c.title}（${c.updatedAt.slice(0, 10)}）：${clip(c.summary, 320)}`,
+  );
+  const chatLines = (input.recentChats ?? []).slice(0, 3).map(
+    (c) => `- ${c.where}：${clip(c.text, 320)}`,
+  );
   const helpLines = input.helpItems.map(
     (h) =>
       `- ${h.where}：${clip(h.question, 200)}${h.options.length ? `（选项：${h.options.slice(0, 5).join(" / ")}）` : ""}${
@@ -176,7 +218,7 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
     : "";
 
   // 可砍的部分：从最长到最短试，直到放得下
-  const build = (opts: { events: boolean; log: boolean; runs: number }) => {
+  const build = (opts: { events: boolean; log: boolean; runs: number; chats: boolean }) => {
     const eventLines = opts.events
       ? input.failedRunEvents.flatMap((f) => [`${f.where} 出错那次的最后几条事件：`, ...f.events.map((e) => `  ${clip(e, 240)}`)])
       : [];
@@ -187,11 +229,15 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       head,
       focus,
       section("流程步骤", stepLines, input.project.hasPipeline ? "（没读到步骤）" : undefined),
-      section("目标", goalLines),
+      section("完结产物与投稿收尾", closeoutLines),
+      section("目标（含近期已完成目标的交付路径）", goalLines),
+      section("定时任务与事件规则", scheduleLines),
       section("最近的运行（新在前）", input.runs.slice(0, opts.runs).map(runLine), "（还没有运行记录）"),
       section("出错运行的事件", eventLines),
       section("项目助手派过的活", dispatchedLines),
       section("各步最近对话里 AI 最后说的话（交互对话里的出错不进运行记录，看这里）", tailLines),
+      opts.chats ? section("最近的多模型研讨", consultLines) : "",
+      opts.chats ? section("项目内其他对话最近内容", chatLines) : "",
       section("等你回答的人工请求", helpLines),
       section("还没送到的留话", mailLines),
       section("Mesa 自己在这个项目上出的错（新在后）", mesaLines, "（没有记录）"),
@@ -204,10 +250,10 @@ export function buildProjectSnapshot(input: SnapshotInput, maxChars = 24000): st
       .join("\n\n");
   };
   const attempts = [
-    { events: true, log: true, runs: 20 },
-    { events: true, log: false, runs: 20 },
-    { events: false, log: false, runs: 12 },
-    { events: false, log: false, runs: 6 },
+    { events: true, log: true, runs: 20, chats: true },
+    { events: true, log: false, runs: 20, chats: true },
+    { events: false, log: false, runs: 12, chats: true },
+    { events: false, log: false, runs: 6, chats: false },
   ];
   for (const opts of attempts) {
     const text = build(opts);
