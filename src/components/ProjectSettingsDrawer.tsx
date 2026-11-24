@@ -183,7 +183,7 @@ export function SettingsDrawerShell({
             }}
           />
         )}
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">{inner}</div>
+        {inner}
       </aside>
     </div>
   );
