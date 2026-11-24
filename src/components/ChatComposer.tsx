@@ -41,6 +41,7 @@ import type { PhoneItem } from "../phone-drop";
 import ChatImageStage, { MarkupLayer } from "./ChatImageStage";
 import { appendMarkRef, exportMarkup, nextMarkNumber, type Markup } from "../image-markup";
 import { attachmentLines, composerImageKind, isInspectionImage, schematicSourceOf } from "../chat-image";
+import { cachedImageDims, cachedImageUrl, releaseImageUrl, retainImageUrl } from "../image-cache";
 import { docThumb, docThumbKind, docTypeLabel } from "../doc-thumb";
 import { FileTypeGlyph } from "./FileTypeMark";
 import ProjectFilePicker from "./ProjectFilePicker";
@@ -50,6 +51,13 @@ import { usePromptStore } from "../prompt-store";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
+
+/** 附件不用了：自己建的 object URL 释放，从聊天图片缓存借来的还回去 */
+function dropUrl(a: { url: string | null; shared?: boolean }) {
+  if (!a.url) return;
+  if (a.shared) releaseImageUrl(a.url);
+  else URL.revokeObjectURL(a.url);
+}
 
 /** 带附件的插入：正文进输入框，paths 按路径成附件卡（编辑后重发还原的图、拖进来的文件；图片与 PDF 补缩略图） */
 export interface ComposerSeed {
@@ -529,15 +537,16 @@ export default function ChatComposer({
   // markup：在看图标注台上画的标注（原图坐标，path 仍指原图；发送时才生成标注图替换这一行路径）
   // thumb：文档首页预览（PDF / Word / 表格）——不是图片，不算「有图」、不进看图标注台
   // edit：从对话里点进来接着改的图（标注台给改图提示与常用说法；标过的话发送时另写一行原图路径，AI 改图要用原图）
+  // shared：url 是从聊天图片缓存借来的（image-cache），用完还回去，不能自己 revoke
   const [attachments, setAttachments] = useState<
-    { path: string; url: string | null; phoneId?: string; markup?: Markup; thumb?: string; edit?: boolean }[]
+    { path: string; url: string | null; phoneId?: string; markup?: Markup; thumb?: string; edit?: boolean; shared?: boolean }[]
   >([]);
   const attachmentsRef = useRef(attachments);
   attachmentsRef.current = attachments;
-  // 卸载时回收所有 object URL
+  // 卸载时回收所有 object URL（借来的还回去）
   useEffect(
     () => () => {
-      attachmentsRef.current.forEach((a) => a.url && URL.revokeObjectURL(a.url));
+      attachmentsRef.current.forEach(dropUrl);
     },
     [],
   );
@@ -574,7 +583,7 @@ export default function ChatComposer({
     }
     setAttachments((cur) => {
       const found = cur.find((a) => a.path === path);
-      if (found?.url) URL.revokeObjectURL(found.url);
+      if (found) dropUrl(found);
       return cur.filter((a) => a.path !== path);
     });
   }
@@ -615,7 +624,8 @@ export default function ChatComposer({
     void invoke<{ mime: string; data: string }>("read_image_bytes", { path, cwdHint: cwd ?? null })
       .then((img) =>
         setAttachments((cur) =>
-          cur.map((a) => (a.path === path ? { ...a, url: `data:${img.mime};base64,${img.data}` } : a)),
+          // 借着缓存地址的不换（换了就还不回去）
+          cur.map((a) => (a.path === path && !a.shared ? { ...a, url: `data:${img.mime};base64,${img.data}` } : a)),
         ),
       )
       .catch(() => undefined);
@@ -868,13 +878,18 @@ export default function ChatComposer({
       addPathAttachments(seedInsert.paths);
       const edit = seedInsert.edit;
       if (edit) {
+        // 聊天里看过的图直接借缓存里那份（已解码、宽高已知）：标注台和灯箱收起在同一帧接上，
+        // 不再等 base64 重读一遍、中间露出后面的对话（2026-11-24 用户：灯箱里点「标注 / 改图」闪一下）
+        const had = attachmentsRef.current.find((a) => a.path === edit);
+        const cached = had?.url ? undefined : cachedImageUrl(edit);
+        if (cached) retainImageUrl(cached);
         // 已在附件里（又点了一次同一张）也照样标成改图、展开
         setAttachments((cur) =>
           cur.some((a) => a.path === edit)
-            ? cur.map((a) => (a.path === edit ? { ...a, edit: true } : a))
-            : [...cur, { path: edit, url: null, edit: true }],
+            ? cur.map((a) => (a.path === edit ? { ...a, edit: true, ...(cached ? { url: cached, shared: true } : {}) } : a))
+            : [...cur, { path: edit, url: cached ?? null, shared: Boolean(cached), edit: true }],
         );
-        if (!attachmentsRef.current.some((a) => a.path === edit && a.url)) loadThumb(edit);
+        if (!had?.url && !cached) loadThumb(edit);
         setViewing(edit);
         // 接着改普通的图 = 用出图模型改：出图胶囊一并打开（示意图改图纸、核对图只问问题，不开）
         if (imageGen && !schematicSourceOf(edit) && !isInspectionImage(edit)) imageGen.onEditImage(edit);
@@ -1012,7 +1027,7 @@ export default function ChatComposer({
       }
       markCounterRef.current = 0;
       if (asImage) imageGen?.onSent(text);
-      sent.attachments.forEach((a) => a.url && URL.revokeObjectURL(a.url));
+      sent.attachments.forEach(dropUrl);
     } finally {
       submittingRef.current = false;
     }
@@ -1084,6 +1099,7 @@ export default function ChatComposer({
           key={viewed.path}
           name={viewed.path.split(/[\\/]/).pop() ?? "图片"}
           url={viewed.url}
+          size={viewed.shared ? (cachedImageDims(viewed.path) ?? null) : null}
           markup={viewed.markup ?? null}
           nextNumber={nextMarkNumber(attachments.map((a) => a.markup), markCounterRef.current)}
           height={stageRoom}

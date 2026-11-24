@@ -16,7 +16,8 @@ const bundle = await build({
       export {default as Composer} from './src/components/ChatComposer';
       export {default as ChatSearch} from './src/components/ChatSearch';
       export {default as Picker} from './src/components/ChatProjectPicker';
-      export {useAppStore} from './src/store';`,
+      export {useAppStore} from './src/store';
+      export {loadImageUrl, cachedImageUrl} from './src/image-cache';`,
     resolveDir: process.cwd(),
     loader: "tsx",
   },
@@ -151,7 +152,7 @@ async function mount() {
     compiled,
     compiled.exports,
   );
-  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore } = compiled.exports;
+  const { createElement: h, act, createRoot, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore, loadImageUrl, cachedImageUrl } = compiled.exports;
   const el = dom.window.document.getElementById("root")!;
   const root = createRoot(el);
   const render = (node: unknown) => act(async () => root.render(node));
@@ -164,7 +165,7 @@ async function mount() {
   };
   const click = (text: string) => act(async () => button(text).click());
   return {
-    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore,
+    h, act, el, host, render, button, click, Badge, Menu, Decision, Conversation, Composer, Picker, ChatSearch, useAppStore, loadImageUrl, cachedImageUrl,
     close: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -923,6 +924,44 @@ test("点对话里的图接着改：图进输入框、直接展开看图台，�
     assert.deepEqual(sent, ["去掉背景，只留主体（透明或纯白底），其余不变\n原图：/proj/scratch/puppy.jpg"], "没标注就发「原图：」一行（Claude Code 不会当图片附件）");
     assert.equal(stage(), null);
   } finally {
+    await ui.close();
+  }
+});
+
+test("灯箱里点「标注 / 改图」：聊天里看过的图直接借缓存那份进看图台，不重读；发出去后还回去、不释放缓存的地址", async () => {
+  const ui = await mount();
+  const revoked: string[] = [];
+  const realRevoke = URL.revokeObjectURL;
+  URL.revokeObjectURL = (url: string) => void revoked.push(url);
+  try {
+    const internals = (window as unknown as { __TAURI_INTERNALS__: { invoke: (c: string, a?: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    const base = internals.invoke;
+    internals.invoke = async (command, args) => (command === "read_image_raw" ? new ArrayBuffer(8) : base(command, args));
+    const path = "/proj/scratch/puppy.jpg";
+    // 聊天图片卡先读过这张（进了缓存）
+    const cached: string = await ui.loadImageUrl(path, "/proj");
+    assert.equal(ui.cachedImageUrl(path), cached);
+    const sent: string[] = [];
+    await ui.render(
+      ui.h(ui.Composer, {
+        onSend: async (t: string) => (sent.push(t), null),
+        cwd: "/proj",
+        seedInsert: { text: "", paths: [], edit: path },
+        onSeedConsumed: () => undefined,
+      }),
+    );
+    const stage = ui.el.querySelector('[role="region"][aria-label="看图与标注"]');
+    assert.ok(stage, "同一次渲染就挂出看图台，不等重读");
+    assert.deepEqual(ui.host.imageReads, [], "不再走 read_image_bytes 重读一遍");
+    assert.equal(stage!.querySelector("img")?.getAttribute("src"), cached, "用的就是缓存里那份");
+    assert.doesNotMatch(stage!.className, /ccode-fade/, "不淡入：灯箱淡出时不露出后面的对话");
+    await typeInto(ui, "帽子换蓝色");
+    await ui.act(async () => ui.el.querySelector<HTMLButtonElement>('button[aria-label="发送"]')!.click());
+    assert.deepEqual(sent, [`帽子换蓝色\n原图：${path}`]);
+    assert.ok(!revoked.includes(cached), "借来的地址还回去，不释放（聊天里的图卡还在用）");
+    assert.equal(ui.cachedImageUrl(path), cached);
+  } finally {
+    URL.revokeObjectURL = realRevoke;
     await ui.close();
   }
 });

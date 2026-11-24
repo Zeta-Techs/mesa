@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createImageLru, imageMime, rawIpcBytes } from "../src/image-cache.ts";
+import { createImageLru, createUrlLeases, imageMime, rawIpcBytes } from "../src/image-cache.ts";
 
 test("读图缓存：命中刷新新旧次序，超条数淘汰最久没用的并释放地址", () => {
   const revoked: string[] = [];
@@ -69,4 +69,21 @@ test("原始字节两种到法都还原成同样的字节：ArrayBuffer（自定
     assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], png);
   }
   assert.throws(() => rawIpcBytes("137,80"));
+});
+
+test("借出去的地址：借着时被淘汰不释放，还回最后一次才释放；没借过的照常释放", () => {
+  const revoked: string[] = [];
+  const leases = createUrlLeases((url) => revoked.push(url));
+  leases.retain("blob:a");
+  leases.retain("blob:a");
+  leases.revoke("blob:a");
+  leases.revoke("blob:b");
+  assert.deepEqual(revoked, ["blob:b"], "借着的先不释放");
+  leases.release("blob:a");
+  assert.deepEqual(revoked, ["blob:b"], "还没全还完");
+  leases.release("blob:a");
+  assert.deepEqual(revoked, ["blob:b", "blob:a"], "全还完才释放");
+  leases.retain("blob:c");
+  leases.release("blob:c");
+  assert.deepEqual(revoked, ["blob:b", "blob:a"], "借过但没被淘汰的还回来不释放（缓存还在用）");
 });

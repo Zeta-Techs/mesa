@@ -148,7 +148,8 @@ components/MermaidDiagrams.tsx  # md 阅读态 mermaid 围栏渲染（FilePrevie
   components/ChatImageStage.tsx # 输入框上方的看图标注台（design-chat-layer §4.7）：盖住对话区、不挡输入框；
                              #   意见框 / 画笔 / 箭头 / 打码 / 裁剪 + 撤销清空，标注存原图坐标交回输入框；
                              #   onQuickText 给了 = 从对话里点进来接着改的图：改图提示 + 「移除背景 / 调整画幅」写进输入框（不直接发）；
-                             #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）
+                             #   MarkupLayer = 标注的 SVG 画法（标注台与缩略图共用，几何与导出同源 image-markup.ts）；
+                             #   size = 已知原图宽高（借聊天图片缓存时给），区域在上屏前量（随台子高度重量），不淡入——灯箱里点「标注 / 改图」同一帧接上
 components/ImageMarkDialog.tsx  # 审阅给一张图加意见的弹层（2026-11-13）：在图上拖红框（可多个）+ 一句话，加入意见时带红框的图经 exportMarkup + saveClipboardImage 存盘、路径随意见交给 AI（拼图出错这类划不了字的问题）；几何与导出沿用聊天标注同一套 image-markup.ts；审阅态点正文图（FilePreviewEditor）或图片预览「框选加意见」（ImagePreview）进
   pages/ConsultPage.tsx      # 研讨页（2026-11-11）：不在导航里的主区页，只放 store.consultOpen 那一场的 ConsultView；showConsult（侧栏研讨行、「去看看」、工作台进行中的研讨）打开它；没打开的给空态与「请几家研讨…」
   components/ProjectTree.tsx # 侧栏项目树（展开态）：一节一节平铺——置顶对话 / 其他打开的（这两节可折叠，记 ccode.railCollapsedSections，收起保留数量与状态）/ 随手聊，再是「项目」标签行（只报计数、只数课题，2026-10-26 挪进滚动区、排在随手聊下面；添加入口 2026-10-27 挪到侧栏顶部「新项目」）与课题；
@@ -896,7 +897,8 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   image-cache.ts             # 读过的本地图按路径缓存成 blob URL（条数 + 字节双上限 LRU，淘汰即 revoke；同路径读取去重），
                              # 聊天图片卡、md 内嵌图与 ImagePreview（看大图灯箱 / 文件预览）共用，切回会话首帧就有图；首次读走二进制通道 read_image_raw（不经 base64）、上屏前先 decode；带磁盘戳，revalidateImageUrl 后台核戳换新图（tests/image-cache.test.ts）；
                              # 预解码顺带记宽高、字节数与有没有透明像素（cachedImageDims / cachedImageBytes / cachedImageAlpha，缩成 64px 数 alpha）：
-                             # 灯箱首帧按最终尺寸摆，不先按原尺寸铺再缩；棋盘格只垫在有透明的图下面（2026-11-24）
+                             # 灯箱首帧按最终尺寸摆，不先按原尺寸铺再缩；棋盘格只垫在有透明的图下面（2026-11-24）；
+                             # retainImageUrl / releaseImageUrl（createUrlLeases）：输入框借缓存地址进标注台，借着时淘汰不释放，还回再释放
   image-markup.ts            # 输入框图片标注纯逻辑：标注类型（原图像素坐标）、线宽 / 徽标 / 箭头几何、意见框编号与消息圈码、
                              # 裁剪范围、paintMarkup 导出绘制（与 MarkupLayer 预览同源）、exportMarkup 生成新图字节（tests/image-markup.test.ts）
   chat-permission.ts         # 输入框权限菜单纯逻辑（2026-10-22）：按连接记住完全访问（rememberChatPermission / profilePermissionMode，只管聊天对话，2026-11-13）；按项目类型拿一件事说明四档（permissionExample）、⇧Tab 轮换跳过没有的档（nextPermissionTier）；

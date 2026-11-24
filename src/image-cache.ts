@@ -52,10 +52,50 @@ export function createImageLru(opts: { capCount: number; capBytes: number; revok
   };
 }
 
+/**
+ * 借出去的地址（输入框把聊天里的图直接拿去标注 / 改图，2026-11-24 用户：灯箱里点「标注 / 改图」闪一下）：
+ * 借着时被淘汰或换版不释放，还回来再释放（纯逻辑，便于测试）
+ */
+export function createUrlLeases(revoke: (url: string) => void) {
+  const retained = new Map<string, number>();
+  const orphaned = new Set<string>();
+  return {
+    retain(url: string): void {
+      retained.set(url, (retained.get(url) ?? 0) + 1);
+    },
+    release(url: string): void {
+      const n = (retained.get(url) ?? 0) - 1;
+      if (n > 0) {
+        retained.set(url, n);
+        return;
+      }
+      retained.delete(url);
+      if (orphaned.delete(url)) revoke(url);
+    },
+    /** 缓存要释放这个地址：借着就先记下，等还回来 */
+    revoke(url: string): void {
+      if (retained.has(url)) orphaned.add(url);
+      else revoke(url);
+    },
+  };
+}
+const leases = createUrlLeases((url) => URL.revokeObjectURL(url));
+const revokeUnlessRetained = (url: string) => leases.revoke(url);
+
+/** 借用缓存里的地址：输入框拿聊天里已解码好的图直接进标注台，不另读一份 */
+export function retainImageUrl(url: string): void {
+  leases.retain(url);
+}
+
+/** 还回借用的地址；借着时已被淘汰的这时才释放 */
+export function releaseImageUrl(url: string): void {
+  leases.release(url);
+}
+
 const lru = createImageLru({
   capCount: 64,
   capBytes: 128 * 1024 * 1024,
-  revoke: (url) => URL.revokeObjectURL(url),
+  revoke: revokeUnlessRetained,
 });
 const inflight = new Map<string, Promise<string>>();
 /** 缓存时那一版的磁盘戳（大小 + 修改时间）：重新出图后据此换掉旧图（2026-10-26） */
@@ -186,7 +226,7 @@ export async function revalidateImageUrl(
     const old = lru.get(path);
     stamps.delete(path);
     lru.delete(path);
-    if (old) setTimeout(() => URL.revokeObjectURL(old), 60_000);
+    if (old) setTimeout(() => revokeUnlessRetained(old), 60_000);
     return await fetchImage(path, cwdHint);
   } catch {
     return null;

@@ -170,6 +170,7 @@ export function MarkupLayer({ markup, draft = null }: { markup: Markup; draft?: 
 export default function ChatImageStage({
   name,
   url,
+  size = null,
   markup,
   nextNumber,
   height,
@@ -182,6 +183,8 @@ export default function ChatImageStage({
 }: {
   name: string;
   url: string;
+  /** 已知的原图宽高（聊天图片缓存预解码时记下的）：首帧就按适配后的大小画，不先按原尺寸铺一下 */
+  size?: { w: number; h: number } | null;
   markup: Markup | null;
   /** 下一个意见框编号（整条消息连着编，输入框给） */
   nextNumber: number;
@@ -200,7 +203,7 @@ export default function ChatImageStage({
 }) {
   const [tool, setTool] = useState<MarkTool | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(
-    markup ? { w: markup.width, h: markup.height } : null,
+    markup ? { w: markup.width, h: markup.height } : size,
   );
   const [area, setArea] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   /** "fit" = 适配框大小；数字 = 固定倍率（支持在标注台放大看清小字再精准框选） */
@@ -219,14 +222,18 @@ export default function ChatImageStage({
     setDraftState(m);
   };
 
-  // 换图由调用方按图换 key 重挂（不在 effect 里重置尺寸：缓存里的图 load 可能先于 effect，被清掉就再也等不到 load）
-  useEffect(() => {
+  // 换图由调用方按图换 key 重挂（不在 effect 里重置尺寸：缓存里的图 load 可能先于 effect，被清掉就再也等不到 load）。
+  // 在上屏前量（layout effect），台子高度一变（输入框量好上沿后才给）也跟着重量：
+  // 原先 useEffect 量，第一帧区域是 0，图先按原尺寸画一帧再缩（2026-11-24 用户：点「标注 / 改图」闪一下）
+  useLayoutEffect(() => {
     const el = areaRef.current;
     if (!el) return;
-    const measure = () => setArea({ w: el.clientWidth - 32, h: el.clientHeight - 16 });
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(measure);
+    setArea({ w: el.clientWidth - 32, h: el.clientHeight - 16 });
+  }, [height]);
+  useEffect(() => {
+    const el = areaRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setArea({ w: el.clientWidth - 32, h: el.clientHeight - 16 }));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -395,7 +402,8 @@ export default function ChatImageStage({
     <div
       role="region"
       aria-label="看图与标注"
-      className="ccode-fade absolute inset-x-0 bottom-full z-10 flex flex-col bg-canvas"
+      // 不淡入：从灯箱点「标注 / 改图」时灯箱正在淡出，台子再淡入，两层都半透明的那几帧会露出后面的对话（2026-11-24 用户：闪一下）
+      className="absolute inset-x-0 bottom-full z-10 flex flex-col bg-canvas"
       style={{ height }}
       onKeyDown={onKeyDown}
     >
