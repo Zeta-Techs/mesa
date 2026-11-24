@@ -3459,3 +3459,70 @@ fn ensure_workspaces_table_is_read_only_once_migrated() {
     let _ = fs::remove_dir_all(&dir);
     res.unwrap();
 }
+
+#[test]
+fn archive_allows_accepted_deliverable_when_main_repo_updated_later() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::write(fx.repo.join(".gitignore"), ".env\n.envrc\noutput/\n").unwrap();
+    sh(&fx.repo, &["add", ".gitignore"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "ignore output"]);
+
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "polish").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    fs::write(wt.join("manuscript.md"), "final v1\n").unwrap();
+    commit_all_in_worktree(&wt, "polish v1");
+    fs::create_dir_all(wt.join("output")).unwrap();
+    fs::write(wt.join("output/review-final.pdf"), b"pdf-v1-accepted").unwrap();
+
+    // 保存进项目但保留工作区：output/review-final.pdf 被带回主仓并写入验收台账指纹
+    let merged = merge_impl(&fx.conn, &w.id, false).unwrap();
+    assert!(merged.merged);
+    assert_eq!(fs::read(fx.repo.join("output/review-final.pdf")).unwrap(), b"pdf-v1-accepted");
+
+    // 之后主仓重渲/重绑域稿产生新版；工作区里的旧副本验收后一字节未动 → 归档应放行
+    fs::write(fx.repo.join("output/review-final.pdf"), b"pdf-v2-rerendered-in-main").unwrap();
+    archive_impl(&fx.conn, &w.id).unwrap();
+    assert_eq!(get_workspace(&fx.conn, &w.id).unwrap().status, "archived");
+    assert_eq!(
+        fs::read(fx.repo.join("output/review-final.pdf")).unwrap(),
+        b"pdf-v2-rerendered-in-main",
+        "归档不得覆盖主仓新版成品"
+    );
+}
+
+#[test]
+fn archive_still_rejects_deliverable_modified_in_worktree_after_acceptance() {
+    let Some(fx) = Fixture::new() else { return };
+    fs::write(fx.repo.join(".gitignore"), ".env\n.envrc\noutput/\n").unwrap();
+    sh(&fx.repo, &["add", ".gitignore"]);
+    sh(&fx.repo, &["-c", "commit.gpgsign=false", "commit", "-m", "ignore output"]);
+
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "polish").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    fs::write(wt.join("manuscript.md"), "final v1\n").unwrap();
+    commit_all_in_worktree(&wt, "polish v1");
+    fs::create_dir_all(wt.join("output")).unwrap();
+    fs::write(wt.join("output/review-final.pdf"), b"pdf-v1-accepted").unwrap();
+
+    let merged = merge_impl(&fx.conn, &w.id, false).unwrap();
+    assert!(merged.merged);
+
+    // 验收后工作区又改出了新版且未再评审接收：即使主仓存在同名文件，归档也必须拦截
+    fs::write(wt.join("output/review-final.pdf"), b"pdf-v2-unreviewed-in-worktree").unwrap();
+    let err = archive_impl(&fx.conn, &w.id).unwrap_err();
+    assert!(err.contains("output/review-final.pdf"), "{err}");
+    assert_eq!(get_workspace(&fx.conn, &w.id).unwrap().status, "active");
+}
+
+#[test]
+fn archive_ignores_untracked_review_notes_in_legacy_repo() {
+    let Some(fx) = Fixture::new() else { return };
+    let w = create_impl(&fx.conn, &fx.ws_root, fx.repo.to_str().unwrap(), "outline").unwrap();
+    let wt = PathBuf::from(&w.worktree_path);
+    // 老项目 .gitignore 未忽略 .ccode/review-notes.md，工作区留有未跟踪退回意见时应照常可归档
+    fs::create_dir_all(wt.join(".ccode")).unwrap();
+    fs::write(wt.join(REVIEW_NOTES_FILE), "退回修改记录\n").unwrap();
+    archive_impl(&fx.conn, &w.id).unwrap();
+    assert_eq!(get_workspace(&fx.conn, &w.id).unwrap().status, "archived");
+    assert!(!wt.exists());
+}

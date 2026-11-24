@@ -1503,6 +1503,11 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
   }, []);
 
   const [archivingSaved, setArchivingSaved] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState<{
+    repoPath: string;
+    tone: "ok" | "warn" | "err";
+    text: string;
+  } | null>(null);
 
   function pendingHelpCountFor(worktreePath: string): number {
     const activeReqs = helpNotDismissed(helpRequests, helpDismissed);
@@ -1530,13 +1535,19 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       return;
     }
     setArchivingSaved(true);
+    setArchiveNotice(null);
     try {
       await invoke("archive_workspace", { id: ws.id });
-      setNotice(`已收起「${label}」的临时工作副本，项目里的成果与历史均完整保留`);
+      const msg = `已收起「${label}」的临时工作副本，项目里的成果与历史均完整保留`;
+      setNotice(msg);
       setError(null);
+      toast(msg, "success");
       await refresh();
     } catch (e) {
-      setError(`暂无法收起「${label}」：${String(e)}`);
+      const msg = `暂无法收起「${label}」：${String(e)}`;
+      setError(msg);
+      setArchiveNotice({ repoPath: ws.repoPath, tone: "err", text: msg });
+      toast(msg, "error");
     } finally {
       setArchivingSaved(false);
     }
@@ -1547,6 +1558,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
     targets: { ws: WorkspaceDto; label: string }[],
   ) {
     if (archivingSaved || targets.length === 0) return;
+    const repoPath = targets[0].ws.repoPath;
     const openHelp = targets.reduce(
       (sum, t) => sum + pendingHelpCountFor(t.ws.worktreePath),
       0,
@@ -1563,6 +1575,7 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
       return;
     }
     setArchivingSaved(true);
+    setArchiveNotice(null);
     try {
       const done: string[] = [];
       const failed: string[] = [];
@@ -1575,13 +1588,22 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
         }
       }
       if (done.length > 0 && failed.length === 0) {
-        setNotice(`已收起 ${done.length} 个临时工作副本，项目成稿与历史记录均完整保留`);
+        const msg = `已收起 ${done.length} 个临时工作副本，项目成稿与历史记录均完整保留`;
+        setNotice(msg);
         setError(null);
+        setArchiveNotice({ repoPath, tone: "ok", text: msg });
+        toast(msg, "success");
       } else if (done.length > 0) {
+        const msg = `已收起 ${done.length} 个临时工作副本；另有 ${failed.length} 个未收起（已保留不动）：${failed.join("；")}`;
         setNotice(`已收起 ${done.length} 个临时工作副本；另有 ${failed.length} 个已保留不动`);
         setError(`以下副本暂未收起：${failed.join("；")}`);
+        setArchiveNotice({ repoPath, tone: "warn", text: msg });
+        toast(`已收起 ${done.length} 个，另有 ${failed.length} 个未收起，详见完结文件栏提示`, "warning");
       } else if (failed.length > 0) {
-        setError(`暂无法收起临时副本：${failed.join("；")}`);
+        const msg = `暂无法收起临时副本：${failed.join("；")}`;
+        setError(msg);
+        setArchiveNotice({ repoPath, tone: "err", text: msg });
+        toast(msg, "error");
       }
       await refresh();
     } finally {
@@ -2768,6 +2790,12 @@ export default function WorkspacesPage({ visible }: { visible: boolean }) {
               void onArchiveSavedWorkspaces(targets)
             }
             archivingSaved={archivingSaved}
+            archiveNotice={
+              archiveNotice && samePath(archiveNotice.repoPath, selectedGroup.repoPath)
+                ? { tone: archiveNotice.tone, text: archiveNotice.text }
+                : null
+            }
+            onDismissArchiveNotice={() => setArchiveNotice(null)}
           >
             {(wsView) => {
             // 步骤工作区与「流程之外」严格分离（纯逻辑 src/workspace-visibility.ts）：

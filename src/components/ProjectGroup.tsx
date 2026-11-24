@@ -391,6 +391,8 @@ export default function ProjectGroup({
   onPickTemplate,
   onArchiveSavedWorkspaces,
   archivingSaved = false,
+  archiveNotice = null,
+  onDismissArchiveNotice,
 }: {
   /** null = 未注册分组（仅按工作区 repo 归组） */
   project: ProjectDto | null;
@@ -446,6 +448,8 @@ export default function ProjectGroup({
   /** 完结区一键收起已保存步骤的临时工作副本 */
   onArchiveSavedWorkspaces?: (targets: { ws: WorkspaceDto; label: string }[]) => void;
   archivingSaved?: boolean;
+  archiveNotice?: { tone: "ok" | "warn" | "err"; text: string } | null;
+  onDismissArchiveNotice?: () => void;
 }) {
   const registered = project !== null;
   const projectPath = project?.path ?? repoPath;
@@ -2502,6 +2506,8 @@ export default function ProjectGroup({
               .map((workspace) => workspace.worktreePath)}
             entries={closeoutScanEntries(cfg.steps)}
             defaultOpen={Boolean(focusDesc && isCloseoutStep(focusDesc.step))}
+            headerNotice={archiveNotice}
+            onDismissHeaderNotice={onDismissArchiveNotice}
             headerActions={
               onArchiveSavedWorkspaces && savedActiveStepWorkspaces.length > 0 ? (
                 <button

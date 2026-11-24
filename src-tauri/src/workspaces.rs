@@ -970,12 +970,25 @@ fn archive_impl_with_guard(
         if merge_state.merging || !merge_state.files.is_empty() {
             return Err("工作区存在未完成的合并或冲突，请先完成或中止冲突处理后再归档".into());
         }
-        let dirty = run_git_porcelain(&wt, &["status", "--porcelain"], Duration::from_secs(30))?;
+        let dirty = run_git_porcelain(
+            &wt,
+            &["status", "--porcelain", "--untracked-files=all"],
+            Duration::from_secs(30),
+        )?;
         let mut removable_copies = Vec::new();
+        let mut removable_review_notes: Option<Vec<u8>> = None;
         let unsafe_lines: Vec<&str> = dirty
             .lines()
             .filter(|line| {
-                let path = line.get(3..).unwrap_or(line).trim();
+                let path = line.get(3..).unwrap_or(line).trim().trim_matches('"');
+                // 退回意见 .ccode/review-notes.md 按设计只留在工作区、不进提交；老项目 .gitignore 未忽略它时
+                // 会以未跟踪出现，不得和用户真实改动混为一谈把归档锁死（2026-11-24 实证）
+                if line.starts_with("??") && path == REVIEW_NOTES_FILE {
+                    if removable_review_notes.is_none() {
+                        removable_review_notes = fs::read(wt.join(REVIEW_NOTES_FILE)).ok();
+                    }
+                    return false;
+                }
                 let is_unchanged_copy = copied_files.iter().any(|f| f == path)
                     && fs::read(Path::new(&w.repo_path).join(path)).ok()
                         == fs::read(wt.join(path)).ok();
@@ -1004,6 +1017,10 @@ fn archive_impl_with_guard(
             fs::remove_file(wt.join(path))
                 .map_err(|e| format!("清理可恢复副本 {path} 失败: {e}"))?;
         }
+        if removable_review_notes.is_some() {
+            let _ = fs::remove_file(wt.join(REVIEW_NOTES_FILE));
+            let _ = fs::remove_dir(wt.join(".ccode"));
+        }
         if let Err(e) = run_git(
             Path::new(&w.repo_path),
             &["worktree", "remove", &w.worktree_path],
@@ -1015,6 +1032,15 @@ fn archive_impl_with_guard(
                 let src = Path::new(&w.repo_path).join(path);
                 if let Err(re) = safe_copy_into_worktree(&wt, path, &src) {
                     restore_errors.push(re);
+                }
+            }
+            if let Some(bytes) = removable_review_notes.as_ref() {
+                let dst = wt.join(REVIEW_NOTES_FILE);
+                if let Some(parent) = dst.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                if let Err(re) = fs::write(&dst, bytes) {
+                    restore_errors.push(format!("回写退回意见失败: {re}"));
                 }
             }
             return Err(if restore_errors.is_empty() {
@@ -4100,6 +4126,8 @@ fn assert_deliverables_retained(w: &WorkspaceDto, repo: &Path) -> Result<(), Str
     let worktree = Path::new(&w.worktree_path);
     let tracked = tracked_delivery_paths(worktree)?;
     let skips = read_delivery_skips(&w.id);
+    // 延迟读取验收台账：仅当主仓同路径文件存在但字节已更新时才核对，避免无谓读盘
+    let mut accepted_fps: Option<std::collections::HashSet<(String, u64, String)>> = None;
     for path in delivery_paths(worktree, repo)? {
         if tracked.contains(&path) {
             continue;
@@ -4109,9 +4137,31 @@ fn assert_deliverables_retained(w: &WorkspaceDto, repo: &Path) -> Result<(), Str
         if skips.get(&path) == Some(&source.1) {
             continue;
         }
-        if delivery_hash(&repo.join(&path)).ok().as_ref() != Some(&source) {
-            return Err(format!("非 Git 产物 {path} 尚未完整接收或在验收后变化，工作区仍保留；请先重新评审，不会随归档删除"));
+        if delivery_hash(&repo.join(&path)).ok().as_ref() == Some(&source) {
+            continue;
         }
+        // 工作区旧副本在验收后一字节未动、只是项目主文件夹后来重渲/编辑/重绑域稿更新成了新版：
+        // 核对本工作区在验收台账里已接收过这一模一样的 (path, size, sha256)，且主仓同路径文件仍在，
+        // 即确认没有未接收或验收后新增的改动，安全放行归档（2026-11-24 实证：主仓重渲后 draft/polish 永远无法归档）
+        if repo.join(&path).is_file() {
+            let fps = accepted_fps.get_or_insert_with(|| {
+                crate::projects::read_acceptance_log_at(repo)
+                    .into_iter()
+                    .filter(|e| {
+                        e.kind == crate::review_contract::KIND_PIPELINE_MERGE
+                            && e.scene_ref.as_deref() == Some(w.id.as_str())
+                    })
+                    .flat_map(|e| e.content_fingerprints)
+                    .filter_map(|fp| fp.sha256.map(|sha| (fp.path, fp.size, sha)))
+                    .collect()
+            });
+            if fps.contains(&(path.clone(), source.0, source.1.clone())) {
+                continue;
+            }
+        }
+        return Err(format!(
+            "非 Git 产物 {path} 尚未完整接收或在验收后变化，工作区仍保留；请先重新评审，不会随归档删除"
+        ));
     }
     Ok(())
 }

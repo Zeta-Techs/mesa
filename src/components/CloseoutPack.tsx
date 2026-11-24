@@ -57,6 +57,8 @@ export default function CloseoutPack({
   entries,
   defaultOpen = false,
   headerActions,
+  headerNotice,
+  onDismissHeaderNotice,
   workspaceId,
   flash = false,
 }: {
@@ -65,6 +67,8 @@ export default function CloseoutPack({
   entries: readonly string[];
   defaultOpen?: boolean;
   headerActions?: React.ReactNode;
+  headerNotice?: { tone: "ok" | "warn" | "err"; text: string } | null;
+  onDismissHeaderNotice?: () => void;
   workspaceId?: string;
   flash?: boolean;
 }) {
@@ -228,6 +232,32 @@ export default function CloseoutPack({
           </div>
         )}
       </div>
+      {headerNotice && (
+        <div
+          role={headerNotice.tone === "err" ? "alert" : "status"}
+          className={`mt-2 flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs ${
+            headerNotice.tone === "err"
+              ? "border-err-text/30 bg-err/40 text-err-text"
+              : headerNotice.tone === "warn"
+                ? "border-warn-text/30 bg-warn/40 text-warn-text"
+                : "border-ok-text/25 bg-ok/40 text-ok-text"
+          }`}
+        >
+          <span className="min-w-0 flex-1 break-words leading-relaxed">
+            {headerNotice.text}
+          </span>
+          {onDismissHeaderNotice && (
+            <button
+              type="button"
+              onClick={onDismissHeaderNotice}
+              aria-label="关闭提示"
+              className="shrink-0 rounded-sm px-1 text-micro opacity-75 hover:opacity-100"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
       {packOpen && (
         <div className="mt-3 space-y-3 border-t border-hairline/60 pt-3">
           {finals.length > 0 && (
