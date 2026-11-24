@@ -1,86 +1,38 @@
 /**
- * 项目助手的取数与问一次（2026-11-04，docs/design-project-assistant.md §4–5）。
- * 全部用已有命令取数（只读），拼成 project-snapshot.ts 的输入；问答经后端 `project_assistant_ask`（出站前脱敏、落记录）。
- * 某一样读不到就跳过那一块，不挡回答。
+ * 项目助手的前端取数与问答入口（2026-11-24 真 Agent 架构重构）：
+ * - 顶部状态条 / 飞书状态卡 / 桌宠共用 `gatherBriefInput` → 单次调用 Rust 唯一真源 `assistant_project_brief`，
+ *   仅在前端叠加实时终端注意力（working / confirm），不再在前端 8 路拼装。
+ * - 问答统一走 Rust `project_assistant_chat`：第一档（Claude Code / Codex）持久只读 Agent + 临时 stdio MCP 工具 +
+ *   结构化 `proposals`；第二档（其余 CLI）由 Rust 唯一真源直接渲染精简上下文回落。
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getVersion } from "@tauri-apps/api/app";
-import { IS_MAC, IS_WINDOWS } from "./hotkeys";
+import { IS_WINDOWS } from "./hotkeys";
 import { useAppStore } from "./store";
 import { pathWithin, samePath } from "./path-utils";
-import { stepAttention } from "./run-overview";
-import { isAppCrashClose, latestRunFailure } from "./run-failure";
-import { projectAssistantLaunch, resolveTaskModel, stepSlotKey, taskBindingLaunch } from "./project-agents";
+import { projectAssistantLaunch, resolveTaskModel } from "./project-agents";
 import { AGENTS } from "./types";
-import { buildProjectSnapshot, type SnapshotInput, type SnapshotRun, type SnapshotStep } from "./project-snapshot";
 import {
-  basisText,
-  historyKeep,
-  recallOlderTurns,
-  buildAssistantPrompt,
   classifyQuestion,
-  GUIDE_LIMIT,
-  inspectRules,
   INSPECT_AGENTS,
-  intentEffort,
   isReviewAsk,
-  mentionedStep,
   previousTurnHint,
-  SNAPSHOT_MAX_CHARS,
   wantsInspect,
   type AssistantHistoryTurn,
   type AssistantIntent,
+  type AssistantProposalsDto,
 } from "./project-assistant";
-import type { CheckItem, ChecksDto } from "./research-checks";
-import { mergeMesaChecks } from "./outline-check";
-import { loadOutlineCheck, loadStepMesaChecks, loadStepWritingChecks } from "./research-report-load";
-import { stepKind } from "./step-kind";
-import { loadSkillProvides, type SkillProvides } from "./skill-slots";
-import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
-import { renderProjectMap, type MapEntry } from "./project-map";
-import { builtinTaskCatalogLines } from "./builtin-tasks";
-import { PIPELINE_TEMPLATES } from "./pipeline-presets";
-import { TRIGGER_CATALOG_LINES, workerCapabilityLines } from "./assistant-capabilities";
-import { projectDefaultProfile } from "./split-draft";
-import { dispatchStatus, type DispatchRecord } from "./assistant-dispatch";
-import { stepSessionTail } from "./session-tail";
+import { reviewingStep } from "./assistant-brief";
+import type { DispatchRecord } from "./assistant-dispatch";
 import type { BriefInput, BriefStep } from "./assistant-brief";
-import { hasKnowledgeSources } from "./assistant-brief";
-import type { DirEntryDto } from "./components/FileTree";
-import { declaredTaskKindsForMode, isDeclaredTask, visibleDeclaredTasks } from "./project-tasks";
-import { groupCloseoutFiles } from "./closeout-pack";
-import { parseTargetJournal } from "./citation-style-choice";
-import { nextActionStepSlug, parseStepNextActions, readNextActionChecks } from "./step-next-actions";
-import type { ConsultDto, ConsultListItem } from "./consult";
-import type { DepCheckDto } from "./dep-check";
-import type { MesaErrorRecord } from "./mesa-errors";
-import type {
-  AgentCapabilitiesDto,
-  DetectResult,
-  HumanTaskStateDto,
-  ModelCapabilityDto,
-  HelpRequestDto,
-  ProjectConfigReadDto,
-  ProjectDto,
-  ProjectMailDto,
-  KnowledgeForAiDto,
-  RunDto,
-  RunEventDto,
-  ScheduleDto,
-  SkillDto,
-  TaskDto,
-  TaskPackDto,
-  WorkspaceDto,
-  WorkspaceHealthDto,
-} from "./types";
+import type { ProjectDto } from "./types";
 
 export interface AssistantTurn {
   at: string;
   question: string;
   answer: string;
   connection: string;
-  /** 这一问依据了什么（说明书哪几节 / 这个项目的记录）；旧记录没有 */
+  /** 这一问依据了什么（说明书哪几节 / Agent 工具 / 这个项目的记录）；旧记录没有 */
   basis?: string;
   /** 这次调用花了多少（美元；只有 Claude Code / Codex、模型查得到价时有） */
   costUsd?: number | null;
@@ -88,6 +40,8 @@ export interface AssistantTurn {
   dispatched?: DispatchRecord | null;
   /** 派活回音（2026-11-05）：为哪一轮派出去的活补的进展；问题为空，不当成问答喂给 AI */
   echoOf?: string | null;
+  /** 第一档 MCP 提议工具产出的结构化提议（派活单 / 补料单 / 规矩 / 按钮 / 说明书标题） */
+  proposals?: AssistantProposalsDto | null;
 }
 
 /** 「问问为什么」带进来的那件事 */
@@ -97,46 +51,10 @@ export interface AssistantFocus {
   runId?: string | null;
 }
 
-const GOAL_STATUS: Record<string, string> = {
-  pending: "记下了还没开工",
-  queued: "排队中",
-  running: "进行中",
-  pending_review: "做完了等你验收",
-  completed: "已完成",
-  failed: "上次失败",
-  stopped: "上次停了",
-};
+/** 支持第一档真 Agent 持久会话 + MCP 工具的 CLI（含其下所有第三方网关连接） */
+export const TIER1_ASSISTANT_AGENTS: readonly string[] = ["claude-code", "codex"];
 
-/** 读不到（报错或返回空值）一律当没有，不挡回答 */
-function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
-  return p.then((v) => v ?? fallback).catch(() => fallback);
-}
-
-/** 一步的核验项：核验文件里的 + Mesa 自己核对的（与评审页同一个纯函数，评审页不写文件，这里再算一遍） */
-async function stepChecks(
-  step: { skills?: readonly string[]; expectedArtifacts?: readonly string[] },
-  worktree: string,
-  projectPath: string,
-  skillProvides?: SkillProvides,
-): Promise<CheckItem[]> {
-  const provides = skillProvides ?? (await safe(loadSkillProvides(), undefined));
-  const kind = stepKind(step, provides);
-  const roots = [worktree, projectPath];
-  const mesa: Promise<CheckItem[]> =
-    kind === "outline"
-      ? loadOutlineCheck(roots).then((r) => r?.items ?? [])
-      : loadStepMesaChecks(roots, kind, step.expectedArtifacts ?? []);
-  const [file, own] = await Promise.all([
-    safe(invoke<ChecksDto>("research_checks_read", { path: worktree }), null as ChecksDto | null),
-    mesa.catch(() => [] as CheckItem[]),
-  ]);
-  const writing = await loadStepWritingChecks(worktree, kind, step.expectedArtifacts ?? [], own).catch(() => [] as CheckItem[]);
-  return mergeMesaChecks(file, [...own, ...writing])?.items ?? [];
-}
-
-function eventLine(e: RunEventDto): string {
-  return `${e.createdAt} ${e.eventType}${e.payload ? ` ${e.payload}` : ""}`;
-}
+export const ASSISTANT_CANCELLED = "ASSISTANT_CANCELLED";
 
 /** 这个项目用谁答（专属绑定 > 项目默认 > AI 功能连接），以及给人看的一行 */
 export function assistantConnection(project: ProjectDto | null): {
@@ -156,7 +74,7 @@ export function assistantConnection(project: ProjectDto | null): {
   return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound, agentId: launch.agentId };
 }
 
-/** 当前项目助手连接不支持进程级只读查看（如 agy）时，从已配置的连接里挑一条支持只读查看的备选连接（供用户显式点「借用 … 打开文件核对重问」用） */
+/** 当前项目助手连接不支持进程级只读查看（如 agy）时，从已配置的连接里挑一条支持只读查看的备选连接 */
 export function readonlyInspectFallback(project: ProjectDto | null): {
   profileId: string;
   model: string | null;
@@ -187,699 +105,89 @@ export function readonlyInspectFallback(project: ProjectDto | null): {
   return null;
 }
 
-function scheduleTriggerLabel(s: ScheduleDto): string {
-  if (s.event) {
-    if (s.event.kind === "folder") return `目录新文件${s.event.folder ? `（${s.event.folder}）` : ""}`;
-    if (s.event.kind === "lit_watch") return "文献雷达新命中";
-    if (s.event.kind === "phone_drop") return "从手机添加";
-    return `事件：${s.event.kind}`;
-  }
-  if (s.frequency === "manual") return "仅手动";
-  if (s.frequency === "hourly") return `每 ${s.intervalHours ?? 1} 小时`;
-  if (s.frequency === "weekdays") return `工作日 ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
-  if (s.frequency === "weekly") return `每周${["", "一", "二", "三", "四", "五", "六", "日"][s.weekday ?? 1] ?? ""} ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
-  return `每天 ${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
+interface RustBriefStepDto extends BriefStep {
+  worktreePath?: string | null;
 }
 
-function scheduleStatusText(s: ScheduleDto): string {
-  const parts: string[] = [];
-  if (s.runningRunId) parts.push(s.stalledMinutes ? `运行中（已 ${s.stalledMinutes} 分钟无动静）` : "正在运行");
-  else if (s.queued) parts.push("排队中");
-  if (s.followupState === "uncertain") parts.push("后台跟进结果不明已暂停，等你核对");
-  if (s.pausedReason) parts.push(`已暂停：${s.pausedReason}`);
-  if (s.grantRequest?.blocked.length) parts.push(`被授权范围拦下（${s.grantRequest.blocked.slice(0, 2).join("、")}）`);
-  if ((s.pendingEvents ?? 0) > 0) parts.push(`待处理事件 ${s.pendingEvents} 批`);
-  if ((s.missedEvents ?? 0) > 0) parts.push(`漏掉 ${s.missedEvents} 批事件待补跑`);
-  if (parts.length === 0) {
-    if (s.lastRunAt) parts.push(`上次 ${s.lastRunAt.slice(0, 16).replace("T", " ")} · ${s.lastStatus || "完成"}`);
-    else parts.push("还没跑过");
-  }
-  return parts.join("；");
+interface RustBriefDto extends Omit<BriefInput, "steps"> {
+  steps: RustBriefStepDto[];
 }
 
-function consultSummary(dto: ConsultDto): string {
-  const msgs = dto.consult.messages.filter((m) => m.status === "ok" && !m.pass && (m.conclusion?.trim() || m.text.trim()));
-  if (msgs.length === 0) return `问题：${dto.consult.meta.question.slice(0, 140)}（暂无有效结论）`;
-  const lastRound = Math.max(...msgs.map((m) => m.round));
-  const picks = msgs
-    .filter((m) => m.round === lastRound)
-    .slice(0, 3)
-    .map((m) => {
-      const member = dto.consult.meta.members.find((x) => x.id === m.member)?.name ?? m.member;
-      const body = (m.conclusion?.trim() || m.text.trim()).replace(/\s+/g, " ").slice(0, 110);
-      return `${member}：${body}`;
-    });
-  return `问题「${dto.consult.meta.question.slice(0, 60)}」→ ${picks.join(" | ")}`;
-}
-
-async function readPendingNextActions(
-  projectPath: string,
-  stepName: string,
-  workspaceName: string,
-  worktreePath: string | null,
-): Promise<string[]> {
-  const slug = nextActionStepSlug(workspaceName || stepName);
-  const candidates = [
-    ...(worktreePath ? [{ root: worktreePath, path: `${worktreePath}/.ccode/next-actions.json` }] : []),
-    ...(slug ? [{ root: projectPath, path: `${projectPath}/.ccode/step-next/${slug}.json` }] : []),
-  ];
-  for (const c of candidates) {
-    const file = await safe(invoke<{ text: string } | null>("read_file_preview", { root: c.root, path: c.path, requireWithinRoot: true }), null);
-    if (!file?.text) continue;
-    const parsed = parseStepNextActions(file.text);
-    if (!parsed?.optional.length) return [];
-    const checked = readNextActionChecks(projectPath, stepName);
-    return parsed.optional.filter((o) => !checked.has(o.id)).map((o) => o.label);
-  }
-  return [];
-}
-
-export async function gatherSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
-  const [
-    projects,
-    read,
-    workspaces,
-    runs,
-    tasks,
-    help,
-    mail,
-    memory,
-    mesaErrors,
-    appLog,
-    detected,
-    version,
-    profile,
-    humanStates,
-    schedules,
-    consultList,
-    fileMap,
-  ] = await Promise.all([
-    safe(invoke<ProjectDto[]>("list_projects"), []),
-    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
-    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
-    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
-    safe(invoke<HelpRequestDto[]>("list_help_requests"), []),
-    safe(invoke<ProjectMailDto[]>("mail_list", { projectRoot: projectPath }), []),
-    safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
-    safe(invoke<MesaErrorRecord[]>("mesa_errors_read", { projectRoot: projectPath, limit: 30 }), []),
-    safe(invoke<{ ts: string; level: string; source: string; message: string }[]>("get_app_log", { limit: 300 }), []),
-    safe(invoke<DetectResult[]>("detect_agents"), []),
-    safe(getVersion(), ""),
-    safe(invoke<string>("research_profile_context"), ""),
-    safe(invoke<HumanTaskStateDto[]>("list_human_task_states", { projectRoot: projectPath }), [] as HumanTaskStateDto[]),
-    safe(invoke<ScheduleDto[]>("list_schedules"), [] as ScheduleDto[]),
-    safe(invoke<ConsultListItem[]>("consult_list", { projectRoots: [projectPath] }), [] as ConsultListItem[]),
-    safe(invoke<{ entries: MapEntry[]; truncated: boolean } | null>("project_file_map", { projectRoot: projectPath }), null),
-  ]);
-  const state = useAppStore.getState();
-  const deps: DepCheckDto | null =
-    state.depCheck ?? (await safe(invoke<DepCheckDto>("check_dependencies"), null as DepCheckDto | null));
-  const project = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS)) ?? null;
-  const cfg = read?.config ?? null;
-  const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
-  const live = state.terminalRunInputs;
-  // 只认用户显式声明的流程外目标（与 gatherBriefInput、项目页同口径）：
-  // 自动登记的 pipeline_step / 绝对路径名称的 Task 不算目标，避免已归档步骤的旧任务行冒充「失败目标」误导回答
-  const declaredGoals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(project?.workMode));
-  const declaredGoalById = new Map(declaredGoals.map((t) => [t.id, t]));
-  // 包含已归档工作副本的路径与保存时间：供运行归属识别与排除非步骤对话，不因归档收起就认不出是哪一步的运行
-  const stepWorkspaceMeta = (cfg?.steps ?? []).map((s, index) => {
-    const active = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
-    const archived = !active ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived") ?? null) : null;
-    const hit = active ?? archived;
-    return { index, worktreePath: hit?.worktreePath ?? null, mergedAt: hit?.mergedAt ?? null };
-  });
-
-  const humanSummaryFor = (stepName: string): SnapshotStep["humanTasks"] => {
-    const items = humanStates.filter((h) => h.step === stepName);
-    if (items.length === 0) return null;
-    const mandatory = items.filter((h) => !h.optional);
-    const optional = items.filter((h) => h.optional);
-    return {
-      done: mandatory.filter((h) => h.done).length,
-      total: mandatory.length,
-      pending: mandatory.filter((h) => !h.done).map((h) => h.title),
-      optionalPending: optional.filter((h) => !h.done).map((h) => h.title),
-    };
-  };
-
-  const steps: SnapshotStep[] = await Promise.all(
-    (cfg?.steps ?? []).map(async (s, index) => {
-      const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
-      const archivedMerged = !ws
-        ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived" && !!w.mergedAt) ?? null)
-        : null;
-      const humanTasks = humanSummaryFor(s.name);
-      const base = {
-        index,
-        name: s.name,
-        brief: s.brief,
-        expectedArtifacts: s.expectedArtifacts,
-        acceptanceCriteria: s.acceptanceCriteria ?? [],
-        worktreePath: ws?.worktreePath ?? null,
-        humanTasks,
-      };
-      if (!ws) {
-        if (archivedMerged) {
-          const pendingNextActions = await readPendingNextActions(projectPath, s.name, s.workspaceName, null);
-          return {
-            ...base,
-            state: "已保存进项目（已收起临时副本，最终产物均已保留在项目主文件夹）",
-            failure: null,
-            checks: [],
-            reviewNotes: null,
-            pendingNextActions,
-          };
-        }
-        return { ...base, state: s.seedComplete ? "已完成（示例预置）" : "还没开始", failure: null, checks: [], reviewNotes: null };
-      }
-      const [health, checks, reviewNotes, pendingNextActions] = await Promise.all([
-        safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
-        stepChecks(s, ws.worktreePath, projectPath),
-        safe(invoke<string | null>("assistant_review_notes", { worktreePath: ws.worktreePath }), null),
-        readPendingNextActions(projectPath, s.name, s.workspaceName, ws.mergedAt ? null : ws.worktreePath),
-      ]);
-      const attention = stepAttention(ws, live, IS_WINDOWS);
-      const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
-      let stateText: string;
-      if (health?.conflict) stateText = "有冲突，等你在评审里处理";
-      else if (attention === "working") stateText = "AI 正在干活";
-      else if (attention === "confirm") stateText = "AI 在等你确认";
-      else if (ws.mergedAt && (health?.ahead ?? 0) === 0) stateText = "已保存进项目";
-      else if (failure) stateText = "出错了";
-      else if ((health?.ahead ?? 0) > 0) stateText = "做完了等你评审、保存进项目";
-      else if (attention === "done") stateText = "AI 这一轮说完了，等你看";
-      else stateText = health?.uncommitted ? "进行中，工作副本里有没保存的改动" : "进行中";
-      if (ws.staleUpstream && attention !== "working" && attention !== "confirm" && !health?.conflict && stateText !== "出错了") {
-        stateText += `（上游「${ws.staleUpstream}」有新保存的内容待跟进）`;
-      }
-      return { ...base, state: stateText, failure, checks, reviewNotes, pendingNextActions };
-    }),
-  );
-
-  // 最近的多模型研讨结论（最多 2 场，供项目助手衔接讨论结果起草派活单或记规矩）
-  const recentConsults = (
-    await Promise.all(
-      [...consultList]
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-        .slice(0, 2)
-        .map(async (c) => {
-          const detail = await safe(invoke<ConsultDto | null>("consult_read", { projectRoot: projectPath, id: c.id }), null);
-          return detail ? { title: c.title, updatedAt: c.updatedAt, summary: consultSummary(detail) } : null;
-        }),
-    )
-  ).filter((c): c is { title: string; updatedAt: string; summary: string } => !!c);
-
-  // 项目根对话 / 非步骤目标对话最近内容（最多 2 条；排除所有流程步骤——含已归档收起的工作副本）
-  const stepRoots = stepWorkspaceMeta.map((s) => s.worktreePath).filter((p): p is string => !!p);
-  const nonStepRootsSeen = new Set<string>();
-  const nonStepRuns = runs
-    .filter(
-      (r) =>
-        !r.internal &&
-        !!r.sessionId &&
-        !!r.isolationPath &&
-        !stepRoots.some((sr) => pathWithin(r.isolationPath, sr, IS_WINDOWS)),
-    )
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .filter((r) => {
-      const k = IS_WINDOWS ? r.isolationPath.toLowerCase() : r.isolationPath;
-      if (nonStepRootsSeen.has(k)) return false;
-      nonStepRootsSeen.add(k);
-      return true;
-    })
-    .slice(0, 2);
-  const recentChats = (
-    await Promise.all(
-      nonStepRuns.map(async (r) => {
-        const tail = await stepSessionTail([r], r.isolationPath).catch(() => null);
-        if (!tail) return null;
-        const goal = r.taskId ? (declaredGoalById.get(r.taskId) ?? null) : null;
-        const label = goal ? `目标「${goal.name}」` : samePath(r.isolationPath, projectPath, IS_WINDOWS) ? "项目根对话" : "项目内对话";
-        return { where: label, text: tail.text };
-      }),
-    )
-  ).filter((c): c is { where: string; text: string } => !!c);
-
-  // 完结产物与目标期刊：从项目地图的已有文件按完结清单同口径汇总
-  const mapEntries = fileMap?.entries ?? [];
-  const closeoutGroups = mapEntries.length
-    ? groupCloseoutFiles(mapEntries.map((e) => ({ rel: e.path, name: "", abs: "", label: "" })))
-    : [];
-  const finalFiles = (closeoutGroups.find((g) => g.id === "final")?.files ?? []).map((f) => `${f.label}（${f.rel}）`);
-  const checkFiles = (closeoutGroups.find((g) => g.id === "checks")?.files ?? []).map((f) => `${f.label}（${f.rel}）`);
-  const hasTargetJournalFile = mapEntries.some((e) => e.path.replace(/\\/g, "/") === "submission/target-journal.md");
-  const targetJournal = hasTargetJournalFile
-    ? await safe(
-        invoke<{ text: string } | null>("read_file_preview", {
-          root: projectPath,
-          path: `${projectPath}/submission/target-journal.md`,
-          requireWithinRoot: true,
-        }),
-        null,
-      ).then((f) => (f?.text ? parseTargetJournal(f.text) : null))
-    : null;
-  const closeout =
-    finalFiles.length || targetJournal || (steps.length > 0 && steps.every((s) => s.state.startsWith("已保存进项目")) && checkFiles.length)
-      ? { finalFiles, targetJournal, pendingChecks: checkFiles }
-      : null;
-
-  const projectSchedules = schedules
-    .filter((s) => samePath(s.projectRoot, projectPath, IS_WINDOWS))
-    .map((s) => ({
-      name: s.name,
-      enabled: s.enabled,
-      trigger: scheduleTriggerLabel(s),
-      skill: s.skill,
-      status: scheduleStatusText(s),
-    }));
-
-  // 交互对话里的出错不进运行记录：各步最近那段对话里 AI 最后说的话（只读最后一页）
-  const stepTails = (
-    await Promise.all(
-      steps
-        .filter((s) => s.worktreePath)
-        .map(async (s) => {
-          const tail = await stepSessionTail(runs, s.worktreePath!);
-          return tail ? { where: `第 ${s.index + 1} 步「${s.name}」`, text: tail.text, flagged: tail.flagged } : null;
-        }),
-    )
-  ).filter((t): t is { where: string; text: string; flagged: boolean } => !!t);
-  // 项目助手自己派过的活与现在的进度（问「进度」时说得出「第 2 步正在按派活单改」）
-  const dispatchedTurns = (await safe(invoke<AssistantTurn[]>("assistant_log_read", { projectRoot: projectPath }), []))
-    .filter((t) => t.dispatched)
-    .slice(-6);
-  const dispatched = await Promise.all(
-    dispatchedTurns.map(async (t) => {
-      const d = t.dispatched!;
-      const status = await dispatchStatus(d, projectPath).catch(() => ({ text: "看不到进度", tone: "idle" as const }));
-      const to = d.target === "step" ? `第 ${d.step} 步` : "新目标";
-      const how = d.mode === "mail" ? "留话" : d.mode === "resume" ? "接回对话开跑" : "记成目标开工";
-      return `「${d.title}」交给${to}（${how}，${d.at}）· 现在：${status.text}`;
-    }),
-  );
-  const stepMetaForRun = (run: RunDto) =>
-    stepWorkspaceMeta.find((s) => s.worktreePath && pathWithin(run.isolationPath, s.worktreePath, IS_WINDOWS)) ?? null;
-  const isBeforeStepSaved = (run: RunDto): boolean => {
-    const meta = stepMetaForRun(run);
-    if (!meta?.mergedAt) return false;
-    const runMs = Date.parse(run.createdAt);
-    const savedMs = Date.parse(meta.mergedAt);
-    return Number.isFinite(runMs) && Number.isFinite(savedMs) ? runMs <= savedMs : run.createdAt <= meta.mergedAt;
-  };
-  const where = (run: RunDto): string => {
-    const meta = stepMetaForRun(run);
-    if (meta) return isBeforeStepSaved(run) ? `第 ${meta.index + 1} 步（已保存前）` : `第 ${meta.index + 1} 步`;
-    const goal = run.taskId ? (declaredGoalById.get(run.taskId) ?? null) : null;
-    if (goal) return `目标「${goal.name}」`;
-    return "对话";
-  };
-  const visibleRuns = runs.filter((r) => !r.internal).slice(0, 20);
-  const snapshotRuns: SnapshotRun[] = visibleRuns.map((r) => ({ ...r, where: where(r) }));
-  // 已经保存进项目的步骤，保存之前的旧失败运行不再作为当前出错事件塞给 AI，避免误判为当前卡住
-  const failed = visibleRuns.filter((r) => r.status === "failed" && !isAppCrashClose(r) && !isBeforeStepSaved(r)).slice(0, 2);
-  const failedRunEvents = await Promise.all(
-    failed.map(async (r) => ({
-      where: where(r),
-      events: (await safe(invoke<RunEventDto[]>("run_events", { id: r.id }), [])).slice(-8).map(eventLine),
-    })),
-  );
-  const focusEvents = focus?.runId
-    ? (await safe(invoke<RunEventDto[]>("run_events", { id: focus.runId }), [])).slice(-12).map(eventLine)
-    : [];
-
-  const roots = [projectPath, ...mine.map((w) => w.worktreePath)];
-  const related = (text: string) => roots.some((r) => text.includes(r));
-  const helpItems = help
-    .filter((h) => samePath(h.repoPath, projectPath, IS_WINDOWS))
-    .flatMap((h) =>
-      h.items
-        .filter((i) => !i.answer)
-        .map((i) => ({
-          where: h.workspaceName ? `工作副本「${h.workspaceName}」` : "项目根",
-          question: i.question,
-          options: i.options.map((o) => `${o.key}：${o.label}`),
-          recommend: i.recommend,
-        })),
-    );
-  const depRows = deps
-    ? (
-        [
-          ["Git", deps.git],
-          ["Node", deps.node],
-          ["Quarto", deps.quarto],
-          ["LaTeX", deps.tex],
-          ["数据分析库（numpy / pandas / matplotlib）", deps.datasci],
-        ] as const
-      ).map(([name, d]) => ({ name, status: d.status, version: d.version, note: d.note }))
-    : [];
-
-  const input: SnapshotInput = {
-    now: new Date().toISOString(),
-    mesaVersion: version || "未知",
-    platform: IS_MAC ? "macOS" : IS_WINDOWS ? "Windows" : "Linux",
-    project: {
-      name: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath,
-      path: projectPath,
-      workMode: project?.workMode ?? null,
-      topic: cfg?.topic ?? null,
-      settings: cfg?.settings ?? [],
-      hasPipeline: (cfg?.steps.length ?? 0) > 0,
-      defaultAgent: project?.defaultAgent ?? null,
-    },
-    steps,
-    goals: declaredGoals
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, 12)
-      .map((t) => ({ name: t.name, status: GOAL_STATUS[t.status] ?? t.status, outputPaths: t.outputPaths })),
-    runs: snapshotRuns,
-    focus: focus ? { title: focus.title, detail: focus.detail, events: focusEvents } : null,
-    failedRunEvents,
-    helpItems,
-    pendingMail: mail.filter((m) => m.status === "pending").map((m) => `${m.fromLabel} → ${m.toLabel}：${m.text}`),
-    mesaErrors,
-    appLog: appLog.filter((l) => l.level !== "info" && related(`${l.source} ${l.message}`)),
-    deps: depRows,
-    agents: detected.map((d) => ({ id: AGENTS.find((a) => a.id === d.id)?.label ?? d.id, installed: !!d.binaryPath, version: d.version })),
-    decided: memory?.lines ?? [],
-    profile,
-    dispatched,
-    stepTails,
-    closeout,
-    schedules: projectSchedules,
-    consults: recentConsults,
-    recentChats,
-  };
-  return buildProjectSnapshot(input, SNAPSHOT_MAX_CHARS);
-}
-
-/** 快照留 90 秒：接着追问不用每次重新取一遍（带「这次重点」的不走缓存） */
-const SNAPSHOT_TTL_MS = 90_000;
-const snapshotCache = new Map<string, { at: number; text: string }>();
-
-/** 面板一打开就先把项目记录整理好（你打字时已经取完，问的时候不再等这一两秒）；失败不管 */
-/** 「现在的情况」卡与常用问题的取数（assistant-brief.ts 只算）：步骤状态与 gatherSnapshot 同口径，但不读对话尾巴、不拼文字 */
+/** 「现在的情况」卡与常用问题的取数：单次调用 Rust 唯一真源 `assistant_project_brief`，再叠加前端实时终端状态 */
 export async function gatherBriefInput(projectPath: string, since: string | null): Promise<BriefInput> {
-  const [read, workspaces, runs, tasks, projects, knowledge, topLevel, schedules] = await Promise.all([
-    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
-    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
-    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
-    safe(invoke<ProjectDto[]>("list_projects"), []),
-    safe(invoke<KnowledgeForAiDto | null>("project_memory_for_ai", { path: projectPath }), null),
-    safe(invoke<DirEntryDto[]>("list_dir", { path: projectPath, showHidden: false }), [] as DirEntryDto[]),
-    safe(invoke<ScheduleDto[]>("list_schedules"), [] as ScheduleDto[]),
-  ]);
-  const cfg = read?.config ?? null;
-  const mine = workspaces.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
-  const live = useAppStore.getState().terminalRunInputs;
-  const steps: BriefStep[] = await Promise.all(
-    (cfg?.steps ?? []).map(async (s, index): Promise<BriefStep> => {
-      const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
-      const archivedMerged = !ws
-        ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived" && !!w.mergedAt) ?? null)
-        : null;
-      const n = index + 1;
-      if (!ws) {
-        if (archivedMerged) return { n, name: s.name, state: "saved", mergedAt: archivedMerged.mergedAt, needsHuman: 0 };
-        return { n, name: s.name, state: s.seedComplete ? "saved" : "idle", needsHuman: 0 };
-      }
-      const health = await safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null);
-      // 上游待跟进只认后端按步骤顺序算出的 ws.staleUpstream（与步进器 / 步骤卡同一真源）：
-      // 不能拿 health.behind / workspace_incoming 判定，否则下游步骤合并或主分支后续提交会让第 1 步在内的所有已保存步骤全误报「有前面步骤新保存的内容待跟进」
-      const staleUpstream = ws.staleUpstream ?? null;
-      const pendingUpstream = Boolean(staleUpstream);
-      const attention = stepAttention(ws, live, IS_WINDOWS);
-      const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
-      const state: BriefStep["state"] =
-        attention === "working"
-          ? "working"
-          : attention === "confirm"
-            ? "confirm"
-            : health?.conflict
-              ? "review"
-              : ws.mergedAt && (health?.ahead ?? 0) === 0
-                ? "saved"
-                : failure
-                  ? "failed"
-                  : (health?.ahead ?? 0) > 0
-                    ? "review"
-                    : "open";
-      const needsHuman =
-        state === "saved" ? 0 : (await stepChecks(s, ws.worktreePath, projectPath)).filter((c) => c.status === "needs_human").length;
-      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman, pendingUpstream, staleUpstream };
-    }),
-  );
-  const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;
-  const latestGoalIsolation = (taskId: string): string | null => {
-    const hit = runs
-      .filter((r) => !r.internal && r.taskId === taskId && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    return hit?.isolationPath ?? null;
-  };
-  const goals = visibleDeclaredTasks(tasks, declaredTaskKindsForMode(workMode)).map((t) => ({
-    id: t.id,
-    name: t.name,
-    status: t.status,
-    updatedAt: t.updatedAt,
-    isolationPath: t.workspaceCleared ? null : latestGoalIsolation(t.id),
-    outputPaths: t.outputPaths,
-  }));
-  // 读不到项目知识时不提议（宁可不提，也别对已有知识的项目说「还没有」）；项目根没有约定文件也不提议（起草了也是「一条没找到」）
-  const knowledgeEmpty =
-    !!knowledge && knowledge.lines.length === 0 && knowledge.stale === 0 && hasKnowledgeSources(topLevel.filter((e) => !e.isDir).map((e) => e.name));
-  const uncertainSchedules = schedules
-    .filter((s) => samePath(s.projectRoot, projectPath, IS_WINDOWS) && s.followupState === "uncertain")
-    .map((s) => ({ id: s.id, name: s.name }));
-  return { hasFlow: steps.length > 0, steps, goals, since, knowledgeEmpty, uncertainSchedules };
-}
-
-export function prefetchSnapshot(projectPath: string): void {
-  void cachedSnapshot(projectPath, null).catch(() => {});
-}
-
-/** 派活、补料、回音、人工请求、记项目知识后清掉 90 秒快照缓存，紧接着追问时立刻看到最新状态 */
-export function invalidateAssistantSnapshot(projectPath?: string): void {
-  if (!projectPath) {
-    snapshotCache.clear();
-    return;
-  }
-  for (const key of snapshotCache.keys()) {
-    if (samePath(key, projectPath, IS_WINDOWS)) snapshotCache.delete(key);
-  }
-}
-
-async function cachedSnapshot(projectPath: string, focus: AssistantFocus | null): Promise<string> {
-  if (!focus) {
-    const hit = snapshotCache.get(projectPath);
-    if (hit && Date.now() - hit.at < SNAPSHOT_TTL_MS) return hit.text;
-  }
-  const text = await gatherSnapshot(projectPath, focus);
-  if (!focus) snapshotCache.set(projectPath, { at: Date.now(), text });
-  return text;
-}
-
-/** 不看项目记录的几类问题（怎么用 / 寒暄 / 判不出）只带的一点概况：当前时间、项目名、工作方式、默认 Agent、项目助手用的连接 */
-function projectContext(projectPath: string, project: ProjectDto | null, connLine: string): string {
-  const mode = project?.workMode === "research" ? "科研" : project?.workMode === "coding" ? "编程" : project?.workMode === "office" ? "工作" : "未登记";
-  const agent = project?.defaultAgent ? (AGENTS.find((a) => a.id === project.defaultAgent)?.label ?? project.defaultAgent) : "没设";
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return [
-    `当前时间（本机）：${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`,
-    `项目：${project?.name ?? projectPath}（${mode}项目）`,
-    `项目默认 Agent：${agent}`,
-    `项目助手这次用的连接：${connLine}`,
-  ].join("\n");
-}
-
-/** 项目地图（要做事或连接不能只读看文件时带）：上次问以来新出现或改过的标「新」；读不到就不带 */
-async function gatherMap(projectPath: string, lastAt: string | undefined, maxChars?: number): Promise<string | null> {
-  const map = await safe(invoke<{ entries: MapEntry[]; truncated: boolean } | null>("project_file_map", { projectRoot: projectPath }), null);
-  if (!map) return null;
-  const since = lastAt ? Date.parse(lastAt) : NaN;
-  return renderProjectMap(map.entries, { truncated: map.truncated, sinceMs: Number.isFinite(since) ? since : null, ...(maxChars ? { maxChars } : {}) });
-}
-
-/** 一句说明只取第一句、截短：能力清单要的是「什么时候用」，不是整段 */
-function firstSentence(text: string, cap = 90): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  const cut = t.search(/[。.!！?？]/);
-  const one = cut > 0 ? t.slice(0, cut + 1) : t;
-  return one.length > cap ? `${one.slice(0, cap)}…` : one;
-}
-
-/** 干活的连接能做到哪一步（二期）：项目默认连接的能力表、模型看不看得了图、出图模型配没配，以及各步单独绑定的连接 */
-async function workerCapabilities(project: ProjectDto | null, projectPath?: string): Promise<string[]> {
-  const profiles = useAppStore.getState().profiles;
-  const profile = projectDefaultProfile(project);
-  const model = profile
-    ? resolveTaskModel({
-        models: profile.models,
-        profileId: profile.id,
-        defaultProfileId: project?.defaultProfiles?.[profile.agent],
-        defaultModel: project?.defaultModels?.[profile.agent],
-      })
-    : "";
-  const root = projectPath ?? project?.path ?? null;
-  const hasStepBindings = !!root && !!project?.taskBindings && Object.keys(project.taskBindings).some((k) => k.startsWith("step:"));
-  const read = hasStepBindings ? await safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: root }), null) : null;
-  const stepEntries = (read?.config.steps ?? [])
-    .map((s, idx) => {
-      const launch = taskBindingLaunch(profiles, project?.taskBindings?.[stepSlotKey(s.name)]);
-      if (!launch) return null;
-      if (profile && launch.profileId === profile.id && launch.model === model) return null;
-      const boundProfile = profiles.find((p) => p.id === launch.profileId);
-      return {
-        n: idx + 1,
-        name: s.name,
-        agent: AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId,
-        profile: boundProfile?.name ?? launch.profileId,
-        model: launch.model,
-        gatewayId: boundProfile?.gatewayId ?? null,
-      };
-    })
-    .filter((x): x is NonNullable<typeof x> => !!x);
-
-  const stepBindings = await Promise.all(
-    stepEntries.map(async (b) => ({
-      n: b.n,
-      name: b.name,
-      agent: b.agent,
-      profile: b.profile,
-      model: b.model,
-      vision: b.model
-        ? await safe(invoke<ModelCapabilityDto[]>("model_capabilities", { models: [b.model], gatewayId: b.gatewayId }), []).then((rows) => rows[0]?.vision ?? null)
-        : null,
-    })),
-  );
-
-  if (!profile) {
-    return workerCapabilityLines({
-      worker: null,
-      headlessWrite: null,
-      vision: null,
-      imageGen: { model: null, helperReady: false },
-      tier: null,
-      stepBindings,
-    });
-  }
-  const imageModel = useAppStore.getState().settings?.imageGenModel?.trim() || null;
-  const [caps, vision, imageStatus] = await Promise.all([
-    safe(invoke<AgentCapabilitiesDto[]>("agent_capabilities"), []),
-    model
-      ? safe(invoke<ModelCapabilityDto[]>("model_capabilities", { models: [model], gatewayId: profile.gatewayId ?? null }), []).then((rows) => rows[0]?.vision ?? null)
-      : Promise.resolve(null),
-    imageModel ? safe(invoke<{ helperReady: boolean }>("image_gen_status"), { helperReady: false }) : Promise.resolve({ helperReady: false }),
-  ]);
-  const cap = caps.find((c) => c.agent === profile.agent) ?? null;
-  return workerCapabilityLines({
-    worker: { agent: AGENTS.find((a) => a.id === profile.agent)?.label ?? profile.agent, profile: profile.name, model },
-    headlessWrite: cap?.headlessWrite ?? null,
-    vision,
-    imageGen: { model: imageModel, helperReady: imageStatus.helperReady },
-    tier: cap ? { level: cap.supportTier, note: cap.tierNote } : null,
-    stepBindings,
+  const dto = await invoke<RustBriefDto>("assistant_project_brief", {
+    projectRoot: projectPath,
+    since,
   });
+  const live = useAppStore.getState().terminalRunInputs;
+  const steps: BriefStep[] = dto.steps.map((s) => {
+    let state = s.state;
+    if (s.worktreePath && state !== "saved" && state !== "idle") {
+      const hits = live.filter((r) => r.running && !r.shell && pathWithin(r.cwd, s.worktreePath!, IS_WINDOWS));
+      if (hits.some((r) => r.attention === "working")) state = "working";
+      else if (hits.some((r) => r.attention === "confirm")) state = "confirm";
+    }
+    return {
+      n: s.n,
+      name: s.name,
+      state,
+      failure: s.failure ?? null,
+      mergedAt: s.mergedAt ?? null,
+      needsHuman: s.needsHuman,
+      pendingUpstream: s.pendingUpstream,
+      staleUpstream: s.staleUpstream ?? null,
+    };
+  });
+  return {
+    hasFlow: dto.hasFlow,
+    steps,
+    goals: dto.goals,
+    since: dto.since ?? since,
+    knowledgeEmpty: dto.knowledgeEmpty,
+    uncertainSchedules: dto.uncertainSchedules,
+  };
 }
 
-/** 能力清单：内置任务、我的任务、已装技能的名字和一句话（一期）；干活的连接能做到哪一步、定时与事件（二期） */
-export async function gatherCatalog(project: ProjectDto | null, projectPath?: string): Promise<string> {
-  const [skills, packs, worker] = await Promise.all([
-    safe(invoke<SkillDto[]>("list_skills"), []),
-    safe(invoke<TaskPackDto[]>("list_task_packs"), []),
-    workerCapabilities(project, projectPath).catch(() => [] as string[]),
-  ]);
-  const lines = ["任务（写在「按任务」里）：", ...builtinTaskCatalogLines()];
-  for (const p of packs) lines.push(`- 我的任务「${p.name}」：${firstSentence(p.description || p.steps.map((s) => s.name).join("、"))}`);
-  if (skills.length) {
-    lines.push("", "已装技能（写在「用到的技能」里）：");
-    for (const sk of skills) lines.push(`- ${sk.name}：${firstSentence(sk.description)}`);
-  }
-  // 整套流程只供指路：写整篇综述 / 论文这种多步活时告诉用户可以套哪套，由他在项目页自己选（2026-11-08）
-  lines.push("", "整套流程模板（写整篇综述、论文、学位论文、投稿返修这类多步活才用；你不套、不写进单子，告诉用户在项目页自己选）：");
-  for (const t of PIPELINE_TEMPLATES) lines.push(`- 「${t.name}」：${firstSentence(t.description)}`);
-  if (worker.length) lines.push("", ...worker);
-  lines.push("", ...TRIGGER_CATALOG_LINES);
-  return lines.join("\n");
-}
+/** 兼容旧调用点的空操作：状态已全部迁移到 Rust 唯一真源实时读取，不再维护前端快照缓存 */
+export function invalidateAssistantSnapshot(_projectPath?: string): void {}
 
-/** 这一问怎么问：分到哪一类、要不要只读查看项目文件（面板据此写等待文案） */
+/** 这一问怎么问（用于面板等待提示文案；实际工具调用与状态获取由 Rust 真 Agent 自主完成） */
 export function planAsk(
   question: string,
   hasFocus: boolean,
   project: ProjectDto | null,
-  /** 「换个查法」：人点了按哪一类重问 */
   forced?: AssistantIntent,
-  /** 之前的问答：上一轮问了用户一个问题 / 起草了单子时，这一轮接着按「要做事」走 */
   history?: readonly (AssistantHistoryTurn & { dispatched?: unknown })[],
 ): { intent: AssistantIntent; inspect: boolean } {
   const last = history?.[history.length - 1];
   const intent = forced ?? classifyQuestion(question, hasFocus, last ? previousTurnHint(last.answer, !!last.dispatched) : undefined);
   const agent = assistantConnection(project).agentId;
-  // 走「AI 功能」连接时不知道是哪家：先试，后端说不支持再退回只看记录
-  const inspect = wantsInspect(question, intent, hasFocus) && (agent === null || INSPECT_AGENTS.includes(agent));
+  const inspect =
+    (agent !== null && TIER1_ASSISTANT_AGENTS.includes(agent)) ||
+    (wantsInspect(question, intent, hasFocus) && (agent === null || INSPECT_AGENTS.includes(agent)));
   return { intent, inspect };
 }
 
-const INSPECT_UNSUPPORTED = "INSPECT_UNSUPPORTED";
-export const ASSISTANT_CANCELLED = "ASSISTANT_CANCELLED";
-
-/** 只读查看文件时一并放开访问的目录：各步骤的工作副本 + 还没清理的在跑 / 待验收 / 失败目标的隔离副本 */
-async function inspectExtraDirs(projectPath: string): Promise<string[]> {
-  const [workspaces, tasks, runs] = await Promise.all([
-    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-    safe(invoke<TaskDto[]>("task_list", { projectRoot: projectPath, includeArchived: false }), []),
-    safe(invoke<RunDto[]>("run_list", { projectRoot: projectPath }), []),
-  ]);
-  const out = workspaces
-    .filter((w) => w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS))
-    .map((w) => w.worktreePath);
-  for (const t of tasks) {
-    if (!isDeclaredTask(t) || t.kind === "step" || t.kind === "pipeline_step" || t.archivedAt || t.workspaceCleared) continue;
-    if (!["running", "pending_review", "failed", "stopped"].includes(t.status)) continue;
-    const hit = runs
-      .filter((r) => !r.internal && r.taskId === t.id && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-    if (hit && !out.some((p) => samePath(p, hit.isolationPath, IS_WINDOWS))) {
-      out.push(hit.isolationPath);
-    }
-  }
-  return out;
-}
-
-/** 问「这一轮怎么样 / 有没有问题 / 帮我看看」时看哪一步：问题里点名的，没点名就是评审页正开着的那一步。
- *  找到且开过工的，带上这一步的核验项（含 Mesa 核对）做成这次的重点，只读打开它的主要产物；找不到返回 null，照原来的问法走 */
-async function reviewAskFocus(projectPath: string, question: string): Promise<AssistantFocus | null> {
-  const [read, workspaces, skillProvides] = await Promise.all([
-    safe(invoke<ProjectConfigReadDto | null>("read_project_config", { path: projectPath }), null),
-    safe(invoke<WorkspaceDto[]>("list_workspaces"), []),
-    safe(loadSkillProvides(), undefined),
-  ]);
-  const steps = read?.config.steps ?? [];
-  if (!steps.length) return null;
-  const open = reviewingStep();
-  const viewing = open && samePath(open.projectRoot, projectPath, IS_WINDOWS) ? open : null;
-  const n = mentionedStep(question, steps.map((s) => ({ name: s.name, kind: stepKind(s, skillProvides) }))) ?? viewing?.n ?? null;
-  const step = n ? steps[n - 1] : undefined;
-  if (!n || !step) return null;
-  const ws = workspaces.find((w) => w.name === step.workspaceName && w.status !== "archived" && samePath(w.repoPath, projectPath, IS_WINDOWS));
-  if (!ws) return null;
-  const checks = await stepChecks(step, ws.worktreePath, projectPath, skillProvides);
-  return reviewRoundFocus(n, step.name, { worktree: ws.worktreePath, artifacts: step.expectedArtifacts }, checks);
-}
-
-/** 评审页开着时，「用户此刻在看哪」补一句正在评审哪一步（评审覆盖层挂在对话页上，页面名只写得出「对话页」） */
+/** 评审页开着时，「用户此刻在看哪」补一句正在评审哪一步 */
 function withReviewing(where: string | undefined, projectPath: string): string | undefined {
   const open = reviewingStep();
   if (!open || !samePath(open.projectRoot, projectPath, IS_WINDOWS)) return where;
   return `${where ? `${where} · ` : ""}正在评审第 ${open.n} 步「${open.name}」`;
 }
 
-/** 问一次：先分流（classifyQuestion），按类取材料 → 拼提示词 → 后端脱敏后无头调用、落记录。
- *  问出错类问题且连接支持时，在项目根只读跑一次，让它自己打开文件核对；不支持就只看记录。
- *  项目默认那家不支持无头调用时退回「AI 功能」的连接 */
+/** 问「这一轮怎么样」且评审页正开着时，补一条轻量重点提示（让 Agent 调用 step_detail 核对，不再在前端跑检查） */
+function reviewingFocusHint(projectPath: string, question: string): AssistantFocus | null {
+  if (!isReviewAsk(question)) return null;
+  const open = reviewingStep();
+  if (!open || !samePath(open.projectRoot, projectPath, IS_WINDOWS)) return null;
+  const artifacts = open.artifacts.length ? `（主要产物：${open.artifacts.join("、")}）` : "";
+  return {
+    title: `这一轮怎么样：第 ${open.n} 步「${open.name}」`,
+    detail: `用户正在评审第 ${open.n} 步「${open.name}」，工作副本在 ${open.worktree}${artifacts}。请先查该步详情与核验项，再只读核对主要产物，不替用户判通过。`,
+  };
+}
+
+/** 统一问答入口：直连 Rust `project_assistant_chat`（第一档持久只读 Agent + MCP 工具；第二档同源回落） */
 export async function askProjectAssistant(input: {
   projectPath: string;
   project: ProjectDto | null;
@@ -888,7 +196,7 @@ export async function askProjectAssistant(input: {
   focus: AssistantFocus | null;
   intent?: AssistantIntent;
   inspect?: boolean;
-  /** 附的截图（Mesa 粘贴目录里的绝对路径，2026-11-05）：后端带图一律走只读查看，只有 Claude Code / Codex 能看 */
+  /** 附的截图（Mesa 粘贴目录里的绝对路径） */
   images?: readonly string[];
   /** 用户此刻在看哪（assistant-dock.ts assistantWhere） */
   where?: string;
@@ -896,92 +204,56 @@ export async function askProjectAssistant(input: {
   streamId?: string;
   /** 边生成边推来的更新：到此为止的回答（整段）/ 正在做的一步 */
   onStream?: (update: { text?: string; step?: string }) => void;
-  /** 仅本次临时借用的连接（如当前连接为 agy 不支持只读时，用户显式点「借用 Claude Code 打开文件核对重问」） */
+  /** 仅本次临时借用的连接（如当前连接不支持只读时，用户显式点借用） */
   overrideConnection?: { profileId: string; model: string | null; line: string } | null;
 }): Promise<AssistantTurn> {
-  // 问一轮怎么样：没带重点进来时，按点名的步骤或评审页开着的那一步补上重点（带核验项、只读打开产物）
-  const focus = input.focus ?? (isReviewAsk(input.question) ? await reviewAskFocus(input.projectPath, input.question).catch(() => null) : null);
-  const where = withReviewing(input.where, input.projectPath);
-  const planned = planAsk(input.question, !!focus, input.project, undefined, input.history);
-  const intent = input.intent ?? planned.intent;
-  const inspect = input.inspect ?? planned.inspect;
+  const focus = input.focus ?? reviewingFocusHint(input.projectPath, input.question);
+  const whereLabel = withReviewing(input.where, input.projectPath) ?? null;
   const baseConn = assistantConnection(input.project);
   const conn = input.overrideConnection
-    ? { ...baseConn, profileId: input.overrideConnection.profileId, model: input.overrideConnection.model, line: `${input.overrideConnection.line}（本次借用只读）`, bound: true }
+    ? {
+        ...baseConn,
+        profileId: input.overrideConnection.profileId,
+        model: input.overrideConnection.model,
+        line: `${input.overrideConnection.line}（本次借用只读）`,
+        bound: true,
+      }
     : baseConn;
-  const needSnapshot = intent === "project" || intent === "mixed" || intent === "request";
-  const needGuide = intent === "howto" || intent === "mixed";
-  const request = intent === "request";
-  // 不能只读打开文件时（如 agy），问项目也附一份紧凑项目地图，至少知道项目里有哪些文件和刚改过什么
-  const needMap = request || (needSnapshot && !inspect);
-  const [snapshot, guide, worktrees, map, catalog] = await Promise.all([
-    needSnapshot ? cachedSnapshot(input.projectPath, focus) : Promise.resolve(null),
-    needGuide
-      ? safe(invoke<{ heading: string; text: string }[]>("assistant_guide_search", { question: input.question, limit: intent === "mixed" ? GUIDE_LIMIT.mixed : GUIDE_LIMIT.howto }), [])
-      : Promise.resolve([] as { heading: string; text: string }[]),
-    inspect ? inspectExtraDirs(input.projectPath) : Promise.resolve([] as string[]),
-    needMap ? gatherMap(input.projectPath, input.history[input.history.length - 1]?.at, request ? undefined : 2500) : Promise.resolve(null),
-    request ? gatherCatalog(input.project, input.projectPath) : Promise.resolve(null),
-  ]);
-  const promptFor = (withInspect: boolean) =>
-    buildAssistantPrompt({
-      intent,
-      snapshot,
-      guide,
-      inspect: withInspect ? inspectRules(input.projectPath, worktrees, request ? "intake" : "debug") : null,
-      context: intent === "howto" || intent === "general" || intent === "chat" ? projectContext(input.projectPath, input.project, conn.line) : null,
-      history: input.history,
-      question: input.question,
-      where: where || null,
-      map,
-      catalog,
-    });
-  const guideHeads = guide.map((g) => g.heading);
+
   const streamId = input.streamId ?? crypto.randomUUID();
-  const ask = async (profileId: string | null, model: string | null, connection: string, withInspect: boolean) => {
-    // 先挂上监听再发：后端一开跑就推（只有 Claude Code / Codex 推得出来，别家整段一次给）
+  const chat = async (profileId: string | null, model: string | null, connection: string, forceReadonly: boolean) => {
     const unlisten = input.onStream
       ? await listen<{ text?: string; step?: string }>(`assistant-stream-${streamId}`, (event) => input.onStream?.(event.payload))
       : null;
     try {
-      return await invoke<AssistantTurn>("project_assistant_ask", {
+      return await invoke<AssistantTurn>("project_assistant_chat", {
         projectRoot: input.projectPath,
         profileId,
         model,
         connection,
-        // 翻出了更早的相关问答时依据里写一句，人知道它不只看了最近几轮
-        basis: (() => {
-          const base = basisText(intent, guideHeads, withInspect);
-          const older = intent === "chat" || intent === "general" ? [] : recallOlderTurns(input.history, historyKeep(intent), input.question);
-          return older.length ? `${base}${base ? " · " : ""}翻出 ${older.length} 轮更早的相关问答` : base;
-        })(),
         question: input.question,
-        prompt: promptFor(withInspect),
-        inspect: withInspect,
-        extraDirs: withInspect ? worktrees : null,
-        effort: intentEffort(intent),
+        whereLabel,
+        focusTitle: focus?.title ?? null,
+        focusDetail: focus?.detail ?? null,
         streamId,
         images: input.images?.length ? input.images : null,
+        forceReadonly,
       });
     } finally {
       unlisten?.();
     }
   };
-  const askWithFallback = async (profileId: string | null, model: string | null, connection: string) => {
-    try {
-      return await ask(profileId, model, connection, inspect);
-    } catch (reason) {
-      if (String(reason).includes(ASSISTANT_CANCELLED)) throw reason;
-      // 这家还不能只读查看项目文件：退回只看记录
-      if (inspect && String(reason).includes(INSPECT_UNSUPPORTED)) return ask(profileId, model, connection, false);
-      throw reason;
-    }
-  };
+
+  const forceReadonly = Boolean(input.inspect || input.overrideConnection);
   try {
-    return await askWithFallback(conn.profileId, conn.model, conn.line);
+    return await chat(conn.profileId, conn.model, conn.line, forceReadonly);
   } catch (reason) {
     if (String(reason).includes(ASSISTANT_CANCELLED)) throw reason;
+    // 第二档连接不支持只读查看时退回仅依据真源上下文
+    if (forceReadonly && !input.images?.length && String(reason).includes("INSPECT_UNSUPPORTED")) {
+      return chat(conn.profileId, conn.model, conn.line, false);
+    }
     if (!conn.profileId || conn.bound || !String(reason).includes("不支持无头调用")) throw reason;
-    return askWithFallback(null, null, "设置里「AI 功能」的连接");
+    return chat(null, null, "设置里「AI 功能」的连接", forceReadonly);
   }
 }

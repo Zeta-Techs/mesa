@@ -12,8 +12,8 @@ import {
   wantsInspect as wantsInspectFn,
   historyBlock,
   parseAssistantAnswer,
+  resolveTurnParts,
 } from "../src/project-assistant.ts";
-import { buildProjectSnapshot, type SnapshotInput } from "../src/project-snapshot.ts";
 
 test("动作标记：只认白名单，按钮文字由前端生成，最多三个", () => {
   const { text, actions } = parseAssistantAnswer(
@@ -103,92 +103,56 @@ test("没问成：超时、找不到 Agent 译成白话，其余照原文", () =
   assert.equal(assistantErrorText("Error: something odd"), "something odd");
 });
 
-function input(over: Partial<SnapshotInput> = {}): SnapshotInput {
-  return {
-    now: "2026-11-04T10:00:00+08:00",
-    mesaVersion: "0.2.0",
-    platform: "macOS",
-    project: {
-      name: "综述",
-      path: "/p/review",
-      workMode: "research",
-      topic: "固态电池",
-      settings: [],
-      hasPipeline: true,
-      defaultAgent: "codex",
+test("resolveTurnParts：优先消费第一档 MCP 结构化提议，缺省无缝回落到文本块解析", () => {
+  const tier1 = resolveTurnParts(
+    {
+      answer: "已核对终稿与投稿清单，建议起草一版审稿回复任务。\n\n[[项目页]]",
+      basis: "说明书「3.2 添加项目」 · 项目助手 Agent（只读 + Mesa 工具）",
+      proposals: {
+        workOrder: {
+          target: "goal",
+          title: "起草审稿回复",
+          task: "整理审稿人意见并写 response letter",
+          done: "产出 manuscript/rebuttal.md",
+          inputs: ["manuscript/final.md"],
+        },
+        memories: [{ text: "图表标题统一用英文", source: "README.md" }],
+        actions: [
+          { kind: "schedule", label: "" },
+          { kind: "step", step: 2, label: "" },
+          { kind: "step", step: 99, label: "越界步骤应忽略" },
+        ],
+        guideHeadings: ["8.1 聊天 / 终端", "3.2 添加项目"],
+      },
     },
-    steps: [
-      {
-        index: 0,
-        name: "文献检索",
-        brief: "检索文献",
-        expectedArtifacts: ["papers/included.md"],
-        acceptanceCriteria: [],
-        state: "出错了",
-        worktreePath: "/w/s1",
-        failure: "PTY 启动失败",
-        checks: [{ id: "c1", kind: "cite", status: "blocked", title: "引用缺 DOI" }],
-        reviewNotes: "图 2 标注不清",
-      },
+    5,
+  );
+  assert.equal(tier1.text, "已核对终稿与投稿清单，建议起草一版审稿回复任务。");
+  assert.equal(tier1.order?.title, "起草审稿回复");
+  assert.deepEqual(tier1.order?.inputs, ["manuscript/final.md"]);
+  assert.deepEqual(tier1.rememberItems, [{ text: "图表标题统一用英文", source: "README.md" }]);
+  assert.deepEqual(tier1.remembers, ["图表标题统一用英文"]);
+  assert.deepEqual(
+    tier1.actions.map((a) => [a.kind, a.step, a.text, a.label]),
+    [
+      ["project", null, "schedule", "去定时任务核对"],
+      ["step", 2, "", "看第 2 步"],
     ],
-    goals: [],
-    runs: [
-      {
-        id: "r1",
-        isolationPath: "/w/s1",
-        internal: false,
-        createdAt: "2026-11-04T09:00:00Z",
-        closedAt: null,
-        status: "failed",
-        exitCode: null,
-        closeReason: "应用上次异常退出，Run 未能正常收尾",
-        agent: "codex",
-        taskKind: "step",
-        where: "第 1 步",
-      },
-    ],
-    focus: null,
-    failedRunEvents: [],
-    helpItems: [],
-    pendingMail: [],
-    mesaErrors: [
-      { at: "2026-11-04T09:30:00+08:00", firstAt: "", count: 2, source: "invoke", command: "save_step", message: "nothing added", version: "0.2.0" },
-    ],
-    appLog: [],
-    deps: [{ name: "Git", status: "ok", version: "2.4" }],
-    agents: [{ id: "codex", installed: true, version: "0.166" }],
-    decided: [],
-    ...over,
-  };
-}
+  );
+  assert.deepEqual(tier1.guideHeadings, ["8.1 聊天 / 终端", "3.2 添加项目"]);
 
-test("快照写清每步状态、出错原因、核验、退回意见与 Mesa 出错", () => {
-  const text = buildProjectSnapshot(input());
-  assert.match(text, /### 第 1 步「文献检索」：出错了\n最近一次运行出错：PTY 启动失败/);
-  assert.match(text, /\[拦下·核验脚本\] 引用缺 DOI/);
-  assert.match(text, /评审退回意见：\n图 2 标注不清/);
-  assert.match(text, /Mesa 上次异常退出.*Mesa 的问题，不是这一步的/);
-  assert.match(text, /save_step 失败（10 分钟内 2 次）/);
-  assert.match(text, /- Git：已就绪 2\.4/);
-});
-
-test("快照带研究档案、单独成段；关掉（空串）时不出现", () => {
-  const text = buildProjectSnapshot(input({ profile: "研究者档案（跨项目…）：\n- 写作偏好：少用被动句" }));
-  assert.match(text, /## 研究档案（[^\n]*不是本项目的事实）\n研究者档案/);
-  assert.doesNotMatch(buildProjectSnapshot(input({ profile: "" })), /## 研究档案/);
-});
-
-test("快照超长时先砍事件和日志，最后硬截", () => {
-  const big = input({
-    failedRunEvents: [{ where: "第 1 步", events: Array.from({ length: 50 }, () => "x".repeat(200)) }],
-    appLog: Array.from({ length: 20 }, () => ({ ts: "t", level: "error", source: "s", message: "y".repeat(200) })),
-  });
-  const full = buildProjectSnapshot(big, 100000);
-  assert.match(full, /出错那次的最后几条事件/);
-  const cut = buildProjectSnapshot(big, 3000);
-  assert.ok(cut.length <= 3000 + 10);
-  assert.ok(!cut.includes("出错那次的最后几条事件"));
-  assert.match(cut, /第 1 步「文献检索」/);
+  // 第二档 / 旧记录：无 proposals 时无缝走文本块解析
+  const tier2 = resolveTurnParts(
+    {
+      answer: "已起草：\n:::派活\n交给：第 2 步\n标题：补两篇近两年文献\n要做：补读最新综述\n怎样算做完：更新 notes/index.json\n:::\n:::记下\n统一用 ACS 引用样式\n:::",
+      basis: "说明书「2 工作台」 · 这个项目的记录",
+    },
+    5,
+  );
+  assert.equal(tier2.order?.target, "step");
+  assert.equal(tier2.order?.step, 2);
+  assert.deepEqual(tier2.remembers, ["统一用 ACS 引用样式"]);
+  assert.deepEqual(tier2.guideHeadings, ["2 工作台"]);
 });
 
 test("只读查看项目文件：只在问出错原因、或带着某次运行进来时", async () => {
@@ -531,34 +495,37 @@ test("问的是哪一步：第 N 步、步骤名、按类型的叫法（同类�
   assert.equal(mentionedStep("这轮怎么样", steps), null);
 });
 
-test("快照里 Mesa 核对的项带位置和说明，拦下的排前面", () => {
-  const text = buildProjectSnapshot(
-    input({
-      steps: [
-        {
-          index: 0,
-          name: "综述大纲",
-          state: "做完了等你评审、保存进项目",
-          brief: "",
-          expectedArtifacts: ["outline.md"],
-          acceptanceCriteria: [],
-          worktreePath: "/w/outline",
-          failure: null,
-          reviewNotes: null,
-          checks: [
-            { id: "a", kind: "outline-figure", status: "needs_human", title: "同一块子图用了两次", target: { file: "outline.md", line: 83 }, checker: "mesa", evidence: { detail: "第 45 行与第 83 行" } },
-            { id: "b", kind: "outline-cite", status: "blocked", title: "引了已排除的文献 @Zed2023", target: { file: "outline.md", line: 4 }, checker: "mesa" },
-            { id: "c", kind: "cite", status: "needs_human", title: "AI 说这句撑不住", target: { file: "outline.md", line: 9 }, checker: "agent" },
-          ],
+test("resolveTurnParts：补料单提议越界拦截与正常解析", () => {
+  const ok = resolveTurnParts(
+    {
+      answer: "需要退回文献检索补两篇。",
+      proposals: {
+        reworkOrder: {
+          toStep: 1,
+          fromStep: 3,
+          topics: ["§3.2 失活机理近三年文献"],
+          reason: "大纲覆盖检查缺近三年综述",
+          clues: "in-situ XAS",
+          scale: 5,
         },
-      ],
-    }),
+      },
+    },
+    5,
   );
-  const block = text.slice(text.indexOf("核验："));
-  assert.ok(block.indexOf("@Zed2023") < block.indexOf("子图"), "拦下的在前");
-  assert.match(block, /- \[拦下·Mesa 核对\] 引了已排除的文献 @Zed2023（outline\.md:4）/);
-  assert.match(block, /\[待你判断·Mesa 核对\] 同一块子图用了两次（outline\.md:83）：第 45 行与第 83 行/);
-  assert.match(block, /\[待你判断·AI 判断\] AI 说这句撑不住（outline\.md）/);
+  assert.equal(ok.rework?.toStep, 1);
+  assert.equal(ok.rework?.fromStep, 3);
+  assert.equal(ok.rework?.scale, 5);
+
+  const bad = resolveTurnParts(
+    {
+      answer: "非法退回",
+      proposals: {
+        reworkOrder: { toStep: 4, fromStep: 2, topics: ["x"], reason: "r" },
+      },
+    },
+    5,
+  );
+  assert.equal(bad.rework, null);
 });
 
 test("动作直达验收与问答文件路径提取：提取项目内相对路径、排除 URL/绝对路径/越界路径", async () => {

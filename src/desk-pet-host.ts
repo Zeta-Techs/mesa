@@ -23,7 +23,7 @@ import { loadHelpDismissed } from "./inbox";
 import { askProjectAssistant, type AssistantTurn } from "./project-assistant-run";
 import { dispatchWorkOrder, resumeDispatchedGoal, type DispatchRecord } from "./assistant-dispatch";
 import { quickIntent } from "./im-route";
-import { guardClaims, localReply, parseAssistantAnswer, parseClarify, parseRemember, parseReworkOrder, parseWorkOrder } from "./project-assistant";
+import { guardClaims, localReply, resolveTurnParts } from "./project-assistant";
 import { briefWorking, deskOnlyNotes, petItemsFromBrief, petItemsFromDesk, type PetFeed, type PetItem, type PetOpen } from "./desk-pet";
 import type { DeskItem } from "./assistant-queue";
 import type { HelpRequestDto, ProjectDto, TaskDto, WorkspaceDto } from "./types";
@@ -95,8 +95,12 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
   // 与桌面面板、手机通道一致：「派出去」「接着做」按字面办，寒暄本地直接回，不白调一次 AI
   const quick = quickIntent(q);
   if (quick === "dispatch") {
-    const last = [...fullLog].reverse().find((t) => !t.echoOf && t.answer.includes(":::派活"));
-    const order = last ? parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(last.answer).text).text, steps).text, steps).order : null;
+    const lastEntry = [...fullLog]
+      .reverse()
+      .map((t) => ({ turn: t, order: !t.echoOf ? resolveTurnParts(t, steps).order : null }))
+      .find((x) => !!x.order);
+    const last = lastEntry?.turn ?? null;
+    const order = lastEntry?.order ?? null;
     if (!last || !order || last.dispatched) {
       return { text: "现在没有还没派的单子。先说要做什么，起草好单子再派。", clarify: null, deskOnly: [] };
     }
@@ -145,15 +149,16 @@ async function askFromPet(a: PetAsk, progress: (text: string) => void): Promise<
     },
   });
   useAppStore.getState().bumpAssistantEchoTick();
-  const memo = parseRemember(turn.answer);
-  const clar = parseClarify(memo.text);
-  const rework = parseReworkOrder(clar.text, steps);
-  const order = parseWorkOrder(rework.text, steps);
-  const parsed = parseAssistantAnswer(order.text, steps);
+  const resolved = resolveTurnParts(turn, steps);
   return {
-    text: guardClaims(parsed.text).text,
-    clarify: clar.ask,
-    deskOnly: deskOnlyNotes({ order: !!order.order, rework: !!rework.rework, remember: memo.remembers.length, actions: parsed.actions.length }),
+    text: guardClaims(resolved.text).text,
+    clarify: resolved.clarify,
+    deskOnly: deskOnlyNotes({
+      order: !!resolved.order,
+      rework: !!resolved.rework,
+      remember: resolved.remembers.length,
+      actions: resolved.actions.length,
+    }),
   };
 }
 

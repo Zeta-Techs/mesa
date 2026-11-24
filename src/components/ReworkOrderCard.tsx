@@ -4,7 +4,8 @@ import { primaryActionClass } from "./PageFrame";
 import { confirmDialog } from "./ConfirmDialog";
 import { ReworkDialog, type ReworkFields } from "./StepLoop";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
-import { invalidateAssistantSnapshot } from "../project-assistant-run";
+import { IS_WINDOWS } from "../hotkeys";
+import { samePath } from "../path-utils";
 import { relTime } from "../rel-time";
 import { loadSkillProvides, type SkillProvides } from "../skill-slots";
 import { litKind, sendReworkRound } from "../step-round";
@@ -55,13 +56,13 @@ export default function ReworkOrderCard({
     loadSkillProvides()
       .then((m) => !stale && setProvides(m))
       .catch(() => {});
-    // 补完后能接着自动跟进的：保存过的步骤，或发起补料且已有工作副本的那一步
+    // 补完后能接着自动跟进的：保存过的步骤（含已归档收起副本的），或发起补料且已有活跃工作副本的那一步
     invoke<WorkspaceDto[]>("list_workspaces")
       .then((list) => {
         if (stale) return;
-        const mine = list.filter((w) => w.repoPath === projectPath && w.status === "active");
-        setLive(new Set(mine.map((w) => w.name)));
-        setSaved(new Set(mine.filter((w) => w.mergedAt).map((w) => w.name)));
+        const mine = list.filter((w) => samePath(w.repoPath, projectPath, IS_WINDOWS));
+        setLive(new Set(mine.filter((w) => w.status === "active").map((w) => w.name)));
+        setSaved(new Set(mine.filter((w) => Boolean(w.mergedAt)).map((w) => w.name)));
       })
       .catch(() => {});
     return () => {
@@ -113,7 +114,6 @@ export default function ReworkOrderCard({
         confirm: confirmDialog,
       });
       if (!rework) return;
-      invalidateAssistantSnapshot(projectPath);
       const [wsList, health] = await Promise.all([
         invoke<WorkspaceDto[]>("list_workspaces").catch(() => [] as WorkspaceDto[]),
         invoke<{ ahead: number }>("workspace_health", { id: rework.toWorkspaceId }).catch(() => null),

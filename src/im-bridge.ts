@@ -16,11 +16,7 @@ import {
   actionLabel,
   guardClaims,
   localReply,
-  parseAssistantAnswer,
-  parseClarify,
-  parseRemember,
-  parseReworkOrder,
-  parseWorkOrder,
+  resolveTurnParts,
 } from "./project-assistant";
 import { reviewPrereadFocus, reviewPrereadQuestion } from "./assistant-brief";
 import { actionOp, opAllowed } from "./assistant-ops";
@@ -282,24 +278,22 @@ function buildAnswerInputFromTurn(
   turn: AssistantTurn,
   steps: number,
 ): Parameters<typeof answerCard>[0] {
-  const memo = parseRemember(turn.answer);
-  const clar = parseClarify(memo.text);
-  const rework = parseReworkOrder(clar.text, steps);
-  const order = parseWorkOrder(rework.text, steps);
-  const parsed = parseAssistantAnswer(order.text, steps);
-  const desktopOnly = parsed.actions.filter((a) => !opAllowed(actionOp(a.kind), "phone")).map((a) => actionLabel(a.kind, a.step));
-  if (rework.rework && !opAllowed("rework", "phone")) {
-    desktopOnly.push(`补料单（退回第 ${rework.rework.toStep} 步）：在桌面的项目助手里点「退回去补」`);
+  const resolved = resolveTurnParts(turn, steps);
+  const desktopOnly = resolved.actions
+    .filter((a) => !opAllowed(actionOp(a.kind), "phone"))
+    .map((a) => a.label || actionLabel(a.kind, a.step, a.text));
+  if (resolved.rework && !opAllowed("rework", "phone")) {
+    desktopOnly.push(`补料单（退回第 ${resolved.rework.toStep} 步）：在桌面的项目助手里点「退回去补」`);
   }
-  const codingGoalBlocked = project.workMode === "coding" && order.order?.target === "goal";
+  const codingGoalBlocked = project.workMode === "coding" && resolved.order?.target === "goal";
   if (codingGoalBlocked) desktopOnly.push("编程项目按分支开工：回桌面的项目页从基准开一条分支来做");
   return {
     project: asRoute(project),
     turnAt: turn.at,
-    text: phoneText(guardClaims(parsed.text).text),
-    ask: clar.ask,
-    order: codingGoalBlocked ? null : order.order,
-    remembers: memo.remembers,
+    text: phoneText(guardClaims(resolved.text).text),
+    ask: resolved.clarify,
+    order: codingGoalBlocked ? null : resolved.order,
+    remembers: resolved.remembers,
     desktopOnly,
   };
 }
@@ -676,8 +670,11 @@ async function logOf(projectPath: string): Promise<AssistantTurn[]> {
 
 /** 派出最近一张还没派的单子 */
 async function dispatchLatest(project: ProjectDto): Promise<void> {
-  const log = (await logOf(project.path)).filter((t) => !t.echoOf);
-  const last = [...log].reverse().find((t) => t.answer.includes(":::派活"));
+  const [log, steps] = await Promise.all([
+    logOf(project.path).then((l) => l.filter((t) => !t.echoOf)),
+    stepCount(project.path),
+  ]);
+  const last = [...log].reverse().find((t) => !!resolveTurnParts(t, steps).order);
   if (!last || last.dispatched) return sendText("现在没有还没派的单子。先说要做什么，项目助手起草好单子再派。");
   const msg = await dispatchTurnCore(project, last);
   await sendText(msg);
@@ -698,7 +695,7 @@ async function resumeLatest(project: ProjectDto): Promise<void> {
 async function dispatchTurnCore(project: ProjectDto, turn: AssistantTurn): Promise<string> {
   if (turn.dispatched) return `这张单已经派过了：${turn.dispatched.note}`;
   const steps = await stepCount(project.path);
-  const order = parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(turn.answer).text).text, steps).text, steps).order;
+  const order = resolveTurnParts(turn, steps).order;
   if (!order) return "那一轮里没有能派的单子。";
   // 手机上派：并入前要确认的（工作副本有没提交的文件）不在手机上问，报回去让人回桌面处理
   const result = await dispatchWorkOrder({ order, projectPath: project.path, project, confirm: null });
@@ -821,8 +818,8 @@ async function handleCard(value: CardValue, openMessageId?: string): Promise<voi
       );
     }
     case "remember": {
-      const turn = await turnAnswer(project.path, value.t);
-      const listRem = turn ? parseRemember(turn.answer).remembers : [];
+      const [turn, steps] = await Promise.all([turnAnswer(project.path, value.t), stepCount(project.path)]);
+      const listRem = turn ? resolveTurnParts(turn, steps).remembers : [];
       const idx = value.v !== undefined ? Number(value.v) : 0;
       const line = Number.isInteger(idx) && idx >= 0 ? (listRem[idx] ?? null) : null;
       if (!line) return sendText("那一句找不到了（问答记录可能清空了）。");

@@ -16,7 +16,6 @@ import { quickIntent } from "../im-route";
 import { buddyDayPart, buddyMood } from "../buddy-time";
 import {
   assistantErrorText,
-  basisGuideHeadings,
   extractAtMentionQuery,
   filterMentionFiles,
   filterTurnsByQuery,
@@ -26,10 +25,7 @@ import {
   localReply,
   parseAssistantAnswer,
   guardClaims,
-  parseClarify,
-  parseRemember,
-  parseReworkOrder,
-  parseWorkOrder,
+  resolveTurnParts,
   splitAnswerLead,
   type AssistantAction,
   type AssistantIntent,
@@ -61,10 +57,9 @@ import {
   ASSISTANT_CANCELLED,
   assistantConnection,
   gatherBriefInput,
-  invalidateAssistantSnapshot,
   planAsk,
-  prefetchSnapshot,
   readonlyInspectFallback,
+  TIER1_ASSISTANT_AGENTS,
   type AssistantFocus,
   type AssistantTurn,
 } from "../project-assistant-run";
@@ -379,8 +374,6 @@ export default function ProjectAssistantPanel({
     setError(null);
     setFreshAt(null);
     setBrief(null);
-    // 一打开就先把项目记录整理好，问项目类问题时不再等这一段
-    prefetchSnapshot(projectPath);
     setBriefOff(false);
     let since: string | null = null;
     try {
@@ -531,8 +524,12 @@ export default function ProjectAssistantPanel({
       setDraft("");
       if (quick === "dispatch") {
         const steps = stepCount;
-        const last = [...turns].reverse().find((t) => !t.echoOf && t.answer.includes(":::派活"));
-        const order = last ? parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(last.answer).text).text, steps).text, steps).order : null;
+        const lastEntry = [...turns]
+          .reverse()
+          .map((t) => ({ turn: t, order: !t.echoOf ? resolveTurnParts(t, steps).order : null }))
+          .find((x) => !!x.order);
+        const last = lastEntry?.turn ?? null;
+        const order = lastEntry?.order ?? null;
         if (!last || !order || last.dispatched) {
           toast("现在没有还没派的单子：先说要做什么，起草好单子再派", "info");
           return;
@@ -804,24 +801,20 @@ export default function ProjectAssistantPanel({
         </article>
       );
     }
-    const withMemo = parseRemember(turn.answer);
-    const withAsk = parseClarify(withMemo.text);
-    const withRework = parseReworkOrder(withAsk.text, stepCount);
-    const withOrder = parseWorkOrder(withRework.text, stepCount);
-    const parsed = parseAssistantAnswer(withOrder.text, stepCount);
+    const resolved = resolveTurnParts(turn, stepCount);
     // 只有最后一轮的问题能点选作答（前面的已经答过了）
-    const openAsk = i === turns.length - 1 ? withAsk.ask : null;
+    const openAsk = i === turns.length - 1 ? resolved.clarify : null;
     // 话与事实分开：它声称自己做了动作的句子换成如实说明（根源三，2026-11-06）
-    const { lead, rest } = splitAnswerLead(guardClaims(parsed.text).text);
+    const { lead, rest } = splitAnswerLead(guardClaims(resolved.text).text);
     const turnKey = `${turn.at}-${i}`;
     const isLocal = !turn.connection || turn.connection.startsWith("本地");
-    const alreadyInspected = Boolean(turn.basis?.includes("文件（只读查看）"));
+    const alreadyInspected = Boolean(turn.basis?.includes("文件（只读查看）") || turn.basis?.includes("项目助手 Agent（只读"));
     const canDraftFromTurn =
       !busy &&
       !isLocal &&
-      !withOrder.order &&
-      !withRework.rework &&
-      !withAsk.ask &&
+      !resolved.order &&
+      !resolved.rework &&
+      !resolved.clarify &&
       `${lead}${rest}`.trim().length >= 30;
     const canInspectTurn = !busy && !isLocal && !alreadyInspected && (imageCapable || !!inspectFallback);
     const costTitle =
@@ -921,9 +914,9 @@ export default function ProjectAssistantPanel({
               <ChatMarkdown text={rest} cwd={projectPath} />
             </div>
           )}
-          {withAsk.ask && (
+          {resolved.clarify && (
             <section className="mt-3 rounded-xl border border-hairline p-3" aria-label="要先问你一句">
-              <p className="text-sm font-medium leading-6 text-l1">{withAsk.ask.question}</p>
+              <p className="text-sm font-medium leading-6 text-l1">{resolved.clarify.question}</p>
               {openAsk ? (
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {openAsk.options.map((o) => (
@@ -936,29 +929,28 @@ export default function ProjectAssistantPanel({
               ) : null}
             </section>
           )}
-          {withMemo.items.map((r) => (
+          {resolved.rememberItems.map((r) => (
             <RememberCard
               key={r.text}
               text={r.text}
               source={r.source}
               projectPath={projectPath}
               onSaved={() => {
-                if (projectPath) invalidateAssistantSnapshot(projectPath);
                 setMemoryTick((n) => n + 1);
               }}
             />
           ))}
-          {withRework.rework && (
+          {resolved.rework && (
             <ReworkOrderCard
-              order={withRework.rework}
+              order={resolved.rework}
               record={turn.dispatched ?? null}
               projectPath={projectPath}
               onSent={(record) => saveDispatched(turn.at, record)}
             />
           )}
-          {withOrder.order && (
+          {resolved.order && (
             <WorkOrderCard
-              order={withOrder.order}
+              order={resolved.order}
               record={turn.dispatched ?? null}
               projectPath={projectPath}
               workMode={project?.workMode ?? null}
@@ -975,14 +967,14 @@ export default function ProjectAssistantPanel({
               onAskWhy={(rec) => void askWhyDispatch(rec)}
             />
           )}
-          {parsed.actions.length > 0 && (
+          {resolved.actions.length > 0 && (
             // 一条回答只一个显眼的按钮：有单子时主按钮是单子上的「派出去」，这里全降成文字按钮；否则第一个是次级按钮
             <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              {parsed.actions.map((action, ai) => (
+              {resolved.actions.map((action, ai) => (
                 <button
-                  key={`${action.kind}-${action.step ?? ""}`}
+                  key={`${action.kind}-${action.step ?? ""}-${action.text === "schedule" ? "schedule" : ""}`}
                   type="button"
-                  className={ai === 0 && !withOrder.order && !withRework.rework ? secondaryActionClass : ghostActionClass}
+                  className={ai === 0 && !resolved.order && !resolved.rework ? secondaryActionClass : ghostActionClass}
                   title={action.text || undefined}
                   onClick={() => onAction(action, turn)}
                 >
@@ -991,27 +983,23 @@ export default function ProjectAssistantPanel({
               ))}
             </div>
           )}
-          {/* 仅引用了说明书小节时留一行可点击的说明书链接；「依据：这个项目的记录」、花费与翻出轮数全部静默收进顶部时间悬停 */}
-          {turn.basis && (() => {
-            const heads = basisGuideHeadings(turn.basis);
-            if (heads.length === 0) return null;
-            return (
-              <p className="mt-2 text-micro text-l4">
-                参考说明书：
-                {heads.map((h) => (
-                  <button
-                    key={h}
-                    type="button"
-                    className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
-                    title="在应用里打开说明书这一节"
-                    onClick={() => setGuideHeading(h)}
-                  >
-                    <span className="text-micro">「{h}」</span>
-                  </button>
-                ))}
-              </p>
-            );
-          })()}
+          {/* 仅引用了说明书小节时留一行可点击的说明书链接；「依据」「花费」全部静默收进顶部时间悬停 */}
+          {resolved.guideHeadings.length > 0 && (
+            <p className="mt-2 text-micro text-l4">
+              参考说明书：
+              {resolved.guideHeadings.map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  className="text-l3 underline decoration-dotted underline-offset-2 hover:text-l1"
+                  title="在应用里打开说明书这一节"
+                  onClick={() => setGuideHeading(h)}
+                >
+                  <span className="text-micro">「{h}」</span>
+                </button>
+              ))}
+            </p>
+          )}
         </div>
       </article>
     );
@@ -1541,8 +1529,17 @@ export default function ProjectAssistantPanel({
                 {/* 与聊天层生成中那一行同一个 M▁ 状态头（MesaStatusLead：光标呼吸 + 光带扫过），2026-11-04 用户：「用 Mesa 的聊天层图标显示」；
                     只读查看时实时写正在读哪个文件 / 搜什么（后端推来的步骤） */}
                 <MesaStatusLead
-                  text={liveStep ?? (liveText ? "正在写…" : inspecting ? INSPECT_WAITING : INTENT_WAITING[intent])}
-                  motion={liveText ? "write" : inspecting && liveStep ? "read" : "thinking"}
+                  text={
+                    liveStep ??
+                    (liveText
+                      ? "正在写…"
+                      : conn.agentId !== null && TIER1_ASSISTANT_AGENTS.includes(conn.agentId)
+                        ? "正在查看项目…"
+                        : inspecting
+                          ? INSPECT_WAITING
+                          : INTENT_WAITING[intent])
+                  }
+                  motion={liveText ? "write" : liveStep ? "read" : "thinking"}
                   sweep
                 />
                 {waited >= 3 && (
@@ -1554,7 +1551,7 @@ export default function ProjectAssistantPanel({
               {/* 边生成边出字：动作标记、派活单写完前先不画，最终回答到了整段换上 */}
               {liveText && (
                 <div className="text-sm text-l1">
-                  <ChatMarkdown text={guardClaims(parseAssistantAnswer(parseWorkOrder(parseReworkOrder(parseClarify(parseRemember(liveText).text).text, stepCount).text, stepCount).text, stepCount).text).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
+                  <ChatMarkdown text={guardClaims(resolveTurnParts({ answer: liveText }, stepCount).text).text.replace(/\[\[[^\]]*$|:::[\s\S]*$/, "")} cwd={projectPath} />
                 </div>
               )}
             </article>
@@ -1640,7 +1637,6 @@ export default function ProjectAssistantPanel({
             compact
             defaultOpen
             onChanged={() => {
-              invalidateAssistantSnapshot(projectPath);
               setMemoryTick((n) => n + 1);
             }}
           />

@@ -1084,6 +1084,212 @@ const DENY_CLAIM_RE = /我[^，。；！？!?\n]{0,6}(?:不能|不会|没法|无
 
 export const CLAIM_NOTE = "〔这句说的动作没有发生：项目助手只会说话。要派活点单子上的「派出去」，要接着做点「接着做」，做到哪以 Mesa 补的进展为准。〕";
 
+/** 后端 MCP 提议工具写入的结构化提议（与 Rust `assistant_mcp::AssistantProposalsDto` 同口径） */
+export interface ProposedWorkOrderDto {
+  target: string;
+  step?: number | null;
+  title: string;
+  task: string;
+  done?: string;
+  inputs?: string[] | null;
+  deliver?: string | null;
+  basedOn?: string | null;
+  skills?: string[] | null;
+  assumptions?: string | null;
+  mustAsk?: string | null;
+  schedule?: string | null;
+}
+
+export interface ProposedReworkOrderDto {
+  toStep: number;
+  fromStep?: number | null;
+  topics: string[];
+  reason: string;
+  clues?: string;
+  scale?: number | null;
+}
+
+export interface ProposedMemoryDto {
+  text: string;
+  source?: string | null;
+}
+
+export interface ProposedActionDto {
+  kind: string;
+  step?: number | null;
+  text?: string;
+  label?: string;
+}
+
+export interface AssistantProposalsDto {
+  workOrder?: ProposedWorkOrderDto | null;
+  reworkOrder?: ProposedReworkOrderDto | null;
+  memories?: ProposedMemoryDto[];
+  actions?: ProposedActionDto[];
+  guideHeadings?: string[];
+}
+
+export interface ResolvedTurnParts {
+  text: string;
+  clarify: ClarifyAsk | null;
+  rememberItems: RememberItem[];
+  remembers: string[];
+  rework: ReworkOrder | null;
+  order: WorkOrder | null;
+  actions: AssistantAction[];
+  guideHeadings: string[];
+}
+
+const VALID_ACTION_KINDS = new Set<AssistantActionKind>([
+  "step",
+  "review",
+  "project",
+  "agents",
+  "profiles",
+  "settings",
+  "mail",
+  "split",
+  "discuss",
+  "consult",
+  "report",
+]);
+
+function mapProposedWorkOrder(raw: ProposedWorkOrderDto | null | undefined, stepCount: number): WorkOrder | null {
+  if (!raw) return null;
+  const target: WorkOrder["target"] | null = raw.target === "step" ? "step" : raw.target === "goal" ? "goal" : null;
+  const task = (raw.task ?? "").trim();
+  const step = target === "step" ? (typeof raw.step === "number" ? raw.step : null) : null;
+  if (!target || !task) return null;
+  if (target === "step" && (step === null || !Number.isInteger(step) || step < 1 || step > stepCount)) return null;
+  const order: WorkOrder = {
+    target,
+    step,
+    title: (raw.title ?? "").trim().slice(0, 80) || task.split("\n")[0].slice(0, 40),
+    task: task.slice(0, 4000),
+    done: (raw.done ?? "").trim().slice(0, 2000),
+  };
+  const inputs = (raw.inputs ?? []).map((p) => p.trim()).filter(Boolean).slice(0, 30);
+  if (inputs.length) order.inputs = inputs;
+  const skills = (raw.skills ?? []).map((s) => s.trim()).filter(Boolean).slice(0, 8);
+  if (skills.length) order.skills = skills;
+  const deliver = optional(raw.deliver ?? undefined, 2000);
+  if (deliver) order.deliver = deliver;
+  const basedOn = optional(raw.basedOn ?? undefined, 80);
+  if (basedOn) order.basedOn = basedOn;
+  const assumptions = optional(raw.assumptions ?? undefined, 2000);
+  if (assumptions) order.assumptions = assumptions;
+  const mustAsk = optional(raw.mustAsk ?? undefined, 2000);
+  if (mustAsk) order.mustAsk = mustAsk;
+  const schedule = optional(raw.schedule ?? undefined, 80);
+  if (schedule) order.schedule = schedule;
+  return order;
+}
+
+function mapProposedRework(raw: ProposedReworkOrderDto | null | undefined, stepCount: number): ReworkOrder | null {
+  if (!raw) return null;
+  const toStep = raw.toStep;
+  const fromStep = raw.fromStep ?? null;
+  const topics = (raw.topics ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 12);
+  const reason = (raw.reason ?? "").trim().slice(0, 300);
+  if (
+    !Number.isInteger(toStep) ||
+    toStep < 1 ||
+    toStep > stepCount ||
+    (fromStep !== null && (!Number.isInteger(fromStep) || fromStep <= toStep || fromStep > stepCount)) ||
+    topics.length === 0 ||
+    !reason
+  ) {
+    return null;
+  }
+  const scale = typeof raw.scale === "number" && Number.isFinite(raw.scale) && raw.scale > 0 ? Math.trunc(raw.scale) : null;
+  return {
+    toStep,
+    fromStep,
+    topics,
+    reason,
+    clues: (raw.clues ?? "").trim().slice(0, 1000),
+    scale,
+  };
+}
+
+function mapProposedMemories(raw: readonly ProposedMemoryDto[] | undefined): RememberItem[] {
+  if (!raw?.length) return [];
+  const items: RememberItem[] = [];
+  for (const m of raw) {
+    const text = (m.text ?? "").trim().slice(0, 300);
+    if (!text || items.some((x) => x.text === text)) continue;
+    const source = (m.source ?? "").trim().slice(0, 120);
+    items.push(source ? { text, source } : { text });
+    if (items.length >= MAX_REMEMBERS) break;
+  }
+  return items;
+}
+
+function mapProposedActions(raw: readonly ProposedActionDto[] | undefined, stepCount: number): AssistantAction[] {
+  if (!raw?.length) return [];
+  const out: AssistantAction[] = [];
+  const seen = new Set<string>();
+  for (const a of raw) {
+    let kindStr = (a.kind ?? "").trim();
+    let text = (a.text ?? "").trim().slice(0, 2000);
+    if (kindStr === "schedule") {
+      kindStr = "project";
+      text = "schedule";
+    }
+    if (!VALID_ACTION_KINDS.has(kindStr as AssistantActionKind)) continue;
+    const kind = kindStr as AssistantActionKind;
+    let step: number | null = null;
+    if (NEEDS_STEP.has(kind)) {
+      if (typeof a.step !== "number" || !Number.isInteger(a.step) || a.step < 1 || a.step > stepCount) continue;
+      step = a.step;
+    }
+    if (NEEDS_TEXT.has(kind) && !text) continue;
+    const key = `${kind}:${step ?? ""}:${kind === "project" && text === "schedule" ? "schedule" : ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = (a.label ?? "").trim().slice(0, 40) || actionLabel(kind, step, text);
+    out.push({ kind, step, text, label });
+    if (out.length >= MAX_ACTIONS) break;
+  }
+  return out;
+}
+
+/** 统一解析一轮助手回答：优先消费第一档 MCP 结构化提议（turn.proposals），缺省无缝回落到文本块解析（兼容第二档与历史记录） */
+export function resolveTurnParts(
+  turn: { answer: string; basis?: string; proposals?: AssistantProposalsDto | null },
+  stepCount: number,
+): ResolvedTurnParts {
+  const withMemo = parseRemember(turn.answer);
+  const withAsk = parseClarify(withMemo.text);
+  const withRework = parseReworkOrder(withAsk.text, stepCount);
+  const withOrder = parseWorkOrder(withRework.text, stepCount);
+  const parsed = parseAssistantAnswer(withOrder.text, stepCount);
+
+  const p = turn.proposals ?? null;
+  const order = mapProposedWorkOrder(p?.workOrder, stepCount) ?? withOrder.order;
+  const rework = mapProposedRework(p?.reworkOrder, stepCount) ?? withRework.rework;
+  const proposedMemos = mapProposedMemories(p?.memories);
+  const rememberItems = proposedMemos.length ? proposedMemos : withMemo.items;
+  const proposedActions = mapProposedActions(p?.actions, stepCount);
+  const actions = proposedActions.length ? proposedActions : parsed.actions;
+  const guideHeadings: string[] = [];
+  for (const h of [...(p?.guideHeadings ?? []), ...basisGuideHeadings(turn.basis ?? "")]) {
+    const clean = h.trim();
+    if (clean && !guideHeadings.includes(clean)) guideHeadings.push(clean);
+  }
+
+  return {
+    text: parsed.text,
+    clarify: withAsk.ask,
+    rememberItems,
+    remembers: rememberItems.map((it) => it.text),
+    rework,
+    order,
+    actions,
+    guideHeadings,
+  };
+}
+
 /** 把回答里声称自己做了动作的句子换成如实说明；保留行首列表符不打乱排版；flagged = 换过 */
 export function guardClaims(text: string): { text: string; flagged: boolean } {
   let flagged = false;
