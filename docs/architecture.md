@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-24 · 项目助手重构为真只读持久 Agent（Rust 唯一真源 + 本地 stdio MCP）
+
+用户在反复撞见前端 17 路拼接项目快照导致的状态漂移（已归档步骤的内部 `pipeline_step` 任务冒充失败目标、保存前历史故障混入当前出错等）后提问「项目助手就像一个 Agent 一样不行吗」，审阅四阶段架构方案后拍板「按真 Agent 方案立项重构」。定下四项边界：① **唯一真源下沉 Rust**（`src-tauri/src/assistant_state.rs`）：直读 `app.db` / `project.toml` / 工作区 / 核验 / 人工事项 / 定时任务 / 研讨 / 完结产物 / 近期真实错误，统一过滤 `pipeline_step`、应用异常退出、已保存步骤历史失败与已归档副本目录消失噪点；顶部状态条 / 飞书 / 桌宠统一调单次 `assistant_project_brief`（前端仅叠加实时终端注意力）；② **零依赖本地只读 + 提议 stdio MCP**（`src-tauri/src/assistant_mcp.rs`，经 `mesa_helper assistant-mcp` 暴露 8 个只读工具与 4 个严格 schema / 路径校验的提议工具）：提议只写每轮 0600 临时 `proposals.json`，绝不直接写项目或配置，仍由用户点确认卡走既有执行链路；③ **两档 CLI 分层执行**（`ai::ai_assistant_agent` + `project_assistant_chat`）：第一档 Claude Code / Codex（覆盖其下全部第三方网关）经临时 `--mcp-config` / `-c mcp_servers.mesa` 零污染挂接 MCP、进程级只读（`--tools Read,Glob,Grep --strict-mcp-config` / `-s read-only` 与 `resume` 的 `-c sandbox_mode="read-only"`）、按项目 `session.json` 多轮续接并立标 `internal`，`StreamState` 实时把 MCP 工具调用译为白话中文步骤；第二档其余 CLI 直连 Rust `render_compact_context` + `guide_search` 回落；④ **前端彻底瘦身**：删除 `src/project-snapshot.ts` 与前端快照缓存，`resolveTurnParts` 统一消费 `turn.proposals` 并向下兼容第二档与历史文本块，同步修复 `ReworkOrderCard.tsx` 裸路径比较与已归档步骤漏计。
+
 ### 2026-11-24 · 连接页「连接冲突」按真实风险分档，消除 Mesa 自己写全局 API 却报冲突的自相矛盾
 
 用户把 CodeBuddy 的 API 连接设为全局后（且未添加 CodeBuddy 官方账号），连接页左栏与组头仍亮出琥珀「! 2 项连接冲突」，弹层主按钮还是会删坏全局配置的「备份后清理已识别项」。拍板将冲突展示改为按实际风险分档（`src/profile-connection-ui.ts::agentConflictState`）：① 未添加该家默认目录官方账号（含仅添加隔离目录官方号）时不报冲突；② 当前全局默认是 Mesa 写入的 API 连接时，进程级可覆盖的三家（`claude-code` / `codebuddy` / `qwen`）不报冲突（Mesa 内官方启动由 `--settings` / `--auth-type` 盖过，外部走 API 本就是设为全局的意图），进程级盖不过的几家（`gemini` / `grok` 等）归为 `mesa_global_api`，明确说明由哪条全局 API 引起、主按钮改为 **将官方账号设为全局**（走正常全局切换事务并支持撤销，不露裸删按钮）；③ 非 API 全局时的外部残留归为 `residual`，可直接在弹层切回官方或备份后清理；④ 清理后若原全局记录为 API 同步调用 `forget_active_global` 并刷新漂移，全局写入 / 撤销 / 恢复备份后同步刷新官方冲突探测。

@@ -1046,7 +1046,7 @@ export default function ProjectAssistantPanel({
         >
           <BookMarked size={14} strokeWidth={1.8} aria-hidden="true" />
           {memoryCount != null && memoryCount > 0 && (
-            <span className="pointer-events-none absolute -right-0.5 top-0.5 min-w-3.5 rounded-full bg-inset px-1 text-center text-[9px] font-medium leading-3.5 text-l2 ring-1 ring-hairline">
+            <span className="pointer-events-none absolute -right-0.5 top-0.5 min-w-3.5 rounded-full bg-inset px-1 text-center text-micro font-medium leading-3.5 text-l2 ring-1 ring-hairline">
               {memoryCount > 99 ? "99+" : memoryCount}
             </span>
           )}
