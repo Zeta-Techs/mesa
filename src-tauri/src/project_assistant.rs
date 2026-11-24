@@ -927,8 +927,8 @@ fn assistant_agent_system_prompt(project_name: &str, project_root: &str) -> Stri
 工作原则：\n\
 1. 回答任何关于项目进度、步骤状态、目标、人工请求、完结产物、定时任务的问题前，先调用 `project_overview` 获取最新权威事实；不要凭记忆猜进度。\n\
 2. 追问某一步的具体核验、任务简报、人工事项或评审意见时，调用 `step_detail`；排查错误时调用 `recent_errors`；需要看项目文件列表或具体内容时用 `list_files` 与只读 `Read`/`Grep`/`Glob`；查 Mesa 功能用法时调用 `search_guide` / `read_guide`；查长期规矩时调用 `project_knowledge`；寒暄直接简短回复，不必调工具。\n\
-3. 真要动手改文件、写报告、画图、返修、补产物时，调用 `propose_work_order` 起草派活单（回头补/改前面步骤调用 `propose_rework`）；用户说出长期规矩时调用 `propose_memory`；需要带用户跳去某页或某步时调用 `suggest_actions`。这些工具只生成待用户点击确认的卡片，严禁在回答里声称自己已经派出、启动、修改或保存了任何东西。\n\
-4. 回答用简洁克制的中文，第一句直接给核心结论，再展开关键依据与下一步；读了具体文件时标清相对路径与位置；不编造数据、文献或结论。"
+3. 真要动手改文件、写报告、画图、返修、补产物时，调用 `propose_work_order` 起草派活单（回头补/改前面步骤调用 `propose_rework`）；用户说出长期规矩时调用 `propose_memory`；仅在确实需要带用户跳转页面时才调用 `suggest_actions`（无必要跳转就不要调用；`report_mesa_bug` 仅限明确判定为 Mesa 软件自身 Bug 或异常崩溃时使用，查看定稿/审查报告绝不使用）。这些工具只生成待用户点击确认的卡片，严禁在回答里声称自己已经派出、启动、修改或保存了任何东西。\n\
+4. 请先完成所有只读查询与提议工具调用，最后再一次性输出面向用户的完整最终回答（严禁先写完长段正文再调提议工具后只补一句「简而言之」或「上面已挂好按钮」）。回答用简洁克制的中文，第一句直接给核心结论，再展开关键依据与下一步；读了具体文件时标清相对路径与位置；不编造数据、文献或结论。"
     )
 }
 
@@ -1334,7 +1334,10 @@ pub struct StreamUpdate {
 /// 文字更新最多 120ms 推一次，步骤立刻推；和上一步一模一样的不再推（Codex 一条命令开始、结束各报一次）
 pub(crate) struct StreamState {
     root: String,
+    /// 最后一次只读/非提议工具调用之后已定稿的前段正文（调用 suggest_actions / propose_* 后继续输出时不丢前文）
+    committed_text: String,
     text: String,
+    turn_has_non_proposal_tool: bool,
     secrets: Vec<String>,
     last_text_emit: Option<std::time::Instant>,
     last_step: Option<String>,
@@ -1342,7 +1345,32 @@ pub(crate) struct StreamState {
 
 impl StreamState {
     pub(crate) fn new(root: String) -> Self {
-        Self { root, text: String::new(), secrets: crate::profiles::stored_secrets(), last_text_emit: None, last_step: None }
+        Self {
+            root,
+            committed_text: String::new(),
+            text: String::new(),
+            turn_has_non_proposal_tool: false,
+            secrets: crate::profiles::stored_secrets(),
+            last_text_emit: None,
+            last_step: None,
+        }
+    }
+
+    fn full_text(&self) -> String {
+        let a = self.committed_text.trim();
+        let b = self.text.trim();
+        match (a.is_empty(), b.is_empty()) {
+            (true, true) => String::new(),
+            (false, true) => a.to_string(),
+            (true, false) => self.text.clone(),
+            (false, false) => {
+                if a == b || a.ends_with(b) {
+                    a.to_string()
+                } else {
+                    format!("{a}\n\n{}", self.text)
+                }
+            }
+        }
     }
 
     fn short_path(&self, p: &str) -> String {
@@ -1460,7 +1488,7 @@ impl StreamState {
         let mut step: Option<String> = None;
         let mut text_changed = false;
         // 一条消息的第一片立刻推（「在想」换成出字要跟手），后面的按 120ms 攒
-        let was_empty = self.text.is_empty();
+        let was_empty = self.committed_text.is_empty() && self.text.is_empty();
         match kind {
             // Claude
             "stream_event" => {
@@ -1468,8 +1496,35 @@ impl StreamState {
                 match ev.get("type").and_then(|t| t.as_str()) {
                     Some("message_start") => {
                         if !self.text.is_empty() {
+                            if !self.turn_has_non_proposal_tool {
+                                let t = self.text.trim();
+                                if !t.is_empty() && !self.committed_text.ends_with(t) {
+                                    if !self.committed_text.is_empty() {
+                                        self.committed_text.push_str("\n\n");
+                                    }
+                                    self.committed_text.push_str(t);
+                                }
+                            } else {
+                                self.committed_text.clear();
+                                text_changed = true;
+                            }
                             self.text.clear();
-                            text_changed = true;
+                        }
+                        self.turn_has_non_proposal_tool = false;
+                    }
+                    Some("content_block_start") => {
+                        if let Some(cb) = ev.get("content_block") {
+                            if cb.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                                let name = cb.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                if !crate::ai::is_assistant_proposal_tool(name) {
+                                    self.turn_has_non_proposal_tool = true;
+                                    if !self.committed_text.is_empty() || !self.text.is_empty() {
+                                        self.committed_text.clear();
+                                        self.text.clear();
+                                        text_changed = true;
+                                    }
+                                }
+                            }
                         }
                     }
                     Some("content_block_delta") => {
@@ -1487,6 +1542,14 @@ impl StreamState {
                 for item in content {
                     if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                         let name = item.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                        if !crate::ai::is_assistant_proposal_tool(name) {
+                            self.turn_has_non_proposal_tool = true;
+                            if !self.committed_text.is_empty() || !self.text.is_empty() {
+                                self.committed_text.clear();
+                                self.text.clear();
+                                text_changed = true;
+                            }
+                        }
                         step = Some(self.tool_step(name, item.get("input").unwrap_or(&serde_json::Value::Null)));
                     }
                 }
@@ -1496,11 +1559,28 @@ impl StreamState {
                 let item = v.get("item")?;
                 match item.get("type").and_then(|t| t.as_str()) {
                     Some("agent_message") if kind == "item.completed" => {
-                        self.text = item.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                        text_changed = true;
+                        let msg = item.get("text").and_then(|t| t.as_str()).unwrap_or("").trim();
+                        if !msg.is_empty() {
+                            if !self.text.is_empty() {
+                                let prev = self.text.trim();
+                                if !prev.is_empty() && !self.committed_text.ends_with(prev) {
+                                    if !self.committed_text.is_empty() {
+                                        self.committed_text.push_str("\n\n");
+                                    }
+                                    self.committed_text.push_str(prev);
+                                }
+                            }
+                            self.text = msg.to_string();
+                            text_changed = true;
+                        }
                     }
                     // 有的版本只发 item.completed：开始、结束都当一步（重复推同一步无妨）
                     Some("command_execution") => {
+                        if !self.committed_text.is_empty() || !self.text.is_empty() {
+                            self.committed_text.clear();
+                            self.text.clear();
+                            text_changed = true;
+                        }
                         let cmd = item.get("command").and_then(|t| t.as_str()).unwrap_or("");
                         step = Some(self.command_step(cmd));
                     }
@@ -1515,6 +1595,13 @@ impl StreamState {
                             .or_else(|| item.get("input"))
                             .unwrap_or(&serde_json::Value::Null);
                         if !tool.is_empty() {
+                            if !crate::ai::is_assistant_proposal_tool(tool)
+                                && (!self.committed_text.is_empty() || !self.text.is_empty())
+                            {
+                                self.committed_text.clear();
+                                self.text.clear();
+                                text_changed = true;
+                            }
                             step = Some(self.tool_step(tool, args));
                         }
                     }
@@ -1613,10 +1700,11 @@ impl StreamState {
         } else if step.is_some() {
             self.last_step = step.clone();
         }
+        let full = self.full_text();
         let now = std::time::Instant::now();
         let text_due = text_changed
             && (step.is_some()
-                || self.text.is_empty()
+                || full.is_empty()
                 || was_empty
                 || self.last_text_emit.is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(120)));
         if !text_due && step.is_none() {
@@ -1626,7 +1714,7 @@ impl StreamState {
             self.last_text_emit = Some(now);
         }
         Some(StreamUpdate {
-            text: text_due.then(|| self.redacted(&self.text)),
+            text: text_due.then(|| self.redacted(&full)),
             step: step.map(|s| self.redacted(&s)),
         })
     }
@@ -2293,16 +2381,18 @@ mod tests {
 
     #[test]
     fn stream_state_collects_claude_text_and_steps() {
-        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut st = StreamState::new("/p/x".into());
+        st.secrets.clear();
         let start = r#"{"type":"stream_event","event":{"type":"message_start"}}"#;
         assert!(st.handle_line(start).is_none());
         let d1 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"我先看看"}}}"#;
         assert_eq!(st.handle_line(d1).unwrap().text.as_deref(), Some("我先看看"));
         let tool = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/p/x/scripts/clean.py"}}]}}"#;
-        assert_eq!(st.handle_line(tool).unwrap().step.as_deref(), Some("读 scripts/clean.py"));
-        // 新一条消息：先前的「我先看看」清掉
-        let up = st.handle_line(start).unwrap();
-        assert_eq!(up.text.as_deref(), Some(""));
+        // 调只读工具时立刻清掉工具前的「我先看看」过渡语，并推出步骤
+        let tool_up = st.handle_line(tool).unwrap();
+        assert_eq!(tool_up.step.as_deref(), Some("读 scripts/clean.py"));
+        assert_eq!(tool_up.text.as_deref(), Some(""));
+        assert!(st.handle_line(start).is_none());
         let d2 = r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"原因是"}}}"#;
         assert_eq!(st.handle_line(d2).unwrap().text.as_deref(), Some("原因是"));
         // 120ms 内的下一片先攒着不推
@@ -2315,7 +2405,8 @@ mod tests {
 
     #[test]
     fn stream_state_reads_codex_events() {
-        let mut st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut st = StreamState::new("/p/x".into());
+        st.secrets.clear();
         let cmd = r#"{"type":"item.started","item":{"type":"command_execution","command":"/bin/zsh -lc 'cat -n scripts/clean.py'"}}"#;
         assert_eq!(st.handle_line(cmd).unwrap().step.as_deref(), Some("读 scripts/clean.py"));
         // 同一条命令结束时再报一次：不重复推
@@ -2323,14 +2414,16 @@ mod tests {
         assert!(st.handle_line(done).is_none());
         let msg = r#"{"type":"item.completed","item":{"type":"agent_message","text":"报错出在第 3 行"}}"#;
         assert_eq!(st.handle_line(msg).unwrap().text.as_deref(), Some("报错出在第 3 行"));
-        let secret = StreamState { root: "/".into(), text: String::new(), secrets: vec!["sk-abcdefgh12345678".into()], last_text_emit: None, last_step: None };
+        let mut secret = StreamState::new("/".into());
+        secret.secrets = vec!["sk-abcdefgh12345678".into()];
         assert!(!secret.redacted("key sk-abcdefgh12345678 here").contains("abcdefgh12345678"));
     }
 
     #[test]
     fn stream_state_reads_kimi_grok_and_agy_events() {
         // Kimi stream-json：读文件调工具会清掉过渡字并推出步骤，终局回答跳过 think
-        let mut ks = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut ks = StreamState::new("/p/x".into());
+        ks.secrets.clear();
         let k_tool = r#"{"role":"assistant","content":[{"type":"think","think":"先看文件"},{"type":"text","text":"我先读"}],"tool_calls":[{"id":"c1","type":"function","function":{"name":"Read","arguments":"{\"path\":\"/p/x/notes/a.md\"}"}}]}"#;
         assert_eq!(ks.handle_line(k_tool).unwrap().step.as_deref(), Some("读 notes/a.md"));
         let k_img = r#"{"role":"assistant","tool_calls":[{"id":"c2","type":"function","function":{"name":"ReadMediaFile","arguments":"{\"path\":\"/p/x/shot.png\"}"}}]}"#;
@@ -2339,7 +2432,8 @@ mod tests {
         assert_eq!(ks.handle_line(k_ans).unwrap().text.as_deref(), Some("结论在第 5 行"));
 
         // Grok streaming-json：工具前的过渡字清空，read_file / list_dir / grep 都转白话步骤
-        let mut gs = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut gs = StreamState::new("/p/x".into());
+        gs.secrets.clear();
         assert_eq!(gs.handle_line(r#"{"type":"text","data":"先查"}"#).unwrap().text.as_deref(), Some("先查"));
         let g_tool = r#"{"type":"tool_call","toolName":"read_file","rawInput":{"target_file":"/p/x/data/clean.csv"}}"#;
         let g_up = gs.handle_line(g_tool).unwrap();
@@ -2350,7 +2444,8 @@ mod tests {
         assert_eq!(gs.handle_line(r#"{"type":"text","data":"核对通过"}"#).unwrap().text.as_deref(), Some("核对通过"));
 
         // Antigravity CLI stream-json：跳过 user_input，只收 agent_response 的 text_delta
-        let mut ags = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut ags = StreamState::new("/p/x".into());
+        ags.secrets.clear();
         assert!(ags.handle_line(r#"{"event":"step_update","step_update":{"step_type":"user_input","text_delta":"问题"}}"#).is_none());
         assert_eq!(
             ags.handle_line(r#"{"event":"step_update","step_update":{"step_type":"agent_response","text_delta":"Agy 回答"}}"#)
@@ -2363,7 +2458,8 @@ mod tests {
 
     #[test]
     fn shell_commands_read_as_plain_words() {
-        let st = StreamState { root: "/p/x".into(), text: String::new(), secrets: vec![], last_text_emit: None, last_step: None };
+        let mut st = StreamState::new("/p/x".into());
+        st.secrets.clear();
         let say = |c: &str| st.command_step(c);
         assert_eq!(say(r#"/bin/zsh -lc "find . -maxdepth 3 -type f | sed 's|^\./||' | sort""#), "列项目文件");
         assert_eq!(say("/bin/zsh -lc \"rg --files --hidden -g '!.git'\""), "列项目文件");
@@ -2726,6 +2822,29 @@ mod tests {
             .handle_line(r#"{"type":"item.started","item":{"type":"mcp_tool_call","tool":"step_detail","arguments":{"step":3}}}"#)
             .unwrap();
         assert_eq!(u2.step.as_deref(), Some("查看第 3 步详情"));
+
+        // 实证回归：模型先写完完整正文、再调 suggest_actions、最后补一句「简而言之」时，流式与终稿都必须保留完整正文（丢弃只读工具前的过渡语）
+        let claude_raw = [
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"我先查一下项目总览"},{"type":"tool_use","name":"mcp__mesa__project_overview","input":{}}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"完整分析：1) 先办 47 块图的转载许可；2) 补齐 declarations.md 四项声明。"},{"type":"tool_use","name":"mcp__mesa__suggest_actions","input":{"actions":[{"kind":"step","step":5}]}}]}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"简而言之：先办许可和声明。"}]}}"#,
+            r#"{"type":"result","result":"简而言之：先办许可和声明。"}"#,
+        ]
+        .join("\n");
+        let merged = crate::ai::extract_assistant_agent_text("claude-code", &claude_raw, "简而言之：先办许可和声明。");
+        assert!(!merged.contains("我先查一下项目总览"), "只读工具前的过渡句不应混入终稿");
+        assert!(merged.contains("完整分析：1) 先办 47 块图的转载许可"), "调提议工具前写出的完整正文不能丢");
+        assert!(merged.contains("简而言之：先办许可和声明。"), "收尾总结照常保留");
+
+        let mut st_full = StreamState::new("/p/demo".into());
+        let _ = st_full.handle_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"过渡句"}}}"#);
+        let _ = st_full.handle_line(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__mesa__project_overview","input":{}}]}}"#);
+        let _ = st_full.handle_line(r#"{"type":"stream_event","event":{"type":"message_start"}}"#);
+        let _ = st_full.handle_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"完整详细正文"}}}"#);
+        let _ = st_full.handle_line(r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__mesa__suggest_actions","input":{"actions":[]}}]}}"#);
+        let _ = st_full.handle_line(r#"{"type":"stream_event","event":{"type":"message_start"}}"#);
+        let _ = st_full.handle_line(r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"简而言之"}}}"#);
+        assert_eq!(st_full.full_text(), "完整详细正文\n\n简而言之");
 
         // session.json 持久化、切模型失效与清空日志重置
         let tmp = std::env::temp_dir().join(format!("mesa-sess-{}", uuid::Uuid::new_v4()));

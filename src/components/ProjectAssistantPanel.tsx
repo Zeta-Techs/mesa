@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowDown, ArrowRight, ArrowUp, BookMarked, MoreHorizontal, Search, Sparkles, Square, X } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, BookMarked, MessageCircleQuestion, MoreHorizontal, Search, Square, X } from "lucide-react";
 import { SettingsDrawerShell } from "./ProjectSettingsDrawer";
 import { confirmDialog } from "./ConfirmDialog";
 import { ghostActionClass, secondaryActionClass } from "./PageFrame";
@@ -1264,7 +1264,7 @@ export default function ProjectAssistantPanel({
             disabled={busy}
             onClick={() => setQuickAsksOpen((v) => !v)}
           >
-            <Sparkles size={13} strokeWidth={1.8} aria-hidden="true" />
+            <MessageCircleQuestion size={14} strokeWidth={1.8} aria-hidden="true" />
           </button>
         )}
         <textarea
@@ -1345,19 +1345,33 @@ export default function ProjectAssistantPanel({
           <Square size={8} strokeWidth={0} fill="currentColor" aria-hidden="true" className="ccode-send-stop" />
         </button>
       </form>
-      {/* 输入框下方只留右侧模型入口；搜索、项目知识与清空统一收进顶栏图标 */}
-      <div className="flex items-center justify-end text-micro text-l4">
+      {/* 输入框下方清晰标明底层运行形态（只读 Agent / 只读查文件 / 仅看记录）与实际运行的 Agent · 连接 · 模型 */}
+      <div className="flex items-center justify-between gap-2 text-micro text-l4">
+        <span
+          className="inline-flex shrink-0 items-center gap-1.5 text-micro text-l4"
+          title={conn.modeHint}
+        >
+          <span
+            className={`size-1.5 rounded-full ${
+              conn.agentId !== null && TIER1_ASSISTANT_AGENTS.includes(conn.agentId)
+                ? "bg-ok-text/80"
+                : imageCapable
+                  ? "bg-l3"
+                  : "bg-warn-text/80"
+            }`}
+            aria-hidden="true"
+          />
+          {conn.modeLabel}
+        </span>
         <button
           type="button"
           className="flex min-w-0 items-center gap-1.5 truncate text-l4 hover:text-l2"
-          title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}${
-            !imageCapable
-              ? `\n当前连接仅看项目记录与目录，暂不支持直接读文件与看图${inspectFallback ? `；回答右上角 ⋯ 可借用 ${inspectFallback.agentLabel} 查文件` : ""}`
-              : ""
-          }\n点了去 Agent 分工换`}
+          title={`${conn.line}${conn.bound ? "（Agent 分工里给项目助手绑的）" : "（跟随项目默认）"}\n${conn.modeHint}${
+            !imageCapable && inspectFallback ? `；回答右上角 ⋯ 可借用 ${inspectFallback.agentLabel} 查文件` : ""
+          }\n点击去 Agent 分工切换`}
           onClick={() => onAction({ kind: "agents", step: null, text: "", label: "去 Agent 分工" }, { at: "", question: "", answer: "", connection: "" })}
         >
-          <span className="truncate text-micro">{conn.model ?? (conn.profileId ? "默认模型" : "AI 功能的连接")}</span>
+          <span className="truncate text-micro">{conn.shortLine}</span>
         </button>
       </div>
     </div>

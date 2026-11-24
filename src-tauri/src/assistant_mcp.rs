@@ -16,8 +16,18 @@ use crate::project_assistant::{guide_search, guide_section, missing_paths_sync};
 use crate::sessions::expand_tilde;
 
 const ALLOWED_ACTIONS: &[&str] = &[
-    "step", "review", "project", "agents", "profiles", "settings", "schedule", "mail", "split",
-    "discuss", "consult", "report",
+    "step",
+    "review",
+    "project",
+    "agents",
+    "profiles",
+    "settings",
+    "schedule",
+    "mail",
+    "split",
+    "discuss",
+    "consult",
+    "report_mesa_bug",
 ];
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -432,10 +442,16 @@ impl McpSession {
             if out.len() >= 3 {
                 break;
             }
-            let kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("").trim();
-            if !ALLOWED_ACTIONS.contains(&kind) {
+            let raw_kind = item.get("kind").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if !ALLOWED_ACTIONS.contains(&raw_kind) {
                 continue;
             }
+            // 对外 schema 明确叫 report_mesa_bug（防止模型把「审查报告/定稿报告」误判成 report），内部仍落成前端动作 kind="report"
+            let kind = if raw_kind == "report_mesa_bug" {
+                "report"
+            } else {
+                raw_kind
+            };
             let step = item.get("step").and_then(|v| v.as_u64()).map(|n| n as u32);
             if matches!(kind, "step" | "review" | "mail") {
                 let Some(n) = step else { continue };
@@ -668,7 +684,7 @@ fn tool_definitions() -> Value {
         },
         {
             "name": "suggest_actions",
-            "description": "在回答底部挂载最多 3 个 Mesa 页面跳转按钮（仅白名单动作）。",
+            "description": "仅在确实需要带用户跳转到 Mesa 某个页面或步骤时挂载 1–3 个按钮；普通回答若不需要跳转就不要调用。严禁把查看论文/定稿/审查报告误填为 report_mesa_bug。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -677,9 +693,13 @@ fn tool_definitions() -> Value {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "kind": { "type": "string", "enum": ["step", "review", "project", "agents", "profiles", "settings", "schedule", "mail", "split", "discuss", "consult", "report"] },
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["step", "review", "project", "agents", "profiles", "settings", "schedule", "mail", "split", "discuss", "consult", "report_mesa_bug"],
+                                    "description": "step=看第N步详情；review=去评审第N步；project=去项目页（text可填 goal:<id> 去验收）；agents=去Agent分工；profiles=去连接页；settings=去设置；schedule=去定时任务页；mail=给第N步留话；split=拆成多个目标；discuss=去跟AI商量课题内容；consult=多模型研讨；report_mesa_bug=仅限明确判定为 Mesa 软件自身 Bug 或异常崩溃时向开发者提交反馈（绝不用于查看审查报告或普通问答）"
+                                },
                                 "step": { "type": "integer", "description": "kind 为 step/review/mail 时的步骤号" },
-                                "text": { "type": "string", "description": "附加参数（如 goal:<id>、留话内容、拆分内容、商量问题、报告说明）" },
+                                "text": { "type": "string", "description": "附加参数（如 goal:<id>、留话内容、拆分内容、商量问题、Mesa软件Bug标题）" },
                                 "label": { "type": "string", "description": "可选按钮文案" }
                             },
                             "required": ["kind"]
@@ -834,6 +854,42 @@ mod tests {
             vec!["output/review.pdf".to_string(), "output/missing.md".to_string()],
             "绝对路径与越界 .. 必须被剥除"
         );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn mcp_suggest_actions_rejects_ambiguous_report_and_maps_report_mesa_bug() {
+        let tmp = std::env::temp_dir().join(format!("mesa-mcp-act-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let props = tmp.join("proposals.json");
+        let mut sess = McpSession::new(tmp.to_string_lossy().into_owned(), Some(props.clone()));
+
+        let res = sess
+            .handle_message(&json!({
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "tools/call",
+                "params": {
+                    "name": "suggest_actions",
+                    "arguments": {
+                        "actions": [
+                            { "kind": "report", "text": "查看定稿审查报告与许可清单状态" },
+                            { "kind": "project", "text": "" },
+                            { "kind": "report_mesa_bug", "text": "保存步骤时 Mesa 闪退" }
+                        ]
+                    }
+                }
+            }))
+            .unwrap();
+        assert_eq!(res["result"]["isError"], false);
+        let saved: AssistantProposalsDto =
+            serde_json::from_str(&std::fs::read_to_string(&props).unwrap()).unwrap();
+        assert_eq!(saved.actions.len(), 2, "旧模糊 kind=report 必须被拒绝，防误挂报告给开发者");
+        assert_eq!(saved.actions[0].kind, "project");
+        assert_eq!(saved.actions[1].kind, "report");
+        assert_eq!(saved.actions[1].text, "保存步骤时 Mesa 闪退");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

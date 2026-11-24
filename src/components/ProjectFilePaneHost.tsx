@@ -158,7 +158,9 @@ export default function ProjectFilePaneHost() {
   const [width, setWidth] = useState(savedWidth);
   const widthRef = useRef(width);
   widthRef.current = width;
-  const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
+  const [dockEl, setDockEl] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" ? document.getElementById("ccode-assistant-dock") : null,
+  );
   const [dockWidth, setDockWidth] = useState<number | null>(null);
   useEffect(() => {
     const dock = document.getElementById("ccode-assistant-dock");
@@ -560,8 +562,8 @@ export default function ProjectFilePaneHost() {
         )}
     </SettingsDrawerShell>
   );
-  // 常驻时轮到项目助手 / 离开项目页只藏起来（不卸载，没保存的改动还在）
-  return docked && dockEl
-    ? createPortal(<div className={visible ? "contents" : "hidden"}>{panel}</div>, dockEl)
+  // 始终经同一 Portal 挂进 #ccode-assistant-dock（缩放切换常驻 ↔ 浮层时不卸载，未保存编辑与状态都在）
+  return dockEl
+    ? createPortal(<div className={docked && !visible ? "hidden" : "contents"}>{panel}</div>, dockEl)
     : panel;
 }

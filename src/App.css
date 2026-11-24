@@ -1326,7 +1326,7 @@ html[data-material="none"] .ccode-app-rail .bg-rail-sel {
   padding-inline: clamp(1rem, 2.2vw, 2rem);
 }
 /* 右侧停靠着项目助手 / 文件栏时，那张卡本身就隔开了内容，页面右边距收窄（被轮下去的面板包在 .hidden 里，不算） */
-.ccode-app-shell:has(#ccode-assistant-dock > .contents > .ccode-docked-panel) .ccode-page-frame {
+.ccode-app-shell:has(#ccode-assistant-dock > .contents .ccode-docked-panel) .ccode-page-frame {
   padding-right: 12px;
 }
 
@@ -5100,12 +5100,12 @@ select:focus-visible {
   border-radius: var(--ccode-radius-panel);
 }
 /* 主区与右侧停靠卡之间的缝收到 3px（行容器 gap 5px；2026-11-16 用户反馈太宽收到 2px，11-18 放回 3px）；面板被轮下去时不收 */
-#ccode-assistant-dock:has(> .contents > .ccode-docked-panel) {
+#ccode-assistant-dock:has(> .contents .ccode-docked-panel) {
   margin-left: -2px;
 }
-/* 停靠位空着（面板没开或只是浮层）时不进行容器：宽 0 也会吃一道 5px gap，右边玻璃边比左、下宽一倍（2026-11-17 用户反馈） */
-#ccode-assistant-dock:not(:has(> .contents > .ccode-docked-panel)) {
-  display: none;
+/* 停靠位空着或仅承载浮层抽屉时用 display: contents：不占 flex 项与 5px gap，同时保持内部 fixed 浮层正常渲染（缩放切换不卸载面板） */
+#ccode-assistant-dock:not(:has(> .contents .ccode-docked-panel)) {
+  display: contents;
 }
 /* 拍板队列、项目分组、定时任务：统一回归全局 .ccode-well 卡片底色 + 微描边，项目组左侧只在有事时亮状态锚线（2026-11-15） */
 .ccode-workbench-list {

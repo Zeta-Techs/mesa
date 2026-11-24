@@ -154,7 +154,9 @@ export default function ProjectAssistantHost() {
   const [width, setWidth] = useState(savedWidth);
   const widthRef = useRef(width);
   widthRef.current = width;
-  const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
+  const [dockEl, setDockEl] = useState<HTMLElement | null>(() =>
+    typeof document !== "undefined" ? document.getElementById("ccode-assistant-dock") : null,
+  );
   const [roomy, setRoomy] = useState(false);
   useEffect(() => {
     const dock = document.getElementById("ccode-assistant-dock");
@@ -232,7 +234,8 @@ export default function ProjectAssistantHost() {
       }}
     />
   );
-  return docked && dockEl
-    ? createPortal(<div className={behind ? "hidden" : "contents"}>{panel}</div>, dockEl)
+  // 始终经同一 Portal 挂进 #ccode-assistant-dock（常驻 ↔ 浮层抽屉切换时绝不卸载 ProjectAssistantPanel，拖动窗口大小不会丢掉发送中/流式会话）
+  return dockEl
+    ? createPortal(<div className={docked && behind ? "hidden" : "contents"}>{panel}</div>, dockEl)
     : panel;
 }

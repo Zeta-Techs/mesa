@@ -56,22 +56,74 @@ export const TIER1_ASSISTANT_AGENTS: readonly string[] = ["claude-code", "codex"
 
 export const ASSISTANT_CANCELLED = "ASSISTANT_CANCELLED";
 
-/** 这个项目用谁答（专属绑定 > 项目默认 > AI 功能连接），以及给人看的一行 */
+/** 这个项目用谁答（专属绑定 > 项目默认 > AI 功能连接），以及给人看的一行与运行形态 */
 export function assistantConnection(project: ProjectDto | null): {
   profileId: string | null;
   model: string | null;
   line: string;
+  /** 底栏紧凑展示（如「Claude Code · GLM-flash · glm-5.3-flash」或「Claude Code · glm-5.3-flash」） */
+  shortLine: string;
   bound: boolean;
   /** 用的是哪家 Agent；走「AI 功能」连接时前端不知道，为 null */
   agentId: string | null;
+  agentLabel: string | null;
+  profileName: string | null;
+  /** 运行形态短标（只读 Agent / 只读查文件 / 仅看记录 / 跟随 AI 功能） */
+  modeLabel: string;
+  modeHint: string;
 } {
   const { profiles } = useAppStore.getState();
   const launch = projectAssistantLaunch(profiles, project);
-  if (!launch) return { profileId: null, model: null, line: "设置里「AI 功能」的连接", bound: false, agentId: null };
+  if (!launch) {
+    return {
+      profileId: null,
+      model: null,
+      line: "设置里「AI 功能」的连接",
+      shortLine: "设置里「AI 功能」的连接",
+      bound: false,
+      agentId: null,
+      agentLabel: null,
+      profileName: null,
+      modeLabel: "跟随 AI 功能",
+      modeHint: "当前使用设置 → AI 与 Agent 中的默认连接",
+    };
+  }
   const profile = profiles.find((p) => p.id === launch.profileId);
-  const agent = AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
-  const line = [agent, profile?.name, launch.model || "默认模型"].filter(Boolean).join(" · ");
-  return { profileId: launch.profileId, model: launch.model || null, line, bound: launch.bound, agentId: launch.agentId };
+  const agentLabel = AGENTS.find((a) => a.id === launch.agentId)?.label ?? launch.agentId;
+  const profileName = profile?.name?.trim() || null;
+  const modelName = launch.model?.trim() || null;
+  const line = [agentLabel, profileName, modelName || "默认模型"].filter(Boolean).join(" · ");
+  // 底栏紧凑展示：Agent 永远显式标出，连接名与 Agent/模型重复时去重，避免过长又清楚知道底层跑的是谁
+  const parts: string[] = [agentLabel];
+  if (
+    profileName &&
+    profileName.toLowerCase() !== agentLabel.toLowerCase() &&
+    profileName !== "官方账号" &&
+    (!modelName || profileName.toLowerCase() !== modelName.toLowerCase())
+  ) {
+    parts.push(profileName);
+  }
+  parts.push(modelName || "默认模型");
+  const isTier1 = TIER1_ASSISTANT_AGENTS.includes(launch.agentId);
+  const isReadonly = INSPECT_AGENTS.includes(launch.agentId);
+  const modeLabel = isTier1 ? "只读 Agent" : isReadonly ? "只读查文件" : "仅看记录";
+  const modeHint = isTier1
+    ? "持久只读会话 · 可自主调用 Mesa 工具与读取项目文件，绝不修改项目"
+    : isReadonly
+      ? "直连 Mesa 项目真源 · 支持只读核对项目文件与看图，绝不修改项目"
+      : "直连 Mesa 项目真源 · 暂不支持直接读文件与看图";
+  return {
+    profileId: launch.profileId,
+    model: modelName,
+    line,
+    shortLine: parts.join(" · "),
+    bound: launch.bound,
+    agentId: launch.agentId,
+    agentLabel,
+    profileName,
+    modeLabel,
+    modeHint,
+  };
 }
 
 /** 当前项目助手连接不支持进程级只读查看（如 agy）时，从已配置的连接里挑一条支持只读查看的备选连接 */

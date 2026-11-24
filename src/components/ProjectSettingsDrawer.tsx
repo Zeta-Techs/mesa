@@ -121,68 +121,69 @@ export function SettingsDrawerShell({
   // 常驻侧栏关掉就收，不等退场动画（它不是从右边滑进来的浮层）
   if (docked && !open) return null;
   const inner = renderInner();
-  if (docked) {
-    return (
-      <aside
-        ref={panelRef}
-        data-surface="canvas"
-        role="complementary"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        style={{ width: docked.width }}
-        className={`ccode-docked-panel relative flex h-full shrink-0 flex-col bg-canvas outline-none ${className}`}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onClose();
-          }
-        }}
-      >
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="拖动调整宽度"
-          title="拖动调整宽度，双击恢复默认"
-          className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize hover:bg-hairline"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            const startX = event.clientX;
-            const startW = docked.width;
-            const move = (e: PointerEvent) => docked.onResize(startW + (startX - e.clientX));
-            const up = () => {
-              window.removeEventListener("pointermove", move);
-              window.removeEventListener("pointerup", up);
-              document.body.style.cursor = "";
-              docked.onResizeEnd?.();
-            };
-            document.body.style.cursor = "col-resize";
-            window.addEventListener("pointermove", move);
-            window.addEventListener("pointerup", up);
-          }}
-          onDoubleClick={() => {
-            docked.onResize(-1);
-            docked.onResizeEnd?.();
-          }}
-        />
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">{inner}</div>
-      </aside>
-    );
-  }
+  // 常驻侧栏与浮层抽屉共用同一 DOM 树结构，窗口宽度跨阈值切换时不卸载 children/footer（正在发送的会话、输入草稿和滚动位置完整保留）
   return (
     <div
-      className={`fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade ${backdropClassName}${exiting ? " ccode-exiting" : ""}`}
-      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+      className={
+        docked
+          ? "contents"
+          : `fixed inset-0 z-40 flex justify-end bg-black/40 ccode-fade ${backdropClassName}${exiting ? " ccode-exiting" : ""}`
+      }
+      onMouseDown={!docked ? (event) => event.target === event.currentTarget && onClose() : undefined}
     >
       <aside
         ref={panelRef}
         data-surface="canvas"
-        role="dialog"
-        aria-modal="true"
+        role={docked ? "complementary" : "dialog"}
+        aria-modal={docked ? undefined : true}
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none ${className}${exiting ? " ccode-exiting" : ""}`}
+        style={docked ? { width: docked.width } : undefined}
+        className={
+          docked
+            ? `ccode-docked-panel relative flex h-full shrink-0 flex-col bg-canvas outline-none ${className}`
+            : `ccode-sheet-right flex h-full w-[34rem] max-w-[92vw] flex-col bg-canvas outline-none ${className}${exiting ? " ccode-exiting" : ""}`
+        }
+        onKeyDown={
+          docked
+            ? (event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onClose();
+                }
+              }
+            : undefined
+        }
       >
-        {inner}
+        {docked && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖动调整宽度"
+            title="拖动调整宽度，双击恢复默认"
+            className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize hover:bg-hairline"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              const startX = event.clientX;
+              const startW = docked.width;
+              const move = (e: PointerEvent) => docked.onResize(startW + (startX - e.clientX));
+              const up = () => {
+                window.removeEventListener("pointermove", move);
+                window.removeEventListener("pointerup", up);
+                document.body.style.cursor = "";
+                docked.onResizeEnd?.();
+              };
+              document.body.style.cursor = "col-resize";
+              window.addEventListener("pointermove", move);
+              window.addEventListener("pointerup", up);
+            }}
+            onDoubleClick={() => {
+              docked.onResize(-1);
+              docked.onResizeEnd?.();
+            }}
+          />
+        )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[inherit]">{inner}</div>
       </aside>
     </div>
   );

@@ -1927,6 +1927,124 @@ pub(crate) fn assistant_agent_args(
     }
 }
 
+/// 判断工具名是否为项目助手的提议工具（写入 proposals.json 的 4 个工具，不是只读查数工具）
+pub(crate) fn is_assistant_proposal_tool(name: &str) -> bool {
+    let norm = name
+        .strip_prefix("mcp__mesa__")
+        .or_else(|| name.strip_prefix("mcp_mesa_"))
+        .or_else(|| name.strip_prefix("mesa."))
+        .unwrap_or(name);
+    matches!(
+        norm,
+        "propose_work_order" | "propose_rework" | "propose_memory" | "suggest_actions"
+    )
+}
+
+/// 从第一档 Agent 流式输出提取完整最终回答：
+/// 当模型先写出完整正文、再调提议工具（如 `suggest_actions` / `propose_work_order`）、最后补一句「简而言之」时，
+/// Claude `result` 和 Codex 最后一条 `agent_message` 都只会保留最后一句。
+/// 这里按「最后一次只读/非提议工具调用之后的所有 assistant 正文」拼接（只读工具前的过渡句照常丢弃），避免正文被截断成一句小结。
+pub(crate) fn extract_assistant_agent_text(agent: &str, raw: &str, fallback_text: &str) -> String {
+    use serde_json::Value;
+    let mut segments: Vec<String> = Vec::new();
+    let push_seg = |segs: &mut Vec<String>, text: &str| {
+        let t = text.trim();
+        if t.is_empty() {
+            return;
+        }
+        if segs.last().map(String::as_str) == Some(t) {
+            return;
+        }
+        segs.push(t.to_string());
+    };
+    match agent {
+        "claude-code" => {
+            for line in raw.lines() {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if v.get("type").and_then(Value::as_str) != Some("assistant") {
+                    continue;
+                }
+                let Some(content) = v
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                let mut turn_text = String::new();
+                let mut has_non_proposal_tool = false;
+                for item in content {
+                    match item.get("type").and_then(Value::as_str) {
+                        Some("text") => {
+                            if let Some(t) = item.get("text").and_then(Value::as_str) {
+                                turn_text.push_str(t);
+                            }
+                        }
+                        Some("tool_use") => {
+                            let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                            if !is_assistant_proposal_tool(name) {
+                                has_non_proposal_tool = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if has_non_proposal_tool {
+                    segments.clear();
+                } else {
+                    push_seg(&mut segments, &turn_text);
+                }
+            }
+        }
+        "codex" => {
+            for line in raw.lines() {
+                let Ok(v) = serde_json::from_str::<Value>(line.trim()) else {
+                    continue;
+                };
+                if v.get("type").and_then(Value::as_str) != Some("item.completed") {
+                    continue;
+                }
+                let Some(item) = v.get("item") else {
+                    continue;
+                };
+                match item.get("type").and_then(Value::as_str) {
+                    Some("command_execution") => {
+                        segments.clear();
+                    }
+                    Some("mcp_tool_call") => {
+                        let tool = item
+                            .get("tool")
+                            .or_else(|| item.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if !is_assistant_proposal_tool(tool) {
+                            segments.clear();
+                        }
+                    }
+                    Some("agent_message") => {
+                        if let Some(t) = item.get("text").and_then(Value::as_str) {
+                            push_seg(&mut segments, t);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        _ => {}
+    }
+    let fb = fallback_text.trim();
+    if !fb.is_empty() && !segments.iter().any(|s| s == fb || s.ends_with(fb)) {
+        segments.push(fb.to_string());
+    }
+    if segments.is_empty() {
+        fb.to_string()
+    } else {
+        segments.join("\n\n")
+    }
+}
+
 /// 项目助手第一档持久只读 Agent 调用（Claude Code / Codex）：
 /// 挂接临时 0600 `mesa_helper assistant-mcp`（不污染用户任何 CLI 配置），进程级只读，会话落盘并立刻标 `internal` 以便多轮续接。
 pub(crate) fn ai_assistant_agent(
@@ -2090,9 +2208,10 @@ pub(crate) fn ai_assistant_agent(
     let mut cost_usd: Option<f64> = None;
     let result = raw_result.and_then(|raw| {
         let today = crate::usage::today_local();
-        let (text, events) = parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &today)?;
+        let (parsed_text, events) = parse_oneshot_output(&profile.agent, &raw, selected.as_deref(), &today)?;
         cost_usd = crate::usage::events_cost_usd(&events);
-        Ok(text)
+        let merged = extract_assistant_agent_text(&profile.agent, &raw, &parsed_text);
+        Ok(if merged.is_empty() { parsed_text } else { merged })
     });
     let status = if result.is_ok() { "completed" } else { "failed" };
     let _ = crate::runs::close_run_with_result(
