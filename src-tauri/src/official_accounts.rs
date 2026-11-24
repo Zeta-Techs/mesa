@@ -1148,19 +1148,15 @@ pub async fn official_create_account(
     })
 }
 
-/// 收录本机当前已登录的 Antigravity 官方账号为托管官方绑定（若已收录则更新提示并返回对应绑定）
-#[tauri::command]
-pub async fn official_capture_agy_current(
-    name: Option<String>,
-) -> Result<CreateOfficialAccountResult, String> {
-    let (snapshot_id, email, display_name) =
-        tauri::async_runtime::spawn_blocking(agy_capture_current_snapshot)
-            .await
-            .map_err(|e| format!("收录 Antigravity 账号失败: {e}"))??;
-    crate::agents::invalidate_official_status_cache("agy");
-    let hint = email.clone().or(display_name.clone());
+fn capture_agy_binding_with_store(
+    store: &crate::profiles::ProfileStore,
+    snapshot_id: String,
+    email: Option<String>,
+    display_name: Option<String>,
+    name: Option<&str>,
+) -> Result<crate::profiles::Profile, String> {
+    let hint = email.clone().or(display_name);
     let chosen_name = name
-        .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
@@ -1172,7 +1168,6 @@ pub async fn official_capture_agy_current(
         })
         .unwrap_or_else(|| "Antigravity 官方号".to_string());
 
-    let store = crate::profiles::ProfileStore::new()?;
     let bindings = crate::gateway_store::load_bindings()?;
     if let Some(existing) = bindings.into_iter().find(|b| {
         b.agent == "agy"
@@ -1183,17 +1178,11 @@ pub async fn official_capture_agy_current(
                 == Some(snapshot_id.as_str())
     }) {
         // 已收录：刷新备注与 account_hint
-        let updated = store.update_official_meta(
+        return store.update_official_meta(
             &existing.id,
-            name.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+            name.map(str::trim).filter(|s| !s.is_empty()),
             hint.as_deref(),
-        )?;
-        return Ok(CreateOfficialAccountResult {
-            profile: updated,
-            login_command: default_login_command("agy"),
-            login_env: outbound_env_map(),
-            already_connected: true,
-        });
+        );
     }
 
     let official_ref = OfficialAccountRef {
@@ -1202,7 +1191,33 @@ pub async fn official_capture_agy_current(
         snapshot_id: Some(snapshot_id),
         account_hint: hint,
     };
-    let profile = store.create_official_with_ref("agy", &chosen_name, official_ref)?;
+    // 若原先只有一条裸默认「官方账号」，首次收录直接原地升级为托管号（保留 ID、模型与所有引用，避免留出重叠默认行）
+    if let Some(upgraded) =
+        store.upgrade_default_official_to_ref("agy", &chosen_name, official_ref.clone())?
+    {
+        return Ok(upgraded);
+    }
+    store.create_official_with_ref("agy", &chosen_name, official_ref)
+}
+
+/// 收录本机当前已登录的 Antigravity 官方账号为托管官方绑定（若已收录则更新提示；若有裸默认官方号则原地升级）
+#[tauri::command]
+pub async fn official_capture_agy_current(
+    name: Option<String>,
+) -> Result<CreateOfficialAccountResult, String> {
+    let (snapshot_id, email, display_name) =
+        tauri::async_runtime::spawn_blocking(agy_capture_current_snapshot)
+            .await
+            .map_err(|e| format!("收录 Antigravity 账号失败: {e}"))??;
+    crate::agents::invalidate_official_status_cache("agy");
+    let store = crate::profiles::ProfileStore::new()?;
+    let profile = capture_agy_binding_with_store(
+        &store,
+        snapshot_id,
+        email,
+        display_name,
+        name.as_deref(),
+    )?;
     crate::subscription_quota::cache_invalidate(crate::official_quota::AGY_ROW_ID);
     Ok(CreateOfficialAccountResult {
         profile,
@@ -1557,5 +1572,105 @@ mod tests {
         assert!(login_env_for_isolated("codebuddy", &cb_dir).contains_key("CODEBUDDY_CONFIG_DIR"));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn agy_first_capture_upgrades_default_official_in_place_and_blocks_duplicate_default() {
+        let dir = std::env::temp_dir().join(format!("mesa-agy-upgrade-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = crate::profiles::ProfileStore::new_for_test(&dir);
+
+        // 1. 先建一条裸默认「官方账号」（带用户选好的模型与环境变量）
+        let mut extra = HashMap::new();
+        extra.insert("CUSTOM_FLAG".to_string(), "1".to_string());
+        let default_prof = store
+            .create(crate::profiles::ProfileInput {
+                agent: "agy".into(),
+                name: "官方账号".into(),
+                account_type: crate::profiles::AccountType::Official,
+                no_auth: false,
+                protocol: None,
+                api_backend: None,
+                base_url: None,
+                models: vec!["gemini-4-neon-high".into()],
+                role_models: None,
+                extra_env: extra,
+                request_policy: Default::default(),
+                api_key: None,
+                expected_gateway_revision: None,
+            })
+            .unwrap();
+
+        // 2. 首次收录第一个 Antigravity 账号：应原地升级原 Default 绑定（保留 ID、模型、env，不留多余裸官方账号）
+        let first = capture_agy_binding_with_store(
+            &store,
+            "sub-first".into(),
+            Some("tongzhouhong@gmail.com".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(first.id, default_prof.id);
+        assert_eq!(first.name, "Antigravity · tongzhouhong");
+        assert_eq!(first.models, vec!["gemini-4-neon-high"]);
+        assert_eq!(first.extra_env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
+        assert_eq!(
+            first.official_ref.as_ref().map(|r| &r.mode),
+            Some(&OfficialAccountMode::ManagedSnapshot)
+        );
+        assert_eq!(
+            first.official_ref.as_ref().and_then(|r| r.snapshot_id.as_deref()),
+            Some("sub-first")
+        );
+        assert_eq!(store.list().unwrap().len(), 1);
+
+        // 3. 再收录第二个账号：新增一条托管绑定，总数变为 2
+        let second = capture_agy_binding_with_store(
+            &store,
+            "sub-second".into(),
+            Some("tzhong911425@gmail.com".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_ne!(second.id, first.id);
+        assert_eq!(second.name, "Antigravity · tzhong911425");
+        assert_eq!(store.list().unwrap().len(), 2);
+
+        // 4. 重复收录第一个账号：只更新元信息，不新建第三条
+        let refreshed = capture_agy_binding_with_store(
+            &store,
+            "sub-first".into(),
+            Some("tongzhouhong@gmail.com".into()),
+            None,
+            Some("主号"),
+        )
+        .unwrap();
+        assert_eq!(refreshed.id, first.id);
+        assert_eq!(refreshed.name, "主号");
+        assert_eq!(store.list().unwrap().len(), 2);
+
+        // 5. 已有托管号时禁止再建裸默认「官方账号」，防再次出现重叠行
+        let dup_err = store
+            .create(crate::profiles::ProfileInput {
+                agent: "agy".into(),
+                name: "官方账号".into(),
+                account_type: crate::profiles::AccountType::Official,
+                no_auth: false,
+                protocol: None,
+                api_backend: None,
+                base_url: None,
+                models: vec![],
+                role_models: None,
+                extra_env: HashMap::new(),
+                request_policy: Default::default(),
+                api_key: None,
+                expected_gateway_revision: None,
+            })
+            .unwrap_err();
+        assert!(dup_err.contains("添加官方号"));
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

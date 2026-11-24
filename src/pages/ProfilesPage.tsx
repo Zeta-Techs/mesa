@@ -6585,7 +6585,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
             {addOfficialModal === "agy" ? (
               <div className="mt-3 space-y-3 text-xs text-l2">
                 <p className="leading-relaxed text-l3">
-                  Antigravity CLI 在本机共用一条系统钥匙串，不支持两个官方号同时并发运行，但可以收录多个 Google 账号：用量页并排看各号余量，额度用完时一键轮换切号接着聊（切号前会自动收回当前账号）。
+                  Antigravity CLI 在本机共用一条系统钥匙串，不支持两个官方号同时并发运行，但可以收录多个 Google 账号：用量页并排看各号余量，额度用完时一键轮换切号接着聊（切号前会自动收回当前账号；若列表里已有默认「官方账号」，首次收录会自动将它原地升级为托管号，不留重复行）。
                 </p>
                 <div>
                   <label className="mb-1 block text-xs text-l2">账号备注名（可留空，自动用邮箱前缀）</label>

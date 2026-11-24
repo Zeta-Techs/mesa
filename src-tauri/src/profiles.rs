@@ -787,6 +787,22 @@ impl ProfileStore {
             }) {
                 return Err("该 Agent 已有默认官方账号绑定；如需添加更多账号请使用「添加官方账号」".into());
             }
+            if input.agent == "agy"
+                && bindings.iter().any(|b| {
+                    b.agent == "agy"
+                        && b.kind == BindingKind::Official
+                        && b.official_ref
+                            .as_ref()
+                            .is_some_and(|r| {
+                                r.mode == crate::official_accounts::OfficialAccountMode::ManagedSnapshot
+                            })
+                })
+            {
+                return Err(
+                    "Antigravity 已收录托管官方账号；如需接入更多账号请点组头的「＋ 添加官方号」"
+                        .into(),
+                );
+            }
             let binding = Binding {
                 id: uuid::Uuid::new_v4().to_string(),
                 agent: input.agent,
@@ -1175,6 +1191,38 @@ impl ProfileStore {
         bindings.push(binding);
         crate::gateway_store::save_bindings(&bindings)?;
         Ok(profile)
+    }
+
+    /// 将指定 Agent 现有的裸默认「官方账号」绑定原地升级为托管/指定官方引用（保留 ID、模型与所有引用，避免留出重复默认行）
+    pub fn upgrade_default_official_to_ref(
+        &self,
+        agent: &str,
+        name: &str,
+        official_ref: crate::official_accounts::OfficialAccountRef,
+    ) -> Result<Option<Profile>, String> {
+        let _g = store_lock()?;
+        self.ensure_split_locked()?;
+        let mut bindings = crate::gateway_store::load_bindings()?;
+        let Some(b) = bindings.iter_mut().find(|b| {
+            b.agent == agent
+                && b.kind == BindingKind::Official
+                && b.official_ref
+                    .as_ref()
+                    .map(|r| &r.mode)
+                    .unwrap_or(&crate::official_accounts::OfficialAccountMode::Default)
+                    == &crate::official_accounts::OfficialAccountMode::Default
+        }) else {
+            return Ok(None);
+        };
+        let clean_name = name.trim();
+        if !clean_name.is_empty() {
+            b.name = clean_name.to_string();
+        }
+        b.official_ref = Some(official_ref);
+        let profile = crate::gateway_store::materialize(b, None, None);
+        crate::profile_validation::validate_profile_fields(&profile)?;
+        crate::gateway_store::save_bindings(&bindings)?;
+        Ok(Some(profile))
     }
 
     /// 更新官方账号绑定的展示名或账号提示（如登录后回填邮箱）
