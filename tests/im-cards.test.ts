@@ -198,8 +198,8 @@ test("项目切换卡、零 Token 状态卡、里程碑通知卡与多目标选�
     {
       hasFlow: true,
       steps: [
-        { n: 1, name: "检索", state: "saved", needsHuman: 0 },
-        { n: 2, name: "精读", state: "review", needsHuman: 1 },
+        { n: 1, name: "检索", state: "saved", needsHuman: 0, pendingUpstream: true },
+        { n: 2, name: "精读", state: "review", needsHuman: 1, pendingUpstream: true, staleUpstream: "检索" },
       ],
       goals: [{ name: "整理附表", status: "running", updatedAt: "2026-11-15T10:00:00Z" }],
       since: null,
@@ -208,6 +208,8 @@ test("项目切换卡、零 Token 状态卡、里程碑通知卡与多目标选�
   );
   assert.deepEqual(buttons(status).map((b: any) => b.value.op), ["show_queue", "preread", "clarify"]);
   assert.match(JSON.stringify(status), /不消耗模型额度/);
+  assert.match(JSON.stringify(status), /「检索」有更新待跟进/);
+  assert.doesNotMatch(JSON.stringify(status), /第 1 步「检索」（[^）]*待跟进/);
 
   const mile: any = milestoneCard([
     {

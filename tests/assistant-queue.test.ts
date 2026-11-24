@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDeskItems, deskSummary, looksLikeQuestion, questionExcerpt, relayText } from "../src/assistant-queue.ts";
+import { buildDeskItems, deskSummary, isTailStaleAfterSave, looksLikeQuestion, questionExcerpt, relayText } from "../src/assistant-queue.ts";
 
 const steps = [
   { index: 0, name: "检索", workspaceName: "lit-search", worktreePath: "/w/lit" },
@@ -136,4 +136,50 @@ test("多题人工请求带 siblingPendingCount；非步骤交互对话提问进
     dismissedQuestions: new Set([questions[0].key]),
   });
   assert.deepEqual(afterDismiss, []);
+});
+
+test("已保存步骤的旧对话结尾、用户已回复的对话、以及引号/代码内的词不误报为「等你的事」", () => {
+  // 未保存的步骤不算过时
+  assert.equal(isTailStaleAfterSave({ mergedAt: null, tailAt: "2026-11-23T08:00:00Z" }), false);
+  // AI 说在保存之前（含 +08:00 与 Z 跨时区比对）：16:15+08:00 = 08:15Z <= 09:55:35Z → 过时
+  assert.equal(
+    isTailStaleAfterSave({ mergedAt: "2026-11-23T09:55:35Z", tailAt: "2026-11-23T16:15:00+08:00" }),
+    true,
+  );
+  // 保存之后又开新讨论问了话：18:10+08:00 = 10:10Z > 09:55:35Z → 仍需提示
+  assert.equal(
+    isTailStaleAfterSave({ mergedAt: "2026-11-23T09:55:35Z", tailAt: "2026-11-23T18:10:00+08:00" }),
+    false,
+  );
+  // 缺逐条时间戳时回落看本轮是否已保存干净、无活标签且开在保存之前
+  assert.equal(
+    isTailStaleAfterSave({
+      mergedAt: "2026-11-23T09:55:35Z",
+      tailAt: null,
+      runCreatedAt: "2026-11-23T14:42:25+08:00",
+      ahead: 0,
+      hasLiveTab: false,
+    }),
+    true,
+  );
+  assert.equal(
+    isTailStaleAfterSave({
+      mergedAt: "2026-11-23T09:55:35Z",
+      tailAt: null,
+      runCreatedAt: "2026-11-23T14:42:25+08:00",
+      ahead: 0,
+      hasLiveTab: true,
+    }),
+    false,
+  );
+  // 用户已经回复过的尾巴不再列进「等你的事」
+  const replied = buildDeskItems({
+    steps,
+    help: [],
+    tails: [{ step: steps[0], text: "要不要加 MeSH 词？", busy: false, awaitingUser: false }],
+    confirms: [],
+  });
+  assert.deepEqual(replied, []);
+  // 总结里引用的按钮名、字段名不误判成提问
+  assert.equal(looksLikeQuestion("已完成核查，页面上的「请确认」按钮和 `是否需要` 字段都已更新。"), false);
 });

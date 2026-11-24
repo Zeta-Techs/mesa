@@ -104,6 +104,8 @@ export interface DeskTailInput {
   text: string;
   /** 它此刻在干活 / 停在等确认（这两种不算在问你） */
   busy: boolean;
+  /** AI 这句之后是否还没收到用户正文回复（false = 用户已经接话了，不再算在等你） */
+  awaitingUser?: boolean;
 }
 
 export interface DeskConfirmInput {
@@ -116,13 +118,35 @@ export interface DeskConfirmInput {
   dispatched: boolean;
 }
 
+/** 引号与行内代码里引用的按钮/字段名不触发问句关键词（如「请确认」、`是否需要`） */
+const QUOTED_PHRASE_RE = /「[^」\n]{1,24}」|“[^”\n]{1,24}”|`[^`\n]{1,40}`/g;
+
 /** 最后一段话像在问人：结尾是问号，或用了「要不要 / 是否 / 请确认 / 选哪 / 你希望 / 需要你」这类问法；说「已完成」一类的总结不算 */
 export function looksLikeQuestion(text: string): boolean {
   const t = text.trim();
   if (!t) return false;
   const tail = t.slice(-300);
   if (/[？?]\s*[)）」"']?\s*$/.test(tail)) return true;
-  return /要不要|是否需要|是否要|请确认|请你确认|你希望|您希望|选哪|选择哪|需要你(决定|确认|拍板|提供)|等你(决定|确认)|告诉我你/.test(tail);
+  const cleaned = tail.replace(QUOTED_PHRASE_RE, "");
+  return /要不要|是否需要|是否要|请确认|请你确认|你希望|您希望|选哪|选择哪|需要你(决定|确认|拍板|提供)|等你(决定|确认)|告诉我你/.test(cleaned);
+}
+
+/** 步骤已保存进项目，且 AI 最后一句说在保存之前（或无逐条时间戳但已保存干净、无活标签且本轮开在保存之前）：
+ *  上一轮已由用户核对保存收尾，不再把旧对话结尾的问句当「等你的事」挂出来 */
+export function isTailStaleAfterSave(opts: {
+  mergedAt?: string | null;
+  tailAt?: string | null;
+  runCreatedAt?: string | null;
+  ahead?: number | null;
+  hasLiveTab?: boolean;
+}): boolean {
+  if (!opts.mergedAt) return false;
+  const mergedMs = Date.parse(opts.mergedAt);
+  if (!Number.isFinite(mergedMs)) return false;
+  const tailMs = opts.tailAt ? Date.parse(opts.tailAt) : NaN;
+  if (Number.isFinite(tailMs)) return tailMs <= mergedMs;
+  const runMs = opts.runCreatedAt ? Date.parse(opts.runCreatedAt) : NaN;
+  return (opts.ahead ?? 0) === 0 && !opts.hasLiveTab && (!Number.isFinite(runMs) || runMs <= mergedMs);
 }
 
 /** 一段话太长时只留结尾的问法（卡片与列表里放得下） */
@@ -200,8 +224,8 @@ export function buildDeskItems(input: {
     });
   }
   for (const t of input.tails) {
-    // 这一步 / 这一处已经有人工请求在等你、或停在等确认：同一件事不说两遍
-    if (t.busy || !looksLikeQuestion(t.text)) continue;
+    // 这一步 / 这一处已经有人工请求在等你、停在等确认，或用户已经接过话：不再重复/误挂对话提问
+    if (t.busy || t.awaitingUser === false || !looksLikeQuestion(t.text)) continue;
     if (t.step !== null) {
       if (out.some((x) => x.step === t.step!.index + 1 && x.kind !== "question")) continue;
       const key = `question:${t.step.worktreePath ?? t.step.workspaceName}:${hash(t.text)}`;

@@ -388,7 +388,9 @@ function formatStepLine(s: BriefStep): string {
     idle: "○ 未开始",
   };
   const extras: string[] = [];
-  if (s.pendingUpstream) extras.push("上游有更新待跟进");
+  if (s.staleUpstream || (s.pendingUpstream && s.n > 1)) {
+    extras.push(s.staleUpstream ? `「${s.staleUpstream}」有更新待跟进` : "上游有更新待跟进");
+  }
   if (s.needsHuman > 0 && s.state !== "saved") extras.push(`核验 ${s.needsHuman} 条待判断`);
   return `${stateMap[s.state]} · 第 ${s.n} 步「${s.name}」${extras.length ? `（${extras.join("，")}）` : ""}`;
 }

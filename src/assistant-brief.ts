@@ -18,8 +18,10 @@ export interface BriefStep {
   mergedAt?: string | null;
   /** 核验里待你判断的条数 */
   needsHuman: number;
-  /** 前面步骤保存了新内容，这一步的工作副本还没跟进并入 */
+  /** 前面步骤保存了新内容，这一步的工作副本还没跟进并入（与项目页步进器 ws.staleUpstream 同口径） */
   pendingUpstream?: boolean;
+  /** 具体是哪一个上游步骤保存了新内容（有则直接点名，如「文献检索与筛选」） */
+  staleUpstream?: string | null;
 }
 
 export interface BriefGoal {
@@ -71,7 +73,11 @@ function stepLabel(s: BriefStep): string {
 }
 
 function after(at: string | null | undefined, since: string | null): boolean {
-  return !!at && !!since && at > since;
+  if (!at || !since) return false;
+  const a = Date.parse(at);
+  const b = Date.parse(since);
+  if (Number.isFinite(a) && Number.isFinite(b)) return a > b;
+  return at > since;
 }
 
 /** 评审前先看一遍的重点（面板「常用问题」与评审页「让项目助手先看一遍」同一句，只读、不判通过） */
@@ -179,10 +185,19 @@ export function briefLines(input: BriefInput): BriefLine[] {
         action: { kind: "review", step: s.n, text: "", label: `去评审第 ${s.n} 步` },
       });
     }
-    if (s.pendingUpstream && s.state !== "failed" && s.state !== "confirm" && s.state !== "review") {
+    const hasPendingUpstream = Boolean(s.staleUpstream) || (Boolean(s.pendingUpstream) && s.n > 1);
+    if (
+      hasPendingUpstream &&
+      s.state !== "failed" &&
+      s.state !== "confirm" &&
+      s.state !== "review" &&
+      s.state !== "working"
+    ) {
       now.push({
         tone: "warn",
-        text: `${stepLabel(s)}有前面步骤新保存的内容待跟进`,
+        text: s.staleUpstream
+          ? `${stepLabel(s)}有「${s.staleUpstream}」新保存的内容待跟进`
+          : `${stepLabel(s)}有前面步骤新保存的内容待跟进`,
         action: { kind: "step", step: s.n, text: "", label: `看第 ${s.n} 步` },
       });
     }

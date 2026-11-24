@@ -7,14 +7,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "./store";
 import { IS_WINDOWS } from "./hotkeys";
 import { pathWithin, samePath } from "./path-utils";
-import { stepSessionTail } from "./session-tail";
+import { latestStepSessionRun, stepSessionTail } from "./session-tail";
 import { helpNotDismissed } from "./help-requests";
 import { buildWorkspaceTerminalRequest } from "./pipeline-start";
 import { loadHelpDismissed } from "./inbox";
 import { liveRunIn, sendToWorkspace } from "./assistant-dispatch";
 import { invalidateAssistantSnapshot } from "./project-assistant-run";
-import { buildDeskItems, loadDismissedDeskQuestions, relayText, type DeskItem, type DeskStep, type DeskTailInput } from "./assistant-queue";
-import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto } from "./types";
+import {
+  buildDeskItems,
+  isTailStaleAfterSave,
+  loadDismissedDeskQuestions,
+  looksLikeQuestion,
+  relayText,
+  type DeskItem,
+  type DeskStep,
+  type DeskTailInput,
+} from "./assistant-queue";
+import type { HelpItemDto, HelpRequestDto, ProjectConfigReadDto, RunDto, ScheduleDto, WorkspaceDto, WorkspaceHealthDto } from "./types";
 import type { OpenDispatch } from "./assistant-echo";
 
 function safe<T>(p: Promise<T>, fallback: T): Promise<T> {
@@ -46,7 +55,32 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
       .filter((s) => s.worktreePath)
       .map(async (s): Promise<DeskTailInput | null> => {
         const tail = await stepSessionTail(runs, s.worktreePath!).catch(() => null);
-        return tail ? { step: s, text: tail.text, busy: busy(s.worktreePath!) } : null;
+        if (!tail || tail.awaitingUser === false) return null;
+        const ws = mine.find((w) => w.name === s.workspaceName) ?? null;
+        if (ws?.mergedAt && looksLikeQuestion(tail.text)) {
+          // 已保存的步骤：AI 最后一句说在保存之前（或无时间戳且本轮已保存干净、无活标签），属于已收尾历史，不再当「等你的事」挂出来
+          const mergedMs = Date.parse(ws.mergedAt);
+          const tailMs = tail.at ? Date.parse(tail.at) : NaN;
+          if (Number.isFinite(mergedMs) && Number.isFinite(tailMs)) {
+            if (isTailStaleAfterSave({ mergedAt: ws.mergedAt, tailAt: tail.at })) return null;
+          } else {
+            const health = await safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null);
+            const run = latestStepSessionRun(runs, s.worktreePath!, IS_WINDOWS);
+            const hasLiveTab = live.some((r) => r.running && !r.shell && pathWithin(r.cwd, s.worktreePath!, IS_WINDOWS));
+            if (
+              isTailStaleAfterSave({
+                mergedAt: ws.mergedAt,
+                tailAt: tail.at,
+                runCreatedAt: run?.createdAt ?? null,
+                ahead: health?.ahead ?? null,
+                hasLiveTab,
+              })
+            ) {
+              return null;
+            }
+          }
+        }
+        return { step: s, text: tail.text, busy: busy(s.worktreePath!), awaitingUser: tail.awaitingUser };
       }),
   );
   // 项目根对话、目标隔离副本对话等非步骤交互活：同样读最后一段话抓提问，就地原路转达
@@ -84,7 +118,7 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
         scoped = runs;
       }
       const tail = await stepSessionTail(scoped, r.cwd).catch(() => null);
-      if (!tail) return null;
+      if (!tail || tail.awaitingUser === false) return null;
       return {
         step: null,
         where: `对话「${r.title || "未命名"}」`,
@@ -93,6 +127,7 @@ export async function loadDesk(projectPath: string): Promise<DeskItem[]> {
         tabId: r.tabId,
         text: tail.text,
         busy: r.attention === "working" || r.attention === "confirm" || !!r.blocker,
+        awaitingUser: tail.awaitingUser,
       };
     }),
   );

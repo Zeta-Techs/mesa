@@ -57,3 +57,19 @@ test("latestStepSessionRun：最新 Run 尚无 sessionId 时绝不跨代倒退�
   const bound = [runs[0], { ...runs[1], sessionId: "new-sess" }];
   assert.equal(latestStepSessionRun(bound, "/w/lit-search", false)?.id, "new");
 });
+
+test("extractLastAssistantText：区分 AI 发言后用户是否已回复（tool_result 不算用户回复）", async () => {
+  const { extractLastAssistantText } = await import("../src/run-failure.ts");
+  const waiting = extractLastAssistantText([
+    { role: "user", timestamp: "2026-11-23T08:00:00Z", blocks: [{ kind: "text", text: "开始做吧" }] },
+    { role: "assistant", timestamp: "2026-11-23T08:05:00Z", blocks: [{ kind: "text", text: "这两篇要保留吗？" }] },
+    { role: "user", timestamp: "2026-11-23T08:05:01Z", blocks: [{ kind: "tool_result", text: "ok" }] },
+  ]);
+  assert.deepEqual(waiting, { text: "这两篇要保留吗？", at: "2026-11-23T08:05:00Z", awaitingUser: true });
+
+  const answered = extractLastAssistantText([
+    { role: "assistant", timestamp: "2026-11-23T08:05:00Z", blocks: [{ kind: "text", text: "这两篇要保留吗？" }] },
+    { role: "user", timestamp: "2026-11-23T08:06:00Z", blocks: [{ kind: "text", text: "保留第一篇" }] },
+  ]);
+  assert.deepEqual(answered, { text: "这两篇要保留吗？", at: "2026-11-23T08:05:00Z", awaitingUser: false });
+});

@@ -37,7 +37,6 @@ import { mergeMesaChecks } from "./outline-check";
 import { loadOutlineCheck, loadStepMesaChecks, loadStepWritingChecks } from "./research-report-load";
 import { stepKind } from "./step-kind";
 import { loadSkillProvides, type SkillProvides } from "./skill-slots";
-import { followupFiles } from "./step-loop";
 import { reviewingStep, reviewRoundFocus } from "./assistant-brief";
 import { renderProjectMap, type MapEntry } from "./project-map";
 import { builtinTaskCatalogLines } from "./builtin-tasks";
@@ -180,6 +179,9 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
   const steps: SnapshotStep[] = await Promise.all(
     (cfg?.steps ?? []).map(async (s, index) => {
       const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
+      const archivedMerged = !ws
+        ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived" && !!w.mergedAt) ?? null)
+        : null;
       const base = {
         index,
         name: s.name,
@@ -189,6 +191,9 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
         worktreePath: ws?.worktreePath ?? null,
       };
       if (!ws) {
+        if (archivedMerged) {
+          return { ...base, state: "已保存进项目（工作副本已归档）", failure: null, checks: [], reviewNotes: null };
+        }
         return { ...base, state: s.seedComplete ? "已完成（示例预置）" : "还没开始", failure: null, checks: [], reviewNotes: null };
       }
       const [health, checks, reviewNotes] = await Promise.all([
@@ -202,11 +207,14 @@ export async function gatherSnapshot(projectPath: string, focus: AssistantFocus 
       if (health?.conflict) stateText = "有冲突，等你在评审里处理";
       else if (attention === "working") stateText = "AI 正在干活";
       else if (attention === "confirm") stateText = "AI 在等你确认";
-      else if (ws.mergedAt && health?.ahead === 0) stateText = "已保存进项目";
+      else if (ws.mergedAt && (health?.ahead ?? 0) === 0) stateText = "已保存进项目";
       else if (failure) stateText = "出错了";
       else if ((health?.ahead ?? 0) > 0) stateText = "做完了等你评审、保存进项目";
       else if (attention === "done") stateText = "AI 这一轮说完了，等你看";
       else stateText = health?.uncommitted ? "进行中，工作副本里有没保存的改动" : "进行中";
+      if (ws.staleUpstream && attention !== "working" && attention !== "confirm" && !health?.conflict && stateText !== "出错了") {
+        stateText += `（上游「${ws.staleUpstream}」有新保存的内容待跟进）`;
+      }
       return { ...base, state: stateText, failure, checks, reviewNotes };
     }),
   );
@@ -339,15 +347,19 @@ export async function gatherBriefInput(projectPath: string, since: string | null
   const steps: BriefStep[] = await Promise.all(
     (cfg?.steps ?? []).map(async (s, index): Promise<BriefStep> => {
       const ws = mine.find((w) => w.name === s.workspaceName && w.status !== "archived") ?? null;
+      const archivedMerged = !ws
+        ? (mine.find((w) => w.name === s.workspaceName && w.status === "archived" && !!w.mergedAt) ?? null)
+        : null;
       const n = index + 1;
-      if (!ws) return { n, name: s.name, state: s.seedComplete ? "saved" : "idle", needsHuman: 0 };
-      const [health, checks] = await Promise.all([
-        safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null),
-        stepChecks(s, ws.worktreePath, projectPath),
-      ]);
-      const pendingUpstream = health?.behind
-        ? (await safe(invoke<string[]>("workspace_incoming", { id: ws.id }), [] as string[])).some((f) => followupFiles([f]).length > 0)
-        : false;
+      if (!ws) {
+        if (archivedMerged) return { n, name: s.name, state: "saved", mergedAt: archivedMerged.mergedAt, needsHuman: 0 };
+        return { n, name: s.name, state: s.seedComplete ? "saved" : "idle", needsHuman: 0 };
+      }
+      const health = await safe(invoke<WorkspaceHealthDto>("workspace_health", { id: ws.id }), null as WorkspaceHealthDto | null);
+      // 上游待跟进只认后端按步骤顺序算出的 ws.staleUpstream（与步进器 / 步骤卡同一真源）：
+      // 不能拿 health.behind / workspace_incoming 判定，否则下游步骤合并或主分支后续提交会让第 1 步在内的所有已保存步骤全误报「有前面步骤新保存的内容待跟进」
+      const staleUpstream = ws.staleUpstream ?? null;
+      const pendingUpstream = Boolean(staleUpstream);
       const attention = stepAttention(ws, live, IS_WINDOWS);
       const failure = latestRunFailure(runs, ws.worktreePath, IS_WINDOWS)?.reason ?? null;
       const state: BriefStep["state"] =
@@ -355,15 +367,18 @@ export async function gatherBriefInput(projectPath: string, since: string | null
           ? "working"
           : attention === "confirm"
             ? "confirm"
-            : ws.mergedAt && health?.ahead === 0
-              ? "saved"
-              : failure
-                ? "failed"
-                : (health?.ahead ?? 0) > 0 || health?.conflict
-                  ? "review"
-                  : "open";
-      const needsHuman = checks.filter((c) => c.status === "needs_human").length;
-      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman, pendingUpstream };
+            : health?.conflict
+              ? "review"
+              : ws.mergedAt && (health?.ahead ?? 0) === 0
+                ? "saved"
+                : failure
+                  ? "failed"
+                  : (health?.ahead ?? 0) > 0
+                    ? "review"
+                    : "open";
+      const needsHuman =
+        state === "saved" ? 0 : (await stepChecks(s, ws.worktreePath, projectPath)).filter((c) => c.status === "needs_human").length;
+      return { n, name: s.name, state, failure, mergedAt: ws.mergedAt ?? null, needsHuman, pendingUpstream, staleUpstream };
     }),
   );
   const workMode = projects.find((p) => samePath(p.path, projectPath, IS_WINDOWS))?.workMode;

@@ -5,8 +5,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { IS_WINDOWS } from "./hotkeys";
-import { aiReportsFailure, latestStepSessionRun } from "./run-failure";
-import type { ChatMessageDto, ConversationPageDto, RunDto, SessionMetaDto } from "./types";
+import { aiReportsFailure, extractLastAssistantText, latestStepSessionRun } from "./run-failure";
+import type { ConversationPageDto, RunDto, SessionMetaDto } from "./types";
 
 export { latestStepSessionRun };
 
@@ -15,24 +15,12 @@ export interface StepTail {
   flagged: boolean;
   at: string | null;
   runId?: string | null;
+  /** AI 这句之后还没有用户正文回复；已回复时调度台不再当成「对话里在问你」 */
+  awaitingUser?: boolean;
 }
 
 const cache = new Map<string, { at: number; value: StepTail | null }>();
 const TTL_MS = 30_000;
-
-function lastAssistantText(messages: readonly ChatMessageDto[]): { text: string; at: string | null } | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    if (m.role !== "assistant") continue;
-    const text = m.blocks
-      .filter((b) => b.kind === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
-    if (text) return { text, at: m.timestamp };
-  }
-  return null;
-}
 
 export async function stepSessionTail(
   runs: readonly RunDto[],
@@ -54,10 +42,10 @@ export async function stepSessionTail(
         before: null,
         around: null,
       });
-      const last = lastAssistantText(page.messages);
+      const last = extractLastAssistantText(page.messages);
       if (last) {
         const text = last.text.length > 700 ? `…${last.text.slice(-700)}` : last.text;
-        value = { text, flagged: aiReportsFailure(last.text), at: last.at, runId: run.id };
+        value = { text, flagged: aiReportsFailure(last.text), at: last.at, runId: run.id, awaitingUser: last.awaitingUser };
       }
     }
   } catch {

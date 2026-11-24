@@ -91,3 +91,33 @@ export function failureSnippet(text: string): string {
   const t = hit.trim();
   return t.length > 50 ? `${t.slice(0, 50)}…` : t;
 }
+
+export interface TailMessageLike {
+  role: string;
+  timestamp: string | null;
+  blocks: readonly { kind: string; text: string }[];
+}
+
+/** 从会话最后一页提取最后一条有正文的 AI 发言，并判断其后是否已有用户正文回复（已回复则不再算「在等用户」） */
+export function extractLastAssistantText(
+  messages: readonly TailMessageLike[],
+): { text: string; at: string | null; awaitingUser: boolean } | null {
+  let userRepliedAfter = false;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "user") {
+      if (m.blocks.some((b) => b.kind === "text" && b.text.trim().length > 0)) {
+        userRepliedAfter = true;
+      }
+      continue;
+    }
+    if (m.role !== "assistant") continue;
+    const text = m.blocks
+      .filter((b) => b.kind === "text")
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+    if (text) return { text, at: m.timestamp, awaitingUser: !userRepliedAfter };
+  }
+  return null;
+}

@@ -263,6 +263,8 @@ export default function ProjectAssistantPanel({
 
   // 派活回音补了一条（巡视在 ProjectAssistantHost）：开着就重读记录，新的回音接在最后
   const echoTick = useAppStore((s) => s.assistantEchoTick);
+  const helpTick = useAppStore((s) => s.helpRefreshTick);
+  const briefSinceRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open || !projectPath || echoTick === 0) return;
     let stale = false;
@@ -272,16 +274,36 @@ export default function ProjectAssistantPanel({
       })
       .catch(() => {});
     // 派出去的活有了进展：卡和常用问题跟着换（since 沿用这次打开时的）
-    gatherBriefInput(projectPath, brief?.since ?? null)
+    const since = briefSinceRef.current;
+    gatherBriefInput(projectPath, since)
       .then((input) => {
-        if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since: brief?.since ?? null });
+        if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since });
       })
       .catch(() => {});
     return () => {
       stale = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [echoTick, open, projectPath]);
+
+  // 常驻侧栏开着期间定期刷新「现在的情况」：在左侧保存/跟进步骤或人工请求变动后，右侧卡片自动跟上，不必开关面板重拉
+  useEffect(() => {
+    if (!open || !projectPath) return;
+    let stale = false;
+    const refresh = () => {
+      const since = briefSinceRef.current;
+      gatherBriefInput(projectPath, since)
+        .then((input) => {
+          if (!stale) setBrief({ lines: briefLines({ ...input, knowledgeEmpty: input.knowledgeEmpty && !draftDismissed(projectPath) }), asks: quickAsks(input), since });
+        })
+        .catch(() => {});
+    };
+    if (helpTick > 0) refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => {
+      stale = true;
+      window.clearInterval(timer);
+    };
+  }, [open, projectPath, helpTick]);
 
   function markSeenNow(targetPath: string | null) {
     if (!targetPath) return;
@@ -297,6 +319,7 @@ export default function ProjectAssistantPanel({
     let stale = false;
     setError(null);
     setFreshAt(null);
+    setBrief(null);
     // 一打开就先把项目记录整理好，问项目类问题时不再等这一段
     prefetchSnapshot(projectPath);
     setBriefOff(false);
@@ -306,6 +329,7 @@ export default function ProjectAssistantPanel({
     } catch {
       /* 存不了就只列现状 */
     }
+    briefSinceRef.current = since;
     // 停留满 4 秒再把「上次打开」拨到现在：顺手打开一眼就关或切项目时，不把还没看清的变化冲掉
     const openedAt = new Date().toISOString();
     const seenTimer = window.setTimeout(() => {

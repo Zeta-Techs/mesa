@@ -191,3 +191,28 @@ test("步骤待跟进与定时任务后台跟进不明都进「现在的情况�
   assert.deepEqual(uncertain.action, { kind: "project", step: null, text: "schedule", label: "去定时任务核对" });
   assert.ok(lines.some((l) => l.text === "目标「图表核对」做完了，等你验收"), "同为 project 动作但 text 不同，不会互相去重吃掉");
 });
+
+test("上游待跟进按真实上游名提示：第 1 步和运行中步骤不误报，且跨时区比较上次打开时间不误判", () => {
+  const lines = briefLines({
+    ...base,
+    since: "2026-11-22T09:00:00.000Z",
+    steps: [
+      { n: 1, name: "文献检索与筛选", state: "saved", mergedAt: "2026-11-22T02:25:02Z", needsHuman: 0, pendingUpstream: true },
+      { n: 2, name: "文献精读与笔记", state: "working", needsHuman: 0, pendingUpstream: true, staleUpstream: "文献检索与筛选" },
+      { n: 3, name: "综述大纲", state: "saved", mergedAt: "2026-11-22T08:00:00Z", needsHuman: 0, pendingUpstream: true, staleUpstream: "文献精读与笔记" },
+    ],
+    goals: [
+      // +08:00 的 10:12 实际是 02:12Z，早于 since（09:00Z），不能因字符串比大小误报
+      { name: "早先完成的目标", status: "completed", updatedAt: "2026-11-22T10:12:15+08:00" },
+      // +08:00 的 17:30 实际是 09:30Z，晚于 since（09:00Z），应当列出
+      { name: "刚刚完成的目标", status: "completed", updatedAt: "2026-11-22T17:30:00+08:00" },
+    ],
+  });
+  assert.deepEqual(
+    lines.map((l) => l.text),
+    [
+      "第 3 步「综述大纲」有「文献精读与笔记」新保存的内容待跟进",
+      "目标「刚刚完成的目标」已验收完成",
+    ],
+  );
+});
