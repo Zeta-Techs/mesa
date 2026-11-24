@@ -26,13 +26,15 @@ export function stepDispatchStatus(input: {
   return { text: input.liveOpen ? "这一轮说完了，等你看" : "停下了，没看到新的改动", tone: "idle" };
 }
 
-export function echoText(rec: Pick<DispatchRecord, "target" | "step" | "title" | "mode">, phase: DispatchPhase): string {
+export function echoText(rec: Pick<DispatchRecord, "target" | "step" | "title" | "mode" | "taskId">, phase: DispatchPhase): string {
   const what = rec.target === "step" ? `派给第 ${rec.step} 步的「${rec.title}」` : `派出去的「${rec.title}」`;
   switch (phase) {
     case "review":
       return rec.target === "step"
         ? `${what}做完了，等你评审、保存进项目。[[去评审:${rec.step}]]`
-        : `${what}做完了，在项目页的待验收里等你验收。[[项目页]]`;
+        : rec.taskId
+          ? `${what}做完了，在项目页的待验收里等你验收。[[项目页|goal:${rec.taskId}]]`
+          : `${what}做完了，在项目页的待验收里等你验收。[[项目页]]`;
     case "failed":
       return rec.target === "goal"
         ? `${what}没做成（上次运行失败）。想知道原因可以直接问我「为什么失败了」；要接着做，点下面的「接着做」。`

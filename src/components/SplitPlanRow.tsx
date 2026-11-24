@@ -8,6 +8,8 @@ import { draftSplitPlan, replyNotice, splitEligibility } from "../split-draft";
 import { batchProgress, liveBatches, readBatches, writeBatches, type BatchProgress, type SplitBatch } from "../split-batch";
 import { useAppStore } from "../store";
 import { toast } from "../toast";
+import { samePath } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
 import type { ProjectDto, TaskDto } from "../types";
 
 const BATCH_TONE: Record<BatchProgress["tone"], string> = {
@@ -44,6 +46,16 @@ export default function SplitPlanRow({
   /** 批准过的几批与各自进度（split-batch.ts）：开了的几路都收场时回报一次，人点「知道了」才收 */
   const [batches, setBatches] = useState<{ batch: SplitBatch; progress: BatchProgress }[]>([]);
   const [batchOpen, setBatchOpen] = useState<string | null>(null);
+  const splitDraftReq = useAppStore((s) => s.splitDraftReq);
+  const setSplitDraftReq = useAppStore((s) => s.setSplitDraftReq);
+
+  useEffect(() => {
+    if (!splitDraftReq || !samePath(splitDraftReq.projectRoot, projectPath, IS_WINDOWS)) return;
+    setRequest(splitDraftReq.text);
+    setAsking(true);
+    setNotice(null);
+    setSplitDraftReq(null);
+  }, [splitDraftReq, projectPath, setSplitDraftReq]);
 
   async function loadBatches() {
     const list = liveBatches(readBatches(projectPath), Date.now());

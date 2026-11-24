@@ -588,3 +588,19 @@ test("快照里 Mesa 核对的项带位置和说明，拦下的排前面", () =>
   assert.match(block, /\[待你判断·Mesa 核对\] 同一块子图用了两次（outline\.md:83）：第 45 行与第 83 行/);
   assert.match(block, /\[待你判断·AI 判断\] AI 说这句撑不住（outline\.md）/);
 });
+
+test("动作直达验收与问答文件路径提取：提取项目内相对路径、排除 URL/绝对路径/越界路径", async () => {
+  const { extractReferencedPaths } = await import("../src/project-assistant.ts");
+  const { actions } = parseAssistantAnswer("做完了。[[项目页|goal:task-88]]", 3);
+  assert.deepEqual(actions, [{ kind: "project", step: null, text: "goal:task-88", label: "去验收" }]);
+
+  const paths = extractReferencedPaths(
+    "建议核对 `output/review-final.pdf`、`manuscript/review-report.md:12-30`、submission/figure-permissions.md，" +
+      "不要带 /etc/passwd、../secret.txt、https://example.com/a.pdf、.ccode/project.toml。",
+  );
+  assert.deepEqual(paths, [
+    "output/review-final.pdf",
+    "manuscript/review-report.md",
+    "submission/figure-permissions.md",
+  ]);
+});

@@ -1,16 +1,17 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Send } from "lucide-react";
-import { compactFieldClass, ghostActionClass, primaryActionClass } from "./PageFrame";
+import { Send, X } from "lucide-react";
+import { compactFieldClass, ghostActionClass, primaryActionClass, secondaryActionClass } from "./PageFrame";
 import { dispatchStatus, type DispatchRecord, type DispatchTone } from "../assistant-dispatch";
 import { relTime } from "../rel-time";
 import { useAppStore } from "../store";
 import SavePackModal from "./SavePackModal";
 import OrderScheduleRow from "./OrderScheduleRow";
-import { builtinTaskMethod, findBuiltinTask } from "../builtin-tasks";
+import { BUILTIN_TASKS, builtinTaskMethod, findBuiltinTask } from "../builtin-tasks";
 import { suggestPackParams, workOrderScheduleIntent, workOrderToStep } from "../work-order-pack";
 import { parseOrderPaths, workOrderGoalText, type WorkOrder } from "../project-assistant";
 import { toast } from "../toast";
+import type { SkillDto, TaskPackDto } from "../types";
 
 /** 可省的几栏（派活单 v2）：看的时候没写就不显示，改的时候都给框 */
 const TEXT_FIELDS: { key: "deliver" | "done" | "assumptions" | "mustAsk"; label: string }[] = [
@@ -49,6 +50,11 @@ export default function WorkOrderCard({
   workMode,
   steps,
   onDispatch,
+  onReviewGoal,
+  onReviewStep,
+  onPreread,
+  onResumeGoal,
+  onAskWhy,
 }: {
   order: WorkOrder;
   /** 派过了的记录；没派为 null */
@@ -57,6 +63,11 @@ export default function WorkOrderCard({
   workMode?: string | null;
   steps?: readonly { name: string }[];
   onDispatch: (order: WorkOrder) => Promise<void>;
+  onReviewGoal?: (taskId: string) => void;
+  onReviewStep?: (step: number) => void;
+  onPreread?: (record: DispatchRecord) => void;
+  onResumeGoal?: (taskId: string) => void;
+  onAskWhy?: (record: DispatchRecord) => void;
 }) {
   const [draft, setDraft] = useState<WorkOrder>(order);
   // 依据材料按一行一个改，存回时同一套规则拆（绝对路径、.. 一律去掉）
@@ -69,9 +80,27 @@ export default function WorkOrderCard({
   const [status, setStatus] = useState<{ text: string; tone: DispatchTone; phase?: string } | null>(null);
   const [savingPack, setSavingPack] = useState(false);
   const [missingPaths, setMissingPaths] = useState<Set<string>>(new Set());
+  const [availableSkills, setAvailableSkills] = useState<string[] | null>(null);
+  const [availablePacks, setAvailablePacks] = useState<string[] | null>(null);
   const shown = record ? { ...draft, title: record.title } : draft;
   const stepName = shown.target === "step" && shown.step ? steps?.[shown.step - 1]?.name : undefined;
   const to = shown.target === "step" ? `第 ${shown.step} 步${stepName ? `「${stepName}」` : ""}的 AI` : "新目标（隔离副本里做，做完验收）";
+
+  useEffect(() => {
+    if (!editing || record || (availableSkills !== null && availablePacks !== null)) return;
+    let stale = false;
+    void Promise.all([
+      invoke<SkillDto[]>("list_skills").catch(() => [] as SkillDto[]),
+      invoke<TaskPackDto[]>("list_task_packs").catch(() => [] as TaskPackDto[]),
+    ]).then(([skills, packs]) => {
+      if (stale) return;
+      setAvailableSkills(skills.map((s) => s.name));
+      setAvailablePacks(packs.map((p) => p.name));
+    });
+    return () => {
+      stale = true;
+    };
+  }, [editing, record, availableSkills, availablePacks]);
 
   const activeInputsKey = (!record ? (editing ? parseOrderPaths(inputsText) : (shown.inputs ?? [])) : []).join("\n");
   useEffect(() => {
@@ -255,6 +284,86 @@ export default function WorkOrderCard({
               />
             </label>
           ))}
+          <label className="block">
+            <span className="mb-1 block text-xs text-l3">按任务（可省）</span>
+            <select
+              className={`${compactFieldClass} w-full`}
+              aria-label="按任务"
+              value={draft.basedOn ?? ""}
+              onChange={(e) => setDraft({ ...draft, basedOn: e.target.value || undefined })}
+            >
+              <option value="">不按固定任务（通用做法）</option>
+              {draft.basedOn &&
+                !BUILTIN_TASKS.some((t) => t.name === draft.basedOn) &&
+                !(availablePacks ?? []).includes(draft.basedOn) && (
+                  <option value={draft.basedOn}>{draft.basedOn}</option>
+                )}
+              <optgroup label="内置科研任务">
+                {BUILTIN_TASKS.map((t) => (
+                  <option key={t.id} value={t.name}>
+                    {t.name}
+                  </option>
+                ))}
+              </optgroup>
+              {(availablePacks ?? []).length > 0 && (
+                <optgroup label="我的任务">
+                  {(availablePacks ?? []).map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+          </label>
+          <div className="block">
+            <span className="mb-1 block text-xs text-l3">用到的技能（可省）</span>
+            {(draft.skills ?? []).length > 0 && (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {(draft.skills ?? []).map((sk) => (
+                  <span
+                    key={sk}
+                    className="inline-flex items-center gap-1 rounded-full border border-hairline bg-inset px-2 py-0.5 text-micro text-l2"
+                  >
+                    {sk}
+                    <button
+                      type="button"
+                      className="text-l4 hover:text-l1"
+                      aria-label={`移除技能 ${sk}`}
+                      onClick={() => {
+                        const next = (draft.skills ?? []).filter((x) => x !== sk);
+                        setDraft({ ...draft, skills: next.length ? next : undefined });
+                      }}
+                    >
+                      <X size={10} strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <select
+              className={`${compactFieldClass} w-full`}
+              aria-label="添加技能"
+              value=""
+              onChange={(e) => {
+                const picked = e.target.value;
+                if (!picked) return;
+                const cur = draft.skills ?? [];
+                if (!cur.includes(picked)) setDraft({ ...draft, skills: [...cur, picked].slice(0, 8) });
+              }}
+            >
+              <option value="">
+                {availableSkills === null ? "正在读取已装技能…" : "＋ 从已装技能添加…"}
+              </option>
+              {(availableSkills ?? [])
+                .filter((sk) => !(draft.skills ?? []).includes(sk))
+                .map((sk) => (
+                  <option key={sk} value={sk}>
+                    {sk}
+                  </option>
+                ))}
+            </select>
+          </div>
         </div>
       ) : !expanded ? (
         <div className="space-y-1 text-sm leading-6">
@@ -315,6 +424,39 @@ export default function WorkOrderCard({
               {relTime(record.at)}派出 · {record.mode === "mail" ? "留话给开着的 AI" : record.mode === "resume" ? "接回那一步的对话开跑" : "记成目标开工"}
             </p>
             <p className={status ? TONE_CLASS[status.tone] : "text-l3"}>现在：{status?.text ?? "正在看…"}</p>
+            {status?.phase === "review" && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {record.mode === "goal" && record.taskId && onReviewGoal && (
+                  <button type="button" className={secondaryActionClass} onClick={() => onReviewGoal(record.taskId!)}>
+                    去验收
+                  </button>
+                )}
+                {record.target === "step" && record.step && onReviewStep && (
+                  <button type="button" className={secondaryActionClass} onClick={() => onReviewStep(record.step!)}>
+                    去评审第 {record.step} 步
+                  </button>
+                )}
+                {onPreread && (
+                  <button type="button" className={ghostActionClass} onClick={() => onPreread(record)}>
+                    先帮我过一遍
+                  </button>
+                )}
+              </div>
+            )}
+            {(status?.phase === "failed" || status?.phase === "stopped") && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {record.mode === "goal" && record.taskId && onResumeGoal && (
+                  <button type="button" className={secondaryActionClass} onClick={() => onResumeGoal(record.taskId!)}>
+                    接着做
+                  </button>
+                )}
+                {onAskWhy && (
+                  <button type="button" className={ghostActionClass} onClick={() => onAskWhy(record)}>
+                    问问为什么
+                  </button>
+                )}
+              </div>
+            )}
             {(accepted || shown.schedule) && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {accepted && (

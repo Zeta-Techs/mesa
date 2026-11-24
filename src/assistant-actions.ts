@@ -11,7 +11,7 @@ import { beginAskAi } from "./components/AskAiModal";
 import { MISMATCH_EVENT, type MismatchReport } from "./chat-mismatch";
 import { DISCUSS_BINDING_SLOT, slotPrefs } from "./project-agents";
 import { liveRunIn, stepWorkspace } from "./assistant-dispatch";
-import type { AssistantAction } from "./project-assistant";
+import { extractReferencedPaths, type AssistantAction } from "./project-assistant";
 import type { AssistantTurn } from "./project-assistant-run";
 import type { ProjectDto } from "./types";
 import { assistantShortcutTarget } from "./assistant-dock";
@@ -70,12 +70,20 @@ export async function runAssistantAction(
       return;
     }
     case "split":
-      // 拆成几路做在工作台项目分组下；方案要人批准，这里只把需求复制好
+      // 拆成几路做在工作台项目分组下：直接带需求跳工作台并展开拆分输入框（同时复制一份到剪贴板兜底）
       void navigator.clipboard?.writeText(action.text).catch(() => {});
-      toast("要拆的事已复制，在工作台项目分组下点「拆成几个目标同时做…」粘进去", "info");
+      leave();
+      st.setSplitDraftReq({ projectRoot: path, text: action.text, token: Date.now() });
+      st.setPage("workbench");
+      toast("已带需求切到工作台，点「出方案」即可起草拆法", "info");
       return;
     case "project":
-      if (action.text === "schedule") {
+      if (action.text.startsWith("goal:")) {
+        const taskId = action.text.slice(5).trim();
+        if (taskId) {
+          st.setTaskReviewReq({ projectRoot: path, taskId });
+        }
+      } else if (action.text === "schedule") {
         st.setProjectFocusReq({ projectRoot: path, focus: "schedule", token: Date.now() });
       }
       toProject();
@@ -92,7 +100,17 @@ export async function runAssistantAction(
       leave();
       st.setPage("settings");
       return;
-    case "discuss":
+    case "discuss": {
+      const refs = turn ? extractReferencedPaths(`${turn.question}\n${turn.answer}`, 6) : [];
+      const existing = refs.length
+        ? await invoke<string[]>("assistant_missing_paths", { projectRoot: path, paths: refs })
+            .then((missing) => refs.filter((r) => !missing.includes(r)))
+            .catch(() => refs)
+        : [];
+      const extraRefs = existing.filter((r) => !action.text.includes(r));
+      const prompt = extraRefs.length
+        ? `${action.text}\n\n相关文件：\n${extraRefs.map((r) => `- ${r}`).join("\n")}`
+        : action.text;
       leave();
       beginAskAi({
         path: "",
@@ -100,7 +118,7 @@ export async function runAssistantAction(
         cwd: path,
         root: path,
         reuseKey: `assistant-discuss:${path}:${Date.now()}`,
-        prompt: action.text,
+        prompt,
         workMode:
           project?.workMode === "coding" || project?.workMode === "office" || project?.workMode === "research"
             ? project.workMode
@@ -108,11 +126,23 @@ export async function runAssistantAction(
         ...slotPrefs(st.profiles, project, DISCUSS_BINDING_SLOT),
       });
       return;
-    case "consult":
-      // 研讨（2026-11-11）：去对话页打开发起弹层，问题预填；请谁、材料由人在弹层里定
+    }
+    case "consult": {
+      // 研讨（2026-11-11）：原地打开发起弹层，问题与本轮提到的项目文件材料一起预填；请谁由人在弹层里定
+      const refs = turn ? extractReferencedPaths(`${turn.question}\n${turn.answer}`, 6) : [];
+      const existing = refs.length
+        ? await invoke<string[]>("assistant_missing_paths", { projectRoot: path, paths: refs })
+            .then((missing) => refs.filter((r) => !missing.includes(r)))
+            .catch(() => [] as string[])
+        : [];
       leave();
-      st.openConsult({ projectRoot: path, question: action.text });
+      st.openConsult({
+        projectRoot: path,
+        question: action.text,
+        ...(existing.length ? { materials: existing.map((p) => ({ path: p, range: "" })) } : {}),
+      });
       return;
+    }
     case "report": {
       const report: MismatchReport = {
         title: action.text,

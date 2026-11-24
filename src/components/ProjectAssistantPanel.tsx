@@ -39,7 +39,18 @@ import RememberCard from "./RememberCard";
 import AssistantDesk from "./AssistantDesk";
 import GuideSectionModal from "./GuideSectionModal";
 import type { DispatchRecord, DispatchResult } from "../assistant-dispatch";
-import { briefLines, quickAsks, SUMMARY_QUESTION, summaryDue, summaryFocus, type BriefLine, type QuickAsk } from "../assistant-brief";
+import {
+  briefLines,
+  goalReviewPrereadFocus,
+  quickAsks,
+  reviewPrereadFocus,
+  reviewPrereadQuestion,
+  SUMMARY_QUESTION,
+  summaryDue,
+  summaryFocus,
+  type BriefLine,
+  type QuickAsk,
+} from "../assistant-brief";
 import { assistantDayLabel, sameLocalDay } from "../assistant-dock";
 import {
   askProjectAssistant,
@@ -51,7 +62,9 @@ import {
   type AssistantFocus,
   type AssistantTurn,
 } from "../project-assistant-run";
-import type { ProjectDto } from "../types";
+import type { ProjectDto, RunDto, TaskDto } from "../types";
+import { samePath } from "../path-utils";
+import { IS_WINDOWS } from "../hotkeys";
 import { saveClipboardImage } from "../clipboard-image";
 import { firstImageItem, imageExtFromMime } from "../terminal-input";
 
@@ -401,6 +414,58 @@ export default function ProjectAssistantPanel({
     }
   }
 
+  /** 派活卡上点「先帮我过一遍」：按步骤或目标隔离副本发起只读预读 */
+  async function prereadDispatch(rec: DispatchRecord) {
+    if (!projectPath || busy) return;
+    if (rec.target === "step" && rec.step) {
+      const name = steps?.[rec.step - 1]?.name ?? `第 ${rec.step} 步`;
+      const f = reviewPrereadFocus(rec.step, name, { worktree: rec.worktreePath ?? undefined });
+      await send(reviewPrereadQuestion(rec.step), f, "project");
+      return;
+    }
+    if (rec.mode === "goal" && rec.taskId) {
+      const [task, runs] = await Promise.all([
+        invoke<TaskDto | null>("task_get", { id: rec.taskId }).catch(() => null),
+        invoke<RunDto[]>("run_list", { projectRoot: projectPath }).catch(() => [] as RunDto[]),
+      ]);
+      const hit = runs
+        .filter((r) => !r.internal && r.taskId === rec.taskId && r.isolationPath && !samePath(r.isolationPath, projectPath, IS_WINDOWS))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      const name = task?.name ?? rec.title;
+      const f = goalReviewPrereadFocus(name, {
+        isolationPath: task?.workspaceCleared ? null : (hit?.isolationPath ?? null),
+        outputs: task?.outputPaths ?? [],
+      });
+      await send(`目标「${name}」做得怎么样，我验收时看哪？`, f, "project");
+    }
+  }
+
+  /** 派活卡上点「问问为什么」：直接带着该目标/步骤信息查原因 */
+  async function askWhyDispatch(rec: DispatchRecord) {
+    if (!projectPath || busy) return;
+    if (rec.target === "step" && rec.step) {
+      await send(
+        `派给第 ${rec.step} 步的「${rec.title}」为什么没做成？我该怎么办？`,
+        { title: `第 ${rec.step} 步「${rec.title}」`, detail: rec.worktreePath ? `工作副本：${rec.worktreePath}` : "" },
+        "project",
+      );
+      return;
+    }
+    const runs = await invoke<RunDto[]>("run_list", { projectRoot: projectPath }).catch(() => [] as RunDto[]);
+    const hit = rec.taskId
+      ? runs.filter((r) => !r.internal && r.taskId === rec.taskId).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      : undefined;
+    await send(
+      `目标「${rec.title}」为什么没做成或停下了？我该怎么办？`,
+      {
+        title: `目标「${rec.title}」`,
+        detail: hit?.isolationPath ? `这个目标的工作副本：${hit.isolationPath}` : "",
+        runId: hit?.id ?? null,
+      },
+      "project",
+    );
+  }
+
   async function send(
     question: string,
     withFocus: AssistantFocus | null,
@@ -677,6 +742,15 @@ export default function ProjectAssistantPanel({
               workMode={project?.workMode ?? null}
               steps={steps}
               onDispatch={(order) => dispatch(turn.at, order)}
+              onReviewGoal={(taskId) =>
+                onAction({ kind: "project", step: null, text: `goal:${taskId}`, label: "去验收" }, turn)
+              }
+              onReviewStep={(step) =>
+                onAction({ kind: "review", step, text: "", label: `去评审第 ${step} 步` }, turn)
+              }
+              onPreread={(rec) => void prereadDispatch(rec)}
+              onResumeGoal={(taskId) => void resume(taskId)}
+              onAskWhy={(rec) => void askWhyDispatch(rec)}
             />
           )}
           {parsed.actions.length > 0 && (

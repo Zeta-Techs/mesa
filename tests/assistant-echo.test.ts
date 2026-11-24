@@ -7,7 +7,11 @@ const step = { target: "step", step: 2, title: "修列名", mode: "mail" } as co
 
 test("回音文字：做完 / 失败 / 停了各一句，带去处按钮；已验收不说", () => {
   assert.match(echoText(goal, "review"), /派出去的「组会汇报」做完了，在项目页的待验收里等你验收。\[\[项目页\]\]/);
-  assert.match(echoText(step, "review"), /派给第 2 步的「修列名」做完了，等你评审、保存进项目。\[\[去评审:2\]\]/);
+  assert.match(
+    echoText({ ...goal, taskId: "task-42" }, "review"),
+    /派出去的「组会汇报」做完了，在项目页的待验收里等你验收。\[\[项目页\|goal:task-42\]\]/,
+  );
+  assert.match(step ? echoText(step, "review") : "", /派给第 2 步的「修列名」做完了，等你评审、保存进项目。\[\[去评审:2\]\]/);
   assert.match(echoText(goal, "failed"), /没做成.*为什么失败了/);
   assert.match(echoText(goal, "stopped"), /停下了/);
   assert.equal(echoText(goal, "accepted"), "");

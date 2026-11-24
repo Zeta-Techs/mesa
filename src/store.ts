@@ -935,6 +935,9 @@ interface AppState {
   /** 打开项目「定时任务」页签的新建弹层并预填（新建巡检技能）。派活单 2026-11-08 起改为一键建成（OrderScheduleRow），这条请求留给别的入口 */
   scheduleDraftReq: { projectRoot: string; name: string; intent: string; token: number } | null;
   setScheduleDraftReq: (req: AppState["scheduleDraftReq"]) => void;
+  /** 项目助手「拆成几个目标同时做…」：跳到工作台并在对应项目展开拆分输入框、预填需求（SplitPlanRow 消费并清空） */
+  splitDraftReq: { projectRoot: string; text: string; token: number } | null;
+  setSplitDraftReq: (req: AppState["splitDraftReq"]) => void;
   /** 替人按某个标签的「是否信任这个目录」菜单（调度台 / 手机，2026-11-06）：终端页交给那个标签读屏核对再回车 */
   trustAnswerReq: { tabId: string; accept: boolean; token: number } | null;
   setTrustAnswerReq: (req: AppState["trustAnswerReq"]) => void;
@@ -1414,6 +1417,8 @@ export const useAppStore = create<AppState>((set, get) => {
   bumpAssistantEchoTick: () => set((st) => ({ assistantEchoTick: st.assistantEchoTick + 1 })),
   scheduleDraftReq: null,
   setScheduleDraftReq: (req) => set({ scheduleDraftReq: req }),
+  splitDraftReq: null,
+  setSplitDraftReq: (req) => set({ splitDraftReq: req }),
   trustAnswerReq: null,
   setTrustAnswerReq: (req) => set({ trustAnswerReq: req }),
   assistantDocked: false,

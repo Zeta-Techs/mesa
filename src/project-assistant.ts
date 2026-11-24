@@ -46,14 +46,14 @@ const NEEDS_STEP = new Set<AssistantActionKind>(["step", "review", "mail"]);
 const NEEDS_TEXT = new Set<AssistantActionKind>(["mail", "split", "discuss", "consult", "report"]);
 export const MAX_ACTIONS = 3;
 
-export function actionLabel(kind: AssistantActionKind, step: number | null): string {
+export function actionLabel(kind: AssistantActionKind, step: number | null, text = ""): string {
   switch (kind) {
     case "step":
       return `看第 ${step} 步`;
     case "review":
       return `去评审第 ${step} 步`;
     case "project":
-      return "去项目页";
+      return text.startsWith("goal:") ? "去验收" : text === "schedule" ? "去定时任务核对" : "去项目页";
     case "agents":
       return "去 Agent 分工";
     case "profiles":
@@ -100,7 +100,8 @@ export function parseAssistantAnswer(answer: string, stepCount: number): { text:
       const key = `${kind}:${step ?? ""}`;
       if (seen.has(key) || actions.length >= MAX_ACTIONS) return "";
       seen.add(key);
-      actions.push({ kind, step, text: payload.slice(0, 2000), label: actionLabel(kind, step) });
+      const clipped = payload.slice(0, 2000);
+      actions.push({ kind, step, text: clipped, label: actionLabel(kind, step, clipped) });
       return "";
     })
     .replace(/[ \t]+\n/g, "\n")
@@ -589,6 +590,34 @@ export function parseOrderPaths(text: string): string[] {
     if (!out.includes(p)) out.push(p);
   }
   return out.slice(0, 30);
+}
+
+const PATH_EXT_RE = /\.(?:md|qmd|txt|csv|tsv|xlsx|xls|json|yaml|yml|toml|bib|ris|xml|docx|pdf|pptx|tex|py|r|sh|js|ts|png|svg|jpg|jpeg|webp|html)$/i;
+
+/** 从问答文本里提取提到的项目相对文件路径（给 [[商量]] / [[研讨]] 自动附材料，不带 URL、绝对路径与 `..`） */
+export function extractReferencedPaths(text: string, limit = 6): string[] {
+  if (!text) return [];
+  const candidates: string[] = [];
+  // 先抓反引号包裹的路径，再抓正文中带目录分隔符的常见文件路径
+  for (const m of text.matchAll(/`([^`\n]{2,160})`/g)) {
+    candidates.push(m[1].trim());
+  }
+  for (const m of text.matchAll(/(?:^|[\s（(「“【,，、。；;:：])((?:[A-Za-z0-9._\u4e00-\u9fff-]+\/)+[A-Za-z0-9._\u4e00-\u9fff-]+\.[A-Za-z]{1,6})(?=$|[\s）)」”】,，、。；;:：?!！？])/g)) {
+    candidates.push(m[1].trim());
+  }
+  const out: string[] = [];
+  for (const raw of candidates) {
+    const clean = raw
+      .replace(/^\.\//, "")
+      .replace(/\\/g, "/")
+      .replace(/:\d+(?:-\d+)?$/, "");
+    if (!clean || !PATH_EXT_RE.test(clean)) continue;
+    if (clean.startsWith("/") || clean.startsWith("~") || /^[a-zA-Z]:/.test(clean) || /^https?:\/\//i.test(clean)) continue;
+    if (clean.split("/").includes("..") || clean.startsWith(".ccode/")) continue;
+    if (!out.includes(clean)) out.push(clean);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function parseNames(text: string): string[] {

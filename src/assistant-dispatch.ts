@@ -64,8 +64,12 @@ async function resolveBasedOn(name: string | undefined): Promise<{ method: strin
   };
 }
 
-/** 第 n 步（从 1 数）和它开着的工作副本；没有就抛人话 */
-export async function stepWorkspace(projectPath: string, n: number) {
+/** 第 n 步（从 1 数）和它开着的工作副本；若已归档且给了确认回调则询问恢复后再继续，否则抛人话 */
+export async function stepWorkspace(
+  projectPath: string,
+  n: number,
+  opts?: { confirmRestore?: ConfirmFn | null },
+) {
   const read = await invoke<ProjectConfigReadDto>("read_project_config", { path: projectPath });
   const step = read.config.steps[n - 1];
   if (!step) throw new Error(`这个项目没有第 ${n} 步了`);
@@ -73,8 +77,26 @@ export async function stepWorkspace(projectPath: string, n: number) {
   const ws = workspaces.find(
     (w) => w.status !== "archived" && w.name === step.workspaceName && samePath(w.repoPath, projectPath, IS_WINDOWS),
   );
-  if (!ws) throw new Error(`第 ${n} 步还没开工作副本：先在项目页开始这一步`);
-  return { step, ws };
+  if (ws) return { step, ws };
+  const archived = workspaces.find(
+    (w) => w.status === "archived" && w.name === step.workspaceName && samePath(w.repoPath, projectPath, IS_WINDOWS),
+  );
+  if (archived) {
+    if (!opts?.confirmRestore) {
+      throw new Error(`第 ${n} 步「${step.name}」的工作副本已归档：请先在桌面项目页恢复工作副本后再派`);
+    }
+    const ok = await opts.confirmRestore(
+      `第 ${n} 步「${step.name}」的工作副本已归档。现在恢复它并把这张派活单送进去？`,
+      { confirmText: "恢复并派出" },
+    );
+    if (!ok) throw new Error("已取消：工作副本仍保持归档");
+    await invoke("restore_workspace", { id: archived.id });
+    const reloaded = await invoke<WorkspaceDto[]>("list_workspaces");
+    const restored = reloaded.find((w) => w.id === archived.id && w.status !== "archived");
+    if (!restored) throw new Error(`第 ${n} 步「${step.name}」的工作副本没恢复成功，请到项目页重试`);
+    return { step, ws: restored };
+  }
+  throw new Error(`第 ${n} 步还没开工作副本：先在项目页开始这一步`);
 }
 
 /** 那个目录里开着、正在干活或等着的 AI（不是回落的 shell）的运行 id */
@@ -87,7 +109,7 @@ export function liveRunIn(worktreePath: string): string | null {
 
 async function dispatchToStep(order: WorkOrder, projectPath: string, opts: OrderTextOptions, confirm: ConfirmFn | null): Promise<DispatchResult> {
   const n = order.step ?? 0;
-  const { step, ws } = await stepWorkspace(projectPath, n);
+  const { step, ws } = await stepWorkspace(projectPath, n, { confirmRestore: confirm });
   const sent = await sendToWorkspace(projectPath, ws, step.name, workOrderMessage(order, opts), { latest: true, confirm });
   const health = await invoke<{ ahead: number }>("workspace_health", { id: ws.id }).catch(() => null);
   const baseAhead = health?.ahead ?? 0;
