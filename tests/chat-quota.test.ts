@@ -84,13 +84,13 @@ function makeWalletRow(overrides: Partial<GatewayBalanceDto>): GatewayBalanceDto
   };
 }
 
-test("resolveChatQuotaView：订阅按最紧窗口分主次环与分档", () => {
+test("resolveChatQuotaView：订阅按最紧窗口换算剩余百分比与分档", () => {
   const profile = makeProfile({ id: "p-claude", agent: "claude-code", accountType: "official" });
   const view = resolveChatQuotaView(profile, [makePlanRow({})], []);
   assert.ok(view && view.kind === "plan");
   assert.equal(view.primary.window, "weekly");
   assert.equal(view.secondary?.window, "five_hour");
-  assert.equal(view.pct, 64);
+  assert.equal(view.remainPct, 36);
   assert.equal(view.tone, "ok");
 
   const dangerView = resolveChatQuotaView(
@@ -107,7 +107,7 @@ test("resolveChatQuotaView：订阅按最紧窗口分主次环与分档", () => 
   );
   assert.ok(dangerView && dangerView.kind === "plan");
   assert.equal(dangerView.primary.window, "five_hour");
-  assert.equal(dangerView.pct, 93);
+  assert.equal(dangerView.remainPct, 7);
   assert.equal(dangerView.tone, "danger");
 });
 
@@ -198,6 +198,6 @@ test("listSameAgentPeers：优先同类型且已用比例更低的备选号，�
     peers.map((p) => p.profile.id),
     ["a3", "a2", "g1"],
   );
-  assert.equal(peers[0].usedPct, 18);
+  assert.equal(peers[0].remainPct, 82);
   assert.equal(peers[1].tone, "warn");
 });

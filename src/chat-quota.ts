@@ -15,13 +15,14 @@ export type ChatQuotaView =
   | {
       kind: "plan";
       row: PlanQuotaDto;
-      /** 最紧的窗口（画在外环，决定数字与着色档位） */
+      /** 最紧的窗口（决定底栏单环与着色档位） */
       primary: PlanQuotaWindowDto;
-      /** 次窗口（画在内环，单窗供应商为 null） */
+      /** 次窗口（单窗供应商为 null） */
       secondary: PlanQuotaWindowDto | null;
-      /** 其余窗口按紧度排列（供浮层明细遍历） */
+      /** 全部窗口按紧度排列（供浮层明细遍历） */
       windows: PlanQuotaWindowDto[];
-      pct: number;
+      /** 最紧窗口的剩余百分比（0-100，满圈 = 余量充足） */
+      remainPct: number;
       tone: ChatQuotaTone;
     }
   | {
@@ -36,8 +37,13 @@ export type ChatQuotaView =
 export interface ChatQuotaPeer {
   profile: Profile;
   row: PlanQuotaDto | null;
-  usedPct: number | null;
+  remainPct: number | null;
   tone: ChatQuotaTone;
+}
+
+/** 将已用百分比换算为 0-100 的整数剩余百分比 */
+export function quotaRemainPercent(usedPercent: number): number {
+  return Math.min(100, Math.max(0, Math.round(100 - usedPercent)));
 }
 
 /** 仅依据本地配置判断这条连接是否「可能有」订阅余量或网关余额，用于决定是否需要后台静默拉取 */
@@ -69,14 +75,13 @@ export function resolveChatQuotaView(
     const ordered = planWindowsByTightness(planRow.windows);
     const primary = ordered[0];
     const secondary = ordered[1] ?? null;
-    const pct = Math.min(100, Math.max(0, Math.round(primary.usedPercent)));
     return {
       kind: "plan",
       row: planRow,
       primary,
       secondary,
       windows: ordered,
-      pct,
+      remainPct: quotaRemainPercent(primary.usedPercent),
       tone: quotaBarLevel(primary.usedPercent),
     };
   }
@@ -121,12 +126,12 @@ export function listSameAgentPeers(
       const row = findPlanRowForProfile(p, planRows) ?? null;
       const ordered = row && row.ok && row.windows.length > 0 ? planWindowsByTightness(row.windows) : [];
       const top = ordered[0] ?? null;
-      const usedPct = top ? Math.min(100, Math.max(0, Math.round(top.usedPercent))) : null;
+      const remainPct = top ? quotaRemainPercent(top.usedPercent) : null;
       const tone: ChatQuotaTone = top ? quotaBarLevel(top.usedPercent) : "ok";
       return {
         profile: p,
         row,
-        usedPct,
+        remainPct,
         tone,
         sameKind: p.accountType === current.accountType ? 0 : 1,
       };
@@ -134,16 +139,16 @@ export function listSameAgentPeers(
 
   peers.sort((a, b) => {
     if (a.sameKind !== b.sameKind) return a.sameKind - b.sameKind;
-    const aKnown = a.usedPct != null ? 0 : 1;
-    const bKnown = b.usedPct != null ? 0 : 1;
+    const aKnown = a.remainPct != null ? 0 : 1;
+    const bKnown = b.remainPct != null ? 0 : 1;
     if (aKnown !== bKnown) return aKnown - bKnown;
-    return (a.usedPct ?? 101) - (b.usedPct ?? 101);
+    return (b.remainPct ?? -1) - (a.remainPct ?? -1);
   });
 
-  return peers.slice(0, limit).map(({ profile, row, usedPct, tone }) => ({
+  return peers.slice(0, limit).map(({ profile, row, remainPct, tone }) => ({
     profile,
     row,
-    usedPct,
+    remainPct,
     tone,
   }));
 }

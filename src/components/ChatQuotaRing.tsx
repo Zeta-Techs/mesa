@@ -7,6 +7,7 @@ import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
   listSameAgentPeers,
   profileQuotaKind,
+  quotaRemainPercent,
   resolveChatQuotaView,
   type ChatQuotaTone,
 } from "../chat-quota";
@@ -108,11 +109,11 @@ async function fetchWalletBalance(force: boolean): Promise<GatewayBalanceDto[]> 
   return req;
 }
 
-/** 正常态静默中性灰，只有 ≥70%（警示）或 ≥90%（危急）才透出语义色 */
-function ringStrokeClass(tone: ChatQuotaTone, secondary = false): string {
+/** 正常态静默中性灰，只有剩余 ≤30%（警示）或 ≤10%（危急）才透出语义色 */
+function ringStrokeClass(tone: ChatQuotaTone): string {
   if (tone === "danger") return "text-err-text";
   if (tone === "warn") return "text-warn-text";
-  return secondary ? "text-l3" : "text-l2";
+  return "text-l2";
 }
 
 function textToneClass(tone: ChatQuotaTone): string {
@@ -121,96 +122,60 @@ function textToneClass(tone: ChatQuotaTone): string {
   return "text-l3";
 }
 
-/** 16px 微型同心双环（单窗时自动退化为单细环），形态与单环 ContextRing 做出清晰语义区隔 */
-function ConcentricMicroRing({
-  outerPct,
-  outerTone,
-  innerPct,
-  innerTone,
+/** 14px 极简细单环：画剩余比例（满圈 = 充足、快空变黄/红），中心留白干净不发挤 */
+function SingleMicroRing({
+  remainPct,
+  tone,
 }: {
-  outerPct: number;
-  outerTone: ChatQuotaTone;
-  innerPct?: number | null;
-  innerTone?: ChatQuotaTone;
+  remainPct: number;
+  tone: ChatQuotaTone;
 }) {
-  const dual = innerPct != null;
-  const r1 = dual ? 6.4 : 6;
-  const c1 = 2 * Math.PI * r1;
-  const p1 = Math.min(100, Math.max(0, outerPct));
-
-  const r2 = 3.5;
-  const c2 = 2 * Math.PI * r2;
-  const p2 = innerPct != null ? Math.min(100, Math.max(0, innerPct)) : 0;
-
+  const r = 5.4;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(100, Math.max(0, remainPct));
   return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className="size-4 shrink-0 -rotate-90">
+    <svg viewBox="0 0 14 14" aria-hidden="true" className="size-3.5 shrink-0 -rotate-90">
       <circle
-        cx="8"
-        cy="8"
-        r={r1}
+        cx="7"
+        cy="7"
+        r={r}
         fill="none"
-        strokeWidth={dual ? 1.65 : 1.8}
+        strokeWidth="1.5"
         stroke="currentColor"
         className="text-l1/12"
       />
-      {p1 > 0 && (
+      {p > 0 && (
         <circle
-          cx="8"
-          cy="8"
-          r={r1}
+          cx="7"
+          cy="7"
+          r={r}
           fill="none"
-          strokeWidth={dual ? 1.65 : 1.8}
+          strokeWidth="1.5"
           strokeLinecap="round"
           stroke="currentColor"
-          strokeDasharray={`${(c1 * p1) / 100} ${c1}`}
-          className={ringStrokeClass(outerTone)}
+          strokeDasharray={`${(c * p) / 100} ${c}`}
+          className={ringStrokeClass(tone)}
         />
-      )}
-      {dual && (
-        <>
-          <circle
-            cx="8"
-            cy="8"
-            r={r2}
-            fill="none"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="text-l1/10"
-          />
-          {p2 > 0 && (
-            <circle
-              cx="8"
-              cy="8"
-              r={r2}
-              fill="none"
-              strokeWidth={1.5}
-              strokeLinecap="round"
-              stroke="currentColor"
-              strokeDasharray={`${(c2 * p2) / 100} ${c2}`}
-              className={ringStrokeClass(innerTone ?? "ok", true)}
-            />
-          )}
-        </>
       )}
     </svg>
   );
 }
 
-/** 浮层内的 22px 单窗小环 */
-function PopoverMiniRing({ pct, tone }: { pct: number; tone: ChatQuotaTone }) {
-  const r = 8.5;
+/** 浮层内的 20px 细单环（同向画剩余比例） */
+function PopoverMiniRing({ remainPct, tone }: { remainPct: number; tone: ChatQuotaTone }) {
+  const r = 7.8;
   const c = 2 * Math.PI * r;
-  const p = Math.min(100, Math.max(0, pct));
+  const p = Math.min(100, Math.max(0, remainPct));
   return (
-    <svg viewBox="0 0 22 22" aria-hidden="true" className="size-[22px] shrink-0 -rotate-90">
-      <circle cx="11" cy="11" r={r} fill="none" strokeWidth="2.2" stroke="currentColor" className="text-l1/12" />
+    <svg viewBox="0 0 20 20" aria-hidden="true" className="size-5 shrink-0 -rotate-90">
+      <circle cx="10" cy="10" r={r} fill="none" strokeWidth="1.9" stroke="currentColor" className="text-l1/12" />
       {p > 0 && (
         <circle
-          cx="11"
-          cy="11"
+          cx="10"
+          cy="10"
           r={r}
           fill="none"
-          strokeWidth="2.2"
+          strokeWidth="1.9"
           strokeLinecap="round"
           stroke="currentColor"
           strokeDasharray={`${(c * p) / 100} ${c}`}
@@ -343,7 +308,7 @@ export default function ChatQuotaRing({
   const dataAt = planQuotaDataAt(view.row.queriedAt, view.row.fromCache);
 
   const compactLabel = isPlan
-    ? `${view.pct}%`
+    ? `${view.remainPct}%`
     : hideWallet
       ? formatBalanceAmountMasked(view.row.currency)
       : view.remainPct != null
@@ -353,8 +318,8 @@ export default function ChatQuotaRing({
           : "不限";
 
   const ariaLabel = isPlan
-    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}已用 ${view.pct}%，点开查看详情`
-    : `${view.row.gatewayName} 网关余额 ${compactLabel}，点开查看详情`;
+    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%，点开查看详情`
+    : `${view.row.gatewayName} 网关余额剩余 ${compactLabel}，点开查看详情`;
 
   const resetCardCount =
     isPlan && view.row.resetCardsSupported && view.row.resetCards.ok
@@ -363,10 +328,11 @@ export default function ChatQuotaRing({
 
   return (
     <>
+      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
       <button
         ref={btnRef}
         type="button"
-        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
@@ -382,20 +348,11 @@ export default function ChatQuotaRing({
         onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
         onMouseLeave={() => setTip(null)}
       >
-        {isPlan ? (
-          <ConcentricMicroRing
-            outerPct={view.primary.usedPercent}
-            outerTone={view.tone}
-            innerPct={view.secondary?.usedPercent ?? null}
-            innerTone={view.secondary ? quotaBarLevel(view.secondary.usedPercent) : undefined}
-          />
-        ) : (
-          <ConcentricMicroRing
-            outerPct={view.remainPct ?? 100}
-            outerTone={view.tone}
-          />
-        )}
-        <span className={`text-micro font-medium tabular-nums ${textToneClass(view.tone)}`}>
+        <SingleMicroRing
+          remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
+          tone={view.tone}
+        />
+        <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
           {compactLabel}
         </span>
       </button>
@@ -422,11 +379,12 @@ export default function ChatQuotaRing({
                   {view.windows.map((w) => {
                     const remain = planResetRemain(w.resetsAt, now);
                     const wt = quotaBarLevel(w.usedPercent);
+                    const rPct = quotaRemainPercent(w.usedPercent);
                     return (
                       <div key={w.window} className="flex items-center justify-between gap-3">
-                        <span>{planWindowLabel(w.window)}已用</span>
+                        <span>{planWindowLabel(w.window)}剩余</span>
                         <span className={wt === "ok" ? "text-l2" : textToneClass(wt)}>
-                          {Math.round(w.usedPercent)}%
+                          {rPct}%
                           {remain ? <span className="ml-1 text-micro text-l4">· {remain}</span> : null}
                         </span>
                       </div>
@@ -443,7 +401,7 @@ export default function ChatQuotaRing({
                         ? formatBalanceAmount(view.row.remaining, view.row.currency)
                         : "不限"}
                   </span>
-                  {view.usedPct != null ? `（已消耗 ${Math.round(view.usedPct)}%）` : ""}
+                  {view.remainPct != null ? `（剩余 ${Math.round(view.remainPct)}%）` : ""}
                 </div>
               )}
             </div>
@@ -503,38 +461,39 @@ export default function ChatQuotaRing({
                 </button>
               </div>
 
-              {/* 浮层主体：双窗微环明细 或 网关钱包余额 */}
+              {/* 浮层主体：各窗剩余小环明细 或 网关钱包余额 */}
               {isPlan ? (
                 <div className="mt-2.5 space-y-2.5">
                   {view.windows.map((w) => {
                     const wt = quotaBarLevel(w.usedPercent);
+                    const rPct = quotaRemainPercent(w.usedPercent);
                     const remain = planResetRemain(w.resetsAt, now);
                     const absPair = planAbsoluteQuotaPair(w.used, w.total);
                     return (
                       <div key={w.window} className="flex items-center gap-2.5">
-                        <PopoverMiniRing pct={w.usedPercent} tone={wt} />
+                        <PopoverMiniRing remainPct={rPct} tone={wt} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
-                            <span className="truncate text-l2">{planWindowLabel(w.window)}已用</span>
+                            <span className="truncate text-l2">{planWindowLabel(w.window)}剩余</span>
                             <span
-                              className={`shrink-0 font-semibold tabular-nums ${
+                              className={`shrink-0 font-medium tabular-nums ${
                                 wt === "ok" ? "text-l1" : textToneClass(wt)
                               }`}
                             >
-                              {Math.round(w.usedPercent)}%
+                              {rPct}%
                             </span>
                           </div>
                           {(remain || absPair) && (
                             <div className="mt-0.5 flex items-center justify-between gap-2 text-micro tabular-nums text-l4">
                               <span className="truncate">{remain ?? ""}</span>
-                              {absPair && <span className="shrink-0">{absPair}</span>}
+                              {absPair && <span className="shrink-0">已用 {absPair}</span>}
                             </div>
                           )}
                         </div>
                       </div>
                     );
                   })}
-                  {resetCardCount > 0 && view.pct >= 80 && (
+                  {resetCardCount > 0 && view.remainPct <= 20 && (
                     <div className="rounded-md bg-inset px-2 py-1 text-micro text-l3">
                       还有 {resetCardCount} 张重置卡可用，可在用量页使用
                     </div>
@@ -569,11 +528,9 @@ export default function ChatQuotaRing({
                           style={{ width: `${view.remainPct}%` }}
                         />
                       </div>
-                      {view.usedPct != null && (
-                        <div className="mt-1 text-micro tabular-nums text-l4">
-                          已消耗 {Math.round(view.usedPct)}%
-                        </div>
-                      )}
+                      <div className="mt-1 text-micro tabular-nums text-l4">
+                        剩余 {Math.round(view.remainPct)}%
+                      </div>
                     </>
                   )}
                 </div>
@@ -597,10 +554,10 @@ export default function ChatQuotaRing({
                         <span className="min-w-0 flex-1 truncate text-l2">{peer.profile.name}</span>
                         <span
                           className={`shrink-0 text-micro tabular-nums ${
-                            peer.usedPct == null ? "text-l4" : textToneClass(peer.tone)
+                            peer.remainPct == null ? "text-l4" : textToneClass(peer.tone)
                           }`}
                         >
-                          {peer.usedPct == null ? "未知" : `已用 ${peer.usedPct}%`}
+                          {peer.remainPct == null ? "未知" : `剩余 ${peer.remainPct}%`}
                         </span>
                       </button>
                     ))}
