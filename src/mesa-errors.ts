@@ -59,7 +59,8 @@ export function errorText(error: unknown): string {
  * No such file or directory、Not a directory），一条红色提示都没配上。这类只在紧跟着弹了红色提示时才记
  * （后端 project_assistant.rs is_routine_failure 同口径）。
  */
-const ROUTINE_RE = /\(os error 2\)|\(os error 20\)|No such file or directory|Not a directory|文件不存在或不可读|路径不可读/i;
+// Windows 上同一类是 3（找不到路径）与 267（目录名称无效：探的是文件），文字随系统语言（2026-11-25 补）
+const ROUTINE_RE = /\(os error 2\)|\(os error 20\)|\(os error 3\)|\(os error 267\)|No such file or directory|Not a directory|文件不存在或不可读|路径不可读/i;
 
 export function isRoutineFailure(message: string): boolean {
   return ROUTINE_RE.test(message);

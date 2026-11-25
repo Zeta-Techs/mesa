@@ -219,9 +219,13 @@ pub(crate) fn attach_notice(
 /// 例行的「没找到」（界面探文件在不在，没有就算了）：没配上红色提示的不记、读出时也滤掉（前端 mesa-errors.ts isRoutineFailure 同口径）。
 /// 2026-11-04 本机实证：一天记下的全是 read_file_preview / read_research_ledger / list_dir 的这一类，一条提示都没有
 pub(crate) fn is_routine_failure(message: &str) -> bool {
+    // Windows 上同一类「没找到」是 3（找不到路径）与 267（目录名称无效：探的是文件），文字随系统语言；
+    // 2026-11-25 前没收，Windows 每次启动都记下两条 list_dir（0.1.1 起每版都有）
     const ROUTINE: &[&str] = &[
         "(os error 2)",
         "(os error 20)",
+        "(os error 3)",
+        "(os error 267)",
         "No such file or directory",
         "Not a directory",
         "文件不存在或不可读",
@@ -2660,6 +2664,9 @@ mod tests {
         let rows: Vec<MesaErrorDto> = read_jsonl(&project_dir("/p/r").unwrap().join(ERRORS_FILE));
         assert_eq!(rows.len(), 2, "配上提示的例行失败、真正的失败都记");
         assert!(is_routine_failure("读取目录失败: Not a directory (os error 20)"));
+        assert!(is_routine_failure("读取目录失败: 系统找不到指定的路径。 (os error 3)"));
+        assert!(is_routine_failure("读取目录失败: 目录名称无效。 (os error 267)"));
+        assert!(!is_routine_failure("写入失败: 拒绝访问。 (os error 5)"));
         assert!(!is_routine_failure("路径不在项目/登记资源/工作区/终端目录范围内，拒绝读取"));
         let _ = fs::remove_dir_all(&tmp);
     }

@@ -60,6 +60,10 @@ test("例行的「没找到」认得出来（只在配上红色提示时才记�
   assert.equal(isRoutineFailure("路径不可读: No such file or directory (os error 2)"), true);
   assert.equal(isRoutineFailure("读取目录失败: Not a directory (os error 20)"), true);
   assert.equal(isRoutineFailure("文件不存在或不可读: x"), true);
+  assert.equal(isRoutineFailure("读取目录失败: 系统找不到指定的路径。 (os error 3)"), true);
+  assert.equal(isRoutineFailure("读取目录失败: 目录名称无效。 (os error 267)"), true);
+  assert.equal(isRoutineFailure("写入失败: 拒绝访问。 (os error 5)"), false);
+  assert.equal(isRoutineFailure("x (os error 32)"), false);
   assert.equal(isRoutineFailure("nothing added to commit"), false);
   assert.equal(isRoutineFailure("路径不在项目/登记资源/工作区/终端目录范围内，拒绝读取"), false);
 });
