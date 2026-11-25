@@ -757,8 +757,14 @@ pub(crate) fn extract_trycloudflare_url(line: &str) -> Option<String> {
     None
 }
 
+/// background_command().spawn() 在 Windows 上返回带诊断追踪的 TrackedChild，其他平台是 Child
+#[cfg(windows)]
+type TunnelChild = crate::process::TrackedChild;
+#[cfg(not(windows))]
+type TunnelChild = std::process::Child;
+
 struct CloudflareTunnel {
-    child: Arc<Mutex<std::process::Child>>,
+    child: Arc<Mutex<TunnelChild>>,
     pid: u32,
     url: String,
     local_port: u16,
