@@ -29,6 +29,11 @@ interface Layout {
   lead: RegExp | null;
   /** 工具调用那一行（它和它的续行都不进预览） */
   tool: RegExp;
+  /**
+   * 下一行紧跟着这种行时，这一行是工具头（不管长什么样）。Claude Code 2.1.326 跑命令时工具头写成说明文字「⏺ 写一个探针文件 · 2s」
+   * （行首 ⏺ 一闪一灭，灭时是两格空白），下一行才是「  ⎿  $ 命令」；原先认不出，说明文字被当成回复挂在预览里（2026-11-25 抓屏回放）
+   */
+  toolHeadAbove?: RegExp;
   /** 转圈、用时、提示、装饰行 */
   skip: RegExp;
   /**
@@ -159,6 +164,8 @@ const LAYOUTS: Record<string, Layout> = {
     tool: new RegExp(`^[⏺●]\\s+[A-Z][A-Za-z]*(?: [A-Z][A-Za-z]*)*\\(|${TOOL_SUMMARY.source}|${CLAUDE_GROUP.source}`),
     skip: CLAUDE_STATUS,
     wrapSkip: /^\s*⎿/,
+    // 被打断的那一行「⎿  Interrupted · …」、转圈下的「⎿  Tip: …」也紧跟在正文下面，不算工具头
+    toolHeadAbove: /^\s*⎿(?!\s*(?:Interrupted\b|Tip:))\s/,
     stderrNotice: /^⚠\s|⚠ claude\.ai connectors are disabled/,
     footNote: 24,
     indent: 2,
@@ -967,6 +974,10 @@ function readReply(
     if (inWrapSkip && t && raw.length - raw.trimStart().length > layout.indent && !layout.lead?.test(raw)) continue;
     inWrapSkip = Boolean(layout.wrapSkip?.test(raw));
     if (inWrapSkip || layout.skip.test(raw)) continue;
+    if (t && layout.toolHeadAbove?.test(region[at + 1] ?? "")) {
+      inTool = layout.lead !== null;
+      continue;
+    }
     if (layout.lead?.test(raw)) {
       inTool = false;
       const m = layout.lead.exec(raw);

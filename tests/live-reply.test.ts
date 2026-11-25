@@ -1572,3 +1572,19 @@ test("Qwen / Grok / Kimi 输入框上沿写着会话名也认得出（/rename �
   const kimi = ["  Session title set to: 名字", `  ╭${"─".repeat(40)} 名字 ─╮`, `  │ > ${" ".repeat(40)}│`, `  ╰${"─".repeat(46)}╯`];
   assert.equal(terminalHasInputBox(kimi, "kimi"), true);
 });
+
+test("Claude 2.1.326 工具头写成说明文字：「⏺ 说明」下一行紧跟「⎿  $ 命令」的不进预览；被打断的那行照常是回复", () => {
+  const rule = "─".repeat(60);
+  const box = [rule, "❯ ", rule, "  ⏵⏵ auto mode on (shift+tab to cycle)"];
+  const echo = ["❯ 跑一下", ""];
+  // 命令在跑：行首 ⏺ 亮着 / 灭了（两格空白）都一样
+  for (const head of ["⏺ 写一个探针文件 · 2s", "  写一个探针文件"]) {
+    assert.equal(extractLiveReply([...echo, head, "  ⎿  $ sleep 3; echo mesa > mesa_probe.txt", "", "✽ Philosophizing… (2s)", ...box], "claude-code"), null, head);
+  }
+  // 跑完接着回答：只留回答
+  const done = extractLiveReply([...echo, "  Ran 1 shell command", "", "⏺ 探针文件已经写好。", "", ...box], "claude-code");
+  assert.deepEqual(done?.lines, ["探针文件已经写好。"]);
+  // 回复说到一半被打断：最后一行下面紧跟「⎿  Interrupted」，它仍是回复
+  const cut = extractLiveReply([...echo, "⏺ 第一段说完了", "  第二段说到一半", "  ⎿  Interrupted · What should Claude do instead?", "", ...box], "claude-code");
+  assert.deepEqual(cut?.lines, ["第一段说完了", "第二段说到一半"]);
+});
