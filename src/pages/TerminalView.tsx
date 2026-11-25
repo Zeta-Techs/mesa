@@ -73,6 +73,7 @@ import { REPLAY_HEAD, REPLAY_TAIL, terminalReplayText } from "../terminal-replay
 import {
   hasAssistantText,
   mergeConversationPages,
+  keepSameMessages,
   slidOutOfWindow,
   localCommandOutput,
   localCommandRecord,
@@ -5383,7 +5384,7 @@ export const TerminalView = memo(function TerminalView({
           );
         }
       }
-      setConv(mergeConversationPages(olderRef.current, mergedMessages));
+      setConv((prev) => keepSameMessages(prev, mergeConversationPages(olderRef.current, mergedMessages)));
       const hasNewAssistantText = parsedMessages.some(
         (message) =>
           message.role !== "user" &&

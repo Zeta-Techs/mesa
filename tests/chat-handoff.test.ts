@@ -17,6 +17,7 @@ import {
   localCommandRecord,
   mergeLocalRecords,
   mergeConversationPages,
+  keepSameMessages,
   slidOutOfWindow,
   modelSwitchCommand,
   pendingAfterTurn,
@@ -460,4 +461,19 @@ test("会话文件里的权限档按家换算：Kimi 的 auto 是 Never Ask = �
   assert.equal(sessionModeTier("claude-code", "auto"), "auto");
   assert.equal(sessionModeTier("claude-code", "bypassPermissions"), "full");
   assert.equal(sessionModeTier("grok", "auto"), null, "没接的家不认");
+});
+
+test("轮询读回的消息没变就沿用原数组，变了才换", () => {
+  const msg = (role: "user" | "assistant", text: string) => ({ role, blocks: [{ kind: "text", text, toolName: null }], timestamp: "t", usage: null });
+  const prev = [msg("user", "问"), msg("assistant", "答")];
+  // 内容一样、对象是新读出来的：沿用原数组
+  assert.equal(keepSameMessages(prev as never, [msg("user", "问"), msg("assistant", "答")] as never), prev);
+  // 最后一条长了一截 / 多了一条：换新的
+  const longer = [msg("user", "问"), msg("assistant", "答完")];
+  assert.equal(keepSameMessages(prev as never, longer as never), longer);
+  const more = [...prev, msg("user", "再问")];
+  assert.equal(keepSameMessages(prev as never, more as never), more);
+  // 前面某条变了（不只看最后一条）
+  const edited = [msg("user", "改过的问"), msg("assistant", "答")];
+  assert.equal(keepSameMessages(prev as never, edited as never), edited);
 });

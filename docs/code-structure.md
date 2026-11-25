@@ -728,6 +728,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   chat-handoff.ts            # 聊天⇄终端交接：等确认有没有精确状态（confirmHandoffEvent）、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠会不会打开选择器、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
+                             # 轮询读回内容没变时沿用原数组 keepSameMessages（对话区不必重画）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
   chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，2026-11-15 升级，规则见 design-system「生成中那一行」）：旁路 activity / thinking
                              # > 会话里还没回结果的调用（已有那一行时 M▁ 直接领衔该行，状态栏不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考
@@ -966,7 +967,7 @@ tab-keys.ts                # 标签栏/分段控件键盘导航三件（tabNavDe
                              # 不满一屏自动补页）+ wasPrepended（聊天层前插判定，最新窗后滑不算）
   idle-preload.ts            # 启动后空闲时依次预载大块（preloadInIdle：一次一块、失败静默；App 里列运行页 / 项目页 / 文件预览编辑器 / PDF 阅读）
   virtual-window.ts          # 长对话只画视野附近（useVirtualWindow：搜索 pin 变更即时换窗，上下两块占位、按字数估高 / 画过记实高、往上接画按锚点从占位扣差额；跟底时钉在末尾 tailWindow、藏起来时不量不换；planWindow / remapWindow / tailWindow 纯逻辑可测）
-  stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏在用
+  stable-props.ts            # memoWithLatestFunctions：父组件每次传新闭包时仍能跳过重画（比较时函数算相等、交出去的是转发到最新闭包的固定函数）；终端页每标签的聊天层 / 状态栏、聊天层里的对话区在用
   polling.ts                 # 定时刷新统一口径（usePolling / pollEvery：窗口隐藏时停、回前台补一次、上一次没回来不叠；createPoller 纯逻辑可测）
 session-refresh.ts         # 会话列表刷新协调器 createSessionRefreshCoordinator（store.ts 唯一挂载）：普通刷新复用在途请求不叠轮；强制刷新开新代次，旧请求晚回不覆盖新列表（成功与失败两路同口径，旧请求的失败也不暴露给新调用者，等最新请求返回当前列表）（tests/session-refresh.test.ts）
   progressive-rows.ts        # 长列表分段渲染（useProgressiveRows：先画 150 行，离底三屏接下一段，换筛选回第一段；选中项在后面画到它）；对话页列表在用

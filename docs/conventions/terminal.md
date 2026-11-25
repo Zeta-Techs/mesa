@@ -40,7 +40,7 @@
   纯界面计时（倒计时、动画、相对时间刷新）。新增轮询先想有没有事件可听（`fs-changed`、`goal-review-ready` 等），没有再轮询。
 - **终端页里按标签画的组件不陪跑重画（2026-10-26）**：`TerminalPage` 在一个组件里给每个标签画聊天层、状态栏，回调都是内联闭包，
   `sessionByTab` 任何一个标签变（实时预览约 300ms 一次）整页重画。按标签画的重组件一律经 `memoWithLatestFunctions`
-  （`src/stable-props.ts`）包一层（现有 `StableChatSurface` / `StableTerminalStatusBar`）；props 里嵌着函数的对象 / 对象数组要在
+  （`src/stable-props.ts`）包一层（现有 `StableChatSurface` / `StableTerminalStatusBar`，聊天层里的对话区 `StableConversationView`——聊天层随实时预览逐帧重画，对话区不陪跑）；props 里嵌着函数的对象 / 对象数组要在
   `depths` 里写明深度，否则那个 prop 每次都算变了。**不要**改用 `memo` + 忽略函数的比较器：跳过重画后子组件手里是旧闭包。
   新加给这两个组件的 prop 若是每次渲染现算的对象（`(() => ({...}))()` 这类），同样补进 `depths`。
   **藏着的标签传 `frozen`（2026-10-26）**：没在看、也不在阅读区右栏的标签，聊天层与状态栏收到 `frozen` 就不重画（记录照常刷新、通知照常判断），

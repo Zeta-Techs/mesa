@@ -403,6 +403,19 @@ export function slidOutOfWindow(previous: ChatMessageDto[], next: ChatMessageDto
 }
 
 /** 向前翻页时把旧窗接到最新窗前面，按内容键去重（最新窗优先） */
+/**
+ * 轮询读回来的消息与现有的一样时沿用原数组：引用不变，聊天层（StableConversationView）不跟着重画。
+ * 生成中等回复时每 700ms 读一次会话文件，内容没变也是一份新数组，整段对话每次重新分段、重画（2026-11-25 打点）。
+ * 从末尾往前比，变化多在最后几条
+ */
+export function keepSameMessages(prev: ChatMessageDto[], next: ChatMessageDto[]): ChatMessageDto[] {
+  if (prev === next || prev.length !== next.length) return next;
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (prev[i] !== next[i] && JSON.stringify(prev[i]) !== JSON.stringify(next[i])) return next;
+  }
+  return prev;
+}
+
 export function mergeConversationPages(
   older: ChatMessageDto[],
   latest: ChatMessageDto[],

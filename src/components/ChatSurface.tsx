@@ -4,6 +4,7 @@ import { ArrowDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import ConversationView from "./ConversationView";
+import { memoWithLatestFunctions } from "../stable-props";
 import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageCaptionContext, ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
@@ -114,6 +115,12 @@ import {
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
 } from "../chat-channel";
+
+/**
+ * 对话区不陪 ChatSurface 重画（2026-11-25 打点）：实时预览逐帧放字、生成计时每秒一跳，ChatSurface 一直在重画，
+ * 原先整段对话（连带每条 Markdown）跟着逐帧重画；props 没变就跳过。queuedNote 里嵌着 action.onClick
+ */
+const StableConversationView = memoWithLatestFunctions(ConversationView, { queuedNote: 3 });
 
 export default function ChatSurface({
   messages,
@@ -462,6 +469,9 @@ export default function ChatSurface({
     const matches = messages.flatMap((message, index) => messageIdentity(message) === focus.identity ? [index] : []);
     return matches[matches.length - 1 - focus.fromEnd] ?? -1;
   }, [messages, focus]);
+  // 传给对话区的检索词：同一个引用（StableConversationView 只比一层）
+  const focusQuery = focus?.query;
+  const focusKeywords = useMemo(() => (focusQuery ? [focusQuery] : undefined), [focusQuery]);
   useEffect(() => {
     if (searchRequest) { followRef.current = false; setSearchOpen(true); }
   }, [searchRequest]);
@@ -1935,12 +1945,12 @@ export default function ChatSurface({
             <ChatImageEditContext.Provider value={editImage}>
             <ChatImageCaptionContext.Provider value={imageGen.captions}>
             <ChatStepStartContext.Provider value={stepStart}>
-            <ConversationView
+            <StableConversationView
               messages={shownMessages}
               stickToBottom={stickToBottom}
               cwd={cwd}
               focusIndex={focusIndex < 0 ? -1 : focusIndex - firstShown}
-              focusKeywords={focus ? [focus.query] : undefined}
+              focusKeywords={focusKeywords}
               focusRequest={focus?.seq ?? 0}
               working={generating || settling}
               awaiting={attention === "confirm" || channel?.turn?.status === "awaiting_approval"}
