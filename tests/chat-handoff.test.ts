@@ -18,6 +18,7 @@ import {
   mergeLocalRecords,
   mergeConversationPages,
   keepSameMessages,
+  settleHoldMs,
   slidOutOfWindow,
   modelSwitchCommand,
   pendingAfterTurn,
@@ -476,4 +477,17 @@ test("轮询读回的消息没变就沿用原数组，变了才换", () => {
   // 前面某条变了（不只看最后一条）
   const edited = [msg("user", "改过的问"), msg("assistant", "答")];
   assert.equal(keepSameMessages(prev as never, edited as never), edited);
+});
+
+test("一轮停下后留预览多久：这一轮还没有任何回复正文落盘就一直留（20 秒封顶），落了一部分 4 秒就撤", () => {
+  const m = (role: "user" | "assistant", blocks: { kind: string; text: string }[]) => ({
+    role, blocks: blocks.map((b) => ({ ...b, toolName: null })), timestamp: "t", usage: null,
+  });
+  const asked = [m("assistant", [{ kind: "text", text: "上一轮的回答" }]), m("user", [{ kind: "text", text: "再讲一段" }])];
+  // 会话文件还没追上：这一轮一个字都没落盘（上一轮的回答不算）
+  assert.equal(settleHoldMs(asked as never), 20000);
+  // 只落了思考、工具调用，正文还没来
+  assert.equal(settleHoldMs([...asked, m("assistant", [{ kind: "thinking", text: "想" }, { kind: "tool_use", text: "{}" }]), m("user", [{ kind: "tool_result", text: "ok" }])] as never), 20000);
+  // 已经落了一段正文：预览和记录可能对不齐，照旧 4 秒
+  assert.equal(settleHoldMs([...asked, m("assistant", [{ kind: "text", text: "先说一句" }])] as never), 4000);
 });

@@ -366,6 +366,22 @@ export function pendingAfterTurn(
   });
 }
 
+/**
+ * 一轮停下、会话文件还没追上时，聊天层把实时预览留多久（毫秒）。这一轮的回复正文一个字都还没落盘时，留着预览不会和记录重复，
+ * 一直留到会话文件带来新内容（或 20 秒）；已经落了一部分时，预览和记录可能对不齐，4 秒就撤，免得两份并排太久。
+ * 原先一律 4 秒：会话文件晚于 4 秒落盘时，回复整段消失约半秒再出来（2026-11-25 真 CLI 抓屏回放，九家同样）
+ */
+export function settleHoldMs(messages: readonly ChatMessageDto[]): number {
+  let lastUser = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "user" && m.blocks.some((b) => b.kind === "text")) lastUser = i;
+  });
+  const synced = messages
+    .slice(lastUser + 1)
+    .some((m) => m.role !== "user" && m.blocks.some((b) => b.kind === "text" && b.text.trim()));
+  return synced ? 4000 : 20000;
+}
+
 /** 斜杠发出后要不要露出 TUI：无参 /model、/models、/login 会唤选择器或登录页 */
 export function slashHandoff(
   text: string,

@@ -728,7 +728,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   chat-handoff.ts            # 聊天⇄终端交接：等确认有没有精确状态（confirmHandoffEvent）、卡住时的一句话 CHAT_NO_SESSION_TEXT、斜杠会不会打开选择器、
                              # 聊天头状态 chatHeaderStatus（未开始不写「等待会话文件」，tests/chat-handoff.test.ts）；
                              # 本地乐观消息放回解析结果的位置 placePendingUsers（排队中的接末尾，其余插在发送后的第一条新回复前）；
-                             # 轮询读回内容没变时沿用原数组 keepSameMessages（对话区不必重画）；
+                             # 轮询读回内容没变时沿用原数组 keepSameMessages（对话区不必重画）；一轮停下后留预览多久 settleHoldMs（这一轮还没正文落盘留到追上、20 秒封顶，否则 4 秒）；
                              # messageKey / chatMessageKey 有来源 id 用 id；HOOKS_AGENTS 键是 agent id（2026-10-20 改正 claude-code）
   chat-status.ts             # 生成中那一行「这一轮在做什么」（2026-10-21，2026-11-15 升级，规则见 design-system「生成中那一行」）：旁路 activity / thinking
                              # > 会话里还没回结果的调用（已有那一行时 M▁ 直接领衔该行，状态栏不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考

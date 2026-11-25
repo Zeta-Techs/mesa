@@ -73,6 +73,7 @@ import {
   chatMessageKey,
   CHAT_NO_SESSION_TEXT,
   composerShowsInterrupt,
+  settleHoldMs,
   slashHandoff,
 } from "../chat-handoff";
 import {
@@ -821,7 +822,7 @@ export default function ChatSurface({
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
-  // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
+  // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或时限到了，settleHoldMs）再收。
   // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
   // 停下与进入收尾在同一次渲染里定（下方 prevGenerating）：原先 settling 在停下后的副作用里才置上，中间提交一帧
   // working=false，这一轮先收起、下一帧又展开成生成中、追上后再收起，三次整段重画连成近一秒的卡顿（2026-11-25 实测）
@@ -830,10 +831,10 @@ export default function ChatSurface({
   /** 进入收尾那一刻的消息列表：之后会话文件带来新内容就算追上了 */
   const [settleBase, setSettleBase] = useState<ChatMessageDto[] | null>(null);
   useEffect(() => {
-    if (!settling) return;
-    const t = window.setTimeout(() => setSettling(false), 4000);
+    if (!settling || !settleBase) return;
+    const t = window.setTimeout(() => setSettling(false), settleHoldMs(settleBase));
     return () => window.clearTimeout(t);
-  }, [settling]);
+  }, [settling, settleBase]);
   // 实时预览：旁路流式 Markdown（Codex / Qwen / OpenCode）或终端读屏富文本（生成中与刚结束的那一会儿显示，追上了自动让位）
   const livePreviewMode: "markdown" | "screen" =
     liveReplySource ?? (channelDeliversLiveText(channel) ? "markdown" : "screen");
