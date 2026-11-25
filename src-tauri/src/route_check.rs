@@ -385,7 +385,36 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
     }
 }
 
-/// 真去访问一次：与启动同源的代理；没代理时显式直连（不让 reqwest 自己读进程环境里的代理变量）
+/// 单次探测请求：不需读地区时收到响应头即可判定连通，不浪费时间等 HTML 响应体
+async fn probe_once(client: &reqwest::Client, url: &str, reports_region: bool) -> ProbeOutcome {
+    let started = std::time::Instant::now();
+    match client.get(url).send().await {
+        Ok(resp) => {
+            let latency_ms = started.elapsed().as_millis() as u64;
+            let status = resp.status();
+            let body = if reports_region {
+                resp.text().await.unwrap_or_default()
+            } else {
+                String::new()
+            };
+            if reports_region && !status.is_success() && parse_trace_loc(&body).is_none() {
+                return ProbeOutcome::Failed(format!("HTTP {}", status.as_u16()));
+            }
+            ProbeOutcome::Ok {
+                loc: parse_trace_loc(&body),
+                ip: parse_trace_prefix(&body),
+                addr: body.lines().find_map(|l| l.strip_prefix("ip=")).map(|v| v.trim().to_string()),
+                latency_ms,
+            }
+        }
+        Err(e) if e.is_timeout() => ProbeOutcome::Timeout,
+        Err(e) if e.is_connect() => ProbeOutcome::Failed("连接被拒或中断".into()),
+        Err(e) => ProbeOutcome::Failed(short_error(&e)),
+    }
+}
+
+/// 真去访问一次：与启动同源的代理；没代理时显式直连（不让 reqwest 自己读进程环境里的代理变量）。
+/// 偶发超时时立刻重试一次，避免代理节点冷启动/瞬时抖动误报「连不上」
 async fn probe(url: &str, proxy: Option<&str>, reports_region: bool) -> ProbeOutcome {
     if let Some(p) = proxy {
         if p.trim_start().to_ascii_lowercase().starts_with("socks") {
@@ -406,26 +435,15 @@ async fn probe(url: &str, proxy: Option<&str>, reports_region: bool) -> ProbeOut
         Ok(c) => c,
         Err(e) => return ProbeOutcome::Failed(e.to_string()),
     };
-    let started = std::time::Instant::now();
-    match client.get(url).send().await {
-        Ok(resp) => {
-            let latency_ms = started.elapsed().as_millis() as u64;
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            if reports_region && !status.is_success() && parse_trace_loc(&body).is_none() {
-                return ProbeOutcome::Failed(format!("HTTP {}", status.as_u16()));
-            }
-            ProbeOutcome::Ok {
-                loc: parse_trace_loc(&body),
-                ip: parse_trace_prefix(&body),
-                addr: body.lines().find_map(|l| l.strip_prefix("ip=")).map(|v| v.trim().to_string()),
-                latency_ms,
-            }
-        }
-        Err(e) if e.is_timeout() => ProbeOutcome::Timeout,
-        Err(e) if e.is_connect() => ProbeOutcome::Failed("连接被拒或中断".into()),
-        Err(e) => ProbeOutcome::Failed(short_error(&e)),
+    match probe_once(&client, url, reports_region).await {
+        ProbeOutcome::Timeout => probe_once(&client, url, reports_region).await,
+        other => other,
     }
+}
+
+/// 缓存命中判定：只复用未过期的通过/待判断结果；`Block`（如偶发超时或代理刚切节点）绝不负缓存 5 分钟，每次启动现测
+fn usable_cached_route(dto: &RouteCheckDto, now: i64, max_age: u64) -> bool {
+    dto.verdict != Verdict::Block && now - dto.checked_at <= max_age as i64
 }
 
 fn short_error(e: &reqwest::Error) -> String {
@@ -478,7 +496,7 @@ pub async fn route_check(
     let cache_key = format!("{agent_id}|{}", profile_id.as_deref().unwrap_or(""));
     if let Some(max_age) = max_age_secs.filter(|s| *s > 0) {
         let cached = CACHE.lock().ok().and_then(|c| c.as_ref()?.get(&cache_key).cloned());
-        if let Some(dto) = cached.filter(|d| now_secs() - d.checked_at <= max_age as i64) {
+        if let Some(dto) = cached.filter(|d| usable_cached_route(d, now_secs(), max_age)) {
             return Ok(dto);
         }
     }
@@ -1019,5 +1037,33 @@ mod tests {
             assert!(p.unsupported_regions.contains(&"CN"));
         }
         assert_eq!(route_check_agents(), ["claude-code", "codex", "gemini", "cursor", "grok", "agy"].map(String::from).to_vec());
+    }
+
+    #[test]
+    fn route_cache_never_reuses_blocked_verdict() {
+        let make = |verdict: Verdict, checked_at: i64| RouteCheckDto {
+            agent: "agy".into(),
+            verdict,
+            stage: (verdict == Verdict::Block).then_some(Stage::Reach),
+            reason: String::new(),
+            proxy_source: ProxySource::Settings,
+            proxy: Some("http://127.0.0.1:7897".into()),
+            probe_host: "cloudcode-pa.googleapis.com".into(),
+            exit_region: None,
+            exit_region_name: None,
+            latency_ms: None,
+            usual_region: None,
+            usual_region_name: None,
+            region_changed: false,
+            service_says: None,
+            checked_at,
+        };
+        assert!(usable_cached_route(&make(Verdict::Pass, 1000), 1100, 300));
+        assert!(usable_cached_route(&make(Verdict::Review, 1000), 1100, 300));
+        assert!(!usable_cached_route(&make(Verdict::Pass, 1000), 1400, 300));
+        assert!(
+            !usable_cached_route(&make(Verdict::Block, 1000), 1005, 300),
+            "瞬时超时或拦截结果不得负缓存 5 分钟，须现场复测"
+        );
     }
 }
