@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { Minimize2 } from "lucide-react";
+import { Bot, Minimize2 } from "lucide-react";
 import { AGENTS } from "../types";
+import type { ContextSnapshot } from "../composer-assist";
 import {
   breakdownSupported,
   contextView,
@@ -85,10 +86,13 @@ export default function ContextRing({
   profileName = null,
   showPercent = false,
   imageBytes = null,
+  snapshot = null,
+  tokenLabel = null,
 }: {
-  ratio: number;
+  /** null = 模型窗口大小未知（改用 tokenLabel 文本触发，点开同样看本地分类/缓存复用/子智能体明细） */
+  ratio: number | null;
   used: number;
-  window: number;
+  window: number | null;
   agentId: string;
   /** 去读分类明细要的参数（context-breakdown.ts breakdownRequest）；null = 这家不提供或还没有会话 */
   breakdown?: ContextBreakdownRequest | null;
@@ -107,13 +111,19 @@ export default function ContextRing({
   showPercent?: boolean;
   /** Codex 会话里存的图（字节，session_image_bytes）：到 8MB 圆环变橙并在悬停 / 浮层里说明（2026-11-11） */
   imageBytes?: number | null;
+  /** 前端从会话消息现算的上一轮缓存复用 / 新增输入 / 压缩次数（所有 Agent 立即可用） */
+  snapshot?: ContextSnapshot | null;
+  /** 窗口未知时的按钮文案（如 "1.3 万 token"） */
+  tokenLabel?: string | null;
 }) {
   const r = 6;
   const c = 2 * Math.PI * r;
+  const hasWindow = Boolean(win && win > 0 && ratio !== null);
+  const safeRatio = ratio ?? 0;
   const heavy = imageWeightNote(imageBytes);
-  const warn = ratio >= 0.8 || heavy !== null;
+  const warn = (hasWindow && safeRatio >= 0.8) || heavy !== null;
   const stroke = warn ? warnColor : color;
-  const pct = Math.round(ratio * 100);
+  const pct = hasWindow ? Math.round(safeRatio * 100) : null;
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
   const ringRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -184,18 +194,28 @@ export default function ContextRing({
   }, [panel]);
 
   const light = typeof document !== "undefined" && (document.documentElement.dataset.theme ?? "").endsWith("-light");
-  const view = contextView(detail.state === "ok" ? detail.data : null, { used, window: win }, light);
+  const breakdownData = detail.state === "ok" ? detail.data : null;
+  const view = contextView(breakdownData, { used, window: win }, light);
   const usedRows = view.rows.filter((r) => r.tone !== "reserve" && r.tone !== "free");
   const capRows = view.rows.filter((r) => r.tone === "reserve" || r.tone === "free");
   const splitRows = usedRows.length > 1 && capRows.length > 0;
   const hasMeta = Boolean(totalTokens || profileName);
   const longHint = longContextHint(used);
   const supported = breakdownSupported(agentId);
+  const compactions = Math.max(breakdownData?.compactions ?? 0, snapshot?.compactions ?? 0);
+  const cacheRead = breakdownData?.cacheRead ?? snapshot?.cacheRead ?? 0;
+  const freshInput = breakdownData?.freshInput ?? snapshot?.freshInput ?? 0;
+  const cacheTotal = cacheRead + freshInput;
+  const subagents = breakdownData?.subagents ?? [];
   const note =
     detail.state === "ok"
-      ? "分类由 /context 估算，与实际略有出入"
+      ? agentId === "agy"
+        ? "分类来自本地会话日志与子智能体库（秒读估算）"
+        : "分类由 /context 估算，与实际略有出入"
       : detail.state === "loading"
-        ? `正在向 ${label} 要分类明细…`
+        ? agentId === "agy"
+          ? "正在读取本地上下文与子智能体明细…"
+          : `正在向 ${label} 要分类明细…`
         : detail.state === "error"
           ? `没读到分类明细：${detail.message}`
           : supported
@@ -215,20 +235,51 @@ export default function ContextRing({
   );
 
   return (
-    <button
-      ref={ringRef}
-      type="button"
-      className={`inline-flex ${showPercent ? "h-7 gap-1 px-1" : "size-6"} shrink-0 items-center justify-center rounded-md outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta ${
-        stroke ? "" : warn ? "text-warn-text" : "text-l3"
-      } ${className}`}
-      style={stroke ? { color: stroke } : undefined}
-      aria-label={`上下文已用 ${pct}%（${contextFmtTokens(used)} / ${contextFmtTokens(win)}），点开看明细`}
-      aria-haspopup="dialog"
-      aria-expanded={Boolean(panel)}
-      onClick={togglePanel}
-      onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
-      onMouseLeave={() => setTip(null)}
-    >
+    <>
+      <button
+        ref={ringRef}
+        type="button"
+        className={`inline-flex ${
+          !hasWindow ? "h-7 gap-1 px-1.5" : showPercent ? "h-7 gap-1 px-1" : "size-6"
+        } shrink-0 items-center justify-center rounded-md outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta ${
+          stroke ? "" : warn ? "text-warn-text" : "text-l3"
+        } ${className}`}
+        style={stroke ? { color: stroke } : undefined}
+        aria-label={
+          hasWindow && win
+            ? `上下文已用 ${pct}%（${contextFmtTokens(used)} / ${contextFmtTokens(win)}），点开看明细`
+            : `当前上下文 ${contextFmtTokens(used)} tokens，点开看明细`
+        }
+        aria-haspopup="dialog"
+        aria-expanded={Boolean(panel)}
+        onClick={togglePanel}
+        onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
+        onMouseLeave={() => setTip(null)}
+      >
+        {hasWindow ? (
+          <>
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r={r} fill="none" stroke={trackColor} strokeWidth="2" />
+              <circle
+                cx="8"
+                cy="8"
+                r={r}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeDasharray={`${c * safeRatio} ${c}`}
+                strokeLinecap="round"
+                transform="rotate(-90 8 8)"
+              />
+            </svg>
+            {showPercent && <span className="text-micro tabular-nums">{pct}%</span>}
+          </>
+        ) : (
+          <span className="text-micro tabular-nums text-l3">
+            {tokenLabel ?? `${contextFmtTokens(used)} token`}
+          </span>
+        )}
+      </button>
       {tip &&
         !panel &&
         typeof document !== "undefined" &&
@@ -243,10 +294,20 @@ export default function ContextRing({
               role="tooltip"
               className="ccode-float-surface w-max max-w-[16rem] rounded-lg border border-field px-2.5 py-2 text-xs shadow-lg"
             >
-              <div className={warn ? "text-warn-text" : "text-l1"}>上下文已用 {pct}%</div>
-              <div className="mt-0.5 tabular-nums text-l3">
-                {contextFmtTokens(used)} / {contextFmtTokens(win)} tokens
+              <div className={warn ? "text-warn-text" : "text-l1"}>
+                {hasWindow ? `上下文已用 ${pct}%` : "当前上下文"}
               </div>
+              <div className="mt-0.5 tabular-nums text-l3">
+                {hasWindow && win
+                  ? `${contextFmtTokens(used)} / ${contextFmtTokens(win)} tokens`
+                  : `${contextFmtTokens(used)} tokens`}
+              </div>
+              {cacheTotal > 0 && cacheRead > 0 && (
+                <div className="mt-0.5 text-micro tabular-nums text-l4">
+                  缓存复用 {fmtRatio(cacheRead / cacheTotal)}
+                  {compactions > 0 ? ` · 已压缩 ${compactions} 次` : ""}
+                </div>
+              )}
             </div>
           </div>,
           document.body,
@@ -262,17 +323,28 @@ export default function ContextRing({
               ref={panelRef}
               role="dialog"
               aria-label="上下文"
-              className="ccode-float-surface w-[20rem] overflow-hidden rounded-xl border border-field text-left text-sm shadow-lg"
+              className="ccode-float-surface w-[20.5rem] overflow-hidden rounded-xl border border-field text-left text-sm shadow-lg"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-3.5 pt-3.5 pb-3">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-medium text-l1">上下文</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium text-l1">上下文</span>
+                    {compactions > 0 && (
+                      <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l3">
+                        已压缩 {compactions} 次
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-baseline gap-1.5 tabular-nums">
                     <span className={`text-xs ${warn ? "text-warn-text" : "text-l3"}`}>
-                      {contextFmtTokens(used)} / {contextFmtTokens(win)}
+                      {hasWindow && win
+                        ? `${contextFmtTokens(used)} / ${contextFmtTokens(win)}`
+                        : `${contextFmtTokens(used)} tokens`}
                     </span>
-                    <span className={`font-medium ${warn ? "text-warn-text" : "text-l1"}`}>{pct}%</span>
+                    {hasWindow && (
+                      <span className={`font-medium ${warn ? "text-warn-text" : "text-l1"}`}>{pct}%</span>
+                    )}
                   </div>
                 </div>
                 {heavy && (
@@ -314,6 +386,81 @@ export default function ContextRing({
                     <div className="space-y-1.5">{view.rows.map((row) => renderRow(row, row.tone === "free"))}</div>
                   )}
                 </div>
+                {cacheTotal > 0 && (
+                  <div className="mt-2.5 space-y-1 border-t border-hairline/70 pt-2.5 text-xs tabular-nums leading-[18px]">
+                    <div className="flex items-center gap-2">
+                      <span className="size-1.5 shrink-0 rounded-full bg-cta" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 text-l2">缓存复用上下文</span>
+                      <span className="text-l2">{contextFmtTokens(cacheRead)}</span>
+                      <span className="w-[3.25rem] text-right text-l4">
+                        {fmtRatio(cacheRead / cacheTotal)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="size-1.5 shrink-0 rounded-full bg-l3" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 text-l2">本步新增输入</span>
+                      <span className="text-l2">{contextFmtTokens(freshInput)}</span>
+                      <span className="w-[3.25rem] text-right text-l4">
+                        {fmtRatio(freshInput / cacheTotal)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {subagents.length > 0 && (
+                  <div className="mt-2.5 border-t border-hairline/70 pt-2.5">
+                    <div className="mb-1.5 flex items-center gap-1.5 text-micro text-l3">
+                      <Bot size={12} strokeWidth={1.8} aria-hidden="true" />
+                      <span>子智能体上下文</span>
+                      <span className="rounded-full bg-inset px-1.5 py-px tabular-nums text-l4">
+                        {subagents.length}
+                      </span>
+                    </div>
+                    <div className="max-h-36 space-y-2 overflow-y-auto pr-0.5">
+                      {subagents.map((sub) => {
+                        const subPct =
+                          sub.window && sub.window > 0
+                            ? Math.min(100, Math.round((sub.used / sub.window) * 100))
+                            : null;
+                        return (
+                          <div key={sub.id} className="rounded-md bg-inset/70 px-2 py-1.5 text-xs">
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="min-w-0 flex-1 truncate font-medium text-l1" title={sub.title}>
+                                {sub.title}
+                              </span>
+                              {sub.model && (
+                                <span className="max-w-[6.5rem] shrink-0 truncate rounded bg-raised px-1 py-px text-micro text-l3">
+                                  {sub.model}
+                                </span>
+                              )}
+                              {subPct !== null && (
+                                <span className="shrink-0 text-micro tabular-nums text-l2">{subPct}%</span>
+                              )}
+                            </div>
+                            {subPct !== null && (
+                              <div className="mt-1 h-1 overflow-hidden rounded-full bg-field">
+                                <div
+                                  className="h-full rounded-full bg-cta/80"
+                                  style={{ width: `${subPct}%` }}
+                                />
+                              </div>
+                            )}
+                            <div className="mt-1 flex items-center justify-between gap-2 text-micro tabular-nums text-l4">
+                              <span>
+                                总 {contextFmtTokens(sub.totalTokens)}
+                                {sub.cacheHitPct != null ? ` · 缓存 ${sub.cacheHitPct}%` : ""}
+                              </span>
+                              <span>
+                                {sub.window && sub.window > 0
+                                  ? `${contextFmtTokens(sub.used)} / ${contextFmtTokens(sub.window)}`
+                                  : contextFmtTokens(sub.used)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
                 {longHint && (
                   <div className="mt-2.5 rounded-md bg-warn/50 px-2.5 py-1.5 text-xs leading-[18px] text-warn-text">
                     {longHint}
@@ -378,21 +525,6 @@ export default function ContextRing({
           </div>,
           document.body,
         )}
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-        <circle cx="8" cy="8" r={r} fill="none" stroke={trackColor} strokeWidth="2" />
-        <circle
-          cx="8"
-          cy="8"
-          r={r}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeDasharray={`${c * ratio} ${c}`}
-          strokeLinecap="round"
-          transform="rotate(-90 8 8)"
-        />
-      </svg>
-      {showPercent && <span className="text-micro tabular-nums">{pct}%</span>}
-    </button>
+    </>
   );
 }

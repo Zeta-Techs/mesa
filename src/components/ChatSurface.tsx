@@ -46,7 +46,7 @@ import { dropAskedEchoOffset, liveReplySupported, sameAsEarlierReply, sameAsPrev
 import { unsyncedMarkdownTail } from "../live-markdown";
 import { CUT_OFF_CONTINUE_TEXT } from "../terminal-tab-persistence";
 import { useRevealedText } from "../text-reveal";
-import { lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
+import { lastContextSnapshot, lastContextTokens, userTextHistory, type MesaCommand } from "../composer-assist";
 import { AGENTS, type ProjectDto } from "../types";
 import type {
   ChatMessageDto,
@@ -1410,7 +1410,8 @@ export default function ChatSurface({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [launchPickOpen, chatDir, storeProfiles, launchPick?.agentId, launchPick?.profileId],
   );
-  const contextUsed = lastContextTokens(messages);
+  const contextSnapshot = useMemo(() => lastContextSnapshot(messages), [messages]);
+  const contextUsed = contextSnapshot?.used ?? lastContextTokens(messages);
 
   // 回到一段很长的对话、缓存多半已过期：框上方提醒一句「这一发会整段重读，先压缩？」（prompt-cache.ts）。
   // 只提醒不拦：照常发送就照常发；点过「照常发送」同一轮不再说
@@ -1614,6 +1615,7 @@ export default function ChatSurface({
           onTuiCommand={onTuiCommand}
           onPicker={openPicker}
           contextUsed={contextUsed}
+          contextSnapshot={contextSnapshot}
           // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
           showRing={!metaSlotted}
           onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}

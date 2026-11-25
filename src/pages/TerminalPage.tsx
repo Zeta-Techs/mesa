@@ -78,7 +78,7 @@ import { closeAsksFirst } from "../run-caret";
 import { runLayout } from "../run-layout";
 import { sidebarChatTitle, type RailStep } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
-import { lastContextTokens, type MesaCommand } from "../composer-assist";
+import { lastContextSnapshot, lastContextTokens, type MesaCommand } from "../composer-assist";
 import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, lanesToHeal, type FanOutPending } from "../fan-out";
 import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
@@ -4382,6 +4382,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           tabActionsRef.current.get(t.id)?.runTuiCommand(cmd)
                         }
                         contextUsed={lastContextTokens(sessionByTab[t.id]?.conv ?? [])}
+                        contextSnapshot={lastContextSnapshot(sessionByTab[t.id]?.conv ?? [])}
                         onRelaunch={(patch) => tabActionsRef.current.get(t.id)?.relaunchWith(patch)}
                         colors={statusBarColors}
                         chatMetaRef={chatMetaRefFor(t.id)}

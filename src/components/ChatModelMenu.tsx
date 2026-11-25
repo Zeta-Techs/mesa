@@ -13,6 +13,7 @@ import { nonChatReason } from "../model-kinds";
 import { modelCapsLabel } from "../model-caps-label";
 import { clipBounds, pickPopoverSide, popoverRoom } from "../popover-side";
 import ContextRing from "./ContextRing";
+import type { ContextSnapshot } from "../composer-assist";
 import EffortMark from "./EffortMark";
 import { effortDepth } from "../effort-depth";
 import type { LaunchCombo } from "../launch-combos";
@@ -83,6 +84,8 @@ type RuntimeProps = {
   next?: NextLaunchPick | null;
   /** 上一轮请求喂进去的 token（输入 + 缓存），画上下文用量圆环用；没有为 null */
   contextUsed?: number | null;
+  /** 上一轮上下文快照（缓存复用 / 新增输入 / 压缩次数） */
+  contextSnapshot?: ContextSnapshot | null;
   /** 圆环画在芯片右边；芯片挂进底部状态栏时由状态栏画（它手里有本段用量和连接名），这里传 false */
   showRing?: boolean;
   /** 上下文浮层里的「压缩上下文」（斜杠面板 Mesa 组同一个动作；这家没有压缩命令或没在运行时不给） */
@@ -614,6 +617,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           breakdown={breakdownRequest(runtime?.status ?? null)}
           onCompact={runtime?.onCompact}
           imageBytes={imageBytes}
+          snapshot={runtime?.contextSnapshot ?? null}
         />
       )}
       <button

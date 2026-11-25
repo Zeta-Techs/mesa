@@ -6,6 +6,7 @@ import { AGENTS } from "../types";
 import { isTerminalIdle } from "../terminal-welcome";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import ContextRing from "./ContextRing";
+import type { ContextSnapshot } from "../composer-assist";
 import { breakdownRequest } from "../context-breakdown";
 import { slashCommandsFor } from "../slash-commands";
 import type { DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
@@ -70,6 +71,7 @@ export default function TerminalStatusBar({
   variant = "terminal",
   onTuiCommand,
   contextUsed = null,
+  contextSnapshot = null,
   onRelaunch,
   chatMetaRef,
 }: {
@@ -104,6 +106,8 @@ export default function TerminalStatusBar({
   onTuiCommand?: (cmd: string) => void;
   /** 上一轮请求喂进去的 token（输入 + 缓存）：两种变体右区都画上下文用量圆环（聊天变体 2026-10-23 起由这里画，模型芯片挂进来时不再自己画） */
   contextUsed?: number | null;
+  /** 上一轮上下文快照（缓存复用 / 本步新增 / 压缩次数） */
+  contextSnapshot?: ContextSnapshot | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
   /**
@@ -1135,14 +1139,25 @@ export default function TerminalStatusBar({
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
+              snapshot={contextSnapshot}
             />
-          ) : !ownHidden && usage && usageTotal(usage) > 0 ? (
-            <span
-              className="shrink-0 tabular-nums text-l3"
-              title={`${usageTitle(usage, fmtTokensZh)}${profileName ? `\n经「${profileName}」连接（额度、限流都按这条连接算）` : ""}`}
-            >
-              {fmtTokensZh(usageTotal(usage))} token
-            </span>
+          ) : !ownHidden && (contextSnapshot || (usage && usageTotal(usage) > 0)) ? (
+            <ContextRing
+              ratio={null}
+              used={contextSnapshot?.used ?? (usage ? usageTotal(usage) : 0)}
+              window={null}
+              agentId={status?.agentId ?? ""}
+              breakdown={breakdownRequest(status)}
+              onCompact={compact}
+              totalTokens={ringTotalTokens}
+              profileName={ringProfileName}
+              snapshot={contextSnapshot}
+              tokenLabel={
+                usage && usageTotal(usage) > 0
+                  ? `${fmtTokensZh(usageTotal(usage))} token`
+                  : undefined
+              }
+            />
           ) : null}
           {chatMetaRef && <span ref={chatMetaRightRef} className="flex min-w-0 items-center gap-1.5 leading-[18px] empty:hidden" />}
         </span>

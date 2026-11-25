@@ -1546,6 +1546,275 @@ pub(crate) fn agy_gemini_dir_for_session_file(
         .flatten()
 }
 
+/// 快速估算一段文本的 token 数（CJK 约 1.5 字/tok，ASCII 约 4 字节/tok），仅用于把已回报的真实总上下文按相对比例拆进各分类
+fn agy_estimate_text_tokens(text: &str) -> u64 {
+    if text.is_empty() {
+        return 0;
+    }
+    let mut cjk = 0u64;
+    let mut non_cjk_bytes = 0u64;
+    for ch in text.chars() {
+        if ch as u32 >= 0x2E80 {
+            cjk += 1;
+        } else {
+            non_cjk_bytes += ch.len_utf8() as u64;
+        }
+    }
+    ((cjk * 2).div_ceil(3)) + non_cjk_bytes.div_ceil(4)
+}
+
+fn agy_read_transcript_steps(path: &Path) -> Option<Vec<Value>> {
+    let raw = fs::read_to_string(path).ok()?;
+    let lines: Vec<String> = raw.lines().map(str::to_string).collect();
+    let steps = agy_dedup_steps(&lines);
+    (!steps.is_empty()).then_some(steps)
+}
+
+/// 从 Antigravity 单段会话的去重步骤里，计算末轮上下文（缓存复用 + 新增输入）、压缩次数及本地分项估算
+pub(crate) fn agy_analyze_transcript_context(
+    steps: &[Value],
+    window: u64,
+    subagents: Vec<crate::context_breakdown::SubagentContextDto>,
+) -> Option<crate::context_breakdown::ContextBreakdownDto> {
+    let mut last_cache_read = 0u64;
+    let mut last_fresh_input = 0u64;
+    let mut last_used = 0u64;
+    let mut prev_used: Option<u64> = None;
+    let mut compactions = 0u32;
+    let mut last_compact_idx: usize = 0;
+
+    for (idx, step) in steps.iter().enumerate() {
+        let stype = get_str(step, "type").unwrap_or("");
+        let upper = stype.to_ascii_uppercase();
+        if upper.contains("COMPACT") || upper.contains("CHECKPOINT") || upper.contains("SUMMAR") {
+            compactions = compactions.saturating_add(1);
+            last_compact_idx = idx;
+            prev_used = None;
+            continue;
+        }
+        if stype == "PLANNER_RESPONSE" {
+            if let Some(u) = agy_step_usage(step) {
+                let fresh = u.input.saturating_add(u.cache_write);
+                let cur_used = u.cache_read.saturating_add(fresh);
+                if cur_used > 0 {
+                    if let Some(prev) = prev_used {
+                        if prev >= 20_000 && cur_used < prev.saturating_mul(65) / 100 {
+                            compactions = compactions.saturating_add(1);
+                            last_compact_idx = idx;
+                        }
+                    }
+                    prev_used = Some(cur_used);
+                    last_cache_read = u.cache_read;
+                    last_fresh_input = fresh;
+                    last_used = cur_used;
+                }
+            }
+        }
+    }
+
+    if last_used == 0 {
+        return None;
+    }
+
+    let mut messages_est = 0u64;
+    let mut tools_est = 0u64;
+    let mut thinking_est = 0u64;
+    for step in &steps[last_compact_idx..] {
+        match get_str(step, "type").unwrap_or("") {
+            "USER_INPUT" => {
+                if let Some(raw) = get_str(step, "content") {
+                    let clean = agy_extract_user_text(raw).unwrap_or_else(|| raw.to_string());
+                    messages_est = messages_est.saturating_add(agy_estimate_text_tokens(&clean));
+                }
+            }
+            "PLANNER_RESPONSE" => {
+                if let Some(c) = get_str(step, "content") {
+                    messages_est = messages_est.saturating_add(agy_estimate_text_tokens(c));
+                }
+                if let Some(t) = get_str(step, "thinking").or_else(|| get_str(step, "thought")) {
+                    thinking_est = thinking_est.saturating_add(agy_estimate_text_tokens(t));
+                }
+                if let Some(calls) = step.get("tool_calls").and_then(|v| v.as_array()) {
+                    for call in calls {
+                        let name = get_str(call, "name").unwrap_or("");
+                        let args = agy_normalize_tool_args(call.get("args"));
+                        tools_est = tools_est
+                            .saturating_add(agy_estimate_text_tokens(name))
+                            .saturating_add(agy_estimate_text_tokens(&args));
+                    }
+                }
+            }
+            _ => {
+                if let Some(c) = get_str(step, "content") {
+                    let stripped = agy_strip_tool_headers(c);
+                    tools_est = tools_est.saturating_add(agy_estimate_text_tokens(&stripped));
+                }
+            }
+        }
+    }
+
+    let conv_est = messages_est
+        .saturating_add(tools_est)
+        .saturating_add(thinking_est);
+    let (msg_tok, tool_tok, think_tok, sys_tok) = if conv_est == 0 {
+        (0, 0, 0, last_used)
+    } else if conv_est <= last_used {
+        (messages_est, tools_est, thinking_est, last_used - conv_est)
+    } else {
+        // 文本粗估偏大时，按真实回报总上下文等比收敛，确保各类之和精确等于 last_used
+        let scale = |v: u64| ((v as u128 * last_used as u128) / conv_est as u128) as u64;
+        let m = scale(messages_est);
+        let t = scale(tools_est);
+        let th = scale(thinking_est);
+        let rem = last_used.saturating_sub(m.saturating_add(t).saturating_add(th));
+        (m.saturating_add(rem), t, th, 0)
+    };
+
+    let mut categories = Vec::new();
+    if msg_tok > 0 {
+        categories.push(crate::context_breakdown::ContextCategoryDto {
+            key: "Messages".into(),
+            tokens: msg_tok,
+        });
+    }
+    if tool_tok > 0 {
+        categories.push(crate::context_breakdown::ContextCategoryDto {
+            key: "Tool outputs".into(),
+            tokens: tool_tok,
+        });
+    }
+    if think_tok > 0 {
+        categories.push(crate::context_breakdown::ContextCategoryDto {
+            key: "Thinking".into(),
+            tokens: think_tok,
+        });
+    }
+    if sys_tok > 0 {
+        categories.push(crate::context_breakdown::ContextCategoryDto {
+            key: "System & tools".into(),
+            tokens: sys_tok,
+        });
+    }
+
+    Some(crate::context_breakdown::ContextBreakdownDto {
+        window,
+        used: last_used,
+        until_compact: None,
+        categories,
+        compactions: (compactions > 0).then_some(compactions),
+        cache_read: Some(last_cache_read),
+        fresh_input: Some(last_fresh_input),
+        subagents,
+    })
+}
+
+fn agy_collect_subagent_contexts(
+    agy_root: &Path,
+    parent_cid: &str,
+) -> Vec<crate::context_breakdown::SubagentContextDto> {
+    let db_path = agy_root.join("conversation_summaries.db");
+    let Some(conn) = open_opencode_db(&db_path) else {
+        return Vec::new();
+    };
+    let rows = query_rows(
+        &conn,
+        "SELECT conversation_id, title, preview FROM conversation_summaries WHERE parent_conversation_id = ?1 ORDER BY last_modified_time DESC LIMIT 8",
+        &[&parent_cid as &dyn rusqlite::ToSql],
+    );
+    let mut out = Vec::new();
+    for (names, vals) in rows {
+        let row = DbRow { names, vals };
+        let Some(cid) = row.as_str("conversation_id").filter(|s| valid_agy_cid(s.trim())) else {
+            continue;
+        };
+        let cid = cid.trim().to_string();
+        let Some(tx_path) = agy_resolve_live_transcript(agy_root, &cid) else {
+            continue;
+        };
+        let Some(steps) = agy_read_transcript_steps(&tx_path) else {
+            continue;
+        };
+        let mut last_used = 0u64;
+        let mut total_tokens = 0u64;
+        let mut total_in = 0u64;
+        let mut total_cache = 0u64;
+        let mut model: Option<String> = None;
+        for step in &steps {
+            if get_str(step, "type") != Some("PLANNER_RESPONSE") {
+                continue;
+            }
+            if let Some(m) = get_str(step, "model").filter(|s| !s.trim().is_empty()) {
+                model = Some(m.trim().to_string());
+            }
+            if let Some(u) = agy_step_usage(step) {
+                let ctx = u.cache_read.saturating_add(u.input).saturating_add(u.cache_write);
+                if ctx > 0 {
+                    last_used = ctx;
+                }
+                total_tokens = total_tokens
+                    .saturating_add(u.input)
+                    .saturating_add(u.output)
+                    .saturating_add(u.cache_read)
+                    .saturating_add(u.cache_write);
+                total_in = total_in.saturating_add(u.input);
+                total_cache = total_cache.saturating_add(u.cache_read);
+            }
+        }
+        if last_used == 0 && total_tokens == 0 {
+            continue;
+        }
+        let cache_denom = total_in.saturating_add(total_cache);
+        let cache_hit_pct = (cache_denom > 0 && total_cache > 0)
+            .then(|| ((total_cache as u128 * 100) / cache_denom as u128).min(100) as u8);
+        let title = row
+            .as_str("title")
+            .and_then(|t| usable_title(&t))
+            .or_else(|| row.as_str("preview").and_then(|p| usable_title(&p)))
+            .unwrap_or_else(|| cid.chars().take(8).collect());
+        let window = model
+            .as_deref()
+            .and_then(|m| crate::model_registry::model_context_size_known_for(m, None))
+            .and_then(|v| u64::try_from(v).ok());
+        out.push(crate::context_breakdown::SubagentContextDto {
+            id: cid,
+            title,
+            model,
+            used: last_used,
+            window,
+            total_tokens,
+            cache_hit_pct,
+        });
+    }
+    out
+}
+
+/// 纯本地只读读取 Antigravity 会话的上下文明细与子智能体汇总（不起子进程、不调用模型）
+pub(crate) fn agy_context_breakdown_local(
+    session_id: &str,
+    model: Option<&str>,
+) -> Result<crate::context_breakdown::ContextBreakdownDto, String> {
+    if !valid_agy_cid(session_id) {
+        return Err("还没有可读的对话".into());
+    }
+    let roots = SessionRoots::current().ok_or("找不到本机 Antigravity 会话目录")?;
+    for (agy_root, _) in agy_data_roots(&roots.agy) {
+        let Some(tx_path) = agy_resolve_live_transcript(&agy_root, session_id) else {
+            continue;
+        };
+        let Some(steps) = agy_read_transcript_steps(&tx_path) else {
+            continue;
+        };
+        let window = model
+            .and_then(|m| crate::model_registry::model_context_size_known_for(m, None))
+            .and_then(|v| u64::try_from(v).ok())
+            .unwrap_or(0);
+        let subagents = agy_collect_subagent_contexts(&agy_root, session_id);
+        return agy_analyze_transcript_context(&steps, window, subagents)
+            .ok_or_else(|| "当前会话还没有上下文用量记录".into());
+    }
+    Err("还没有找到这段对话的本地日志".into())
+}
+
 #[cfg_attr(test, allow(dead_code))]
 pub(crate) fn agy_session_gemini_dir(session_id: &str) -> Option<PathBuf> {
     if !valid_agy_cid(session_id) {

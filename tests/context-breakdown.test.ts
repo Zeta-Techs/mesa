@@ -19,9 +19,10 @@ const status = {
   model: "glm-5.3",
 };
 
-test("只有能在后台跑 /context 的家才去读分类", () => {
+test("支持读分类的家：Claude / Qwen 走 /context，Antigravity 走本地日志估算", () => {
   assert.equal(breakdownSupported("claude-code"), true);
   assert.equal(breakdownSupported("qwen"), true);
+  assert.equal(breakdownSupported("agy"), true);
   assert.equal(breakdownSupported("codex"), false);
   assert.equal(breakdownSupported("codebuddy"), false, "无头模式把 /context 当普通提问发给模型");
   assert.deepEqual(breakdownRequest(status), {

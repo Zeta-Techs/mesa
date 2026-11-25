@@ -4,6 +4,7 @@ import {
   applyMention,
   contextUsage,
   filterMesaCommands,
+  lastContextSnapshot,
   lastUserText,
   mentionQueryAt,
   typedMentionAt,
@@ -78,6 +79,13 @@ test("上下文用量：最后一条带用量的助手消息 ÷ 窗口；窗口�
   assert.deepEqual(contextUsage(msgs, 200000), { used: 63000, ratio: 0.315 });
   assert.equal(contextUsage(msgs, null), null);
   assert.equal(contextUsage([], 200000), null);
+  assert.deepEqual(
+    lastContextSnapshot([
+      { role: "assistant", usage: { input: 2000, cacheRead: 78000, cacheWrite: 0 } },
+      { role: "assistant", usage: { input: 2400, cacheRead: 22600, cacheWrite: 0 } },
+    ]),
+    { used: 25000, cacheRead: 22600, freshInput: 2400, compactions: 1 },
+  );
 });
 
 test("↑ 历史：最近的在前，连着发的同一句只留一条，只认文字块", async () => {

@@ -112,6 +112,40 @@ export function lastUserText(
 }
 
 /** 上一轮请求喂进去的 token（输入 + 缓存读 + 缓存写）：最后一条带用量的助手消息；没有为 null */
+export interface ContextSnapshot {
+  used: number;
+  cacheRead: number;
+  freshInput: number;
+  /** 从会话历史中识别到的上下文骤降/压缩次数 */
+  compactions: number;
+}
+
+/** 上一轮上下文快照：拆分缓存复用上下文、本步新增输入与压缩次数，供上下文浮层复用 */
+export function lastContextSnapshot(
+  messages: readonly {
+    role: string;
+    usage: { input: number; cacheRead: number; cacheWrite: number } | null;
+  }[],
+): ContextSnapshot | null {
+  let prevUsed: number | null = null;
+  let compactions = 0;
+  let last: { used: number; cacheRead: number; freshInput: number } | null = null;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const u = m.usage;
+    if (m.role === "user" || !u) continue;
+    const freshInput = u.input + u.cacheWrite;
+    const used = u.cacheRead + freshInput;
+    if (used <= 0) continue;
+    if (prevUsed !== null && prevUsed >= 20_000 && used < prevUsed * 0.65) {
+      compactions += 1;
+    }
+    prevUsed = used;
+    last = { used, cacheRead: u.cacheRead, freshInput };
+  }
+  return last ? { ...last, compactions } : null;
+}
+
 export function lastContextTokens(
   messages: readonly {
     role: string;

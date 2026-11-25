@@ -12,12 +12,27 @@ export interface ContextCategory {
   tokens: number;
 }
 
+export interface SubagentContext {
+  id: string;
+  title: string;
+  model?: string | null;
+  used: number;
+  window?: number | null;
+  totalTokens: number;
+  cacheHitPct?: number | null;
+}
+
 /** 后端 ContextBreakdownDto */
 export interface ContextBreakdown {
+  /** CLI 自己认的上下文窗口（0 表示该模型窗口未知，按已用总量拆比） */
   window: number;
   used: number;
   untilCompact: number | null;
   categories: ContextCategory[];
+  compactions?: number | null;
+  cacheRead?: number | null;
+  freshInput?: number | null;
+  subagents?: SubagentContext[];
 }
 
 export interface ContextBreakdownRequest {
@@ -28,9 +43,9 @@ export interface ContextBreakdownRequest {
   sessionId: string;
 }
 
-/** 能在后台跑 `/context` 的家（2026-10-20 实测；CodeBuddy 无头模式把它当普通提问发给模型） */
+/** 支持读取分类明细的家：Claude Code / Qwen Code 走无头 `/context`，Antigravity 走纯本地只读日志与子智能体库 */
 export function breakdownSupported(agentId: string | null | undefined): boolean {
-  return agentId === "claude-code" || agentId === "qwen";
+  return agentId === "claude-code" || agentId === "qwen" || agentId === "agy";
 }
 
 /** 标签状态 → 去读分类明细要的参数；这家不支持、还没有会话就 null */
@@ -56,6 +71,9 @@ export function breakdownRequest(
 
 const LABELS: Record<string, string> = {
   Messages: "对话",
+  "Tool outputs": "工具调用与输出",
+  Thinking: "思考过程",
+  "System & tools": "系统提示与工具",
   "System prompt": "系统提示",
   "System tools": "内置工具",
   "Built-in tools": "内置工具",
@@ -81,8 +99,10 @@ export function categoryLabel(key: string): string {
 const SERIES: Record<string, { dark: string; light: string }> = {
   Messages: { dark: "#3987e5", light: "#2a78d6" },
   "MCP tools": { dark: "#d95926", light: "#eb6834" },
+  "Tool outputs": { dark: "#199e70", light: "#1baf7a" },
   "System tools": { dark: "#199e70", light: "#1baf7a" },
   "Built-in tools": { dark: "#199e70", light: "#1baf7a" },
+  "System & tools": { dark: "#c98500", light: "#eda100" },
   "System prompt": { dark: "#c98500", light: "#eda100" },
 };
 
@@ -90,9 +110,12 @@ const SERIES: Record<string, { dark: string; light: string }> = {
 const ORDER = [
   "Messages",
   "MCP tools",
+  "Tool outputs",
   "System tools",
   "Built-in tools",
+  "System & tools",
   "System prompt",
+  "Thinking",
   "Skills",
   "MCP server instructions",
   "Custom agents",
@@ -127,10 +150,17 @@ const clamp = (x: number) => Math.max(0, Math.min(1, x));
  */
 export function contextView(
   b: ContextBreakdown | null,
-  total: { used: number; window: number },
+  total: { used: number; window: number | null },
   light = false,
 ): ContextView {
-  if (!b || b.window <= 0) {
+  if (!b || (b.window <= 0 && b.categories.length === 0)) {
+    if (!total.window || total.window <= 0) {
+      return {
+        rows: [{ label: "已用", tokens: total.used, ratio: 1, tone: "used", color: null }],
+        bar: { segments: [{ ratio: 1, tone: "used", color: null }], compactAt: null },
+        untilCompact: null,
+      };
+    }
     const free = Math.max(0, total.window - total.used);
     const used = clamp(total.used / total.window);
     return {
@@ -142,7 +172,8 @@ export function contextView(
       untilCompact: null,
     };
   }
-  const w = b.window;
+  const hasWindow = b.window > 0;
+  const denom = hasWindow ? b.window : Math.max(1, b.used);
   const rank = (key: string) => {
     const i = ORDER.indexOf(key);
     return i < 0 ? ORDER.length : i;
@@ -156,7 +187,7 @@ export function contextView(
     return {
       label: categoryLabel(c.key),
       tokens: c.tokens,
-      ratio: c.tokens / w,
+      ratio: c.tokens / denom,
       tone: series ? "series" : "minor",
       color: series ? (light ? series.light : series.dark) : null,
     };
@@ -165,17 +196,19 @@ export function contextView(
   const segments = rows
     .filter((r) => r.ratio >= 0.002)
     .map((r) => ({ ratio: clamp(r.ratio), tone: r.tone, color: r.color }));
-  const free = b.untilCompact ?? Math.max(0, w - b.used);
-  const reserve = b.untilCompact !== null ? Math.max(0, w - b.used - b.untilCompact) : 0;
-  if (reserve > 0) rows.push({ label: "自动压缩预留", tokens: reserve, ratio: reserve / w, tone: "reserve", color: null });
-  rows.push({ label: "剩余", tokens: free, ratio: free / w, tone: "free", color: null });
+  if (hasWindow) {
+    const free = b.untilCompact ?? Math.max(0, b.window - b.used);
+    const reserve = b.untilCompact !== null ? Math.max(0, b.window - b.used - b.untilCompact) : 0;
+    if (reserve > 0) rows.push({ label: "自动压缩预留", tokens: reserve, ratio: reserve / b.window, tone: "reserve", color: null });
+    rows.push({ label: "剩余", tokens: free, ratio: free / b.window, tone: "free", color: null });
+  }
   return {
     rows,
     bar: {
       segments,
-      compactAt: b.untilCompact !== null ? clamp((b.used + b.untilCompact) / w) : null,
+      compactAt: hasWindow && b.untilCompact !== null ? clamp((b.used + b.untilCompact) / b.window) : null,
     },
-    untilCompact: b.untilCompact,
+    untilCompact: hasWindow ? b.untilCompact : null,
   };
 }
 

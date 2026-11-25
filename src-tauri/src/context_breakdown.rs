@@ -25,19 +25,46 @@ pub struct ContextCategoryDto {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SubagentContextDto {
+    pub id: String,
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub used: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window: Option<u64>,
+    pub total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_hit_pct: Option<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContextBreakdownDto {
-    /// CLI 自己认的上下文窗口
+    /// CLI 自己认的上下文窗口（0 表示窗口未知，仅按已用总量分项展示）
     pub window: u64,
-    /// 已占用（各分类之和；Qwen 有接口回报的实际用量时用它）
+    /// 已占用（各分类之和；Qwen/Antigravity 有接口回报的实际用量时用它）
     pub used: u64,
     /// 离自动压缩还有多少（Claude 的 Free space、Qwen 的 Free，两家都已扣掉自动压缩预留）
     pub until_compact: Option<u64>,
     /// 占用里的各分类（不含剩余与自动压缩预留）
     pub categories: Vec<ContextCategoryDto>,
+    /// 压缩次数（从本地会话日志读到时返回）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compactions: Option<u32>,
+    /// 上一轮缓存复用上下文 tokens
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_read: Option<u64>,
+    /// 上一轮新增输入 tokens（含缓存写）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fresh_input: Option<u64>,
+    /// 挂载在本会话下的子智能体上下文汇总
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<SubagentContextDto>,
 }
 
 pub(crate) fn supported(agent: &str) -> bool {
-    matches!(agent, "claude-code" | "qwen")
+    matches!(agent, "claude-code" | "qwen" | "agy")
 }
 
 /// `302.9k` / `1m` / `167,000` / `100` → token 数
@@ -110,6 +137,10 @@ pub(crate) fn parse_claude(text: &str) -> Option<ContextBreakdownDto> {
         used,
         until_compact,
         categories,
+        compactions: None,
+        cache_read: None,
+        fresh_input: None,
+        subagents: Vec::new(),
     })
 }
 
@@ -161,6 +192,10 @@ pub(crate) fn parse_qwen(text: &str) -> Option<ContextBreakdownDto> {
         used,
         until_compact,
         categories,
+        compactions: None,
+        cache_read: None,
+        fresh_input: None,
+        subagents: Vec::new(),
     })
 }
 
@@ -201,6 +236,14 @@ pub async fn context_breakdown(
     }
     if !valid_session_id(&session_id) {
         return Err("还没有可读的对话".into());
+    }
+    if agent_id == "agy" {
+        let model_opt = model.filter(|m| !m.trim().is_empty());
+        return tauri::async_runtime::spawn_blocking(move || {
+            crate::sessions::agy_context_breakdown_local(&session_id, model_opt.as_deref())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
     }
     let selected = model.filter(|m| !m.trim().is_empty());
     let mut profile = store.get_with_model(&profile_id, selected.as_deref())?;
@@ -385,5 +428,53 @@ Model: m  Context window: 200.0k tokens
             ["-p", "/context", "--resume", "s1", "--no-session-persistence"]
         );
         assert_eq!(headless_args("qwen", "s1"), ["-p", "/context", "--resume", "s1"]);
+        assert!(supported("agy"));
+    }
+
+    #[test]
+    fn agy_local_transcript_breakdown_and_compactions() {
+        let steps = vec![
+            serde_json::json!({
+                "step_index": 0,
+                "type": "USER_INPUT",
+                "status": "DONE",
+                "content": "<USER_REQUEST>帮我分析这段代码的性能瓶颈</USER_REQUEST>"
+            }),
+            serde_json::json!({
+                "step_index": 1,
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "content": "好的，我先读一下相关文件。",
+                "input_tokens": 5000,
+                "cache_read_tokens": 45000,
+                "output_tokens": 200
+            }),
+            // 上下文从 50,000 骤降到 15,000（<65%）：识别为一次压缩
+            serde_json::json!({
+                "step_index": 2,
+                "type": "PLANNER_RESPONSE",
+                "status": "DONE",
+                "content": "压缩后继续检查。",
+                "tool_calls": [{"name": "read_file", "args": {"Path": "/tmp/a.rs"}}],
+                "input_tokens": 2400,
+                "cache_read_tokens": 12600,
+                "output_tokens": 120
+            }),
+            serde_json::json!({
+                "step_index": 3,
+                "type": "GENERIC",
+                "status": "DONE",
+                "content": "fn main() { println!(\"hello world\"); }"
+            }),
+        ];
+        let dto = crate::sessions::agy_analyze_transcript_context(&steps, 0, Vec::new()).unwrap();
+        assert_eq!(dto.used, 15_000);
+        assert_eq!(dto.cache_read, Some(12_600));
+        assert_eq!(dto.fresh_input, Some(2_400));
+        assert_eq!(dto.compactions, Some(1));
+        let sum: u64 = dto.categories.iter().map(|c| c.tokens).sum();
+        assert_eq!(sum, dto.used);
+        assert!(dto.categories.iter().any(|c| c.key == "Messages"));
+        assert!(dto.categories.iter().any(|c| c.key == "System & tools"));
     }
 }
