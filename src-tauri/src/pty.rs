@@ -2454,7 +2454,7 @@ mod tests {
         // 不带 async 的 Tauri 命令跑在主线程上。这几个会等子进程 / 外部应用 / 回收站或冻结快照，
         // 改回同步，等待期间所有终端的输出和按键都会停住（conventions/terminal.md「会等待的命令不占主线程」）。
         // 写 app.db 的命令同理：后台在写库时主线程最多等满 busy_timeout
-        let sources: [(&str, &str, &[&str]); 14] = [
+        let sources: [(&str, &str, &[&str]); 15] = [
             (
                 "pty.rs",
                 include_str!("pty.rs"),
@@ -2545,6 +2545,7 @@ mod tests {
             ),
             ("artifacts.rs", include_str!("artifacts.rs"), &["run_artifacts"]),
             ("fonts.rs", include_str!("fonts.rs"), &["font_status"]),
+            ("ask_aside.rs", include_str!("ask_aside.rs"), &["run_ask_aside", "chat_ask_aside"]),
         ];
         for (file, source, commands) in sources {
             let source = source.replace("\r\n", "\n");

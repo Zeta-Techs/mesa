@@ -62,6 +62,8 @@ export interface MesaCommand {
   cmd: string;
   label: string;
   hint: string;
+  /** 允许 Tab 补全成 `/cmd ` 后直接跟参数回车（如 `/btw 问题`）；点击或直接回车仍走 run() */
+  allowArgs?: boolean;
   run: () => void;
 }
 

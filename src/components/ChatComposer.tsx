@@ -7,6 +7,7 @@ import {
   BookmarkPlus,
   Maximize2,
   Minimize2,
+  MessageSquareQuote,
   MessageSquareText,
   Paperclip,
   Plus,
@@ -48,6 +49,7 @@ import ProjectFilePicker from "./ProjectFilePicker";
 import { quotePayload, type ChatQuote } from "../chat-navigation";
 import { applyPrompt, filterPrompts, promptLabel, promptPreview, type PromptItem } from "../prompts";
 import { usePromptStore } from "../prompt-store";
+import { parseBtwInput } from "../chat-aside";
 
 /** 按扩展名认图片附件（选来的、读不出缩略图的也要算） */
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
@@ -215,6 +217,7 @@ function AddMenu({
   onManagePrompts,
   canSavePrompt,
   imageGen = null,
+  onAside = null,
 }: {
   skills: SkillDto[];
   mcps: McpServerDto[];
@@ -233,6 +236,8 @@ function AddMenu({
   canSavePrompt: boolean;
   /** 出图模式开关（没有就不出这一项） */
   imageGen?: { on: boolean; model: string | null; toggle: () => void } | null;
+  /** 侧边「问它一句（不打断）」入口（没有就不出这一项） */
+  onAside?: (() => void) | null;
 }) {
   const [open, setOpen] = useState(false);
   // 菜单开着时提示词首次读盘（之后全应用共用一份）
@@ -322,6 +327,22 @@ function AddMenu({
                   <ImageModelMark model={imageGen.model} size={14} className="text-l3" />
                   {imageGen.on ? "退出画图" : "画图"}
                   <span className="ml-auto text-micro text-l4">{imageGen.on ? "回到普通对话" : "用出图模型画"}</span>
+                </button>
+              </li>
+            )}
+            {onAside && (
+              <li>
+                <button
+                  type="button"
+                  className={row}
+                  onClick={() => {
+                    setOpen(false);
+                    onAside();
+                  }}
+                >
+                  <MessageSquareQuote size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                  问它一句
+                  <span className="ml-auto text-micro text-l4">/btw · 不打断</span>
                 </button>
               </li>
             )}
@@ -431,6 +452,7 @@ export default function ChatComposer({
   suggestion = null,
   notice = null,
   imageGen = null,
+  onAside = null,
   floatingFooter = false,
   onEmptySlideSettled,
 }: {
@@ -494,6 +516,8 @@ export default function ChatComposer({
   notice?: ComposerNotice | null;
   /** 出图模式（没有就不出「画图」入口） */
   imageGen?: ComposerImageGen | null;
+  /** 侧边「问它一句（不打断）」：不传则不拦截 `/btw`、不在「+」菜单展示入口 */
+  onAside?: ((question?: string) => void) | null;
   /** 从居中空态滑到底部那 260ms 内，把底栏以绝对定位贴在输入框正下方随盒同滑（落地与状态栏 0px 无缝衔接） */
   floatingFooter?: boolean;
   /** 空态沉底过渡结束后回调，通知调用方把底栏交接给底部状态栏 */
@@ -988,6 +1012,16 @@ export default function ChatComposer({
     const text = (override ?? value).trim();
     if ((!text && attachments.length === 0 && !quote) || disabled || busy || submittingRef.current) return;
     setError(null);
+    // 侧边提问直发：主框里敲 `/btw` 或 `/btw 问题` 直接交给侧边浮卡，不写进主对话、不打断主 Agent
+    if (onAside && !raw && attachments.length === 0 && !quote) {
+      const btw = parseBtwInput(text);
+      if (btw) {
+        setValue("");
+        setSlashDismissed(false);
+        onAside(btw.kind === "ask" ? btw.question : undefined);
+        return;
+      }
+    }
     submittingRef.current = true;
     try {
       // 出图模式：Mesa 在描述前写一行固定写法（技能 image-gen 认它就必须调出图工具）；没模型 / 没工具先拦下。
@@ -1098,6 +1132,12 @@ export default function ChatComposer({
     }
     const mesa = hit?.mesa;
     if (mesa) {
+      if (!send && mesa.allowArgs) {
+        // Tab 补全带参数的 Mesa 命令（如 `/btw `）：留在输入框让你直接接着打问题回车直发
+        setValue(`${mesa.cmd} `);
+        requestAnimationFrame(() => ref.current?.focus());
+        return;
+      }
       // Mesa 操作不进输入框也不写终端：清掉「/xx」再执行
       setValue("");
       mesa.run();
@@ -1385,6 +1425,7 @@ export default function ChatComposer({
               imageGen={
                 imageGen ? { on: imageGen.on, model: imageGen.model, toggle: () => imageGen.setOn(!imageGen.on) } : null
               }
+              onAside={onAside ? () => onAside() : null}
             />
             {imageGen?.on && imageGen.pill}
           </span>

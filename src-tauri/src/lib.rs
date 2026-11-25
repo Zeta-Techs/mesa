@@ -1052,6 +1052,7 @@ pub fn run() {
             consult::consult_cost_stats,
             consult::consult_record_adoption,
             ask_aside::run_ask_aside,
+            ask_aside::chat_ask_aside,
             consult::consult_delete,
             project_assistant::assistant_review_notes,
             project_assistant::assistant_guide_search,

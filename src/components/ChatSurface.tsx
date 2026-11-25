@@ -8,6 +8,7 @@ import ChatSearch from "./ChatSearch";
 import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageCaptionContext, ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
 import { useChatImageGen } from "./ChatImageGen";
+import { useChatAside } from "./ChatAsideCard";
 import { splitImageGenDirective } from "../chat-image-gen";
 import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
@@ -215,6 +216,7 @@ export default function ChatSurface({
   onEmptySlideChange,
   tabId = null,
   sessionId = null,
+  sessionFile = null,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -393,8 +395,10 @@ export default function ChatSurface({
   onEmptySlideChange?: (sliding: boolean) => void;
   /** 这个标签（出图模式按它记这个对话选的出图模型、认出图工具的调用） */
   tabId?: string | null;
-  /** 已关联的会话：标签从侧栏重开时按它找回这个对话选过的出图模型 */
+  /** 已关联的会话：标签从侧栏重开时按它找回这个对话选过的出图模型，以及侧边提问上下文 */
   sessionId?: string | null;
+  /** 已关联的会话文件路径：聊天页「问它一句」直读原记录，免等扫描缓存 */
+  sessionFile?: string | null;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1359,11 +1363,34 @@ export default function ChatSurface({
     attention,
   });
   const imageMissNotice = imageGen.missedNotice((said) => setSeedInsert({ text: said, paths: [] }));
+  // 侧边「问它一句（不打断）」（ChatAsideCard.tsx）：不打断主对话、不覆盖主框草稿、支持 10 家 Agent 与卡内连续追问
+  const asideProfileId = runtime?.status?.profileId ?? launchPick?.profileId ?? null;
+  const asideModel =
+    runtime?.status?.modelSeen ||
+    runtime?.status?.model ||
+    runtime?.status?.launchModel ||
+    launchPick?.model?.trim() ||
+    launchPick?.models[0] ||
+    null;
+  const insertAsideToMain = useCallback((text: string) => setSeedInsert({ text, paths: [] }), []);
+  const focusMainComposer = useCallback(() => setComposerFocus((v) => v + 1), []);
+  const aside = useChatAside({
+    sessionId,
+    sessionFile,
+    agentId: agentId ?? launchPick?.agentId ?? runtime?.status?.agentId ?? null,
+    profileId: asideProfileId,
+    model: asideModel,
+    cwd: cwd ?? null,
+    messages,
+    narrow: emptyLayout,
+    onInsertToMain: insertAsideToMain,
+    onReturnFocus: focusMainComposer,
+  });
   const composerCommands = useMemo(
-    () => (readOnly ? mesaCommands : [...mesaCommands, imageGen.command]),
+    () => (readOnly ? [...mesaCommands, aside.command] : [...mesaCommands, aside.command, imageGen.command]),
     // command 每次渲染重建，只按它的提示字变
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mesaCommands, readOnly, imageGen.command.hint],
+    [mesaCommands, readOnly, aside.command, imageGen.command.hint],
   );
 
   // 项目表（项目芯片弹层、权限菜单拿哪件事举例、「最近用过」标题里的项目名都要）
@@ -2154,6 +2181,7 @@ export default function ChatSurface({
         )}
       </div>
 
+      {aside.panel}
       <ChatComposer
         disabled={!canSend}
         busy={busy}
@@ -2233,6 +2261,7 @@ export default function ChatSurface({
         stopTitle={stopTitle(midTurn, agentId)}
         notice={relayNotice ?? cutOffNotice ?? imageMissNotice ?? cacheNotice}
         imageGen={readOnly ? null : imageGen.composer}
+        onAside={aside.openCard}
       />
       {emptyLayout && (
         // 输入框后面同一层级渲染，切出空态时输入框不重挂载（已输入的字、焦点都在）

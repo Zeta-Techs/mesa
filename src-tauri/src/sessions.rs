@@ -4305,6 +4305,33 @@ pub(crate) fn session_markdown(agent: &str, session_id: &str) -> Option<String> 
     Some(redact_sensitive_text(&render_markdown(agent, session_id, &redact_sensitive_text(&title), &msgs)))
 }
 
+/// 聊天页「问它一句（不打断）」读对话原文用：优先按已知文件路径直读（免等 10 秒扫描缓存），
+/// 否则按 agent + session_id 走缓存与 2 秒节流重扫，整份在 Rust 层脱敏后返回
+pub(crate) fn session_markdown_with_path(
+    agent: &str,
+    session_id: Option<&str>,
+    file_path: Option<&str>,
+) -> Option<String> {
+    if let Some(path) = file_path.map(str::trim).filter(|p| !p.is_empty()) {
+        let msgs = conversation_impl(agent, path);
+        if !msgs.is_empty() {
+            let sid = session_id.filter(|s| !s.trim().is_empty()).unwrap_or("chat");
+            return Some(redact_sensitive_text(&render_markdown(agent, sid, sid, &msgs)));
+        }
+    }
+    let sid = session_id.map(str::trim).filter(|s| !s.is_empty())?;
+    if let Some(md) = session_markdown(agent, sid) {
+        return Some(md);
+    }
+    let meta = find_session_sync(agent, sid)?;
+    let msgs = conversation_impl(agent, &meta.file_path);
+    if msgs.is_empty() {
+        return None;
+    }
+    let title = meta.title.clone().unwrap_or_else(|| sid.to_string());
+    Some(redact_sensitive_text(&render_markdown(agent, sid, &redact_sensitive_text(&title), &msgs)))
+}
+
 /// 一行里内嵌图片的字节数（2026-11-11，借 ClawChat 实测）：Codex 把看过的每张图以 `data:image/…;base64,…` 原样存进会话、
 /// 每轮整个重发；按 base64 长度 × 3/4 估原始字节
 pub(crate) fn inline_image_bytes(line: &str) -> u64 {

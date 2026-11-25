@@ -116,6 +116,9 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   对比几个（compare / pickMulti，最多 MAX_COMPARE，只在前端，按标签存 localStorage）：headerAction「对比几个 / 只用一个」，onEditImage 挑中结果回单个模型；
                              #   出图进度 ImageGenProgress（生成中每 2 秒读调用记录，inflightCalls 每条一根估算进度，耗时与连接页共用 ccode.imageGen.durations）
                              #   （tests/chat-image-gen-ui.test.ts）
+  components/ChatAsideCard.tsx # 聊天页「问它一句（不打断）」（Side Question，2026-11-25）：useChatAside 给 ChatSurface 用——输入框正上方同中轴独立浮卡、
+                             #   不覆盖主框草稿、支持主框 `/btw <问题>` 直发 / 斜杠 `/btw`（Tab 补全）/「+」菜单呼出；支持卡内连续追问（最近 8 轮）、ChatMarkdown 渲染、
+                             #   收起成单行、清空、复制、带入主输入框与 Esc 关闭丢弃，切换会话自动重置不串台（tests/chat-aside-ui.test.ts）
   components/ImageModelMark.tsx # 聊天出图模式里出图模型的标识：vendorForModel 认得出画 VendorIcon，认不出 / 没选画 Lucide Palette（不用图片图标，
                              #   放「+」旁像附件）；胶囊、「+」菜单「画图」、消息上方「出图 · 模型」三处共用；尺寸只收 12/13/14（Tailwind 类名写死）
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方；
@@ -783,6 +786,8 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）、
                              #   producerOf（这张图是哪次调用出的）、inflightCalls / finishedDurations / waitedText（出图进度）；对比时那一行点名几个模型（「A、B 各出一版对比」）
                              #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
+  chat-aside.ts              # 聊天页「问它一句（不打断）」纯逻辑（tests/chat-aside.test.ts）：parseBtwInput（主框 `/btw` 与 `/btw 问题` 识别）、
+                             #   canAskAside、asideMethodHint、asideModeBadge（fork/copy/delegate/text 四档徽标与说明）、toAsideHistory 与未落盘兜底记录拼接 buildFallbackTranscript
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
                              # 确认按钮是否给出（tests/chat-reply.test.ts）
@@ -1278,7 +1283,9 @@ src-tauri/src/
                              #   只认二进制/配置 schema 实证，调研录 matrix §9 第 8 条；agents.rs
                              #   apply_request_policy_env 按表注入启动 env，未实证一律不注）；
                              #   resolve_binary 兜底候选目录 binary_candidate_dirs 同在本模块（macOS 含 /Library/TeX/texbin、/Applications/quarto/bin；Linux /opt/quarto/bin；Windows Program Files\Quarto\bin）
-  ask_aside.rs               # 问它一句（不打断，2026-11-11）：run_ask_aside——Claude Code 经 ai::with_fork_session 原生分叉只读回答（不落盘）、Codex 用 session_markdown 记忆副本；fork_real_run 真跑钉住原会话不变
+  ask_aside.rs               # 问它一句（不打断，2026-11-11 工作台版；2026-11-25 扩展聊天页与全 10 家 Agent）：run_ask_aside 与 chat_ask_aside 共用 execute_aside——
+                             #   Claude Code 经 ai::with_fork_session 原生分叉只读回答（不落盘），Codex/Kimi/Grok 走同家只读记忆副本，其余 6 家借项目助手/默认只读连接读脱敏副本代答
+                             #   （无只读 CLI 时回落纯文本按记录答）；支持卡内最近 8 轮追问历史与 session_markdown_with_path 直读；fork_real_run 真跑钉住原会话不变
   agents.rs                  # 适配器分发入口 + resolve_binary 二进制解析（GUI 短 PATH 兜底；Windows 最后再查注册表 PATH，接住 winget 无开发者模式时只改 PATH 的安装；resolve_binary_all 列全部候选给占位程序场景）+ readonly_launch_args（聊想法只读注入）；
                              # 官方账号 Codex：apply_official_inject 必带 -c model_provider="openai"（内置 ChatGPT 渠道；磁盘
                              #   config.toml 的网关默认会盖过订阅，不得省略；只影响本进程、不写 model_providers 块）；

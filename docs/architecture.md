@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-25 · 聊天页「问它一句（不打断）」（Side Question / `/btw`）：独立浮卡 + 卡内追问 + 10 家全覆盖
+
+用户要求把工作台任务面板里已有的「问它一句（不打断）」扩展到聊天页。拍板三项交互与能力口径：① **入口与草稿隔离**：主输入框直接敲 `/btw <问题>` 回车直发（不进主对话、不打断运行中的 Agent），同时提供 `/` 斜杠菜单项（Tab 补全 `/btw `）与「+」菜单入口；打开独立浮卡与独立追问框，不借用主框胶囊模式，以免覆盖用户正在写的主对话草稿；② **展示形态**：浮卡紧贴主输入框正上方（与对话流同中轴、不插入虚拟滚动主消息流），支持卡内连续追问（最近 8 轮）、ChatMarkdown 完整渲染、折叠成单行条、复制、**带入主输入框**与 Esc 关闭即丢（不落盘、切会话重置）；③ **全 10 家 Agent 只读分流**：后端 `ask_aside.rs` 新增异步命令 `chat_ask_aside` 并与 `run_ask_aside` 共用核心执行——Claude Code 走原生无落盘分叉（`fork`），Codex / Kimi / Grok 走同家只读记忆副本（`copy`），其余 6 家自动借项目助手或默认只读连接读脱敏对话副本代答（`delegate`），本机未装上述 4 家时回落无工具纯文本按记录回答（`text`），并在卡头诚实标明回答方式。
+
 ### 2026-11-24 · 手机工作台：127.0.0.1 加密 PWA + 可插拔 Tailscale / 自定义 HTTPS 通道
 
 用户要求落地「手机工作台（PWA + Tailscale 加密通道）」将跨网看进展、答人工请求、项目助手流式问答、只读审阅文件/Diff 与跨网传资料合而为一。拍板四项架构边界：① **物理隔离普通局域网**：新增 `mobile_workbench.rs` 只监听 `127.0.0.1:<端口>`，绝不碰 `phone_drop.rs` 局域网网卡，普通 Wi-Fi 严守「只收不出」（否决“受信任私有 Wi-Fi 明文只读开关”）；② **可插拔加密通道**：内置 Tailscale CLI 诊断与 `tailscale serve --bg --https=8443` 专属端口开关（绝不调 `tailscale serve reset`，不抢用户 443 端口），同时支持自备 `https://` 隧道（Cloudflare Tunnel / FRP / WireGuard / Nginx）；③ **直连 Rust 唯一真源**：借助同日落地的 `assistant_state.rs` 与 `project_assistant::chat_sync`，概览、人工请求答复、流式项目助手问答、只读文件/PDF/图片/脱敏 Diff 与复用 `phone-inbox/` 的跨网上传全部直连 Rust（零 WebView 拼装依赖），仅派活经桌面桥校验；④ **高危仍留桌面 + 纵深防护**：确认命令、评审采纳写回与删除不放给手机端；0600 设备簿只存 SHA-256（≤8 台）、5 分钟一次性二维码换 `HttpOnly; SameSite=Strict` Cookie、`POST` 强验 `X-Mesa-CSRF` 与 `Origin`、严格无内联 CSP。细则 `safety.md`「手机工作台」。
