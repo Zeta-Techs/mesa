@@ -292,7 +292,8 @@
   （审批 / 信任 / 提问 / 方案 / 菜单 / 通知 / 面板 / 连接）。认不出时出通用卡（`terminal-wait.ts waitScreenOf`，`ChatDecisionCard` 的 `screen`）：
   摘录从最后一条实线或启动字符画下面到屏底、去掉字符画与方框竖边，最多 16 行，跟着屏实时变；按键 ↑ ↓ 回车 Esc，带序号的给数字键，
   屏上要输入文字给输入框（整段写入再回车），网址折行接上做成「在浏览器打开」。出卡条件（ChatSurface `showWaitCard`）：等确认、卡住、
-  选择器开着（发了会开选择器的命令到屏上回到输入框，最多 30 秒），或 Agent 静止 4 秒且这家有画面布局表、屏上没有它的输入框；
+  选择器开着（发了会开选择器的命令到屏上回到输入框，最多 30 秒），或 Agent 静止 4 秒且这家有画面布局表、屏上没有它的输入框——
+  最后这条读屏猜测让位于 CLI 自己报的回合状态：旁路（hooks / 程序状态 / Codex 等）报过这一轮已结束就不出（`chat-channel.ts quietScreenMayBeWaiting`，2026-11-25）；
   看得见输入框或认得出的屏不出摘录。等确认 / 静止时 TerminalView 也扫一次屏（停在菜单上不再出字，没有输出驱动扫屏）。
   Grok 不给 Esc（`escInterruptSafe`）。
   **问句收尾不出批准卡（2026-11-06）**：会话尾部以问句收尾也判 confirm（标签黄点、通知照旧提醒回话），但只因问句（`chat-decision.ts replyEndsWithQuestion`，

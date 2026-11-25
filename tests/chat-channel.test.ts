@@ -17,6 +17,7 @@ import {
   hooksApprovalAnswered,
   channelInfersApproval,
   menuOutgrowsChannel,
+  quietScreenMayBeWaiting,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -277,4 +278,17 @@ test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hook
   assert.equal(channelDeliversLiveText(snap({ agent: "opencode", kind: "opencode", turn: turn("running") })), true);
   assert.equal(channelDeliversLiveText(snap({ agent: "qwen", kind: "qwen", turn: turn("running") })), true);
   assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", connection: "disconnected" })), false);
+});
+
+test("CLI 自己报过这一轮结束，读屏没认出输入框也不当成在等人", () => {
+  // Claude 答完（Stop / 程序状态 idle）：不出「终端在等你」
+  assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("completed") })), false);
+  assert.equal(quietScreenMayBeWaiting(snap({ kind: "program-status", turn: turn("cancelled") })), false);
+  assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("failed") })), false);
+  assert.equal(quietScreenMayBeWaiting(snap({ kind: "codex", turn: turn("completed") })), false);
+  // 还没开聊（配色、登录屏）、回合还开着、旁路断了、没有旁路：照旧按读屏
+  assert.equal(quietScreenMayBeWaiting(snap()), true);
+  assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("running") })), true);
+  assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("completed"), connection: "disconnected" })), true);
+  assert.equal(quietScreenMayBeWaiting(null), true);
 });

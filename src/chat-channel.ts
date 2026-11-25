@@ -86,6 +86,18 @@ export function channelAttention(snap: ChatChannelSnapshot | null): "working" | 
 }
 
 /**
+ * 「终端静了、屏上认不出输入框」能不能当成在等人（「终端在等你」通用卡）。CLI 自己报过这一轮已结束（hooks 的 Stop、
+ * 程序状态 OSC 7501 的 idle / done、Codex / Qwen / OpenCode 旁路的回合结束）就不能：它真停在要人处理的画面上会报等确认，读屏猜的不比它准。
+ * 2026-11-25 用户实测：Claude 答完、输入框好好在屏底，读屏没认出来，一从终端切回聊天层就弹卡，卡上是回复正文。
+ * 旁路没报过回合（还没开聊：配色、登录、启动菜单）、断了、回合还开着时照旧按读屏判断
+ */
+export function quietScreenMayBeWaiting(snap: ChatChannelSnapshot | null | undefined): boolean {
+  if (!snap || snap.connection === "disconnected") return true;
+  const s = snap?.turn?.status;
+  return !(s === "completed" || s === "failed" || s === "cancelled");
+}
+
+/**
  * hooks 家（Claude Code）的审批答完了没有：CLI 不报「答了」，旁路要等那个工具跑完（PostToolUse）才撤卡，
  * 批准后工具跑多久「等你确认」就挂多久——卡片从终端菜单的英文原文换成一张中文的「要访问网络」，
  * 标签黄点也一直亮着（2026-10-20 用户 Windows 实测：WebFetch 批准后又挂了 14 秒；Windows 上 hooks 在后台跑，

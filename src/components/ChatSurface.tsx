@@ -112,6 +112,7 @@ import {
   approvalPreview,
   approvalTitle,
   menuOutgrowsChannel,
+  quietScreenMayBeWaiting,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
 } from "../chat-channel";
@@ -1002,7 +1003,7 @@ export default function ChatSurface({
     ((attention === "confirm" && confirmAged) ||
       pickerOpen ||
       stuckWaiting ||
-      (ptyQuiet && Boolean(waitScreen?.noInputBox)));
+      (ptyQuiet && Boolean(waitScreen?.noInputBox) && quietScreenMayBeWaiting(channel)));
   function waitDecision(screen: WaitScreen, detail?: string | null): ChatDecision {
     return {
       key: `wait:${screen.title}`,
