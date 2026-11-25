@@ -106,17 +106,20 @@ const THINK_GUTTER = /^\s*[│┃]/;
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」及 Windows 方角「┌────」也算；表格已先由 tableRows 放行）
 const BORDER = /^[╭╰┌└]?[─━═▄▀]{8,}[╮╯┐┘]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
-// Claude 输入框上沿除了整条横线，线上还会写字：右端「 会话名 ─」（/rename 起的名、--agent / 队友横幅），
-// 左端「─── History 2/5 」（翻输入历史）、「─── ↑ 3 more 」（输入折行滚动）。2.1.326 实测
-const CLAUDE_LABELED_TOP = /^[─━═]{3}(?: \S.*? )?[─━═]{8,}(?: \S.* [─━═])?$/;
+// 输入框上沿除了整条横线，线上还会写字：右端「 会话名 ─」（Claude / Qwen / Grok 的 /rename，Claude 的 --agent / 队友横幅），
+// 左端「─── History 2/5 」「─── ↑ 3 more 」（Claude 翻输入历史、输入折行滚动）。2026-11-25 逐家 /rename 抓屏：
+// Claude 2.1.326「──… 名字 ─」、Qwen「──… 名字 ──」、Grok 圆角框「╭──… 名字 ─╮」；Codex / Kimi / Antigravity 的名字不写在框上
+const LABELED_RULE = /^[─━═]{2,}(?: \S.*? )?[─━═]{8,}(?: \S.* [─━═]+)?$/;
+// 圆角 / 方角输入框的上沿（Grok、Kimi）：「╭────╮」，线上也可能写着会话名「╭──── 名字 ─╮」
+const BOX_TOP = /^\s*[╭┌][─━]+(?: \S.*? [─━]+)?[╮┐]$/;
 
 /**
- * Claude 输入框的上沿（整条横线，或线上写着会话名 / 输入历史等字）。原先只认整条横线，会话起了名就认不出输入框，
+ * 横线画的输入框上沿（整条横线，或线上写着会话名 / 输入历史等字）。原先只认整条横线，会话起了名就认不出输入框，
  * 答完一切回聊天层就弹「终端在等你」（2026-11-25 用户实测，/rename 后抓屏复现）
  */
-export function claudePromptTop(row: string): boolean {
+export function promptTopRule(row: string): boolean {
   const t = row.trim();
-  return BORDER.test(t) || CLAUDE_LABELED_TOP.test(t);
+  return BORDER.test(t) || LABELED_RULE.test(t);
 }
 const SPINNER = /^\s*[\u2800-\u28ff]\s/;
 // Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
@@ -146,8 +149,8 @@ function lastBox(rows: readonly string[], pick: (i: number) => number): number {
 
 const LAYOUTS: Record<string, Layout> = {
   "claude-code": {
-    // 输入框上边框：最后一条「❯」行的上一行是横线（线上可能写着会话名，claudePromptTop）
-    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && claudePromptTop(rows[i - 1]) ? i - 1 : -1)),
+    // 输入框上边框：最后一条「❯」行的上一行是横线（线上可能写着会话名，promptTopRule）
+    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && promptTopRule(rows[i - 1]) ? i - 1 : -1)),
     echo: /^❯\s+\S/,
     // 行首符号：macOS / Linux 是 ⏺，Windows 上 Claude Code 画 ●（控制台字体没有 ⏺，2026-10-20 ConPTY 抓屏）
     lead: /^[⏺●]\s?/,
@@ -177,7 +180,7 @@ const LAYOUTS: Record<string, Layout> = {
     scrolledAway: /^(?:↓\s*)?(?:New activity(?:\s+·\s+)?)?(?:↓(?:\s+(?:Back to bottom|Bottom))?(?:\s+·\s+esc)?)?$/,
   },
   qwen: {
-    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^>\s/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
+    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^>\s/.test(rows[i]) && promptTopRule(rows[i - 1]) ? i - 1 : -1)),
     echo: /^\s{1,3}>\s+\S/,
     lead: /^\s*◆\s/,
     // 「  ? Shell echo …」「  - Shell …」「  ✓ ReadFile …」：顶两格 + 状态符号 + 工具名（正文列表缩进更深）
@@ -209,7 +212,7 @@ const LAYOUTS: Record<string, Layout> = {
     // Windows 上 Grok 换了一套字形（2026-10-20 ConPTY 抓屏）：回显与输入框 ❯ → >，工具 ◆ → ♦，代码块标签 ◇ → ○；
     // 1.0.89 起 Windows 输入框也从圆角 ╭──╮ 换成方角 ┌──┐（2026-11-18 金丝雀抓屏）
     boxTop: (rows) =>
-      lastBox(rows, (i) => (/^\s*[╭┌][─━]+[╮┐]$/.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
+      lastBox(rows, (i) => (BOX_TOP.test(rows[i]) && /^\s*│\s*[❯>]/.test(rows[i + 1] ?? "") ? i : -1)),
     echo: /^\s+[❯>]\s+\S/,
     lead: null,
     tool: /^\s*[◆♦]\s/,
@@ -224,7 +227,7 @@ const LAYOUTS: Record<string, Layout> = {
   },
   kimi: {
     boxTop: (rows) =>
-      lastBox(rows, (i) => (/^\s*╭[─━]+╮$/.test(rows[i]) && /^\s*│\s*>/.test(rows[i + 1] ?? "") ? i : -1)),
+      lastBox(rows, (i) => (BOX_TOP.test(rows[i]) && /^\s*│\s*>/.test(rows[i + 1] ?? "") ? i : -1)),
     echo: /^\s*❯\s+\S/,
     lead: /^\s*●\s/,
     tool: new RegExp(`^\\s*[●✗✓•]\\s+${TOOL_VERB}\\b`),
@@ -249,7 +252,7 @@ const LAYOUTS: Record<string, Layout> = {
       lastBox(rows, (i) =>
         i > 0 &&
         /^>(?:\s|$)/.test(rows[i]) &&
-        BORDER.test(rows[i - 1].trim()) &&
+        promptTopRule(rows[i - 1]) &&
         rows.slice(i + 1, i + 12).some((line) => BORDER.test(line.trim()))
           ? i - 1
           : -1,

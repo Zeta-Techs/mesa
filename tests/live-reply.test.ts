@@ -1559,3 +1559,16 @@ test("Claude 输入框上沿写着字（会话名、输入历史）也认得出�
   assert.equal(sentTextStuckInBox(screen(`${"─".repeat(40)} 只读对比三个文件 ─`), "claude-code", "只读对比三个文件"), false);
   assert.equal(sentTextStuckInBox(screen(`${"─".repeat(40)} 名字 ─`, "❯ 帮我看看这个文件"), "claude-code", "帮我看看这个文件"), true);
 });
+
+test("Qwen / Grok / Kimi 输入框上沿写着会话名也认得出（/rename 抓屏）", () => {
+  const rule = "─".repeat(60);
+  // Qwen 0.28.4：横线右端「 名字 ──」
+  const qwen = ["  ●︎ Session renamed to \"只读对比三个文件\"", `${"─".repeat(50)} 只读对比三个文件 ──`, ">   Type your message or @path/to/file", rule, "  Auto mode (shift + tab to cycle)"];
+  assert.equal(terminalHasInputBox(qwen, "qwen"), true);
+  // Grok 1.0.92：圆角框上沿「╭──… 名字 ─╮」，下沿也写着模型「… e2e-picked · always-approve ─╯」
+  const grok = ["     Worked for 6.2s", `  ╭${"─".repeat(50)} 只读对比三个文件 ─╮`, `  │ ❯ ${" ".repeat(50)}│`, `  ╰${"─".repeat(40)} e2e-picked · always-approve ─╯`];
+  assert.equal(terminalHasInputBox(grok, "grok"), true);
+  // Kimi 现在不把名字写在框上，同一种框也照认
+  const kimi = ["  Session title set to: 名字", `  ╭${"─".repeat(40)} 名字 ─╮`, `  │ > ${" ".repeat(40)}│`, `  ╰${"─".repeat(46)}╯`];
+  assert.equal(terminalHasInputBox(kimi, "kimi"), true);
+});
