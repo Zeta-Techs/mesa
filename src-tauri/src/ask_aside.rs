@@ -39,6 +39,12 @@ pub struct ChatAskAsideReq {
     pub file_path: Option<String>,
     pub profile_id: Option<String>,
     pub model: Option<String>,
+    /// 侧边栏独立选定的回答连接（可选；为空时按自动 4 档策略分流）
+    #[serde(default)]
+    pub override_profile_id: Option<String>,
+    /// 侧边栏独立选定的回答模型（可选；与 override_profile_id 配合使用）
+    #[serde(default)]
+    pub override_model: Option<String>,
     pub cwd: Option<String>,
     pub question: String,
     #[serde(default)]
@@ -256,6 +262,21 @@ fn infer_session_model(agent: &str, session_id: Option<&str>, explicit_model: Op
         .or_else(|| crate::sessions::launch_model_of(agent, sid))
 }
 
+/// 校验侧边提问显式选定的连接是否存在（纯函数，便于无 I/O 单测与复用）
+pub(crate) fn resolve_override_profile<'a>(
+    profiles: &'a [Profile],
+    override_profile_id: Option<&str>,
+) -> Result<Option<&'a Profile>, String> {
+    let Some(ov_id) = override_profile_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let found = profiles
+        .iter()
+        .find(|p| p.id == ov_id)
+        .ok_or_else(|| "侧边提问所选连接已不存在，请重新选择或切回「自动跟随」".to_string())?;
+    Ok(Some(found))
+}
+
 fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAnswerDto, String> {
     let question: String = req.question.trim().chars().take(QUESTION_CAP).collect();
     if question.is_empty() {
@@ -279,6 +300,112 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
         .filter(|p| p.is_dir());
 
     let mut cost: Option<f64> = None;
+
+    // 路径 0：用户在侧边提问栏显式选择了自己的连接 / 模型
+    if let Some(ov_prof) = resolve_override_profile(&profiles, req.override_profile_id.as_deref())?.cloned() {
+        let ov_model = req
+            .override_model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+
+        // 选的是同为 Claude Code 的连接且原会话有 session_id：直接用新模型走原生无落盘分叉
+        if ov_prof.agent == "claude-code" && req.agent == "claude-code" && cli_installed_for("claude-code") {
+            if let (Some(cwd), Some(sid)) = (cwd_path.as_deref(), session_id) {
+                let prompt = crate::sessions::redact_sensitive_text(&fork_prompt_with_history(
+                    &question,
+                    &req.history,
+                ));
+                let raw = crate::ai::with_fork_session(sid.to_string(), || {
+                    crate::ai::ai_inspect_readonly(
+                        profiles.clone(),
+                        Some(ov_prof.id.clone()),
+                        ov_model.clone(),
+                        cwd,
+                        &[],
+                        prompt,
+                        None,
+                        None,
+                        Some(&mut cost),
+                        &[],
+                    )
+                })?;
+                return Ok(AsideAnswerDto {
+                    text: crate::sessions::redact_sensitive_text(raw.trim()),
+                    how: "fork".into(),
+                    cost_usd: cost,
+                    responder_agent: Some(ov_prof.agent),
+                    responder_profile: Some(ov_prof.name),
+                });
+            }
+        }
+
+        let transcript = resolve_transcript(
+            &req.agent,
+            session_id,
+            file_path,
+            req.fallback_transcript.as_deref(),
+        )
+        .ok_or_else(|| "还没读到这段对话的记录：先发一句再问".to_string())?;
+
+        // 选的是原生只读 4 家且目录有效：走进程级只读查看工作区
+        if is_native_inspect_agent(&ov_prof.agent) && cli_installed_for(&ov_prof.agent) {
+            if let Some(cwd) = cwd_path.as_deref() {
+                let same_agent = ov_prof.agent == req.agent;
+                let prompt = crate::sessions::redact_sensitive_text(&if same_agent {
+                    copy_prompt_with_history(&transcript, &question, &req.history)
+                } else {
+                    delegate_prompt(&req.agent, &transcript, &question, &req.history, true)
+                });
+                let raw = crate::ai::ai_inspect_readonly(
+                    profiles.clone(),
+                    Some(ov_prof.id.clone()),
+                    ov_model,
+                    cwd,
+                    &[],
+                    prompt,
+                    None,
+                    None,
+                    Some(&mut cost),
+                    &[],
+                )?;
+                return Ok(AsideAnswerDto {
+                    text: crate::sessions::redact_sensitive_text(raw.trim()),
+                    how: if same_agent { "copy" } else { "delegate" }.into(),
+                    cost_usd: cost,
+                    responder_agent: Some(ov_prof.agent),
+                    responder_profile: Some(ov_prof.name),
+                });
+            }
+        }
+
+        // 其余 6 家（或目录不存在）：用用户选定的连接与模型按对话记录纯文本回答
+        let prompt = crate::sessions::redact_sensitive_text(&delegate_prompt(
+            &req.agent,
+            &transcript,
+            &question,
+            &req.history,
+            false,
+        ));
+        let raw = crate::ai::ai_prompt_impl_full(
+            profiles,
+            Some(ov_prof.id.clone()),
+            ov_model,
+            Some("project-assistant"),
+            prompt,
+            None,
+            None,
+            Some(&mut cost),
+        )?;
+        return Ok(AsideAnswerDto {
+            text: crate::sessions::redact_sensitive_text(raw.trim()),
+            how: "text".into(),
+            cost_usd: cost,
+            responder_agent: Some(ov_prof.agent),
+            responder_profile: Some(ov_prof.name),
+        });
+    }
 
     // 路径 1：原会话属于原生只读 4 家，且工作目录存在、同家连接与 CLI 均可用
     if is_native_inspect_agent(&req.agent) && cli_installed_for(&req.agent) {
@@ -506,6 +633,8 @@ pub async fn run_ask_aside(
                 file_path: None,
                 profile_id: run.profile_id,
                 model: None,
+                override_profile_id: None,
+                override_model: None,
                 cwd: Some(run.isolation_path),
                 question: trimmed,
                 history: Vec::new(),
@@ -651,6 +780,17 @@ mod tests {
         // 显式传同家 c1（哪怕被隐藏）仍尊重
         let explicit = pick_same_agent_profile(&profiles, "codex", Some("c1"), &hidden).unwrap();
         assert_eq!(explicit.id, "c1");
+    }
+
+    #[test]
+    fn override_profile_resolver_handles_none_found_and_missing() {
+        let profiles = vec![fake_profile("p1", "codex", "Codex", None, false)];
+        assert!(resolve_override_profile(&profiles, None).unwrap().is_none());
+        assert!(resolve_override_profile(&profiles, Some("   ")).unwrap().is_none());
+        let ok = resolve_override_profile(&profiles, Some("p1")).unwrap().unwrap();
+        assert_eq!(ok.id, "p1");
+        let err = resolve_override_profile(&profiles, Some("deleted-profile")).unwrap_err();
+        assert!(err.contains("不存在"), "实际报错: {err}");
     }
 
     /// 原生分叉真跑（2026-11-11，默认不跑）：MESA_ASIDE_REAL=1，MESA_ASIDE_PROFILE=Claude Code 连接 id。

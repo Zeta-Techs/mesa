@@ -9,14 +9,17 @@ import {
   asideMethodHint,
   asideModeBadge,
   asideThreadTitleFromQuestion,
+  buildAsideModelGroups,
   buildFallbackTranscript,
   canAskAside,
   clampAsidePaneWidth,
   createAsideThread,
   parseBtwInput,
   removeAsideThread,
+  resolveAsideModelOverride,
   summarizeAsidePane,
   toAsideHistory,
+  type AsideProfileLike,
   type AsideTurn,
 } from "../src/chat-aside.ts";
 import type { ChatMessageDto } from "../src/types.ts";
@@ -195,5 +198,46 @@ describe("toAsideHistory & buildFallbackTranscript", () => {
     assert.ok(clipped);
     assert.match(clipped, /更早的略/);
     assert.ok(clipped.endsWith("尾部内容"));
+  });
+});
+
+describe("buildAsideModelGroups & resolveAsideModelOverride", () => {
+  const mkProfile = (over: Partial<AsideProfileLike> & { id: string; agent: string; name: string }): AsideProfileLike => ({
+    models: [],
+    ...over,
+  });
+
+  it("puts native read-only agents first, skips hidden/uninstalled, and expands models", () => {
+    const profiles: AsideProfileLike[] = [
+      mkProfile({ id: "p-gem", agent: "gemini", name: "Gemini", models: ["gemini-2.5-pro"], lastUsedAt: "2026-11-25T12:00:00Z" }),
+      mkProfile({ id: "p-claude", agent: "claude-code", name: "Claude", models: ["claude-sonnet-4-5", "claude-haiku-4-5"], lastUsedAt: "2026-11-24T12:00:00Z" }),
+      mkProfile({ id: "p-hidden", agent: "codex", name: "Codex 停用", models: ["gpt-5"], lastUsedAt: "2026-11-25T15:00:00Z" }),
+      mkProfile({ id: "p-uninst", agent: "kimi", name: "Kimi 未装", models: ["kimi-k2"], lastUsedAt: "2026-11-25T15:00:00Z" }),
+      mkProfile({ id: "p-agy", agent: "agy", name: "Antigravity", models: [], lastUsedAt: "2026-11-25T14:00:00Z" }),
+    ];
+    const groups = buildAsideModelGroups(profiles, ["p-hidden"], ["claude-code", "gemini", "agy"]);
+    assert.deepEqual(
+      groups.map((g) => g.profileId),
+      ["p-claude", "p-agy", "p-gem"],
+    );
+    assert.equal(groups[0].canInspectFiles, true);
+    assert.equal(groups[0].options.length, 2);
+    assert.equal(groups[1].canInspectFiles, false);
+    assert.deepEqual(groups[1].options, [{ profileId: "p-agy", model: null, label: "默认模型" }]);
+  });
+
+  it("validates saved override and gracefully falls back when profile or model is removed", () => {
+    const profiles: AsideProfileLike[] = [
+      mkProfile({ id: "p1", agent: "claude-code", name: "Claude", models: ["sonnet", "haiku"] }),
+    ];
+    assert.deepEqual(resolveAsideModelOverride({ profileId: "p1", model: "haiku" }, profiles), {
+      profileId: "p1",
+      model: "haiku",
+    });
+    assert.deepEqual(resolveAsideModelOverride({ profileId: "p1", model: "removed" }, profiles), {
+      profileId: "p1",
+      model: "sonnet",
+    });
+    assert.equal(resolveAsideModelOverride({ profileId: "gone", model: "sonnet" }, profiles), null);
   });
 });

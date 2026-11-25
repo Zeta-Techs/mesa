@@ -6,8 +6,13 @@
  * - 汇总后端返回的不同执行路径（原生分叉 / 同家副本 / 只读代答 / 纯文本记录）的中文徽标与说明；
  * - 裁剪送给后端的线程内连续追问历史。
  */
-import type { ChatMessageDto } from "./types.ts";
+import type { ChatMessageDto, Profile } from "./types.ts";
 import { userSaid } from "./chat-relay.ts";
+
+/** 模型选择器只需要连接的这几个字段（也方便纯逻辑单测构造精简样本） */
+export type AsideProfileLike = Pick<Profile, "id" | "agent" | "name" | "models"> & {
+  lastUsedAt?: string | null;
+};
 
 /** 支持进程级只读无头调用的 4 家 Agent（与 src-tauri/src/ask_aside.rs NATIVE_INSPECT_AGENTS 同口径） */
 export const ASIDE_NATIVE_AGENTS = ["claude-code", "codex", "kimi", "grok"] as const;
@@ -23,6 +28,29 @@ export const ASIDE_PANE_DEFAULT_WIDTH = 400;
 export const ASIDE_PANE_MIN_WIDTH = 310;
 export const ASIDE_PANE_MAX_WIDTH = 640;
 export const ASIDE_PANE_WIDTH_KEY = "ccode.chatAside.width";
+export const ASIDE_MODEL_PREF_KEY = "ccode.chatAside.model";
+
+/** 侧边提问独立选定的连接与模型（null 表示自动跟随主对话/默认只读策略） */
+export interface AsideModelOverride {
+  profileId: string;
+  model: string | null;
+}
+
+export interface AsideModelOption {
+  profileId: string;
+  model: string | null;
+  label: string;
+}
+
+export interface AsideModelGroup {
+  profileId: string;
+  profileName: string;
+  agentId: string;
+  agentLabel: string;
+  /** 是否支持进程级只读查看工作区文件（Claude Code / Codex / Kimi / Grok） */
+  canInspectFiles: boolean;
+  options: AsideModelOption[];
+}
 
 /** 空侧边线程默认标题 */
 export const ASIDE_NEW_THREAD_TITLE = "新侧边提问";
@@ -87,6 +115,66 @@ const AGENT_LABELS: Record<string, string> = {
 export function displayAsideAgent(agentId: string | null | undefined): string {
   if (!agentId) return "只读连接";
   return AGENT_LABELS[agentId] ?? agentId;
+}
+
+/**
+ * 整理侧边提问模型选择器列表：
+ * - 跳过停用连接与本机未安装对应 CLI 的连接；
+ * - 支持进程级只读查文件的 4 家排在前面，其余按最近使用时间排在后面；
+ * - 每条连接按其模型名单展开（空名单给一项「默认模型」）。
+ */
+export function buildAsideModelGroups(
+  profiles: readonly AsideProfileLike[],
+  hiddenProfileIds: readonly string[],
+  installedAgentIds: readonly string[] | null,
+): AsideModelGroup[] {
+  const hidden = new Set(hiddenProfileIds);
+  const installed = installedAgentIds ? new Set(installedAgentIds) : null;
+  const nativeSet = new Set<string>(ASIDE_NATIVE_AGENTS);
+  const eligible = profiles.filter((p) => {
+    if (hidden.has(p.id)) return false;
+    if (installed && !installed.has(p.agent)) return false;
+    return true;
+  });
+  const sorted = [...eligible].sort((a, b) => {
+    const aNative = nativeSet.has(a.agent) ? 0 : 1;
+    const bNative = nativeSet.has(b.agent) ? 0 : 1;
+    if (aNative !== bNative) return aNative - bNative;
+    const ta = a.lastUsedAt ?? "";
+    const tb = b.lastUsedAt ?? "";
+    if (ta !== tb) return tb.localeCompare(ta);
+    return a.name.localeCompare(b.name, "zh-Hans-CN");
+  });
+  return sorted.map((p) => {
+    const models = p.models.map((m) => m.trim()).filter(Boolean);
+    const options: AsideModelOption[] =
+      models.length > 0
+        ? models.map((m) => ({ profileId: p.id, model: m, label: m }))
+        : [{ profileId: p.id, model: null, label: "默认模型" }];
+    return {
+      profileId: p.id,
+      profileName: p.name,
+      agentId: p.agent,
+      agentLabel: displayAsideAgent(p.agent),
+      canInspectFiles: nativeSet.has(p.agent),
+      options,
+    };
+  });
+}
+
+/** 校验本地记住的侧边提问模型是否仍有效：连接被删回退自动跟随，模型被删回退该连接默认 */
+export function resolveAsideModelOverride(
+  saved: AsideModelOverride | null,
+  profiles: readonly AsideProfileLike[],
+): AsideModelOverride | null {
+  if (!saved || !saved.profileId) return null;
+  const prof = profiles.find((p) => p.id === saved.profileId);
+  if (!prof) return null;
+  if (!saved.model) return { profileId: prof.id, model: null };
+  if (prof.models.length === 0 || prof.models.includes(saved.model)) {
+    return { profileId: prof.id, model: saved.model };
+  }
+  return { profileId: prof.id, model: prof.models[0] ?? null };
 }
 
 /** 创建一条新的空白侧边提问线程 */

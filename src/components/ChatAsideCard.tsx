@@ -1,43 +1,53 @@
 // 聊天页「侧边提问（Side Question / `/btw`）」右侧全高分栏（2026-11-25，纯逻辑在 chat-aside.ts，后端在 ask_aside.rs）：
-// - 左右全高独立分栏：左边主对话与主框丝毫不受遮挡，右边独立分栏支持多条侧边提问页签（+ 新建 / × 关单条）与拖宽；
-// - 顶部页签条 + 线程标题/方式微标 + 中间独立滚动对话区（ChatMarkdown 渲染）+ 底部与主框齐平的独立输入框；
-// - 支持顶栏图标一键开合、主框 `/btw <问题>` 直发、斜杠面板 `/btw`（Tab 补全）、「+」菜单呼出；
-// - 多条线程彼此隔离且支持并发提问；收起分栏保留当前线程，关闭单条或切换主会话即丢弃不落盘。
+// - 与左侧「主对话 + 主状态栏」平级并排（经 asideSlot portal 挂进 pane-body 右列，贯穿至底栏，不让主状态栏横穿右侧）；
+// - 布局与左侧聊天层严格同构：单行页签顶栏（+ 新建 / × 关单条 / 清空 / 收起）+ 中间对话流 + 同高单行圆角输入框 + 同高 32px 底栏（只读徽标 + 独立模型选择器）；
+// - 支持为侧边提问独立挑选任意已安装 Agent / 连接 / 模型（也可切回「自动跟随」），按本机记住偏好；
+// - 多条线程彼此隔离、并发不串台；收起保留记录并在顶栏图标点微点，关单条或切主会话即丢弃不落盘。
 import { invoke } from "@tauri-apps/api/core";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowUp,
   Check,
+  ChevronDown,
   Copy,
   CornerDownLeft,
   MessageSquareQuote,
   PanelRightClose,
   Plus,
   RotateCcw,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
 import {
+  ASIDE_MODEL_PREF_KEY,
   ASIDE_PANE_DEFAULT_WIDTH,
   ASIDE_PANE_WIDTH_KEY,
   asideMethodHint,
   asideModeBadge,
   asideThreadTitleFromQuestion,
+  buildAsideModelGroups,
   buildFallbackTranscript,
   canAskAside,
   clampAsidePaneWidth,
   createAsideThread,
   displayAsideAgent,
   removeAsideThread,
+  resolveAsideModelOverride,
   summarizeAsidePane,
   toAsideHistory,
+  type AsideModelGroup,
+  type AsideModelOverride,
   type AsidePaneSummary,
   type AsideThread,
   type AsideTurn,
 } from "../chat-aside";
 import type { MesaCommand } from "../composer-assist";
 import { imeBlocksEnter } from "../ime-guard";
+import { useAppStore } from "../store";
 import type { ChatMessageDto } from "../types";
+import AgentIcon from "./AgentIcon";
 import ChatMarkdown from "./ChatMarkdown";
 import { MesaStatusLead } from "./MesaMark";
 
@@ -49,7 +59,7 @@ interface AsideAnswerResponse {
   responderProfile: string | null;
 }
 
-/** 容器宽低于此阈值时（双标签分屏 / 阅读区右栏），右侧分栏改为叠加覆盖右侧，避免把主对话压扁 */
+/** 容器总宽低于此阈值时（双标签分屏 / 阅读区右栏），右侧分栏改为叠加覆盖右侧，避免把主对话压扁 */
 const OVERLAY_BREAKPOINT_PX = 720;
 
 function readSavedWidth(): number {
@@ -70,6 +80,32 @@ function savePaneWidth(width: number) {
   }
 }
 
+function readSavedModelOverride(): AsideModelOverride | null {
+  try {
+    const raw = localStorage.getItem(ASIDE_MODEL_PREF_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const p = parsed as { profileId?: unknown; model?: unknown };
+    if (typeof p.profileId !== "string" || !p.profileId.trim()) return null;
+    return {
+      profileId: p.profileId,
+      model: typeof p.model === "string" && p.model.trim() ? p.model : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveModelOverride(next: AsideModelOverride | null) {
+  try {
+    if (!next) localStorage.removeItem(ASIDE_MODEL_PREF_KEY);
+    else localStorage.setItem(ASIDE_MODEL_PREF_KEY, JSON.stringify(next));
+  } catch {
+    /* 存不了只影响下次重启后的记忆 */
+  }
+}
+
 export function useChatAside({
   sessionId,
   sessionFile,
@@ -79,6 +115,7 @@ export function useChatAside({
   cwd,
   messages,
   containerWidth = null,
+  asideSlot = null,
   toggleRequest = 0,
   onSummaryChange,
   onInsertToMain,
@@ -91,8 +128,10 @@ export function useChatAside({
   model: string | null;
   cwd: string | null;
   messages: readonly ChatMessageDto[];
-  /** 当前 ChatSurface 根容器像素宽（用于拖拽上限与窄容器叠加回落） */
+  /** 整个 pane-body 的可用宽度（含左右两列，开关/拖宽右栏时不变，避免误触发 overlay 震荡） */
   containerWidth?: number | null;
+  /** pane-body 右侧全高列插槽：宽屏时经 createPortal 挂进去，使左侧主状态栏不再横穿右栏底下 */
+  asideSlot?: HTMLElement | null;
   /** 来自顶栏侧边提问按钮的开关请求序号（每次 +1 翻转开合） */
   toggleRequest?: number;
   /** 把开合、活跃线程数、是否思考中上报给顶栏按钮点亮状态 */
@@ -105,11 +144,34 @@ export function useChatAside({
   const threadCounterRef = useRef(1);
   const nextThreadId = useCallback(() => `sq-${threadCounterRef.current++}`, []);
 
+  const profiles = useAppStore((s) => s.profiles);
+  const agents = useAppStore((s) => s.agents);
+  const hiddenProfiles = useAppStore((s) => s.settings?.hiddenProfiles);
+
   const [open, setOpen] = useState(false);
   const [threads, setThreads] = useState<AsideThread[]>(() => [createAsideThread("sq-0")]);
   const [activeId, setActiveId] = useState<string>("sq-0");
   const [focusSeq, setFocusSeq] = useState(0);
   const [paneWidth, setPaneWidth] = useState<number>(readSavedWidth);
+  const [savedOverride, setSavedOverride] = useState<AsideModelOverride | null>(readSavedModelOverride);
+
+  // 校验本地记忆的独立模型是否仍在连接列表里；连接被删自动回退「自动跟随」
+  const modelOverride = useMemo(
+    () => resolveAsideModelOverride(savedOverride, profiles),
+    [savedOverride, profiles],
+  );
+  const installedAgentIds = useMemo(
+    () => (agents.length > 0 ? agents.filter((a) => Boolean(a.binaryPath)).map((a) => a.id) : null),
+    [agents],
+  );
+  const modelGroups = useMemo(
+    () => buildAsideModelGroups(profiles, hiddenProfiles ?? [], installedAgentIds),
+    [profiles, hiddenProfiles, installedAgentIds],
+  );
+  const pickModelOverride = useCallback((next: AsideModelOverride | null) => {
+    setSavedOverride(next);
+    saveModelOverride(next);
+  }, []);
 
   // 每条线程独立维护请求令牌，并发多开不串台；主会话切换时递增 sessionEpochRef 丢弃所有旧会话在途响应
   const sessionEpochRef = useRef(0);
@@ -120,8 +182,8 @@ export function useChatAside({
   activeIdRef.current = activeId;
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
-  const contextRef = useRef({ sessionId, sessionFile, agentId, profileId, model, cwd });
-  contextRef.current = { sessionId, sessionFile, agentId, profileId, model, cwd };
+  const contextRef = useRef({ sessionId, sessionFile, agentId, profileId, model, cwd, modelOverride });
+  contextRef.current = { sessionId, sessionFile, agentId, profileId, model, cwd, modelOverride };
 
   // 切到另一段完全不同的主会话时重置所有侧边线程（新对话首句后补上 sessionId 不算换会话）
   const boundSessionRef = useRef<string | null>(sessionId || sessionFile || null);
@@ -207,6 +269,8 @@ export function useChatAside({
           filePath: ctx.sessionFile,
           profileId: ctx.profileId,
           model: ctx.model,
+          overrideProfileId: ctx.modelOverride?.profileId ?? null,
+          overrideModel: ctx.modelOverride?.model ?? null,
           cwd: ctx.cwd,
           question: q,
           history,
@@ -258,7 +322,6 @@ export function useChatAside({
       const q = initialQuestion?.trim() ?? "";
       setOpen(true);
       if (q) {
-        // `/btw 问题`：如果当前活跃线程正在思考，自动新开一条线程并发问，不覆盖正在等的任务
         const cur = threadsRef.current.find((t) => t.id === activeIdRef.current) ?? threadsRef.current[0];
         if (cur && cur.pendingQuestion === null) {
           void askInThread(cur.id, q);
@@ -289,9 +352,7 @@ export function useChatAside({
 
   const clearThread = useCallback((id: string) => {
     threadReqRef.current.set(id, (threadReqRef.current.get(id) ?? 0) + 1);
-    setThreads((prev) =>
-      prev.map((t) => (t.id === id ? createAsideThread(id) : t)),
-    );
+    setThreads((prev) => prev.map((t) => (t.id === id ? createAsideThread(id) : t)));
     setFocusSeq((n) => n + 1);
   }, []);
 
@@ -300,7 +361,6 @@ export function useChatAside({
       threadReqRef.current.set(id, (threadReqRef.current.get(id) ?? 0) + 1);
       const res = removeAsideThread(threadsRef.current, activeIdRef.current, id);
       if (res.threads.length === 0) {
-        // 关掉最后一条线程：重置为一条干净空白线程并顺手收起右侧栏，把焦点还给主框
         const fresh = createAsideThread(nextThreadId());
         setThreads([fresh]);
         setActiveId(fresh.id);
@@ -343,7 +403,7 @@ export function useChatAside({
   const overlay = Boolean(containerWidth && containerWidth > 0 && containerWidth < OVERLAY_BREAKPOINT_PX);
   const clampedWidth = clampAsidePaneWidth(paneWidth, containerWidth);
 
-  const pane: ReactNode = open ? (
+  const paneElement = open ? (
     <ChatAsidePane
       agentId={agentId}
       cwd={cwd}
@@ -352,6 +412,9 @@ export function useChatAside({
       focusSeq={focusSeq}
       width={clampedWidth}
       overlay={overlay}
+      modelGroups={modelGroups}
+      modelOverride={modelOverride}
+      onPickModel={pickModelOverride}
       onResize={resizeWidth}
       onSelectThread={selectThread}
       onCreateThread={createThread}
@@ -363,7 +426,163 @@ export function useChatAside({
     />
   ) : null;
 
+  // 宽屏且父级给了 pane-body 右列插槽时，portal 进全高右列（与左侧「主对话 + 主状态栏」平级并排）；
+  // 窄屏或阅读区无插槽时留在 ChatSurface 内部叠加显示
+  const pane: ReactNode =
+    paneElement && !overlay && asideSlot ? createPortal(paneElement, asideSlot) : paneElement;
+
   return { open, summary, openCard, createThread, collapsePane, command, pane, panel: pane };
+}
+
+function AsideModelPicker({
+  agentId,
+  groups,
+  override,
+  lastResponder,
+  onPick,
+}: {
+  agentId: string | null;
+  groups: readonly AsideModelGroup[];
+  override: AsideModelOverride | null;
+  lastResponder: { agent: string | null; profile: string | null } | null;
+  onPick: (next: AsideModelOverride | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    const onPointer = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onPointer);
+    };
+  }, [open]);
+
+  const pickedGroup = override ? groups.find((g) => g.profileId === override.profileId) ?? null : null;
+  const chipAgent = pickedGroup?.agentId ?? lastResponder?.agent ?? agentId ?? null;
+  const chipLabel = pickedGroup
+    ? override?.model || pickedGroup.profileName
+    : lastResponder?.profile
+      ? `自动 · ${lastResponder.profile}`
+      : "自动跟随";
+  const chipTitle = pickedGroup
+    ? `侧边提问已指定：${pickedGroup.agentLabel} · ${pickedGroup.profileName}${override?.model ? ` · ${override.model}` : ""}\n${
+        pickedGroup.canInspectFiles ? "支持只读查看工作区文件" : "按当前对话记录纯文本回答"
+      }（点击更换或切回自动跟随）`
+    : `侧边提问模型：自动跟随（${asideMethodHint(agentId)}）\n点击可为侧边提问单独选一个模型`;
+
+  return (
+    <div ref={rootRef} className="relative flex min-w-0 items-center">
+      <button
+        type="button"
+        data-testid="aside-model-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        title={chipTitle}
+        className="inline-flex h-6 max-w-[14rem] items-center gap-1.5 rounded-md px-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+      >
+        {chipAgent ? (
+          <AgentIcon agent={chipAgent} label={displayAsideAgent(chipAgent)} size={13} className="shrink-0" />
+        ) : (
+          <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
+        )}
+        <span className="min-w-0 truncate leading-[18px]">{chipLabel}</span>
+        <ChevronDown size={12} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l4" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="选择侧边提问模型"
+          className="ccode-float-surface ccode-menu-surface absolute bottom-full right-0 z-50 mb-1.5 flex max-h-80 w-72 flex-col overflow-hidden rounded-xl border border-field p-1.5 text-xs"
+        >
+          <div className="ccode-chat-scroll overflow-auto">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={override === null}
+              onClick={() => {
+                onPick(null);
+                setOpen(false);
+              }}
+              className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover"
+            >
+              <Sparkles size={13} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0 text-l3" />
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium text-l1">自动跟随</span>
+                <span className="block text-micro leading-4 text-l4">
+                  优先原生分身 / 同家只读，其余借只读连接代答
+                </span>
+              </span>
+              <Check
+                size={13}
+                strokeWidth={2}
+                aria-hidden="true"
+                className={`mt-0.5 shrink-0 ${override === null ? "text-l2" : "invisible"}`}
+              />
+            </button>
+
+            {groups.length > 0 && <div className="mx-1 my-1.5 h-px bg-hairline" />}
+
+            {groups.length === 0 ? (
+              <p className="px-2 py-2 text-micro text-l4">还没有可用的其他连接，当前将按自动策略回答。</p>
+            ) : (
+              groups.map((g) => (
+                <div key={g.profileId} className="mb-1 last:mb-0">
+                  <div className="flex items-center gap-1.5 px-2 pb-0.5 pt-1 text-micro text-l4">
+                    <AgentIcon agent={g.agentId} label={g.agentLabel} size={12} className="shrink-0" />
+                    <span className="min-w-0 truncate font-medium text-l3">{g.profileName}</span>
+                    <span className="ml-auto shrink-0 text-l4">
+                      {g.canInspectFiles ? "可读文件" : "按记录答"}
+                    </span>
+                  </div>
+                  {g.options.map((opt) => {
+                    const selected =
+                      override !== null &&
+                      override.profileId === opt.profileId &&
+                      (override.model ?? null) === opt.model;
+                    return (
+                      <button
+                        key={`${opt.profileId}:${opt.model ?? ""}`}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={selected}
+                        onClick={() => {
+                          onPick({ profileId: opt.profileId, model: opt.model });
+                          setOpen(false);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg py-1 pl-6 pr-2 text-left text-l2 transition-colors hover:bg-hover hover:text-l1"
+                      >
+                        <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                        <Check
+                          size={13}
+                          strokeWidth={2}
+                          aria-hidden="true"
+                          className={`shrink-0 ${selected ? "text-l2" : "invisible"}`}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ChatAsidePane({
@@ -374,6 +593,9 @@ function ChatAsidePane({
   focusSeq,
   width,
   overlay,
+  modelGroups,
+  modelOverride,
+  onPickModel,
   onResize,
   onSelectThread,
   onCreateThread,
@@ -390,6 +612,9 @@ function ChatAsidePane({
   focusSeq: number;
   width: number;
   overlay: boolean;
+  modelGroups: readonly AsideModelGroup[];
+  modelOverride: AsideModelOverride | null;
+  onPickModel: (next: AsideModelOverride | null) => void;
   onResize: (width: number, commit?: boolean) => void;
   onSelectThread: (id: string) => void;
   onCreateThread: () => void;
@@ -438,7 +663,7 @@ function ChatAsidePane({
     return () => window.clearInterval(timer);
   }, [busy, activeThread.id]);
 
-  // 底部输入框自动增高（封顶约 5 行）
+  // 底部输入框单行起自动增高（封顶约 5 行）
   useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
@@ -488,9 +713,22 @@ function ChatAsidePane({
   const badge = latestTurn
     ? asideModeBadge(latestTurn.how, latestTurn.responderAgent, latestTurn.responderProfile)
     : null;
-  const footerMeta = badge
-    ? `${badge.label}${latestTurn?.responderProfile ? ` · ${latestTurn.responderProfile}` : ""}`
-    : `${displayAsideAgent(agentId)} · 只读不进主对话`;
+  const pickedGroup = modelOverride
+    ? modelGroups.find((g) => g.profileId === modelOverride.profileId) ?? null
+    : null;
+  const emptyHint = pickedGroup
+    ? `将由 ${pickedGroup.profileName}${modelOverride?.model ? `（${modelOverride.model}）` : ""}${
+        pickedGroup.canInspectFiles ? "只读回答" : "按对话记录回答"
+      } · 原对话一字不动`
+    : asideMethodHint(agentId);
+  const leftStatusLabel = badge
+    ? badge.label
+    : pickedGroup
+      ? pickedGroup.canInspectFiles
+        ? "只读 · 可查文件"
+        : "只读 · 按记录答"
+      : "只读 · 不进主对话";
+  const leftStatusTitle = badge ? badge.title : emptyHint;
   const hasContent = activeThread.turns.length > 0 || busy || Boolean(activeThread.error);
 
   return (
@@ -515,7 +753,7 @@ function ChatAsidePane({
         }`}
       />
 
-      {/* 顶部页签条：支持多条独立 Side Question 页签 + 「+」新建 + 收起栏 */}
+      {/* 单行清爽页签顶栏：多页签 + 「+」新建 + 清空 + 收起（去掉多余的重复副标题行） */}
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-hairline px-2">
         <div
           role="tablist"
@@ -583,6 +821,17 @@ function ChatAsidePane({
           </button>
         </div>
 
+        {hasContent && !busy && (
+          <button
+            type="button"
+            onClick={onClearThread}
+            title="清空当前侧边提问内容"
+            aria-label="清空当前侧边提问"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-l4 transition-colors hover:bg-hover hover:text-l1"
+          >
+            <Trash2 size={13} strokeWidth={1.8} aria-hidden="true" />
+          </button>
+        )}
         <button
           type="button"
           onClick={onCollapse}
@@ -594,40 +843,13 @@ function ChatAsidePane({
         </button>
       </div>
 
-      {/* 当前线程副标题行：标题 + 回答方式徽标 + 清空 */}
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-hairline/70 px-3">
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-l2" title={activeThread.title}>
-          {activeThread.title}
-        </span>
-        {badge && (
-          <span
-            title={badge.title}
-            className="shrink-0 rounded-md border border-hairline px-1.5 py-0.5 text-micro text-l3"
-          >
-            {badge.label}
-          </span>
-        )}
-        {hasContent && !busy && (
-          <button
-            type="button"
-            onClick={onClearThread}
-            title="清空当前侧边提问内容"
-            aria-label="清空当前侧边提问"
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-micro text-l4 transition-colors hover:bg-hover hover:text-l1"
-          >
-            <Trash2 size={11} strokeWidth={1.8} aria-hidden="true" />
-            <span>清空</span>
-          </button>
-        )}
-      </div>
-
       {/* 中间独立滚动对话流 / 极简空态 */}
       <div ref={bodyRef} className="ccode-chat-scroll flex min-h-0 flex-1 flex-col overflow-auto px-3.5 py-4">
         {!hasContent ? (
           <div className="m-auto flex max-w-[18rem] flex-col items-center gap-2 py-8 text-center">
             <MessageSquareQuote size={22} strokeWidth={1.6} aria-hidden="true" className="text-l4" />
             <p className="text-xs leading-5 text-l3">不打断主对话，在旁边随口问一句</p>
-            <p className="text-micro leading-relaxed text-l4">{asideMethodHint(agentId)}</p>
+            <p className="text-micro leading-relaxed text-l4">{emptyHint}</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -709,70 +931,84 @@ function ChatAsidePane({
         )}
       </div>
 
-      {/* 底部独立输入框：与左侧 ChatComposer 同款外壳与底边距，视觉底边齐平 */}
+      {/* 底部输入盒：与左侧 ChatComposer 同款单行圆角结构（48px 单行高度、pb-2 pt-2.5 边距） */}
       <div className="shrink-0 bg-canvas px-3 pb-2 pt-2.5">
-        <div className="ccode-composer-box rounded-xl border border-composer-edge bg-composer px-2.5 py-1.5 transition-colors focus-within:border-l4">
-          <textarea
-            ref={inputRef}
-            rows={1}
-            value={draft}
-            disabled={busy}
-            onChange={(e) => setDraft(e.target.value)}
-            onCompositionStart={() => {
-              composingLockRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              window.requestAnimationFrame(() => {
-                composingLockRef.current = false;
-              });
-            }}
-            onKeyDown={(e) => {
-              if (
-                imeBlocksEnter({
-                  isComposing: e.nativeEvent.isComposing,
-                  keyCode: e.keyCode,
-                  composingLock: composingLockRef.current,
-                })
-              ) {
-                return;
+        <div className="ccode-composer-box rounded-xl border border-composer-edge bg-composer transition-colors focus-within:border-l4">
+          <div className="flex items-end gap-1.5 px-2 py-1.5">
+            <textarea
+              ref={inputRef}
+              rows={1}
+              value={draft}
+              disabled={busy}
+              onChange={(e) => setDraft(e.target.value)}
+              onCompositionStart={() => {
+                composingLockRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                window.requestAnimationFrame(() => {
+                  composingLockRef.current = false;
+                });
+              }}
+              onKeyDown={(e) => {
+                if (
+                  imeBlocksEnter({
+                    isComposing: e.nativeEvent.isComposing,
+                    keyCode: e.keyCode,
+                    composingLock: composingLockRef.current,
+                  })
+                ) {
+                  return;
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCollapse();
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submitDraft();
+                }
+              }}
+              placeholder={
+                activeThread.turns.length === 0
+                  ? "随口问一句，不打断主对话"
+                  : "接着追问，仍不进主对话"
               }
-              if (e.key === "Escape") {
-                e.preventDefault();
-                onCollapse();
-                return;
-              }
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                submitDraft();
-              }
-            }}
-            placeholder={
-              activeThread.turns.length === 0
-                ? "随口问一句，不打断主对话"
-                : "接着追问，仍不进主对话"
-            }
-            className="ccode-composer-text block max-h-[8.25rem] w-full resize-none bg-transparent px-1 py-1 text-sm leading-6 text-l1 caret-mesa-amber outline-none placeholder:text-l3 disabled:opacity-50"
-          />
-          <div className="mt-1 flex items-center justify-between gap-2 px-0.5">
-            <span
-              className="min-w-0 truncate text-micro text-l4"
-              title={badge ? badge.title : asideMethodHint(agentId)}
-            >
-              {footerMeta}
-            </span>
-            <button
-              type="button"
-              disabled={busy || !draft.trim()}
-              onClick={submitDraft}
-              data-state={!busy && draft.trim() ? "ready" : busy ? "sending" : "empty"}
-              title="发送侧边提问（Enter 发送 · Shift+Enter 换行 · Esc 收起）"
-              aria-label="发送侧边提问"
-              className="ccode-send-block shrink-0"
-            >
-              <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" className="ccode-send-arrow" />
-            </button>
+              className="ccode-composer-text block max-h-[8.25rem] min-w-0 flex-1 resize-none bg-transparent px-1.5 pb-[6.5px] pt-[3.5px] text-sm leading-6 text-l1 caret-mesa-amber outline-none placeholder:text-l3 disabled:opacity-50"
+            />
+            <div className="flex h-[34px] shrink-0 items-center">
+              <button
+                type="button"
+                disabled={busy || !draft.trim()}
+                onClick={submitDraft}
+                data-state={!busy && draft.trim() ? "ready" : busy ? "sending" : "empty"}
+                title="发送侧边提问（Enter 发送 · Shift+Enter 换行 · Esc 收起）"
+                aria-label="发送侧边提问"
+                className="ccode-send-block"
+              >
+                <ArrowUp size={13} strokeWidth={2.4} aria-hidden="true" className="ccode-send-arrow" />
+              </button>
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* 底部 32px 状态栏：与左侧 TerminalStatusBar（h-8）像素级齐平——左只读方式，右侧边栏独立模型选择器 */}
+      <div className="flex h-8 shrink-0 items-center justify-between gap-2 bg-canvas px-3 text-micro select-none">
+        <span className="min-w-0 truncate text-l4" title={leftStatusTitle}>
+          {leftStatusLabel}
+        </span>
+        <AsideModelPicker
+          agentId={agentId}
+          groups={modelGroups}
+          override={modelOverride}
+          lastResponder={
+            latestTurn
+              ? { agent: latestTurn.responderAgent, profile: latestTurn.responderProfile }
+              : null
+          }
+          onPick={onPickModel}
+        />
       </div>
     </aside>
   );

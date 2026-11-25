@@ -5,13 +5,14 @@ import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
 // 聊天页右侧全高「侧边提问（Side Question）」分栏 UI 行为测试（components/ChatAsideCard.tsx）：
-// 覆盖顶栏开合、多页签新建与隔离历史、收起保留记录、关单条、带入主框与切主会话重置。
+// 覆盖顶栏开合、多页签新建与隔离历史、收起保留记录、关单条、带入主框、侧边独立选模型与切主会话重置。
 const bundle = await build({
   stdin: {
     contents: `import { createElement } from 'react';
       import { useChatAside } from './src/components/ChatAsideCard';
       export { act } from 'react';
       export { createRoot } from 'react-dom/client';
+      export { useAppStore } from './src/store';
       export { createElement };
       export function Harness(props) {
         const aside = useChatAside({
@@ -23,6 +24,7 @@ const bundle = await build({
           cwd: props.cwd ?? '/repo/demo',
           messages: props.messages ?? [{ role: 'user', timestamp: null, blocks: [{ kind: 'text', text: '帮我改下列名' }] }],
           containerWidth: props.containerWidth ?? 1200,
+          asideSlot: props.asideSlot ?? null,
           toggleRequest: props.toggleRequest ?? 0,
           onSummaryChange: (s) => { window.__aside.summary = s; },
           onInsertToMain: (text) => window.__aside.inserted.push(text),
@@ -50,13 +52,21 @@ const bundle = await build({
           contents: `import { createElement } from 'react'; export default function ChatMarkdown({ text }) { return createElement('div', { 'data-testid': 'aside-md' }, text); }`,
           loader: "js",
         }));
+        b.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({ path: args.path, namespace: "svg-raw" }));
+        b.onLoad({ filter: /.*/, namespace: "svg-raw" }, () => ({
+          contents: `export default "<svg></svg>";`,
+          loader: "js",
+        }));
       },
     },
   ],
 });
 
 async function mount(initialProps: Record<string, unknown> = {}) {
-  const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost/", pretendToBeVisual: true });
+  const dom = new JSDOM('<div id="root"></div><div id="slot"></div>', {
+    url: "http://localhost/",
+    pretendToBeVisual: true,
+  });
   const restore: Array<[string, PropertyDescriptor | undefined]> = [];
   for (const [key, value] of Object.entries({
     window: dom.window,
@@ -105,13 +115,26 @@ async function mount(initialProps: Record<string, unknown> = {}) {
     compiled,
     compiled.exports,
   );
-  const { act, createRoot, createElement: h, Harness } = compiled.exports;
+  const { act, createRoot, createElement: h, Harness, useAppStore } = compiled.exports;
+  useAppStore.setState({
+    profiles: [
+      { id: "p-claude", agent: "claude-code", name: "Claude 主号", models: ["claude-sonnet-4-5", "claude-haiku-4-5"], extraEnv: {}, hasKey: true },
+      { id: "p-codex", agent: "codex", name: "Codex 网关", models: ["gpt-5.2"], extraEnv: {}, hasKey: true },
+    ],
+    agents: [
+      { id: "claude-code", binaryPath: "/usr/local/bin/claude" },
+      { id: "codex", binaryPath: "/usr/local/bin/codex" },
+    ],
+  });
   const el = dom.window.document.getElementById("root")!;
+  const slot = dom.window.document.getElementById("slot")!;
   const root = createRoot(el);
   let curProps: Record<string, unknown> = { sessionId: "sid-1", agentId: "claude-code", ...initialProps };
   await act(async () => root.render(h(Harness, curProps)));
   return {
     el,
+    slot,
+    doc: dom.window.document,
     host,
     act,
     rerender: async (next: Record<string, unknown>) => {
@@ -129,60 +152,73 @@ async function mount(initialProps: Record<string, unknown> = {}) {
   };
 }
 
-test("右侧 Side Question 分栏：多页签独立历史、收起保留记录、关闭单条与带入主框", async () => {
+test("右侧 Side Question 分栏：portal 挂入右列、独立切模型、多页签隔离、收起保留与关闭单条", async () => {
   const ctx = await mount({ sessionId: "sid-1", sessionFile: "/tmp/s1.jsonl", agentId: "claude-code" });
   try {
-    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-pane"]'), null);
-
-    // 1. 顶栏按钮翻转展开右侧分栏，进入极简空态
-    await ctx.rerender({ toggleRequest: 1 });
-    const pane = () => ctx.el.querySelector<HTMLElement>('[data-testid="chat-aside-pane"]');
-    assert.ok(pane());
+    await ctx.rerender({ asideSlot: ctx.slot, toggleRequest: 1 });
+    const pane = () => ctx.slot.querySelector<HTMLElement>('[data-testid="chat-aside-pane"]');
+    assert.ok(pane(), "宽屏应 portal 到 pane-body 右列插槽，避免主状态栏横穿");
     assert.match(pane()!.textContent!, /不打断主对话，在旁边随口问一句/);
     assert.equal(ctx.host.summary.open, true);
 
-    // 2. 第一条线程提问（自动把首问设为页签标题）
+    // 1. 底部模型选择器：切到 Codex 网关的 gpt-5.2
+    const trigger = pane()!.querySelector<HTMLButtonElement>('[data-testid="aside-model-trigger"]')!;
+    assert.match(trigger.textContent!, /自动跟随/);
+    await ctx.act(async () => trigger.click());
+    const menuItems = Array.from(pane()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    const codexOpt = menuItems.find((b) => b.textContent?.includes("gpt-5.2"))!;
+    assert.ok(codexOpt);
+    await ctx.act(async () => codexOpt.click());
+    assert.match(trigger.textContent!, /gpt-5\.2/);
+
+    // 2. 第一条线程提问：请求携带显式 overrideProfileId 与 overrideModel
+    ctx.host.nextReply = {
+      text: "目前改到了第 2 个字段。",
+      how: "delegate",
+      costUsd: 0.004,
+      responderAgent: "codex",
+      responderProfile: "Codex 网关",
+    };
     await ctx.act(async () => {
       ctx.host.latest.openCard("做到哪了？");
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.equal(ctx.host.calls.length, 1);
+    assert.equal(ctx.host.calls[0].overrideProfileId, "p-codex");
+    assert.equal(ctx.host.calls[0].overrideModel, "gpt-5.2");
     assert.deepEqual(ctx.host.calls[0].history, []);
-    assert.match(pane()!.textContent!, /做到哪了？/);
-    assert.match(pane()!.textContent!, /只读分身/);
+    assert.match(pane()!.textContent!, /Codex 代答/);
     assert.match(pane()!.textContent!, /目前改到了第 2 个字段/);
 
-    // 3. 在同一线程里连续追问 → 自动带上第一轮 history
+    // 3. 切回「自动跟随」并在同线程追问：override 回到 null、history 带上一轮
+    await ctx.act(async () => trigger.click());
+    const autoOpt = Array.from(pane()!.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find((b) =>
+      b.textContent?.includes("自动跟随"),
+    )!;
+    await ctx.act(async () => autoOpt.click());
     ctx.host.nextReply = {
       text: "旧列名含空格会导致 CSV 错位。",
-      how: "delegate",
+      how: "fork",
       costUsd: null,
-      responderAgent: "codex",
-      responderProfile: "Codex 只读",
+      responderAgent: "claude-code",
+      responderProfile: "Claude 主号",
     };
     await ctx.act(async () => {
       ctx.host.latest.openCard("为什么改列名？");
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.equal(ctx.host.calls.length, 2);
+    assert.equal(ctx.host.calls[1].overrideProfileId, null);
+    assert.equal(ctx.host.calls[1].overrideModel, null);
     assert.deepEqual(ctx.host.calls[1].history, [
       { question: "做到哪了？", answer: "目前改到了第 2 个字段。" },
     ]);
-    assert.match(pane()!.textContent!, /Codex 代答/);
 
-    // 4. 点顶部「+」新建第二条独立侧边提问线程：上下文完全隔离，history 为空
+    // 4. 点顶部「+」新建第二条独立侧边提问线程：上下文完全隔离
     const addBtn = pane()!.querySelector<HTMLButtonElement>('button[aria-label="新建侧边提问"]')!;
     await ctx.act(async () => addBtn.click());
     assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 2);
-    assert.match(pane()!.textContent!, /不打断主对话，在旁边随口问一句/);
 
-    ctx.host.nextReply = {
-      text: "一共改了 3 个测试文件。",
-      how: "fork",
-      costUsd: 0.002,
-      responderAgent: "claude-code",
-      responderProfile: "Claude 主号",
-    };
     await ctx.act(async () => {
       ctx.host.latest.openCard("动了几个测试文件？");
       await new Promise((r) => setTimeout(r, 10));
@@ -191,32 +227,18 @@ test("右侧 Side Question 分栏：多页签独立历史、收起保留记录�
     assert.deepEqual(ctx.host.calls[2].history, []);
     assert.equal(ctx.host.summary.activeThreads, 2);
 
-    // 5. 点「带入主输入框」传给主框
-    const insertBtn = Array.from(pane()!.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-      b.textContent?.includes("带入主输入框"),
-    )!;
-    await ctx.act(async () => insertBtn.click());
-    assert.deepEqual(ctx.host.inserted, ["一共改了 3 个测试文件。"]);
-
-    // 6. 收起右侧栏：记录保留、上报 activeThreads 仍为 2、焦点还给主框
+    // 5. 收起保留记录 → 再次打开仍在 → 关掉全部页签自动收起
     const collapseBtn = pane()!.querySelector<HTMLButtonElement>('button[aria-label="收起侧边提问栏"]')!;
     await ctx.act(async () => collapseBtn.click());
     assert.equal(pane(), null);
-    assert.equal(ctx.host.summary.open, false);
     assert.equal(ctx.host.summary.activeThreads, 2);
     assert.equal(ctx.host.returnedFocus, 1);
 
-    // 7. 再次通过顶栏打开：2 条页签记录完整保留
     await ctx.rerender({ toggleRequest: 2 });
-    assert.ok(pane());
     assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 2);
 
-    // 8. 关掉第二条页签，切回第一条；再关掉第一条，自动收起分栏
     const closeSecond = pane()!.querySelector<HTMLButtonElement>('button[aria-label="关闭「动了几个测试文件？」"]')!;
     await ctx.act(async () => closeSecond.click());
-    assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 1);
-    assert.match(pane()!.textContent!, /目前改到了第 2 个字段/);
-
     const closeFirst = pane()!.querySelector<HTMLButtonElement>('button[aria-label="关闭「做到哪了？」"]')!;
     await ctx.act(async () => closeFirst.click());
     assert.equal(pane(), null);

@@ -472,6 +472,22 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [chatMetaSlots, setChatMetaSlots] = useState<
     Record<string, { left: HTMLElement | null; right: HTMLElement | null }>
   >({});
+  // 聊天层右侧全高 Side Question 分栏插槽（pane-body 右列）：与左侧「主对话 + 主状态栏」平级并排，
+  // 避免主状态栏横穿到右侧栏底下；ref 回调同样按标签缓存避免重复触发 setState
+  const [chatAsideSlots, setChatAsideSlots] = useState<Record<string, HTMLElement | null>>({});
+  const chatAsideSlotRefs = useRef(new Map<string, (el: HTMLElement | null) => void>());
+  const chatAsideSlotRefFor = (tabId: string) => {
+    let fn = chatAsideSlotRefs.current.get(tabId);
+    if (!fn) {
+      fn = (el) =>
+        setChatAsideSlots((cur) => {
+          if ((cur[tabId] ?? null) === el) return cur;
+          return { ...cur, [tabId]: el };
+        });
+      chatAsideSlotRefs.current.set(tabId, fn);
+    }
+    return fn;
+  };
   const chatMetaRefs = useRef(new Map<string, (side: "left" | "right", el: HTMLElement | null) => void>());
   const chatMetaRefFor = (tabId: string) => {
     let fn = chatMetaRefs.current.get(tabId);
@@ -4100,7 +4116,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </button>
                   </div>
                 )}
-                <div key="pane-body" className="flex min-h-0 flex-1 flex-col">
+                <div key="pane-body" className="flex min-h-0 flex-1 flex-row">
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                   {(() => {
                     const chatOn =
                       (surfaceModeByTab[t.id] ?? defaultSurface) ===
@@ -4165,6 +4182,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tabId={t.id}
                         sessionId={statuses[t.id]?.sessionId ?? sessionByTab[t.id]?.sessionId ?? t.resumeSessionId ?? null}
                         sessionFile={sessionByTab[t.id]?.file ?? null}
+                        asideSlot={chatOn && !inReader ? (chatAsideSlots[t.id] ?? null) : null}
                         asideToggleRequest={chatAsideToggleByTab[t.id] ?? 0}
                         onAsideStateChange={(summary) => reportChatAsideState(t.id, summary)}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
@@ -4490,6 +4508,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   </div>
                     );
                   })()}
+                  </div>
+                  <div
+                    ref={chatAsideSlotRefFor(t.id)}
+                    className="flex min-h-0 shrink-0 empty:hidden"
+                  />
                 </div>
               </div>
             );

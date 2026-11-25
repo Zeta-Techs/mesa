@@ -218,6 +218,7 @@ export default function ChatSurface({
   tabId = null,
   sessionId = null,
   sessionFile = null,
+  asideSlot = null,
   asideToggleRequest = 0,
   onAsideStateChange,
 }: {
@@ -402,6 +403,8 @@ export default function ChatSurface({
   sessionId?: string | null;
   /** 已关联的会话文件路径：聊天页「问它一句」直读原记录，免等扫描缓存 */
   sessionFile?: string | null;
+  /** pane-body 右侧全高插槽：宽屏时侧边提问经 portal 挂入，使主状态栏仅归属左侧主对话 */
+  asideSlot?: HTMLElement | null;
   /** 顶栏侧边提问图标触发的开合请求序号（递增翻转） */
   asideToggleRequest?: number;
   /** 上报侧边提问栏开合与活跃状态给顶栏图标点亮 */
@@ -410,7 +413,8 @@ export default function ChatSurface({
   const rootRef = useRef<HTMLDivElement>(null);
   const [rootWidth, setRootWidth] = useState<number | null>(null);
   useEffect(() => {
-    const el = rootRef.current;
+    // 宽屏挂进 pane-body 右列时量整个 pane-body（含左右两列）的宽度，避免打开右栏后左栏变窄触发 overlay 来回震荡
+    const el = asideSlot?.parentElement ?? rootRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     setRootWidth(el.clientWidth || null);
     const ro = new ResizeObserver((entries) => {
@@ -419,7 +423,7 @@ export default function ChatSurface({
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [asideSlot]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
@@ -1402,6 +1406,7 @@ export default function ChatSurface({
     cwd: cwd ?? null,
     messages,
     containerWidth: rootWidth,
+    asideSlot,
     toggleRequest: asideToggleRequest,
     onSummaryChange: onAsideStateChange,
     onInsertToMain: insertAsideToMain,
