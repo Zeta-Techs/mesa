@@ -204,7 +204,8 @@ const LAYOUTS: Record<string, Layout> = {
     // 输入框上方的提示与状态行。0.65 起按权限档变字（「auto-accept edits  Shift+Tab to manual」），MCP 后面还跟技能数
     // （「1 MCP server · 20 skills」）；粘贴多行后回显下面多一行「Press Ctrl+O to expand pasted text」（2026-10-21 用户截图）；
     // 完全访问时是「YOLO Ctrl+Y」，没有 MCP 时这一行只有它（2026-10-22）
-    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|^\s*YOLO\b.*Ctrl\+Y|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]/,
+    // 「Executing Hooks: <命令>」：跑全局 hooks 时画在状态区（输入框上方、「? for shortcuts」上一行），不是回复（2026-11-25 抓屏）
+    skip: /esc to cancel|Shift\+Tab to |auto-accept edits|^\s*YOLO\b.*Ctrl\+Y|\? for shortcuts|\bMCP servers?\b|\b\d+ skills?\s*$|Press Ctrl\+O to expand|^\s*[╭│╰]|^\s*Executing Hooks?:/,
     // 段落续行缩进 2、列表缩进 3
     indent: 3,
   },
