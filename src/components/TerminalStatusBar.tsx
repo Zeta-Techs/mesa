@@ -1175,6 +1175,8 @@ export default function TerminalStatusBar({
               agentId={effAgent}
               breakdown={breakdownRequest(breakdownTarget)}
               localBreakdown={localBreakdown}
+              running={running}
+              busy={agentBusy}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
@@ -1188,6 +1190,8 @@ export default function TerminalStatusBar({
               agentId={effAgent}
               breakdown={breakdownRequest(breakdownTarget)}
               localBreakdown={localBreakdown}
+              running={running}
+              busy={agentBusy}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
@@ -1216,6 +1220,9 @@ export default function TerminalStatusBar({
               window={ring.window}
               agentId={status?.agentId ?? ""}
               breakdown={breakdownRequest(status)}
+              localBreakdown={localBreakdown}
+              running={running}
+              busy={agentBusy}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}

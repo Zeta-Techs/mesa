@@ -53,7 +53,7 @@ export function localBackendBreakdown(agentId: string | null | undefined): boole
   return agentId === "agy";
 }
 
-/** 需在后台拉起无头 CLI 跑 `/context` 的家：不在悬停时自动拉起，改为浮层内按需点击校准 */
+/** 需在后台拉起无头 CLI 跑 `/context` 的家：仅在用户继续/运行会话后于后台静默校准一次，历史预览不拉起进程 */
 export function headlessBreakdownSupported(agentId: string | null | undefined): boolean {
   return agentId === "claude-code" || agentId === "qwen";
 }
@@ -180,6 +180,89 @@ export function estimateLocalBreakdown(
     compactions: compactions > 0 ? compactions : null,
     cacheRead: cacheRead > 0 ? cacheRead : undefined,
     freshInput: freshInput > 0 ? freshInput : undefined,
+  };
+}
+
+const VARIABLE_CATEGORY_KEYS = new Set(["Messages", "Tool outputs", "Thinking", "Unattributed"]);
+
+/**
+ * 将运行中会话做过一次 `/context` 校准得到的固定开销（系统提示、内置工具、MCP 工具、技能、记忆文件与自动压缩预留）
+ * 投射到当前轮的真实 `currentUsed`：后续每轮无需再次拉起无头 CLI 子进程，即可实时更新「对话」与「离自动压缩剩余」。
+ */
+export function projectCalibratedBreakdown(
+  calibrated: ContextBreakdown,
+  currentUsed: number,
+  currentWindow: number | null,
+  local?: ContextBreakdown | null,
+): ContextBreakdown {
+  const effWin = currentWindow && currentWindow > 0 ? currentWindow : calibrated.window;
+  const calWin = calibrated.window > 0 ? calibrated.window : effWin;
+  const reserve =
+    calibrated.untilCompact !== null && calWin > 0
+      ? Math.max(0, calWin - calibrated.used - calibrated.untilCompact)
+      : null;
+
+  const compactions = calibrated.compactions ?? local?.compactions ?? null;
+  const cacheRead = local?.cacheRead ?? calibrated.cacheRead;
+  const freshInput = local?.freshInput ?? calibrated.freshInput;
+
+  if (currentUsed <= 0) {
+    return {
+      ...calibrated,
+      window: effWin,
+      compactions,
+      cacheRead,
+      freshInput,
+    };
+  }
+
+  const fixed = calibrated.categories.filter(
+    (c) => c.tokens > 0 && !VARIABLE_CATEGORY_KEYS.has(c.key),
+  );
+  const fixedSum = fixed.reduce((acc, c) => acc + c.tokens, 0);
+  const categories: ContextCategory[] = [];
+
+  if (fixed.length === 0) {
+    categories.push({ key: "Messages", tokens: currentUsed });
+  } else if (fixedSum <= currentUsed) {
+    categories.push(...fixed);
+    const msgTokens = currentUsed - fixedSum;
+    if (msgTokens > 0) categories.push({ key: "Messages", tokens: msgTokens });
+  } else {
+    const scale = currentUsed / fixedSum;
+    const scaled = fixed
+      .map((c) => ({ key: c.key, tokens: Math.round(c.tokens * scale) }))
+      .filter((c) => c.tokens > 0);
+    if (scaled.length === 0) {
+      categories.push({ key: "Messages", tokens: currentUsed });
+    } else {
+      const sum = scaled.reduce((acc, c) => acc + c.tokens, 0);
+      const diff = currentUsed - sum;
+      if (diff !== 0) {
+        let maxIdx = 0;
+        for (let i = 1; i < scaled.length; i++) {
+          if (scaled[i].tokens > scaled[maxIdx].tokens) maxIdx = i;
+        }
+        scaled[maxIdx].tokens = Math.max(1, scaled[maxIdx].tokens + diff);
+      }
+      categories.push(...scaled);
+    }
+  }
+
+  const untilCompact =
+    reserve !== null && effWin > 0
+      ? Math.max(0, effWin - Math.min(effWin, reserve) - currentUsed)
+      : null;
+
+  return {
+    window: effWin,
+    used: currentUsed,
+    untilCompact,
+    categories,
+    compactions,
+    cacheRead,
+    freshInput,
+    subagents: calibrated.subagents,
   };
 }
 

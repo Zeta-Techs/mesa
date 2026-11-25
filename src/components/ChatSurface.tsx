@@ -1663,6 +1663,8 @@ export default function ChatSurface({
         agentId={activeContextAgent}
         breakdown={breakdownRequest(runtime?.status ?? null)}
         localBreakdown={inlineLocalBreakdown}
+        running={running}
+        busy={generating}
         onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
         snapshot={contextSnapshot}
       />

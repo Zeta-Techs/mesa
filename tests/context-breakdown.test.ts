@@ -201,6 +201,53 @@ test("estimateLocalBreakdown：按末次压缩切段，估算对话/工具/思�
   assert.equal(estimateLocalBreakdown(msgs, 0, 200_000), null);
 });
 
+test("projectCalibratedBreakdown：一次校准后的固定开销与自动压缩预留自动投射到后续各轮", async () => {
+  const { projectCalibratedBreakdown, contextView } = await import("../src/context-breakdown.ts");
+  const calibrated = {
+    window: 200_000,
+    used: 42_000,
+    untilCompact: 125_000, // reserve = 200k - 42k - 125k = 33k
+    categories: [
+      { key: "System prompt", tokens: 3_000 },
+      { key: "System tools", tokens: 12_000 },
+      { key: "MCP tools", tokens: 15_000 },
+      { key: "Skills", tokens: 2_000 },
+      { key: "Messages", tokens: 10_000 },
+    ],
+  };
+  const local = {
+    window: 200_000,
+    used: 92_000,
+    untilCompact: null,
+    categories: [{ key: "Messages", tokens: 92_000 }],
+    compactions: 1,
+    cacheRead: 80_000,
+    freshInput: 12_000,
+  };
+  const next = projectCalibratedBreakdown(calibrated, 92_000, 200_000, local);
+  assert.equal(next.used, 92_000);
+  assert.equal(next.untilCompact, 75_000, "200k - 33k(reserve) - 92k = 75k");
+  assert.equal(next.compactions, 1);
+  assert.equal(next.cacheRead, 80_000);
+  assert.equal(next.freshInput, 12_000);
+  const byKey = new Map(next.categories.map((c) => [c.key, c.tokens]));
+  assert.equal(byKey.get("MCP tools"), 15_000);
+  assert.equal(byKey.get("System tools"), 12_000);
+  assert.equal(byKey.get("System prompt"), 3_000);
+  assert.equal(byKey.get("Skills"), 2_000);
+  assert.equal(byKey.get("Messages"), 60_000, "92k - 32k(fixed) = 60k");
+  const view = contextView(next, { used: 92_000, window: 200_000 });
+  assert.equal(view.bar.compactAt, 167_000 / 200_000, "压缩线保持在 167k / 200k");
+
+  // 压缩或新回合后 used 低于固定开销时按比例缩回，总和仍严格等于 currentUsed
+  const shrunk = projectCalibratedBreakdown(calibrated, 16_000, 200_000, null);
+  assert.equal(
+    shrunk.categories.reduce((acc, c) => acc + c.tokens, 0),
+    16_000,
+  );
+  assert.equal(shrunk.untilCompact, 200_000 - 33_000 - 16_000);
+});
+
 test("Codex 会话图片过重：8MB 起提醒变慢，13MB 起提醒随时卡住", async () => {
   const { imageWeightNote, IMAGE_SLOW_BYTES, IMAGE_STUCK_BYTES } = await import("../src/context-breakdown.ts");
   assert.equal(imageWeightNote(null), null);

@@ -600,6 +600,8 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
           window={ctxWindow}
           agentId={agentId}
           breakdown={breakdownRequest(runtime?.status ?? null)}
+          running={live}
+          busy={Boolean(runtime?.busy)}
           onCompact={runtime?.onCompact}
           imageBytes={imageBytes}
           snapshot={runtime?.contextSnapshot ?? null}

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, Minimize2, Sparkles } from "lucide-react";
+import { Bot, Minimize2 } from "lucide-react";
 import type { ContextSnapshot } from "../composer-assist";
 import {
   contextView,
@@ -9,6 +9,7 @@ import {
   headlessBreakdownSupported,
   imageWeightNote,
   localBackendBreakdown,
+  projectCalibratedBreakdown,
   type ContextBreakdown,
   type ContextBreakdownRequest,
   type ContextTone,
@@ -28,9 +29,24 @@ export function contextFmtTokens(n: number): string {
   return String(n);
 }
 
-// 同一轮（用量没变）只读一次：后台起一次 CLI 要几秒，挂了 MCP 的更久
+// 本地秒读（Antigravity）按「会话 + 当轮用量」缓存，避免重复读库
 const breakdownCache = new Map<string, ContextBreakdown>();
 const breakdownInflight = new Map<string, Promise<ContextBreakdown>>();
+
+// 无头 `/context` 校准（Claude Code / Qwen Code）按「会话 + 模型 + 目录」只跑一次：
+// 仅在会话真正运行/继续后于后台静默校准一次，后续每轮由 projectCalibratedBreakdown 实时投射
+const calibratedCache = new Map<string, ContextBreakdown>();
+const calibratedInflight = new Map<string, Promise<ContextBreakdown>>();
+const calibratedAttempted = new Set<string>();
+const MAX_CACHE_ENTRIES = 64;
+
+function putBounded<V>(map: Map<string, V>, key: string, val: V) {
+  if (map.size >= MAX_CACHE_ENTRIES && !map.has(key)) {
+    const first = map.keys().next().value;
+    if (first !== undefined) map.delete(first);
+  }
+  map.set(key, val);
+}
 
 function loadBreakdown(req: ContextBreakdownRequest, key: string): Promise<ContextBreakdown> {
   const hit = breakdownCache.get(key);
@@ -39,11 +55,27 @@ function loadBreakdown(req: ContextBreakdownRequest, key: string): Promise<Conte
   if (!p) {
     p = invoke<ContextBreakdown>("context_breakdown", { ...req })
       .then((b) => {
-        breakdownCache.set(key, b);
+        putBounded(breakdownCache, key, b);
         return b;
       })
       .finally(() => breakdownInflight.delete(key));
     breakdownInflight.set(key, p);
+  }
+  return p;
+}
+
+function loadCalibrated(req: ContextBreakdownRequest, key: string): Promise<ContextBreakdown> {
+  const hit = calibratedCache.get(key);
+  if (hit) return Promise.resolve(hit);
+  let p = calibratedInflight.get(key);
+  if (!p) {
+    p = invoke<ContextBreakdown>("context_breakdown", { ...req })
+      .then((b) => {
+        putBounded(calibratedCache, key, b);
+        return b;
+      })
+      .finally(() => calibratedInflight.delete(key));
+    calibratedInflight.set(key, p);
   }
   return p;
 }
@@ -64,12 +96,6 @@ function toneClass(tone: ContextTone, warn: boolean): string {
   }
 }
 
-type Detail =
-  | { state: "idle" }
-  | { state: "loading" }
-  | { state: "ok"; data: ContextBreakdown }
-  | { state: "error"; message: string };
-
 /** 顺时针从 12 点起画实心扇形路径（0 < ratio < 1），避免描边法在 WebKit 上产生圆心针孔伪影 */
 function contextPiePath(cx: number, cy: number, r: number, ratio: number): string {
   const theta = ratio * Math.PI * 2;
@@ -86,6 +112,8 @@ export default function ContextRing({
   agentId,
   breakdown = null,
   localBreakdown = null,
+  running = false,
+  busy = false,
   onCompact,
   color,
   warnColor,
@@ -105,6 +133,10 @@ export default function ContextRing({
   breakdown?: ContextBreakdownRequest | null;
   /** 纯前端秒算的本地分类明细（全 7 家有逐轮用量的 CLI 通用，零等待不起子进程） */
   localBreakdown?: ContextBreakdown | null;
+  /** 当前会话是否正在运行（继续会话或新聊已启动）：仅运行中时为 Claude / Qwen 静默做一次 `/context` 校准 */
+  running?: boolean;
+  /** 当前回合是否正在生成/待确认：避开生成尖峰，等回合落地空闲后再静默校准 */
+  busy?: boolean;
   /** 「压缩上下文」：这家有压缩命令且正在运行时才给 */
   onCompact?: (() => void) | null;
   /** 不传 = 主题灰（text-l3 / 橙色 warn） */
@@ -138,35 +170,41 @@ export default function ContextRing({
   const pct = hasWindow ? Math.round(safeRatio * 100) : null;
   const ringRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
   const pinnedRef = useRef(false);
   const openTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   // 浮层右缘对齐图标右缘、底边在按钮上方 6px（通过外层 pb-1.5 形成隐形悬停桥，鼠标移入面板不断开）
   const [panel, setPanel] = useState<{ x: number; y: number } | null>(null);
-  const [detail, setDetail] = useState<Detail>({ state: "idle" });
+  const [, setCacheRev] = useState(0);
   const anchor = (el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
     return { x: rect.right + 4, y: rect.top };
   };
 
-  const reqKey = breakdown ? `${breakdown.agentId}|${breakdown.sessionId}|${used}` : null;
-  const reqKeyRef = useRef(reqKey);
-  reqKeyRef.current = reqKey;
-  function fetchDetail() {
-    if (!breakdown || !reqKey) return;
-    const cached = breakdownCache.get(reqKey);
-    if (cached) {
-      setDetail({ state: "ok", data: cached });
-      return;
-    }
-    setDetail({ state: "loading" });
-    const key = reqKey;
-    loadBreakdown(breakdown, key)
-      .then((data) => {
-        if (reqKeyRef.current === key) setDetail({ state: "ok", data });
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const isLocalBackend = localBackendBreakdown(agentId);
+  const isHeadless = headlessBreakdownSupported(agentId);
+  const localKey = breakdown && isLocalBackend ? `${breakdown.agentId}|${breakdown.sessionId}|${used}` : null;
+  const calKey =
+    breakdown && isHeadless
+      ? `${breakdown.agentId}|${breakdown.sessionId}|${breakdown.model ?? ""}|${breakdown.cwd}`
+      : null;
+
+  function fetchLocalBackend() {
+    if (!breakdown || !localKey || breakdownCache.has(localKey)) return;
+    loadBreakdown(breakdown, localKey)
+      .then(() => {
+        if (mountedRef.current) setCacheRev((v) => v + 1);
       })
-      .catch((e) => {
-        if (reqKeyRef.current === key) setDetail({ state: "error", message: String(e) });
+      .catch(() => {
+        // 已有纯前端 localBreakdown 兜底，失败静默保持本地估算
       });
   }
 
@@ -186,11 +224,8 @@ export default function ContextRing({
     if (!ringRef.current) return;
     if (pin) pinnedRef.current = true;
     setPanel(anchor(ringRef.current));
-    // 仅对纯本地秒读（Antigravity）或本轮已有缓存时自动读取后端；
-    // Claude / Qwen 需拉起无头 /context 子进程，悬停直接展示本地秒算分类，不自动起进程
-    if (reqKey && (localBackendBreakdown(agentId) || breakdownCache.has(reqKey))) {
-      fetchDetail();
-    }
+    // Antigravity 为纯本地秒读日志/子智能体库，悬停直接补读；Claude / Qwen 不因悬停起进程
+    if (localKey) fetchLocalBackend();
   }
 
   function closePanel() {
@@ -242,15 +277,33 @@ export default function ContextRing({
 
   useEffect(() => () => clearHoverTimers(), []);
 
-  // 开着时这一轮结束、用量变了：本地秒读家自动刷新，无头 /context 家清回待校准避免后台频繁起进程
+  // Antigravity 浮层开着且用量变了：同步刷新本地只读库
   useEffect(() => {
-    if (panel && reqKey && (localBackendBreakdown(agentId) || breakdownCache.has(reqKey))) {
-      fetchDetail();
-    } else {
-      setDetail({ state: "idle" });
-    }
+    if (panel && localKey) fetchLocalBackend();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reqKey]);
+  }, [panel, localKey]);
+
+  // Claude Code / Qwen Code：仅在用户真正继续/运行会话、且回合落地空闲时于后台静默校准一次 `/context`，
+  // 拿到精确的 MCP / 技能 / 内置工具与自动压缩预留后，后续每轮由 projectCalibratedBreakdown 实时投射，不再重复起进程
+  useEffect(() => {
+    if (!running || busy || used <= 0 || !breakdown || !calKey) return;
+    if (calibratedCache.has(calKey) || calibratedAttempted.has(calKey)) return;
+    const req = breakdown;
+    const key = calKey;
+    const timer = window.setTimeout(() => {
+      if (calibratedCache.has(key) || calibratedAttempted.has(key)) return;
+      calibratedAttempted.add(key);
+      loadCalibrated(req, key)
+        .then(() => {
+          if (mountedRef.current) setCacheRev((v) => v + 1);
+        })
+        .catch(() => {
+          // 静默回退到纯前端 localBreakdown，不打扰用户
+        });
+    }, 400);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, busy, used > 0, calKey]);
 
   useEffect(() => {
     if (!panel) return;
@@ -271,7 +324,13 @@ export default function ContextRing({
   }, [panel]);
 
   const light = typeof document !== "undefined" && (document.documentElement.dataset.theme ?? "").endsWith("-light");
-  const breakdownData = detail.state === "ok" ? detail.data : localBreakdown;
+  const cachedLocal = localKey ? breakdownCache.get(localKey) ?? null : null;
+  const cachedCalibrated = calKey ? calibratedCache.get(calKey) ?? null : null;
+  const breakdownData = cachedLocal
+    ? cachedLocal
+    : cachedCalibrated
+      ? projectCalibratedBreakdown(cachedCalibrated, used, win, localBreakdown)
+      : localBreakdown;
   const view = contextView(breakdownData, { used, window: win }, light);
   const usedRows = view.rows.filter((r) => r.tone !== "reserve" && r.tone !== "free");
   const capRows = view.rows.filter((r) => r.tone === "reserve" || r.tone === "free");
@@ -281,16 +340,7 @@ export default function ContextRing({
   const freshInput = breakdownData?.freshInput ?? snapshot?.freshInput ?? 0;
   const cacheTotal = cacheRead + freshInput;
   const subagents = breakdownData?.subagents ?? [];
-  const canCalibrateExact = Boolean(
-    headlessBreakdownSupported(agentId) && breakdown && used > 0 && detail.state === "idle",
-  );
-  const statusNote =
-    detail.state === "loading"
-      ? "正在读取精确分类…"
-      : detail.state === "error"
-        ? `没读到精确分类：${detail.message}`
-        : null;
-  const hasFooter = Boolean(onCompact || canCalibrateExact || statusNote);
+  const hasFooter = Boolean(onCompact);
 
   const renderRow = (row: (typeof view.rows)[number], muted = false) => (
     <div key={row.label} className="flex items-center gap-2 tabular-nums leading-[20px]">
@@ -506,55 +556,27 @@ export default function ContextRing({
                   </div>
                 )}
               </div>
-              {/* 仅在有操作（「压缩上下文」/ 按需校准 /context）或加载/报错时显示卡底托盘 */}
-              {hasFooter && (
+              {/* 仅在支持「压缩上下文」且正在运行时显示卡底托盘 */}
+              {hasFooter && onCompact && (
                 <div className="border-t border-hairline bg-strip/60 px-3.5 py-2.5">
-                  {onCompact && (
-                    <div className="text-xs font-medium">
-                      <button
-                        type="button"
-                        className={`flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-2.5 transition-colors ${
-                          warn
-                            ? "border-warn-text/40 bg-warn/40 text-warn-text hover:bg-warn/70"
-                            : "border-field bg-raised text-l2 hover:border-l4 hover:bg-hover hover:text-l1"
-                        }`}
-                        title="把前面的对话压成摘要，腾出上下文"
-                        onClick={() => {
-                          closePanel();
-                          onCompact();
-                        }}
-                      >
-                        <Minimize2 size={12} strokeWidth={1.8} aria-hidden="true" />
-                        压缩上下文
-                      </button>
-                    </div>
-                  )}
-                  {canCalibrateExact && (
-                    <div className={`${onCompact ? "mt-2" : ""} text-xs`}>
-                      <button
-                        type="button"
-                        className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-hairline bg-inset/70 px-2.5 text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1"
-                        title="按需跑一次无头 /context，读取精确的 MCP、技能与自动压缩预留（不花钱、需几秒）"
-                        onClick={() => {
-                          pinnedRef.current = true;
-                          fetchDetail();
-                        }}
-                      >
-                        <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />
-                        校准精确分类（/context）
-                      </button>
-                    </div>
-                  )}
-                  {statusNote && (
-                    <div className={`${onCompact || canCalibrateExact ? "mt-2" : ""} text-micro leading-[16px] text-l4`}>
-                      {statusNote}
-                      {detail.state === "error" && (
-                        <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
-                          重试
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <div className="text-xs font-medium">
+                    <button
+                      type="button"
+                      className={`flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-2.5 transition-colors ${
+                        warn
+                          ? "border-warn-text/40 bg-warn/40 text-warn-text hover:bg-warn/70"
+                          : "border-field bg-raised text-l2 hover:border-l4 hover:bg-hover hover:text-l1"
+                      }`}
+                      title="把前面的对话压成摘要，腾出上下文"
+                      onClick={() => {
+                        closePanel();
+                        onCompact();
+                      }}
+                    >
+                      <Minimize2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                      压缩上下文
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
