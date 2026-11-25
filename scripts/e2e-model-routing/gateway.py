@@ -64,6 +64,8 @@ PLAN_TEXT = os.environ.get("E2E_PLAN_TEXT", "# 方案：写一个探针文件\n\
 PROBE = os.environ.get("E2E_PROBE_CMD", "echo mesa > mesa_probe.txt")
 # E2E_DONE_TEXT 换工具跑完后的那句回复（如带图片路径，看聊天层出不出图）
 DONE = os.environ.get("E2E_DONE_TEXT", "done")
+# E2E_OK_TEXT 换没有触发词的请求回的那句（标题、Claude「※ recap」回顾等旁支请求；默认 ok）。回顾写长一点，看它折行后读屏还认不认得输入框（2026-11-25）
+OK_TEXT = os.environ.get("E2E_OK_TEXT", "ok")
 SHELLISH = ("bash", "shell", "run_shell_command", "exec_command", "run_command", "terminal", "execute", "command")
 
 
@@ -245,9 +247,9 @@ class H(BaseHTTPRequestHandler):
                    (json.dumps(tools, ensure_ascii=False)[:1500] if mode == "notool" else None),
             hint=("SUBTASK" if "SUBTASK" in msgs else "") + " | " + (sysp or "")[:0] + msgs[-90:].replace("\n", " "))
         p = self.path
-        text = "ok"
+        text = OK_TEXT
         lines = (SLOW_LINES if mode == "slow" else LONG_LINES if mode == "long" else [SUGGESTION] if mode == "suggest"
-                 else [(DONE if mode == "done" else "ok")])
+                 else [(DONE if mode == "done" else OK_TEXT)])
         if mode == "suggest":
             text = SUGGESTION
         shell = pick_shell(tools) if mode == "tool" else None

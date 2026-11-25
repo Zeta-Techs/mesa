@@ -32,7 +32,8 @@ BIN = {"claude-code": "claude", "codebuddy": "codebuddy", "codex": "codex", "qwe
        "kimi": shutil.which("kimi") or os.path.join(real_home, ".kimi-code/bin/kimi"), "opencode": "opencode", "grok": "grok",
        "gemini": "gemini", "cursor": "cursor-agent",
        "agy": shutil.which("agy") or os.path.join(real_home, ".antigravity/antigravity/bin/agy")}
-COPY = [".claude/settings.json", ".claude.json", ".codex/config.toml", ".grok/config.toml", ".qwen/settings.json",
+# .claude/statusline.sh：settings.json 里的状态栏常写成 ~/.claude/statusline.sh，临时 HOME 里没有它屏底就少一行（2026-11-25）
+COPY = [".claude/settings.json", ".claude.json", ".claude/statusline.sh", ".codex/config.toml", ".grok/config.toml", ".qwen/settings.json",
         ".kimi-code/config.toml", ".config/opencode/opencode.json", ".gemini/settings.json", ".codebuddy/settings.json",
         ".gemini/antigravity-cli/settings.json"]
 plan = plans[agent]
@@ -447,6 +448,14 @@ if esc_after:
     except OSError: alive[0] = False
 record["scenes"]["reply"] = film(float(os.environ.get("REPLY_SECS", "12")))
 pump(1)
+# IDLE_SECS=<秒>：答完不发下一句、接着拍（答完停着时屏上还会冒出什么：Claude 失焦后写的「※ recap」回顾等，配 CAP_FOCUS=out；2026-11-25）
+if os.environ.get("IDLE_SECS"):
+    # IDLE_FOCUS="in,out"：停着时按顺序报得焦 / 失焦（隔 IDLE_FOCUS_GAP 秒），同在 Mesa 里从终端层切回聊天层（xterm 失焦）
+    for f in filter(None, os.environ.get("IDLE_FOCUS", "").split(",")):
+        record["scenes"].setdefault("idle_focus", []).extend(film(float(os.environ.get("IDLE_FOCUS_GAP", "2")), 0.3))
+        try: pty_write(b"\x1b[I" if f == "in" else b"\x1b[O")
+        except OSError: alive[0] = False
+    record["scenes"]["idle"] = film(float(os.environ["IDLE_SECS"]), 1.0)
 
 probe = os.path.join(work, "mesa_probe.txt")
 send(os.environ.get("TOOL_PROMPT", "TRIGGER_TOOL 跑一下"))

@@ -143,6 +143,22 @@ node --experimental-strip-types scripts/e2e-model-routing/capture-check.ts "$(cy
 `E2E_THINK_DELAY=0.08`（按字数切块慢慢流出），抓屏发 `REPLY_PROMPT="TRIGGER_THINK TRIGGER_SLOW 讲一段"`，看各家生成中怎么画思考。
 Grok 1.0.70 的结论与样本见 docs/conventions/terminal.md「思考不进预览」。
 
+**答完停着、失焦、会话名（2026-11-25）**：用户在 Mesa 里答完一切回聊天层就弹「终端在等你」，卡上是回复正文。抓屏加
+`IDLE_SECS=<秒>`（答完不发下一句接着拍）、`IDLE_FOCUS="in,out"`（停着时报得焦 / 失焦，同从终端层切回聊天层）；
+假网关加 `E2E_OK_TEXT=<一句>`（没有触发词的旁支请求回这句，如 Claude `/recap` 的「※ recap」回顾）。
+Claude 的状态栏常写成 `~/.claude/statusline.sh`，脚本会一并拷进临时 HOME。第二幕发 `/rename <名字>` 就能看到输入框上沿写着会话名：
+
+```bash
+CAP_RAW=1 CAP_COLS=150 CAP_ROWS=53 REPLY_PROMPT="TRIGGER_LONG 写长一点" REPLY_SECS=25 IDLE_FOCUS="in,out" IDLE_SECS=3 \
+  TOOL_PROMPT="/rename 只读对比三个文件" TOOL_SECS=8 PYTE_DIR=/tmp/pyte \
+  python3 -I scripts/e2e-model-routing/chat-capture.py /tmp/e2e-plans.json claude-code auto /tmp/cap/claude-rename.json
+```
+
+用真 xterm.js 回放、每块按 Mesa 口径调 `terminalHasInputBox`。2026-11-25 九家结论（同一份长回复 + 停着得焦 / 失焦，再各发一次 `/rename`）：
+Claude 2.1.326「────… 名字 ─」、Qwen 0.28.4「────… 名字 ──」、Grok 1.0.92「╭──… 名字 ─╮」起名后原先读成没有输入框（已修，样本在
+tests/fixtures/screens/<家>/darwin-<版本>-renamed-idle.json）；Codex 把名字写在底栏、Kimi / Antigravity 只在对话里回一句，Gemini 没有 `/rename`，都不受影响；
+失焦、`/recap`、长回复本身不影响任何一家。OpenCode / CodeBuddy / Cursor 没有画面布局表，不按读屏判断输入框；Cursor 不收第三方网关的钥匙，跑不了假网关。
+
 **Windows 上跑**（2026-10-20）：依赖装到临时目录 `python -m pip install --target <目录> pyte pywinpty`，`PYTE_DIR` / `PYWINPTY_DIR` 都指向它；
 三个坑——①中文系统必须 `python -I -X utf8`（不加时读计划 JSON 按 GBK 报错；`-I` 会忽略 `PYTHONUTF8` 环境变量）；
 ②在 Git Bash 里带斜杠命令参数（`/model`）要 `MSYS_NO_PATHCONV=1`，否则变成 `C:/Program Files/Git/model` 被当成一句话发出去，
