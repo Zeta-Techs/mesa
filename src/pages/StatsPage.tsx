@@ -42,6 +42,7 @@ import {
   quotaTone,
   resetCardExpiryNote,
   applyQuotaDisplayPrefs,
+  EMPTY_QUOTA_PREFS,
   loadQuotaDisplayPrefs,
   saveQuotaDisplayPrefs,
   toggleQuotaHidden,
@@ -86,6 +87,7 @@ import { mergePartialPlanRows, useQuotaSwipe } from "../quota-swipe";
 import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
 import { showFloatingCoach } from "../components/CoachTip";
 import {
+  Checkbox,
   EmptyState,
   FoldMark,
   LoadingRows,
@@ -703,6 +705,130 @@ function QuotaPager({
   );
 }
 
+interface QuotaOrderItem {
+  id: string;
+  label: string;
+  hint?: string | null;
+  icon?: ReactNode;
+  checked: boolean;
+}
+
+/** 订阅余量 / 网关余额共用：显示筛选与轮播排序面板，复用全站 Checkbox 与弱分层底色 */
+function QuotaOrderPanel({
+  title,
+  items,
+  hasCustom,
+  onToggle,
+  onMove,
+  onReset,
+  onDone,
+}: {
+  title: string;
+  items: QuotaOrderItem[];
+  hasCustom: boolean;
+  onToggle: (id: string) => void;
+  onMove: (id: string, dir: -1 | 1) => void;
+  onReset: () => void;
+  onDone: () => void;
+}) {
+  const visibleCount = items.reduce((n, it) => n + (it.checked ? 1 : 0), 0);
+  return (
+    <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
+      <div className="mb-2 flex items-center justify-between gap-2 border-b border-hairline pb-2">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-medium text-l2">{title}</span>
+          <span className="shrink-0 rounded-full bg-hover px-1.5 py-px text-micro tabular-nums text-l3">
+            {visibleCount} / {items.length}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {hasCustom && (
+            <button
+              type="button"
+              className="inline-flex h-6 items-center rounded-md px-2 text-micro text-l3 transition-colors hover:bg-hover hover:text-l1"
+              onClick={onReset}
+            >
+              恢复默认
+            </button>
+          )}
+          <button
+            type="button"
+            className="inline-flex h-6 items-center rounded-md border border-hairline bg-raised px-2.5 text-micro font-medium text-l1 transition-colors hover:bg-seg-sel"
+            onClick={onDone}
+          >
+            完成
+          </button>
+        </div>
+      </div>
+      <ul className="space-y-0.5">
+        {items.map((item, idx) => {
+          const isLastVisible = item.checked && visibleCount <= 1;
+          return (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-hover"
+            >
+              <Checkbox
+                checked={item.checked}
+                disabled={isLastVisible}
+                title={isLastVisible ? "至少保留一项显示" : item.hint ? `${item.label}（${item.hint}）` : item.label}
+                className="min-w-0 flex-1 gap-2.5"
+                onChange={() => {
+                  if (isLastVisible) return;
+                  onToggle(item.id);
+                }}
+                label={
+                  <span
+                    className={`flex min-w-0 flex-1 items-center gap-2 transition-opacity ${
+                      item.checked ? "opacity-100" : "opacity-50"
+                    }`}
+                  >
+                    {item.icon && (
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                        {item.icon}
+                      </span>
+                    )}
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className={item.checked ? "font-medium text-l1" : "text-l3"}>
+                        {item.label}
+                      </span>
+                      {item.hint ? (
+                        <span className="ml-1.5 text-micro text-l4">{item.hint}</span>
+                      ) : null}
+                    </span>
+                  </span>
+                }
+              />
+              <div className="flex shrink-0 items-center gap-0.5">
+                <button
+                  type="button"
+                  disabled={idx === 0}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                  aria-label={`上移 ${item.label}`}
+                  title="上移"
+                  onClick={() => onMove(item.id, -1)}
+                >
+                  <ArrowUp aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  disabled={idx === items.length - 1}
+                  className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                  aria-label={`下移 ${item.label}`}
+                  title="下移"
+                  onClick={() => onMove(item.id, 1)}
+                >
+                  <ArrowDown aria-hidden="true" className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
 const WALLET_CACHE_KEY = "ccode.stats.walletRowsCache";
 const OFFICIAL_QUOTA_AGENTS = new Set(["claude-code", "codex", "grok", "kimi", "agy"]);
@@ -800,6 +926,7 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
 
   const togglePlanOpen = useCallback(() => {
     setPlanOpen((v) => {
+      if (v) setPlanFilterOpen(false);
       localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
       return !v;
     });
@@ -876,7 +1003,7 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
     return (
       <section
         ref={planSwipe.containerRef}
-        className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+        className="ccode-well ccode-card flex flex-col overflow-hidden overscroll-x-contain p-4"
         aria-label="订阅余量"
       >
         <div className="flex min-h-8 items-center gap-2">
@@ -921,7 +1048,7 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
   return (
     <section
       ref={planSwipe.containerRef}
-      className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+      className="ccode-well ccode-card flex flex-col overflow-hidden overscroll-x-contain p-4"
       aria-label="订阅余量"
     >
       {/* 卡头恒一行，把服务商与等级收进紧凑身份胶囊，时间戳窄屏收进重查悬浮提示 */}
@@ -953,7 +1080,8 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
           {planOpen && rows.length > 1 && (
             <button
               type="button"
-              className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${planFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
+              className={`flex h-6 w-6 items-center justify-center rounded-sm transition-colors hover:bg-hover hover:text-l1 ${planFilterOpen ? "bg-seg-sel text-l1" : "text-l3"}`}
+              aria-pressed={planFilterOpen}
               title="筛选和调整账号显示顺序"
               onClick={() => setPlanFilterOpen((v) => !v)}
             >
@@ -1028,82 +1156,63 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
         </>
       ) : (
         <>
-          {planFilterOpen && rows.length > 1 && (
-            <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
-              <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
-                <span>勾选要在卡片中轮播的账号并调整顺序（至少保留一项）</span>
-                <button
-                  type="button"
-                  className="text-l3 hover:text-l1"
-                  onClick={() => setPlanFilterOpen(false)}
-                >
-                  完成
-                </button>
+          {planFilterOpen && rows.length > 1 ? (
+            <QuotaOrderPanel
+              title="轮播显示与排序"
+              hasCustom={
+                planPrefs.orderIds.length > 0 ||
+                planPrefs.hiddenIds.some((id) => rows.some((r) => r.gatewayId === id))
+              }
+              items={orderedAllPlanRows.map((item) => {
+                const vendor = vendorForPlanProvider(item.provider);
+                const icon =
+                  item.provider === "agy" ? (
+                    <AgentIcon agent="agy" label="Antigravity" size={14} />
+                  ) : vendor ? (
+                    <VendorIcon
+                      vendor={vendor}
+                      name={planProviderLabel(item.provider)}
+                      className="h-3.5 w-3.5 shrink-0"
+                    />
+                  ) : null;
+                return {
+                  id: item.gatewayId,
+                  label: planTabLabel(item, allProviderCounts[item.provider] ?? 1),
+                  hint: item.accountHint,
+                  icon,
+                  checked: !planPrefs.hiddenIds.includes(item.gatewayId),
+                };
+              })}
+              onToggle={(id) => updatePlanPrefs(toggleQuotaHidden(planPrefs, id))}
+              onMove={(id, dir) =>
+                updatePlanPrefs(
+                  moveQuotaOrder(
+                    planPrefs,
+                    orderedAllPlanRows.map((x) => x.gatewayId),
+                    id,
+                    dir,
+                  ),
+                )
+              }
+              onReset={() => updatePlanPrefs(EMPTY_QUOTA_PREFS)}
+              onDone={() => setPlanFilterOpen(false)}
+            />
+          ) : (
+            planRowsVisible.length > 1 && (
+              <div className="mt-3">
+                <SegTabs
+                  variant="boxed"
+                  size="sm"
+                  wrap
+                  items={planRowsVisible.map((r) => ({
+                    id: r.gatewayId,
+                    label: planTabLabel(r, providerCounts[r.provider] ?? 1),
+                  }))}
+                  value={row.gatewayId}
+                  onChange={setPlanActive}
+                />
               </div>
-              <ul className="space-y-1">
-                {orderedAllPlanRows.map((item, idx) => {
-                  const checked = !planPrefs.hiddenIds.includes(item.gatewayId);
-                  const allIds = orderedAllPlanRows.map((x) => x.gatewayId);
-                  return (
-                    <li
-                      key={item.gatewayId}
-                      className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          updatePlanPrefs(toggleQuotaHidden(planPrefs, item.gatewayId))
-                        }
-                      />
-                      <span className="min-w-0 flex-1 truncate text-l2">
-                        {planTabLabel(item, allProviderCounts[item.provider] ?? 1)}
-                        {item.accountHint ? (
-                          <span className="ml-1.5 text-micro text-l4">{item.accountHint}</span>
-                        ) : null}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                        title="上移"
-                        onClick={() =>
-                          updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, -1))
-                        }
-                      >
-                        <ArrowUp className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === orderedAllPlanRows.length - 1}
-                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                        title="下移"
-                        onClick={() =>
-                          updatePlanPrefs(moveQuotaOrder(planPrefs, allIds, item.gatewayId, 1))
-                        }
-                      >
-                        <ArrowDown className="h-3 w-3" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-          {planRowsVisible.length > 1 && (
-            <div className="mt-3">
-              <SegTabs
-                variant="boxed"
-                size="sm"
-                wrap
-                items={planRowsVisible.map((r) => ({
-                  id: r.gatewayId,
-                  label: planTabLabel(r, providerCounts[r.provider] ?? 1),
-                }))}
-                value={row.gatewayId}
-                onChange={setPlanActive}
-              />
-            </div>
+            )
           )}
           <div key={row.gatewayId} className="mt-3">
             {(row.accountHint || row.isActiveSlot != null) && (
@@ -1283,6 +1392,7 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
 
   const toggleWalletOpen = useCallback(() => {
     setWalletOpen((v) => {
+      if (v) setWalletFilterOpen(false);
       localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
       return !v;
     });
@@ -1328,12 +1438,12 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
     return (
       <section
         ref={walletSwipe.containerRef}
-        className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+        className="ccode-well ccode-card flex flex-col overflow-hidden overscroll-x-contain p-4"
         aria-label="网关余额"
       >
         <div className="flex min-h-8 items-center gap-2">
           <h2 className="text-base font-medium text-l1">网关余额</h2>
-          <div className="ml-auto flex items-center">
+          <div className="ml-auto flex items-center gap-0.5">
             <button
               type="button"
               className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1"
@@ -1391,7 +1501,7 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
   return (
     <section
       ref={walletSwipe.containerRef}
-      className="ccode-well ccode-card overflow-hidden overscroll-x-contain p-4"
+      className="ccode-well ccode-card flex flex-col overflow-hidden overscroll-x-contain p-4"
       aria-label="网关余额"
     >
       {/* 卡头恒一行：站点名可截断，其余不缩 */}
@@ -1407,11 +1517,12 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
           </span>
         )}
         {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
-        <div className="ml-auto flex shrink-0 items-center">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {walletOpen && walletGroups.length > 1 && (
             <button
               type="button"
-              className={`flex h-6 w-6 items-center justify-center rounded-sm hover:bg-hover hover:text-l1 ${walletFilterOpen ? "bg-hover text-l1" : "text-l3"}`}
+              className={`flex h-6 w-6 items-center justify-center rounded-sm transition-colors hover:bg-hover hover:text-l1 ${walletFilterOpen ? "bg-seg-sel text-l1" : "text-l3"}`}
+              aria-pressed={walletFilterOpen}
               title="筛选和调整账户显示顺序"
               onClick={() => setWalletFilterOpen((v) => !v)}
             >
@@ -1508,79 +1619,48 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
         </>
       ) : (
         <>
-          {walletFilterOpen && walletGroups.length > 1 && (
-            <div className="mt-3 rounded-lg border border-hairline bg-inset p-2.5 text-xs">
-              <div className="mb-1.5 flex items-center justify-between text-micro text-l3">
-                <span>勾选要在卡片中显示的钱包账户并调整顺序（至少保留一项）</span>
-                <button
-                  type="button"
-                  className="text-l3 hover:text-l1"
-                  onClick={() => setWalletFilterOpen(false)}
-                >
-                  完成
-                </button>
+          {walletFilterOpen && walletGroups.length > 1 ? (
+            <QuotaOrderPanel
+              title="账户显示与排序"
+              hasCustom={
+                walletPrefs.orderIds.length > 0 ||
+                walletPrefs.hiddenIds.some((id) => walletGroups.some((g) => g.key === id))
+              }
+              items={orderedAllWallets.map((item) => ({
+                id: item.key,
+                label: walletAccountTitle(item, true),
+                checked: !walletPrefs.hiddenIds.includes(item.key),
+              }))}
+              onToggle={(id) => updateWalletPrefs(toggleQuotaHidden(walletPrefs, id))}
+              onMove={(id, dir) =>
+                updateWalletPrefs(
+                  moveQuotaOrder(
+                    walletPrefs,
+                    orderedAllWallets.map((x) => x.key),
+                    id,
+                    dir,
+                  ),
+                )
+              }
+              onReset={() => updateWalletPrefs(EMPTY_QUOTA_PREFS)}
+              onDone={() => setWalletFilterOpen(false)}
+            />
+          ) : (
+            walletGroupsVisible.length > 1 && (
+              <div className="mt-3">
+                <SegTabs
+                  variant="boxed"
+                  size="sm"
+                  wrap
+                  items={walletGroupsVisible.map((g) => ({
+                    id: g.key,
+                    label: walletAccountTitle(g, true),
+                  }))}
+                  value={group.key}
+                  onChange={setWalletActive}
+                />
               </div>
-              <ul className="space-y-1">
-                {orderedAllWallets.map((item, idx) => {
-                  const checked = !walletPrefs.hiddenIds.includes(item.key);
-                  const allIds = orderedAllWallets.map((x) => x.key);
-                  return (
-                    <li
-                      key={item.key}
-                      className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-hover/60"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          updateWalletPrefs(toggleQuotaHidden(walletPrefs, item.key))
-                        }
-                      />
-                      <span className="min-w-0 flex-1 truncate text-l2">
-                        {walletAccountTitle(item, true)}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={idx === 0}
-                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                        title="上移"
-                        onClick={() =>
-                          updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, -1))
-                        }
-                      >
-                        <ArrowUp className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={idx === orderedAllWallets.length - 1}
-                        className="rounded p-0.5 text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-                        title="下移"
-                        onClick={() =>
-                          updateWalletPrefs(moveQuotaOrder(walletPrefs, allIds, item.key, 1))
-                        }
-                      >
-                        <ArrowDown className="h-3 w-3" />
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-          {walletGroupsVisible.length > 1 && (
-            <div className="mt-3">
-              <SegTabs
-                variant="boxed"
-                size="sm"
-                wrap
-                items={walletGroupsVisible.map((g) => ({
-                  id: g.key,
-                  label: walletAccountTitle(g, true),
-                }))}
-                value={group.key}
-                onChange={setWalletActive}
-              />
-            </div>
+            )
           )}
           <div key={group.key} className="mt-3">
             {row.error && (
@@ -2512,7 +2592,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
       {((planRows.length > 0 || (planLoading && hasPlanSource)) ||
         (hasWalletGateway && (walletRowsShown.length > 0 || walletLoading))) && (
-        <div className="mb-4 grid items-start gap-4 lg:grid-cols-2">
+        <div className="mb-4 grid gap-4 lg:grid-cols-2">
           {(planRows.length > 0 || (planLoading && hasPlanSource)) && (
             <PlanQuotaCard
               visible={visible}
