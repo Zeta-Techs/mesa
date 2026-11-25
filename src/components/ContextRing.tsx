@@ -133,13 +133,15 @@ export default function ContextRing({
   const pct = hasWindow ? Math.round(safeRatio * 100) : null;
   const ringRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  // 浮层右缘对齐圆环右缘、底边在圆环上方 6px（用 translate 往左上挪，不依赖视口高度）
-  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const pinnedRef = useRef(false);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  // 浮层右缘对齐图标右缘、底边在按钮上方 6px（通过外层 pb-1.5 形成隐形悬停桥，鼠标移入面板不断开）
   const [panel, setPanel] = useState<{ x: number; y: number } | null>(null);
   const [detail, setDetail] = useState<Detail>({ state: "idle" });
   const anchor = (el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
-    return { x: rect.right + 4, y: rect.top - 6 };
+    return { x: rect.right + 4, y: rect.top };
   };
 
   const reqKey = breakdown ? `${breakdown.agentId}|${breakdown.sessionId}|${used}` : null;
@@ -163,16 +165,73 @@ export default function ContextRing({
       });
   }
 
-  function togglePanel() {
-    if (panel) {
-      setPanel(null);
-      return;
+  function clearHoverTimers() {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
     }
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function openPanel(pin: boolean) {
+    clearHoverTimers();
     if (!ringRef.current) return;
-    setTip(null);
+    if (pin) pinnedRef.current = true;
     setPanel(anchor(ringRef.current));
     fetchDetail();
   }
+
+  function closePanel() {
+    clearHoverTimers();
+    pinnedRef.current = false;
+    setPanel(null);
+  }
+
+  function handleTriggerEnter() {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    if (panel) return;
+    if (openTimerRef.current !== null) window.clearTimeout(openTimerRef.current);
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      openPanel(false);
+    }, 100);
+  }
+
+  function handleLeave() {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (pinnedRef.current) return;
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      closePanel();
+    }, 180);
+  }
+
+  function handlePanelEnter() {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  function togglePanel() {
+    if (panel && pinnedRef.current) {
+      closePanel();
+      return;
+    }
+    openPanel(true);
+  }
+
+  useEffect(() => () => clearHoverTimers(), []);
 
   // 开着时这一轮结束、用量变了：重新读
   useEffect(() => {
@@ -186,10 +245,10 @@ export default function ContextRing({
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (panelRef.current?.contains(t) || ringRef.current?.contains(t)) return;
-      setPanel(null);
+      closePanel();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPanel(null);
+      if (e.key === "Escape") closePanel();
     };
     document.addEventListener("mousedown", onDown, true);
     document.addEventListener("keydown", onKey, true);
@@ -244,14 +303,14 @@ export default function ContextRing({
         style={stroke ? { color: stroke } : undefined}
         aria-label={
           hasWindow && win
-            ? `上下文已用 ${pct}%（${contextFmtTokens(used)} / ${contextFmtTokens(win)}），点开看明细`
-            : `当前上下文 ${contextFmtTokens(used)} tokens，点开看明细`
+            ? `上下文已用 ${pct}%（${contextFmtTokens(used)} / ${contextFmtTokens(win)}）`
+            : `当前上下文 ${contextFmtTokens(used)} tokens`
         }
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
         onClick={togglePanel}
-        onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
-        onMouseLeave={() => setTip(null)}
+        onMouseEnter={handleTriggerEnter}
+        onMouseLeave={handleLeave}
       >
         {hasWindow ? (
           <>
@@ -280,44 +339,15 @@ export default function ContextRing({
           </span>
         )}
       </button>
-      {tip &&
-        !panel &&
-        typeof document !== "undefined" &&
-        createPortal(
-          // 定位挂外层（translate 往左上挪）；内层才是浮层皮肤——ccode-float-surface 的入场动画会改 transform，
-          // 两者放在同一个元素上，入场那 150ms 浮层会先出现在错位置再跳回来
-          <div
-            className="pointer-events-none fixed z-70"
-            style={{ left: tip.x, top: tip.y, transform: "translate(-100%, -100%)" }}
-          >
-            <div
-              role="tooltip"
-              className="ccode-float-surface w-max max-w-[16rem] rounded-lg border border-field px-2.5 py-2 text-xs shadow-lg"
-            >
-              <div className={warn ? "text-warn-text" : "text-l1"}>
-                {hasWindow ? `上下文已用 ${pct}%` : "当前上下文"}
-              </div>
-              <div className="mt-0.5 tabular-nums text-l3">
-                {hasWindow && win
-                  ? `${contextFmtTokens(used)} / ${contextFmtTokens(win)} tokens`
-                  : `${contextFmtTokens(used)} tokens`}
-              </div>
-              {cacheTotal > 0 && cacheRead > 0 && (
-                <div className="mt-0.5 text-micro tabular-nums text-l4">
-                  缓存复用 {fmtRatio(cacheRead / cacheTotal)}
-                  {compactions > 0 ? ` · 已压缩 ${compactions} 次` : ""}
-                </div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
       {panel &&
         typeof document !== "undefined" &&
         createPortal(
+          // 定位与悬停桥（pb-1.5）挂外层；内层负责 .ccode-float-surface 入场动画，不与 translate 冲突
           <div
-            className="fixed z-70"
+            className="fixed z-70 pb-1.5"
             style={{ left: panel.x, top: panel.y, transform: "translate(-100%, -100%)" }}
+            onMouseEnter={handlePanelEnter}
+            onMouseLeave={handleLeave}
           >
             <div
               ref={panelRef}
@@ -481,7 +511,7 @@ export default function ContextRing({
                         }`}
                         title="把前面的对话压成摘要，腾出上下文"
                         onClick={() => {
-                          setPanel(null);
+                          closePanel();
                           onCompact();
                         }}
                       >

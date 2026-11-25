@@ -268,24 +268,88 @@ export default function ChatQuotaRing({
 
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const pinnedRef = useRef(false);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
   const [panel, setPanel] = useState<{ x: number; y: number } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const anchor = (el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
-    return { x: Math.max(276, rect.right + 4), y: rect.top - 6 };
+    return { x: Math.max(276, rect.right + 4), y: rect.top };
   };
+
+  const clearHoverTimers = useCallback(() => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  const openPanel = useCallback(
+    (pin: boolean) => {
+      clearHoverTimers();
+      if (!btnRef.current) return;
+      if (pin) pinnedRef.current = true;
+      setPanel(anchor(btnRef.current));
+    },
+    [clearHoverTimers],
+  );
+
+  const closePanel = useCallback(() => {
+    clearHoverTimers();
+    pinnedRef.current = false;
+    setPanel(null);
+  }, [clearHoverTimers]);
+
+  const handleTriggerEnter = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+    if (panel) return;
+    if (openTimerRef.current !== null) window.clearTimeout(openTimerRef.current);
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      openPanel(false);
+    }, 100);
+  }, [panel, openPanel]);
+
+  const handleLeave = useCallback(() => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+    if (pinnedRef.current) return;
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      closePanel();
+    }, 180);
+  }, [closePanel]);
+
+  const handlePanelEnter = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => clearHoverTimers(), [clearHoverTimers]);
 
   useEffect(() => {
     if (!panel) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
-      setPanel(null);
+      closePanel();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPanel(null);
+      if (e.key === "Escape") closePanel();
     };
     document.addEventListener("mousedown", onDown, true);
     document.addEventListener("keydown", onKey, true);
@@ -293,7 +357,7 @@ export default function ChatQuotaRing({
       document.removeEventListener("mousedown", onDown, true);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, [panel]);
+  }, [panel, closePanel]);
 
   const handleRefresh = useCallback(async () => {
     if (!view || refreshing) return;
@@ -336,8 +400,8 @@ export default function ChatQuotaRing({
     : "";
 
   const ariaLabel = isPlan
-    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%，点开查看全部窗口`
-    : `${view.row.gatewayName} 钱包余额 ${walletLabel}，点开查看详情`;
+    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%`
+    : `${view.row.gatewayName} 钱包余额 ${walletLabel}`;
 
   const resetCardCount =
     isPlan && view.row.resetCardsSupported && view.row.resetCards.ok
@@ -354,16 +418,14 @@ export default function ChatQuotaRing({
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
         onClick={() => {
-          if (panel) {
-            setPanel(null);
+          if (panel && pinnedRef.current) {
+            closePanel();
             return;
           }
-          if (!btnRef.current) return;
-          setTip(null);
-          setPanel(anchor(btnRef.current));
+          openPanel(true);
         }}
-        onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
-        onMouseLeave={() => setTip(null)}
+        onMouseEnter={handleTriggerEnter}
+        onMouseLeave={handleLeave}
       >
         <SingleMicroRing
           remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
@@ -376,56 +438,15 @@ export default function ChatQuotaRing({
       </button>
       <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
 
-      {/* 轻量悬停提示 */}
-      {tip &&
-        !panel &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div
-            className="pointer-events-none fixed z-70"
-            style={{ left: tip.x, top: tip.y, transform: "translate(-100%, -100%)" }}
-          >
-            <div
-              role="tooltip"
-              className="ccode-float-surface w-max max-w-[16.5rem] rounded-lg border border-field px-2.5 py-2 text-xs shadow-lg"
-            >
-              <div className="flex items-center gap-1.5 font-medium text-l1">
-                <span className="truncate">{titleText}</span>
-                {levelText && <span className="text-micro font-normal text-l3">· {levelText}</span>}
-              </div>
-              {isPlan ? (
-                <div className="mt-1 space-y-0.5 tabular-nums text-l3">
-                  {view.windows.map((w) => {
-                    const remain = planResetRemain(w.resetsAt, now);
-                    return (
-                      <div key={w.window} className="flex items-center justify-between gap-3">
-                        <span>{planWindowLabel(w.window)}剩余</span>
-                        <span className={w.tone === "ok" ? "text-l2" : textToneClass(w.tone)}>
-                          {w.remainPct}%
-                          {remain ? <span className="ml-1 text-micro text-l4">· {remain}</span> : null}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="mt-1 tabular-nums text-l3">
-                  {walletAmountCaption(view.row.source)}{" "}
-                  <span className="text-l1">{walletLabel}</span>
-                </div>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
-
-      {/* 点击展开的精致玻璃浮层 */}
+      {/* 悬停直出详情浮层（点击可固定展开；外层 pb-1.5 形成隐形悬停桥） */}
       {panel &&
         typeof document !== "undefined" &&
         createPortal(
           <div
-            className="fixed z-70"
+            className="fixed z-70 pb-1.5"
             style={{ left: panel.x, top: panel.y, transform: "translate(-100%, -100%)" }}
+            onMouseEnter={handlePanelEnter}
+            onMouseLeave={handleLeave}
           >
             <div
               ref={panelRef}
