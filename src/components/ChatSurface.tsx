@@ -810,13 +810,12 @@ export default function ChatSurface({
   const liveReplyCapable = liveReplySupported(agentId ?? "");
   // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或 4 秒到了）再收。
   // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
+  // 停下与进入收尾在同一次渲染里定（下方 prevGenerating）：原先 settling 在停下后的副作用里才置上，中间提交一帧
+  // working=false，这一轮先收起、下一帧又展开成生成中、追上后再收起，三次整段重画连成近一秒的卡顿（2026-11-25 实测）
   const [settling, setSettling] = useState(false);
-  const wasGeneratingRef = useRef(generating);
-  useEffect(() => {
-    if (wasGeneratingRef.current && !generating) setSettling(true);
-    if (generating) setSettling(false);
-    wasGeneratingRef.current = generating;
-  }, [generating]);
+  const [prevGenerating, setPrevGenerating] = useState(generating);
+  /** 进入收尾那一刻的消息列表：之后会话文件带来新内容就算追上了 */
+  const [settleBase, setSettleBase] = useState<ChatMessageDto[] | null>(null);
   useEffect(() => {
     if (!settling) return;
     const t = window.setTimeout(() => setSettling(false), 4000);
@@ -825,11 +824,12 @@ export default function ChatSurface({
   // 实时预览：旁路流式 Markdown（Codex / Qwen / OpenCode）或终端读屏富文本（生成中与刚结束的那一会儿显示，追上了自动让位）
   const livePreviewMode: "markdown" | "screen" =
     liveReplySource ?? (channelDeliversLiveText(channel) ? "markdown" : "screen");
-  const { livePreview, livePreviewStyled } = (() => {
-    const empty = { livePreview: [] as string[], livePreviewStyled: null as LiveStyledLine[] | null };
+  const emptyPreview = { livePreview: [] as string[], livePreviewStyled: null as LiveStyledLine[] | null };
+  // 还没落进会话文件的那截回复（不看在不在生成：停下那一刻要靠它判断还要不要收尾）
+  const previewCandidate = (() => {
+    const empty = emptyPreview;
     // 有「等你决定」时屏上是菜单，不是回复（decision 在下方算，这里直接看三个来源）
     if (
-      !(generating || settling) ||
       !liveReply?.length ||
       attention === "confirm" ||
       trustPrompt ||
@@ -885,6 +885,14 @@ export default function ChatSurface({
       livePreviewStyled: alignedStyled ? alignedStyled.slice(tailOff) : null,
     };
   })();
+  if (prevGenerating !== generating) {
+    setPrevGenerating(generating);
+    // 停下时会话文件已追上（没有没落盘的预览）就直接收，不进收尾
+    const pendingTail = !generating && previewCandidate.livePreview.length > 0;
+    setSettling(pendingTail);
+    setSettleBase(pendingTail ? messages : null);
+  }
+  const { livePreview, livePreviewStyled } = generating || settling ? previewCandidate : emptyPreview;
   // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
   // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
   const thinkingPreview =
@@ -907,14 +915,9 @@ export default function ChatSurface({
     if (el && followRef.current && livePreviewText) el.scrollTop = el.scrollHeight;
   }, [livePreviewText]);
   // 会话文件追上了（预览全被盖掉，或者新内容进来了）就收；终端渲染与原文对不上的零星几行不再多挂 4 秒
-  const settledMessagesRef = useRef(messages);
   useEffect(() => {
-    if (!settling) {
-      settledMessagesRef.current = messages;
-      return;
-    }
-    if (livePreview.length === 0 || messages !== settledMessagesRef.current) setSettling(false);
-  }, [settling, messages, livePreview.length]);
+    if (settling && (livePreview.length === 0 || messages !== settleBase)) setSettling(false);
+  }, [settling, settleBase, messages, livePreview.length]);
 
   // 「等你决定」：审批 > 启动信任 > 连接出问题 > 确认菜单（同一时刻只出一张卡）。
   // 屏上认出了审批菜单（menuPrompt）就按菜单原文给按钮，不再给「批准 / 拒绝」两个按键——
