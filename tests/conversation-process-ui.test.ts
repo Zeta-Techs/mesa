@@ -225,6 +225,24 @@ test("还在生成的一轮：不收起、没有「已工作」，说到一半�
   }
 });
 
+test("生成结束：过程直接落在收起态，不先铺开思考全文再播收起动画", async () => {
+  const ui = await mount();
+  try {
+    const thought = [
+      m("user", [block("text", "这道题怎么想")], 0),
+      m("assistant", [block("thinking", "THOUGHT-BODY 先拆成两步")], 4),
+      m("assistant", [block("text", "答案是 42")], 6),
+    ];
+    await ui.render({ messages: thought, cwd: CWD, working: true });
+    await ui.render({ messages: thought, cwd: CWD, working: false });
+    assert.match(ui.el.textContent ?? "", /已思考/);
+    assert.equal(ui.el.querySelector(".ccode-collapse"), null, "结束那一刻不应留着一个正在收起的折叠区");
+    assert.doesNotMatch(ui.el.textContent ?? "", /THOUGHT-BODY/);
+  } finally {
+    await ui.close();
+  }
+});
+
 test("失败的步骤：收起时标在「已工作」后面，展开后那一行写明", async () => {
   const ui = await mount();
   try {

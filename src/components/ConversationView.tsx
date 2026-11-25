@@ -993,7 +993,10 @@ export default function ConversationView({
           )}
           </div>
         )}
-        <Collapse key={detailTarget?.key.startsWith(`${key}:`) ? detailTarget.seq : "toggle"} open={open} className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
+        {/* 生成中 → 结束是换一种画法，不是用户点收起：live 单独一个 key，结束时重挂、直接落在收起态。
+            同一个 Collapse 跨过去时，结束那一帧先把整段思考正文铺开（下面 thoughtOnly 换成全文）、
+            再播 200ms 收起，看着就是「展开一下又收起」 */}
+        <Collapse key={seg.live ? "live" : detailTarget?.key.startsWith(`${key}:`) ? detailTarget.seq : "toggle"} open={open} className={seg.live ? "" : "mb-3 mt-1 border-t border-hairline pt-2"}>
           {plan && <PlanCard entries={plan} />}
           {thoughtOnly && !seg.live
             ? richText(
