@@ -3,6 +3,7 @@
  "channel": null,
  "checks": {
   "假网关收到主对话请求": true,
+  "帮助里仍有 models 子命令": true,
   "抓屏跑完": true
  },
  "platform": "win32",
@@ -44,5 +45,5 @@
   },
   "previewReadable": true
  },
- "version": "1.5.9"
+ "version": "1.5.16"
 }
