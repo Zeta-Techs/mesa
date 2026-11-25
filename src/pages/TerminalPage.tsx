@@ -484,6 +484,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
     return fn;
   };
+  // 空态发送首句时输入框带着底栏一起滑落 260ms：滑动期间状态栏自身暂隐，落地那一帧无缝接管
+  const [emptySlidingByTab, setEmptySlidingByTab] = useState<Record<string, boolean>>({});
+  const emptySlideRefs = useRef(new Map<string, (sliding: boolean) => void>());
+  const emptySlideRefFor = (tabId: string) => {
+    let fn = emptySlideRefs.current.get(tabId);
+    if (!fn) {
+      fn = (sliding) =>
+        setEmptySlidingByTab((cur) => {
+          if (Boolean(cur[tabId]) === sliding) return cur;
+          return { ...cur, [tabId]: sliding };
+        });
+      emptySlideRefs.current.set(tabId, fn);
+    }
+    return fn;
+  };
   const [peekLocked, setPeekLocked] = useState<Record<string, boolean>>({});
   const [writableForks, setWritableForks] = useState<Record<string, boolean>>({});
   const [chatBusy, setChatBusy] = useState(false);
@@ -4093,6 +4108,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         sessionId={statuses[t.id]?.sessionId ?? null}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
                         metaSlots={chatOn && !peek ? (chatMetaSlots[t.id] ?? null) : null}
+                        onEmptySlideChange={emptySlideRefFor(t.id)}
                         messages={forkChatMessages(
                           sessionByTab[t.id]?.conv ?? [],
                           forkPreview[t.id],
@@ -4333,11 +4349,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   <div data-statusbar-host={t.id} className="shrink-0">
                   {(() => {
                     const st = statuses[t.id] ?? null;
-                    const prof = st
-                      ? profiles.find((p) => p.id === st.profileId)
+                    const sess = sessionByTab[t.id] ?? null;
+                    const lp = sess?.launchPick ?? null;
+                    const effProfileId = st?.profileId ?? lp?.profileId ?? null;
+                    const effLaunchModel = st?.launchModel ?? (lp?.model?.trim() || lp?.models?.[0] || null);
+                    const effAgentId = st?.agentId ?? lp?.agentId ?? t.initialAgentId;
+                    const effSessionId = st?.sessionId ?? lp?.resumeSessionId ?? null;
+                    const prof = effProfileId
+                      ? profiles.find((p) => p.id === effProfileId)
                       : null;
-                    const det = st
-                      ? agents.find((a) => a.id === st.agentId)
+                    const det = effAgentId
+                      ? agents.find((a) => a.id === effAgentId)
                       : null;
                     const focused = t.id === focusedId;
                     // 阅读会话的状态栏搬进了阅读区右栏：读文献时用不上提交推送，git 胶囊不出
@@ -4346,19 +4368,29 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     const chatBar =
                       (surfaceModeByTab[t.id] ?? defaultSurface) ===
                         "chat" && !peekByTab[t.id];
+                    const chatEmpty =
+                      chatBar &&
+                      (sess?.conv?.length ?? 0) === 0 &&
+                      !(forkPreview[t.id]?.length) &&
+                      !st?.ptyId &&
+                      !st?.running &&
+                      lp?.preview !== "loading";
                     return (
                       <StableTerminalStatusBar
                         frozen={!tabVisible}
                         variant={chatBar ? "chat" : "terminal"}
+                        chatEmpty={chatEmpty || Boolean(emptySlidingByTab[t.id])}
+                        fallbackAgentId={effAgentId ?? null}
+                        fallbackSessionId={effSessionId}
                         status={st}
                         fallbackCwd={t.initialCwd ?? ""}
-                        profileId={st?.profileId ?? null}
+                        profileId={effProfileId}
                         profileName={prof?.name ?? null}
                         profileModels={prof?.models ?? []}
-                        launchModel={st?.launchModel ?? null}
+                        launchModel={effLaunchModel}
                         modelSwitch={runtimeModelSwitch(
                           det?.modelSwitch ?? null,
-                          st?.agentId,
+                          effAgentId,
                           prof?.accountType,
                         )}
                         effort={det?.effort ?? null}

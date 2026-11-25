@@ -13,7 +13,8 @@ import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
 import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
 import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
-import { contextFmtTokens } from "./ContextRing";
+import ContextRing, { contextFmtTokens } from "./ContextRing";
+import { breakdownRequest } from "../context-breakdown";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import MesaThinkingDots from "./MesaThinkingDots";
@@ -205,6 +206,7 @@ export default function ChatSurface({
   onDismissLaunchBlock,
   specialScreen = null,
   metaSlots = null,
+  onEmptySlideChange,
   tabId = null,
   sessionId = null,
 }: {
@@ -379,6 +381,8 @@ export default function ChatSurface({
    * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
    */
   metaSlots?: { left: HTMLElement | null; right: HTMLElement | null } | null;
+  /** 空态沉底滑动中（260ms）通知外层暂隐状态栏自身元素，由滑动中的底栏落地无缝交接 */
+  onEmptySlideChange?: (sliding: boolean) => void;
   /** 这个标签（出图模式按它记这个对话选的出图模型、认出图工具的调用） */
   tabId?: string | null;
   /** 已关联的会话：标签从侧栏重开时按它找回这个对话选过的出图模型 */
@@ -606,10 +610,10 @@ export default function ChatSurface({
   // 开聊前选择（Agent·模型 / 权限）：可改、没起进程、还没有对话
   const launchPickOpen = Boolean(launchPick?.editable && !running && messages.length === 0);
   dropPickDirRef.current = launchPickOpen && onPickDir ? onPickDir : null;
-  // 首句已发出、进程还在起的那一两秒（乐观气泡在了、running 还没翻）：「权限」徽标与「模型」芯片
-  // 原先随版式翻转先消失、等 running 翻真再从底部状态栏冒出来（2026-10-28 用户：底部抖一下）——
-  // 这段空窗照旧给开聊前那份（editable 那时仍真），只是挂的位置跟着版式进了状态栏
-  const launching = Boolean(launchPick?.editable && !running && !canResume && messages.length > 0);
+  // 首句已发出、或未启动的旧对话刚发出消息、进程还在起的那一两秒（running 还没翻）：
+  // 无论新聊还是接回旧对话（含 shellActive 已翻或 previewState 刚清空），都保留权限徽标与模型芯片不卸载，
+  // 彻底杜绝底栏先消失、等 running 翻真再闪回的顿挫感
+  const launching = Boolean(launchPick && !running && !canResume && messages.length > 0);
 
   // 空态：输入框挪到画面中间偏上，起手提示与「接着上一段」在它下方（2026-10-17 二轮收敛）。
   // 只看没接的对话还在读记录时不进空态，免得问候语闪一下；标签刚开、这段对话的状态还没报上来时同样不进
@@ -623,6 +627,28 @@ export default function ChatSurface({
   // 输入框上方的看图标注台开着时不用居中空态：输入框沉到底，把整块高度让给图（2026-10-23 用户：图太小了）
   const [imageStageOpen, setImageStageOpen] = useState(false);
   const emptyLayout = emptyStart && !imageStageOpen;
+  // 发送第一句从居中空态沉底时：同步锁住底栏贴着输入框一起滑完 260ms，落地那一帧再无缝交给 TerminalStatusBar，
+  // 避免底栏在输入盒刚起步时瞬移到底部并卸载重挂
+  const [prevEmptyLayout, setPrevEmptyLayout] = useState(emptyLayout);
+  const [slidingFromEmpty, setSlidingFromEmpty] = useState(false);
+  if (prevEmptyLayout !== emptyLayout) {
+    setPrevEmptyLayout(emptyLayout);
+    const reduced =
+      typeof window !== "undefined" &&
+      Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    if (prevEmptyLayout && !emptyLayout && !reduced) {
+      setSlidingFromEmpty(true);
+    } else if (emptyLayout) {
+      setSlidingFromEmpty(false);
+    }
+  }
+  useEffect(() => {
+    onEmptySlideChange?.(slidingFromEmpty);
+    if (!slidingFromEmpty) return;
+    // 兜底：标签切走或无布局环境下也能确保收回滑动标志
+    const t = window.setTimeout(() => setSlidingFromEmpty(false), 450);
+    return () => window.clearTimeout(t);
+  }, [slidingFromEmpty, onEmptySlideChange]);
 
   // 开聊那一帧问候语和起手提示是被整块卸掉的：空态时记下它们的位置和一份克隆，切出空态时把克隆
   // 垫在原位上淡出 150ms，让位而不是闪没（2026-10-29 用户）。克隆是纯展示，不挂事件、不吃点击
@@ -1481,8 +1507,9 @@ export default function ChatSurface({
       : null;
 
   // 输入框下面那一行（2026-10-23 用户：照 Claude 客户端那样简洁）：框里只留 + 和发送，
-  // 左边「权限 · 项目」、右边「模型 · 思考」挪到框外；居中空态时紧贴输入框，开聊后挂进底部状态栏同一行
-  const metaSlotted = !emptyLayout && Boolean(metaSlots?.left && metaSlots?.right);
+  // 左边「权限 · 项目」、右边「上下文 · 余量 | 模型 · 思考」挪到框外；居中空态及沉底滑动中紧贴输入框同滑，落地后挂进底部状态栏同一行
+  const metaSlotted = !emptyLayout && !slidingFromEmpty && Boolean(metaSlots?.left && metaSlots?.right);
+  const showProjectPicker = Boolean(cwd && launchPick?.editable && !running && messages.length === 0);
   const metaLeft = (
     <>
       {/* 权限：开聊前可选，开聊后换 = 重开接回；只读分叉另有「只读分叉」标签，不重复。
@@ -1510,9 +1537,8 @@ export default function ChatSurface({
         />
       )}
       {/* 项目芯片（2026-10-17 用户：「将在 ~ 开始」应该是选项目；2026-10-22 换成与权限、模型同一族的弹层）：
-          能搜、带项目类型与项目默认；开聊后目录不能再换，不显示（开聊后状态栏自己写项目名 / 分支）。
-          换了目录，空态「最近的对话」随之列那个文件夹的 */}
-      {cwd && launchPick?.editable && !running && messages.length === 0 && (
+          能搜、带项目类型与项目默认；开聊后目录不能再换，沉底滑动中留静态名衔接，落地后由状态栏接管 */}
+      {showProjectPicker && cwd && (
         <ChatProjectPicker
           cwd={cwd}
           homeDir={homeDir}
@@ -1524,6 +1550,11 @@ export default function ChatSurface({
           onChooseFolder={() => onChooseCwd?.()}
           onNewProject={onNewProject}
         />
+      )}
+      {!showProjectPicker && slidingFromEmpty && cwd && (
+        <span className="ml-1 min-w-0 truncate text-micro text-l4" title={cwd}>
+          {cwdLabel}
+        </span>
       )}
       {statusNote ? (
         <span
@@ -1557,11 +1588,51 @@ export default function ChatSurface({
       )}
     </>
   );
-  // 「模型 · 思考」菜单 + 当前账号订阅余量/网关余额静默微环：开聊前、运行中、停了可接着聊统一展示
+  // 「模型 · 思考」菜单 + 当前账号订阅余量/网关余额静默单环 + 居中/滑动期常显上下文饼盘
   const activeQuotaProfileId =
     (launchPickOpen || resumePickOpen || launching) && launchPick?.profileId
       ? launchPick.profileId
       : runtime?.status?.profileId ?? launchPick?.profileId ?? null;
+  const activeContextModel =
+    (launchPickOpen || resumePickOpen || launching) && launchPick
+      ? launchPick.model.trim() || launchPick.models[0] || null
+      : runtime?.status?.modelSeen ||
+        runtime?.status?.model ||
+        runtime?.status?.launchModel ||
+        launchPick?.model?.trim() ||
+        launchPick?.models[0] ||
+        null;
+  const [inlineContextWindow, setInlineContextWindow] = useState<number | null>(null);
+  useEffect(() => {
+    if (metaSlotted || !activeQuotaProfileId) return;
+    let cancelled = false;
+    invoke<{ context?: number | null }>("combo_surface", {
+      profileId: activeQuotaProfileId,
+      model: activeContextModel,
+    })
+      .then((c) => {
+        if (!cancelled) setInlineContextWindow(c?.context && c.context > 0 ? c.context : null);
+      })
+      .catch(() => {
+        if (!cancelled) setInlineContextWindow(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [metaSlotted, activeQuotaProfileId, activeContextModel]);
+  const inlineContextRing =
+    !metaSlotted && inlineContextWindow ? (
+      <ContextRing
+        showPercent
+        ratio={Math.min(1, (contextUsed ?? 0) / inlineContextWindow)}
+        used={contextUsed ?? 0}
+        window={inlineContextWindow}
+        agentId={launchPick?.agentId ?? runtime?.status?.agentId ?? ""}
+        breakdown={breakdownRequest(runtime?.status ?? null)}
+        onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
+        snapshot={contextSnapshot}
+      />
+    ) : null;
   const quotaRing = activeQuotaProfileId ? <ChatQuotaRing profileId={activeQuotaProfileId} /> : null;
 
   const metaRight =
@@ -1571,6 +1642,7 @@ export default function ChatSurface({
         {launchPick?.autoNote && (
           <span className="shrink-0 animate-pulse-brief text-micro text-l4">{launchPick.autoNote}</span>
         )}
+        {inlineContextRing}
         {quotaRing}
         <ChatModelMenu
           kind="launch"
@@ -1591,6 +1663,7 @@ export default function ChatSurface({
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
       <>
+        {inlineContextRing}
         {quotaRing}
         <ChatModelMenu
           kind="runtime"
@@ -1605,8 +1678,8 @@ export default function ChatSurface({
           onPicker={openPicker}
           contextUsed={contextUsed}
           contextSnapshot={contextSnapshot}
-          // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
-          showRing={!metaSlotted}
+          // 无论挂状态栏还是未挂状态栏，上下文饼盘都固定在余量环左侧（inlineContextRing / TerminalStatusBar），这里不再重复画
+          showRing={false}
           onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
           onRelaunch={runtime.onRelaunch}
           // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
@@ -1632,7 +1705,12 @@ export default function ChatSurface({
           }
         />
       </>
-    ) : quotaRing;
+    ) : (
+      <>
+        {inlineContextRing}
+        {quotaRing}
+      </>
+    );
 
   return (
     <div
@@ -2078,15 +2156,22 @@ export default function ChatSurface({
         }
         // Claude 猜的下一句：只在它停在输入框、没有等你决定的事时给（生成中屏上那行是排队提示，不是建议）
         suggestion={running && !generating && !decision ? promptSuggestion : null}
-        // 权限 · 项目 | 模型：状态栏在就挂进状态栏，否则画在框下面（metaSlots 注释）
+        // 权限 · 项目 | 上下文 · 余量 · 模型：状态栏落地接管后画进状态栏；居中空态和 260ms 沉底滑动期紧贴输入框同滑（0px 落差）
         footer={
-          metaSlotted ? null : (
-            <div className="mt-1 flex h-7 min-w-0 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-0.5">{metaLeft}</div>
-              <div className="flex min-w-0 shrink items-center gap-1.5">{metaRight}</div>
+          metaSlotted ? null : slidingFromEmpty ? (
+            <div className="ccode-chat-column mx-auto flex h-full w-full min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-0.5 leading-[18px]">{metaLeft}</div>
+              <div className="flex min-w-0 shrink items-center gap-1.5 leading-[18px]">{metaRight}</div>
+            </div>
+          ) : (
+            <div className="mt-2 flex h-8 min-w-0 items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-0.5 leading-[18px]">{metaLeft}</div>
+              <div className="flex min-w-0 shrink items-center gap-1.5 leading-[18px]">{metaRight}</div>
             </div>
           )
         }
+        floatingFooter={slidingFromEmpty}
+        onEmptySlideSettled={() => setSlidingFromEmpty(false)}
         running={composerShowsInterrupt({
           running,
           attention,

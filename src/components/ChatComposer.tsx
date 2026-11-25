@@ -431,6 +431,8 @@ export default function ChatComposer({
   suggestion = null,
   notice = null,
   imageGen = null,
+  floatingFooter = false,
+  onEmptySlideSettled,
 }: {
   disabled?: boolean;
   busy?: boolean;
@@ -492,6 +494,10 @@ export default function ChatComposer({
   notice?: ComposerNotice | null;
   /** 出图模式（没有就不出「画图」入口） */
   imageGen?: ComposerImageGen | null;
+  /** 从居中空态滑到底部那 260ms 内，把底栏以绝对定位贴在输入框正下方随盒同滑（落地与状态栏 0px 无缝衔接） */
+  floatingFooter?: boolean;
+  /** 空态沉底过渡结束后回调，通知调用方把底栏交接给底部状态栏 */
+  onEmptySlideSettled?: () => void;
 }) {
   const [value, setValue] = useState("");
   const [quote, setQuote] = useState<ChatQuote | null>(null);
@@ -685,6 +691,8 @@ export default function ChatComposer({
   // 整体拉回原位、再过渡回 0，位置变化走 260ms 滑动而不是整块瞬移（2026-10-28 用户：开聊过程要流畅）。
   // 反方向（收起看图标注台回到空态）保持瞬切：那时注意力在图上，不在框的位置
   const emptyTopRef = useRef<number | null>(null);
+  const onEmptySlideSettledRef = useRef(onEmptySlideSettled);
+  onEmptySlideSettledRef.current = onEmptySlideSettled;
   useLayoutEffect(() => {
     const el = outerRef.current;
     if (!el) return;
@@ -693,18 +701,26 @@ export default function ChatComposer({
       return;
     }
     const from = emptyTopRef.current;
+    if (from == null) return;
     emptyTopRef.current = null;
-    const dy = from == null ? 0 : from - el.getBoundingClientRect().top;
+    const dy = from - el.getBoundingClientRect().top;
     // 沉底时 dy 为负（先拉回上方再滑下来），所以取绝对值判断
-    if (Math.abs(dy) < 8 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (Math.abs(dy) < 8 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      onEmptySlideSettledRef.current?.();
+      return;
+    }
     el.style.transform = `translateY(${dy}px)`;
     el.style.transition = "none";
     let timer = 0;
+    let settled = false;
     const settle = () => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timer);
       el.removeEventListener("transitionend", onEnd);
       el.style.transition = "";
       el.style.transform = "";
+      onEmptySlideSettledRef.current?.();
     };
     // transitionend 会从子元素（发送钮的 120ms 过渡）冒泡上来，只认自己的 transform
     const onEnd = (e: TransitionEvent) => {
@@ -712,6 +728,7 @@ export default function ChatComposer({
     };
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
+        if (settled) return;
         el.style.transition = "transform 260ms var(--ccode-motion-ease)";
         el.style.transform = "";
       });
@@ -1603,8 +1620,13 @@ export default function ChatComposer({
             </div>
           </div>
         </div>
-        {footer}
+        {!floatingFooter && footer}
       </div>
+      {floatingFooter && footer && (
+        <div className="pointer-events-none absolute inset-x-0 top-full z-30 h-8 bg-canvas px-4">
+          {footer}
+        </div>
+      )}
       {cwd && (
         <ProjectFilePicker
           open={projectPickOpen}

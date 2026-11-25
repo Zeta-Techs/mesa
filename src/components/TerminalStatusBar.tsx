@@ -74,6 +74,9 @@ export default function TerminalStatusBar({
   contextSnapshot = null,
   onRelaunch,
   chatMetaRef,
+  chatEmpty,
+  fallbackAgentId = null,
+  fallbackSessionId = null,
 }: {
   /** null = 终端尚未上报（刚挂载）：显示 cwd + 未启动占位 */
   status: TabStatus | null;
@@ -115,6 +118,11 @@ export default function TerminalStatusBar({
    * ChatSurface 用 portal 挂进来（芯片的状态都在聊天层）。终端变体不留
    */
   chatMetaRef?: (side: "left" | "right", el: HTMLElement | null) => void;
+  /** 聊天层是否处于居中空态（或空态沉底滑动中）：仅此时隐藏状态栏自身元素，其余时刻常显目录与上下文饼盘 */
+  chatEmpty?: boolean;
+  /** 终端尚未启动时的回退 Agent / 会话 ID（供未启动的旧对话直接悬停看本地上下文明细） */
+  fallbackAgentId?: string | null;
+  fallbackSessionId?: string | null;
 }) {
   const agentLabel = status
     ? (AGENTS.find((a) => a.id === status.agentId)?.label ?? status.agentId)
@@ -381,14 +389,28 @@ export default function TerminalStatusBar({
   // 目录浮层改路径：仅未启动可编辑；进程存活期间 cwd 由 pty_get_cwd 回写跟随（shell 里 cd 即可）
   const cwdLocked = !!status?.ptyId;
   const idle = isTerminalIdle(status);
-  // 聊天变体还没起进程：栏里自己的东西不画，只留给聊天层的两格
-  const ownHidden = chat && !status?.ptyId;
+  // 聊天变体处于居中空态（或空态沉底滑落中）时栏里自己的东西不画，只留给聊天层；
+  // 一旦落地或打开已有历史对话，即使终端尚未启动也立刻展示目录与上下文饼盘，避免启动期消失再闪回
+  const ownHidden = chat && (chatEmpty ?? !status?.ptyId);
   const chatMetaLeftRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("left", el), [chatMetaRef]);
   const chatMetaRightRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("right", el), [chatMetaRef]);
-  // 上下文用量圆环（两种变体同一份）：窗口大小来自模型能力库，读不到的家（如 Grok）不画
+  // 上下文用量饼盘：窗口大小来自模型能力库；聊天层只要确知窗口就常显（未发第一句为 0%，旧对话直显末轮真实占比），
+  // 终端变体仍只在有实际用量时画
   const ring =
-    combo?.context && contextUsed
-      ? { ratio: Math.min(1, contextUsed / combo.context), window: combo.context }
+    combo?.context && (chat || contextUsed)
+      ? { ratio: Math.min(1, (contextUsed ?? 0) / combo.context), window: combo.context }
+      : null;
+  const breakdownTarget = status?.sessionId
+    ? status
+    : fallbackAgentId && fallbackSessionId && profileId
+      ? {
+          agentId: fallbackAgentId,
+          profileId,
+          cwd: cwdRaw,
+          sessionId: fallbackSessionId,
+          launchModel: launchModel ?? null,
+          model: shownModel || launchModel || "",
+        }
       : null;
   const compact =
     running && onTuiCommand && status && slashCommandsFor(status.agentId).some((c) => c.cmd === "/compact")
@@ -1132,10 +1154,10 @@ export default function TerminalStatusBar({
             <ContextRing
               showPercent
               ratio={ring.ratio}
-              used={contextUsed!}
+              used={contextUsed ?? 0}
               window={ring.window}
-              agentId={status?.agentId ?? ""}
-              breakdown={breakdownRequest(status)}
+              agentId={status?.agentId ?? fallbackAgentId ?? ""}
+              breakdown={breakdownRequest(breakdownTarget)}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
@@ -1146,8 +1168,8 @@ export default function TerminalStatusBar({
               ratio={null}
               used={contextSnapshot?.used ?? (usage ? usageTotal(usage) : 0)}
               window={null}
-              agentId={status?.agentId ?? ""}
-              breakdown={breakdownRequest(status)}
+              agentId={status?.agentId ?? fallbackAgentId ?? ""}
+              breakdown={breakdownRequest(breakdownTarget)}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
