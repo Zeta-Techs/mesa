@@ -587,6 +587,67 @@ pub fn agy_keychain_supported() -> bool {
     cfg!(target_os = "macos")
 }
 
+/// 本机有没有存 Antigravity 登录凭据：`~/.gemini/antigravity-cli/antigravity-oauth-token`，或 go-keyring 那一项
+/// （macOS 钥匙串 service `gemini` / account `antigravity`，Windows 凭据管理器的普通凭据 `gemini:antigravity`）。
+/// 只看有没有，不读内容（macOS 不带 -w，不弹钥匙串授权）。
+/// `Some(false)` = 确定没登录：别在后台跑 `agy --print …`——未登录的打印模式会转去交互式 OAuth、自己弹浏览器登录页，
+/// Mesa 几秒后就收掉进程，回调页成了死路（2026-11-25 Windows agy 1.5.16 实测：余量环查 `--print /usage` 每两分钟弹一次）。
+/// 查不了（Linux 等）返回 None，调用方照旧
+pub fn agy_credential_present() -> Option<bool> {
+    if cfg!(test) {
+        return None;
+    }
+    let token_file = crate::dirs::home_dir().is_some_and(|h| {
+        h.join(".gemini/antigravity-cli/antigravity-oauth-token")
+            .metadata()
+            .is_ok_and(|m| m.is_file() && m.len() > 0)
+    });
+    if token_file {
+        return Some(true);
+    }
+    agy_credential_present_os()
+}
+
+#[cfg(target_os = "macos")]
+fn agy_credential_present_os() -> Option<bool> {
+    let status = crate::process::background_command("/usr/bin/security")
+        .args(["find-generic-password", "-s", AGY_KEYCHAIN_SERVICE, "-a", AGY_KEYCHAIN_ACCOUNT])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(44) => Some(false), // errSecItemNotFound
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn agy_credential_present_os() -> Option<bool> {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NOT_FOUND};
+    use windows_sys::Win32::Security::Credentials::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
+    // go-keyring 的 Windows 实现：凭据名 = service + ":" + user
+    let target: Vec<u16> = format!("{AGY_KEYCHAIN_SERVICE}:{AGY_KEYCHAIN_ACCOUNT}")
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+    // SAFETY：target 以 0 结尾；成功时 cred 由系统分配，随即 CredFree 释放，不读其中内容
+    let ok = unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut cred) };
+    if ok != 0 {
+        unsafe { CredFree(cred as *const std::ffi::c_void) };
+        return Some(true);
+    }
+    (unsafe { GetLastError() } == ERROR_NOT_FOUND).then_some(false)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn agy_credential_present_os() -> Option<bool> {
+    None
+}
+
 fn agy_accounts_path() -> Result<PathBuf, String> {
     Ok(official_accounts_root()?.join(AGY_ACCOUNTS_FILE))
 }
@@ -1429,6 +1490,18 @@ mod tests {
         assert!(validate_local_dir_id("../etc").is_err());
         assert!(validate_local_dir_id("a/b").is_err());
         assert!(validate_local_dir_id("a b").is_err());
+    }
+
+    /// 实机：查得到本机钥匙串 / 凭据管理器里 Antigravity 那一项的有无（没登录时应为 Some(false)）。
+    /// `cargo test --lib agy_credential_present_os_real -- --ignored --nocapture`
+    #[test]
+    #[ignore = "读本机钥匙串 / 凭据管理器"]
+    fn agy_credential_present_os_real() {
+        let got = agy_credential_present_os();
+        eprintln!("Antigravity 登录凭据：{got:?}");
+        if cfg!(any(target_os = "macos", windows)) {
+            assert!(got.is_some(), "macOS / Windows 上应查得出有无");
+        }
     }
 
     #[test]

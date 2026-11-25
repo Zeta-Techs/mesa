@@ -1621,8 +1621,7 @@ fn refresh_agy_display_cache_if_needed(model: &str) {
         *guard = Some(Instant::now());
     }
     if let Some(path) = resolve_binary("agy") {
-        let envs = agy_models_probe_env();
-        if let Some(pairs) = cli_output_with_env(&path, &["models"], &envs, Duration::from_secs(8))
+        if let Some(pairs) = agy_models_output(&path, Duration::from_secs(8))
             .map(|t| parse_agy_model_pairs(&t))
             .filter(|p| !p.is_empty())
         {
@@ -3448,8 +3447,7 @@ pub(crate) fn agy_official_settings_model(model: &str) -> Option<String> {
         let mut cached = read_agy_display_cache();
         if !cached.contains_key(trimmed) {
             if let Some(path) = resolve_binary("agy") {
-                let envs = agy_models_probe_env();
-                if let Some(pairs) = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
+                if let Some(pairs) = agy_models_output(&path, std::time::Duration::from_secs(10))
                     .map(|t| parse_agy_model_pairs(&t))
                     .filter(|p| !p.is_empty())
                 {
@@ -3466,6 +3464,16 @@ pub(crate) fn agy_official_settings_model(model: &str) -> Option<String> {
         .iter()
         .find(|(slug, _)| slug.eq_ignore_ascii_case(trimmed))
         .map(|(_, display)| (*display).to_string())
+}
+
+/// `agy models` 的输出。本机确定没有 Antigravity 登录凭据时不跑：未登录的 `agy models` 会转去交互式 OAuth、
+/// 自己弹出浏览器登录页，而 Mesa 几秒后就杀掉进程，回调成了死路（official_accounts::agy_credential_present）。
+/// 查官方状态、启动、换模型显示名这几处都走这里
+fn agy_models_output(path: &std::path::Path, timeout: std::time::Duration) -> Option<String> {
+    if crate::official_accounts::agy_credential_present() == Some(false) {
+        return None;
+    }
+    cli_output_with_env(path, &["models"], &agy_models_probe_env(), timeout)
 }
 
 fn agy_models_probe_env() -> Vec<(String, String)> {
@@ -3609,9 +3617,8 @@ pub(crate) fn official_models_for_launch(agent: &str) -> Vec<String> {
     #[cfg(not(test))]
     if agent == "agy" && read_official_models_cache("agy").is_empty() {
         if let Some(path) = resolve_binary("agy") {
-            let envs = agy_models_probe_env();
             refresh_official_models_cache("agy", || {
-                let pairs = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(12))
+                let pairs = agy_models_output(&path, std::time::Duration::from_secs(12))
                     .map(|t| parse_agy_model_pairs(&t))
                     .unwrap_or_default();
                 write_agy_display_cache(&pairs);
@@ -8403,8 +8410,7 @@ fn official_account_status_sync(agent_id: &str) -> OfficialAccountStatusDto {
     }
     if agent_id == "agy" && !cfg!(test) {
         if let Some(path) = resolve_binary("agy") {
-            let envs = agy_models_probe_env();
-            let pairs = cli_output_with_env(&path, &["models"], &envs, std::time::Duration::from_secs(10))
+            let pairs = agy_models_output(&path, std::time::Duration::from_secs(10))
                 .map(|t| parse_agy_model_pairs(&t))
                 .unwrap_or_default();
             if !pairs.is_empty() {
