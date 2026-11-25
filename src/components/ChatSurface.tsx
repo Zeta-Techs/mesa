@@ -595,15 +595,13 @@ export default function ChatSurface({
     canResume,
     messageCount: messages.length,
   });
-  // 未就绪状态注记（原头部第一行文案迁入输入框左下角）：识别中/等待会话文件/可恢复才显示，
-  // linked 稳态（实时同步/已结束·可继续）不显——运行态由底部状态栏状态点覆盖。
-  // 只看没接的对话（列表里点开的）：输入框底部照常摆这段对话上次的「权限 · 模型 · 思考」、能改（2026-10-24 用户），
-  // 不加注记（原「发一句就接着聊」，同日用户删：看着像提示语、占地方，发一句接回是自然的事）
+  // 正常启动期的「识别会话 / 等待会话文件」属内部衔接过程，不在底栏一闪而过（真正卡住 >8s 时消息区有专门提示）；
+  // 仅在超时态（timeout）保留底栏状态注记
   const resumePickOpen = Boolean(launchPick?.resumePick && !running);
   const statusNote =
     launchPick?.preview === "shown" && !running
       ? null
-      : syncState === "waiting" || state === "detecting" || state === "timeout"
+      : state === "timeout"
         ? headerStatus
         : null;
   const canSend = state !== "timeout" || running || canResume;
