@@ -25,6 +25,23 @@ function subscribeOverrides(fn: () => void) {
   };
 }
 
+/** combo_surface 进程内缓存（按连接 + 模型）：侧栏切换不同会话时第一帧同步拿到上下文窗口与思考档表，避免底栏闪动 */
+const comboSurfaceCache = new Map<string, ComboSurfaceDto>();
+export function cachedComboSurface(
+  profileId: string | null | undefined,
+  model: string | null | undefined,
+): ComboSurfaceDto | null {
+  if (!profileId) return null;
+  return comboSurfaceCache.get(`${profileId}\t${model ?? ""}`) ?? null;
+}
+export function cacheComboSurface(
+  profileId: string,
+  model: string | null | undefined,
+  dto: ComboSurfaceDto,
+): void {
+  comboSurfaceCache.set(`${profileId}\t${model ?? ""}`, dto);
+}
+
 /**
  * 运行中切模型 / 思考档的共用逻辑（原在 TerminalStatusBar 里，2026-10-17 抽出）：
  * 终端底栏与聊天输入框右侧的「模型 · 思考」芯片同用一份——显示什么、能不能切、怎么写命令，
@@ -128,27 +145,41 @@ export function useRuntimeModelEffort(opts: {
     }
   }
 
-  const [combo, setCombo] = useState<ComboSurfaceDto | null>(null);
-  const [comboReady, setComboReady] = useState(false);
   const activeModel = shownModel || launchModel || null;
+  const comboKey = profileId ? `${profileId}\t${activeModel ?? ""}` : "";
+  const cachedCombo = cachedComboSurface(profileId, activeModel);
+  const [comboState, setComboState] = useState<{ key: string; dto: ComboSurfaceDto | null }>(() => ({
+    key: comboKey,
+    dto: cachedCombo,
+  }));
+  const [comboReady, setComboReady] = useState(() => cachedCombo !== null);
+  const combo = comboState.key === comboKey ? comboState.dto : cachedCombo;
   useEffect(() => {
     if (!profileId) {
-      setCombo(null);
+      setComboState({ key: "", dto: null });
       setComboReady(true);
       return;
     }
+    const key = `${profileId}\t${activeModel ?? ""}`;
+    const hit = cachedComboSurface(profileId, activeModel);
+    if (hit) {
+      setComboState({ key, dto: hit });
+      setComboReady(true);
+    } else {
+      setComboReady(false);
+    }
     let cancelled = false;
-    setComboReady(false);
     invoke<ComboSurfaceDto>("combo_surface", { profileId, model: activeModel })
       .then((c) => {
+        cacheComboSurface(profileId, activeModel, c);
         if (!cancelled) {
-          setCombo(c);
+          setComboState({ key, dto: c });
           setComboReady(true);
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setCombo(null);
+          setComboState({ key, dto: null });
           setComboReady(true);
         }
       });

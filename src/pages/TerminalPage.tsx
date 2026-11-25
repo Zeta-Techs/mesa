@@ -4108,6 +4108,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         sessionId={statuses[t.id]?.sessionId ?? null}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
                         metaSlots={chatOn && !peek ? (chatMetaSlots[t.id] ?? null) : null}
+                        hasStatusBar={chatOn && !peek && (appSettings?.statusBar ?? true)}
                         onEmptySlideChange={emptySlideRefFor(t.id)}
                         messages={forkChatMessages(
                           sessionByTab[t.id]?.conv ?? [],
@@ -4351,10 +4352,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     const st = statuses[t.id] ?? null;
                     const sess = sessionByTab[t.id] ?? null;
                     const lp = sess?.launchPick ?? null;
-                    const effProfileId = st?.profileId ?? lp?.profileId ?? null;
-                    const effLaunchModel = st?.launchModel ?? (lp?.model?.trim() || lp?.models?.[0] || null);
+                    const effProfileId = st?.profileId ?? lp?.profileId ?? t.initialProfileId ?? null;
+                    const effLaunchModel =
+                      st?.launchModel ??
+                      (lp?.model?.trim() || lp?.models?.[0] || t.initialModel?.trim() || null);
                     const effAgentId = st?.agentId ?? lp?.agentId ?? t.initialAgentId;
-                    const effSessionId = st?.sessionId ?? lp?.resumeSessionId ?? null;
+                    const effSessionId = st?.sessionId ?? lp?.resumeSessionId ?? t.resumeSessionId ?? null;
                     const prof = effProfileId
                       ? profiles.find((p) => p.id === effProfileId)
                       : null;
@@ -4372,6 +4375,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       chatBar &&
                       (sess?.conv?.length ?? 0) === 0 &&
                       !(forkPreview[t.id]?.length) &&
+                      !t.resumeSessionId &&
                       !st?.ptyId &&
                       !st?.running &&
                       lp?.preview !== "loading";

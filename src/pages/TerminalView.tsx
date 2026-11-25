@@ -22,7 +22,11 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useAppStore } from "../store";
-import type { AgyActiveSessionDto } from "../types";
+import { cacheComboSurface, cachedComboSurface } from "../runtime-model-effort";
+import type { AgyActiveSessionDto, ComboSurfaceDto } from "../types";
+
+/** 本机默认权限探查缓存（按 Agent）：切换侧栏对话时首帧直出真实权限档，不先闪「默认权限」再跳档名 */
+const cliPermNoteCache = new Map<string, CliPermissionNote | null>();
 import {
   findPlanRowForProfile,
   isPlanRowExhausted,
@@ -2042,20 +2046,31 @@ export const TerminalView = memo(function TerminalView({
   // 有启动注入通道（combo_surface.injectEffortAllowed）才给档位；值是本次覆盖（标签 effort），不写回连接
   const launchAgents = useAppStore((s) => s.agents);
   const effectiveLaunchModel = model.trim() || selectedProfile?.models[0] || "";
-  const [launchEffortInjectable, setLaunchEffortInjectable] = useState(false);
-  const [launchComboLevels, setLaunchComboLevels] = useState<string[]>([]);
+  const cachedLaunchCombo = !running ? cachedComboSurface(profileId, effectiveLaunchModel || null) : null;
+  const [launchEffortInjectable, setLaunchEffortInjectable] = useState(
+    () => cachedLaunchCombo?.injectEffortAllowed === true,
+  );
+  const [launchComboLevels, setLaunchComboLevels] = useState<string[]>(
+    () => (Array.isArray(cachedLaunchCombo?.effortLevels) ? cachedLaunchCombo.effortLevels : []),
+  );
   useEffect(() => {
     if (running || !profileId) {
       setLaunchEffortInjectable(false);
       setLaunchComboLevels([]);
       return;
     }
+    const hit = cachedComboSurface(profileId, effectiveLaunchModel || null);
+    if (hit) {
+      setLaunchEffortInjectable(hit.injectEffortAllowed === true);
+      setLaunchComboLevels(Array.isArray(hit.effortLevels) ? hit.effortLevels : []);
+    }
     let stale = false;
-    invoke<{ injectEffortAllowed?: boolean; effortLevels?: string[] }>("combo_surface", {
+    invoke<ComboSurfaceDto>("combo_surface", {
       profileId,
       model: effectiveLaunchModel || null,
     })
       .then((c) => {
+        cacheComboSurface(profileId, effectiveLaunchModel || null, c);
         if (!stale) {
           setLaunchEffortInjectable(c.injectEffortAllowed === true);
           setLaunchComboLevels(Array.isArray(c.effortLevels) ? c.effortLevels : []);
@@ -2091,15 +2106,22 @@ export const TerminalView = memo(function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [launchComboLevels.join(","), launchAgentDet?.effort?.levels?.join(",")],
   );
-  // 这家 CLI 本机默认权限（只读探查，cli_permission.rs）：如实告诉用户会不会先问
-  const [cliPermissionNote, setCliPermissionNote] = useState<CliPermissionNote | null>(null);
+  // 这家 CLI 本机默认权限（只读探查，cli_permission.rs）：先用缓存首帧直出，后台照旧刷新
+  const [cliPermissionNote, setCliPermissionNote] = useState<CliPermissionNote | null>(
+    () => cliPermNoteCache.get(agentId) ?? null,
+  );
   useEffect(() => {
+    if (cliPermNoteCache.has(agentId)) {
+      setCliPermissionNote(cliPermNoteCache.get(agentId) ?? null);
+    }
     let stale = false;
     invoke<CliPermissionNote | null>("cli_default_permission", {
       agent: agentId,
     })
       .then((note) => {
-        if (!stale) setCliPermissionNote(note ?? null);
+        const next = note ?? null;
+        cliPermNoteCache.set(agentId, next);
+        if (!stale) setCliPermissionNote(next);
       })
       .catch(() => {
         if (!stale) setCliPermissionNote(null);
@@ -3650,7 +3672,8 @@ export const TerminalView = memo(function TerminalView({
     return () => window.clearInterval(timer);
   }, [attention]);
   const lastReportRef = useRef("");
-  useEffect(() => {
+  // 绘制前把状态同步给 TerminalPage（含切侧栏对话的首帧 status），避免首帧空白再闪出底栏
+  useLayoutEffect(() => {
     const s: TabStatus = {
       title,
       alive: running || shellActive,
@@ -3732,8 +3755,9 @@ export const TerminalView = memo(function TerminalView({
     }),
     [relayAvailable, attention, pendingReply, relayPick, relayOptions],
   );
-  // 当前会话数据镜像给页面级主工作区聊天层
-  useEffect(() => {
+  // 当前会话数据镜像给页面级主工作区聊天层：走 useLayoutEffect 与上方预读 conv 同帧提交，
+  // 切换侧栏会话首帧即带有 launchPick 与记录，底栏不再先空一帧再弹出
+  useLayoutEffect(() => {
     onSessionUpdate(tabId, {
       file: sessionFile,
       sessionId: linkedSessionId,

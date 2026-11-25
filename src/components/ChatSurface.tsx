@@ -13,6 +13,7 @@ import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
 import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } from "./ChatComposer";
 import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
+import { cacheComboSurface, cachedComboSurface } from "../runtime-model-effort";
 import ContextRing, { contextFmtTokens } from "./ContextRing";
 import { breakdownRequest } from "../context-breakdown";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
@@ -206,6 +207,7 @@ export default function ChatSurface({
   onDismissLaunchBlock,
   specialScreen = null,
   metaSlots = null,
+  hasStatusBar = false,
   onEmptySlideChange,
   tabId = null,
   sessionId = null,
@@ -381,6 +383,8 @@ export default function ChatSurface({
    * 两格都在、输入框不在居中空态时挂进去（输入框下面只有一行，2026-10-23）；否则画在输入框下面
    */
   metaSlots?: { left: HTMLElement | null; right: HTMLElement | null } | null;
+  /** 外层当前挂载了聊天底部状态栏：非空态首帧等待 metaSlots 挂好时不回退画内联 footer，避免切会话跳动 40px */
+  hasStatusBar?: boolean;
   /** 空态沉底滑动中（260ms）通知外层暂隐状态栏自身元素，由滑动中的底栏落地无缝交接 */
   onEmptySlideChange?: (sliding: boolean) => void;
   /** 这个标签（出图模式按它记这个对话选的出图模型、认出图工具的调用） */
@@ -1600,19 +1604,36 @@ export default function ChatSurface({
         launchPick?.model?.trim() ||
         launchPick?.models[0] ||
         null;
-  const [inlineContextWindow, setInlineContextWindow] = useState<number | null>(null);
+  const [inlineContextState, setInlineContextState] = useState<{ key: string; win: number | null }>(() => {
+    const c = cachedComboSurface(activeQuotaProfileId, activeContextModel);
+    return {
+      key: activeQuotaProfileId ? `${activeQuotaProfileId}\t${activeContextModel ?? ""}` : "",
+      win: c?.context && c.context > 0 ? c.context : null,
+    };
+  });
+  const inlineComboKey = activeQuotaProfileId ? `${activeQuotaProfileId}\t${activeContextModel ?? ""}` : "";
+  const cachedInlineWin = (() => {
+    const c = cachedComboSurface(activeQuotaProfileId, activeContextModel);
+    return c?.context && c.context > 0 ? c.context : null;
+  })();
+  const inlineContextWindow =
+    inlineContextState.key === inlineComboKey ? inlineContextState.win : cachedInlineWin;
   useEffect(() => {
     if (metaSlotted || !activeQuotaProfileId) return;
+    const key = `${activeQuotaProfileId}\t${activeContextModel ?? ""}`;
     let cancelled = false;
-    invoke<{ context?: number | null }>("combo_surface", {
+    invoke<import("../types").ComboSurfaceDto>("combo_surface", {
       profileId: activeQuotaProfileId,
       model: activeContextModel,
     })
       .then((c) => {
-        if (!cancelled) setInlineContextWindow(c?.context && c.context > 0 ? c.context : null);
+        cacheComboSurface(activeQuotaProfileId, activeContextModel, c);
+        if (!cancelled) {
+          setInlineContextState({ key, win: c?.context && c.context > 0 ? c.context : null });
+        }
       })
       .catch(() => {
-        if (!cancelled) setInlineContextWindow(null);
+        if (!cancelled) setInlineContextState({ key, win: null });
       });
     return () => {
       cancelled = true;
@@ -2154,9 +2175,10 @@ export default function ChatSurface({
         }
         // Claude 猜的下一句：只在它停在输入框、没有等你决定的事时给（生成中屏上那行是排队提示，不是建议）
         suggestion={running && !generating && !decision ? promptSuggestion : null}
-        // 权限 · 项目 | 上下文 · 余量 · 模型：状态栏落地接管后画进状态栏；居中空态和 260ms 沉底滑动期紧贴输入框同滑（0px 落差）
+        // 权限 · 项目 | 上下文 · 余量 · 模型：状态栏挂载时非空态一律走状态栏（首帧 ref 尚未回传也不画内联 footer，避免跳 40px）；
+        // 居中空态和 260ms 沉底滑动期紧贴输入框同滑（0px 落差）
         footer={
-          metaSlotted ? null : slidingFromEmpty ? (
+          metaSlotted || (!emptyLayout && !slidingFromEmpty && hasStatusBar) ? null : slidingFromEmpty ? (
             <div className="ccode-chat-column mx-auto flex h-full w-full min-w-0 items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-0.5 leading-[18px]">{metaLeft}</div>
               <div className="flex min-w-0 shrink items-center gap-1.5 leading-[18px]">{metaRight}</div>
