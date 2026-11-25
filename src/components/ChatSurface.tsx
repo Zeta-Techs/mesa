@@ -516,6 +516,8 @@ export default function ChatSurface({
   // 卡住、认不出的确认、斜杠命令打开的选择器：不再自动弹出底部终端（2026-10-27 用户拍板），改出「终端在等你」通用卡
   //（waitDecision）。选择器开着由这里记：发了会打开选择器的命令 / 点了芯片里的选择器之后，到屏上回到输入框为止
   const [pickerOpen, setPickerOpen] = useState(false);
+  // 最近一次从聊天层发出的时间：回合结束后又发过（斜杠命令开了全屏画面）时，「终端在等你」照旧读屏判断（quietScreenMayBeWaiting）
+  const [lastSentAt, setLastSentAt] = useState(0);
   const pickerSeenRef = useRef(false);
   useEffect(() => {
     if (!pickerOpen) return;
@@ -1003,7 +1005,7 @@ export default function ChatSurface({
     ((attention === "confirm" && confirmAged) ||
       pickerOpen ||
       stuckWaiting ||
-      (ptyQuiet && Boolean(waitScreen?.noInputBox) && quietScreenMayBeWaiting(channel)));
+      (ptyQuiet && Boolean(waitScreen?.noInputBox) && quietScreenMayBeWaiting(channel, lastSentAt)));
   function waitDecision(screen: WaitScreen, detail?: string | null): ChatDecision {
     return {
       key: `wait:${screen.title}`,
@@ -1356,6 +1358,7 @@ export default function ChatSurface({
     }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
     if (event === "picker_model") openPicker();
+    setLastSentAt(Date.now());
     // 自己发一句 = 要看接下来的回复：不管刚才翻到哪里都回到底部、接着跟（同各家聊天应用；2026-10-28 用户：
     // 发第一条之后画面停在上面，还得手拖下来看回复）
     followRef.current = true;

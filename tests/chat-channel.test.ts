@@ -291,4 +291,8 @@ test("CLI 自己报过这一轮结束，读屏没认出输入框也不当成在�
   assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("running") })), true);
   assert.equal(quietScreenMayBeWaiting(snap({ turn: turn("completed"), connection: "disconnected" })), true);
   assert.equal(quietScreenMayBeWaiting(null), true);
+  // 回合结束后又从聊天层发了 /config 一类斜杠命令（不开新回合、终端里是全屏画面）：照旧读屏
+  const ended = snap({ turn: turn("completed") }); // endedAt = 2
+  assert.equal(quietScreenMayBeWaiting(ended, 1), false);
+  assert.equal(quietScreenMayBeWaiting(ended, 3), true);
 });
