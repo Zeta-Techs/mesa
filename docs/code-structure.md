@@ -2180,7 +2180,9 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   com.ccode.dev 的网页数据）移入回收站。课题文件夹与各 CLI 数据不动；移目录前先收回
                              #   各家技能目录里指向技能库的软链（skills）与全局配置里带标记的 hook 条目（hooks）
   updater.rs                 # CLI 安装/更新（brew TUNA、npm_for 同目录 npm、Windows winget 渠道：claude/codex/opencode/kimi/grok 五家有官方包）+ 应用自身 Tauri updater；
-                             #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线
+                             #   run_streaming_pty/run_streaming/emit_done/winget_args 为 pub(crate)，dep_check 复用同一管线；
+                             #   brew 一律 NO_AUTO_UPDATE，查新版 / 升级前由 refresh_brew_meta(_with) 节流跑 brew update
+                             #   （看 api/*_names.txt 修改时间 + 本进程上次尝试；检查 6 小时、升级 10 分钟）
   watch_review.rs            # 定时巡检产物评审：工作目录可复用，但评审和采纳只读每次执行冻结的副本
                              #   （freeze_at 返回这轮改动数＝契约文件变化 + 新 PDF，0 = 无新内容；2026-10-23）
                              #   （2026-10-13 起：new_hits_of 评审只列该次新命中=after−initial；watch_run_decide 校验冻结证据并对已采纳运行拒绝；

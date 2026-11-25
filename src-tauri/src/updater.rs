@@ -52,9 +52,14 @@ pub(crate) fn pty_deadline_kind(elapsed: Duration, idle: Duration, downloading: 
     }
 }
 
-/// brew 的下载缓存目录：HOMEBREW_CACHE > macOS ~/Library/Caches/Homebrew > XDG 缓存/Homebrew
+/// brew 的下载缓存目录（brew_cache_dir 下的 downloads）
 fn brew_downloads_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("HOMEBREW_CACHE")
+    Some(brew_cache_dir()?.join("downloads"))
+}
+
+/// brew 的缓存根目录：HOMEBREW_CACHE > macOS ~/Library/Caches/Homebrew > XDG 缓存/Homebrew
+fn brew_cache_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOMEBREW_CACHE")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| {
@@ -68,8 +73,7 @@ fn brew_downloads_dir() -> Option<std::path::PathBuf> {
                     .unwrap_or_else(|| home.join(".cache"))
                     .join("Homebrew")
             })
-        })?;
-    Some(base.join("downloads"))
+        })
 }
 
 /// 本次开跑以来还在写的 `*.incomplete` 总字节数（brew 下到一半的文件）；没有返回 0
@@ -870,6 +874,13 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
         });
     }
 
+    // brew 升级带 HOMEBREW_NO_AUTO_UPDATE：软件包信息旧了会以为已是最新、什么都不升，先刷新一次（输出同样流到更新面板）
+    if cmds[0].program == "brew" && cmds[0].args.first().map(String::as_str) == Some("upgrade") {
+        refresh_brew_meta_with(BREW_META_TTL_EAGER, || {
+            let _ = run_streaming(app, agent_id, "brew", &["update".to_string()]);
+        });
+    }
+
     let mut ok = false;
     let mut output = String::new();
     let mut method_used = cmds[0].method;
@@ -1262,7 +1273,76 @@ fn plain_version(body: &str) -> Option<String> {
     (semver_token(v).as_deref() == Some(bare)).then(|| bare.to_string())
 }
 
-fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
+// ===== brew 软件包信息（元数据）节流刷新 =====
+// Mesa 跑 brew 一律带 HOMEBREW_NO_AUTO_UPDATE（brew_env_pairs），brew info / upgrade 只认本机缓存的
+// 软件包信息；用户自己不跑 brew 时这份信息会停在几天前：查不出新版、点「更新」也升不动
+// （2026-11-25：claude-code 缓存停在 11-24，终端 brew upgrade 自动刷新后才发现 2.1.326）。
+// 所以查新版 / 升级前先刷新一次，按时间节流，免得每次进连接页都拉一遍。
+
+/// 平时（打开连接页的自动检查）：软件包信息 6 小时内刷新过就不再刷
+const BREW_META_TTL: Duration = Duration::from_secs(6 * 3600);
+/// 用户手动「重新检查」与点「更新」：10 分钟内刷新过才跳过
+const BREW_META_TTL_EAGER: Duration = Duration::from_secs(10 * 60);
+const BREW_META_REFRESH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// 本进程上次尝试刷新的时间；锁同时把并发的几路 brew 查询串成一次刷新
+static BREW_META_ATTEMPT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// 本机软件包信息多久前刷新过：取 API 缓存里 brew update 会重写的清单文件里最新的修改时间。
+/// 没有这些文件（git tap 模式 / 从未刷新过）→ None，按过期处理
+fn brew_meta_age() -> Option<Duration> {
+    let api = brew_cache_dir()?.join("api");
+    ["formula_names.txt", "cask_names.txt", "formula.jws.json", "cask.jws.json"]
+        .iter()
+        .filter_map(|name| std::fs::metadata(api.join(name)).ok()?.modified().ok())
+        .max()
+        .and_then(|t| t.elapsed().ok())
+}
+
+/// 要不要刷新：软件包信息与本进程上次尝试都不在 ttl 内才刷（尝试失败也记时间，网络不通时不反复重试）
+pub(crate) fn brew_meta_needs_refresh(
+    meta_age: Option<Duration>,
+    attempt_age: Option<Duration>,
+    ttl: Duration,
+) -> bool {
+    let fresh = |age: Option<Duration>| age.is_some_and(|a| a < ttl);
+    !fresh(meta_age) && !fresh(attempt_age)
+}
+
+/// 需要时刷新软件包信息。run 负责真正执行 brew update（检查走后台有界执行，升级走 PTY 流式输出）
+fn refresh_brew_meta_with(ttl: Duration, run: impl FnOnce()) {
+    let mut attempt = BREW_META_ATTEMPT.lock().unwrap_or_else(|e| e.into_inner());
+    if !brew_meta_needs_refresh(brew_meta_age(), attempt.map(|t| t.elapsed()), ttl) {
+        return;
+    }
+    run();
+    *attempt = Some(std::time::Instant::now());
+}
+
+/// 后台静默刷新（查新版用）：超时杀树，失败静默，照旧用本机已有的信息查
+fn refresh_brew_meta(ttl: Duration) {
+    refresh_brew_meta_with(ttl, || {
+        let Some(brew) = agents::resolve_binary("brew") else { return };
+        let mut c = crate::process::background_command(brew);
+        c.args(["update", "--quiet"]);
+        for (k, v) in brew_env_pairs(
+            "brew",
+            crate::settings::brew_mirror_enabled(),
+            crate::settings::download_proxy_active(),
+        ) {
+            c.env(k, v);
+        }
+        for (k, v) in
+            crate::settings::download_proxy_env(&["mirrors.tuna.tsinghua.edu.cn", "ghcr.nju.edu.cn"])
+        {
+            c.env(k, v);
+        }
+        let _ = capture_ok(&mut c, BREW_META_REFRESH_TIMEOUT);
+    });
+}
+
+fn brew_latest(pkg: &str, cask: bool, meta_ttl: Duration) -> Option<String> {
+    refresh_brew_meta(meta_ttl);
     let brew = agents::resolve_binary("brew")?;
     let mut c = crate::process::background_command(brew);
     c.args(["info", "--json=v2"]);
@@ -1282,11 +1362,8 @@ fn brew_latest(pkg: &str, cask: bool) -> Option<String> {
     {
         c.env(k, v);
     }
-    let out = c.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let json: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let out = capture_ok(&mut c, Duration::from_secs(30))?;
+    let json: serde_json::Value = serde_json::from_slice(&out).ok()?;
     let v = if cask {
         json["casks"][0]["version"].as_str()
     } else {
@@ -1404,9 +1481,9 @@ fn latest_source(agent_id: &str, detected_method: &str, opencode_v2: bool) -> Op
     None
 }
 
-fn latest_version(agent_id: &str, detected_method: &str, opencode_v2: bool) -> Option<String> {
+fn latest_version(agent_id: &str, detected_method: &str, opencode_v2: bool, brew_meta_ttl: Duration) -> Option<String> {
     match latest_source(agent_id, detected_method, opencode_v2)? {
-        LatestSource::Brew { name, cask } => brew_latest(name, cask),
+        LatestSource::Brew { name, cask } => brew_latest(name, cask, brew_meta_ttl),
         LatestSource::Npm(pkg) => npm_latest(pkg),
         LatestSource::Winget(id) => winget_latest(id),
         LatestSource::Plain(url) => plain_latest(url),
@@ -1414,7 +1491,7 @@ fn latest_version(agent_id: &str, detected_method: &str, opencode_v2: bool) -> O
     }
 }
 
-fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
+fn check_one(agent_id: &str, brew_meta_ttl: Duration) -> AgentUpdateInfoDto {
     let mut upstream_note = None;
     let mut upstream_package = None;
     let mut upstream_command = None;
@@ -1426,7 +1503,7 @@ fn check_one(agent_id: &str) -> AgentUpdateInfoDto {
             let method = detect_method(&resolved.to_string_lossy());
             let opencode_v2 = opencode_v2_install(agent_id, &resolved.to_string_lossy(), installed.as_deref());
             let effective_method = effective_update_method(agent_id, method, opencode_v2);
-            let latest = latest_version(agent_id, method, opencode_v2);
+            let latest = latest_version(agent_id, method, opencode_v2, brew_meta_ttl);
             // 与 update_agent 同一套渠道判定：首条命令是交互式 TUI 自更新时给前端改路由
             interactive_update_command =
                 interactive_self_update(agent_id, method, &path.to_string_lossy(), installed.as_deref());
@@ -1510,12 +1587,14 @@ pub async fn check_agent_updates(force: Option<bool>) -> Vec<AgentUpdateInfoDto>
             }
         }
     }
-    let out = tauri::async_runtime::spawn_blocking(|| {
+    // 手动「重新检查」时 brew 软件包信息按 10 分钟口径刷新，平时 6 小时
+    let brew_meta_ttl = if force == Some(true) { BREW_META_TTL_EAGER } else { BREW_META_TTL };
+    let out = tauri::async_runtime::spawn_blocking(move || {
         let handles: Vec<_> = crate::agent_specs::all_agent_specs()
             .iter()
             .map(|s| {
                 let id = s.id;
-                std::thread::spawn(move || check_one(id))
+                std::thread::spawn(move || check_one(id, brew_meta_ttl))
             })
             .collect();
         handles
@@ -1532,6 +1611,24 @@ pub async fn check_agent_updates(force: Option<bool>) -> Vec<AgentUpdateInfoDto>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brew_meta_refresh_throttles_on_meta_age_and_attempts() {
+        let ttl = Duration::from_secs(600);
+        let old = Some(Duration::from_secs(9 * 24 * 3600));
+        let recent = Some(Duration::from_secs(60));
+        // 软件包信息几天没刷、本进程也没试过 → 刷
+        assert!(brew_meta_needs_refresh(old, None, ttl));
+        // 找不到缓存清单（git tap / 从未刷新）→ 刷
+        assert!(brew_meta_needs_refresh(None, None, ttl));
+        // 用户刚在终端跑过 brew（信息是新的）→ 不刷
+        assert!(!brew_meta_needs_refresh(recent, None, ttl));
+        // 刚试过一次（哪怕失败、清单没更新）→ 不再反复刷
+        assert!(!brew_meta_needs_refresh(old, recent, ttl));
+        assert!(!brew_meta_needs_refresh(None, recent, ttl));
+        // 上次尝试也过期了 → 再刷
+        assert!(brew_meta_needs_refresh(old, Some(Duration::from_secs(601)), ttl));
+    }
 
     #[test]
     fn semver_token_extracts_first_version_like_token() {
