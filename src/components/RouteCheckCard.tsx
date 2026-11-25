@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RotateCw, ShieldCheck } from "lucide-react";
+import { Globe, Loader2, RotateCw, ShieldCheck } from "lucide-react";
+import AgentIcon from "./AgentIcon";
 import { paneOutlineButtonClass } from "./PageFrame";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { useAppStore } from "../store";
@@ -9,7 +10,6 @@ import {
   PREFLIGHT_MAX_AGE_SECS,
   VERDICT_LABEL,
   checkedAgoText,
-  exitTypeText,
   latencyText,
   nativeText,
   proxyHeaderSummary,
@@ -21,6 +21,7 @@ import {
   routeTargetKey,
   serviceConfirmText,
   serviceConfirmTip,
+  shortOrg,
   type ExitType,
   type RouteCheck,
   type RouteFix,
@@ -34,11 +35,10 @@ type Row = RouteCheck | { agent: string; error: string };
 // 全站 button { font: inherit } 会吞掉按钮自身的 text-*：细边按钮跟设置页其他按钮一样随外层字号；
 // 行内小字动作（查出口类型）的字号写在内层 span
 
-/** 状态只给圆点上色（design-system：语义色只给点 / 图标，不铺在文字上） */
+/** 状态只给圆点上色（design-system：语义色只给点 / 图标 / 克制徽标，不把整段正文涂彩） */
 const DOT_CLASS = { pass: "bg-ok-text", block: "bg-err-text", review: "bg-warn-text" } as const;
-/** 一行到底：点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮（靠右）；各行用同一组定宽列对齐。
- *  拦下的原因较长，占地区 / 用时 / 确认三列的位置 */
-const ROW_GRID = "grid grid-cols-[0.5rem_8rem_9rem_3.5rem_minmax(0,1fr)_auto] items-center gap-x-3";
+const ROW_CLASS =
+  "flex min-h-10 items-center gap-3 rounded-md px-2.5 py-1.5 transition-colors hover:bg-hover";
 
 /** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行（同家多号配不同代理时分别测），
  *  经与启动同源的代理访问这家服务自己的地址。
@@ -204,29 +204,37 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
     .filter((r): r is RouteCheck => !!r && !("error" in r));
   const header = proxyHeaderSummary(checks);
   const oldest = checks.length ? Math.min(...checks.map((c) => c.checkedAt)) : null;
-  const labelOf = (t: RouteTarget) => {
-    const base = AGENTS.find((a) => a.id === t.agent)?.label ?? t.agent;
-    return t.profileName ? `${base} · ${t.profileName}` : base;
-  };
+  const blockCount = checks.filter((c) => c.verdict === "block").length;
+  const reviewCount = checks.filter((c) => c.verdict === "review").length;
+  const baseLabelOf = (agentId: string) => AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
 
   return (
-    <div className="w-full">
-      <div className="flex items-center gap-3 pb-2">
-        <p className="min-w-0 flex-1 truncate text-xs text-l3">
-          {header.text}
-          {oldest != null && !running && <span className="text-l4"> · {checkedAgoText(oldest, now)}</span>}
-        </p>
+    <div className="w-full pt-1">
+      <div className="flex items-center justify-between gap-3 pb-2.5">
+        <div className="flex min-w-0 items-center gap-2 text-xs">
+          <Globe className="size-3.5 shrink-0 text-l4" aria-hidden="true" />
+          <span className="truncate text-l2">{header.text}</span>
+          {!running && checks.length > 0 && blockCount > 0 && (
+            <span className="shrink-0 text-err-text">· {blockCount} 项不通</span>
+          )}
+          {!running && checks.length > 0 && blockCount === 0 && reviewCount > 0 && (
+            <span className="shrink-0 text-warn-text">· {reviewCount} 项待判断</span>
+          )}
+          {oldest != null && !running && (
+            <span className="shrink-0 text-l4">· {checkedAgoText(oldest, now)}</span>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => void run(0)}
           disabled={running}
-          className={`${paneOutlineButtonClass} gap-1.5`}
+          className={`${paneOutlineButtonClass} shrink-0 gap-1.5`}
         >
           <RotateCw className={`size-3.5 ${running ? "animate-spin" : ""}`} aria-hidden="true" />
           {running ? "体检中" : "重测"}
         </button>
       </div>
-      <ul className="divide-y divide-hairline border-t border-hairline">
+      <ul className="space-y-0.5 rounded-lg bg-canvas/55 p-1">
         {targets.map((t) => {
           const key = routeTargetKey(t);
           const row = rows[key];
@@ -237,7 +245,9 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
           return (
             <RouteRow
               key={key}
-              name={labelOf(t)}
+              agentId={t.agent}
+              baseName={baseLabelOf(t.agent)}
+              profileName={t.profileName}
               row={row}
               rowProxyNote={rowProxyNote}
               fix={fixes[key] ?? null}
@@ -255,7 +265,9 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
 }
 
 function RouteRow({
-  name,
+  agentId,
+  baseName,
+  profileName,
   row,
   rowProxyNote,
   fix,
@@ -265,7 +277,9 @@ function RouteRow({
   onAccept,
   onLookup,
 }: {
-  name: string;
+  agentId: string;
+  baseName: string;
+  profileName?: string;
   row: Row | undefined;
   rowProxyNote: string | null;
   fix: RouteFix | null;
@@ -275,7 +289,7 @@ function RouteRow({
   onAccept: () => void;
   onLookup: () => void;
 }) {
-  const nameRef = useRef<HTMLSpanElement>(null);
+  const nameRef = useRef<HTMLDivElement>(null);
   const tip = useHoverTip(nameRef);
   const confirmRef = useRef<HTMLSpanElement>(null);
   const confirmTip = useHoverTip(confirmRef);
@@ -286,26 +300,34 @@ function RouteRow({
       ? "没测成"
       : "体检中";
 
-  const nameCell = (
-    <span
+  const identityCell = (
+    <div
       ref={nameRef}
       onMouseEnter={tip.show}
       onMouseLeave={tip.hide}
-      className="truncate text-sm text-l2"
+      className="flex w-[9.5rem] shrink-0 items-center gap-2 min-w-0"
     >
-      {name}
-    </span>
+      <AgentIcon agent={agentId} label={baseName} size={15} />
+      <span className="min-w-0 truncate text-sm font-medium text-l1">
+        {baseName}
+        {profileName && <span className="font-normal text-l3"> · {profileName}</span>}
+      </span>
+    </div>
   );
 
   if (!check) {
+    const isErr = Boolean(row && "error" in row);
     return (
-      <li className={`${ROW_GRID} min-h-12 py-2`}>
-        <span className="size-2 rounded-full bg-l4" />
-        {nameCell}
-        <span className="col-span-3 truncate text-sm text-l4">
-          {row && "error" in row ? `没测成：${row.error}` : "体检中…"}
-        </span>
-        <span />
+      <li className={ROW_CLASS}>
+        {identityCell}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span
+            className={`size-1.5 shrink-0 rounded-full ${isErr ? "bg-err-text" : "animate-pulse bg-l4"}`}
+          />
+          <span className={`min-w-0 truncate text-xs ${isErr ? "text-l2" : "text-l4"}`}>
+            {row && "error" in row ? `没测成：${row.error}` : "体检中…"}
+          </span>
+        </div>
         <HoverTip tip={tip.tip} text={tipText} />
       </li>
     );
@@ -313,102 +335,172 @@ function RouteRow({
 
   const confirm = serviceConfirmText(check);
   const typed = typeof exitType === "object" ? exitType : null;
+  const orgName = typed ? shortOrg(typed.org) : "";
   const native = typed ? nativeText(typed) : null;
   const hasExitMeta = Boolean(check.exitRegion || exitType !== undefined);
   const meta =
     rowProxyNote || confirm || hasExitMeta ? (
-      <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
-        {rowProxyNote && <span className="truncate text-l3">{rowProxyNote}</span>}
-        {rowProxyNote && (confirm || hasExitMeta) && <span aria-hidden="true">·</span>}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        {rowProxyNote && (
+          <span
+            className="max-w-44 shrink-0 truncate rounded-md bg-inset px-1.5 py-0.5 font-mono text-micro text-l3"
+            title={rowProxyNote}
+          >
+            {rowProxyNote}
+          </span>
+        )}
         {confirm && (
           <span
             ref={confirmRef}
             onMouseEnter={confirmTip.show}
             onMouseLeave={confirmTip.hide}
-            className="inline-flex shrink-0 cursor-help items-center gap-1 text-l3"
+            className="inline-flex shrink-0 cursor-help items-center gap-1 rounded-md border border-hairline bg-raised/70 px-1.5 py-0.5 text-micro text-l2"
           >
-            <ShieldCheck className="size-3 text-ok-text" aria-hidden="true" />
+            <ShieldCheck className="size-3 shrink-0 text-ok-text" aria-hidden="true" />
             {confirm}
             <HoverTip tip={confirmTip.tip} text={serviceConfirmTip(check)} />
           </span>
         )}
-        {confirm && check.exitRegion && <span aria-hidden="true">·</span>}
         {check.exitRegion &&
           (exitType === undefined ? (
             <button
               type="button"
               onClick={onLookup}
-              className="shrink-0 underline-offset-2 hover:text-l2 hover:underline"
+              title="向 ipinfo.io 查询出口 IP 是住宅还是机房、是否原生 IP"
+              className="inline-flex shrink-0 items-center rounded-md border border-hairline bg-raised/50 px-1.5 py-0.5 text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1"
             >
               <span className="text-micro">查出口类型</span>
             </button>
-          ) : (
+          ) : typeof exitType === "string" ? (
+            exitType === "查询中…" ? (
+              <span className="inline-flex shrink-0 items-center gap-1 text-micro text-l4">
+                <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                查询中…
+              </span>
+            ) : (
+              <span className="min-w-0 truncate text-micro text-l4" title={exitType}>
+                {exitType}
+              </span>
+            )
+          ) : typed ? (
             <>
               <span
-                className={`min-w-0 truncate ${typed?.kind === "datacenter" ? "text-warn-text" : ""}`}
+                className={`inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-micro font-medium ${
+                  typed.kind === "datacenter"
+                    ? "border-warn-text/20 bg-warn text-warn-text"
+                    : "border-hairline bg-raised/70 text-l2"
+                }`}
               >
-                {typed ? exitTypeText(typed) : (exitType as string)}
+                {typed.label}
               </span>
+              {orgName && (
+                <span className="min-w-0 truncate text-micro text-l3" title={typed.org}>
+                  {orgName}
+                </span>
+              )}
               {native && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className={`shrink-0 ${typed?.native === false ? "text-warn-text" : ""}`}>{native}</span>
-                </>
+                <span
+                  className={`inline-flex shrink-0 items-center rounded-md border px-1.5 py-0.5 text-micro ${
+                    typed.native === false
+                      ? "border-warn-text/20 bg-warn text-warn-text"
+                      : "border-hairline bg-inset/80 text-l3"
+                  }`}
+                >
+                  {native}
+                </span>
               )}
             </>
-          ))}
-      </span>
+          ) : null)}
+      </div>
     ) : null;
+
   // 设置里的代理端口未运行但装了代理软件：多半是软件没开或改用了纯 TUN 透明代理，补一个「改走直连」次按钮
   const showDirectFallback =
     check.stage === "proxy" && check.proxySource === "settings" && fix?.kind === "openApp";
-  const actions =
-    check.regionChanged || fix || showDirectFallback ? (
-      <span className="flex justify-end gap-2">
-        {check.regionChanged && (
-          <button type="button" disabled={busy} onClick={onAccept} className={paneOutlineButtonClass}>
-            记为常用出口
-          </button>
-        )}
-        {fix && (
-          <button type="button" disabled={busy} onClick={() => onFix(fix)} className={paneOutlineButtonClass}>
-            {busy ? "处理中…" : routeFixLabel(fix)}
-          </button>
-        )}
-        {showDirectFallback && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onFix({ kind: "clearProxy" })}
-            title="已改用 TUN 透明代理或不再需要代理时，清空出网代理改走直连"
-            className={paneOutlineButtonClass}
-          >
-            改走直连
-          </button>
-        )}
-      </span>
-    ) : (
-      <span />
-    );
+  const hasActions = Boolean(check.regionChanged || fix || showDirectFallback);
+  const actions = hasActions ? (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {check.regionChanged && (
+        <button type="button" disabled={busy} onClick={onAccept} className={paneOutlineButtonClass}>
+          记为常用出口
+        </button>
+      )}
+      {fix && (
+        <button type="button" disabled={busy} onClick={() => onFix(fix)} className={paneOutlineButtonClass}>
+          {busy ? "处理中…" : routeFixLabel(fix)}
+        </button>
+      )}
+      {showDirectFallback && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onFix({ kind: "clearProxy" })}
+          title="已改用 TUN 透明代理或不再需要代理时，清空出网代理改走直连"
+          className={paneOutlineButtonClass}
+        >
+          改走直连
+        </button>
+      )}
+    </span>
+  ) : null;
+
   const blocked = check.verdict === "block";
+  const mainText = routeRowMain(check);
+  const latency = latencyText(check.latencyMs);
+  const compactStatus = check.verdict === "pass";
 
   return (
-    <li className={`${ROW_GRID} min-h-12 py-2`}>
-      <span className={`size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
-      {nameCell}
+    <li className={ROW_CLASS}>
+      {identityCell}
       {blocked ? (
-        <span className="col-span-3 truncate text-sm text-l1">
-          {routeRowMain(check)}
-          {rowProxyNote && <span className="ml-2 text-micro text-l4">· {rowProxyNote}</span>}
-        </span>
-      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[check.verdict]}`} />
+          <span className="min-w-0 truncate text-sm text-l1" title={mainText}>
+            {mainText}
+          </span>
+          {rowProxyNote && (
+            <span
+              className="max-w-44 shrink-0 truncate rounded-md bg-inset px-1.5 py-0.5 font-mono text-micro text-l3"
+              title={rowProxyNote}
+            >
+              {rowProxyNote}
+            </span>
+          )}
+        </div>
+      ) : compactStatus ? (
         <>
-          <span className="truncate text-sm text-l1">{routeRowMain(check)}</span>
-          <span className="text-right text-xs tabular-nums text-l4">{latencyText(check.latencyMs)}</span>
-          {meta ?? <span />}
+          <div className="flex w-[5.5rem] shrink-0 items-center gap-1.5 min-w-0">
+            <span className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[check.verdict]}`} />
+            <span
+              className={`truncate text-sm ${check.exitRegionName ? "font-medium text-l1" : "text-l2"}`}
+              title={mainText}
+            >
+              {mainText}
+            </span>
+          </div>
+          {meta ?? <div className="min-w-0 flex-1" />}
         </>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[check.verdict]}`} />
+          <span className="min-w-0 truncate text-sm text-l1" title={mainText}>
+            {mainText}
+          </span>
+          {meta}
+        </div>
       )}
-      {actions}
+      <div className="ml-auto flex shrink-0 items-center gap-2.5">
+        {actions}
+        {!blocked && latency && (
+          <span
+            className={`w-12 shrink-0 text-right font-mono text-micro tabular-nums ${
+              (check.latencyMs ?? 0) >= 2500 ? "text-l3" : "text-l4"
+            }`}
+          >
+            {latency}
+          </span>
+        )}
+      </div>
       <HoverTip tip={tip.tip} text={tipText} />
     </li>
   );

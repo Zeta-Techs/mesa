@@ -376,8 +376,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
                              # 2026-11-05 量主区宽度决定常驻（portal 进 App 的 #ccode-assistant-dock）还是浮层，宽度可拖记本机，项目页换项目跟着切，算「此刻在看哪」
   components/GuideSectionModal.tsx # 在应用里看说明书一节（assistant_guide_section，随版本打包），另给「在浏览器里看最新版」
   components/AssistantDesk.tsx # 项目助手顶上的「等你的事」：就地点选项 / 写一句送过去，等确认的带路回对话；20 秒刷新
-  components/RouteCheckCard.tsx # 设置 → 网络「线路体检」（挂在 Row 的 extra 全宽区）：route_check_agents 列有探测点的 Agent，每家一行到底
-                             #   （点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮，ROW_GRID 定宽列对齐，拦下原因跨三列），探测主机进 HoverTip；出网代理保存后自动重测
+  components/RouteCheckCard.tsx # 设置 → 网络「线路体检」（挂在 Row 的 extra 全宽区）：route_check_agents 列有探测点的 Agent，收进无分隔线的 bg-canvas/55 柔和内槽，每行带官方 AgentIcon、清晰字重层级、状态点 + 出口地区、服务确认/住宅/机房/原生 IP 分层微徽标与右对齐等宽用时，探测主机进 HoverTip；出网代理保存后自动重测
   components/MobileWorkbenchCard.tsx # 设置 → AI 与 Agent →「手机工作台（端到端加密 PWA）」：127.0.0.1 本机服务开关与预览、Cloudflare Tunnel 一键自动下载与开关 / Tailscale CLI 诊断与手机节点离线提示及专属 HTTPS 端口一键开关 / 自定义 HTTPS 隧道配置、5 分钟一次性二维码配对与最多 8 台设备管理
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、立即重连、测试连接、发测试卡片自检、绑定 6 位码倒计时与复制、步骤与目标通知 / 夜间免打扰开关、一键复制权限配置 JSON
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
