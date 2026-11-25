@@ -71,6 +71,15 @@ type Detail =
   | { state: "ok"; data: ContextBreakdown }
   | { state: "error"; message: string };
 
+/** 顺时针从 12 点起画实心扇形路径（0 < ratio < 1），避免描边法在 WebKit 上产生圆心针孔伪影 */
+function contextPiePath(cx: number, cy: number, r: number, ratio: number): string {
+  const theta = ratio * Math.PI * 2;
+  const x = cx + r * Math.sin(theta);
+  const y = cy - r * Math.cos(theta);
+  const largeArc = ratio > 0.5 ? 1 : 0;
+  return `M ${cx} ${cy} L ${cx} ${(cy - r).toFixed(3)} A ${r} ${r} 0 ${largeArc} 1 ${x.toFixed(3)} ${y.toFixed(3)} Z`;
+}
+
 export default function ContextRing({
   ratio,
   used,
@@ -116,10 +125,13 @@ export default function ContextRing({
   /** 窗口未知时的按钮文案（如 "1.3 万 token"） */
   tokenLabel?: string | null;
 }) {
-  const r = 6;
-  const c = 2 * Math.PI * r;
+  // 与底栏右侧订阅余量环（ChatQuotaRing）统一为 14×14 画布、12.6px 光学外径：
+  // 外框 r=5.7 / sw=1.2（外径 12.6px），内嵌实心扇形饼盘 r=4.2（实心填充 = 上下文往里填，空心圆环 = 订阅配额往外扣）
+  const rimR = 5.7;
+  const pieR = 4.2;
   const hasWindow = Boolean(win && win > 0 && ratio !== null);
-  const safeRatio = ratio ?? 0;
+  const safeRatio = Math.min(1, Math.max(0, ratio ?? 0));
+  const visRatio = safeRatio <= 0 ? 0 : safeRatio >= 0.999 ? 1 : Math.max(0.05, safeRatio);
   const heavy = imageWeightNote(imageBytes);
   const warn = (hasWindow && safeRatio >= 0.8) || heavy !== null;
   const stroke = warn ? warnColor : color;
@@ -240,7 +252,7 @@ export default function ContextRing({
         ref={ringRef}
         type="button"
         className={`inline-flex ${
-          !hasWindow ? "h-7 gap-1 px-1.5" : showPercent ? "h-7 gap-1 px-1" : "size-6"
+          !hasWindow || showPercent ? "h-7 gap-1 px-1.5" : "size-6"
         } shrink-0 items-center justify-center rounded-md outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta ${
           stroke ? "" : warn ? "text-warn-text" : "text-l3"
         } ${className}`}
@@ -258,24 +270,27 @@ export default function ContextRing({
       >
         {hasWindow ? (
           <>
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <circle cx="8" cy="8" r={r} fill="none" stroke={trackColor} strokeWidth="2" />
+            <svg viewBox="0 0 14 14" aria-hidden="true" className="size-3.5 shrink-0">
               <circle
-                cx="8"
-                cy="8"
-                r={r}
+                cx="7"
+                cy="7"
+                r={rimR}
                 fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeDasharray={`${c * safeRatio} ${c}`}
-                strokeLinecap="round"
-                transform="rotate(-90 8 8)"
+                stroke={warn ? "currentColor" : trackColor}
+                strokeOpacity={warn ? 0.5 : undefined}
+                strokeWidth="1.2"
               />
+              <circle cx="7" cy="7" r={pieR} fill="currentColor" fillOpacity={0.14} />
+              {visRatio >= 1 ? (
+                <circle cx="7" cy="7" r={pieR} fill="currentColor" />
+              ) : visRatio > 0 ? (
+                <path d={contextPiePath(7, 7, pieR, visRatio)} fill="currentColor" />
+              ) : null}
             </svg>
-            {showPercent && <span className="text-micro tabular-nums">{pct}%</span>}
+            {showPercent && <span className="text-micro font-normal tabular-nums">{pct}%</span>}
           </>
         ) : (
-          <span className="text-micro tabular-nums text-l3">
+          <span className="text-micro font-normal tabular-nums text-l3">
             {tokenLabel ?? `${contextFmtTokens(used)} token`}
           </span>
         )}

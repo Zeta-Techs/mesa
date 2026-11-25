@@ -124,7 +124,7 @@ function textToneClass(tone: ChatQuotaTone): string {
   return "text-l3";
 }
 
-/** 14px 极简单环：5 小时保持中性灰轨 + 细弧；本周剩余改为同色系浅弧 + 深轨（一眼区分窗口周期） */
+/** 14px 极简单环：与左侧上下文饼盘严格对齐 12.6px 光学外径；5 小时保持中性灰轨 + 细弧，本周剩余改为同色系浅弧 + 深轨 */
 function SingleMicroRing({
   remainPct,
   tone,
@@ -134,8 +134,9 @@ function SingleMicroRing({
   tone: ChatQuotaTone;
   tinted?: boolean;
 }) {
-  const r = tinted ? 5.1 : 5.4;
-  const sw = tinted ? 1.9 : 1.5;
+  // 外径统一：tinted 5.3 + 2.0/2 = 6.3（12.6px），5h 5.5 + 1.6/2 = 6.3（12.6px）
+  const r = tinted ? 5.3 : 5.5;
+  const sw = tinted ? 2.0 : 1.6;
   const c = 2 * Math.PI * r;
   const p = Math.min(100, Math.max(0, remainPct));
   const hueClass = ringStrokeClass(tone, tinted);

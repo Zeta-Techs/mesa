@@ -935,7 +935,7 @@ file-preview.ts            # 预览保存快照纯逻辑（FilePreviewEditor 用
   client-open.ts             # 客户端接力前端纯逻辑：目标 DTO、needsDialog（全部通过才免弹层）、检查项排序、主按钮文案、按钮/弹层标题措辞（项目级写「打开项目」）；预检与深链全在后端 client_open.rs
   switch-strategy.ts         # 运行中换模型 / 思考档走命令还是重开接回：SWITCH_PERSISTS 记哪几家的切换命令会写回自己的全局配置（实测表），
                              # 会写回且启动时注得进的改走 relaunchWith（runtime-model-effort.ts 消费；tests/switch-strategy.test.ts）
-  components/ContextRing.tsx # 上下文用量圆环：模型芯片左边（状态栏在时由状态栏聊天变体画；模型窗口未知时以可点击 token 读数触发）与终端底栏右区共用；悬停写比例/用量与缓存复用；点开是上下文浮层，含已压缩次数、分类色横条、缓存复用/本步新增输入拆解、Antigravity 子智能体上下文汇总、离自动压缩还有多少与「压缩上下文」；Claude/Qwen 走无头 `/context`，Antigravity 走纯本地只读日志与子智能体库秒算
+  components/ContextRing.tsx # 上下文用量饼盘：模型芯片左边（状态栏在时由状态栏聊天变体画，与右侧订阅余量环统一 14px 画布 / 12.6px 光学外径，用外细框 + 实心扇形填充与空心余量环区隔；模型窗口未知时以可点击 token 读数触发）与终端底栏右区共用；悬停写比例/用量与缓存复用；点开是上下文浮层，含已压缩次数、分类色横条、缓存复用/本步新增输入拆解、Antigravity 子智能体上下文汇总、离自动压缩还有多少与「压缩上下文」；Claude/Qwen 走无头 `/context`，Antigravity 走纯本地只读日志与子智能体库秒算
   components/ChatQuotaRing.tsx # 聊天底栏「订阅余量 / 网关余额」静默单环（紧挨上下文圆环右侧、模型芯片左侧，右附 12px 细竖线区隔）：14px 单环 + 纯百分比（无前缀字；本周剩余以同色系浅弧 + 深轨呈现，5 小时剩余沿用中性灰轨 + 细弧，一眼区分窗口周期；New API 优先回落同站钱包行直显余额）；点开 .ccode-float-surface 玻璃浮层看各窗剩余与倒计时、刷新、同厂备选号快切与「查看全部 ↗」；复用 store.planQuotaRows / walletBalanceRows 与本地快照秒出
   chat-quota.ts              # 聊天底栏余量微环纯逻辑（resolveChatQuotaView / profileQuotaKind / listSameAgentPeers，tests/chat-quota.test.ts）
   context-breakdown.ts       # 上下文浮层纯逻辑：哪几家能读分类（breakdownSupported）、标签状态 → 读取参数（breakdownRequest）、；imageWeightNote（Codex 会话图片 8MB 变慢 / 13MB 可能卡住，借 ClawChat 实测）
