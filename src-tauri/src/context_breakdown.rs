@@ -477,4 +477,80 @@ Model: m  Context window: 200.0k tokens
         assert!(dto.categories.iter().any(|c| c.key == "Messages"));
         assert!(dto.categories.iter().any(|c| c.key == "System & tools"));
     }
+
+    #[test]
+    fn agy_breakdown_reads_real_root_transcript_and_subagent_db() {
+        let tmp = std::env::temp_dir().join(format!(
+            "mesa-agy-ctx-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let agy_root = tmp.join("antigravity-cli");
+        let parent_logs = agy_root
+            .join("brain")
+            .join("parent-cid")
+            .join(".system_generated")
+            .join("logs");
+        let child_logs = agy_root
+            .join("brain")
+            .join("child-cid")
+            .join(".system_generated")
+            .join("logs");
+        std::fs::create_dir_all(&parent_logs).unwrap();
+        std::fs::create_dir_all(&child_logs).unwrap();
+
+        std::fs::write(
+            parent_logs.join("transcript_full.jsonl"),
+            concat!(
+                "{\"step_index\":0,\"type\":\"USER_INPUT\",\"status\":\"DONE\",\"content\":\"<USER_REQUEST>检查性能</USER_REQUEST>\"}\n",
+                "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"content\":\"正在派子智能体\",\"input_tokens\":2300,\"cache_read_tokens\":11700,\"output_tokens\":180}\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            child_logs.join("transcript.jsonl"),
+            concat!(
+                "{\"step_index\":0,\"type\":\"USER_INPUT\",\"status\":\"DONE\",\"content\":\"<USER_REQUEST>读日志</USER_REQUEST>\"}\n",
+                "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"model\":\"gemini-4-hydrogen\",\"content\":\"完成\",\"input_tokens\":5000,\"cache_read_tokens\":20000,\"output_tokens\":600}\n",
+            ),
+        )
+        .unwrap();
+
+        let db_path = agy_root.join("conversation_summaries.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE conversation_summaries (
+                conversation_id TEXT PRIMARY KEY,
+                parent_conversation_id TEXT,
+                title TEXT,
+                preview TEXT,
+                last_modified_time TEXT
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO conversation_summaries VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                "child-cid",
+                "parent-cid",
+                "X Post Reader",
+                "preview",
+                "2026-11-25T10:00:00Z"
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let dto = crate::sessions::agy_context_breakdown_in_root(&agy_root, "parent-cid", None)
+            .expect("应从 agy_root/brain/<cid> 正确读出本地日志与子智能体");
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert_eq!(dto.used, 14_000);
+        assert_eq!(dto.cache_read, Some(11_700));
+        assert_eq!(dto.fresh_input, Some(2_300));
+        assert_eq!(dto.subagents.len(), 1);
+        assert_eq!(dto.subagents[0].title, "X Post Reader");
+        assert_eq!(dto.subagents[0].model.as_deref(), Some("gemini-4-hydrogen"));
+        assert_eq!(dto.subagents[0].used, 25_000);
+        assert_eq!(dto.subagents[0].cache_hit_pct, Some(80));
+    }
 }

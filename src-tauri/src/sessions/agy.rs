@@ -1563,6 +1563,24 @@ fn agy_estimate_text_tokens(text: &str) -> u64 {
     ((cjk * 2).div_ceil(3)) + non_cjk_bytes.div_ceil(4)
 }
 
+/// 在给定的 `agy_root` 目录（如 `~/.gemini/antigravity-cli`）下查找 `brain/<cid>/.system_generated/logs/transcript*.jsonl`
+pub(crate) fn agy_transcript_in_root(agy_root: &Path, cid: &str) -> Option<PathBuf> {
+    if !valid_agy_cid(cid) {
+        return None;
+    }
+    let logs = agy_root
+        .join("brain")
+        .join(cid)
+        .join(".system_generated")
+        .join("logs");
+    let full = logs.join("transcript_full.jsonl");
+    if full.is_file() {
+        return Some(full);
+    }
+    let compact = logs.join("transcript.jsonl");
+    compact.is_file().then_some(compact)
+}
+
 fn agy_read_transcript_steps(path: &Path) -> Option<Vec<Value>> {
     let raw = fs::read_to_string(path).ok()?;
     let lines: Vec<String> = raw.lines().map(str::to_string).collect();
@@ -1728,7 +1746,7 @@ fn agy_collect_subagent_contexts(
             continue;
         };
         let cid = cid.trim().to_string();
-        let Some(tx_path) = agy_resolve_live_transcript(agy_root, &cid) else {
+        let Some(tx_path) = agy_transcript_in_root(agy_root, &cid) else {
             continue;
         };
         let Some(steps) = agy_read_transcript_steps(&tx_path) else {
@@ -1788,6 +1806,21 @@ fn agy_collect_subagent_contexts(
     out
 }
 
+pub(crate) fn agy_context_breakdown_in_root(
+    agy_root: &Path,
+    session_id: &str,
+    model: Option<&str>,
+) -> Option<crate::context_breakdown::ContextBreakdownDto> {
+    let tx_path = agy_transcript_in_root(agy_root, session_id)?;
+    let steps = agy_read_transcript_steps(&tx_path)?;
+    let window = model
+        .and_then(|m| crate::model_registry::model_context_size_known_for(m, None))
+        .and_then(|v| u64::try_from(v).ok())
+        .unwrap_or(0);
+    let subagents = agy_collect_subagent_contexts(agy_root, session_id);
+    agy_analyze_transcript_context(&steps, window, subagents)
+}
+
 /// 纯本地只读读取 Antigravity 会话的上下文明细与子智能体汇总（不起子进程、不调用模型）
 pub(crate) fn agy_context_breakdown_local(
     session_id: &str,
@@ -1796,21 +1829,25 @@ pub(crate) fn agy_context_breakdown_local(
     if !valid_agy_cid(session_id) {
         return Err("还没有可读的对话".into());
     }
+    // 1) 优先从会话扫描缓存直接命中真实 file_path（涵盖全部自定义 --gemini_dir 与隔离根）
+    let scan = cached_scan();
+    if let Some(hit) = scan
+        .sessions
+        .iter()
+        .find(|s| s.agent == "agy" && s.session_id == session_id)
+    {
+        if let Some(agy_root) = agy_root_from_session_file(&hit.file_path) {
+            if let Some(dto) = agy_context_breakdown_in_root(&agy_root, session_id, model) {
+                return Ok(dto);
+            }
+        }
+    }
+    // 2) 回落遍历所有已知 Antigravity 数据根
     let roots = SessionRoots::current().ok_or("找不到本机 Antigravity 会话目录")?;
     for (agy_root, _) in agy_data_roots(&roots.agy) {
-        let Some(tx_path) = agy_resolve_live_transcript(&agy_root, session_id) else {
-            continue;
-        };
-        let Some(steps) = agy_read_transcript_steps(&tx_path) else {
-            continue;
-        };
-        let window = model
-            .and_then(|m| crate::model_registry::model_context_size_known_for(m, None))
-            .and_then(|v| u64::try_from(v).ok())
-            .unwrap_or(0);
-        let subagents = agy_collect_subagent_contexts(&agy_root, session_id);
-        return agy_analyze_transcript_context(&steps, window, subagents)
-            .ok_or_else(|| "当前会话还没有上下文用量记录".into());
+        if let Some(dto) = agy_context_breakdown_in_root(&agy_root, session_id, model) {
+            return Ok(dto);
+        }
     }
     Err("还没有找到这段对话的本地日志".into())
 }
