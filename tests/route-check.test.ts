@@ -13,8 +13,10 @@ import {
   routeProxyKey,
   runningOfficialTargets,
   exitTypeText,
+  formatNoProxyLines,
   nativeText,
   noRegionProbeNote,
+  normalizeNoProxyInput,
   serviceConfirmText,
   serviceConfirmTip,
   routeRowMain,
@@ -205,4 +207,15 @@ test("原生 IP：注册国家与所在地相同写「原生 IP」，不同点�
   assert.equal(nativeText({ native: true, registeredCountryName: "英国" }), "原生 IP");
   assert.equal(nativeText({ native: false, registeredCountryName: "美国" }), "非原生（注册在美国）");
   assert.equal(nativeText({ native: null, registeredCountryName: null }), null);
+});
+
+test("不走代理列表：展示拆成每行一条，保存自动规整为标准英文逗号串并保序去重", () => {
+  assert.equal(formatNoProxyLines(null), "");
+  assert.equal(formatNoProxyLines(""), "");
+  assert.equal(formatNoProxyLines("localhost, 127.0.0.1, ::1"), "localhost\n127.0.0.1\n::1");
+  assert.equal(
+    normalizeNoProxyInput(" localhost \n127.0.0.1，::1;localhost\n\n.local "),
+    "localhost,127.0.0.1,::1,.local",
+  );
+  assert.equal(normalizeNoProxyInput("   \n , \n "), "");
 });

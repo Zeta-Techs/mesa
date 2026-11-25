@@ -455,6 +455,19 @@ impl AppSettingsDto {
 
 pub const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1";
 
+/// 把换行、中英文逗号或分号混写的 NO_PROXY 列表规整为标准英文逗号分隔串（去空白、去空项、保序去重）
+pub fn normalize_no_proxy(raw: &str) -> String {
+    let mut out = Vec::new();
+    for part in raw.split(|c| matches!(c, '\r' | '\n' | ',' | '，' | ';' | '；')) {
+        let item = part.trim();
+        if item.is_empty() || out.iter().any(|existing: &String| existing == item) {
+            continue;
+        }
+        out.push(item.to_string());
+    }
+    out.join(",")
+}
+
 /// 出网代理须是合法的 http(s) / socks URL。空串视为未配置。
 pub fn validate_outbound_proxy(raw: &str) -> Result<(), String> {
     let t = raw.trim();
@@ -507,9 +520,9 @@ pub fn official_outbound_env_from(s: &AppSettingsDto) -> Vec<(String, String)> {
     let no_proxy = s
         .outbound_no_proxy
         .as_deref()
-        .map(str::trim)
+        .map(normalize_no_proxy)
         .filter(|v| !v.is_empty())
-        .unwrap_or(DEFAULT_NO_PROXY);
+        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_string());
     vec![
         ("HTTPS_PROXY".into(), proxy.to_string()),
         ("https_proxy".into(), proxy.to_string()),
@@ -517,8 +530,8 @@ pub fn official_outbound_env_from(s: &AppSettingsDto) -> Vec<(String, String)> {
         ("http_proxy".into(), proxy.to_string()),
         ("ALL_PROXY".into(), proxy.to_string()),
         ("all_proxy".into(), proxy.to_string()),
-        ("NO_PROXY".into(), no_proxy.to_string()),
-        ("no_proxy".into(), no_proxy.to_string()),
+        ("NO_PROXY".into(), no_proxy.clone()),
+        ("no_proxy".into(), no_proxy),
     ]
 }
 
@@ -583,10 +596,9 @@ pub fn download_proxy_env_from(
     let mut no_proxy = s
         .outbound_no_proxy
         .as_deref()
-        .map(str::trim)
+        .map(normalize_no_proxy)
         .filter(|v| !v.is_empty())
-        .unwrap_or(DEFAULT_NO_PROXY)
-        .to_string();
+        .unwrap_or_else(|| DEFAULT_NO_PROXY.to_string());
     for host in extra_no_proxy {
         let h = host.trim();
         if h.is_empty() || no_proxy.split(',').any(|e| e.trim() == h) {
@@ -1158,7 +1170,10 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         ),
         terminal_color_report: s.terminal_color_report.or(Some(true)),
         outbound_proxy: s.outbound_proxy.filter(|v| !v.trim().is_empty()),
-        outbound_no_proxy: s.outbound_no_proxy.filter(|v| !v.trim().is_empty()),
+        outbound_no_proxy: s
+            .outbound_no_proxy
+            .map(|v| normalize_no_proxy(&v))
+            .filter(|v| !v.is_empty()),
         institutional_prefix: s.institutional_prefix.filter(|v| !v.trim().is_empty()),
         institutional_login_url: s.institutional_login_url.filter(|v| !v.trim().is_empty()),
         institutional_access: s.institutional_access.filter(|v| matches!(v.as_str(), "campus" | "proxy" | "carsi")),
@@ -1387,7 +1402,10 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
         cur.shared_env = patch.shared_env.filter(|m| !m.is_empty());
     }
     if patch.outbound_no_proxy.is_some() {
-        cur.outbound_no_proxy = patch.outbound_no_proxy.filter(|v| !v.trim().is_empty());
+        cur.outbound_no_proxy = patch
+            .outbound_no_proxy
+            .map(|v| normalize_no_proxy(&v))
+            .filter(|v| !v.is_empty());
     }
     if patch.institutional_prefix.is_some() {
         cur.institutional_prefix = patch.institutional_prefix.filter(|v| !v.trim().is_empty());
@@ -2764,6 +2782,19 @@ mod tests {
         assert!(custom
             .iter()
             .any(|(k, v)| k == "NO_PROXY" && v == "localhost,example.com"));
+
+        assert_eq!(
+            normalize_no_proxy(" localhost \n127.0.0.1，::1;localhost\n\n.local "),
+            "localhost,127.0.0.1,::1,.local"
+        );
+        let multiline = official_outbound_env_from(&AppSettingsDto {
+            outbound_proxy: Some("http://127.0.0.1:7890".into()),
+            outbound_no_proxy: Some("localhost\n127.0.0.1，example.com\nlocalhost".into()),
+            ..Default::default()
+        });
+        assert!(multiline
+            .iter()
+            .any(|(k, v)| k == "NO_PROXY" && v == "localhost,127.0.0.1,example.com"));
 
         let bad = official_outbound_env_from(&AppSettingsDto {
             outbound_proxy: Some("not-a-url".into()),

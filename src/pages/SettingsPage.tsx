@@ -26,6 +26,7 @@ import MobileWorkbenchCard from "../components/MobileWorkbenchCard";
 import MesaBuddy from "../components/MesaBuddy";
 import { normalizeBuddyStyle, type BuddyStyle } from "../buddy-sprite";
 import RouteCheckCard from "../components/RouteCheckCard";
+import { formatNoProxyLines, normalizeNoProxyInput } from "../route-check";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { exit } from "@tauri-apps/plugin-process";
@@ -1993,7 +1994,7 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             .join("\n"),
         );
       if (!dirty.has("outboundNoProxy"))
-        setOutboundNoProxy(settings.outboundNoProxy ?? "");
+        setOutboundNoProxy(formatNoProxyLines(settings.outboundNoProxy));
       if (!dirty.has("institutionalPrefix"))
         setInstitutionalPrefix(settings.institutionalPrefix ?? "");
       if (!dirty.has("customFont")) {
@@ -4182,29 +4183,32 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
         <Row
           label="不走代理的地址"
-          hint="留空默认本机地址"
-          labelTitle="对应 NO_PROXY。填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1"
+          align="start"
+          hint="每行一条，也支持逗号分隔；留空默认本机地址"
+          labelTitle="对应 NO_PROXY。填了出网代理但此项留空时，默认 localhost,127.0.0.1,::1；保存时自动整理为标准英文逗号分隔格式"
+          extra={
+            <textarea
+              className={`${fieldFixed} mt-1 h-auto min-h-24 w-full resize-y py-2 font-mono text-xs leading-5`}
+              placeholder={"localhost\n127.0.0.1\n::1"}
+              aria-label="不走代理的地址"
+              rows={4}
+              value={outboundNoProxy}
+              onChange={(e) => {
+                draftDirty.current.add("outboundNoProxy");
+                setOutboundNoProxy(e.target.value);
+              }}
+              onBlur={() => {
+                const normalized = normalizeNoProxyInput(outboundNoProxy);
+                setOutboundNoProxy(formatNoProxyLines(normalized));
+                const dirty = draftDirty.current.delete("outboundNoProxy");
+                const current = normalizeNoProxyInput(settings?.outboundNoProxy ?? "");
+                if (!dirty && normalized === current) return;
+                void patch({ outboundNoProxy: normalized });
+              }}
+            />
+          }
         >
-          <input
-            className={`${fieldFixed} w-72 font-mono text-xs`}
-            placeholder="localhost,127.0.0.1,::1"
-            value={outboundNoProxy}
-            onChange={(e) => {
-              draftDirty.current.add("outboundNoProxy");
-              setOutboundNoProxy(e.target.value);
-            }}
-            onBlur={() => {
-              const trimmed = outboundNoProxy.trim();
-              const dirty = draftDirty.current.delete("outboundNoProxy");
-              if (!dirty && trimmed === (settings?.outboundNoProxy ?? "").trim()) return;
-              void patch({ outboundNoProxy: trimmed });
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              draftDirty.current.delete("outboundNoProxy");
-              void patch({ outboundNoProxy: outboundNoProxy.trim() });
-            }}
-          />
+          {null}
         </Row>
         {/* Homebrew 只在 macOS / Linux 上用；Windows 一键安装走 winget，这行对它没有意义 */}
         {!IS_WINDOWS && (

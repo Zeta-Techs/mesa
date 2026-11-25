@@ -307,3 +307,28 @@ export function preflightFixMessage(check: RouteCheck, agentName: string, fix: R
 export function preflightReviewNote(check: RouteCheck, agentName: string): string | null {
   return check.verdict === "review" ? `${agentName}：${check.reason}` : null;
 }
+
+const NO_PROXY_SPLIT_RE = /[\r\n,，;；]+/;
+
+/** 把存储里的逗号分隔 NO_PROXY 展开成多行展示（每行一条），方便查看与编辑 */
+export function formatNoProxyLines(raw?: string | null): string {
+  if (!raw) return "";
+  return raw
+    .split(NO_PROXY_SPLIT_RE)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** 把多行或混用逗号/分号的「不走代理的地址」规整为标准英文逗号分隔的 NO_PROXY（去空项、保序去重） */
+export function normalizeNoProxyInput(text: string): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of text.split(NO_PROXY_SPLIT_RE)) {
+    const item = part.trim();
+    if (!item || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out.join(",");
+}

@@ -30,6 +30,9 @@ const bundle = await build({
     };
     b.onResolve({ filter: /App\.css\?raw$/ }, () => ({ path: "app-css", namespace: "settings-css" }));
     b.onLoad({ filter: /.*/, namespace: "settings-css" }, () => ({ contents: `export default ${JSON.stringify(appCss)};`, loader: "js" }));
+    // AgentIcon 的厂商图标以 ?raw 内联，测试里桩成空 svg 字符串
+    b.onResolve({ filter: /\.svg\?raw$/ }, (args) => ({ path: args.path, namespace: "svg-raw" }));
+    b.onLoad({ filter: /.*/, namespace: "svg-raw" }, () => ({ contents: `export default "<svg></svg>";`, loader: "js" }));
     b.onResolve({ filter: /.*/ }, (args) => args.path in stubs ? { path: args.path, namespace: "settings-stub" } : undefined);
     b.onLoad({ filter: /.*/, namespace: "settings-stub" }, (args) => ({ contents: stubs[args.path], loader: "js" }));
   } }],
@@ -259,6 +262,22 @@ test("设置保存与错误反馈保持原逻辑；网络输入仍按 Enter 提�
       access.dispatchEvent(new view.dom.window.Event("change", { bubbles: true }));
     });
     assert.deepEqual(view.patches.at(-1), { institutionalAccess: "proxy" });
+
+    // 不走代理的地址：多行文本框，失焦自动规整为标准英文逗号串并整理成每行一条
+    const noProxy = view.content().querySelector<HTMLTextAreaElement>('textarea[aria-label="不走代理的地址"]')!;
+    assert.ok(noProxy, "网络分区应使用多行文本框展示不走代理的地址");
+    await view.act(async () => {
+      Object.getOwnPropertyDescriptor(view.dom.window.HTMLTextAreaElement.prototype, "value")!.set!.call(
+        noProxy,
+        "localhost\n127.0.0.1，example.com\nlocalhost\n",
+      );
+      noProxy.dispatchEvent(new view.dom.window.Event("input", { bubbles: true }));
+    });
+    await view.act(async () => {
+      noProxy.dispatchEvent(new view.dom.window.FocusEvent("focusout", { bubbles: true }));
+    });
+    assert.deepEqual(view.patches.at(-1), { outboundNoProxy: "localhost,127.0.0.1,example.com" });
+    assert.equal(noProxy.value, "localhost\n127.0.0.1\nexample.com");
   } finally { await view.close(); }
   const storage = await renderSettings({ request: "storage", storageError: true });
   try {
