@@ -12,6 +12,7 @@ import {
   checkedAgoText,
   latencyText,
   nativeText,
+  noRegionProbeNote,
   proxyHeaderSummary,
   proxySourceText,
   routeCheckTargets,
@@ -293,6 +294,8 @@ function RouteRow({
   const tip = useHoverTip(nameRef);
   const confirmRef = useRef<HTMLSpanElement>(null);
   const confirmTip = useHoverTip(confirmRef);
+  const noRegionRef = useRef<HTMLSpanElement>(null);
+  const noRegionTip = useHoverTip(noRegionRef);
   const check = row && !("error" in row) ? row : null;
   const tipText = check
     ? `${VERDICT_LABEL[check.verdict]} · 探测 ${check.probeHost}${rowProxyNote ? ` · ${rowProxyNote}` : ""}`
@@ -334,12 +337,13 @@ function RouteRow({
   }
 
   const confirm = serviceConfirmText(check);
+  const noRegionNote = noRegionProbeNote(check);
   const typed = typeof exitType === "object" ? exitType : null;
   const orgName = typed ? shortOrg(typed.org) : "";
   const native = typed ? nativeText(typed) : null;
   const hasExitMeta = Boolean(check.exitRegion || exitType !== undefined);
   const meta =
-    rowProxyNote || confirm || hasExitMeta ? (
+    rowProxyNote || confirm || noRegionNote || hasExitMeta ? (
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
         {rowProxyNote && (
           <span
@@ -348,6 +352,25 @@ function RouteRow({
           >
             {rowProxyNote}
           </span>
+        )}
+        {noRegionNote && (
+          <>
+            <span
+              className="min-w-0 truncate rounded-md border border-hairline bg-raised/70 px-1.5 py-0.5 font-mono text-micro text-l2"
+              title={`探测地址：${noRegionNote.host}`}
+            >
+              {noRegionNote.host}
+            </span>
+            <span
+              ref={noRegionRef}
+              onMouseEnter={noRegionTip.show}
+              onMouseLeave={noRegionTip.hide}
+              className="shrink-0 cursor-help text-micro text-l4"
+            >
+              {noRegionNote.hint}
+              <HoverTip tip={noRegionTip.tip} text={noRegionNote.tip} />
+            </span>
+          </>
         )}
         {confirm && (
           <span

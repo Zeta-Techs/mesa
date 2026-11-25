@@ -398,7 +398,7 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
             (Verdict::Block, Some(Stage::Region), reason, loc, Some(*latency_ms))
         }
         Some(ProbeOutcome::Ok { loc: None, latency_ms, .. }) if !input.probe.reports_region => {
-            (Verdict::Pass, None, format!("连得上 · {}", secs(*latency_ms)), None, Some(*latency_ms))
+            (Verdict::Pass, None, format!("可连通 · {}", secs(*latency_ms)), None, Some(*latency_ms))
         }
         Some(ProbeOutcome::Ok { loc: None, latency_ms, .. }) => (
             Verdict::Review,
@@ -1082,7 +1082,7 @@ mod tests {
         let mut cursor = input(Some(ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms: 1200 }));
         cursor.probe = &NO_REGION;
         assert_eq!(judge(&cursor).0, Verdict::Pass, "本来就不回地区的，连得上就算通过");
-        assert_eq!(judge(&cursor).2, "连得上 · 1.2 秒");
+        assert_eq!(judge(&cursor).2, "可连通 · 1.2 秒");
         let (v, ..) = judge(&input(Some(ProbeOutcome::Unsupported("SOCKS".into()))));
         assert_eq!(v, Verdict::Review, "测不了不当失败");
     }

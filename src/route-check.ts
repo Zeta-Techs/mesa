@@ -177,10 +177,22 @@ export function routeInboxFields(
   return null;
 }
 
-/** 体检卡一行的主结果：通过只写地区（不告诉地区的写「连得上」），其余写原因；用时单独一列，从原因里拿掉 */
+/** 体检卡一行的主结果：通过只写地区（不返回出口地区的服务写「可连通」），其余写原因；用时单独一列，从原因里拿掉 */
 export function routeRowMain(check: Pick<RouteCheck, "verdict" | "reason" | "exitRegionName">): string {
-  if (check.verdict === "pass") return check.exitRegionName ?? "连得上";
+  if (check.verdict === "pass") return check.exitRegionName ?? "可连通";
   return check.reason.replace(/ · [\d.]+ 秒$/, "");
+}
+
+/** 不返回出口地区但已测通的服务（Gemini / Cursor / Antigravity）：在行内展示实际探测域名与说明 */
+export function noRegionProbeNote(
+  check: Pick<RouteCheck, "verdict" | "exitRegion" | "probeHost">,
+): { host: string; hint: string; tip: string } | null {
+  if (check.verdict !== "pass" || check.exitRegion) return null;
+  return {
+    host: check.probeHost,
+    hint: "服务不回出口地区",
+    tip: `这家服务的公开接口（${check.probeHost}）本身不返回出口地区或 IP；规则分流下不同域名出口不同，不能用第三方查 IP 网站代测，这里只核验实际接口可连通。`,
+  };
 }
 
 /** 用时：1.2 秒；没测到写空 */

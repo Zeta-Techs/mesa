@@ -14,6 +14,7 @@ import {
   runningOfficialTargets,
   exitTypeText,
   nativeText,
+  noRegionProbeNote,
   serviceConfirmText,
   serviceConfirmTip,
   routeRowMain,
@@ -176,9 +177,20 @@ test("服务方确认可用才标「Claude 支持这个地区」；没这项检�
 
 test("体检卡一行：通过只写地区，用时单列；网络名收短；测过多久", () => {
   assert.equal(routeRowMain({ verdict: "pass", reason: "英国 · 1.2 秒", exitRegionName: "英国" }), "英国");
-  assert.equal(routeRowMain({ verdict: "pass", reason: "连得上 · 1.6 秒", exitRegionName: null }), "连得上");
+  assert.equal(routeRowMain({ verdict: "pass", reason: "可连通 · 1.6 秒", exitRegionName: null }), "可连通");
   assert.equal(routeRowMain({ verdict: "review", reason: "连得上，没拿到地区 · 0.9 秒", exitRegionName: null }), "连得上，没拿到地区");
   assert.equal(routeRowMain({ verdict: "block", reason: "代理 127.0.0.1:7888 没开", exitRegionName: null }), "代理 127.0.0.1:7888 没开");
+  assert.deepEqual(
+    noRegionProbeNote({ verdict: "pass", exitRegion: null, probeHost: "cloudcode-pa.googleapis.com" })?.host,
+    "cloudcode-pa.googleapis.com",
+  );
+  assert.equal(
+    noRegionProbeNote({ verdict: "pass", exitRegion: null, probeHost: "api2.cursor.sh" })?.hint,
+    "服务不回出口地区",
+  );
+  assert.equal(noRegionProbeNote({ verdict: "pass", exitRegion: "GB", probeHost: "claude.ai" }), null);
+  assert.equal(noRegionProbeNote({ verdict: "block", exitRegion: null, probeHost: "api2.cursor.sh" }), null);
+  assert.equal(noRegionProbeNote({ verdict: "review", exitRegion: null, probeHost: "claude.ai" }), null);
   assert.equal(latencyText(1234), "1.2 秒");
   assert.equal(latencyText(null), "");
   assert.equal(shortOrg("AS2856 British Telecommunications Limited"), "British Telecommunications");
