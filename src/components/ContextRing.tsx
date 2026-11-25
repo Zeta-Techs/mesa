@@ -98,7 +98,7 @@ function toneClass(tone: ContextTone, warn: boolean): string {
 
 /**
  * 底栏读数细环（2026-11-25 用户拍板 A 方案）：上下文与订阅用量同一种画法——
- * 12 点起顺时针、越满越接近上限；弧与底轨都取 currentColor（底轨 20% 透明），颜色由外层文字色决定，
+ * 12 点起顺时针、越满越接近上限；弧与底轨都取 currentColor（底轨 36% 透明，20% 在深色底上看不出整圈、低百分比时显小），颜色由外层文字色决定，
  * 平时灰、临界才着色。sm = 底栏 14px，md = 浮层 20px；线宽按尺寸等比，外径约占画布 91%。
  */
 export function MicroRing({
@@ -109,7 +109,7 @@ export function MicroRing({
 }: {
   /** 0–1，已用比例 */
   ratio: number;
-  /** 不传 = currentColor 20% 透明 */
+  /** 不传 = currentColor 36% 透明 */
   trackColor?: string;
   size?: "sm" | "md";
   className?: string;
@@ -132,7 +132,7 @@ export function MicroRing({
         fill="none"
         strokeWidth={sw}
         stroke={trackColor ?? "currentColor"}
-        strokeOpacity={trackColor ? undefined : 0.2}
+        strokeOpacity={trackColor ? undefined : 0.36}
       />
       {p > 0 && (
         <circle
