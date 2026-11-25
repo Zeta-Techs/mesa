@@ -67,6 +67,7 @@ export interface AsideTurn {
   costUsd: number | null;
   responderAgent: string | null;
   responderProfile: string | null;
+  responderModel?: string | null;
 }
 
 export interface AsideError {

@@ -57,6 +57,7 @@ interface AsideAnswerResponse {
   costUsd: number | null;
   responderAgent: string | null;
   responderProfile: string | null;
+  responderModel?: string | null;
 }
 
 /** 容器总宽低于此阈值时（双标签分屏 / 阅读区右栏），右侧分栏改为叠加覆盖右侧，避免把主对话压扁 */
@@ -286,6 +287,7 @@ export function useChatAside({
         costUsd: res.costUsd ?? null,
         responderAgent: res.responderAgent ?? null,
         responderProfile: res.responderProfile ?? null,
+        responderModel: res.responderModel ?? null,
       };
       setThreads((prev) =>
         prev.map((t) =>
@@ -444,7 +446,7 @@ function AsideModelPicker({
   agentId: string | null;
   groups: readonly AsideModelGroup[];
   override: AsideModelOverride | null;
-  lastResponder: { agent: string | null; profile: string | null } | null;
+  lastResponder: { agent: string | null; profile: string | null; model: string | null } | null;
   onPick: (next: AsideModelOverride | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -471,19 +473,24 @@ function AsideModelPicker({
 
   const pickedGroup = override ? groups.find((g) => g.profileId === override.profileId) ?? null : null;
   const chipAgent = pickedGroup?.agentId ?? lastResponder?.agent ?? agentId ?? null;
+  const autoName = lastResponder?.model?.trim() || lastResponder?.profile?.trim() || null;
   const chipLabel = pickedGroup
     ? override?.model || pickedGroup.profileName
-    : lastResponder?.profile
-      ? `自动 · ${lastResponder.profile}`
+    : autoName
+      ? `自动 · ${autoName}`
       : "自动跟随";
   const chipTitle = pickedGroup
     ? `侧边提问已指定：${pickedGroup.agentLabel} · ${pickedGroup.profileName}${override?.model ? ` · ${override.model}` : ""}\n${
         pickedGroup.canInspectFiles ? "支持只读查看工作区文件" : "按当前对话记录纯文本回答"
       }（点击更换或切回自动跟随）`
-    : `侧边提问模型：自动跟随（${asideMethodHint(agentId)}）\n点击可为侧边提问单独选一个模型`;
+    : `侧边提问模型：自动跟随${
+        lastResponder?.profile || lastResponder?.model
+          ? `（实际使用 ${[displayAsideAgent(lastResponder.agent), lastResponder.profile, lastResponder.model].filter(Boolean).join(" · ")}）`
+          : `（${asideMethodHint(agentId)}）`
+      }\n点击可为侧边提问单独选一个模型`;
 
   return (
-    <div ref={rootRef} className="relative flex min-w-0 items-center">
+    <div ref={rootRef} className="relative flex min-w-0 flex-1 items-center justify-end">
       <button
         type="button"
         data-testid="aside-model-trigger"
@@ -491,7 +498,7 @@ function AsideModelPicker({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         title={chipTitle}
-        className="inline-flex h-6 max-w-[14rem] items-center gap-1.5 rounded-md px-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+        className="inline-flex h-6 min-w-0 max-w-full items-center gap-1.5 rounded-md px-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
       >
         {chipAgent ? (
           <AgentIcon agent={chipAgent} label={displayAsideAgent(chipAgent)} size={13} className="shrink-0" />
@@ -739,7 +746,7 @@ function ChatAsidePane({
       className={
         overlay
           ? "ccode-float-surface absolute inset-y-0 right-0 z-30 flex min-h-0 flex-col border-l border-field"
-          : "relative flex h-full min-h-0 shrink-0 flex-col border-l border-hairline bg-canvas"
+          : "relative -mt-px flex h-[calc(100%+1px)] min-h-0 shrink-0 flex-col border-l border-hairline bg-canvas"
       }
     >
       {/* 左侧隐形拖拽宽手柄 */}
@@ -857,21 +864,23 @@ function ChatAsidePane({
               const copied = copiedId === turn.id;
               return (
                 <div key={turn.id} className="space-y-2.5">
-                  <div className="ml-auto max-w-[88%] ccode-well rounded-2xl px-3.5 py-2 text-sm leading-6 text-l1">
+                  <div className="ml-auto w-fit max-w-[88%] ccode-well rounded-2xl px-3.5 py-2 text-sm leading-6 text-l1">
                     <p className="whitespace-pre-wrap break-words">{turn.question}</p>
                   </div>
                   <div className="min-w-0 text-sm leading-relaxed text-l2">
-                    <ChatMarkdown text={turn.answer} cwd={cwd} />
-                    <div className="mt-1.5 flex items-center gap-1.5 text-micro text-l4">
+                    <ChatMarkdown text={turn.answer} cwd={cwd} suppressMentionedMedia />
+                    <div className="mt-1.5 flex items-center gap-1 text-micro text-l4">
                       <button
                         type="button"
                         onClick={() => copyAnswer(turn.id, turn.answer)}
-                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-hover hover:text-l1"
+                        title={copied ? "已复制" : "复制回答"}
+                        aria-label={copied ? "已复制" : "复制回答"}
+                        className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 transition-colors hover:bg-hover hover:text-l1"
                       >
                         {copied ? (
-                          <Check size={11} strokeWidth={2} aria-hidden="true" />
+                          <Check size={12} strokeWidth={2} aria-hidden="true" />
                         ) : (
-                          <Copy size={11} strokeWidth={1.8} aria-hidden="true" />
+                          <Copy size={12} strokeWidth={1.8} aria-hidden="true" />
                         )}
                         <span>{copied ? "已复制" : "复制"}</span>
                       </button>
@@ -879,14 +888,12 @@ function ChatAsidePane({
                         type="button"
                         onClick={() => onInsertToMain(turn.answer)}
                         title="把这段回答填进左侧主输入框，修改后再决定发不发"
-                        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-hover hover:text-l1"
+                        aria-label="带入主输入框"
+                        className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 transition-colors hover:bg-hover hover:text-l1"
                       >
-                        <CornerDownLeft size={11} strokeWidth={1.8} aria-hidden="true" />
+                        <CornerDownLeft size={12} strokeWidth={1.8} aria-hidden="true" />
                         <span>带入主输入框</span>
                       </button>
-                      {turn.costUsd != null && turn.costUsd > 0 && (
-                        <span className="ml-auto tabular-nums text-l4">约 ${turn.costUsd.toFixed(3)}</span>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -895,7 +902,7 @@ function ChatAsidePane({
 
             {busy && (
               <div className="space-y-2.5">
-                <div className="ml-auto max-w-[88%] ccode-well rounded-2xl px-3.5 py-2 text-sm leading-6 text-l1">
+                <div className="ml-auto w-fit max-w-[88%] ccode-well rounded-2xl px-3.5 py-2 text-sm leading-6 text-l1">
                   <p className="whitespace-pre-wrap break-words">{activeThread.pendingQuestion}</p>
                 </div>
                 <div className="flex items-center gap-2 py-0.5 text-xs text-l3">
@@ -995,7 +1002,7 @@ function ChatAsidePane({
 
       {/* 底部 32px 状态栏：与左侧 TerminalStatusBar（h-8）像素级齐平——左只读方式，右侧边栏独立模型选择器 */}
       <div className="flex h-8 shrink-0 items-center justify-between gap-2 bg-canvas px-3 text-micro select-none">
-        <span className="min-w-0 truncate text-l4" title={leftStatusTitle}>
+        <span className="shrink-0 text-l4" title={leftStatusTitle}>
           {leftStatusLabel}
         </span>
         <AsideModelPicker
@@ -1004,7 +1011,11 @@ function ChatAsidePane({
           override={modelOverride}
           lastResponder={
             latestTurn
-              ? { agent: latestTurn.responderAgent, profile: latestTurn.responderProfile }
+              ? {
+                  agent: latestTurn.responderAgent,
+                  profile: latestTurn.responderProfile,
+                  model: latestTurn.responderModel ?? null,
+                }
               : null
           }
           onPick={onPickModel}

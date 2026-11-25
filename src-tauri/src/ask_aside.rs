@@ -62,6 +62,23 @@ pub struct AsideAnswerDto {
     pub cost_usd: Option<f64>,
     pub responder_agent: Option<String>,
     pub responder_profile: Option<String>,
+    pub responder_model: Option<String>,
+}
+
+fn agent_display_name(agent: &str) -> &str {
+    match agent {
+        "claude-code" => "Claude Code",
+        "codex" => "Codex",
+        "kimi" => "Kimi Code",
+        "grok" => "Grok Build",
+        "gemini" => "Gemini CLI",
+        "qwen" => "Qwen Code",
+        "opencode" => "OpenCode",
+        "codebuddy" => "CodeBuddy Code",
+        "cursor" => "Cursor CLI",
+        "agy" => "Antigravity CLI",
+        other => other,
+    }
 }
 
 fn tail_chars(s: &str, cap: usize) -> String {
@@ -141,8 +158,9 @@ pub(crate) fn delegate_prompt(
     } else {
         "你这次只能根据下面的对话记录回答，不能读写或修改任何文件。"
     };
+    let source_label = agent_display_name(source_agent);
     format!(
-        "下面是一段用户与 {source_agent} 的对话记录副本。用户在旁边提出一个不打断主对话的临时问题，请你以只读旁观者身份简短代答，答完即丢，不会写入原对话。{scope}\n\n\
+        "下面是一段用户与 {source_label} 的对话记录副本。用户在旁边提出一个不打断主对话的临时问题，请你以只读旁观者身份简短代答，答完即丢，不会写入原对话。{scope}\n\n\
          ===== 原对话记录（最近的部分）=====\n{}\n===== 记录结束 ====={hist}\n\n旁边有人问你一句：{}\n用中文简短直接回答；记录里看不出来的就直说看不出来。",
         tail_chars(transcript, COPY_CAP),
         question.trim()
@@ -331,12 +349,14 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
                         &[],
                     )
                 })?;
+                let used_model = ov_model.clone().or_else(|| ov_prof.models.first().cloned());
                 return Ok(AsideAnswerDto {
                     text: crate::sessions::redact_sensitive_text(raw.trim()),
                     how: "fork".into(),
                     cost_usd: cost,
                     responder_agent: Some(ov_prof.agent),
                     responder_profile: Some(ov_prof.name),
+                    responder_model: used_model,
                 });
             }
         }
@@ -358,6 +378,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
                 } else {
                     delegate_prompt(&req.agent, &transcript, &question, &req.history, true)
                 });
+                let used_model = ov_model.clone().or_else(|| ov_prof.models.first().cloned());
                 let raw = crate::ai::ai_inspect_readonly(
                     profiles.clone(),
                     Some(ov_prof.id.clone()),
@@ -376,6 +397,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
                     cost_usd: cost,
                     responder_agent: Some(ov_prof.agent),
                     responder_profile: Some(ov_prof.name),
+                    responder_model: used_model,
                 });
             }
         }
@@ -388,6 +410,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
             &req.history,
             false,
         ));
+        let used_model = ov_model.clone().or_else(|| ov_prof.models.first().cloned());
         let raw = crate::ai::ai_prompt_impl_full(
             profiles,
             Some(ov_prof.id.clone()),
@@ -404,6 +427,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
             cost_usd: cost,
             responder_agent: Some(ov_prof.agent),
             responder_profile: Some(ov_prof.name),
+            responder_model: used_model,
         });
     }
 
@@ -415,6 +439,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
         ) {
             let same_prof = same_prof.clone();
             let model = infer_session_model(&req.agent, session_id, req.model.as_deref());
+            let used_model = model.clone().or_else(|| same_prof.models.first().cloned());
             if req.agent == "claude-code" {
                 if let Some(sid) = session_id {
                     let prompt = crate::sessions::redact_sensitive_text(&fork_prompt_with_history(
@@ -441,6 +466,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
                         cost_usd: cost,
                         responder_agent: Some(same_prof.agent),
                         responder_profile: Some(same_prof.name),
+                        responder_model: used_model,
                     });
                 }
             }
@@ -474,6 +500,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
                     cost_usd: cost,
                     responder_agent: Some(same_prof.agent),
                     responder_profile: Some(same_prof.name),
+                    responder_model: used_model,
                 });
             }
         }
@@ -511,6 +538,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
         ),
     ) {
         let delegate = delegate.clone();
+        let used_model = del_model.clone().or_else(|| delegate.models.first().cloned());
         let prompt = crate::sessions::redact_sensitive_text(&delegate_prompt(
             &req.agent,
             &transcript,
@@ -536,6 +564,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
             cost_usd: cost,
             responder_agent: Some(delegate.agent),
             responder_profile: Some(delegate.name),
+            responder_model: used_model,
         });
     }
 
@@ -569,6 +598,9 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
     } else {
         None
     };
+    let used_model = text_model
+        .clone()
+        .or_else(|| fallback_profile.as_ref().and_then(|p| p.models.first().cloned()));
     let raw = crate::ai::ai_prompt_impl_full(
         profiles,
         explicit_id,
@@ -585,6 +617,7 @@ fn execute_aside(profiles: Vec<Profile>, req: ChatAskAsideReq) -> Result<AsideAn
         cost_usd: cost,
         responder_agent: fallback_profile.as_ref().map(|p| p.agent.clone()),
         responder_profile: fallback_profile.as_ref().map(|p| p.name.clone()),
+        responder_model: used_model,
     })
 }
 
@@ -707,11 +740,12 @@ mod tests {
         assert!(p.ends_with("最后追问"));
 
         let d = delegate_prompt("gemini", "用户：你好", "总结一下", &history[8..], true);
-        assert!(d.contains("与 gemini 的对话记录副本"));
+        assert!(d.contains("与 Gemini CLI 的对话记录副本"));
         assert!(d.contains("只读查看工作目录"));
         assert!(d.contains("问题9") && d.contains("总结一下"));
 
-        let t = delegate_prompt("qwen", "用户：你好", "总结一下", &[], false);
+        let t = delegate_prompt("agy", "用户：你好", "总结一下", &[], false);
+        assert!(t.contains("与 Antigravity CLI 的对话记录副本"));
         assert!(t.contains("不能读写或修改任何文件"));
     }
 

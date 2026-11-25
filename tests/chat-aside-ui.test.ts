@@ -202,6 +202,7 @@ test("右侧 Side Question 分栏：portal 挂入右列、独立切模型、多�
       costUsd: null,
       responderAgent: "claude-code",
       responderProfile: "Claude 主号",
+      responderModel: "claude-sonnet-4-5",
     };
     await ctx.act(async () => {
       ctx.host.latest.openCard("为什么改列名？");
@@ -210,6 +211,7 @@ test("右侧 Side Question 分栏：portal 挂入右列、独立切模型、多�
     assert.equal(ctx.host.calls.length, 2);
     assert.equal(ctx.host.calls[1].overrideProfileId, null);
     assert.equal(ctx.host.calls[1].overrideModel, null);
+    assert.match(trigger.textContent!, /自动 · claude-sonnet-4-5/);
     assert.deepEqual(ctx.host.calls[1].history, [
       { question: "做到哪了？", answer: "目前改到了第 2 个字段。" },
     ]);

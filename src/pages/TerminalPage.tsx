@@ -472,8 +472,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const [chatMetaSlots, setChatMetaSlots] = useState<
     Record<string, { left: HTMLElement | null; right: HTMLElement | null }>
   >({});
-  // 聊天层右侧全高 Side Question 分栏插槽（pane-body 右列）：与左侧「主对话 + 主状态栏」平级并排，
-  // 避免主状态栏横穿到右侧栏底下；ref 回调同样按标签缓存避免重复触发 setState
+  // 聊天层右侧全高 Side Question 分栏宿主（按标签各自一个插槽并排在中带右侧，顶底与左栏齐平；
+  // 切标签 / 切终端靠容器 hidden 秒切，不拆装 portal、不丢滚动位置，也不受 frozen 影响）
   const [chatAsideSlots, setChatAsideSlots] = useState<Record<string, HTMLElement | null>>({});
   const chatAsideSlotRefs = useRef(new Map<string, (el: HTMLElement | null) => void>());
   const chatAsideSlotRefFor = (tabId: string) => {
@@ -3752,6 +3752,24 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               >_ 终端（亮着 = 正看着这段对话的终端）、± 改动（右栏改动窗格，有改动带数字）、⋯ 更多（分屏、查找、启动配置行、文件预览）。
               「成果面板」一词取消：文件预览由左边点文件打开，改动由 ± 打开，右栏自己带收起 */}
           <span className="ml-auto flex shrink-0 items-center gap-0.5">
+            <button
+              type="button"
+              onClick={(e) => {
+                // 用鼠标来回切到第 3 下时提醒快捷键（shortcut-nudges.tsx）：挂在按钮下面
+                noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
+                toggleSurface();
+              }}
+              aria-pressed={focusedSurfaceMode !== "chat"}
+              title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${
+                toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
+              }`}
+              aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
+              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+              }`}
+            >
+              <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
+            </button>
             {(() => {
               const aside = focusedId ? chatAsideStateByTab[focusedId] : undefined;
               const asideOpen = focusedSurfaceMode === "chat" && Boolean(aside?.open);
@@ -3794,24 +3812,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
               );
             })()}
-            <button
-              type="button"
-              onClick={(e) => {
-                // 用鼠标来回切到第 3 下时提醒快捷键（shortcut-nudges.tsx）：挂在按钮下面
-                noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
-                toggleSurface();
-              }}
-              aria-pressed={focusedSurfaceMode !== "chat"}
-              title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${
-                toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
-              }`}
-              aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
-              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
-                focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-              }`}
-            >
-              <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
             {(() => {
               const changesOpen = rightOpen && rightTab === "git";
               const count = gitTotals?.isRepo ? gitTotals.files.length : 0;
@@ -4116,8 +4116,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     </button>
                   </div>
                 )}
-                <div key="pane-body" className="flex min-h-0 flex-1 flex-row">
-                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                <div key="pane-body" className="flex min-h-0 flex-1 flex-col">
                   {(() => {
                     const chatOn =
                       (surfaceModeByTab[t.id] ?? defaultSurface) ===
@@ -4182,7 +4181,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tabId={t.id}
                         sessionId={statuses[t.id]?.sessionId ?? sessionByTab[t.id]?.sessionId ?? t.resumeSessionId ?? null}
                         sessionFile={sessionByTab[t.id]?.file ?? null}
-                        asideSlot={chatOn && !inReader ? (chatAsideSlots[t.id] ?? null) : null}
+                        asideSlot={
+                          !inReader && !splitActive
+                            ? (chatAsideSlots[t.id] ?? null)
+                            : null
+                        }
                         asideToggleRequest={chatAsideToggleByTab[t.id] ?? 0}
                         onAsideStateChange={(summary) => reportChatAsideState(t.id, summary)}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
@@ -4508,11 +4511,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                   </div>
                     );
                   })()}
-                  </div>
-                  <div
-                    ref={chatAsideSlotRefFor(t.id)}
-                    className="flex min-h-0 shrink-0 empty:hidden"
-                  />
                 </div>
               </div>
             );
@@ -4538,6 +4536,22 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         </div>
         {/* 专注内容：右栏铺满即表达主次，中带不加压暗遮罩（v3.44 用户否决压黑） */}
       </div>
+
+      {/* 聊天层侧边提问全高右列：按标签各自保活、仅当前聚焦聊天标签显示，顶底对齐、竖线贯通 */}
+      {tabs.map((t) => {
+        const showHost =
+          t.id === focusedId &&
+          (surfaceModeByTab[t.id] ?? defaultSurface) === "chat" &&
+          !splitActive &&
+          !(reader && readerTabId === t.id);
+        return (
+          <div
+            key={`aside-host-${t.id}`}
+            ref={chatAsideSlotRefFor(t.id)}
+            className={showHost ? "flex min-h-0 shrink-0 empty:hidden" : "hidden"}
+          />
+        );
+      })}
 
       {/* 右侧面板：文件预览 / 改动（聊天在主工作区）。
           用 hidden 保活而非卸载：收起再开不丢未保存编辑、Monaco undo 栈、文件树展开状态与改动面板勾选/提交草稿；

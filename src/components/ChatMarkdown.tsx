@@ -66,18 +66,24 @@ function useChatDecorations(ref: RefObject<HTMLElement | null>, html: string, cw
 export default function ChatMarkdown({
   text,
   cwd,
+  suppressMentionedMedia = false,
 }: {
   text: string;
   /** 会话工作目录：相对图片/链接的解析基准 + read_image_bytes 的 cwdHint */
   cwd?: string | null;
+  /** 侧边提问等窄栏场景：不把正文中顺口提到的本机图片/音视频路径自动展开成大图卡片（显式 Markdown 图片照常） */
+  suppressMentionedMedia?: boolean;
 }) {
   const sections = useMemo(() => splitReplySections(text), [text]);
-  const audios = useMemo(() => mentionedAudioFiles(text), [text]);
-  const videos = useMemo(() => mentionedVideoFiles(text), [text]);
+  const audios = useMemo(() => (suppressMentionedMedia ? [] : mentionedAudioFiles(text)), [text, suppressMentionedMedia]);
+  const videos = useMemo(() => (suppressMentionedMedia ? [] : mentionedVideoFiles(text)), [text, suppressMentionedMedia]);
   // 内嵌的图与正文里提到的路径按会话目录解析后再比：一边写相对路径、一边写绝对路径也认得出是同一张
   const images = useMemo(
-    () => mentionedImageFiles(text, (p) => (p.startsWith("~") || !cwd ? p.replace(/\\/g, "/") : resolveMdPath(`${cwd}/_`, p))),
-    [text, cwd],
+    () =>
+      suppressMentionedMedia
+        ? []
+        : mentionedImageFiles(text, (p) => (p.startsWith("~") || !cwd ? p.replace(/\\/g, "/") : resolveMdPath(`${cwd}/_`, p))),
+    [text, cwd, suppressMentionedMedia],
   );
   // 默认全部展开、点小节标题收起：原先只开第一节，长回答大半被藏在一串标题后面，
   // 读起来像内容丢了（2026-10-17 用户截图）
