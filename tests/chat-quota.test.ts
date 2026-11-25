@@ -84,12 +84,18 @@ function makeWalletRow(overrides: Partial<GatewayBalanceDto>): GatewayBalanceDto
   };
 }
 
-test("resolveChatQuotaView：订阅按最紧窗口换算剩余百分比与分档", () => {
+test("resolveChatQuotaView：订阅按自然序保留 5h 与周双窗，并按最紧窗口定分档", () => {
   const profile = makeProfile({ id: "p-claude", agent: "claude-code", accountType: "official" });
   const view = resolveChatQuotaView(profile, [makePlanRow({})], []);
   assert.ok(view && view.kind === "plan");
   assert.equal(view.primary.window, "weekly");
-  assert.equal(view.secondary?.window, "five_hour");
+  assert.deepEqual(
+    view.windows.map((w) => [w.window, w.shortTag, w.remainPct]),
+    [
+      ["five_hour", "5h", 88],
+      ["weekly", "周", 36],
+    ],
+  );
   assert.equal(view.remainPct, 36);
   assert.equal(view.tone, "ok");
 
@@ -98,8 +104,8 @@ test("resolveChatQuotaView：订阅按最紧窗口换算剩余百分比与分档
     [
       makePlanRow({
         windows: [
-          { window: "five_hour", usedPercent: 93.4, resetsAt: null, used: null, total: null },
           { window: "weekly", usedPercent: 40, resetsAt: null, used: null, total: null },
+          { window: "five_hour", usedPercent: 93.4, resetsAt: null, used: null, total: null },
         ],
       }),
     ],
@@ -107,23 +113,51 @@ test("resolveChatQuotaView：订阅按最紧窗口换算剩余百分比与分档
   );
   assert.ok(dangerView && dangerView.kind === "plan");
   assert.equal(dangerView.primary.window, "five_hour");
+  assert.equal(dangerView.windows[0].window, "five_hour");
+  assert.equal(dangerView.windows[1].window, "weekly");
   assert.equal(dangerView.remainPct, 7);
   assert.equal(dangerView.tone, "danger");
 });
 
-test("resolveChatQuotaView：网关钱包按剩余比例与消耗告警分档", () => {
+test("resolveChatQuotaView：New API 优先匹配同站钱包余额且高余额不因历史占比误标红", () => {
   const profile = makeProfile({
     id: "p-gw",
     agent: "codex",
     accountType: "gateway",
-    gatewayId: "gw-wallet",
+    gatewayId: "gw-token-only",
     hasKey: true,
   });
-  const view = resolveChatQuotaView(profile, [], [makeWalletRow({ used: 455, total: 500 })]);
+  const gateways: Gateway[] = [
+    {
+      id: "gw-token-only",
+      name: "Codex",
+      slots: { openai: "https://ent.zetatechs.com/v1" },
+    } as Gateway,
+  ];
+  // 当前网关返回的是 token 不限行，应回落到同站点的钱包行；剩 ¥4,917 时即便历史消耗 91% 也保持静默 ok
+  const view = resolveChatQuotaView(
+    profile,
+    [],
+    [
+      makeWalletRow({ gatewayId: "gw-token-only", source: "token", unlimited: true, remaining: null, used: 100, total: null }),
+      makeWalletRow({ gatewayId: "gw-main", source: "wallet", remaining: 4917.31, used: 48010.99, total: 52928.3 }),
+    ],
+    gateways,
+  );
   assert.ok(view && view.kind === "wallet");
-  assert.equal(view.usedPct, 91);
-  assert.equal(view.remainPct, 9);
-  assert.equal(view.tone, "danger");
+  assert.equal(view.row.source, "wallet");
+  assert.equal(view.row.remaining, 4917.31);
+  assert.equal(view.tone, "ok");
+
+  // 真剩 ¥5 时标红告警
+  const lowView = resolveChatQuotaView(
+    profile,
+    [],
+    [makeWalletRow({ gatewayId: "gw-token-only", source: "wallet", remaining: 5, used: 495, total: 500 })],
+    gateways,
+  );
+  assert.ok(lowView && lowView.kind === "wallet");
+  assert.equal(lowView.tone, "danger");
 });
 
 test("resolveChatQuotaView：无匹配或失败行返回 null 不占空位", () => {

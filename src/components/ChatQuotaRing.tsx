@@ -7,7 +7,6 @@ import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
   listSameAgentPeers,
   profileQuotaKind,
-  quotaRemainPercent,
   resolveChatQuotaView,
   type ChatQuotaTone,
 } from "../chat-quota";
@@ -19,7 +18,6 @@ import {
   planQuotaDataAt,
   planResetRemain,
   planWindowLabel,
-  quotaBarLevel,
 } from "../plan-quota";
 import {
   formatBalanceAmount,
@@ -109,16 +107,16 @@ async function fetchWalletBalance(force: boolean): Promise<GatewayBalanceDto[]> 
   return req;
 }
 
-/** 正常态静默中性灰，只有剩余 ≤30%（警示）或 ≤10%（危急）才透出语义色 */
+/** 正常态静默中性灰；警示档走哑光琥珀 caution-text（替代刺眼纯黄 warn-text），危急档走珊瑚红 */
 function ringStrokeClass(tone: ChatQuotaTone): string {
   if (tone === "danger") return "text-err-text";
-  if (tone === "warn") return "text-warn-text";
+  if (tone === "warn") return "text-caution-text";
   return "text-l2";
 }
 
 function textToneClass(tone: ChatQuotaTone): string {
   if (tone === "danger") return "text-err-text";
-  if (tone === "warn") return "text-warn-text";
+  if (tone === "warn") return "text-caution-text";
   return "text-l3";
 }
 
@@ -235,8 +233,8 @@ export default function ChatQuotaRing({
   }, [expectedKind]);
 
   const view = useMemo(
-    () => resolveChatQuotaView(profile, planRows, walletRows),
-    [profile, planRows, walletRows],
+    () => resolveChatQuotaView(profile, planRows, walletRows, gateways),
+    [profile, planRows, walletRows, gateways],
   );
 
   const peers = useMemo(
@@ -307,19 +305,21 @@ export default function ChatQuotaRing({
   const levelText = isPlan ? planLevelLabel(view.row.planLevel) : null;
   const dataAt = planQuotaDataAt(view.row.queriedAt, view.row.fromCache);
 
-  const compactLabel = isPlan
-    ? `${view.remainPct}%`
-    : hideWallet
+  const barWindows = isPlan ? view.windows.slice(0, 2) : [];
+  const showWindowTag = barWindows.length > 1;
+  const walletLabel = !isPlan
+    ? hideWallet
       ? formatBalanceAmountMasked(view.row.currency)
-      : view.remainPct != null
-        ? `${Math.round(view.remainPct)}%`
-        : view.row.remaining != null
-          ? formatBalanceAmount(view.row.remaining, view.row.currency)
-          : "不限";
+      : view.row.remaining != null
+        ? formatBalanceAmount(view.row.remaining, view.row.currency)
+        : view.row.total != null
+          ? formatBalanceAmount(view.row.total, view.row.currency)
+          : "不限"
+    : "";
 
   const ariaLabel = isPlan
-    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%，点开查看详情`
-    : `${view.row.gatewayName} 网关余额剩余 ${compactLabel}，点开查看详情`;
+    ? `${planProviderLabel(view.row.provider)} ${barWindows.map((w) => `${planWindowLabel(w.window)}剩余 ${w.remainPct}%`).join("，")}，点开查看详情`
+    : `${view.row.gatewayName} 钱包余额 ${walletLabel}，点开查看详情`;
 
   const resetCardCount =
     isPlan && view.row.resetCardsSupported && view.row.resetCards.ok
@@ -332,7 +332,7 @@ export default function ChatQuotaRing({
       <button
         ref={btnRef}
         type="button"
-        className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+        className="inline-flex h-7 shrink-0 items-center gap-2.5 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
@@ -348,13 +348,26 @@ export default function ChatQuotaRing({
         onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
         onMouseLeave={() => setTip(null)}
       >
-        <SingleMicroRing
-          remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
-          tone={view.tone}
-        />
-        <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
-          {compactLabel}
-        </span>
+        {isPlan ? (
+          barWindows.map((w) => (
+            <span key={w.window} className="inline-flex items-center gap-1">
+              <SingleMicroRing remainPct={w.remainPct} tone={w.tone} />
+              {showWindowTag && w.shortTag && (
+                <span className="text-micro font-normal text-l4">{w.shortTag}</span>
+              )}
+              <span className={`text-micro font-normal tabular-nums ${textToneClass(w.tone)}`}>
+                {w.remainPct}%
+              </span>
+            </span>
+          ))
+        ) : (
+          <span className="inline-flex items-center gap-1.5">
+            <SingleMicroRing remainPct={view.remainPct ?? 100} tone={view.tone} />
+            <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
+              {walletLabel}
+            </span>
+          </span>
+        )}
       </button>
 
       {/* 轻量悬停提示 */}
@@ -378,13 +391,11 @@ export default function ChatQuotaRing({
                 <div className="mt-1 space-y-0.5 tabular-nums text-l3">
                   {view.windows.map((w) => {
                     const remain = planResetRemain(w.resetsAt, now);
-                    const wt = quotaBarLevel(w.usedPercent);
-                    const rPct = quotaRemainPercent(w.usedPercent);
                     return (
                       <div key={w.window} className="flex items-center justify-between gap-3">
                         <span>{planWindowLabel(w.window)}剩余</span>
-                        <span className={wt === "ok" ? "text-l2" : textToneClass(wt)}>
-                          {rPct}%
+                        <span className={w.tone === "ok" ? "text-l2" : textToneClass(w.tone)}>
+                          {w.remainPct}%
                           {remain ? <span className="ml-1 text-micro text-l4">· {remain}</span> : null}
                         </span>
                       </div>
@@ -394,14 +405,7 @@ export default function ChatQuotaRing({
               ) : (
                 <div className="mt-1 tabular-nums text-l3">
                   {walletAmountCaption(view.row.source)}{" "}
-                  <span className="text-l1">
-                    {hideWallet
-                      ? formatBalanceAmountMasked(view.row.currency)
-                      : view.row.remaining != null
-                        ? formatBalanceAmount(view.row.remaining, view.row.currency)
-                        : "不限"}
-                  </span>
-                  {view.remainPct != null ? `（剩余 ${Math.round(view.remainPct)}%）` : ""}
+                  <span className="text-l1">{walletLabel}</span>
                 </div>
               )}
             </div>
@@ -465,22 +469,20 @@ export default function ChatQuotaRing({
               {isPlan ? (
                 <div className="mt-2.5 space-y-2.5">
                   {view.windows.map((w) => {
-                    const wt = quotaBarLevel(w.usedPercent);
-                    const rPct = quotaRemainPercent(w.usedPercent);
                     const remain = planResetRemain(w.resetsAt, now);
                     const absPair = planAbsoluteQuotaPair(w.used, w.total);
                     return (
                       <div key={w.window} className="flex items-center gap-2.5">
-                        <PopoverMiniRing remainPct={rPct} tone={wt} />
+                        <PopoverMiniRing remainPct={w.remainPct} tone={w.tone} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="truncate text-l2">{planWindowLabel(w.window)}剩余</span>
                             <span
                               className={`shrink-0 font-medium tabular-nums ${
-                                wt === "ok" ? "text-l1" : textToneClass(wt)
+                                w.tone === "ok" ? "text-l1" : textToneClass(w.tone)
                               }`}
                             >
-                              {rPct}%
+                              {w.remainPct}%
                             </span>
                           </div>
                           {(remain || absPair) && (
@@ -504,14 +506,7 @@ export default function ChatQuotaRing({
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-l3">{walletAmountCaption(view.row.source)}</span>
                     <span className="text-base font-semibold tabular-nums text-l1">
-                      {hideWallet
-                        ? formatBalanceAmountMasked(view.row.currency)
-                        : view.row.remaining != null || view.row.total != null
-                          ? formatBalanceAmount(
-                              view.row.remaining ?? view.row.total ?? NaN,
-                              view.row.currency,
-                            )
-                          : "不限"}
+                      {walletLabel}
                     </span>
                   </div>
                   {view.remainPct != null && (
@@ -522,7 +517,7 @@ export default function ChatQuotaRing({
                             view.tone === "danger"
                               ? "bg-err-text"
                               : view.tone === "warn"
-                                ? "bg-warn-text"
+                                ? "bg-caution-text"
                                 : "bg-l2"
                           }`}
                           style={{ width: `${view.remainPct}%` }}

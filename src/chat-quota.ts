@@ -8,19 +8,30 @@ import {
   quotaBarLevel,
 } from "./plan-quota.ts";
 import { gatewayHasWallet, walletUsedPercent } from "./gateway-balance.ts";
+import { endpointHost } from "./gateway-option.ts";
 
 export type ChatQuotaTone = "ok" | "warn" | "danger";
+
+export interface ChatQuotaWindowItem {
+  window: string;
+  /** 底栏短标签（如 5h / 周 / 月），单窗展示时可省略 */
+  shortTag: string | null;
+  remainPct: number;
+  usedPercent: number;
+  resetsAt: number | null;
+  used: number | null;
+  total: number | null;
+  tone: ChatQuotaTone;
+}
 
 export type ChatQuotaView =
   | {
       kind: "plan";
       row: PlanQuotaDto;
-      /** 最紧的窗口（决定底栏单环与着色档位） */
+      /** 最紧的窗口（用于判定整体告警档与重置卡提示） */
       primary: PlanQuotaWindowDto;
-      /** 次窗口（单窗供应商为 null） */
-      secondary: PlanQuotaWindowDto | null;
-      /** 全部窗口按紧度排列（供浮层明细遍历） */
-      windows: PlanQuotaWindowDto[];
+      /** 固定自然顺序排列的窗口列表（5 小时优先，其次本周，方便底栏同时展示且位置稳定） */
+      windows: ChatQuotaWindowItem[];
       /** 最紧窗口的剩余百分比（0-100，满圈 = 余量充足） */
       remainPct: number;
       tone: ChatQuotaTone;
@@ -46,6 +57,69 @@ export function quotaRemainPercent(usedPercent: number): number {
   return Math.min(100, Math.max(0, Math.round(100 - usedPercent)));
 }
 
+const WINDOW_DISPLAY_RANK: Record<string, number> = {
+  five_hour: 0,
+  weekly: 1,
+  agy_argon_weekly: 1,
+  monthly: 2,
+  credits: 3,
+};
+
+export function shortWindowTag(window: string): string | null {
+  if (window === "five_hour") return "5h";
+  if (window === "weekly" || window === "agy_argon_weekly") return "周";
+  if (window === "monthly") return "月";
+  return null;
+}
+
+function gatewayHosts(gw: Gateway): string[] {
+  const urls = [
+    gw.slots?.anthropic,
+    gw.slots?.openai,
+    gw.slots?.responses,
+    gw.slots?.gemini,
+    gw.slots?.cursor,
+  ];
+  const hosts = new Set<string>();
+  for (const u of urls) {
+    if (!u) continue;
+    const h = endpointHost(u).trim().toLowerCase();
+    if (h) hosts.add(h);
+  }
+  return [...hosts];
+}
+
+function findWalletRowForProfile(
+  profile: Profile,
+  walletRows: readonly GatewayBalanceDto[],
+  gateways: readonly Gateway[],
+): GatewayBalanceDto | null {
+  if (!profile.gatewayId) return null;
+  const direct = walletRows.find((r) => r.gatewayId === profile.gatewayId && r.ok) ?? null;
+  if (direct && direct.source === "wallet") return direct;
+
+  // New API 一般按站点钱包计费而非单 Key 限额：若当前网关行是 token 视图或缺失，优先回落到同站点的钱包行
+  if (direct?.origin) {
+    const sameOriginWallet = walletRows.find(
+      (r) => r.ok && r.source === "wallet" && r.origin === direct.origin,
+    );
+    if (sameOriginWallet) return sameOriginWallet;
+  }
+
+  const gw = gateways.find((g) => g.id === profile.gatewayId);
+  if (gw) {
+    const hosts = gatewayHosts(gw);
+    if (hosts.length > 0) {
+      const hostSet = new Set(hosts);
+      const byHostWallet = walletRows.find(
+        (r) => r.ok && r.source === "wallet" && hostSet.has(endpointHost(r.origin).trim().toLowerCase()),
+      );
+      if (byHostWallet) return byHostWallet;
+    }
+  }
+  return direct;
+}
+
 /** 仅依据本地配置判断这条连接是否「可能有」订阅余量或网关余额，用于决定是否需要后台静默拉取 */
 export function profileQuotaKind(
   profile: Profile | null | undefined,
@@ -63,43 +137,65 @@ export function profileQuotaKind(
   return null;
 }
 
-/** 为聊天底栏微环解析当前 Profile 对应的订阅余量或网关余额；无有效数据时返回 null（不占空位） */
+/** 为聊天底栏微环解析当前 Profile 对应的订阅余量或网关钱包余额；无有效数据时返回 null（不占空位） */
 export function resolveChatQuotaView(
   profile: Profile | null | undefined,
   planRows: readonly PlanQuotaDto[],
   walletRows: readonly GatewayBalanceDto[],
+  gateways: readonly Gateway[] = [],
 ): ChatQuotaView | null {
   if (!profile) return null;
   const planRow = findPlanRowForProfile(profile, planRows);
   if (planRow && planRow.ok && planRow.windows.length > 0) {
-    const ordered = planWindowsByTightness(planRow.windows);
-    const primary = ordered[0];
-    const secondary = ordered[1] ?? null;
+    const byTightness = planWindowsByTightness(planRow.windows);
+    const primary = byTightness[0];
+    const naturalWindows: ChatQuotaWindowItem[] = [...planRow.windows]
+      .sort((a, b) => (WINDOW_DISPLAY_RANK[a.window] ?? 9) - (WINDOW_DISPLAY_RANK[b.window] ?? 9))
+      .map((w) => ({
+        window: w.window,
+        shortTag: shortWindowTag(w.window),
+        remainPct: quotaRemainPercent(w.usedPercent),
+        usedPercent: w.usedPercent,
+        resetsAt: w.resetsAt,
+        used: w.used,
+        total: w.total,
+        tone: quotaBarLevel(w.usedPercent),
+      }));
     return {
       kind: "plan",
       row: planRow,
       primary,
-      secondary,
-      windows: ordered,
+      windows: naturalWindows,
       remainPct: quotaRemainPercent(primary.usedPercent),
       tone: quotaBarLevel(primary.usedPercent),
     };
   }
-  if (profile.gatewayId) {
-    const walletRow = walletRows.find((r) => r.gatewayId === profile.gatewayId && r.ok);
-    if (walletRow) {
-      const usedPct = walletUsedPercent(walletRow.used, walletRow.total);
-      const remainPct = usedPct == null ? null : Math.min(100, Math.max(0, 100 - usedPct));
-      const tone: ChatQuotaTone =
-        usedPct == null ? "ok" : usedPct >= 90 ? "danger" : usedPct >= 80 ? "warn" : "ok";
-      return {
-        kind: "wallet",
-        row: walletRow,
-        usedPct,
-        remainPct,
-        tone,
-      };
-    }
+  const walletRow = findWalletRowForProfile(profile, walletRows, gateways);
+  if (walletRow) {
+    const usedPct = walletUsedPercent(walletRow.used, walletRow.total);
+    const remainPct = usedPct == null ? null : Math.min(100, Math.max(0, 100 - usedPct));
+    // 钱包余额按绝对余量防误报：累计充值很高时剩几千元不应因历史占比 >90% 标红
+    const lowBalance =
+      walletRow.remaining != null &&
+      Number.isFinite(walletRow.remaining) &&
+      (walletRow.currency === "USD" ? walletRow.remaining < 10 : walletRow.remaining < 50);
+    const criticalBalance =
+      walletRow.remaining != null &&
+      Number.isFinite(walletRow.remaining) &&
+      (walletRow.currency === "USD" ? walletRow.remaining < 2 : walletRow.remaining < 10);
+    const tone: ChatQuotaTone =
+      criticalBalance || (usedPct != null && usedPct >= 95 && walletRow.remaining == null)
+        ? "danger"
+        : lowBalance || (usedPct != null && usedPct >= 90 && walletRow.remaining == null)
+          ? "warn"
+          : "ok";
+    return {
+      kind: "wallet",
+      row: walletRow,
+      usedPct,
+      remainPct,
+      tone,
+    };
   }
   return null;
 }
