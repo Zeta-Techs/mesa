@@ -581,7 +581,7 @@ pub(crate) fn agy_normalize_model_selection(raw: &str) -> String {
     slug
 }
 
-fn agy_is_model_enum(raw: &str) -> bool {
+pub(crate) fn agy_is_model_enum(raw: &str) -> bool {
     raw.starts_with("MODEL_")
         && raw
             .chars()

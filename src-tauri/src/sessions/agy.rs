@@ -1761,8 +1761,14 @@ fn agy_collect_subagent_contexts(
             if get_str(step, "type") != Some("PLANNER_RESPONSE") {
                 continue;
             }
-            if let Some(m) = get_str(step, "model").filter(|s| !s.trim().is_empty()) {
-                model = Some(m.trim().to_string());
+            if let Some(m) = get_str(step, "model")
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !crate::usage::agy_is_model_enum(s))
+            {
+                let norm = crate::usage::agy_normalize_model_selection(m);
+                if !norm.is_empty() {
+                    model = Some(norm);
+                }
             }
             if let Some(u) = agy_step_usage(step) {
                 let ctx = u.cache_read.saturating_add(u.input).saturating_add(u.cache_write);
@@ -1813,7 +1819,23 @@ pub(crate) fn agy_context_breakdown_in_root(
 ) -> Option<crate::context_breakdown::ContextBreakdownDto> {
     let tx_path = agy_transcript_in_root(agy_root, session_id)?;
     let steps = agy_read_transcript_steps(&tx_path)?;
-    let window = model
+    let transcript_model = steps.iter().rev().find_map(|step| {
+        if get_str(step, "type") != Some("PLANNER_RESPONSE") {
+            return None;
+        }
+        let raw = get_str(step, "model")?
+            .trim();
+        if raw.is_empty() || crate::usage::agy_is_model_enum(raw) {
+            return None;
+        }
+        let norm = crate::usage::agy_normalize_model_selection(raw);
+        (!norm.is_empty()).then_some(norm)
+    });
+    let effective_model = model
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .or(transcript_model.as_deref());
+    let window = effective_model
         .and_then(|m| crate::model_registry::model_context_size_known_for(m, None))
         .and_then(|v| u64::try_from(v).ok())
         .unwrap_or(0);

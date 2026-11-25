@@ -1256,8 +1256,34 @@ fn snapshot_base(key: &str) -> &str {
     key
 }
 
+/// 去掉 CLI 拼在型号尾部的思考档位后缀（Antigravity 的 `-low` / `-medium` / `-high` / `-xhigh`
+/// 以及偶发的 `-tiered` 分层后缀，如 `gemini-4-neon-high` → `gemini-4-neon`、
+/// `gemini-4-hydrogen-tiered-high` → `gemini-4-hydrogen`）。
+/// 刻意不剥 `-max`（`qwen-max` / `minimax-h3-max` / `gpt-5-1-codex-max` 等是独立型号档位而非思考档）。
+fn strip_effort_suffix(key: &str) -> Option<&str> {
+    let mut cur = key;
+    let mut stripped = false;
+    for suf in ["-xhigh", "-high", "-medium", "-low"] {
+        if let Some(rest) = cur.strip_suffix(suf) {
+            if !rest.is_empty() {
+                cur = rest;
+                stripped = true;
+                break;
+            }
+        }
+    }
+    if let Some(rest) = cur.strip_suffix("-tiered") {
+        if !rest.is_empty() {
+            cur = rest;
+            stripped = true;
+        }
+    }
+    stripped.then_some(cur)
+}
+
 /// 一层表怎么认模型：用户覆盖与内置表写的是「前缀」（一个系列一条），按最长前缀；
-/// 网关实测与公共库是逐个型号的完整名，只认同一型号（统一写法后相等，或去掉快照后缀后相等）——
+/// 网关实测与公共库是逐个型号的完整名，只认同一型号（统一写法后相等、去掉快照后缀后相等，
+/// 或在两者都未命中时单向剥掉查询键尾部的思考档位后缀回落到同型号基名）——
 /// 按前缀退到别的型号会张冠李戴（2026-10-28：中转自起名的模型拿到另一个型号的上下文和价格）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyMatch {
@@ -1278,10 +1304,24 @@ pub(crate) fn match_in<'a, T>(table: &'a [(String, T)], key: &str, how: KeyMatch
             .filter(|(p, _)| key.starts_with(p.as_str()))
             .max_by_key(|(p, _)| p.len())
             .map(|(_, c)| c),
-        KeyMatch::Exact => table.iter().find(|(k, _)| k == key).map(|(_, c)| c).or_else(|| {
-            let base = snapshot_base(key);
-            table.iter().find(|(k, _)| snapshot_base(k) == base).map(|(_, c)| c)
-        }),
+        KeyMatch::Exact => table
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, c)| c)
+            .or_else(|| {
+                let base = snapshot_base(key);
+                table
+                    .iter()
+                    .find(|(k, _)| snapshot_base(k) == base)
+                    .map(|(_, c)| c)
+                    .or_else(|| {
+                        let eb = snapshot_base(strip_effort_suffix(base)?);
+                        table
+                            .iter()
+                            .find(|(k, _)| k == eb || snapshot_base(k) == eb)
+                            .map(|(_, c)| c)
+                    })
+            }),
     }
 }
 
@@ -2007,6 +2047,63 @@ mod tests {
         assert!(match_in(&db, &model_key("glm-4.7-flash"), KeyMatch::Exact).is_none());
         // 前缀层照旧按系列
         assert_eq!(match_in(&db, &model_key("glm-4.7-flash"), KeyMatch::Prefix).and_then(|c| c.context), Some(3));
+    }
+
+    #[test]
+    fn exact_layers_match_effort_suffixed_models_safely() {
+        // Antigravity 把思考档直接拼在模型 slug 尾部（gemini-4-neon-high / gemini-4-hydrogen-tiered-high /
+        // gemini-3.8-flash-high / claude-opus-5-5-high / gpt-oss-120b-medium），公共库里存的是不带档位的基名
+        let db = keyed(vec![
+            ("gemini-4-neon".to_string(), caps(true, Some(1_048_576))),
+            ("gemini-4-hydrogen".to_string(), caps(true, Some(1_048_576))),
+            ("gemini-3-8-flash".to_string(), caps(true, Some(1_048_576))),
+            ("claude-opus-5-5".to_string(), caps(true, Some(1_000_000))),
+            ("gpt-oss-120b".to_string(), caps(true, Some(128_000))),
+            ("gpt-5-4".to_string(), caps(true, Some(1_050_000))),
+            ("gpt-5-4-high".to_string(), caps(true, Some(999_999))),
+            ("mistral-medium".to_string(), caps(false, Some(262_144))),
+            ("qwen".to_string(), caps(false, Some(32_768))),
+        ]);
+        assert_eq!(
+            match_in(&db, &model_key("gemini-4-neon-high"), KeyMatch::Exact).and_then(|c| c.context),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("gemini-4-neon-xhigh"), KeyMatch::Exact).and_then(|c| c.context),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("gemini-4-hydrogen-tiered-high"), KeyMatch::Exact)
+                .and_then(|c| c.context),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("gemini-3.8-flash-high"), KeyMatch::Exact)
+                .and_then(|c| c.context),
+            Some(1_048_576)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("claude-opus-5-5-high"), KeyMatch::Exact)
+                .and_then(|c| c.context),
+            Some(1_000_000)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("gpt-oss-120b-medium"), KeyMatch::Exact)
+                .and_then(|c| c.context),
+            Some(128_000)
+        );
+        // 精确键优先于回落基名
+        assert_eq!(
+            match_in(&db, &model_key("gpt-5-4-high"), KeyMatch::Exact).and_then(|c| c.context),
+            Some(999_999)
+        );
+        assert_eq!(
+            match_in(&db, &model_key("mistral-medium"), KeyMatch::Exact).and_then(|c| c.context),
+            Some(262_144)
+        );
+        // 单向安全：基名不反向匹配带后缀条目；-max 属于型号档位而非思考档，不剥
+        assert!(match_in(&db, &model_key("mistral"), KeyMatch::Exact).is_none());
+        assert!(match_in(&db, &model_key("qwen-max"), KeyMatch::Exact).is_none());
     }
 
     #[test]
