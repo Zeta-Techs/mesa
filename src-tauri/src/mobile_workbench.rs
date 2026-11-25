@@ -985,6 +985,21 @@ fn is_https_request(rq: &tiny_http::Request) -> bool {
         && header_val(rq, "Host").is_some_and(|h| !h.starts_with("127.0.0.1") && !h.starts_with("localhost"))
 }
 
+fn render_themed_index_html() -> Vec<u8> {
+    let mode = if crate::settings::is_light_theme_sync() {
+        "light"
+    } else {
+        "dark"
+    };
+    PAGE_HTML
+        .replacen(
+            "<html lang=\"zh-CN\">",
+            &format!("<html lang=\"zh-CN\" data-theme=\"{mode}\">"),
+            1,
+        )
+        .into_bytes()
+}
+
 // ===== HTTP 请求路由分发 =====
 
 fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
@@ -995,7 +1010,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
     if method == "GET" {
         match path.as_str() {
             "/" | "/pair" => {
-                let _ = rq.respond(reply_bytes(200, "text/html; charset=utf-8", PAGE_HTML.as_bytes().to_vec(), Some(PAGE_CSP), &[]));
+                let _ = rq.respond(reply_bytes(200, "text/html; charset=utf-8", render_themed_index_html(), Some(PAGE_CSP), &[]));
                 return;
             }
             "/app.js" => {
@@ -1131,6 +1146,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
 
     match (method.as_str(), path.as_str()) {
         ("GET", "/api/me") => {
+            let mode = if crate::settings::is_light_theme_sync() { "light" } else { "dark" };
             let _ = rq.respond(reply_json(
                 200,
                 serde_json::json!({
@@ -1138,6 +1154,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                     "deviceId": device.id,
                     "deviceName": device.name,
                     "csrfToken": csrf_for_token(&dev_token),
+                    "theme": mode,
                 }),
             ));
         }
@@ -1612,13 +1629,28 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                 .and_then(|e| e.to_str())
                 .unwrap_or("")
                 .to_lowercase();
-            let (mime, csp) = match ext.as_str() {
-                "png" => ("image/png", None),
-                "jpg" | "jpeg" => ("image/jpeg", None),
-                "webp" => ("image/webp", None),
-                "gif" => ("image/gif", None),
-                "svg" => ("image/svg+xml", Some("default-src 'none'; style-src 'unsafe-inline'")),
-                "pdf" => ("application/pdf", None),
+            let (mime, csp, disp) = match ext.as_str() {
+                "png" => ("image/png", None, "inline"),
+                "jpg" | "jpeg" => ("image/jpeg", None, "inline"),
+                "webp" => ("image/webp", None, "inline"),
+                "gif" => ("image/gif", None, "inline"),
+                "svg" => ("image/svg+xml", Some("default-src 'none'; style-src 'unsafe-inline'"), "inline"),
+                "pdf" => ("application/pdf", None, "inline"),
+                "docx" => (
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    None,
+                    "attachment",
+                ),
+                "pptx" => (
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    None,
+                    "attachment",
+                ),
+                "xlsx" => (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    None,
+                    "attachment",
+                ),
                 _ => {
                     let _ = rq.respond(reply_err(415, "此文件类型不支持原始预览"));
                     return;
@@ -1639,7 +1671,7 @@ fn handle_request(sess: Arc<RunningServer>, mut rq: tiny_http::Request) {
                         mime,
                         bytes,
                         csp,
-                        &[("Content-Disposition", "inline")],
+                        &[("Content-Disposition", disp)],
                     ));
                 }
                 Err(_) => {

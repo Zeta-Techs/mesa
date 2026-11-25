@@ -66,6 +66,68 @@
     }
   }
 
+  const ICON_MESA_MARK = `<svg viewBox="232 284 708 456" aria-hidden="true"><path d="M232 740 V284 H356 L512 512 L668 284 H792 V740 H672 V474 L548 652 H476 L352 474 V740 Z" fill="currentColor"/><rect x="820" y="680" width="120" height="60" rx="6" class="mesa-cursor"/></svg>`;
+  const ICON_CHEV_DOWN = `<svg class="select-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
+  const ICON_CHEV_RIGHT = `<svg class="row-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>`;
+  const ICON_CHECK = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
+  const ICON_PLUS = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
+  const ICON_TAB_OVERVIEW = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="7" x="3" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="3" rx="1.5"/><rect width="7" height="7" x="14" y="14" rx="1.5"/><rect width="7" height="7" x="3" y="14" rx="1.5"/></svg>`;
+  const ICON_TAB_ASSISTANT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+  const ICON_TAB_FILES = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`;
+  const ICON_SEND = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></svg>`;
+  const ICON_STOP = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+  const ICON_FILE_TEXT = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 13H8"/><path d="M16 17H8"/><path d="M16 13h-2"/></svg>`;
+  const ICON_FILE_IMG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
+
+  function fileIconInfo(relPath) {
+    const ext = (String(relPath || "").split(".").pop() || "").toLowerCase();
+    if (ext === "pdf") return { cls: "pdf", svg: ICON_FILE_TEXT };
+    if (["doc", "docx", "rtf", "pptx", "xlsx"].includes(ext)) return { cls: "doc", svg: ICON_FILE_TEXT };
+    if (["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext)) return { cls: "img", svg: ICON_FILE_IMG };
+    return { cls: "", svg: ICON_FILE_TEXT };
+  }
+
+  function parseCloseoutLine(line) {
+    const s = String(line || "").trim();
+    const m = s.match(/^(.+?)\s*[（(]([^）)]+)[）)]$/);
+    if (m) return { title: m[1].trim(), rel: m[2].trim() };
+    const name = s.split("/").pop() || s;
+    return { title: name, rel: s };
+  }
+
+  function humanSummarySub(ov, steps, savedCount) {
+    if (!steps.length) {
+      const n = (ov.goals || []).length;
+      return n ? `自由目标模式 · ${n} 个目标` : "自由目标模式";
+    }
+    if (savedCount === steps.length) {
+      const allArchived = steps.every((s) => s.archived);
+      return allArchived ? "全部步骤已保存 · 临时副本已收起" : "全部步骤已保存进项目";
+    }
+    const cur =
+      steps.find((s) => s.failure) ||
+      steps.find((s) => s.briefState === "confirm") ||
+      steps.find((s) => s.briefState === "review") ||
+      steps.find((s) => s.briefState === "working") ||
+      steps.find((s) => !s.saved);
+    if (!cur) return `已完成 ${savedCount}/${steps.length} 步`;
+    const bm = briefStateMeta(cur.briefState);
+    return `第 ${cur.n} 步「${cur.name}」${cur.failure ? "出错" : bm.label}`;
+  }
+
+  function humanStepSub(s) {
+    if (s.failure) return s.failure;
+    if (s.saved && s.archived) return "已保存 · 已收起";
+    if (s.saved) return "已保存进项目";
+    if (s.staleUpstream) return `上游「${s.staleUpstream}」有更新待跟进`;
+    if (s.briefState === "review") return "做完了 · 待回电脑评审";
+    if (s.briefState === "working") return "Agent 运行中";
+    if (s.briefState === "confirm") return "等确认";
+    if (s.briefState === "open") return "已开启工作副本";
+    if (s.briefState === "idle") return "未开始";
+    return String(s.state || "").replace(/（[^）]*）/g, "").trim() || "进行中";
+  }
+
   function totalPendingCount(ov) {
     if (!ov) return 0;
     return (ov.helpItems?.length || 0) + (ov.grantItems?.length || 0);
@@ -540,18 +602,19 @@
     const ext = (relPath.split(".").pop() || "").toLowerCase();
     const isImg = ["png", "jpg", "jpeg", "webp", "gif", "svg"].includes(ext);
     const isPdf = ext === "pdf";
+    const isOffice = ["docx", "pptx", "xlsx"].includes(ext);
     const rawUrl = `/api/files/raw?project=${encodeURIComponent(state.currentProject)}&path=${encodeURIComponent(relPath)}`;
     if (isImg) {
       state.sheet = { type: "file", path: relPath, kind: "image", rawUrl, loading: false };
       render();
       return;
     }
-    if (isPdf) {
-      state.sheet = { type: "file", path: relPath, kind: "pdf", rawUrl, blobUrl: "", loading: true };
+    if (isPdf || isOffice) {
+      state.sheet = { type: "file", path: relPath, kind: isPdf ? "pdf" : "download", rawUrl, blobUrl: "", loading: true };
       render();
       try {
         // iOS 主屏独立 PWA 下 target="_blank" 会切到无 Cookie 的 SafariViewController 导致 401；
-        // 先同源带 Cookie 拉成 Blob URL，在页内嵌预览并提供离线下载/系统打开入口
+        // 先同源带 Cookie 拉成 Blob URL，PDF 页内嵌显，Word/PPT/Excel 直接提供系统打开/下载
         const res = await fetch(rawUrl, { credentials: "same-origin" });
         if (res.status === 401) {
           state.authed = false;
@@ -561,11 +624,19 @@
         }
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `读取 PDF 失败 (${res.status})`);
+          throw new Error(err.error || `读取文件失败 (${res.status})`);
         }
         const blob = await res.blob();
         activeBlobUrl = URL.createObjectURL(blob);
-        state.sheet = { type: "file", path: relPath, kind: "pdf", rawUrl, blobUrl: activeBlobUrl, loading: false };
+        state.sheet = {
+          type: "file",
+          path: relPath,
+          kind: isPdf ? "pdf" : "download",
+          rawUrl,
+          blobUrl: activeBlobUrl,
+          size: blob.size,
+          loading: false,
+        };
         render();
       } catch (e) {
         closeSheet();
@@ -612,14 +683,38 @@
     const savedCount = steps.filter((s) => s.saved).length;
 
     let html = "";
-    html += `<div class="summary-banner">
-      <div>
-        <div class="summary-title">${esc(ov.name || ov.projectName || "项目")}</div>
-        <div class="summary-sub">${esc(ov.progressSummary || (steps.length ? `${savedCount}/${steps.length} 步已保存` : "自由目标模式"))}</div>
+    const miniStepper = steps.length > 0
+      ? `<div class="mini-stepper" aria-label="步骤总览">${steps
+          .map((s, idx) => {
+            const nodeCls = s.saved
+              ? "saved"
+              : s.failure
+                ? "failed"
+                : s.briefState === "working"
+                  ? "working"
+                  : s.briefState === "review" || s.briefState === "confirm"
+                    ? "warn"
+                    : "";
+            const nodeInner = s.saved ? ICON_CHECK : String(s.n);
+            const line = idx < steps.length - 1
+              ? `<span class="mini-line ${s.saved && steps[idx + 1].saved ? "done" : ""}"></span>`
+              : "";
+            return `<button type="button" class="mini-node ${nodeCls}" data-open-step="${s.n}" title="第 ${s.n} 步 · ${esc(s.name)}">${nodeInner}</button>${line}`;
+          })
+          .join("")}</div>`
+      : "";
+
+    html += `<div class="summary-card">
+      <div class="summary-top">
+        <div class="step-body">
+          <div class="summary-title">${esc(ov.name || ov.projectName || "项目")}</div>
+          <div class="summary-sub">${esc(humanSummarySub(ov, steps, savedCount))}</div>
+        </div>
+        <span class="pill ${steps.length && savedCount === steps.length ? "ok" : "muted"}">
+          <span class="pill-dot"></span>${steps.length ? `${savedCount} / ${steps.length}` : `${goals.length} 目标`}
+        </span>
       </div>
-      <span class="pill ${steps.length && savedCount === steps.length ? "ok" : "warn"}">${
-        steps.length ? `${savedCount}/${steps.length}` : `${goals.length} 目标`
-      }</span>
+      ${miniStepper}
     </div>`;
 
     if (pendingTotal > 0) {
@@ -629,8 +724,8 @@
           ? `<div class="md mt-8"><ul>${g.blocked.slice(0, 6).map((b) => `<li>${esc(b)}</li>`).join("")}</ul></div>`
           : "";
         html += `<div class="card card-warn" data-grant-card="${esc(g.scheduleId)}">
-          <div class="help-where">定时任务被授权拦下 · ${esc(g.scheduleName)}</div>
-          <p class="help-q">这次运行因联网/权限受限被拦下，是否放宽重跑这一次？</p>
+          <div class="help-where"><span class="pill warn"><span class="pill-dot"></span>定时授权</span><span>${esc(g.scheduleName)}</span></div>
+          <p class="help-q">这次运行因联网或权限受限被拦下，是否放宽重跑这一次？</p>
           ${blockedList}
           <div class="btn-row mt-10">
             <button class="btn primary" data-grant-resolve="once" data-grant-id="${esc(g.scheduleId)}">放宽重跑这一次</button>
@@ -640,7 +735,7 @@
       }
       for (const h of helpItems) {
         html += `<div class="card card-warn" data-help-card="${esc(h.itemId)}" data-help-root="${esc(h.root)}">
-          <div class="help-where">${esc(h.whereLabel || "人工请求")}</div>
+          <div class="help-where"><span class="pill warn"><span class="pill-dot"></span>人工请求</span><span>${esc(h.whereLabel || "待答复")}</span></div>
           <p class="help-q">${esc(h.question)}</p>
           ${h.options && h.options.length ? `<div class="btn-row">${h.options
             .map((o) => {
@@ -658,39 +753,47 @@
     }
 
     if (steps.length > 0) {
-      html += `<div class="section-label"><span>流程步骤</span><span>点开看核验与详情</span></div>`;
+      html += `<div class="section-label"><span>流程步骤</span><span>点按看核验与详情</span></div>`;
       html += `<div class="list-card">`;
       for (const s of steps) {
-        const cls = s.saved ? "saved" : s.failure ? "failed" : "";
+        const cls = s.saved ? "saved" : s.failure ? "failed" : s.briefState === "working" ? "working" : "";
         const bm = briefStateMeta(s.briefState);
         const badge = s.failure
-          ? `<span class="pill err">出错</span>`
+          ? `<span class="pill err"><span class="pill-dot"></span>出错</span>`
           : s.checksBlocked > 0
-            ? `<span class="pill err">拦下 ${s.checksBlocked}</span>`
+            ? `<span class="pill err"><span class="pill-dot"></span>拦下 ${s.checksBlocked}</span>`
             : s.checksNeedsHuman > 0
-              ? `<span class="pill warn">待判 ${s.checksNeedsHuman}</span>`
+              ? `<span class="pill warn"><span class="pill-dot"></span>待判 ${s.checksNeedsHuman}</span>`
               : s.saved
-                ? `<span class="pill ok">已保存</span>`
-                : `<span class="pill ${bm.cls}">${esc(bm.label)}</span>`;
+                ? `<span class="pill ok"><span class="pill-dot"></span>已保存</span>`
+                : `<span class="pill ${bm.cls}"><span class="pill-dot"></span>${esc(bm.label)}</span>`;
         html += `<button class="step-row" data-open-step="${s.n}">
-          <span class="step-num ${cls}">${s.n}</span>
+          <span class="step-num ${cls}">${s.saved ? ICON_CHECK : s.n}</span>
           <div class="step-body">
             <div class="step-name">${esc(s.name)}</div>
-            <div class="step-state">${esc(s.state)}</div>
+            <div class="step-state">${esc(humanStepSub(s))}</div>
           </div>
           ${badge}
+          ${ICON_CHEV_RIGHT}
         </button>`;
       }
       html += `</div>`;
     }
 
     if (closeout && ((closeout.finalFiles && closeout.finalFiles.length) || closeout.targetJournal)) {
-      html += `<div class="section-label"><span>完结产物</span>${closeout.targetJournal ? `<span>${esc(closeout.targetJournal)}</span>` : ""}</div>`;
+      html += `<div class="section-label"><span>完结文件</span>${closeout.targetJournal ? `<span>${esc(closeout.targetJournal)}</span>` : ""}</div>`;
       html += `<div class="list-card">`;
       for (const line of closeout.finalFiles || []) {
-        const m = line.match(/（([^）]+)）$/);
-        const rel = m ? m[1] : line;
-        html += `<button class="file-row" data-open-file="${esc(rel)}"><span class="file-path">${esc(line)}</span><span class="file-meta">查看</span></button>`;
+        const { title, rel } = parseCloseoutLine(line);
+        const ico = fileIconInfo(rel);
+        html += `<button class="file-row" data-open-file="${esc(rel)}">
+          <span class="file-ico ${ico.cls}">${ico.svg}</span>
+          <div class="file-main">
+            <div class="file-name">${esc(title)}</div>
+            <div class="file-sub">${esc(rel)}</div>
+          </div>
+          ${ICON_CHEV_RIGHT}
+        </button>`;
       }
       html += `</div>`;
     }
@@ -699,7 +802,7 @@
       html += `<div class="section-label"><span>流程外目标</span></div><div class="list-card">`;
       for (const g of goals) {
         const tone = g.status === "completed" ? "ok" : g.status === "failed" ? "err" : g.status === "pending_review" ? "warn" : g.status === "running" ? "info" : "muted";
-        html += `<div class="file-row"><div><div class="step-name">${esc(g.name)}</div></div><span class="pill ${tone}">${esc(g.statusLabel || g.status)}</span></div>`;
+        html += `<div class="file-row"><div class="file-main"><div class="file-name">${esc(g.name)}</div></div><span class="pill ${tone}"><span class="pill-dot"></span>${esc(g.statusLabel || g.status)}</span></div>`;
       }
       html += `</div>`;
     }
@@ -790,7 +893,7 @@
     const headMeta = [relTime(turn.at), turn.connection].filter(Boolean).join(" · ");
     return `<div class="q-bubble">${esc(turn.question)}</div>
       <div class="a-block">
-        <div class="a-head"><span class="a-mark"></span><span>项目助手${headMeta ? ` · ${esc(headMeta)}` : ""}</span></div>
+        <div class="a-head"><span class="a-mark-svg">${ICON_MESA_MARK}</span><span>项目助手${headMeta ? ` · ${esc(headMeta)}` : ""}</span></div>
         <div class="md">${renderMarkdown(cleanText)}</div>
         ${extra}
       </div>`;
@@ -800,12 +903,14 @@
     const turns = state.history || [];
     let body = "";
     if (!turns.length && !state.streaming) {
-      body = `<div class="empty-note">
-        <div>和电脑端项目助手共用同一份记录与上下文。</div>
-        <div class="quick-chips justify-center">
-          <button class="chip" data-quick-ask="现在到哪了？">现在到哪了？</button>
-          <button class="chip" data-quick-ask="哪里出问题了？">哪里出问题了？</button>
-          <button class="chip" data-quick-ask="我下一步该做什么？">我下一步该做什么？</button>
+      body = `<div class="chat-empty">
+        <div class="chat-empty-mark">${ICON_MESA_MARK}</div>
+        <div class="chat-empty-title">项目助手</div>
+        <div class="chat-empty-sub">与电脑端共用同一份记录与上下文</div>
+        <div class="quick-list">
+          <button class="quick-row" data-quick-ask="现在到哪了？"><span>现在到哪了？</span>${ICON_CHEV_RIGHT}</button>
+          <button class="quick-row" data-quick-ask="哪里出问题了？"><span>哪里出问题了？</span>${ICON_CHEV_RIGHT}</button>
+          <button class="quick-row" data-quick-ask="我下一步该做什么？"><span>我下一步该做什么？</span>${ICON_CHEV_RIGHT}</button>
         </div>
       </div>`;
     } else {
@@ -814,24 +919,27 @@
     if (state.streaming) {
       body += `<div class="q-bubble">${esc(state.pendingQuestion)}</div>
         <div class="a-block">
+          <div class="a-head"><span class="a-mark-svg">${ICON_MESA_MARK}</span><span>项目助手</span></div>
           <div id="stream-trail" class="stream-trail">${renderStreamTrailHtml()}</div>
           <div id="stream-md" class="md">${renderMarkdown(state.streamText)}</div>
         </div>`;
     }
     return `<div class="chat-wrap">
       <div class="chat-list">${body}</div>
-      <form id="chat-form" class="composer-bar">
-        <textarea id="chat-input" class="composer-input" rows="1" placeholder="问项目进展、查文件或派活…"></textarea>
-        ${state.streaming
-          ? `<button type="button" id="chat-stop" class="btn">停止</button>`
-          : `<button type="submit" class="btn primary">发送</button>`}
-      </form>
+      <div class="composer-wrap">
+        <form id="chat-form" class="composer-bar">
+          <textarea id="chat-input" class="composer-input" rows="1" placeholder="问项目进展、查文件或起草派活…"></textarea>
+          ${state.streaming
+            ? `<button type="button" id="chat-stop" class="send-circle stop" aria-label="停止">${ICON_STOP}</button>`
+            : `<button type="submit" class="send-circle" aria-label="发送">${ICON_SEND}</button>`}
+        </form>
+      </div>
     </div>`;
   }
 
   function renderFilesTab() {
     const seg = `<div class="seg-bar">
-      <button class="seg-btn ${state.filesMode === "closeout" ? "active" : ""}" data-fmode="closeout">完结与重点</button>
+      <button class="seg-btn ${state.filesMode === "closeout" ? "active" : ""}" data-fmode="closeout">完结文件</button>
       <button class="seg-btn ${state.filesMode === "all" ? "active" : ""}" data-fmode="all">全部文件</button>
       <button class="seg-btn ${state.filesMode === "diff" ? "active" : ""}" data-fmode="diff">最近改动</button>
     </div>`;
@@ -855,12 +963,19 @@
       const c = state.overview?.closeout;
       const items = [...(c?.finalFiles || []), ...(c?.checkFiles || [])];
       if (!items.length) {
-        listHtml = `<div class="empty-note">暂无完结产物，点上方「全部文件」浏览项目目录。</div>`;
+        listHtml = `<div class="empty-note">暂无完结文件，点上方「全部文件」浏览项目目录。</div>`;
       } else {
         listHtml = `<div class="list-card">${items.map((line) => {
-          const m = line.match(/（([^）]+)）$/);
-          const rel = m ? m[1] : line;
-          return `<button class="file-row" data-open-file="${esc(rel)}"><span class="file-path">${esc(line)}</span><span class="file-meta">打开</span></button>`;
+          const { title, rel } = parseCloseoutLine(line);
+          const ico = fileIconInfo(rel);
+          return `<button class="file-row" data-open-file="${esc(rel)}">
+            <span class="file-ico ${ico.cls}">${ico.svg}</span>
+            <div class="file-main">
+              <div class="file-name">${esc(title)}</div>
+              <div class="file-sub">${esc(rel)}</div>
+            </div>
+            ${ICON_CHEV_RIGHT}
+          </button>`;
         }).join("")}</div>`;
       }
       return seg + listHtml;
@@ -870,10 +985,19 @@
     if (!state.files.length) {
       listHtml = `<div class="empty-note">没有匹配的文件</div>`;
     } else {
-      listHtml = `<div class="list-card">${state.files.map((f) => `<button class="file-row" data-open-file="${esc(f.path)}">
-        <span class="file-path">${esc(f.path)}</span>
-        <span class="file-meta">${esc(formatBytes(f.size))}</span>
-      </button>`).join("")}</div>`;
+      listHtml = `<div class="list-card">${state.files.map((f) => {
+        const ico = fileIconInfo(f.path);
+        const name = f.path.split("/").pop() || f.path;
+        return `<button class="file-row" data-open-file="${esc(f.path)}">
+          <span class="file-ico ${ico.cls}">${ico.svg}</span>
+          <div class="file-main">
+            <div class="file-name">${esc(name)}</div>
+            <div class="file-sub">${esc(f.path)}</div>
+          </div>
+          <span class="file-meta">${esc(formatBytes(f.size))}</span>
+          ${ICON_CHEV_RIGHT}
+        </button>`;
+      }).join("")}</div>`;
     }
     return seg + searchBox + listHtml;
   }
@@ -895,7 +1019,10 @@
         <p class="auth-desc mb-12">拍照、选文件或写一段灵感，经加密通道直达电脑端「从手机添加」暂存区（4G/5G 或任意 Wi-Fi 均可）。</p>
         <div class="mb-12">
           <label class="field-label" for="drop-project">目标课题</label>
-          <select id="drop-project" class="project-select">${dropOpts}</select>
+          <div class="project-select-wrap">
+            <select id="drop-project" class="project-select plain-select">${dropOpts}</select>
+            ${ICON_CHEV_DOWN}
+          </div>
         </div>
         <div class="btn-row mt-0 mb-14">
           <label class="btn primary inline-flex-center">
@@ -943,6 +1070,13 @@
           <div class="btn-row mt-10">
             <a class="btn primary flex-1 inline-flex-center justify-center no-underline" href="${esc(sh.blobUrl)}" download="${esc(fileName)}">下载 / 用系统打开 PDF</a>
           </div>`;
+      } else if (sh.kind === "download") {
+        const fileName = sh.path.split("/").pop() || "document";
+        body = `<div class="empty-note">
+          <div class="summary-title">${esc(fileName)}</div>
+          <p class="auth-desc mt-8">${sh.size ? `文件大小 ${esc(formatBytes(sh.size))}，` : ""}点击下方按钮保存到手机或用 Word / WPS 打开。</p>
+          <a class="btn primary inline-flex-center no-underline" href="${esc(sh.blobUrl)}" download="${esc(fileName)}">下载 / 用系统打开</a>
+        </div>`;
       } else if (sh.kind === "markdown") {
         body = `${sh.truncated ? `<p class="auth-desc">文件较大，仅展示前 512 KB 预览（已脱敏）。</p>` : ""}<div class="md">${renderMarkdown(sh.text)}</div>`;
       } else {
@@ -979,19 +1113,28 @@
 
     appEl.innerHTML = `
       <header class="topbar">
+        <span class="brand-mini" title="Mesa 手机工作台">${ICON_MESA_MARK}</span>
         <div class="project-select-wrap">
           <span class="live-dot ${state.sseOnline ? "online" : ""}" title="${state.sseOnline ? "实时连接中" : "正在重连"}"></span>
           <select id="project-select" class="project-select" aria-label="切换项目">${projectOpts}</select>
+          ${ICON_CHEV_DOWN}
         </div>
-        <button class="icon-btn accent" data-open-drop>＋ 传资料</button>
+        <button class="icon-btn" data-open-drop>${ICON_PLUS}<span>传资料</span></button>
       </header>
       ${content}
       <nav class="tabbar" aria-label="主导航">
         <button class="tab-btn ${state.tab === "overview" ? "active" : ""}" data-tab="overview">
-          概览 <span class="badge ${pendingCount ? "" : "hidden"}" data-help-badge>${pendingCount}</span>
+          <span class="tab-ico-wrap">${ICON_TAB_OVERVIEW}<span class="badge ${pendingCount ? "" : "hidden"}" data-help-badge>${pendingCount}</span></span>
+          <span>概览</span>
         </button>
-        <button class="tab-btn ${state.tab === "assistant" ? "active" : ""}" data-tab="assistant">助手</button>
-        <button class="tab-btn ${state.tab === "files" ? "active" : ""}" data-tab="files">文件</button>
+        <button class="tab-btn ${state.tab === "assistant" ? "active" : ""}" data-tab="assistant">
+          <span class="tab-ico-wrap">${ICON_TAB_ASSISTANT}</span>
+          <span>助手</span>
+        </button>
+        <button class="tab-btn ${state.tab === "files" ? "active" : ""}" data-tab="files">
+          <span class="tab-ico-wrap">${ICON_TAB_FILES}</span>
+          <span>文件</span>
+        </button>
       </nav>
       ${renderSheet()}`;
 
@@ -1299,6 +1442,9 @@
     }
     try {
       const me = await apiGet("/api/me");
+      if (me.theme === "light" || me.theme === "dark") {
+        document.documentElement.dataset.theme = me.theme;
+      }
       state.authed = true;
       state.csrfToken = me.csrfToken || "";
       state.deviceName = me.deviceName || "";

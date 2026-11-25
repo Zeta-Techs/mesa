@@ -1713,6 +1713,16 @@ fn set_hooks_attention_entry_at(
 
 // ===== Tauri commands =====
 
+/// 供手机工作台同步桌面端当前深浅模式（仅分 dark / light 两套，零阻塞只读）
+pub(crate) fn is_light_theme_sync() -> bool {
+    settings_path()
+        .ok()
+        .and_then(|p| read_checked(&p).ok())
+        .map(with_defaults)
+        .and_then(|s| s.theme)
+        .is_some_and(|t| t.ends_with("-light"))
+}
+
 #[tauri::command]
 pub async fn get_settings() -> Result<AppSettingsDto, String> {
     Ok(with_defaults(read_checked(&settings_path()?)?))
