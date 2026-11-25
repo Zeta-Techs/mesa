@@ -16,6 +16,8 @@ import {
   planCapsuleLabel,
   planPrimaryWindowIndex,
   planProviderLabel,
+  planRemainingPercent,
+  planRemainingQuotaPair,
   planGatewayNameVisible,
   planLevelLabel,
   planQuotaDataAt,
@@ -196,9 +198,14 @@ test("主窗口挑最紧的那个（本机实测：5 小时 0% / 周 100% 必须
   );
   // 空数组不给 0（调用方必须判，防越界取 undefined 当窗口渲染）
   assert.equal(planPrimaryWindowIndex([]), -1);
-  assert.equal(planWindowCaption("five_hour"), "5 小时已用");
-  assert.equal(planWindowCaption("weekly"), "本周已用");
-  assert.equal(planWindowCaption("monthly"), "本月已用");
+  assert.equal(planWindowCaption("five_hour"), "5 小时剩余");
+  assert.equal(planWindowCaption("weekly"), "本周剩余");
+  assert.equal(planWindowCaption("monthly"), "本月剩余");
+  assert.equal(planRemainingPercent(23), 77);
+  assert.equal(planRemainingPercent(0), 100);
+  assert.equal(planRemainingPercent(100), 0);
+  assert.equal(planRemainingPercent(115), 0);
+  assert.equal(planRemainingPercent(-5), 100);
 });
 
 test("双窗同构：最紧的排第一，其余保持原序", () => {
@@ -257,6 +264,12 @@ test("绝对值行：只给百分比（或只给总量）不摆半截数", () =>
   // 超发在卡面封顶，避免 140,023 / 140,000 看起来像坏了
   assert.equal(planAbsoluteQuotaPair(140023, 140000), "140,000 / 140,000");
   assert.equal(planAbsoluteQuotaLine(140023, 140000), "已用 140,000 / 140,000");
+  // 剩余绝对值：80k / 140k → 剩 60k；0 用量 → 满总量；超发封底 0
+  assert.equal(planRemainingQuotaPair(80000, 140000), "60,000 / 140,000");
+  assert.equal(planRemainingQuotaPair(0, 28000), "28,000 / 28,000");
+  assert.equal(planRemainingQuotaPair(140023, 140000), "0 / 140,000");
+  assert.equal(planRemainingQuotaPair(null, 28000), null);
+  assert.equal(planRemainingQuotaPair(5, null), null);
 });
 
 test("重置脚注：时间点 + 倒计时同屏（不再只藏在悬停）", () => {

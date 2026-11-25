@@ -1078,14 +1078,14 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   本机实测 5 小时 0%、周 100%，固定锚 5 小时会把爆掉的周额度藏住；
                              #   planResetRemain：卡面只写「还有 28 小时 51 分」，时刻放悬停（formatResetPoint）；
                              #   quotaTone：分档 → 条/数字同一套颜色令牌（正常档**不着色**，一片彩字反而看不出该管哪个）；
-                             #   绝对值走 formatQuotaPoints（手写千分位）+ planAbsoluteQuotaPair（百分比旁；
-                             #   已用超过总量时按总量封顶，140,023 显示成 140,000 / 140,000；解析层仍如实；
+                             #   绝对值走 formatQuotaPoints（手写千分位）+ planRemainingQuotaPair（剩余 / 总量，超发封底 0；
+                             #   与 planRemainingPercent / planWindowCaption「5 小时剩余 / 本周剩余」统一按剩余口径展示；
                              #   MiniMax 只回百分比就不显示）；
                              #   重置卡两列平铺不套内卡（auto-fit），名称「5 小时重置卡 / 周重置卡」，
                              #   张数做微型胶囊；期限卡面只写日期，时刻悬停；3 天内/已过期标黄；
-                             #   planResetCardHighlight：只给最紧且 ≥90% 的那张按钮上强调色，**不禁用**另一张；
-                             #   planWindowUnused：窗口一点没用（0%）**只劝退，不禁用按钮**——用户拍板 2026-09-21
-                             #   「看着劝退吧 不拦截」。落地：①确认框写已用 X% ②0% 确认按钮改「仍要用」；
+                             #   planResetCardHighlight：只给最紧且 ≥90%（剩 ≤10%）的那张按钮上强调色，**不禁用**另一张；
+                             #   planWindowUnused：窗口一点没用（剩余 100%）**只劝退，不禁用按钮**——用户拍板 2026-09-21
+                             #   「看着劝退吧 不拦截」。落地：①确认框写剩余 X% ②剩余 100% 确认按钮改「仍要用」；
                              #   **重置卡里不写「已用 X%」**（用量已经在上面两个窗口）；
                              #   planLevelLabel 全小写等级首字母大写（智谱实测回 level:"max"）
                              #   （tests/plan-quota.test.ts）

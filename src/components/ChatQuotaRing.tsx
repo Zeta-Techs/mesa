@@ -10,10 +10,10 @@ import {
   type ChatQuotaTone,
 } from "../chat-quota";
 import {
-  planAbsoluteQuotaPair,
   planCapsuleLabel,
   planLevelLabel,
   planProviderLabel,
+  planRemainingQuotaPair,
   planResetRemain,
   planWindowLabel,
 } from "../plan-quota";
@@ -497,7 +497,7 @@ export default function ChatQuotaRing({
                 <div className="mt-2.5 space-y-2.5">
                   {view.windows.map((w) => {
                     const remain = planResetRemain(w.resetsAt, now);
-                    const absPair = planAbsoluteQuotaPair(w.used, w.total);
+                    const remPair = planRemainingQuotaPair(w.used, w.total);
                     return (
                       <div key={w.window} className="flex items-center gap-2.5">
                         <PopoverMiniRing
@@ -516,10 +516,10 @@ export default function ChatQuotaRing({
                               {w.remainPct}%
                             </span>
                           </div>
-                          {(remain || absPair) && (
+                          {(remain || remPair) && (
                             <div className="mt-0.5 flex items-center justify-between gap-2 text-micro tabular-nums text-l4">
                               <span className="truncate">{remain ?? ""}</span>
-                              {absPair && <span className="shrink-0">已用 {absPair}</span>}
+                              {remPair && <span className="shrink-0">剩余 {remPair}</span>}
                             </div>
                           )}
                         </div>

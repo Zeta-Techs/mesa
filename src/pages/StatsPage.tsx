@@ -26,7 +26,8 @@ import ActivityHeatmap from "../components/ActivityHeatmap";
 import {
   formatPlanTimestamp,
   formatResetPoint,
-  planAbsoluteQuotaPair,
+  planRemainingPercent,
+  planRemainingQuotaPair,
   planWindowUnused,
   planProviderLabel,
   planQuotaDataAt,
@@ -315,26 +316,28 @@ function PlanWindowBlock({
   primary?: boolean;
 }) {
   const { bar, text } = quotaTone(win.usedPercent);
-  const abs = planAbsoluteQuotaPair(win.used, win.total);
+  const remainPct = planRemainingPercent(win.usedPercent);
+  const shownPct = Math.round(remainPct);
+  const abs = planRemainingQuotaPair(win.used, win.total);
   const remain = planResetRemain(win.resetsAt, now);
   const point = formatResetPoint(win.resetsAt, now);
   const remainTitle = remain
     ? [point, lastReset ? `上次重置：${lastReset}` : null].filter(Boolean).join(" · ")
     : "这家没有给出这个窗口的重置时间";
-  const fill = Math.min(100, Math.max(0, win.usedPercent));
+  const fill = remainPct;
   const caption = planWindowCaption(win.window);
 
   if (!primary) {
-    // 次级窗口：一行说完「哪个窗口 / 用了多少 / 何时重置」。
-    // 条与密钥行共用 SecondaryUsageTrack，倒计时跟在用量后面，不把空档留在行尾。
+    // 次级窗口：一行说完「哪个窗口 / 还剩多少 / 何时重置」。
+    // 条与密钥行共用 SecondaryUsageTrack，倒计时跟在余量后面，不把空档留在行尾。
     return (
       <div className="flex items-center gap-2.5">
         <span className="w-24 max-w-24 shrink-0 truncate text-xs text-l3">{caption}</span>
         <SecondaryUsageTrack fill={fill} bar={bar} />
         <span className={`min-w-8 shrink-0 whitespace-nowrap text-xs tabular-nums ${text}`}>
-          {win.usedPercent.toFixed(0)}%
+          {shownPct}%
         </span>
-        {/* 可截断：窄窗下「140,000 / 140,000」不许把整行顶出去 */}
+        {/* 可截断：窄窗下「60,000 / 140,000」不许把整行顶出去 */}
         {abs && <span className="min-w-0 truncate text-micro tabular-nums text-l4">{abs}</span>}
         <span
           className={`shrink-0 text-micro ${remain ? "text-l3" : "text-l4"}`}
@@ -352,7 +355,7 @@ function PlanWindowBlock({
       <div className="mt-0.5 flex flex-col gap-2">
         <div className="flex items-baseline gap-2">
           <span className={`text-2xl font-semibold tracking-tight tabular-nums ${text}`}>
-            {win.usedPercent.toFixed(0)}
+            {shownPct}
             <span className="ml-1 text-base font-medium tracking-normal text-l3">%</span>
           </span>
           {abs && <span className="text-xs tabular-nums text-l3">{abs}</span>}
@@ -565,7 +568,7 @@ function QuotaFold({ open, onToggle, label }: { open: boolean; onToggle: () => v
 
 type QuotaTone = "warn" | "err" | null;
 
-/** 收起态的小圆环：订阅画已用比例，网关余额画剩余比例（与展开后的余额条同向，满圈 = 钱还多）；颜色走告警档 */
+/** 收起态的小圆环：订阅余量与网关余额统一按剩余比例绘制（满圈 = 余量充足，与展开后的进度条同向）；颜色走告警档 */
 function QuotaRing({ pct, tone, label }: { pct: number; tone: QuotaTone; label: string }) {
   const r = 14;
   const c = 2 * Math.PI * r;
@@ -591,7 +594,7 @@ function QuotaRing({ pct, tone, label }: { pct: number; tone: QuotaTone; label: 
   );
 }
 
-/** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周已用；网关：当前余额），各带一个小圆环，点一下展开 */
+/** 余量 / 余额卡收起时的一行：只给最要紧的几个数（订阅：5 小时 / 本周剩余；网关：当前余额），各带一个小圆环，点一下展开 */
 /** 最近的会滚动的祖先（提示气泡随它滚动收起） */
 function scrollParent(el: HTMLElement): Element | null {
   for (let p = el.parentElement; p; p = p.parentElement) {
@@ -1115,7 +1118,7 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
       {error && (
         <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
       )}
-      {/* 收起时只看各窗已用（5 小时 / 本周…），多家时 GPU 连续轨道左右滑动切换、右侧同排轻切钮；
+      {/* 收起时只看各窗剩余（5 小时 / 本周…），多家时 GPU 连续轨道左右滑动切换、右侧同排轻切钮；
           展开后卡头切号，不再铺多行供应商标签栏 */}
       {!planOpen ? (
         <div className="mt-3 flex items-center gap-3">
@@ -1132,13 +1135,15 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
                   <QuotaSummary
                     inactive={idx !== planSwipe.activeIdx}
                     items={item.windows.map((w) => {
+                      const remainPct = planRemainingPercent(w.usedPercent);
+                      const shownPct = Math.round(remainPct);
                       const tone: QuotaTone = w.usedPercent >= 90 ? "err" : w.usedPercent >= 70 ? "warn" : null;
-                      const label = `${planWindowLabel(w.window)}已用`;
+                      const label = planWindowCaption(w.window);
                       return {
                         label,
-                        value: `${Math.round(w.usedPercent)}%`,
+                        value: `${shownPct}%`,
                         tone,
-                        ring: { pct: w.usedPercent, tone, label: `${label} ${Math.round(w.usedPercent)}%` },
+                        ring: { pct: remainPct, tone, label: `${label} ${shownPct}%` },
                       };
                     })}
                     empty={item.error && !item.ok ? item.error : "暂无数据"}
@@ -1681,7 +1686,7 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
                 </div>
                 {usedPct != null && (
                   <div className="mt-1 text-micro tabular-nums text-l4">
-                    已消耗 {usedPct.toFixed(0)}%
+                    剩余 {Math.round(balanceBar.remainPct)}%
                   </div>
                 )}
               </>
@@ -2083,12 +2088,13 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       // 把「这个窗口现在用了多少」写进确认文案：这是不可撤销的消费，
       // 确认前该看到自己按的是哪个数。**0% 时明说会白费但不拦**（2026-09-21 用户：「看着劝退吧 不拦截」）
       const used = row.windows.find((w) => w.window === type)?.usedPercent;
+      const remainPct = used == null ? null : Math.round(planRemainingPercent(used));
       const usedNote =
-        used == null
+        used == null || remainPct == null
           ? ""
           : used <= 0
-            ? `该窗口当前已用 0%，重置不会腾出任何额度，这张卡会白费。`
-            : `该窗口当前已用 ${used.toFixed(0)}%。`;
+            ? `该窗口当前剩余 100%，重置不会腾出任何额度，这张卡会白费。`
+            : `该窗口当前剩余 ${remainPct}%。`;
       const ok = await confirmDialog(
         `立即重置「${label}」窗口的额度？${usedNote}将消耗一张重置卡，消费后不可撤销。${
           expiryAt ? `将优先使用最早过期的一张（${expiryAt} 过期）。` : "将优先使用最早过期的一张。"

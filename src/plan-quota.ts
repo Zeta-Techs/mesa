@@ -313,9 +313,15 @@ export function planResetCardHighlight(
   return w.window === cardWindow && quotaBarLevel(w.usedPercent) === "danger";
 }
 
-/** 大数字上方的说明：这个百分比属于哪个窗口（「5 小时已用」） */
+/** 剩余百分比（0–100）：统一按油量表口径显示「还剩多少」，满 = 安心、低 = 紧迫 */
+export function planRemainingPercent(usedPercent: number): number {
+  if (!Number.isFinite(usedPercent)) return 0;
+  return Math.min(100, Math.max(0, 100 - usedPercent));
+}
+
+/** 大数字上方的说明：这个百分比属于哪个窗口（「5 小时剩余」/「本周剩余」） */
 export function planWindowCaption(window: string): string {
-  return `${planWindowLabel(window)}已用`;
+  return `${planWindowLabel(window)}剩余`;
 }
 
 // ===== 绝对值（智谱积分、Kimi 配额点数；MiniMax 只有百分比） =====
@@ -329,7 +335,18 @@ export function formatQuotaPoints(value: number): string {
   return frac ? `${grouped}.${frac}` : grouped;
 }
 
-/** 百分比旁的绝对值「140,000 / 140,000」；已用超过总量时按总量封顶（智谱周窗会到 140,023） */
+/** 百分比旁的剩余绝对值「60,000 / 140,000」；已用超发时剩余封底 0，未用时封顶总量 */
+export function planRemainingQuotaPair(
+  used: number | null | undefined,
+  total: number | null | undefined,
+): string | null {
+  if (used == null || total == null) return null;
+  const rawRemain = total - used;
+  const remain = total > 0 ? Math.min(total, Math.max(0, rawRemain)) : Math.max(0, rawRemain);
+  return `${formatQuotaPoints(remain)} / ${formatQuotaPoints(total)}`;
+}
+
+/** 百分比旁的已用绝对值「140,000 / 140,000」；已用超过总量时按总量封顶（智谱周窗会到 140,023） */
 export function planAbsoluteQuotaPair(
   used: number | null | undefined,
   total: number | null | undefined,
