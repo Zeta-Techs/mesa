@@ -7,6 +7,7 @@ import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
   profileQuotaKind,
   resolveChatQuotaView,
+  shortWindowTag,
   type ChatQuotaTone,
 } from "../chat-quota";
 import {
@@ -328,6 +329,10 @@ export default function ChatQuotaRing({
           <MicroRing ratio={view.ringUsedPct / 100} />
         ) : (
           <Wallet aria-hidden="true" strokeWidth={2.2} className="size-3.5 shrink-0" />
+        )}
+        {/* 用量数字前写最紧窗口（5h / 7d），与左边不带标签的上下文圆环区分；标签比数字淡一档 */}
+        {isPlan && shortWindowTag(view.primary.window) && (
+          <span className="text-micro font-normal tabular-nums opacity-60">{shortWindowTag(view.primary.window)}</span>
         )}
         <span className="text-micro font-normal tabular-nums">
           {isPlan ? `${view.usedPct}%` : walletLabel}

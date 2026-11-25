@@ -93,7 +93,7 @@ test("resolveChatQuotaView：订阅按自然序保留 5h 与周双窗，并按�
     view.windows.map((w) => [w.window, w.shortTag, w.remainPct]),
     [
       ["five_hour", "5h", 88],
-      ["weekly", "周", 36],
+      ["weekly", "7d", 36],
     ],
   );
   assert.equal(view.remainPct, 36);

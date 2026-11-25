@@ -14,7 +14,7 @@ export type ChatQuotaTone = "ok" | "warn" | "danger";
 
 export interface ChatQuotaWindowItem {
   window: string;
-  /** 底栏短标签（如 5h / 周 / 月），单窗展示时可省略 */
+  /** 底栏短标签（5h / 7d / 30d）；没有固定时长的窗口为 null */
   shortTag: string | null;
   remainPct: number;
   usedPercent: number;
@@ -72,10 +72,11 @@ const WINDOW_DISPLAY_RANK: Record<string, number> = {
   credits: 3,
 };
 
+/** 底栏用量数字前的窗口标签：统一写成「数字 + 单位」（5h / 7d / 30d），不用「周」「月」汉字——和 5h 并排时字形突兀（2026-11-25 用户） */
 export function shortWindowTag(window: string): string | null {
   if (window === "five_hour") return "5h";
-  if (window === "weekly" || window === "agy_argon_weekly") return "周";
-  if (window === "monthly") return "月";
+  if (window === "weekly" || window === "agy_argon_weekly") return "7d";
+  if (window === "monthly") return "30d";
   return null;
 }
 
