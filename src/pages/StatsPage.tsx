@@ -70,7 +70,7 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { toast } from "../toast";
 import {
   barWidthPct,
@@ -712,7 +712,7 @@ interface QuotaOrderItem {
   checked: boolean;
 }
 
-/** 订阅余量 / 网关余额共用：显示筛选与轮播排序面板，采用设置页「岛上显示的入口」同款轻描边开关按钮 */
+/** 订阅余量 / 网关余额共用：显示筛选与轮播排序面板，采用中性行 + 全站 Toggle 开关与排序钮 */
 function QuotaOrderPanel({
   title,
   items,
@@ -759,39 +759,22 @@ function QuotaOrderPanel({
           </button>
         </div>
       </div>
-      <ul className="space-y-1.5">
+      <ul className="space-y-0.5">
         {items.map((item, idx) => {
           const isLastVisible = item.checked && visibleCount <= 1;
           return (
-            <li key={item.id} className="flex items-center gap-1.5">
-              <button
-                type="button"
-                role="checkbox"
-                aria-checked={item.checked}
-                aria-disabled={isLastVisible || undefined}
-                title={
-                  isLastVisible
-                    ? "至少保留一项显示"
-                    : item.hint
-                      ? `${item.label}（${item.hint}）`
-                      : item.label
-                }
-                onClick={() => {
-                  if (isLastVisible) return;
-                  onToggle(item.id);
-                }}
-                className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left text-xs transition-colors ${
-                  item.checked
-                    ? "border-cta/45 bg-cta/10 text-l1 hover:bg-cta/15"
-                    : "border-hairline bg-transparent text-l3 hover:bg-hover hover:text-l2"
-                } ${isLastVisible ? "cursor-default" : "cursor-pointer"}`}
+            <li
+              key={item.id}
+              className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-hover"
+            >
+              <div
+                className={`flex min-w-0 flex-1 items-center gap-2 transition-opacity ${
+                  item.checked ? "opacity-100" : "opacity-50"
+                }`}
+                title={item.hint ? `${item.label}（${item.hint}）` : item.label}
               >
                 {item.icon && (
-                  <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center transition-opacity ${
-                      item.checked ? "opacity-100" : "opacity-45"
-                    }`}
-                  >
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                     {item.icon}
                   </span>
                 )}
@@ -803,34 +786,46 @@ function QuotaOrderPanel({
                     <span className="ml-1.5 text-micro text-l4">{item.hint}</span>
                   ) : null}
                 </span>
-                <Check
-                  aria-hidden="true"
-                  className={`h-3.5 w-3.5 shrink-0 transition-opacity ${
-                    item.checked ? "text-cta opacity-100" : "opacity-0"
-                  }`}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Toggle
+                  label={`在卡片中显示 ${item.label}`}
+                  checked={item.checked}
+                  disabled={isLastVisible}
+                  title={
+                    isLastVisible
+                      ? "至少保留一项显示"
+                      : item.checked
+                        ? "关闭以隐藏"
+                        : "开启以显示"
+                  }
+                  onChange={() => {
+                    if (isLastVisible) return;
+                    onToggle(item.id);
+                  }}
                 />
-              </button>
-              <div className="flex shrink-0 items-center gap-0.5">
-                <button
-                  type="button"
-                  disabled={idx === 0}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
-                  aria-label={`上移 ${item.label}`}
-                  title="上移"
-                  onClick={() => onMove(item.id, -1)}
-                >
-                  <ArrowUp aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  disabled={idx === items.length - 1}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
-                  aria-label={`下移 ${item.label}`}
-                  title="下移"
-                  onClick={() => onMove(item.id, 1)}
-                >
-                  <ArrowDown aria-hidden="true" className="h-3.5 w-3.5" />
-                </button>
+                <div className="flex items-center gap-0.5 border-l border-hairline pl-1.5">
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                    aria-label={`上移 ${item.label}`}
+                    title="上移"
+                    onClick={() => onMove(item.id, -1)}
+                  >
+                    <ArrowUp aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === items.length - 1}
+                    className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                    aria-label={`下移 ${item.label}`}
+                    title="下移"
+                    onClick={() => onMove(item.id, 1)}
+                  >
+                    <ArrowDown aria-hidden="true" className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             </li>
           );

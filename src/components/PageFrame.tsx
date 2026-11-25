@@ -563,10 +563,14 @@ export function Toggle({
   checked,
   onChange,
   label,
+  disabled = false,
+  title,
 }: {
   checked: boolean;
   onChange: (checked: boolean) => void;
   label: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   return (
     <button
@@ -574,8 +578,12 @@ export function Toggle({
       role="switch"
       aria-checked={checked}
       aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={`ccode-toggle relative h-5 w-9 shrink-0 rounded-full border transition-colors ${
+      disabled={disabled}
+      title={title}
+      onClick={() => {
+        if (!disabled) onChange(!checked);
+      }}
+      className={`ccode-toggle relative h-5 w-9 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
         checked ? "border-cta-bd bg-cta" : "border-field bg-switch-off"
       }`}
     >

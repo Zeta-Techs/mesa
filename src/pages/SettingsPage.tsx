@@ -4,7 +4,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookUser,
   ChartColumn,
-  Check,
   Download,
   Globe,
   HardDrive,
@@ -3568,46 +3567,48 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             </button>
           }
         >
-          {/* 9 个入口按 3×3 图标卡片排布（无尾行空洞，与上方「助手形象」统一选中态语言） */}
-          <div className="grid grid-cols-3 gap-2 py-2">
+          {/* 9 个入口按 3×3 开关行排布：中性图标与文字 + 右侧全站 Toggle，避免整格强调色铺满 */}
+          <div className="grid grid-cols-1 gap-x-6 py-1 sm:grid-cols-2 md:grid-cols-3">
             {NAV_CAPSULE_SETTING_ITEMS.map((item) => {
               const selected = normalizeNavCapsuleVisibleItems(
                 settings?.navCapsuleVisibleItems,
               ).includes(item.id);
               const Icon = item.Icon;
+              const onToggle = (nextChecked: boolean) => {
+                const current = normalizeNavCapsuleVisibleItems(
+                  settings?.navCapsuleVisibleItems,
+                );
+                const next = nextChecked
+                  ? [...new Set([...current, item.id])]
+                  : current.filter((id) => id !== item.id);
+                void patch({ navCapsuleVisibleItems: next });
+              };
               return (
-                <button
+                <div
                   key={item.id}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={selected}
-                  onClick={() => {
-                    const current = normalizeNavCapsuleVisibleItems(
-                      settings?.navCapsuleVisibleItems,
-                    );
-                    const next = !selected
-                      ? [...new Set([...current, item.id])]
-                      : current.filter((id) => id !== item.id);
-                    void patch({ navCapsuleVisibleItems: next });
-                  }}
-                  className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-medium transition-colors ${
-                    selected
-                      ? "border-cta/50 bg-cta/10 text-l1"
-                      : "border-hairline bg-transparent text-l3 hover:bg-hover hover:text-l2"
-                  }`}
+                  className="flex min-h-10 items-center justify-between gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-hover"
                 >
-                  <Icon
-                    aria-hidden="true"
-                    className={`h-3.5 w-3.5 shrink-0 ${selected ? "text-cta" : "text-l4"}`}
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Icon
+                      aria-hidden="true"
+                      className={`h-4 w-4 shrink-0 transition-colors ${
+                        selected ? "text-l2" : "text-l4"
+                      }`}
+                    />
+                    <span
+                      className={`truncate text-xs font-medium transition-colors ${
+                        selected ? "text-l1" : "text-l3"
+                      }`}
+                    >
+                      {item.label}
+                    </span>
+                  </div>
+                  <Toggle
+                    label={`在灵动岛显示${item.label}`}
+                    checked={selected}
+                    onChange={onToggle}
                   />
-                  <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
-                  <Check
-                    aria-hidden="true"
-                    className={`h-3.5 w-3.5 shrink-0 transition-opacity ${
-                      selected ? "text-cta opacity-100" : "opacity-0"
-                    }`}
-                  />
-                </button>
+                </div>
               );
             })}
           </div>
