@@ -362,41 +362,43 @@ export default function ChatQuotaRing({
       : 0;
 
   return (
-    <button
-      ref={btnRef}
-      type="button"
-      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
-      aria-label={ariaLabel}
-      aria-haspopup="dialog"
-      aria-expanded={Boolean(panel)}
-      onClick={() => {
-        if (panel) {
-          setPanel(null);
-          return;
-        }
-        if (!btnRef.current) return;
-        setTip(null);
-        setPanel(anchor(btnRef.current));
-      }}
-      onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
-      onMouseLeave={() => setTip(null)}
-    >
-      {isPlan ? (
-        <ConcentricMicroRing
-          outerPct={view.primary.usedPercent}
-          outerTone={view.tone}
-          innerPct={view.secondary?.usedPercent ?? null}
-          innerTone={view.secondary ? quotaBarLevel(view.secondary.usedPercent) : undefined}
-        />
-      ) : (
-        <ConcentricMicroRing
-          outerPct={view.remainPct ?? 100}
-          outerTone={view.tone}
-        />
-      )}
-      <span className={`text-micro font-medium tabular-nums ${textToneClass(view.tone)}`}>
-        {compactLabel}
-      </span>
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+        aria-label={ariaLabel}
+        aria-haspopup="dialog"
+        aria-expanded={Boolean(panel)}
+        onClick={() => {
+          if (panel) {
+            setPanel(null);
+            return;
+          }
+          if (!btnRef.current) return;
+          setTip(null);
+          setPanel(anchor(btnRef.current));
+        }}
+        onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
+        onMouseLeave={() => setTip(null)}
+      >
+        {isPlan ? (
+          <ConcentricMicroRing
+            outerPct={view.primary.usedPercent}
+            outerTone={view.tone}
+            innerPct={view.secondary?.usedPercent ?? null}
+            innerTone={view.secondary ? quotaBarLevel(view.secondary.usedPercent) : undefined}
+          />
+        ) : (
+          <ConcentricMicroRing
+            outerPct={view.remainPct ?? 100}
+            outerTone={view.tone}
+          />
+        )}
+        <span className={`text-micro font-medium tabular-nums ${textToneClass(view.tone)}`}>
+          {compactLabel}
+        </span>
+      </button>
 
       {/* 轻量悬停提示 */}
       {tip &&
@@ -625,6 +627,6 @@ export default function ChatQuotaRing({
           </div>,
           document.body,
         )}
-    </button>
+    </>
   );
 }
