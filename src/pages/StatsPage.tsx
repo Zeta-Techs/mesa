@@ -70,7 +70,7 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, Info, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { toast } from "../toast";
 import {
   barWidthPct,
@@ -392,17 +392,28 @@ function wowLabel(
   wow: WeekOverWeek | null,
   currency: "$" | "¥",
   rate: number,
-): { text: string; tone: "up" | "down" | "flat" } | null {
+): { text: string; title: string; tone: "up" | "down" | "flat" } | null {
   if (!wow) return null;
-  const amount = fmtCost(wow.thisWeek, currency, rate, false);
-  if (wow.percent == null) return { text: `本周 ${amount}`, tone: "flat" };
-  if (wow.percent === 0)
-    return { text: `本周 ${amount} · 与上周持平`, tone: "flat" };
+  const thisW = fmtCost(wow.thisWeek, currency, rate, false);
+  const lastW = fmtCost(wow.lastWeek, currency, rate, false);
+  const title = `近 7 天 ${thisW} · 上周 ${lastW}`;
+  if (wow.percent == null) return { text: `本周 ${thisW}`, title, tone: "flat" };
+  if (wow.percent === 0) return { text: "与上周持平", title, tone: "flat" };
   const arrow = wow.percent > 0 ? "▲" : "▼";
   return {
-    text: `本周 ${amount} · 较上周 ${arrow}${Math.abs(wow.percent)}%`,
+    text: `较上周 ${arrow}${Math.abs(wow.percent)}%`,
+    title,
     tone: wow.percent > 0 ? "up" : "down",
   };
+}
+
+/** 概览卡紧凑 token 读数：十亿级自动进位到 B，悬停保留精确全数对账 */
+function compactOverviewTokens(n: number): string {
+  if (n >= 1_000_000_000) {
+    const decimals = n >= 10_000_000_000 ? 1 : 2;
+    return `${(n / 1_000_000_000).toFixed(decimals).replace(/\.?0+$/, "")}B`;
+  }
+  return compact(n);
 }
 
 type ChartPt = {
@@ -1756,20 +1767,26 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
   );
 });
 
-function StatLine({
+function StatCell({
   label,
+  sub,
   value,
-  valueClass,
+  title,
 }: {
   label: string;
+  sub?: string;
   value: string;
-  valueClass?: string;
+  title?: string;
 }) {
-  // 概览卡的一行明细：左名右值（2026-10-29 参考 Claude 客户端用量页）
   return (
-    <div className="flex items-baseline justify-between gap-4">
-      <dt className="text-l2">{label}</dt>
-      <dd className={`tabular-nums ${valueClass ?? "text-l1"}`}>{value}</dd>
+    <div className="min-w-0" title={title}>
+      <dt className="flex items-baseline gap-1 text-micro text-l3">
+        <span className="truncate">{label}</span>
+        {sub && <span className="shrink-0 tabular-nums text-l4">{sub}</span>}
+      </dt>
+      <dd className="mt-0.5 truncate text-sm font-medium tabular-nums text-l1">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -2618,14 +2635,22 @@ export default function StatsPage({ visible }: { visible: boolean }) {
         />
       ) : (
         <>
-          {/* 概览两张卡（参考 Claude 客户端用量页）：大数字一行，下面左名右值的明细行，脚注一句口径。
-              次要指标只留对话次数与不计费（2026-10-23 用户「没用的不要」）；tokens 明细给全数（不缩写），方便对账 */}
+          {/* 概览两张卡：主数字 + 一行紧凑明细格，口径说明收进标题旁 ⓘ 悬停，去掉卡底大段脚注与冗余进度条 */}
           <div className="mb-4 grid gap-4 md:grid-cols-2">
             <section className="ccode-well ccode-card flex flex-col p-4" aria-label="花费">
               <div className="flex items-center justify-between gap-2">
-                <h2 className="text-base font-medium text-l1">花费</h2>
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-sm font-medium text-l2">花费</h2>
+                  <span
+                    className="inline-flex text-l4 hover:text-l2"
+                    title="按各厂商官方价（含缓存读写价）估算；官方订阅与 Mesa 内部 AI 统计 tokens 但不计入费用；≥ 表示含未计价模型；经中转站的实际扣费以中转站为准。"
+                  >
+                    <Info aria-hidden="true" className="h-3.5 w-3.5" />
+                  </span>
+                </div>
                 {badge && (
                   <span
+                    title={badge.title}
                     className={`inline-flex items-center rounded-full px-2 py-0.5 text-micro font-medium tabular-nums ${
                       badge.tone === "up"
                         ? "bg-warn text-warn-text"
@@ -2634,7 +2659,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                           : "bg-inset text-l3"
                     }`}
                   >
-                    周环比 {badge.text}
+                    {badge.text}
                   </span>
                 )}
               </div>
@@ -2642,27 +2667,35 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
                   {fmtCost(stats.cards.costUsd, currency, rate, stats.cards.costPartial)}
                 </span>
-                {/* 2026-11-07 用户拍板：只按官方价估算，不做中转倍率；口径写明，免得当成实际扣费 */}
-                <span
-                  className="text-xs text-l3"
-                  title="按各厂商官方价（含缓存读写价）估算；经中转站的实际扣费以中转站为准，单次超长上下文的加价未计"
-                >
-                  按官方价估算
-                </span>
+                <span className="text-xs text-l4">按官方价估算</span>
               </div>
-              <dl className="mt-3 space-y-1.5 border-t border-hairline pt-2.5 text-xs">
-                <StatLine label="对话次数" value={`${stats.cards.sessions.toLocaleString("en-US")} 次`} />
+              <dl className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(5.5rem,1fr))] gap-x-4 gap-y-2.5 border-t border-hairline pt-3">
+                <StatCell
+                  label="对话"
+                  value={`${stats.cards.sessions.toLocaleString("en-US")} 次`}
+                />
+                {wow && (
+                  <StatCell
+                    label="本周"
+                    value={fmtCost(wow.thisWeek, currency, rate, false)}
+                    title={badge?.title}
+                  />
+                )}
                 {stats.cards.officialTokens > 0 && (
-                  <StatLine label="订阅（不计费）" value={`${compact(stats.cards.officialTokens)} tokens`} />
+                  <StatCell
+                    label="订阅不计费"
+                    value={compactOverviewTokens(stats.cards.officialTokens)}
+                    title={`官方订阅：${stats.cards.officialTokens.toLocaleString("en-US")} tokens（不计入费用）`}
+                  />
                 )}
                 {stats.cards.internalTokens > 0 && (
-                  <StatLine label="Mesa 内部（不计费）" value={`${compact(stats.cards.internalTokens)} tokens`} />
+                  <StatCell
+                    label="内部不计费"
+                    value={compactOverviewTokens(stats.cards.internalTokens)}
+                    title={`Mesa 内部 AI：${stats.cards.internalTokens.toLocaleString("en-US")} tokens（不计入费用）`}
+                  />
                 )}
               </dl>
-              {/* 脚注贴卡底：两张卡明细行数不一样，脚注对齐成一条线 */}
-              <p className="mt-auto pt-3 text-micro leading-relaxed text-l4">
-                官方订阅与 Mesa 内部 AI 的 tokens 统计在内，但不算进费用；≥ 表示含未计价模型。走中转的实际扣费以中转站为准。
-              </p>
             </section>
             <section className="ccode-well ccode-card flex flex-col p-4" aria-label="tokens">
               {(() => {
@@ -2674,7 +2707,15 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                 return (
                   <>
                     <div className="flex items-center justify-between gap-2">
-                      <h2 className="text-base font-medium text-l1">tokens</h2>
+                      <div className="flex items-center gap-1.5">
+                        <h2 className="text-sm font-medium text-l2">Tokens</h2>
+                        <span
+                          className="inline-flex text-l4 hover:text-l2"
+                          title="上方大数字仅统计输入与输出，缓存读写单独列示；悬停各数字可查看精确全数。"
+                        >
+                          <Info aria-hidden="true" className="h-3.5 w-3.5" />
+                        </span>
+                      </div>
                       {cacheHitPct > 0 && (
                         <span
                           className="inline-flex items-center rounded-full bg-ok px-2 py-0.5 text-micro font-medium tabular-nums text-ok-text"
@@ -2685,36 +2726,38 @@ export default function StatsPage({ visible }: { visible: boolean }) {
                       )}
                     </div>
                     <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-2xl font-semibold tracking-tight tabular-nums text-l1">
-                        {compact(totalTokens)}
+                      <span
+                        className="text-2xl font-semibold tracking-tight tabular-nums text-l1"
+                        title={`${totalTokens.toLocaleString("en-US")} tokens`}
+                      >
+                        {compactOverviewTokens(totalTokens)}
                       </span>
-                      <span className="text-xs text-l3">输入 + 输出</span>
+                      <span className="text-xs text-l4">输入 + 输出</span>
                     </div>
-                    <div className="mt-2.5">
-                      <div className="flex h-2 w-full overflow-hidden rounded-full bg-inset" aria-hidden="true">
-                        <span className="h-full bg-cta transition-[width]" style={{ width: `${inShare}%` }} />
-                        <span className="h-full bg-l3/50 transition-[width]" style={{ width: `${100 - inShare}%` }} />
-                      </div>
-                      <div className="mt-1 flex items-center justify-between text-micro tabular-nums text-l3">
-                        <span className="inline-flex items-center gap-1">
-                          <span className="size-1.5 rounded-full bg-cta" aria-hidden="true" />
-                          输入 {inShare}%
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <span className="size-1.5 rounded-full bg-l3/60" aria-hidden="true" />
-                          输出 {100 - inShare}%
-                        </span>
-                      </div>
-                    </div>
-                    <dl className="mt-2.5 space-y-1.5 border-t border-hairline pt-2.5 text-xs">
-                      <StatLine label="输入" value={stats.cards.input.toLocaleString("en-US")} />
-                      <StatLine label="输出" value={stats.cards.output.toLocaleString("en-US")} />
-                      <StatLine label="缓存读" value={stats.cards.cacheRead.toLocaleString("en-US")} />
-                      <StatLine label="缓存写" value={stats.cards.cacheWrite.toLocaleString("en-US")} />
+                    <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-hairline pt-3 sm:grid-cols-4">
+                      <StatCell
+                        label="输入"
+                        sub={totalTokens > 0 ? `${inShare}%` : undefined}
+                        value={compactOverviewTokens(stats.cards.input)}
+                        title={`输入：${stats.cards.input.toLocaleString("en-US")} tokens`}
+                      />
+                      <StatCell
+                        label="输出"
+                        sub={totalTokens > 0 ? `${100 - inShare}%` : undefined}
+                        value={compactOverviewTokens(stats.cards.output)}
+                        title={`输出：${stats.cards.output.toLocaleString("en-US")} tokens`}
+                      />
+                      <StatCell
+                        label="缓存读"
+                        value={compactOverviewTokens(stats.cards.cacheRead)}
+                        title={`缓存读：${stats.cards.cacheRead.toLocaleString("en-US")} tokens`}
+                      />
+                      <StatCell
+                        label="缓存写"
+                        value={compactOverviewTokens(stats.cards.cacheWrite)}
+                        title={`缓存写：${stats.cards.cacheWrite.toLocaleString("en-US")} tokens`}
+                      />
                     </dl>
-                    <p className="mt-auto pt-3 text-micro leading-relaxed text-l4">
-                      上方大数字仅统计输入与输出，缓存读写单独列示对账。
-                    </p>
                   </>
                 );
               })()}
