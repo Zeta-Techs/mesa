@@ -3166,24 +3166,24 @@ fn codex_instructions_read_from_sent_request() {
 #[test]
 #[ignore = "需要本机装着 codex"]
 fn codex_instructions_extract_real() {
+    // 私有临时父目录：不和本机开着的 Mesa 共用配置根 tmp（它也在那里探测、开头还扫掉别人的临时目录）
+    let tmp = std::env::temp_dir().join(format!("ccode-codex-probe-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
     let t = std::time::Instant::now();
-    let text = extract_codex_base_instructions().expect("取不到");
+    let text = extract_codex_base_instructions_in(&tmp).expect("取不到");
     eprintln!("{} 字，用时 {:?}，开头：{}", text.chars().count(), t.elapsed(), &text[..80]);
     assert!(plausible_codex_instructions(&text));
     // 取的是实发版本：Codex 默认没开计划工具，实发的提示词里没有 update_plan 两段
     assert!(!text.contains("update_plan"), "取到了会话文件里没删减的模板");
-    // 临时目录（后台每 0.2 秒重试删、最多 30 秒）清干净：轮询到清空，别死等固定秒数（Codex 0.169 起 Windows 上约 20 秒才放句柄）
-    let tmp = crate::storage::config_root().unwrap().join("tmp");
-    let count_left = || {
-        std::fs::read_dir(&tmp)
-            .map(|d| d.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("codex-instructions-")).count())
-            .unwrap_or(0)
-    };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(35);
+    // 临时目录（后台每 0.2 秒重试删、最多 120 秒）清干净：轮询到清空，别死等固定秒数
+    let count_left = || std::fs::read_dir(&tmp).map(|d| d.flatten().count()).unwrap_or(0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(125);
     while count_left() > 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    assert_eq!(count_left(), 0, "临时目录没删干净");
+    let left = count_left();
+    let _ = std::fs::remove_dir(&tmp);
+    assert_eq!(left, 0, "临时目录没删干净");
 }
 
 #[test]

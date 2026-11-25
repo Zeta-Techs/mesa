@@ -4063,11 +4063,17 @@ fn local_codex_base_instructions(_version: (u32, u32, u32)) -> Option<String> {
 /// 兜底取出的未删减模板（含 `update_plan`），仅供当次用、绝不落盘
 #[cfg_attr(test, allow(dead_code))]
 fn probe_codex_base_instructions() -> Option<(String, bool)> {
+    probe_codex_base_instructions_in(&crate::storage::config_root()?.join("tmp"))
+}
+
+/// `tmp`：放探测临时目录的父目录。生产用配置根下的 tmp；实测测试另给私有目录——同一台机器上开着的 Mesa
+/// 也在配置根 tmp 里探测、开头还会扫掉别人的临时目录，共用就互相干扰（2026-11-25 金丝雀偶发「没删干净」）
+#[cfg_attr(test, allow(dead_code))]
+fn probe_codex_base_instructions_in(tmp: &std::path::Path) -> Option<(String, bool)> {
     const KEY_VAR: &str = "MESA_CODEX_INSTRUCTIONS_PROBE_KEY";
     let bin = resolve_binary("codex")?;
-    let tmp = crate::storage::config_root()?.join("tmp");
     // 上次没删干净的（见下）先扫掉
-    if let Ok(entries) = std::fs::read_dir(&tmp) {
+    if let Ok(entries) = std::fs::read_dir(tmp) {
         for e in entries.flatten() {
             if e.file_name().to_string_lossy().starts_with("codex-instructions-") {
                 let _ = std::fs::remove_dir_all(e.path());
@@ -4140,10 +4146,11 @@ fn probe_codex_base_instructions() -> Option<(String, bool)> {
         let rollout = first_jsonl(&home.join("sessions"))?;
         codex_instructions_from_rollout(&std::fs::read_to_string(rollout).ok()?).map(|s| (s, false))
     })();
-    // Windows 上 codex 退出后目录句柄放得慢（0.5x 约 1.3 秒；0.169 起约 20 秒，实测文件删得掉、空目录删不掉）：放后台重试 30 秒，不拖慢启动
+    // Windows 上 codex 退出后目录句柄放得慢（0.5x 约 1.3 秒；0.169 起约 20 秒，实测文件删得掉、空目录删不掉；
+    // 机器忙时杀毒 / 索引还会多占一阵，2026-11-25 金丝雀里超过 35 秒）：放后台重试 120 秒，不拖慢启动；仍没删掉的下次探测开头扫掉
     if std::fs::remove_dir_all(&scratch).is_err() && scratch.exists() {
         std::thread::spawn(move || {
-            for _ in 0..150 {
+            for _ in 0..600 {
                 std::thread::sleep(std::time::Duration::from_millis(200));
                 if std::fs::remove_dir_all(&scratch).is_ok() || !scratch.exists() {
                     break;
@@ -4155,8 +4162,8 @@ fn probe_codex_base_instructions() -> Option<(String, bool)> {
 }
 
 #[cfg(test)]
-fn extract_codex_base_instructions() -> Option<String> {
-    probe_codex_base_instructions()
+fn extract_codex_base_instructions_in(tmp: &std::path::Path) -> Option<String> {
+    probe_codex_base_instructions_in(tmp)
         .filter(|(_, from_req)| *from_req)
         .map(|(s, _)| s)
 }
