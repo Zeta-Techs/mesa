@@ -32,16 +32,23 @@ export type ChatQuotaView =
       primary: PlanQuotaWindowDto;
       /** 固定自然顺序排列的窗口列表（5 小时优先，其次本周，方便底栏同时展示且位置稳定） */
       windows: ChatQuotaWindowItem[];
-      /** 最紧窗口的剩余百分比（0-100，满圈 = 余量充足） */
+      /** 最紧窗口的剩余百分比（0-100） */
       remainPct: number;
+      /** 最紧窗口的已用百分比（0-100 整数；底栏圆环与数字都写已用，越满越接近上限） */
+      usedPct: number;
       tone: ChatQuotaTone;
     }
   | {
       kind: "wallet";
       row: GatewayBalanceDto;
       usedPct: number | null;
-      /** 剩余比例（0-100，用于画圆环，满圈 = 余额充足） */
+      /** 剩余比例（0-100） */
       remainPct: number | null;
+      /**
+       * 底栏圆环画的已用比例：只有真上限（密钥额度、非不限）才有；
+       * 账户钱包的 total = 剩余 + 历史累计花费，不是上限，画成比例会误导，返回 null（底栏只写余额，不画环）
+       */
+      ringUsedPct: number | null;
       tone: ChatQuotaTone;
     };
 
@@ -167,6 +174,7 @@ export function resolveChatQuotaView(
       primary,
       windows: naturalWindows,
       remainPct: quotaRemainPercent(primary.usedPercent),
+      usedPct: 100 - quotaRemainPercent(primary.usedPercent),
       tone: quotaBarLevel(primary.usedPercent),
     };
   }
@@ -189,11 +197,14 @@ export function resolveChatQuotaView(
         : lowBalance || (usedPct != null && usedPct >= 90 && walletRow.remaining == null)
           ? "warn"
           : "ok";
+    const ringUsedPct =
+      walletRow.source !== "wallet" && !walletRow.unlimited && usedPct != null ? Math.round(usedPct) : null;
     return {
       kind: "wallet",
       row: walletRow,
       usedPct,
       remainPct,
+      ringUsedPct,
       tone,
     };
   }

@@ -97,6 +97,7 @@ test("resolveChatQuotaView：订阅按自然序保留 5h 与周双窗，并按�
     ],
   );
   assert.equal(view.remainPct, 36);
+  assert.equal(view.usedPct, 64);
   assert.equal(view.tone, "ok");
 
   const dangerView = resolveChatQuotaView(
@@ -147,6 +148,8 @@ test("resolveChatQuotaView：New API 优先匹配同站钱包余额且高余额�
   assert.ok(view && view.kind === "wallet");
   assert.equal(view.row.source, "wallet");
   assert.equal(view.row.remaining, 4917.31);
+  // 钱包 total = 剩余 + 历史花费，不是上限：底栏不画比例环
+  assert.equal(view.ringUsedPct, null);
   assert.equal(view.tone, "ok");
 
   // 真剩 ¥5 时标红告警
@@ -158,6 +161,25 @@ test("resolveChatQuotaView：New API 优先匹配同站钱包余额且高余额�
   );
   assert.ok(lowView && lowView.kind === "wallet");
   assert.equal(lowView.tone, "danger");
+});
+
+test("resolveChatQuotaView：只有限额密钥画已用环，不限额度不画", () => {
+  const profile = makeProfile({ id: "p-key", agent: "codex", accountType: "gateway", gatewayId: "gw-key", hasKey: true });
+  const limited = resolveChatQuotaView(
+    profile,
+    [],
+    [makeWalletRow({ gatewayId: "gw-key", source: "token", unlimited: false, remaining: 30, used: 70, total: 100 })],
+  );
+  assert.ok(limited && limited.kind === "wallet");
+  assert.equal(limited.ringUsedPct, 70);
+
+  const unlimited = resolveChatQuotaView(
+    profile,
+    [],
+    [makeWalletRow({ gatewayId: "gw-key", source: "token", unlimited: true, remaining: 30, used: 70, total: 100 })],
+  );
+  assert.ok(unlimited && unlimited.kind === "wallet");
+  assert.equal(unlimited.ringUsedPct, null);
 });
 
 test("resolveChatQuotaView：无匹配或失败行返回 null 不占空位", () => {

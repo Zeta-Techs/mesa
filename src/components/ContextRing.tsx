@@ -96,13 +96,58 @@ function toneClass(tone: ContextTone, warn: boolean): string {
   }
 }
 
-/** 顺时针从 12 点起画实心扇形路径（0 < ratio < 1），避免描边法在 WebKit 上产生圆心针孔伪影 */
-function contextPiePath(cx: number, cy: number, r: number, ratio: number): string {
-  const theta = ratio * Math.PI * 2;
-  const x = cx + r * Math.sin(theta);
-  const y = cy - r * Math.cos(theta);
-  const largeArc = ratio > 0.5 ? 1 : 0;
-  return `M ${cx} ${cy} L ${cx} ${(cy - r).toFixed(3)} A ${r} ${r} 0 ${largeArc} 1 ${x.toFixed(3)} ${y.toFixed(3)} Z`;
+/**
+ * 底栏读数细环（2026-11-25 用户拍板 A 方案）：上下文与订阅用量同一种画法——
+ * 12 点起顺时针、越满越接近上限；弧与底轨都取 currentColor（底轨 20% 透明），颜色由外层文字色决定，
+ * 平时灰、临界才着色。sm = 底栏 14px，md = 浮层 20px；线宽按尺寸等比，外径约占画布 91%。
+ */
+export function MicroRing({
+  ratio,
+  trackColor,
+  size = "sm",
+  className = "",
+}: {
+  /** 0–1，已用比例 */
+  ratio: number;
+  /** 不传 = currentColor 20% 透明 */
+  trackColor?: string;
+  size?: "sm" | "md";
+  className?: string;
+}) {
+  const s = size === "md" ? 20 : 14;
+  const sw = size === "md" ? 2.1 : 1.6;
+  const r = s / 2 - sw / 2 - 0.6;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(1, Math.max(0, ratio));
+  return (
+    <svg
+      viewBox={`0 0 ${s} ${s}`}
+      aria-hidden="true"
+      className={`${size === "md" ? "size-5" : "size-3.5"} shrink-0 -rotate-90 ${className}`}
+    >
+      <circle
+        cx={s / 2}
+        cy={s / 2}
+        r={r}
+        fill="none"
+        strokeWidth={sw}
+        stroke={trackColor ?? "currentColor"}
+        strokeOpacity={trackColor ? undefined : 0.2}
+      />
+      {p > 0 && (
+        <circle
+          cx={s / 2}
+          cy={s / 2}
+          r={r}
+          fill="none"
+          strokeWidth={sw}
+          strokeLinecap="round"
+          stroke="currentColor"
+          strokeDasharray={`${(c * p).toFixed(3)} ${c.toFixed(3)}`}
+        />
+      )}
+    </svg>
+  );
 }
 
 export default function ContextRing({
@@ -117,7 +162,7 @@ export default function ContextRing({
   onCompact,
   color,
   warnColor,
-  trackColor = "var(--color-field)",
+  trackColor,
   className = "",
   showPercent = false,
   imageBytes = null,
@@ -157,13 +202,9 @@ export default function ContextRing({
   /** 窗口未知时的按钮文案（如 "1.3 万 token"） */
   tokenLabel?: string | null;
 }) {
-  // 与底栏右侧订阅余量环（ChatQuotaRing）统一为 14×14 画布、12.6px 光学外径：
-  // 外框 r=5.7 / sw=1.2（外径 12.6px），内嵌实心扇形饼盘 r=4.2（实心填充 = 上下文往里填，空心圆环 = 订阅配额往外扣）
-  const rimR = 5.7;
-  const pieR = 4.2;
   const hasWindow = Boolean(win && win > 0 && ratio !== null);
   const safeRatio = Math.min(1, Math.max(0, ratio ?? 0));
-  const visRatio = safeRatio <= 0 ? 0 : safeRatio >= 0.999 ? 1 : Math.max(0.05, safeRatio);
+  const visRatio = safeRatio <= 0 ? 0 : safeRatio >= 0.999 ? 1 : Math.max(0.03, safeRatio);
   const heavy = imageWeightNote(imageBytes);
   const warn = (hasWindow && safeRatio >= 0.8) || heavy !== null;
   const stroke = warn ? warnColor : color;
@@ -378,23 +419,7 @@ export default function ContextRing({
       >
         {hasWindow ? (
           <>
-            <svg viewBox="0 0 14 14" aria-hidden="true" className="size-3.5 shrink-0">
-              <circle
-                cx="7"
-                cy="7"
-                r={rimR}
-                fill="none"
-                stroke={warn ? "currentColor" : trackColor}
-                strokeOpacity={warn ? 0.5 : undefined}
-                strokeWidth="1.2"
-              />
-              <circle cx="7" cy="7" r={pieR} fill="currentColor" fillOpacity={0.14} />
-              {visRatio >= 1 ? (
-                <circle cx="7" cy="7" r={pieR} fill="currentColor" />
-              ) : visRatio > 0 ? (
-                <path d={contextPiePath(7, 7, pieR, visRatio)} fill="currentColor" />
-              ) : null}
-            </svg>
+            <MicroRing ratio={visRatio} trackColor={warn ? undefined : trackColor} />
             {showPercent && <span className="text-micro font-normal tabular-nums">{pct}%</span>}
           </>
         ) : (

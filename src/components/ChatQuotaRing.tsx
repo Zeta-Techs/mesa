@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Wallet } from "lucide-react";
 import { useAppStore } from "../store";
 import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
@@ -24,6 +24,7 @@ import {
 } from "../gateway-balance";
 import AgentIcon from "./AgentIcon";
 import VendorIcon from "./VendorIcon";
+import { MicroRing } from "./ContextRing";
 import { vendorForPlanProvider } from "../vendor-icon";
 
 const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
@@ -104,122 +105,16 @@ async function fetchWalletBalance(force: boolean): Promise<GatewayBalanceDto[]> 
   return req;
 }
 
-/** 5 小时窗走静默中性灰；警示档走哑光琥珀 caution-text，危急档走珊瑚红 */
-function ringStrokeClass(tone: ChatQuotaTone, tinted = false): string {
-  if (tone === "danger") return "text-err-text";
-  if (tone === "warn") return "text-caution-text";
-  return tinted ? "text-ok-text" : "text-l2";
-}
-
-function isWeeklyWindow(window: string): boolean {
-  return window === "weekly" || window === "agy_argon_weekly" || window === "monthly";
-}
-
 function textToneClass(tone: ChatQuotaTone): string {
   if (tone === "danger") return "text-err-text";
   if (tone === "warn") return "text-caution-text";
   return "text-l3";
 }
 
-/** 14px 极简单环：与左侧上下文饼盘严格对齐 12.6px 光学外径；5 小时保持中性灰轨 + 细弧，本周剩余改为同色系浅弧 + 深轨 */
-function SingleMicroRing({
-  remainPct,
-  tone,
-  tinted = false,
-}: {
-  remainPct: number;
-  tone: ChatQuotaTone;
-  tinted?: boolean;
-}) {
-  // 外径统一：tinted 5.3 + 2.0/2 = 6.3（12.6px），5h 5.5 + 1.6/2 = 6.3（12.6px）
-  const r = tinted ? 5.3 : 5.5;
-  const sw = tinted ? 2.0 : 1.6;
-  const c = 2 * Math.PI * r;
-  const p = Math.min(100, Math.max(0, remainPct));
-  const hueClass = ringStrokeClass(tone, tinted);
-  return (
-    <svg
-      viewBox="0 0 14 14"
-      aria-hidden="true"
-      className={`size-3.5 shrink-0 -rotate-90 ${tinted ? hueClass : ""}`}
-    >
-      <circle
-        cx="7"
-        cy="7"
-        r={r}
-        fill="none"
-        strokeWidth={sw}
-        stroke="currentColor"
-        strokeOpacity={tinted ? 0.28 : undefined}
-        className={tinted ? undefined : "text-l1/12"}
-      />
-      {p > 0 && (
-        <circle
-          cx="7"
-          cy="7"
-          r={r}
-          fill="none"
-          strokeWidth={sw}
-          strokeLinecap="round"
-          stroke="currentColor"
-          strokeDasharray={`${(c * p) / 100} ${c}`}
-          className={tinted ? undefined : hueClass}
-        />
-      )}
-    </svg>
-  );
-}
-
-/** 浮层内的 20px 单环（与底栏同一视觉语言：本周浅深双调、5 小时中性灰轨） */
-function PopoverMiniRing({
-  remainPct,
-  tone,
-  tinted = false,
-}: {
-  remainPct: number;
-  tone: ChatQuotaTone;
-  tinted?: boolean;
-}) {
-  const r = 7.8;
-  const c = 2 * Math.PI * r;
-  const p = Math.min(100, Math.max(0, remainPct));
-  const hueClass = ringStrokeClass(tone, tinted);
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      aria-hidden="true"
-      className={`size-5 shrink-0 -rotate-90 ${tinted ? hueClass : ""}`}
-    >
-      <circle
-        cx="10"
-        cy="10"
-        r={r}
-        fill="none"
-        strokeWidth="2.1"
-        stroke="currentColor"
-        strokeOpacity={tinted ? 0.28 : undefined}
-        className={tinted ? undefined : "text-l1/12"}
-      />
-      {p > 0 && (
-        <circle
-          cx="10"
-          cy="10"
-          r={r}
-          fill="none"
-          strokeWidth="2.1"
-          strokeLinecap="round"
-          stroke="currentColor"
-          strokeDasharray={`${(c * p) / 100} ${c}`}
-          className={tinted ? undefined : hueClass}
-        />
-      )}
-    </svg>
-  );
-}
-
 /**
- * 聊天底栏「订阅余量 / 网关余额」静默单环：
- * - 平时保持低饱和克制态，本周剩余用同色系浅深双调环、5 小时剩余用中性灰轨单环，仅警示/危急时着色；
+ * 聊天底栏「订阅用量 / 网关余额」静默单环（2026-11-25 用户拍板 A 方案，与上下文圆环同形同色）：
+ * - 套餐写已用：圆环与数字都是最紧窗口的已用比例，越满越接近上限；平时灰，警示 / 危急才着色；
+ * - 账户钱包写余额、不画比例环（total 是累计充值，不是上限），用同尺寸钱包图标；只有限额密钥才画已用环；
  * - 悬停出轻量提示，点击弹出 .ccode-float-surface 精简玻璃浮层查看各窗剩余、倒计时与手动刷新；
  * - 当前连接无套餐/钱包余量时自动隐藏，绝不占空位。
  */
@@ -400,7 +295,7 @@ export default function ChatQuotaRing({
     : "";
 
   const ariaLabel = isPlan
-    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%`
+    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}已用 ${view.usedPct}%`
     : `${view.row.gatewayName} 钱包余额 ${walletLabel}`;
 
   const resetCardCount =
@@ -413,7 +308,7 @@ export default function ChatQuotaRing({
       <button
         ref={btnRef}
         type="button"
-        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+        className={`-ml-1 inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta ${textToneClass(view.tone)}`}
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
@@ -427,16 +322,17 @@ export default function ChatQuotaRing({
         onMouseEnter={handleTriggerEnter}
         onMouseLeave={handleLeave}
       >
-        <SingleMicroRing
-          remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
-          tone={view.tone}
-          tinted={isPlan && isWeeklyWindow(view.primary.window)}
-        />
-        <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
-          {isPlan ? `${view.remainPct}%` : walletLabel}
+        {isPlan ? (
+          <MicroRing ratio={view.usedPct / 100} />
+        ) : view.ringUsedPct != null ? (
+          <MicroRing ratio={view.ringUsedPct / 100} />
+        ) : (
+          <Wallet aria-hidden="true" strokeWidth={2.2} className="size-3.5 shrink-0" />
+        )}
+        <span className="text-micro font-normal tabular-nums">
+          {isPlan ? `${view.usedPct}%` : walletLabel}
         </span>
       </button>
-      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
 
       {/* 悬停直出详情浮层（点击可固定展开；外层 pb-1.5 形成隐形悬停桥） */}
       {panel &&
@@ -500,20 +396,20 @@ export default function ChatQuotaRing({
                     const remPair = planRemainingQuotaPair(w.used, w.total);
                     return (
                       <div key={w.window} className="flex items-center gap-2.5">
-                        <PopoverMiniRing
-                          remainPct={w.remainPct}
-                          tone={w.tone}
-                          tinted={isWeeklyWindow(w.window)}
+                        <MicroRing
+                          size="md"
+                          ratio={(100 - w.remainPct) / 100}
+                          className={w.tone === "ok" ? "text-l2" : textToneClass(w.tone)}
                         />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
-                            <span className="truncate text-l2">{planWindowLabel(w.window)}剩余</span>
+                            <span className="truncate text-l2">{planWindowLabel(w.window)}已用</span>
                             <span
                               className={`shrink-0 font-medium tabular-nums ${
                                 w.tone === "ok" ? "text-l1" : textToneClass(w.tone)
                               }`}
                             >
-                              {w.remainPct}%
+                              {100 - w.remainPct}%
                             </span>
                           </div>
                           {(remain || remPair) && (
@@ -540,7 +436,7 @@ export default function ChatQuotaRing({
                       {walletLabel}
                     </span>
                   </div>
-                  {view.remainPct != null && (
+                  {view.ringUsedPct != null && (
                     <>
                       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-l1/10">
                         <div
@@ -551,11 +447,11 @@ export default function ChatQuotaRing({
                                 ? "bg-caution-text"
                                 : "bg-l2"
                           }`}
-                          style={{ width: `${view.remainPct}%` }}
+                          style={{ width: `${view.ringUsedPct}%` }}
                         />
                       </div>
                       <div className="mt-1 text-micro tabular-nums text-l4">
-                        剩余 {Math.round(view.remainPct)}%
+                        已用 {view.ringUsedPct}%
                       </div>
                     </>
                   )}
