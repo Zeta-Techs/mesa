@@ -305,8 +305,6 @@ export default function ChatQuotaRing({
   const levelText = isPlan ? planLevelLabel(view.row.planLevel) : null;
   const dataAt = planQuotaDataAt(view.row.queriedAt, view.row.fromCache);
 
-  const barWindows = isPlan ? view.windows.slice(0, 2) : [];
-  const showWindowTag = barWindows.length > 1;
   const walletLabel = !isPlan
     ? hideWallet
       ? formatBalanceAmountMasked(view.row.currency)
@@ -318,7 +316,7 @@ export default function ChatQuotaRing({
     : "";
 
   const ariaLabel = isPlan
-    ? `${planProviderLabel(view.row.provider)} ${barWindows.map((w) => `${planWindowLabel(w.window)}剩余 ${w.remainPct}%`).join("，")}，点开查看详情`
+    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}剩余 ${view.remainPct}%，点开查看全部窗口`
     : `${view.row.gatewayName} 钱包余额 ${walletLabel}，点开查看详情`;
 
   const resetCardCount =
@@ -328,11 +326,10 @@ export default function ChatQuotaRing({
 
   return (
     <>
-      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
       <button
         ref={btnRef}
         type="button"
-        className="inline-flex h-7 shrink-0 items-center gap-2.5 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={Boolean(panel)}
@@ -348,27 +345,22 @@ export default function ChatQuotaRing({
         onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
         onMouseLeave={() => setTip(null)}
       >
+        <SingleMicroRing
+          remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
+          tone={view.tone}
+        />
         {isPlan ? (
-          barWindows.map((w) => (
-            <span key={w.window} className="inline-flex items-center gap-1">
-              <SingleMicroRing remainPct={w.remainPct} tone={w.tone} />
-              {showWindowTag && w.shortTag && (
-                <span className="text-micro font-normal text-l4">{w.shortTag}</span>
-              )}
-              <span className={`text-micro font-normal tabular-nums ${textToneClass(w.tone)}`}>
-                {w.remainPct}%
-              </span>
-            </span>
-          ))
+          <span className="inline-flex items-baseline gap-0.5 text-micro font-normal tabular-nums">
+            <span className="text-l4">余</span>
+            <span className={textToneClass(view.tone)}>{view.remainPct}%</span>
+          </span>
         ) : (
-          <span className="inline-flex items-center gap-1.5">
-            <SingleMicroRing remainPct={view.remainPct ?? 100} tone={view.tone} />
-            <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
-              {walletLabel}
-            </span>
+          <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
+            {walletLabel}
           </span>
         )}
       </button>
+      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
 
       {/* 轻量悬停提示 */}
       {tip &&

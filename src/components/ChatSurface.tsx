@@ -1581,6 +1581,7 @@ export default function ChatSurface({
         {launchPick?.autoNote && (
           <span className="shrink-0 animate-pulse-brief text-micro text-l4">{launchPick.autoNote}</span>
         )}
+        {quotaRing}
         <ChatModelMenu
           kind="launch"
           pick={launchPick!}
@@ -1597,10 +1598,10 @@ export default function ChatSurface({
           onImageWarning={setImageWarning}
           onOpenTerminal={onOpenTerminal}
         />
-        {quotaRing}
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
       <>
+        {quotaRing}
         <ChatModelMenu
           kind="runtime"
           channel={channel}
@@ -1639,7 +1640,6 @@ export default function ChatSurface({
               : null
           }
         />
-        {quotaRing}
       </>
     ) : quotaRing;
 
