@@ -868,7 +868,8 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    .github/workflows/cli-canary.yml 每天在 macOS / Windows 跑；2026-10-22 起九家、2026-11-14 加入 agy（十家）：有旁路的八家跑旁路端到端（Kimi 2026-11-04、agy 2026-11-14 加入），
    Gemini 只抓屏，Cursor 连不上假网关只记版本；基线 version 随包进应用（src/cli-verified.ts）；2026-10-30 加「全局配置」层：global_phase 用
    global_config 的 e2e_write_global_config 把真写计划写进临时 HOME、不经 Mesa 起 CLI，核对模型与密钥；2026-11-04 加「上游通道雷达」：
-   upstream_phase 看伪终端探询 / --help / 更新日志里的结构化通道线索，与 upstream.json 的结论比，新线索不算红、upstream_issue.py 开 / 追加 issue；见其 README）
+   upstream_phase 看伪终端探询 / --help / 更新日志里的结构化通道线索，与 upstream.json 的结论比，新线索不算红、upstream_issue.py 开 / 追加 issue（2026-11-25 起由工作流的 upstream-radar 任务在两平台跑完后按顺序发）；
+   2026-11-25 Windows 上不接旁路的 Grok / Kimi / agy 抓屏留临时 HOME（CAP_KEEP），chat_channel 的 e2e_parse_kept_home 取会话交解析器核对；见其 README）
   （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
