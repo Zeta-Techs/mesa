@@ -88,3 +88,8 @@ test("xterm 一行转成字的样子：宽字符的第二格不算", () => {
   ]);
   assert.deepEqual(lineCells(undefined), []);
 });
+
+test("输入框上沿写着会话名时也找得到输入框那一行", () => {
+  const rule = "─".repeat(60);
+  assert.equal(claudeInputRow(["⏺ 答完了", "", `${"─".repeat(40)} 只读对比三个文件 ─`, "❯ 再运行一次看看输出", rule]), 3);
+});

@@ -10,6 +10,7 @@
  * 实测（2026-10-22，假网关，126×29）：开关在服务端（growthbook），假网关下要设 CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=1 才出；
  * 第二轮起才猜（头一轮不猜）；终端失焦（ESC[O）之后照样出。
  */
+import { claudePromptTop } from "./live-reply.ts";
 import type { ScreenCell } from "./screen-cells";
 
 // 输入框上下沿的横线
@@ -23,10 +24,10 @@ export function promptSuggestionSupported(agentId: string | null | undefined): b
   return agentId === "claude-code";
 }
 
-/** Claude 输入框那一行在可视区里的行号：顶格「❯」、上一行是整条横线；从下往上找，没有为 -1 */
+/** Claude 输入框那一行在可视区里的行号：顶格「❯」、上一行是输入框上沿（整条横线或线上写着会话名）；从下往上找，没有为 -1 */
 export function claudeInputRow(lines: readonly string[]): number {
   for (let i = lines.length - 1; i > 0; i--) {
-    if (PROMPT.test(lines[i]) && RULE.test(lines[i - 1].trim())) return i;
+    if (PROMPT.test(lines[i]) && claudePromptTop(lines[i - 1])) return i;
   }
   return -1;
 }

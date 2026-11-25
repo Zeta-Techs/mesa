@@ -106,6 +106,18 @@ const THINK_GUTTER = /^\s*[│┃]/;
 // 横线、半格边框，以及方框的上下边（画到一半的输入框「╭────」及 Windows 方角「┌────」也算；表格已先由 tableRows 放行）
 const BORDER = /^[╭╰┌└]?[─━═▄▀]{8,}[╮╯┐┘]?$/;
 const MENU_BORDER = /^[▔▁]{8,}$/;
+// Claude 输入框上沿除了整条横线，线上还会写字：右端「 会话名 ─」（/rename 起的名、--agent / 队友横幅），
+// 左端「─── History 2/5 」（翻输入历史）、「─── ↑ 3 more 」（输入折行滚动）。2.1.326 实测
+const CLAUDE_LABELED_TOP = /^[─━═]{3}(?: \S.*? )?[─━═]{8,}(?: \S.* [─━═])?$/;
+
+/**
+ * Claude 输入框的上沿（整条横线，或线上写着会话名 / 输入历史等字）。原先只认整条横线，会话起了名就认不出输入框，
+ * 答完一切回聊天层就弹「终端在等你」（2026-11-25 用户实测，/rename 后抓屏复现）
+ */
+export function claudePromptTop(row: string): boolean {
+  const t = row.trim();
+  return BORDER.test(t) || CLAUDE_LABELED_TOP.test(t);
+}
 const SPINNER = /^\s*[\u2800-\u28ff]\s/;
 // Claude：转圈 / 用时 / 右对齐的思考档提示：✻ Sautéed for 7s · done、✶ Thinking…、● high · /effort；
 // 还有两种界面提示，聊天层里按不了、也不是回复：「Thought for 7s (ctrl+o to expand)」（思考折叠行，不带行首符号，
@@ -134,8 +146,8 @@ function lastBox(rows: readonly string[], pick: (i: number) => number): number {
 
 const LAYOUTS: Record<string, Layout> = {
   "claude-code": {
-    // 输入框上边框：最后一条「❯」行的上一行是横线
-    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && BORDER.test(rows[i - 1].trim()) ? i - 1 : -1)),
+    // 输入框上边框：最后一条「❯」行的上一行是横线（线上可能写着会话名，claudePromptTop）
+    boxTop: (rows) => lastBox(rows, (i) => (i > 0 && /^❯/.test(rows[i]) && claudePromptTop(rows[i - 1]) ? i - 1 : -1)),
     echo: /^❯\s+\S/,
     // 行首符号：macOS / Linux 是 ⏺，Windows 上 Claude Code 画 ●（控制台字体没有 ⏺，2026-10-20 ConPTY 抓屏）
     lead: /^[⏺●]\s?/,
@@ -416,11 +428,10 @@ export function sentTextStuckInBox(lines: readonly string[], agentId: string, se
   if (top < 0) return false;
   const box: string[] = [];
   for (let i = top; i < rows.length; i++) {
+    // 上沿那行（可能写着会话名）不算框里的字
+    if (i === top) continue;
     const row = rows[i].trim();
-    if (BORDER.test(row)) {
-      if (i === top) continue;
-      break;
-    }
+    if (BORDER.test(row)) break;
     box.push(row.replace(/^[❯›>]\s*/, ""));
   }
   const squash = (s: string) => s.replace(/\s+/g, "");

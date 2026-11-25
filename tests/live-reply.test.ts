@@ -1543,3 +1543,19 @@ test("Antigravity CLI 1.5.14：工具行下面重绘留下的提问残影不当�
   ];
   assert.deepEqual(extractLiveReply(interrupted, "agy")?.lines, ["第二轮开头。"]);
 });
+
+test("Claude 输入框上沿写着字（会话名、输入历史）也认得出输入框", () => {
+  const rule = "─".repeat(60);
+  const screen = (top: string, box = "❯ ") => ["⏺ 答完了", "", "✻ Worked for 9s", "", top, box, rule, "  ⏵⏵ auto mode on (shift+tab to cycle)"];
+  // /rename 起的名、--agent 横幅：画在上沿右端（2.1.326 抓屏）
+  assert.equal(terminalHasInputBox(screen(`${"─".repeat(40)} 只读对比三个文件 ─`), "claude-code"), true);
+  // 翻输入历史 / 输入折行滚动：画在上沿左端
+  assert.equal(terminalHasInputBox(screen(`─── History 2/5 ${"─".repeat(40)}`), "claude-code"), true);
+  assert.equal(terminalHasInputBox(screen(`─── ↑ 3 more ${"─".repeat(40)}`), "claude-code"), true);
+  // 表格边、正文里的一句话不是上沿
+  assert.equal(terminalHasInputBox(screen(`┌${"─".repeat(20)}┬${"─".repeat(20)}┐`), "claude-code"), false);
+  assert.equal(terminalHasInputBox(screen("上一句话 ── 带两个横线"), "claude-code"), false);
+  // 上沿的会话名不算框里没发出去的字
+  assert.equal(sentTextStuckInBox(screen(`${"─".repeat(40)} 只读对比三个文件 ─`), "claude-code", "只读对比三个文件"), false);
+  assert.equal(sentTextStuckInBox(screen(`${"─".repeat(40)} 名字 ─`, "❯ 帮我看看这个文件"), "claude-code", "帮我看看这个文件"), true);
+});
