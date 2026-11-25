@@ -1736,72 +1736,66 @@ export default function ChatSurface({
         )}
         {inlineContextRing}
         {quotaRing}
-        {/* 读数圆环与模型芯片之间靠留白分组，不画竖线（2026-11-25 用户拍板） */}
-        <span className="ml-1.5 flex min-w-0 items-center">
-          <ChatModelMenu
-            kind="launch"
-            pick={launchPick!}
-            onAgent={onPickLaunch.agent}
-            onProfile={onPickLaunch.profile}
-            onModel={onPickLaunch.model}
-            onEffort={onPickLaunch.effort}
-            onPermission={pickPermission ?? onPickLaunch.permission}
-            combos={combos}
-            combosWhere={cwdLabel || null}
-            onCombo={onPickLaunch.combo}
-            relay={launchPick?.resumePick ? relayMenu : null}
-            imageKind={imageKind}
-            onImageWarning={setImageWarning}
-            onOpenTerminal={onOpenTerminal}
-          />
-        </span>
+        <ChatModelMenu
+          kind="launch"
+          pick={launchPick!}
+          onAgent={onPickLaunch.agent}
+          onProfile={onPickLaunch.profile}
+          onModel={onPickLaunch.model}
+          onEffort={onPickLaunch.effort}
+          onPermission={pickPermission ?? onPickLaunch.permission}
+          combos={combos}
+          combosWhere={cwdLabel || null}
+          onCombo={onPickLaunch.combo}
+          relay={launchPick?.resumePick ? relayMenu : null}
+          imageKind={imageKind}
+          onImageWarning={setImageWarning}
+          onOpenTerminal={onOpenTerminal}
+        />
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
       <>
         {inlineContextRing}
         {quotaRing}
-        {/* 读数圆环与模型芯片之间靠留白分组，不画竖线（2026-11-25 用户拍板） */}
-        <span className="ml-1.5 flex min-w-0 items-center">
-          <ChatModelMenu
-            kind="runtime"
-            channel={channel}
-            live={running}
-            status={runtime.status}
-            profileModels={runtime.profileModels}
-            modelSwitch={modelSwitch ?? null}
-            effort={runtime.effort}
-            submitCsiU={runtime.submitCsiU}
-            onTuiCommand={onTuiCommand}
-            onPicker={openPicker}
-            contextUsed={contextUsed}
-            contextSnapshot={contextSnapshot}
-            // 无论挂状态栏还是未挂状态栏，上下文饼盘都固定在余量环左侧（inlineContextRing / TerminalStatusBar），这里不再重复画
-            showRing={false}
-            onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
-            onRelaunch={runtime.onRelaunch}
-            // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
-            onSwitchConnection={onSwitchConnection && runtime.status?.sessionId ? onSwitchConnection : null}
-            busy={generating}
-            relay={relayMenu}
-            imageKind={imageKind}
-            onImageWarning={setImageWarning}
-            onOpenTerminal={onOpenTerminal}
-            onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
-            // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
-            next={
-              !running && canResume && launchPick && onPickLaunch
-                ? {
-                    models: launchPick.models,
-                    model: launchPick.model,
-                    onModel: onPickLaunch.model,
-                    effortLevels: launchPick.effortLevels,
-                    effort: launchPick.effort,
-                    onEffort: onPickLaunch.effort,
-                  }
-                : null
-            }
-          />
-        </span>
+        <ChatModelMenu
+          kind="runtime"
+          channel={channel}
+          live={running}
+          status={runtime.status}
+          profileModels={runtime.profileModels}
+          modelSwitch={modelSwitch ?? null}
+          effort={runtime.effort}
+          submitCsiU={runtime.submitCsiU}
+          onTuiCommand={onTuiCommand}
+          onPicker={openPicker}
+          contextUsed={contextUsed}
+          contextSnapshot={contextSnapshot}
+          // 无论挂状态栏还是未挂状态栏，上下文饼盘都固定在余量环左侧（inlineContextRing / TerminalStatusBar），这里不再重复画
+          showRing={false}
+          onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
+          onRelaunch={runtime.onRelaunch}
+          // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
+          onSwitchConnection={onSwitchConnection && runtime.status?.sessionId ? onSwitchConnection : null}
+          busy={generating}
+          relay={relayMenu}
+          imageKind={imageKind}
+          onImageWarning={setImageWarning}
+          onOpenTerminal={onOpenTerminal}
+          onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
+          // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
+          next={
+            !running && canResume && launchPick && onPickLaunch
+              ? {
+                  models: launchPick.models,
+                  model: launchPick.model,
+                  onModel: onPickLaunch.model,
+                  effortLevels: launchPick.effortLevels,
+                  effort: launchPick.effort,
+                  onEffort: onPickLaunch.effort,
+                }
+              : null
+          }
+        />
       </>
     ) : (
       <>
