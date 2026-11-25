@@ -70,7 +70,7 @@ import {
 } from "../gateway-balance";
 import { confirmDialog } from "../components/ConfirmDialog";
 import { agentBrand } from "../agent-colors";
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronLeft, ChevronRight, Copy, Eye, EyeOff, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { toast } from "../toast";
 import {
   barWidthPct,
@@ -87,7 +87,6 @@ import { mergePartialPlanRows, useQuotaSwipe } from "../quota-swipe";
 import { canShowCoachTip, markCoachTipSeen, markCoachTipShown } from "../coach-tips";
 import { showFloatingCoach } from "../components/CoachTip";
 import {
-  Checkbox,
   EmptyState,
   FoldMark,
   LoadingRows,
@@ -713,7 +712,7 @@ interface QuotaOrderItem {
   checked: boolean;
 }
 
-/** 订阅余量 / 网关余额共用：显示筛选与轮播排序面板，复用全站 Checkbox 与弱分层底色 */
+/** 订阅余量 / 网关余额共用：显示筛选与轮播排序面板，采用设置页「岛上显示的入口」同款轻描边开关按钮 */
 function QuotaOrderPanel({
   title,
   items,
@@ -760,50 +759,62 @@ function QuotaOrderPanel({
           </button>
         </div>
       </div>
-      <ul className="space-y-0.5">
+      <ul className="space-y-1.5">
         {items.map((item, idx) => {
           const isLastVisible = item.checked && visibleCount <= 1;
           return (
-            <li
-              key={item.id}
-              className="flex items-center gap-2 rounded-md px-1.5 py-1.5 transition-colors hover:bg-hover"
-            >
-              <Checkbox
-                checked={item.checked}
-                disabled={isLastVisible}
-                title={isLastVisible ? "至少保留一项显示" : item.hint ? `${item.label}（${item.hint}）` : item.label}
-                className="min-w-0 flex-1 gap-2.5"
-                onChange={() => {
+            <li key={item.id} className="flex items-center gap-1.5">
+              <button
+                type="button"
+                role="checkbox"
+                aria-checked={item.checked}
+                aria-disabled={isLastVisible || undefined}
+                title={
+                  isLastVisible
+                    ? "至少保留一项显示"
+                    : item.hint
+                      ? `${item.label}（${item.hint}）`
+                      : item.label
+                }
+                onClick={() => {
                   if (isLastVisible) return;
                   onToggle(item.id);
                 }}
-                label={
+                className={`flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border px-2.5 text-left text-xs transition-colors ${
+                  item.checked
+                    ? "border-cta/45 bg-cta/10 text-l1 hover:bg-cta/15"
+                    : "border-hairline bg-transparent text-l3 hover:bg-hover hover:text-l2"
+                } ${isLastVisible ? "cursor-default" : "cursor-pointer"}`}
+              >
+                {item.icon && (
                   <span
-                    className={`flex min-w-0 flex-1 items-center gap-2 transition-opacity ${
-                      item.checked ? "opacity-100" : "opacity-50"
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center transition-opacity ${
+                      item.checked ? "opacity-100" : "opacity-45"
                     }`}
                   >
-                    {item.icon && (
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                        {item.icon}
-                      </span>
-                    )}
-                    <span className="min-w-0 flex-1 truncate">
-                      <span className={item.checked ? "font-medium text-l1" : "text-l3"}>
-                        {item.label}
-                      </span>
-                      {item.hint ? (
-                        <span className="ml-1.5 text-micro text-l4">{item.hint}</span>
-                      ) : null}
-                    </span>
+                    {item.icon}
                   </span>
-                }
-              />
+                )}
+                <span className="min-w-0 flex-1 truncate">
+                  <span className={item.checked ? "font-medium text-l1" : "text-l3"}>
+                    {item.label}
+                  </span>
+                  {item.hint ? (
+                    <span className="ml-1.5 text-micro text-l4">{item.hint}</span>
+                  ) : null}
+                </span>
+                <Check
+                  aria-hidden="true"
+                  className={`h-3.5 w-3.5 shrink-0 transition-opacity ${
+                    item.checked ? "text-cta opacity-100" : "opacity-0"
+                  }`}
+                />
+              </button>
               <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
                   disabled={idx === 0}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
                   aria-label={`上移 ${item.label}`}
                   title="上移"
                   onClick={() => onMove(item.id, -1)}
@@ -813,7 +824,7 @@ function QuotaOrderPanel({
                 <button
                   type="button"
                   disabled={idx === items.length - 1}
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-l3 transition-colors hover:bg-raised hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-25"
                   aria-label={`下移 ${item.label}`}
                   title="下移"
                   onClick={() => onMove(item.id, 1)}
@@ -884,6 +895,8 @@ function saveCachedWalletRows(rows: GatewayBalanceDto[]) {
 
 interface PlanQuotaCardProps {
   visible: boolean;
+  open: boolean;
+  onToggleOpen: () => void;
   rows: PlanQuotaDto[];
   loading: boolean;
   usingKey: string | null;
@@ -893,9 +906,11 @@ interface PlanQuotaCardProps {
   onOpenConsole: (url: string) => void;
 }
 
-/** 独立 memo 化的订阅余量卡：将 active / open / swipe 状态关在卡片内部，左右滑切不再牵连整页图表与热力图重绘 */
+/** 独立 memo 化的订阅余量卡：将 active / swipe 状态关在卡片内部，左右滑切不再牵连整页图表与热力图重绘 */
 const PlanQuotaCard = memo(function PlanQuotaCard({
   visible,
+  open: planOpen,
+  onToggleOpen,
   rows,
   loading,
   usingKey,
@@ -905,7 +920,6 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
   onOpenConsole,
 }: PlanQuotaCardProps) {
   const [planActive, setPlanActive] = useState<string | null>(null);
-  const [planOpen, setPlanOpen] = useState(() => localStorage.getItem("ccode.stats.planOpen") === "1");
   const [planPrefs, setPlanPrefs] = useState<QuotaDisplayPrefs>(() =>
     loadQuotaDisplayPrefs("ccode.stats.planPrefs"),
   );
@@ -925,12 +939,9 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
   }, []);
 
   const togglePlanOpen = useCallback(() => {
-    setPlanOpen((v) => {
-      if (v) setPlanFilterOpen(false);
-      localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
-      return !v;
-    });
-  }, []);
+    if (planOpen) setPlanFilterOpen(false);
+    onToggleOpen();
+  }, [planOpen, onToggleOpen]);
 
   const onSwiped = useCallback(() => {
     markCoachTipSeen("planSwipe");
@@ -1358,6 +1369,8 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
 });
 
 interface WalletBalanceCardProps {
+  open: boolean;
+  onToggleOpen: () => void;
   rows: GatewayBalanceDto[];
   gateways: Gateway[];
   loading: boolean;
@@ -1368,6 +1381,8 @@ interface WalletBalanceCardProps {
 
 /** 独立 memo 化的网关余额卡：滑切与隐私遮盖局部更新，不牵连主统计页 */
 const WalletBalanceCard = memo(function WalletBalanceCard({
+  open: walletOpen,
+  onToggleOpen,
   rows,
   gateways,
   loading,
@@ -1376,7 +1391,6 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
   onOpenWallet,
 }: WalletBalanceCardProps) {
   const [walletActive, setWalletActive] = useState<string | null>(null);
-  const [walletOpen, setWalletOpen] = useState(() => localStorage.getItem("ccode.stats.walletOpen") === "1");
   const [walletPrefs, setWalletPrefs] = useState<QuotaDisplayPrefs>(() =>
     loadQuotaDisplayPrefs("ccode.stats.walletPrefs"),
   );
@@ -1391,12 +1405,9 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
   }, []);
 
   const toggleWalletOpen = useCallback(() => {
-    setWalletOpen((v) => {
-      if (v) setWalletFilterOpen(false);
-      localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
-      return !v;
-    });
-  }, []);
+    if (walletOpen) setWalletFilterOpen(false);
+    onToggleOpen();
+  }, [walletOpen, onToggleOpen]);
 
   const toggleHideQuota = useCallback(() => {
     setHideQuota((v) => {
@@ -1972,6 +1983,24 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
   // 订阅余量卡（智谱/Kimi/MiniMax 网关 + Claude/Codex/Grok/Kimi/Antigravity 官方多账号）：
   // 首屏从 store / 本地快照秒出，后台并发渐进刷新（plan-quota-partial），可见期 2 分钟自动轮询，手动刷新才 force
+  const [planOpen, setPlanOpen] = useState(
+    () => localStorage.getItem("ccode.stats.planOpen") === "1",
+  );
+  const [walletOpen, setWalletOpen] = useState(
+    () => localStorage.getItem("ccode.stats.walletOpen") === "1",
+  );
+  const togglePlanOpen = useCallback(() => {
+    setPlanOpen((v) => {
+      localStorage.setItem("ccode.stats.planOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
+  const toggleWalletOpen = useCallback(() => {
+    setWalletOpen((v) => {
+      localStorage.setItem("ccode.stats.walletOpen", v ? "0" : "1");
+      return !v;
+    });
+  }, []);
   const [planRows, setPlanRows] = useState<PlanQuotaDto[]>(loadCachedPlanRows);
   const [planLoading, setPlanLoading] = useState(false);
   const [planUsing, setPlanUsing] = useState<string | null>(null);
@@ -2592,10 +2621,18 @@ export default function StatsPage({ visible }: { visible: boolean }) {
 
       {((planRows.length > 0 || (planLoading && hasPlanSource)) ||
         (hasWalletGateway && (walletRowsShown.length > 0 || walletLoading))) && (
-        <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <div
+          className={`mb-4 grid gap-4 lg:grid-cols-2 ${
+            (planOpen && planRows.length > 0) === (walletOpen && walletRowsShown.length > 0)
+              ? ""
+              : "items-start"
+          }`}
+        >
           {(planRows.length > 0 || (planLoading && hasPlanSource)) && (
             <PlanQuotaCard
               visible={visible}
+              open={planOpen}
+              onToggleOpen={togglePlanOpen}
               rows={planRows}
               loading={planLoading}
               usingKey={planUsing}
@@ -2607,6 +2644,8 @@ export default function StatsPage({ visible }: { visible: boolean }) {
           )}
           {hasWalletGateway && (walletRowsShown.length > 0 || walletLoading) && (
             <WalletBalanceCard
+              open={walletOpen}
+              onToggleOpen={toggleWalletOpen}
               rows={walletRowsShown}
               gateways={gateways}
               loading={walletLoading}
