@@ -43,9 +43,144 @@ export interface ContextBreakdownRequest {
   sessionId: string;
 }
 
-/** 支持读取分类明细的家：Claude Code / Qwen Code 走无头 `/context`，Antigravity 走纯本地只读日志与子智能体库 */
+/** 支持后端读取分类明细的家：Claude Code / Qwen Code 走无头 `/context`，Antigravity 走纯本地只读日志与子智能体库 */
 export function breakdownSupported(agentId: string | null | undefined): boolean {
   return agentId === "claude-code" || agentId === "qwen" || agentId === "agy";
+}
+
+/** 后端可纯本地秒读明细、悬停即可自动调用的家（不起子进程） */
+export function localBackendBreakdown(agentId: string | null | undefined): boolean {
+  return agentId === "agy";
+}
+
+/** 需在后台拉起无头 CLI 跑 `/context` 的家：不在悬停时自动拉起，改为浮层内按需点击校准 */
+export function headlessBreakdownSupported(agentId: string | null | undefined): boolean {
+  return agentId === "claude-code" || agentId === "qwen";
+}
+
+/** 会话日志记录了逐轮 token 用量的 7 家：已知模型窗口时可常显 0% 上下文饼盘并逐轮更新；
+ *  Grok / CodeBuddy / Cursor 会话不落逐轮 usage，不常显 0% 以免聊完几十轮仍卡在 0% */
+export function contextUsageSupported(agentId: string | null | undefined): boolean {
+  return (
+    agentId === "agy" ||
+    agentId === "claude-code" ||
+    agentId === "codex" ||
+    agentId === "gemini" ||
+    agentId === "kimi" ||
+    agentId === "qwen" ||
+    agentId === "opencode"
+  );
+}
+
+/** 中英文混合文本的轻量 token 估算（与 agy.rs 同口径：CJK 约 0.55 tok/字，ASCII 约 0.25 tok/字） */
+function estimateTextTokens(text: string): number {
+  if (!text) return 0;
+  let ascii = 0;
+  let nonAscii = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) < 128) ascii++;
+    else nonAscii++;
+  }
+  return Math.max(1, Math.round(ascii * 0.25 + nonAscii * 0.55));
+}
+
+export interface LocalBreakdownMessage {
+  role: string;
+  blocks: readonly { kind: string; text: string; toolName?: string | null }[];
+  usage: { input: number; cacheRead: number; cacheWrite: number } | null;
+}
+
+/**
+ * 纯前端秒算本地上下文明细（全 7 家有逐轮用量的 CLI 通用，不起子进程、零等待）：
+ * - 按末次上下文骤降（≥20K 后跌破 65%）截出最近一次压缩后的可见消息段；
+ * - 估算「对话 / 工具调用与输出 / 思考过程」权重并严格锚定到末轮真实 used tokens；
+ * - 真实 used 超出可见消息估算的部分归入「系统提示与工具」（系统提示、技能、工具定义等）。
+ */
+export function estimateLocalBreakdown(
+  messages: readonly LocalBreakdownMessage[],
+  used: number,
+  window: number | null,
+): ContextBreakdown | null {
+  if (used <= 0 || messages.length === 0) return null;
+  let prevUsed: number | null = null;
+  let compactions = 0;
+  let lastCompactIdx = 0;
+  let cacheRead = 0;
+  let freshInput = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const u = m.usage;
+    if (m.role === "user" || !u) continue;
+    const fresh = u.input + u.cacheWrite;
+    const cur = u.cacheRead + fresh;
+    if (cur <= 0) continue;
+    if (prevUsed !== null && prevUsed >= 20_000 && cur < prevUsed * 0.65) {
+      compactions += 1;
+      lastCompactIdx = i;
+    }
+    prevUsed = cur;
+    cacheRead = u.cacheRead;
+    freshInput = fresh;
+  }
+
+  let msgTok = 0;
+  let toolTok = 0;
+  let thinkingTok = 0;
+  for (let i = lastCompactIdx; i < messages.length; i++) {
+    for (const b of messages[i].blocks) {
+      const t = estimateTextTokens(b.text);
+      if (b.kind === "thinking") {
+        thinkingTok += t;
+      } else if (b.kind === "tool_use" || b.kind === "tool_result") {
+        toolTok += t + (b.toolName ? 12 : 4);
+      } else {
+        msgTok += t;
+      }
+    }
+  }
+
+  const estSum = msgTok + toolTok + thinkingTok;
+  const categories: ContextCategory[] = [];
+  if (estSum <= 0) {
+    categories.push({ key: "Messages", tokens: used });
+  } else if (estSum <= used) {
+    if (msgTok > 0) categories.push({ key: "Messages", tokens: msgTok });
+    if (toolTok > 0) categories.push({ key: "Tool outputs", tokens: toolTok });
+    if (thinkingTok > 0) categories.push({ key: "Thinking", tokens: thinkingTok });
+    const sysTok = used - estSum;
+    if (sysTok > 0) categories.push({ key: "System & tools", tokens: sysTok });
+  } else {
+    const scale = used / estSum;
+    const buckets: { key: string; tokens: number }[] = [
+      { key: "Messages", tokens: Math.round(msgTok * scale) },
+      { key: "Tool outputs", tokens: Math.round(toolTok * scale) },
+      { key: "Thinking", tokens: Math.round(thinkingTok * scale) },
+    ].filter((b) => b.tokens > 0);
+    const roundedSum = buckets.reduce((acc, b) => acc + b.tokens, 0);
+    if (buckets.length === 0) {
+      categories.push({ key: "Messages", tokens: used });
+    } else {
+      const diff = used - roundedSum;
+      if (diff !== 0) {
+        let maxIdx = 0;
+        for (let i = 1; i < buckets.length; i++) {
+          if (buckets[i].tokens > buckets[maxIdx].tokens) maxIdx = i;
+        }
+        buckets[maxIdx].tokens = Math.max(1, buckets[maxIdx].tokens + diff);
+      }
+      categories.push(...buckets);
+    }
+  }
+
+  return {
+    window: window && window > 0 ? window : 0,
+    used,
+    untilCompact: null,
+    categories,
+    compactions: compactions > 0 ? compactions : null,
+    cacheRead: cacheRead > 0 ? cacheRead : undefined,
+    freshInput: freshInput > 0 ? freshInput : undefined,
+  };
 }
 
 /** 标签状态 → 去读分类明细要的参数；这家不支持、还没有会话就 null */

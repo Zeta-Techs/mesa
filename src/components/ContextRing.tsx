@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, Minimize2 } from "lucide-react";
+import { Bot, Minimize2, Sparkles } from "lucide-react";
 import type { ContextSnapshot } from "../composer-assist";
 import {
   contextView,
   fmtRatio,
+  headlessBreakdownSupported,
   imageWeightNote,
-  longContextHint,
+  localBackendBreakdown,
   type ContextBreakdown,
   type ContextBreakdownRequest,
   type ContextTone,
@@ -82,7 +83,9 @@ export default function ContextRing({
   ratio,
   used,
   window: win,
+  agentId,
   breakdown = null,
+  localBreakdown = null,
   onCompact,
   color,
   warnColor,
@@ -100,6 +103,8 @@ export default function ContextRing({
   agentId: string;
   /** 去读分类明细要的参数（context-breakdown.ts breakdownRequest）；null = 这家不提供或还没有会话 */
   breakdown?: ContextBreakdownRequest | null;
+  /** 纯前端秒算的本地分类明细（全 7 家有逐轮用量的 CLI 通用，零等待不起子进程） */
+  localBreakdown?: ContextBreakdown | null;
   /** 「压缩上下文」：这家有压缩命令且正在运行时才给 */
   onCompact?: (() => void) | null;
   /** 不传 = 主题灰（text-l3 / 橙色 warn） */
@@ -181,7 +186,11 @@ export default function ContextRing({
     if (!ringRef.current) return;
     if (pin) pinnedRef.current = true;
     setPanel(anchor(ringRef.current));
-    fetchDetail();
+    // 仅对纯本地秒读（Antigravity）或本轮已有缓存时自动读取后端；
+    // Claude / Qwen 需拉起无头 /context 子进程，悬停直接展示本地秒算分类，不自动起进程
+    if (reqKey && (localBackendBreakdown(agentId) || breakdownCache.has(reqKey))) {
+      fetchDetail();
+    }
   }
 
   function closePanel() {
@@ -233,10 +242,13 @@ export default function ContextRing({
 
   useEffect(() => () => clearHoverTimers(), []);
 
-  // 开着时这一轮结束、用量变了：重新读
+  // 开着时这一轮结束、用量变了：本地秒读家自动刷新，无头 /context 家清回待校准避免后台频繁起进程
   useEffect(() => {
-    if (panel) fetchDetail();
-    else setDetail({ state: "idle" });
+    if (panel && reqKey && (localBackendBreakdown(agentId) || breakdownCache.has(reqKey))) {
+      fetchDetail();
+    } else {
+      setDetail({ state: "idle" });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reqKey]);
 
@@ -259,24 +271,26 @@ export default function ContextRing({
   }, [panel]);
 
   const light = typeof document !== "undefined" && (document.documentElement.dataset.theme ?? "").endsWith("-light");
-  const breakdownData = detail.state === "ok" ? detail.data : null;
+  const breakdownData = detail.state === "ok" ? detail.data : localBreakdown;
   const view = contextView(breakdownData, { used, window: win }, light);
   const usedRows = view.rows.filter((r) => r.tone !== "reserve" && r.tone !== "free");
   const capRows = view.rows.filter((r) => r.tone === "reserve" || r.tone === "free");
   const splitRows = usedRows.length > 1 && capRows.length > 0;
-  const longHint = longContextHint(used);
   const compactions = Math.max(breakdownData?.compactions ?? 0, snapshot?.compactions ?? 0);
   const cacheRead = breakdownData?.cacheRead ?? snapshot?.cacheRead ?? 0;
   const freshInput = breakdownData?.freshInput ?? snapshot?.freshInput ?? 0;
   const cacheTotal = cacheRead + freshInput;
   const subagents = breakdownData?.subagents ?? [];
+  const canCalibrateExact = Boolean(
+    headlessBreakdownSupported(agentId) && breakdown && used > 0 && detail.state === "idle",
+  );
   const statusNote =
     detail.state === "loading"
-      ? "正在读取明细…"
+      ? "正在读取精确分类…"
       : detail.state === "error"
-        ? `没读到分类明细：${detail.message}`
+        ? `没读到精确分类：${detail.message}`
         : null;
-  const hasFooter = Boolean(onCompact || statusNote);
+  const hasFooter = Boolean(onCompact || canCalibrateExact || statusNote);
 
   const renderRow = (row: (typeof view.rows)[number], muted = false) => (
     <div key={row.label} className="flex items-center gap-2 tabular-nums leading-[20px]">
@@ -491,13 +505,8 @@ export default function ContextRing({
                     </div>
                   </div>
                 )}
-                {longHint && (
-                  <div className="mt-2.5 rounded-md bg-warn/50 px-2.5 py-1.5 text-xs leading-[18px] text-warn-text">
-                    {longHint}
-                  </div>
-                )}
               </div>
-              {/* 仅在有操作（「压缩上下文」）或加载/报错时显示卡底托盘；常驻说明已精简 */}
+              {/* 仅在有操作（「压缩上下文」/ 按需校准 /context）或加载/报错时显示卡底托盘 */}
               {hasFooter && (
                 <div className="border-t border-hairline bg-strip/60 px-3.5 py-2.5">
                   {onCompact && (
@@ -520,8 +529,24 @@ export default function ContextRing({
                       </button>
                     </div>
                   )}
+                  {canCalibrateExact && (
+                    <div className={`${onCompact ? "mt-2" : ""} text-xs`}>
+                      <button
+                        type="button"
+                        className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-hairline bg-inset/70 px-2.5 text-l3 transition-colors hover:border-field hover:bg-hover hover:text-l1"
+                        title="按需跑一次无头 /context，读取精确的 MCP、技能与自动压缩预留（不花钱、需几秒）"
+                        onClick={() => {
+                          pinnedRef.current = true;
+                          fetchDetail();
+                        }}
+                      >
+                        <Sparkles size={12} strokeWidth={1.8} aria-hidden="true" />
+                        校准精确分类（/context）
+                      </button>
+                    </div>
+                  )}
                   {statusNote && (
-                    <div className={`${onCompact ? "mt-2" : ""} text-micro leading-[16px] text-l4`}>
+                    <div className={`${onCompact || canCalibrateExact ? "mt-2" : ""} text-micro leading-[16px] text-l4`}>
                       {statusNote}
                       {detail.state === "error" && (
                         <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>

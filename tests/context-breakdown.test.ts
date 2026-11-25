@@ -4,8 +4,12 @@ import {
   breakdownRequest,
   breakdownSupported,
   categoryLabel,
+  contextUsageSupported,
   contextView,
+  estimateLocalBreakdown,
   fmtRatio,
+  headlessBreakdownSupported,
+  localBackendBreakdown,
   longContextHint,
   type ContextBreakdown,
 } from "../src/context-breakdown.ts";
@@ -134,6 +138,67 @@ test("分类名与百分比", () => {
 test("上下文过 30 万提示回复会变慢、新开对话会快（54 万 token 首字 30 秒起的实测）", () => {
   assert.equal(longContextHint(120_000), null);
   assert.equal(longContextHint(545_023), "对话已有 55 万 token，回复会变慢，新开对话会快");
+});
+
+test("逐轮上下文支持表与前后端分类策略：7 家常显、Antigravity 本地后端、Claude/Qwen 按需校准", () => {
+  for (const id of ["agy", "claude-code", "codex", "gemini", "kimi", "qwen", "opencode"]) {
+    assert.equal(contextUsageSupported(id), true, id);
+  }
+  for (const id of ["grok", "codebuddy", "cursor", ""]) {
+    assert.equal(contextUsageSupported(id), false, id);
+  }
+  assert.equal(localBackendBreakdown("agy"), true);
+  assert.equal(localBackendBreakdown("claude-code"), false);
+  assert.equal(headlessBreakdownSupported("claude-code"), true);
+  assert.equal(headlessBreakdownSupported("qwen"), true);
+  assert.equal(headlessBreakdownSupported("agy"), false);
+});
+
+test("estimateLocalBreakdown：按末次压缩切段，估算对话/工具/思考并锚定末轮真实总量", () => {
+  const msgs = [
+    {
+      role: "assistant",
+      blocks: [{ kind: "text", text: "旧内容".repeat(500) }],
+      usage: { input: 25_000, cacheRead: 15_000, cacheWrite: 0 },
+    },
+    // 上下文骤降（40K → 10K）记为一次压缩，只统计此后的块
+    {
+      role: "user",
+      blocks: [{ kind: "text", text: "请帮我看下代码" }],
+      usage: null,
+    },
+    {
+      role: "assistant",
+      blocks: [
+        { kind: "thinking", text: "先检查文件结构和接口定义".repeat(20) },
+        { kind: "tool_use", toolName: "read_file", text: "src/main.ts" },
+        { kind: "tool_result", toolName: "read_file", text: "export const ok = true;\n".repeat(40) },
+        { kind: "text", text: "已经检查完毕，接口正常。" },
+      ],
+      usage: { input: 1_500, cacheRead: 8_000, cacheWrite: 500 },
+    },
+  ];
+  const res = estimateLocalBreakdown(msgs, 10_000, 200_000);
+  assert.ok(res);
+  assert.equal(res.window, 200_000);
+  assert.equal(res.used, 10_000);
+  assert.equal(res.compactions, 1);
+  assert.equal(res.cacheRead, 8_000);
+  assert.equal(res.freshInput, 2_000);
+  const sum = res.categories.reduce((acc, c) => acc + c.tokens, 0);
+  assert.equal(sum, 10_000, "各分类之和严格等于真实 used");
+  assert.deepEqual(
+    res.categories.map((c) => c.key),
+    ["Messages", "Tool outputs", "Thinking", "System & tools"],
+  );
+  // 估算超出 used 时按比例缩回，总和仍精确等于 used
+  const small = estimateLocalBreakdown(msgs, 100, 200_000);
+  assert.ok(small);
+  assert.equal(
+    small.categories.reduce((acc, c) => acc + c.tokens, 0),
+    100,
+  );
+  assert.equal(estimateLocalBreakdown(msgs, 0, 200_000), null);
 });
 
 test("Codex 会话图片过重：8MB 起提醒变慢，13MB 起提醒随时卡住", async () => {

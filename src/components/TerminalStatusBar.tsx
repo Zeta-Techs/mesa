@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FolderOpen, GitBranch, GitMerge } from "lucide-react";
 import { fmtTokensZh, usageTitle, usageTotal } from "../token-format";
 import { invoke } from "@tauri-apps/api/core";
@@ -7,7 +7,12 @@ import { isTerminalIdle } from "../terminal-welcome";
 import { useRuntimeModelEffort } from "../runtime-model-effort";
 import ContextRing from "./ContextRing";
 import type { ContextSnapshot } from "../composer-assist";
-import { breakdownRequest } from "../context-breakdown";
+import {
+  breakdownRequest,
+  contextUsageSupported,
+  estimateLocalBreakdown,
+  type LocalBreakdownMessage,
+} from "../context-breakdown";
 import { slashCommandsFor } from "../slash-commands";
 import type { DetectResult, GitCommitResultDto, SessionUsageDto } from "../types";
 import type { GitSummary } from "./GitPanel";
@@ -72,6 +77,7 @@ export default function TerminalStatusBar({
   onTuiCommand,
   contextUsed = null,
   contextSnapshot = null,
+  contextMessages = null,
   onRelaunch,
   chatMetaRef,
   chatEmpty,
@@ -111,6 +117,8 @@ export default function TerminalStatusBar({
   contextUsed?: number | null;
   /** 上一轮上下文快照（缓存复用 / 本步新增 / 压缩次数） */
   contextSnapshot?: ContextSnapshot | null;
+  /** 当前对话消息（供悬停上下文饼盘时纯前端秒算分类明细，不起子进程） */
+  contextMessages?: readonly LocalBreakdownMessage[] | null;
   /** 停下 Agent、带新模型 / 思考档接回原对话（会写回 CLI 全局配置的切换走这条，switch-strategy.ts） */
   onRelaunch?: (patch: { model?: string; effort?: string | null }) => void;
   /**
@@ -394,12 +402,20 @@ export default function TerminalStatusBar({
   const ownHidden = chat && (chatEmpty ?? !status?.ptyId);
   const chatMetaLeftRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("left", el), [chatMetaRef]);
   const chatMetaRightRef = useCallback((el: HTMLSpanElement | null) => chatMetaRef?.("right", el), [chatMetaRef]);
-  // 上下文用量饼盘：窗口大小来自模型能力库；聊天层只要确知窗口就常显（未发第一句为 0%，旧对话直显末轮真实占比），
+  // 上下文用量饼盘：窗口大小来自模型能力库；聊天层仅对会话记录逐轮 usage 的 7 家常显 0%（Grok / CodeBuddy / Cursor 不卡在 0%），
   // 终端变体仍只在有实际用量时画
+  const effAgent = status?.agentId ?? fallbackAgentId ?? "";
   const ring =
-    combo?.context && (chat || contextUsed)
+    combo?.context && (contextUsed || (chat && contextUsageSupported(effAgent)))
       ? { ratio: Math.min(1, (contextUsed ?? 0) / combo.context), window: combo.context }
       : null;
+  const localBreakdown = useMemo(
+    () =>
+      contextUsed && contextUsed > 0 && contextMessages && contextMessages.length > 0
+        ? estimateLocalBreakdown(contextMessages, contextUsed, ring?.window ?? null)
+        : null,
+    [contextMessages, contextUsed, ring?.window],
+  );
   const breakdownTarget = status?.sessionId
     ? status
     : fallbackAgentId && fallbackSessionId && profileId
@@ -1156,8 +1172,9 @@ export default function TerminalStatusBar({
               ratio={ring.ratio}
               used={contextUsed ?? 0}
               window={ring.window}
-              agentId={status?.agentId ?? fallbackAgentId ?? ""}
+              agentId={effAgent}
               breakdown={breakdownRequest(breakdownTarget)}
+              localBreakdown={localBreakdown}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}
@@ -1168,8 +1185,9 @@ export default function TerminalStatusBar({
               ratio={null}
               used={contextSnapshot?.used ?? (usage ? usageTotal(usage) : 0)}
               window={null}
-              agentId={status?.agentId ?? fallbackAgentId ?? ""}
+              agentId={effAgent}
               breakdown={breakdownRequest(breakdownTarget)}
+              localBreakdown={localBreakdown}
               onCompact={compact}
               totalTokens={ringTotalTokens}
               profileName={ringProfileName}

@@ -4419,6 +4419,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         }
                         contextUsed={lastContextTokens(sessionByTab[t.id]?.conv ?? [])}
                         contextSnapshot={lastContextSnapshot(sessionByTab[t.id]?.conv ?? [])}
+                        contextMessages={sessionByTab[t.id]?.conv ?? null}
                         onRelaunch={(patch) => tabActionsRef.current.get(t.id)?.relaunchWith(patch)}
                         colors={statusBarColors}
                         chatMetaRef={chatMetaRefFor(t.id)}

@@ -15,7 +15,11 @@ import ChatComposer, { useFlashOnSeq, type ComposerNotice, type ComposerSeed } f
 import { coldCacheAt, coldCacheHint, idleLabel, lastMessageAt } from "../prompt-cache";
 import { cacheComboSurface, cachedComboSurface } from "../runtime-model-effort";
 import ContextRing, { contextFmtTokens } from "./ContextRing";
-import { breakdownRequest } from "../context-breakdown";
+import {
+  breakdownRequest,
+  contextUsageSupported,
+  estimateLocalBreakdown,
+} from "../context-breakdown";
 import { splitDocPaths, splitImagePaths } from "../chat-image";
 import ChatEmptyStart from "./ChatEmptyStart";
 import MesaThinkingDots from "./MesaThinkingDots";
@@ -1639,15 +1643,26 @@ export default function ChatSurface({
       cancelled = true;
     };
   }, [metaSlotted, activeQuotaProfileId, activeContextModel]);
+  const activeContextAgent = launchPick?.agentId ?? runtime?.status?.agentId ?? "";
+  const inlineLocalBreakdown = useMemo(
+    () =>
+      !metaSlotted && contextUsed && contextUsed > 0 && messages.length > 0
+        ? estimateLocalBreakdown(messages, contextUsed, inlineContextWindow)
+        : null,
+    [metaSlotted, messages, contextUsed, inlineContextWindow],
+  );
   const inlineContextRing =
-    !metaSlotted && inlineContextWindow ? (
+    !metaSlotted &&
+    inlineContextWindow &&
+    (contextUsed || contextUsageSupported(activeContextAgent)) ? (
       <ContextRing
         showPercent
         ratio={Math.min(1, (contextUsed ?? 0) / inlineContextWindow)}
         used={contextUsed ?? 0}
         window={inlineContextWindow}
-        agentId={launchPick?.agentId ?? runtime?.status?.agentId ?? ""}
+        agentId={activeContextAgent}
         breakdown={breakdownRequest(runtime?.status ?? null)}
+        localBreakdown={inlineLocalBreakdown}
         onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
         snapshot={contextSnapshot}
       />
