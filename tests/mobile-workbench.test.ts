@@ -2,15 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_TAILSCALE_HTTPS_PORT,
+  cloudflareStateLabel,
   formatPairingCountdown,
   mobileWorkbenchSummary,
+  tailscaleMobilePeerWarning,
   tailscaleServeCommand,
   tailscaleStateLabel,
   validateCustomBaseUrl,
   validateTailscalePort,
+  type CloudflareInfoDto,
   type MobileWorkbenchStatusDto,
   type TailscaleInfoDto,
 } from "../src/mobile-workbench.ts";
+
+function makeCf(patch: Partial<CloudflareInfoDto> = {}): CloudflareInfoDto {
+  return {
+    installed: false,
+    binaryPath: null,
+    running: false,
+    tunnelUrl: null,
+    hint: "",
+    ...patch,
+  };
+}
 
 function makeTs(patch: Partial<TailscaleInfoDto> = {}): TailscaleInfoDto {
   return {
@@ -22,6 +36,8 @@ function makeTs(patch: Partial<TailscaleInfoDto> = {}): TailscaleInfoDto {
     httpsReady: true,
     serveActive: false,
     serveUrl: null,
+    mobilePeersTotal: 1,
+    mobilePeersOnline: 1,
     hint: "",
     ...patch,
   };
@@ -33,7 +49,7 @@ function makeStatus(patch: Partial<MobileWorkbenchStatusDto> = {}): MobileWorkbe
     running: true,
     port: 17590,
     localUrl: "http://127.0.0.1:17590",
-    tunnelMode: "tailscale",
+    tunnelMode: "cloudflare",
     tailscaleHttpsPort: DEFAULT_TAILSCALE_HTTPS_PORT,
     customBaseUrl: "",
     publicUrl: null,
@@ -41,6 +57,7 @@ function makeStatus(patch: Partial<MobileWorkbenchStatusDto> = {}): MobileWorkbe
     pairingUrl: null,
     pairingQrSvg: null,
     pairingLeftSecs: 0,
+    cloudflare: makeCf(),
     tailscale: makeTs(),
     lastError: null,
     ...patch,
@@ -77,6 +94,35 @@ test("tailscaleStateLabel 准确区分未装、未登录、未开 HTTPS、就绪
   assert.equal(tailscaleStateLabel(makeTs({ httpsReady: false })).tone, "warn");
   assert.equal(tailscaleStateLabel(makeTs({ httpsReady: true, serveActive: false })).tone, "ok");
   assert.equal(tailscaleStateLabel(makeTs({ serveActive: true })).text, "HTTPS 通道已开启");
+});
+
+test("cloudflareStateLabel 区分未下载、已就绪与通道运行中", () => {
+  assert.equal(cloudflareStateLabel(makeCf({ installed: false })).tone, "muted");
+  assert.equal(cloudflareStateLabel(makeCf({ installed: true, running: false })).tone, "ok");
+  assert.equal(
+    cloudflareStateLabel(
+      makeCf({ installed: true, running: true, tunnelUrl: "https://calm-river.trycloudflare.com" }),
+    ).text,
+    "HTTPS 通道已开启",
+  );
+});
+
+test("tailscaleMobilePeerWarning 仅在通道已开且缺少在线手机节点时告警", () => {
+  assert.equal(tailscaleMobilePeerWarning(makeTs({ serveActive: false, mobilePeersTotal: 0 })), null);
+  assert.equal(
+    tailscaleMobilePeerWarning(makeTs({ serveActive: true, mobilePeersTotal: 1, mobilePeersOnline: 1 })),
+    null,
+  );
+  assert.ok(
+    tailscaleMobilePeerWarning(makeTs({ serveActive: true, mobilePeersTotal: 0, mobilePeersOnline: 0 }))?.includes(
+      "Cloudflare",
+    ),
+  );
+  assert.ok(
+    tailscaleMobilePeerWarning(makeTs({ serveActive: true, mobilePeersTotal: 1, mobilePeersOnline: 0 }))?.includes(
+      "未检测到在线手机节点",
+    ),
+  );
 });
 
 test("formatPairingCountdown 与 mobileWorkbenchSummary 输出符合预期", () => {

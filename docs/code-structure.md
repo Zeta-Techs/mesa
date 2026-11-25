@@ -378,7 +378,7 @@ components/ErrorBoundary.tsx  # 顶层错误边界（App 根部包一层）：�
   components/AssistantDesk.tsx # 项目助手顶上的「等你的事」：就地点选项 / 写一句送过去，等确认的带路回对话；20 秒刷新
   components/RouteCheckCard.tsx # 设置 → 网络「线路体检」（挂在 Row 的 extra 全宽区）：route_check_agents 列有探测点的 Agent，每家一行到底
                              #   （点 · 名称 · 地区 · 用时 · 确认与出口类型 · 修复按钮，ROW_GRID 定宽列对齐，拦下原因跨三列），探测主机进 HoverTip；出网代理保存后自动重测
-  components/MobileWorkbenchCard.tsx # 设置 → AI 与 Agent →「手机工作台（端到端加密 PWA）」：127.0.0.1 本机服务开关与预览、Tailscale CLI 诊断与专属 HTTPS 端口一键开关 / 自定义 HTTPS 隧道配置、5 分钟一次性二维码配对与最多 8 台设备管理
+  components/MobileWorkbenchCard.tsx # 设置 → AI 与 Agent →「手机工作台（端到端加密 PWA）」：127.0.0.1 本机服务开关与预览、Cloudflare Tunnel 一键自动下载与开关 / Tailscale CLI 诊断与手机节点离线提示及专属 HTTPS 端口一键开关 / 自定义 HTTPS 隧道配置、5 分钟一次性二维码配对与最多 8 台设备管理
   components/FeishuSettingsCard.tsx # 设置 → AI 与 Agent →「手机上的项目助手（飞书）」：App ID / Secret、打开、立即重连、测试连接、发测试卡片自检、绑定 6 位码倒计时与复制、步骤与目标通知 / 夜间免打扰开关、一键复制权限配置 JSON
   components/RememberCard.tsx # 项目助手起草的「以后照这样办」：可改，点「记进项目知识」才 project_memory_update add；已记过同一句显示已记下
   components/ConsultView.tsx  # 研讨回放（2026-11-11）：useConsult（consult_read + consult-event 事件：started/done/idle 重读、step/text 只更新进行中）；第一轮并排卡片（有人还在答时只写「已答完 · 等其他几家」）、各家结论对照条（原话、不判谁对）、交叉与追问流、点名胶囊输入框；记进项目知识复用 RememberCard，起草派活单经 openAssistant 交给项目助手；MemberAvatar = 成员所选模型的厂商图标
@@ -662,7 +662,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
   assistant-ops.ts           # 项目助手动作分级唯一真源：auto / tap / desktop，opAllowed（手机只做前两档）、actionOp；rework（发补料单）= desktop（tests/im-route.test.ts）
   im-route.ts                # 总助手路由：帮助 / 项目 / 等我的 / 进展（status） / 切到 / 点名项目 / 回第 N 步与回：… / 默认项目 / 说不清给项目按钮 / 夜间免打扰时段判定 isImQuietHour；只认点名不猜（tests/im-route.test.ts）
   im-cards.ts                # 飞书卡片 JSON（全带 update_multi 供 PATCH 原地更新）：thinkingCard / askErrorCard、answerCard（追问选项、派出去、记进项目知识及已处理态）、deskCard（>4 选项分行、自定回答、写一句回它、顺手记进项目知识）、projectListCard、projectStatusCard、milestoneCard、replyPickCard、selfTestDoneCard、phoneText（tests/im-cards.test.ts）
-  mobile-workbench.ts        # 手机工作台（2026-11-24）纯逻辑与 DTO：Tailscale 命令预览、HTTPS 端口与自定义基址校验、状态标签与配对倒计时格式化（tests/mobile-workbench.test.ts）
+  mobile-workbench.ts        # 手机工作台（2026-11-24）纯逻辑与 DTO：Cloudflare / Tailscale 状态标签与手机节点离线预警、Tailscale 命令预览、HTTPS 端口与自定义基址校验及配对倒计时格式化（tests/mobile-workbench.test.ts）
   mobile-workbench-bridge.ts # 手机工作台 ↔ 桌面事件桥（挂 ProjectAssistantHost）：监听 mobile-workbench-assistant-updated / help-updated 刷新桌面状态，接收 mobile-workbench-dispatch 经 assistant-ops phone 档校验调用 dispatchWorkOrder 并回传 mobile_workbench_bridge_reply
   im-bridge.ts               # 飞书通道前端桥（调 invoke）：听 feishu-message / feishu-card-action 并回执 feishu_ack_inbound，支持左滑引用回复（parentId）与免前缀待回目标，思考占位卡流式更新后原地换成回答卡，按钮点击后 feishu_update_card 原地置已完成；主动推送 pushNewHelp / pushNewGrants / pushStuck / pushMilestones / imPushEcho（夜间免打扰与桌宠勿扰联动），唤醒重连 reconnectImIfNeeded
   assistant-echo.ts          # 派活回音纯逻辑（2026-11-05）：echoText（做完 / 失败 / 停了各一句、带去处标记，已验收不说）、echoInboxItems（没看过的进收件箱「项目助手」asst:）、本机已看记录 ccode.assistantEchoSeen（tests/assistant-echo.test.ts）
@@ -2050,10 +2050,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              # fan_out_plan（开工弹层预览 / 开工切片，顺手把 .ccode/fanout/ 写进 info/exclude）、fan_out_done（数各路做完标记）
   split_plan.rs              # 拆分方案（2026-11-03 三期）：split_plan_context（给出方案的 AI 看的项目概况：目录前两层 + 开着的工作）、split_plan_write（必须「# 拆分方案」开头）、split_plan_read 读项目根 .ccode/split-plan.md（64KB 上限、脱敏，读到时把方案与留底目录写进 info/exclude），
                              # split_plan_close 把它移进 .ccode/split-plans/<时间>-approved|declined.md；只读与留底，不按方案开工
-  mobile_workbench.rs        # 手机工作台本地加密 PWA 服务（2026-11-24，资源内嵌 resources/mobile-workbench/ + 真 PNG 主屏图标）：物理隔离于 phone_drop，仅绑 127.0.0.1；支持 Tailscale CLI 探查、专属端口 serve 开关（默认 8443，永不 reset，退出清理、重启自动恢复）及自定义 HTTPS 隧道；
+  mobile_workbench.rs        # 手机工作台本地加密 PWA 服务（2026-11-24，资源内嵌 resources/mobile-workbench/ + 真 PNG 主屏图标）：物理隔离于 phone_drop，仅绑 127.0.0.1；支持 Cloudflare Quick Tunnel（首次自动下载官方 cloudflared 到配置 bin/、http2 协议托管、断线监听与退出清理）、Tailscale CLI 探查（含 iOS/Android 手机在线节点统计）与专属端口 serve 开关（默认 8443，永不 reset，退出清理、重启自动恢复）及自定义 HTTPS 隧道；
                              #   0600 mobile-workbench.json 仅存设备令牌 SHA-256（≤8 台）、5 分钟一次性配对码换 HttpOnly Cookie、POST 强验 X-Mesa-CSRF 与 Origin、无内联严格 CSP（放行同源 Blob PDF 预览）；
                              #   直连 Rust 真源提供项目列表 / 概览与 SSE / 步骤详情 / 人工请求与定时任务授权审批 / 流式项目助手问答 / 项目知识保存 / 只读文件与主仓+活跃工作副本脱敏 Git Diff / 跨网按课题传资料（复用 phone-inbox/），仅派活经桌面事件桥；
-                             #   命令 mobile_workbench_status / _public_url（供飞书卡片零阻塞附「在手机工作台打开」直跳链接） / _set_config / _tailscale_serve / _pair_start / _pair_cancel / _remove_device / _bridge_reply
+                             #   命令 mobile_workbench_status / _public_url（供飞书卡片零阻塞附「在手机工作台打开」直跳链接） / _set_config / _cloudflare_tunnel / _tailscale_serve / _pair_start / _pair_cancel / _remove_device / _bridge_reply
   feishu.rs                  # 飞书机器人通道（2026-11-06，design-assistant-dispatch-desk.md；2026-11-15 体验与重连加固）：只出不进的长连接（同步 tungstenite 跑在 feishu-ws 线程，手写 pbbp2 帧编解码、
                              #   45s 上限心跳、2s→5s→15s 阶梯快重连、分片重组 / ack 照官方 Go SDK ws 客户端），兼容 text 与 post 富文本（剥 @_user_N）及 parent_id 引用回复，6 秒前端回执看门狗防静默丢消息；
                              #   REST 取 tenant token、发文字与卡片、PATCH 原地更新卡片（is_safe_message_id 校验）；配置 feishu.json（App ID / 开关 / 绑定的 open_id / notify_milestones / quiet_night，0600），

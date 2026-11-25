@@ -9,7 +9,9 @@ import { relTime } from "../rel-time";
 import {
   DEFAULT_TAILSCALE_HTTPS_PORT,
   MAX_MOBILE_DEVICES,
+  cloudflareStateLabel,
   formatPairingCountdown,
+  tailscaleMobilePeerWarning,
   tailscaleServeCommand,
   tailscaleStateLabel,
   validateCustomBaseUrl,
@@ -22,12 +24,13 @@ const fieldClass = baseFieldClass.replace("w-full ", "").replace("bg-canvas", "b
 const rowClass = "flex flex-wrap items-center gap-x-6 gap-y-2 py-3";
 
 const TUNNEL_ITEMS: readonly { id: MobileTunnelMode; label: string }[] = [
-  { id: "tailscale", label: "Tailscale（推荐）" },
+  { id: "cloudflare", label: "Cloudflare（免装 App）" },
+  { id: "tailscale", label: "Tailscale" },
   { id: "custom", label: "自定义 HTTPS" },
 ];
 
 const INTRO_DETAIL =
-  "本地服务只监听 127.0.0.1 回环，不向局域网明文开放（普通 Wi-Fi 的「从手机添加」仍保持只收不出）。经 Tailscale HTTPS 或自定义 HTTPS 隧道加密访问后，手机主屏即可看进展、答人工请求、与项目助手流式对话、点「派出去」、只读审阅文件与脱敏 Diff、跨网传资料。每台手机独立配对（HttpOnly 加密 Cookie，本机 0600 文件仅存 SHA-256，最多 8 台随时移除）。确认命令、评审采纳、写回与删除仍留在电脑端执行。";
+  "本地服务只监听 127.0.0.1 回环，不向局域网明文开放（普通 Wi-Fi 的「从手机添加」仍保持只收不出）。经 Cloudflare Tunnel（手机免装 App、免账号、不与代理冲突）、Tailscale HTTPS 或自定义 HTTPS 隧道加密访问后，手机浏览器即可看进展、答人工请求、与项目助手流式对话、点「派出去」、只读审阅文件与脱敏 Diff、跨网传资料。每台手机独立配对（HttpOnly 加密 Cookie，本机 0600 文件仅存 SHA-256，最多 8 台随时移除）。确认命令、评审采纳、写回与删除仍留在电脑端执行。";
 
 async function copyText(text: string, okMsg: string): Promise<void> {
   try {
@@ -48,6 +51,7 @@ export default function MobileWorkbenchCard() {
   const [customUrlInput, setCustomUrlInput] = useState("");
   const [pairLeft, setPairLeft] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [cfPending, setCfPending] = useState(false);
   const prevDevCountRef = useRef<number | null>(null);
 
   const applyStatus = (next: MobileWorkbenchStatusDto) => {
@@ -121,6 +125,27 @@ export default function MobileWorkbenchCard() {
     }
   }
 
+  async function toggleCloudflareTunnel(enable: boolean) {
+    setBusy(true);
+    setCfPending(true);
+    if (enable && !st?.cloudflare.installed) {
+      toast("首次开启正在下载官方 cloudflared 并建立通道，约需数秒…", "info");
+    }
+    try {
+      const next = await invoke<MobileWorkbenchStatusDto>("mobile_workbench_cloudflare_tunnel", { enable });
+      applyStatus(next);
+      toast(
+        enable ? "Cloudflare HTTPS 通道已开启，可直接扫码配对" : "Cloudflare HTTPS 通道已关闭",
+        "success",
+      );
+    } catch (err) {
+      toast(String(err), "error");
+    } finally {
+      setCfPending(false);
+      setBusy(false);
+    }
+  }
+
   async function toggleTailscaleServe(enable: boolean) {
     setBusy(true);
     try {
@@ -155,7 +180,7 @@ export default function MobileWorkbenchCard() {
 
   async function startPairing() {
     if (!st?.publicUrl) {
-      toast("请先开启上方 Tailscale 通道或保存自定义 HTTPS 地址，再生成手机扫码二维码", "info");
+      toast("请先开启上方加密通道（Cloudflare / Tailscale）或保存自定义 HTTPS 地址，再生成二维码", "info");
       return;
     }
     setBusy(true);
@@ -217,13 +242,17 @@ export default function MobileWorkbenchCard() {
     });
   }
 
+  const cfInfo = st?.cloudflare;
+  const cfBadge = cfInfo ? cloudflareStateLabel(cfInfo) : { text: "检测中…", tone: "muted" as const };
   const tsInfo = st?.tailscale;
   const tsBadge = tsInfo ? tailscaleStateLabel(tsInfo) : { text: "检测中…", tone: "muted" as const };
+  const tsPeerWarn = tsInfo ? tailscaleMobilePeerWarning(tsInfo) : null;
   const qrSrc = st?.pairingQrSvg ? `data:image/svg+xml;utf8,${encodeURIComponent(st.pairingQrSvg)}` : null;
   const localUpstream = st?.localUrl ?? (st?.port ? `http://127.0.0.1:${st.port}` : "http://127.0.0.1:<端口>");
   const cmdPreview = tailscaleServeCommand(st?.tailscaleHttpsPort ?? DEFAULT_TAILSCALE_HTTPS_PORT, st?.port ?? 0);
   const showDetail = Boolean(st?.enabled);
   const showDevices = Boolean(st?.enabled || (st?.devices.length ?? 0) > 0);
+  const tunnelMode: MobileTunnelMode = st?.tunnelMode ?? "cloudflare";
 
   const serviceStatusText = !st
     ? "读取中…"
@@ -237,6 +266,8 @@ export default function MobileWorkbenchCard() {
           ? `已就绪 · ${st.publicUrl}`
           : `运行中 · 127.0.0.1:${st.port}（仅本机可访问）`;
 
+  const cfStatusTone =
+    cfBadge.tone === "ok" ? "text-ok-text" : cfBadge.tone === "warn" ? "text-warn-text" : "text-l3";
   const tsStatusTone =
     tsBadge.tone === "ok" ? "text-ok-text" : tsBadge.tone === "warn" ? "text-warn-text" : "text-l3";
 
@@ -308,15 +339,77 @@ export default function MobileWorkbenchCard() {
                 variant="boxed"
                 size="sm"
                 items={TUNNEL_ITEMS}
-                value={st?.tunnelMode ?? "tailscale"}
+                value={tunnelMode}
                 onChange={(mode) => void saveConfig({ tunnelMode: mode })}
               />
             </div>
           </div>
         )}
 
-        {/* 行 3：Tailscale 通道 或 自定义隧道地址 */}
-        {showDetail && st?.tunnelMode !== "custom" && (
+        {/* 行 3a：Cloudflare Tunnel（一键自动拉起，免装手机 App） */}
+        {showDetail && tunnelMode === "cloudflare" && (
+          <div className={rowClass}>
+            <div className="min-w-[12rem] flex-1">
+              <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-l1">
+                <span>Cloudflare 通道</span>
+                <span className={`text-xs font-normal ${cfStatusTone}`}>{cfBadge.text}</span>
+              </div>
+              <p
+                className="mt-0.5 max-w-xl truncate text-xs leading-relaxed text-l3"
+                title={cfInfo?.tunnelUrl ?? cfInfo?.hint}
+              >
+                {cfInfo?.running && cfInfo.tunnelUrl
+                  ? cfInfo.tunnelUrl
+                  : cfInfo?.hint || "点击「开启通道」即可一键生成加密 HTTPS 地址"}
+              </p>
+            </div>
+            <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                className={paneOutlineButtonClass}
+                disabled={busy}
+                onClick={() => void refresh(false)}
+              >
+                刷新
+              </button>
+              {st?.running && (
+                cfInfo?.running ? (
+                  <>
+                    {cfInfo.tunnelUrl && (
+                      <button
+                        type="button"
+                        className={paneOutlineButtonClass}
+                        onClick={() => void copyText(cfInfo.tunnelUrl!, "已复制访问地址")}
+                      >
+                        复制地址
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={paneOutlineButtonClass}
+                      disabled={busy}
+                      onClick={() => void toggleCloudflareTunnel(false)}
+                    >
+                      关闭通道
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className={paneOutlineButtonClass}
+                    disabled={busy}
+                    onClick={() => void toggleCloudflareTunnel(true)}
+                  >
+                    {cfPending ? (cfInfo?.installed ? "启动中…" : "下载并启动中…") : "开启通道"}
+                  </button>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 行 3b：Tailscale 通道 */}
+        {showDetail && tunnelMode === "tailscale" && (
           <div className={rowClass}>
             <div className="min-w-[12rem] flex-1">
               <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-l1">
@@ -389,10 +482,24 @@ export default function MobileWorkbenchCard() {
                 )
               )}
             </div>
+            {tsPeerWarn && (
+              <div className="flex basis-full flex-wrap items-center justify-between gap-2 rounded-lg bg-warn px-3 py-2 text-xs leading-5 text-warn-text">
+                <span className="min-w-0 flex-1">{tsPeerWarn}</span>
+                <button
+                  type="button"
+                  className={paneOutlineButtonClass}
+                  disabled={busy}
+                  onClick={() => void saveConfig({ tunnelMode: "cloudflare" })}
+                >
+                  改用 Cloudflare
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {showDetail && st?.tunnelMode === "custom" && (
+        {/* 行 3c：自定义隧道地址 */}
+        {showDetail && tunnelMode === "custom" && (
           <div className={rowClass}>
             <div className="min-w-[12rem] flex-1">
               <div className="text-sm font-medium text-l1">自定义隧道地址</div>
@@ -500,7 +607,11 @@ export default function MobileWorkbenchCard() {
                       用手机自带相机扫码配对（剩余 {formatPairingCountdown(pairLeft)}，用一次即废）
                     </div>
                     <p className="leading-5 text-l3">
-                      请使用系统相机（勿用微信扫一扫），并确认手机已连接同一 Tailscale 账号；打开后点浏览器「添加到主屏幕」即可全屏使用。
+                      {tunnelMode === "cloudflare"
+                        ? "请使用手机自带相机扫码（勿用微信扫一扫），免装任何 App、支持 4G/5G 且不与代理冲突；重启 Mesa 后临时地址会刷新，如需固定主屏域名可改用 Tailscale 或自定义 HTTPS。"
+                        : tunnelMode === "tailscale"
+                          ? "请使用系统相机（勿用微信扫一扫），并确认手机已连接同一 Tailscale 账号；打开后点浏览器「添加到主屏幕」即可全屏使用。"
+                          : "请使用手机自带相机扫码（勿用微信扫一扫），打开后点浏览器「添加到主屏幕」即可全屏使用。"}
                     </p>
                     <div className="pt-0.5">
                       <button
@@ -526,11 +637,11 @@ export default function MobileWorkbenchCard() {
         </summary>
         <div className="mt-1.5 max-w-2xl space-y-2.5 leading-5 text-l3">
           <ol className="list-decimal space-y-1 pl-4">
-            <li>电脑和手机安装免费版 Tailscale 并登录同一账号；在 Tailscale 网页后台「DNS」页开启 MagicDNS 与 HTTPS Certificates（仅需一次）。</li>
-            <li>打开上方「开启手机工作台」，在 Tailscale 行点「开启通道」（仅映射 Mesa 专属 HTTPS 端口，不动你已有的其他服务）。</li>
-            <li>点「配对新手机」，用手机自带相机扫码并在浏览器选「添加到主屏幕」。自备 Cloudflare Tunnel / FRP 等隧道时可切到「自定义 HTTPS」。</li>
+            <li>免装 App（推荐）：切到「Cloudflare（免装 App）」，点「开启通道」（首次自动下载官方 cloudflared）即可扫码直连，支持 4G/5G 且不与手机代理冲突。</li>
+            <li>固定主屏域名（可选）：如需长期固定同一域名，可改用「Tailscale」（电脑与手机登录同一账号并在 DNS 页开启 MagicDNS 与 HTTPS Certificates）或自备「自定义 HTTPS」。</li>
+            <li>配对与主屏：点「配对新手机」，用手机自带相机扫码，打开后在浏览器选「添加到主屏幕」。</li>
           </ol>
-          {st?.tunnelMode !== "custom" && (
+          {tunnelMode === "tailscale" && (
             <div className="flex flex-wrap items-center gap-2 pt-0.5">
               <span>Tailscale HTTPS 端口</span>
               <input

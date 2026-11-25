@@ -1308,6 +1308,7 @@ pub fn run() {
             mobile_workbench::mobile_workbench_public_url,
             mobile_workbench::mobile_workbench_set_config,
             mobile_workbench::mobile_workbench_tailscale_serve,
+            mobile_workbench::mobile_workbench_cloudflare_tunnel,
             mobile_workbench::mobile_workbench_pair_start,
             mobile_workbench::mobile_workbench_pair_cancel,
             mobile_workbench::mobile_workbench_remove_device,

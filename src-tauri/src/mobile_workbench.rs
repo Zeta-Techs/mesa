@@ -1,6 +1,6 @@
 //! Mesa 手机工作台（2026-11-24）：
 //! - **物理隔离于 `phone_drop.rs`**：只监听本机回环 `127.0.0.1:<端口>`，永不绑 `0.0.0.0` 或普通局域网网卡（普通 Wi-Fi 继续守死「只收不出」）。
-//! - **可插拔加密通道**：支持 `tailscale serve --bg --https=<port>`（默认 8443，只操作 Mesa 专属端口，永不 `reset`）或用户自定义 HTTPS 隧道 / 反代地址。
+//! - **可插拔加密通道**：支持 Cloudflare Tunnel（一键自动拉起 `cloudflared`，手机免装 App、免账号、不与代理冲突）、`tailscale serve --bg --https=<port>`（默认 8443，只操作 Mesa 专属端口，永不 `reset`）或用户自定义 HTTPS 隧道 / 反代地址。
 //! - **零重复直连 Rust 唯一真源**：项目概览 / 步骤详情 / 文件清单 / 人工请求 / 项目助手流式多轮会话全部直连 Rust 核心，
 //!   跨网传资料复用 `phone_drop` 的 `phone-inbox/` 暂存区；仅派活执行经桌面事件桥校验后走既有 `dispatchWorkOrder`。
 //! - **纵深安全**：0600 设备配对簿只存 SHA-256（最多 8 台，可随时移除）、5 分钟一次性配对码、
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Cursor, Read};
+use std::io::{self, BufRead, BufReader, Cursor, Read};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -60,7 +60,7 @@ struct StoredConfig {
     enabled: bool,
     #[serde(default)]
     port: u16,
-    /// "tailscale" | "custom"
+    /// "cloudflare" | "tailscale" | "custom"
     #[serde(default = "default_tunnel_mode")]
     tunnel_mode: String,
     #[serde(default = "default_ts_port")]
@@ -68,6 +68,9 @@ struct StoredConfig {
     /// 用户是否开启了 Tailscale Serve 通道：退出时清理端口，下次重启自动恢复映射
     #[serde(default)]
     tailscale_serve_wanted: bool,
+    /// 用户是否开启了 Cloudflare Quick Tunnel：退出时杀子进程，下次重启自动恢复
+    #[serde(default)]
+    cloudflare_wanted: bool,
     #[serde(default)]
     custom_base_url: String,
     #[serde(default)]
@@ -75,7 +78,7 @@ struct StoredConfig {
 }
 
 fn default_tunnel_mode() -> String {
-    "tailscale".to_string()
+    "cloudflare".to_string()
 }
 
 fn default_ts_port() -> u16 {
@@ -90,6 +93,7 @@ impl Default for StoredConfig {
             tunnel_mode: default_tunnel_mode(),
             tailscale_https_port: default_ts_port(),
             tailscale_serve_wanted: false,
+            cloudflare_wanted: false,
             custom_base_url: String::new(),
             devices: Vec::new(),
         }
@@ -107,6 +111,16 @@ pub struct MobileDeviceDto {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CloudflareInfoDto {
+    pub installed: bool,
+    pub binary_path: Option<String>,
+    pub running: bool,
+    pub tunnel_url: Option<String>,
+    pub hint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TailscaleInfoDto {
     pub installed: bool,
     pub binary_path: Option<String>,
@@ -116,6 +130,8 @@ pub struct TailscaleInfoDto {
     pub https_ready: bool,
     pub serve_active: bool,
     pub serve_url: Option<String>,
+    pub mobile_peers_total: usize,
+    pub mobile_peers_online: usize,
     pub hint: String,
 }
 
@@ -134,6 +150,7 @@ pub struct MobileWorkbenchStatusDto {
     pub pairing_url: Option<String>,
     pub pairing_qr_svg: Option<String>,
     pub pairing_left_secs: u64,
+    pub cloudflare: CloudflareInfoDto,
     pub tailscale: TailscaleInfoDto,
     pub last_error: Option<String>,
 }
@@ -153,8 +170,8 @@ fn load_config() -> StoredConfig {
     };
     match serde_json::from_str::<StoredConfig>(&raw) {
         Ok(mut cfg) => {
-            if cfg.tunnel_mode != "custom" {
-                cfg.tunnel_mode = "tailscale".into();
+            if !matches!(cfg.tunnel_mode.as_str(), "cloudflare" | "tailscale" | "custom") {
+                cfg.tunnel_mode = default_tunnel_mode();
             }
             if cfg.tailscale_https_port == 0 {
                 cfg.tailscale_https_port = DEFAULT_TS_HTTPS_PORT;
@@ -343,6 +360,8 @@ pub(crate) fn parse_tailscale_status_json(
             https_ready: false,
             serve_active: false,
             serve_url: None,
+            mobile_peers_total: 0,
+            mobile_peers_online: 0,
             hint: "读取 Tailscale 状态失败，请确认本机 Tailscale 应用已打开".into(),
         };
     };
@@ -375,6 +394,23 @@ pub(crate) fn parse_tailscale_status_json(
                 .collect()
         })
         .unwrap_or_default();
+    let mut mobile_peers_total = 0usize;
+    let mut mobile_peers_online = 0usize;
+    if let Some(peers) = v.get("Peer").and_then(|p| p.as_object()) {
+        for peer in peers.values() {
+            let os = peer
+                .get("OS")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if os == "ios" || os == "android" {
+                mobile_peers_total += 1;
+                if peer.get("Online").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    mobile_peers_online += 1;
+                }
+            }
+        }
+    }
     let https_ready = !cert_domains.is_empty();
     let serve_active = serve_json
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
@@ -394,9 +430,15 @@ pub(crate) fn parse_tailscale_status_json(
             if !https_ready {
                 "Tailscale 已连接，但尚未开启 HTTPS 证书：请到 Tailscale 网页后台 DNS 页打开 MagicDNS 与 HTTPS Certificates 后点刷新".into()
             } else if serve_active {
-                "Tailscale HTTPS 加密通道运行中，可在手机 4G/5G 或任意 Wi-Fi 访问".into()
+                if mobile_peers_total == 0 {
+                    "Tailscale 通道运行中，但账号下尚未检测到手机节点（请确认手机已登录并加入同一 Tailscale 账号）".into()
+                } else if mobile_peers_online == 0 {
+                    "Tailscale 通道运行中，但手机节点未在线（请在手机端开启 Tailscale 连接，或改用免装 App 的 Cloudflare 通道）".into()
+                } else {
+                    "Tailscale HTTPS 加密通道运行中，可在手机 4G/5G 或任意 Wi-Fi 访问".into()
+                }
             } else {
-                "Tailscale 已就绪，点击「开启 Tailscale 通道」即可获得正式 HTTPS 地址".into()
+                "Tailscale 已就绪，点击「开启通道」即可获得固定 HTTPS 地址".into()
             }
         }
         "Stopped" => "本机 Tailscale 已安装但未启动，请先打开 Tailscale 应用并连接".into(),
@@ -413,6 +455,8 @@ pub(crate) fn parse_tailscale_status_json(
         https_ready,
         serve_active,
         serve_url,
+        mobile_peers_total,
+        mobile_peers_online,
         hint,
     }
 }
@@ -428,7 +472,9 @@ fn inspect_tailscale(https_port: u16) -> TailscaleInfoDto {
             https_ready: false,
             serve_active: false,
             serve_url: None,
-            hint: "未检测到 Tailscale：可安装免费版 Tailscale（电脑与手机各装一次），或切换「自定义 HTTPS 隧道」填入你自己的反代地址".into(),
+            mobile_peers_total: 0,
+            mobile_peers_online: 0,
+            hint: "未检测到 Tailscale：可改用「Cloudflare（免装 App）」一键直连，或安装 Tailscale 获取固定主屏域名".into(),
         };
     };
     let bin_str = Some(bin.to_string_lossy().into_owned());
@@ -444,6 +490,8 @@ fn inspect_tailscale(https_port: u16) -> TailscaleInfoDto {
                 https_ready: false,
                 serve_active: false,
                 serve_url: None,
+                mobile_peers_total: 0,
+                mobile_peers_online: 0,
                 hint: format!("无法读取 Tailscale 状态（{e}），请确认 Tailscale 应用已启动"),
             };
         }
@@ -475,6 +523,464 @@ fn apply_tailscale_serve(enable: bool, https_port: u16, local_port: u16) -> Resu
     }
 }
 
+// ===== Cloudflare Quick Tunnel（免装手机 App / 免账号 / 一键自动托管）=====
+
+static CF_INSTALLING: AtomicBool = AtomicBool::new(false);
+
+struct AtomicFlagReset(&'static AtomicBool);
+impl Drop for AtomicFlagReset {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn managed_cloudflared_path() -> Result<PathBuf, String> {
+    let root = crate::storage::config_root().ok_or_else(|| "无法确定 Mesa 配置目录".to_string())?;
+    let bin_name = if cfg!(target_os = "windows") {
+        "cloudflared.exe"
+    } else {
+        "cloudflared"
+    };
+    Ok(root.join("bin").join(bin_name))
+}
+
+fn resolve_cloudflared_binary() -> Option<PathBuf> {
+    if let Ok(managed) = managed_cloudflared_path() {
+        if managed.is_file() {
+            return Some(managed);
+        }
+    }
+    if let Some(p) = crate::agents::resolve_binary("cloudflared") {
+        return Some(p);
+    }
+    let candidates: &[&str] = &[
+        #[cfg(target_os = "macos")]
+        "/opt/homebrew/bin/cloudflared",
+        #[cfg(target_os = "macos")]
+        "/usr/local/bin/cloudflared",
+        #[cfg(target_os = "windows")]
+        r"C:\Program Files\cloudflared\cloudflared.exe",
+        #[cfg(target_os = "windows")]
+        r"C:\Program Files (x86)\cloudflared\cloudflared.exe",
+        #[cfg(target_os = "linux")]
+        "/usr/local/bin/cloudflared",
+        #[cfg(target_os = "linux")]
+        "/usr/bin/cloudflared",
+    ];
+    for c in candidates {
+        let p = PathBuf::from(c);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn cloudflared_download_asset() -> Result<(&'static str, bool), String> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Ok((
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz",
+            true,
+        )),
+        ("macos", "x86_64") => Ok((
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz",
+            true,
+        )),
+        ("windows", "x86_64" | "aarch64") => Ok((
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe",
+            false,
+        )),
+        ("linux", "x86_64") => Ok((
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+            false,
+        )),
+        ("linux", "aarch64") => Ok((
+            "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
+            false,
+        )),
+        (os, arch) => Err(format!(
+            "暂不支持为 {os}/{arch} 自动下载 cloudflared，请手动安装后点击刷新"
+        )),
+    }
+}
+
+fn outbound_proxy_for_mobile() -> Option<String> {
+    if cfg!(test) {
+        return None;
+    }
+    let s = crate::settings::read_current();
+    s.outbound_proxy
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && crate::settings::validate_outbound_proxy(p).is_ok())
+        .map(str::to_string)
+}
+
+/// 首次开启 Cloudflare 通道时自动从官方 GitHub Release 下载 `cloudflared` 到 Mesa 私有 bin 目录
+async fn install_cloudflared_async() -> Result<PathBuf, String> {
+    if let Some(existing) = resolve_cloudflared_binary() {
+        return Ok(existing);
+    }
+    if CF_INSTALLING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Err("正在下载 cloudflared 组件，请稍候完成后重试".into());
+    }
+    let _reset = AtomicFlagReset(&CF_INSTALLING);
+
+    let (url, is_tgz) = cloudflared_download_asset()?;
+    let target = managed_cloudflared_path()?;
+
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(120))
+        .user_agent("Mesa/1.0");
+    if let Some(p) = outbound_proxy_for_mobile() {
+        builder = builder.proxy(reqwest::Proxy::all(&p).map_err(|e| format!("出网代理不可用：{e}"))?);
+    }
+    let client = builder
+        .build()
+        .map_err(|e| format!("创建下载客户端失败：{e}"))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("下载 cloudflared 失败（可在设置页配置出网代理后重试）：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("下载 cloudflared 失败（HTTP {}）", resp.status().as_u16()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取 cloudflared 安装包失败：{e}"))?;
+    if bytes.len() < 1_000_000 || bytes.len() > 150_000_000 {
+        return Err(format!("下载的 cloudflared 文件大小异常（{} 字节）", bytes.len()));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let bin_dir = target
+            .parent()
+            .ok_or_else(|| "无法确定 cloudflared 安装目录".to_string())?;
+        fs::create_dir_all(bin_dir).map_err(|e| format!("创建组件目录失败：{e}"))?;
+        let tag = uuid::Uuid::new_v4().simple().to_string();
+        let tmp_dl = bin_dir.join(format!("cloudflared-dl-{tag}.tmp"));
+        fs::write(&tmp_dl, &bytes).map_err(|e| format!("写入下载临时文件失败：{e}"))?;
+
+        if is_tgz {
+            let ext_dir = bin_dir.join(format!("cloudflared-ext-{tag}"));
+            fs::create_dir_all(&ext_dir).map_err(|e| {
+                let _ = fs::remove_file(&tmp_dl);
+                format!("创建解压目录失败：{e}")
+            })?;
+            let tar_bin = if Path::new("/usr/bin/tar").is_file() {
+                Path::new("/usr/bin/tar")
+            } else {
+                Path::new("tar")
+            };
+            let ext_res = run_cmd_timeout(
+                tar_bin,
+                &[
+                    "-xzf",
+                    &tmp_dl.to_string_lossy(),
+                    "-C",
+                    &ext_dir.to_string_lossy(),
+                    "cloudflared",
+                ],
+                Duration::from_secs(20),
+            );
+            let _ = fs::remove_file(&tmp_dl);
+            if let Err(e) = ext_res {
+                let _ = fs::remove_dir_all(&ext_dir);
+                return Err(format!("解压 cloudflared 失败：{e}"));
+            }
+            let extracted = ext_dir.join("cloudflared");
+            if !extracted.is_file() {
+                let _ = fs::remove_dir_all(&ext_dir);
+                return Err("解压后未找到 cloudflared 可执行文件".into());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&extracted, fs::Permissions::from_mode(0o755));
+            }
+            let mv_res = fs::rename(&extracted, &target);
+            let _ = fs::remove_dir_all(&ext_dir);
+            mv_res.map_err(|e| format!("安装 cloudflared 失败：{e}"))?;
+        } else {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&tmp_dl, fs::Permissions::from_mode(0o755));
+            }
+            #[cfg(target_os = "windows")]
+            if target.exists() {
+                let _ = fs::remove_file(&target);
+            }
+            fs::rename(&tmp_dl, &target).map_err(|e| {
+                let _ = fs::remove_file(&tmp_dl);
+                format!("安装 cloudflared 失败：{e}")
+            })?;
+        }
+        Ok(target)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 从 `cloudflared` 输出行里严格提取 `https://<slug>.trycloudflare.com`
+pub(crate) fn extract_trycloudflare_url(line: &str) -> Option<String> {
+    const PREFIX: &str = "https://";
+    const SUFFIX: &str = ".trycloudflare.com";
+    let mut rest = line;
+    while let Some(idx) = rest.find(PREFIX) {
+        let after = &rest[idx + PREFIX.len()..];
+        let host_end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '.'))
+            .unwrap_or(after.len());
+        let host_low = after[..host_end].to_lowercase();
+        if host_low.ends_with(SUFFIX) {
+            let sub = &host_low[..host_low.len() - SUFFIX.len()];
+            if !sub.is_empty()
+                && !sub.contains('.')
+                && !sub.starts_with('-')
+                && !sub.ends_with('-')
+                && sub
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            {
+                return Some(format!("https://{host_low}"));
+            }
+        }
+        rest = after;
+    }
+    None
+}
+
+struct CloudflareTunnel {
+    child: Arc<Mutex<std::process::Child>>,
+    pid: u32,
+    url: String,
+    local_port: u16,
+    stop: Arc<AtomicBool>,
+}
+
+enum CfLogEvent {
+    Url(String),
+    Connected,
+}
+
+fn start_cloudflare_tunnel_sync(
+    bin: &Path,
+    app: Option<tauri::AppHandle>,
+    local_port: u16,
+) -> Result<CloudflareTunnel, String> {
+    if local_port == 0 {
+        return Err("手机工作台本机服务尚未启动，请先打开开关".into());
+    }
+    let upstream = format!("http://127.0.0.1:{local_port}");
+    let mut cmd = crate::process::background_command(bin);
+    // 使用 http2（TCP）绕开校园网/国内运营商常见的 UDP 7844 QUIC 阻断，显著提升连通率
+    cmd.args([
+        "tunnel",
+        "--no-autoupdate",
+        "--protocol",
+        "http2",
+        "--url",
+        &upstream,
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped());
+    for (k, v) in crate::settings::download_proxy_env(&["127.0.0.1", "localhost"]) {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 cloudflared 失败：{e}"))?;
+    let pid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    let (ev_tx, ev_rx) = mpsc::channel::<CfLogEvent>();
+    let recent_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let spawn_reader = |pipe: Option<Box<dyn Read + Send>>,
+                        tx: mpsc::Sender<CfLogEvent>,
+                        recent: Arc<Mutex<Vec<String>>>| {
+        let Some(p) = pipe else { return };
+        std::thread::spawn(move || {
+            let reader = BufReader::new(p);
+            for line in reader.lines().map_while(Result::ok) {
+                if let Some(u) = extract_trycloudflare_url(&line) {
+                    let _ = tx.send(CfLogEvent::Url(u));
+                }
+                if line.to_lowercase().contains("registered tunnel connection") {
+                    let _ = tx.send(CfLogEvent::Connected);
+                }
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(mut buf) = recent.lock() {
+                        if buf.len() >= 8 {
+                            buf.remove(0);
+                        }
+                        buf.push(trimmed.chars().take(200).collect());
+                    }
+                }
+            }
+        });
+    };
+    spawn_reader(
+        stdout.map(|s| Box::new(s) as Box<dyn Read + Send>),
+        ev_tx.clone(),
+        recent_lines.clone(),
+    );
+    spawn_reader(
+        stderr.map(|s| Box::new(s) as Box<dyn Read + Send>),
+        ev_tx,
+        recent_lines.clone(),
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let mut found_url: Option<String> = None;
+    let mut connected = false;
+    let mut connect_deadline: Option<Instant> = None;
+
+    loop {
+        if let Some(cd) = connect_deadline {
+            if connected || Instant::now() >= cd {
+                break;
+            }
+        }
+        match ev_rx.recv_timeout(Duration::from_millis(120)) {
+            Ok(CfLogEvent::Url(u)) => {
+                if found_url.is_none() {
+                    found_url = Some(u);
+                    // 拿到域名后再稍等边缘节点注册完成（最多 5 秒），避免扫码瞬间遇到冷启动 530
+                    connect_deadline = Some(Instant::now() + Duration::from_secs(5));
+                }
+            }
+            Ok(CfLogEvent::Connected) => {
+                connected = true;
+                if found_url.is_some() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            let tail = recent_lines
+                .lock()
+                .ok()
+                .map(|b| b.join(" | "))
+                .unwrap_or_default();
+            let detail = if tail.is_empty() {
+                format!("退出码 {}", status.code().unwrap_or(-1))
+            } else {
+                tail
+            };
+            return Err(format!("Cloudflare 通道提前退出：{detail}"));
+        }
+        if found_url.is_none() && Instant::now() >= deadline {
+            crate::pty::kill_process_tree(pid);
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Cloudflare 通道启动超时，请检查网络连接（或切换设置页出网代理后重试）".into());
+        }
+    }
+
+    let Some(url) = found_url else {
+        crate::pty::kill_process_tree(pid);
+        let _ = child.kill();
+        let _ = child.wait();
+        let tail = recent_lines
+            .lock()
+            .ok()
+            .map(|b| b.join(" | "))
+            .unwrap_or_default();
+        return Err(if tail.is_empty() {
+            "未能从 cloudflared 获取临时 HTTPS 地址".into()
+        } else {
+            format!("未能获取 Cloudflare 通道地址：{tail}")
+        });
+    };
+
+    let child_arc = Arc::new(Mutex::new(child));
+    let stop = Arc::new(AtomicBool::new(false));
+    let watch_child = child_arc.clone();
+    let watch_stop = stop.clone();
+    std::thread::spawn(move || {
+        while !watch_stop.load(Ordering::Acquire) {
+            std::thread::sleep(Duration::from_millis(500));
+            if watch_stop.load(Ordering::Acquire) {
+                break;
+            }
+            let exited = watch_child
+                .lock()
+                .ok()
+                .and_then(|mut c| c.try_wait().ok().flatten())
+                .is_some();
+            if exited {
+                let mut cleared = false;
+                if let Ok(mut rt) = runtime().lock() {
+                    if rt.cloudflare.as_ref().is_some_and(|cf| cf.pid == pid) {
+                        rt.cloudflare = None;
+                        rt.last_error = Some("Cloudflare 加密通道已断开，请重新点击开启".into());
+                        cleared = true;
+                    }
+                }
+                if cleared {
+                    if let Some(ref a) = app {
+                        let _ = a.emit("mobile-workbench-status", ());
+                    }
+                }
+                break;
+            }
+        }
+    });
+
+    Ok(CloudflareTunnel {
+        child: child_arc,
+        pid,
+        url,
+        local_port,
+        stop,
+    })
+}
+
+fn stop_cloudflare_tunnel_locked(rt: &mut Runtime) {
+    if let Some(cf) = rt.cloudflare.take() {
+        cf.stop.store(true, Ordering::Release);
+        crate::pty::kill_process_tree(cf.pid);
+        if let Ok(mut ch) = cf.child.lock() {
+            let _ = ch.kill();
+            let _ = ch.wait();
+        }
+    }
+}
+
+fn inspect_cloudflare(running_url: Option<String>) -> CloudflareInfoDto {
+    let bin = resolve_cloudflared_binary();
+    let installed = bin.is_some();
+    let binary_path = bin.map(|p| p.to_string_lossy().into_owned());
+    let running = running_url.is_some();
+    let hint = if running {
+        "Cloudflare 加密通道运行中，手机免装 App 扫码直连（支持 4G/5G，不与代理冲突）".into()
+    } else if installed {
+        "已就绪，点击「开启通道」即可生成加密 HTTPS 地址（免账号、手机免装 App）".into()
+    } else {
+        "首次点击「开启通道」将自动下载官方 cloudflared 组件并启动（免账号、手机免装 App）".into()
+    };
+    CloudflareInfoDto {
+        installed,
+        binary_path,
+        running,
+        tunnel_url: running_url,
+        hint,
+    }
+}
+
 // ===== 运行时会话与桌面派活桥 =====
 
 struct PairingState {
@@ -495,6 +1001,7 @@ struct RunningServer {
 
 struct Runtime {
     running: Option<Arc<RunningServer>>,
+    cloudflare: Option<CloudflareTunnel>,
     pairing: Option<PairingState>,
     last_error: Option<String>,
     /// 最近一次探测到的有效 Tailscale Serve 公网地址（供飞书通知零阻塞读取）
@@ -505,6 +1012,7 @@ impl Runtime {
     fn new() -> Self {
         Self {
             running: None,
+            cloudflare: None,
             pairing: None,
             last_error: None,
             last_serve_url: None,
@@ -704,6 +1212,19 @@ fn check_csrf_and_origin(rq: &tiny_http::Request, token: &str, local_port: u16) 
         ];
         if let Some(o) = extract_origin(&cfg.custom_base_url) {
             allowed.push(o);
+        }
+        {
+            let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(ref cf) = rt.cloudflare {
+                if let Some(o) = extract_origin(&cf.url) {
+                    allowed.push(o);
+                }
+            }
+            if let Some(ref ts_u) = rt.last_serve_url {
+                if let Some(o) = extract_origin(ts_u) {
+                    allowed.push(o);
+                }
+            }
         }
         if let Some(host) = header_val(rq, "Host") {
             let h = host.trim().to_lowercase();
@@ -972,8 +1493,13 @@ fn is_https_request(rq: &tiny_http::Request) -> bool {
     {
         return true;
     }
+    if header_val(rq, "Cf-Visitor")
+        .is_some_and(|v| v.to_lowercase().contains("https"))
+    {
+        return true;
+    }
     let cfg = load_config();
-    if cfg.tunnel_mode == "tailscale" {
+    if matches!(cfg.tunnel_mode.as_str(), "cloudflare" | "tailscale") {
         if let Some(host) = header_val(rq, "Host") {
             let h = host.to_lowercase();
             if !h.starts_with("127.0.0.1") && !h.starts_with("localhost") {
@@ -1818,6 +2344,7 @@ fn start_server_locked(rt: &mut Runtime, app: Option<tauri::AppHandle>, desired_
 }
 
 fn stop_server_locked(rt: &mut Runtime) {
+    stop_cloudflare_tunnel_locked(rt);
     if let Some(sess) = rt.running.take() {
         sess.stop.store(true, Ordering::Release);
         sess.server.unblock();
@@ -1839,14 +2366,20 @@ fn current_status_sync() -> MobileWorkbenchStatusDto {
         Some(s) => (true, s.port),
         None => (false, cfg.port),
     };
+    let cf_url = rt.cloudflare.as_ref().map(|c| c.url.clone());
+    let cf = inspect_cloudflare(cf_url.clone());
     rt.last_serve_url = if ts.serve_active { ts.serve_url.clone() } else { None };
     let local_url = (running && actual_port > 0).then(|| format!("http://127.0.0.1:{actual_port}"));
-    let public_url = if cfg.tunnel_mode == "custom" {
-        (!cfg.custom_base_url.is_empty()).then(|| cfg.custom_base_url.clone())
-    } else if ts.serve_active {
-        ts.serve_url.clone()
-    } else {
-        None
+    let public_url = match cfg.tunnel_mode.as_str() {
+        "cloudflare" => cf_url,
+        "custom" => (!cfg.custom_base_url.is_empty()).then(|| cfg.custom_base_url.clone()),
+        _ => {
+            if ts.serve_active {
+                ts.serve_url.clone()
+            } else {
+                None
+            }
+        }
     };
     let pair_base = public_url.as_ref().or(local_url.as_ref());
     let (pairing_url, pairing_qr_svg, pairing_left_secs) = match rt.pairing.as_ref() {
@@ -1887,6 +2420,7 @@ fn current_status_sync() -> MobileWorkbenchStatusDto {
         pairing_url,
         pairing_qr_svg,
         pairing_left_secs,
+        cloudflare: cf,
         tailscale: ts,
         last_error: rt.last_error.clone(),
     }
@@ -1918,6 +2452,51 @@ fn maybe_restore_tailscale_serve(
     }
 }
 
+/// 若用户上次开启了 Cloudflare 通道且本机已有 `cloudflared`，则在后台自动恢复隧道（不持 Runtime 锁）
+fn maybe_restore_cloudflare_tunnel(
+    app: Option<tauri::AppHandle>,
+    cfg: &StoredConfig,
+    actual_port: u16,
+) {
+    if cfg.tunnel_mode != "cloudflare" || !cfg.cloudflare_wanted || actual_port == 0 {
+        return;
+    }
+    {
+        let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+        if rt
+            .cloudflare
+            .as_ref()
+            .is_some_and(|c| c.local_port == actual_port)
+        {
+            return;
+        }
+    }
+    let Some(bin) = resolve_cloudflared_binary() else {
+        return;
+    };
+    match start_cloudflare_tunnel_sync(&bin, app, actual_port) {
+        Ok(tunnel) => {
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            if rt.running.as_ref().is_some_and(|s| s.port == actual_port) {
+                stop_cloudflare_tunnel_locked(&mut rt);
+                rt.cloudflare = Some(tunnel);
+                rt.last_error = None;
+            } else {
+                tunnel.stop.store(true, Ordering::Release);
+                crate::pty::kill_process_tree(tunnel.pid);
+                if let Ok(mut ch) = tunnel.child.lock() {
+                    let _ = ch.kill();
+                    let _ = ch.wait();
+                }
+            }
+        }
+        Err(e) => {
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            rt.last_error = Some(e);
+        }
+    }
+}
+
 /// 零阻塞获取当前可用的加密公网地址（供飞书通知卡片一键附带「在手机工作台打开」按钮）
 fn current_public_url_fast() -> Option<String> {
     let cfg = load_config();
@@ -1926,14 +2505,14 @@ fn current_public_url_fast() -> Option<String> {
     }
     let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
     rt.running.as_ref()?;
-    if cfg.tunnel_mode == "custom" {
-        (!cfg.custom_base_url.is_empty()).then_some(cfg.custom_base_url)
-    } else {
-        rt.last_serve_url.clone()
+    match cfg.tunnel_mode.as_str() {
+        "cloudflare" => rt.cloudflare.as_ref().map(|c| c.url.clone()),
+        "custom" => (!cfg.custom_base_url.is_empty()).then_some(cfg.custom_base_url),
+        _ => rt.last_serve_url.clone(),
     }
 }
 
-/// 应用启动时若用户开启了手机工作台，则在后台启动 `127.0.0.1` 本地监听，并自动恢复上次开启的 Tailscale 加密通道
+/// 应用启动时若用户开启了手机工作台，则在后台启动 `127.0.0.1` 本地监听，并自动恢复上次开启的加密通道
 pub(crate) fn start_at_setup(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let cfg = load_config();
@@ -1959,7 +2538,10 @@ pub(crate) fn start_at_setup(app: tauri::AppHandle) {
             }
         };
         if let Some((sess, port)) = started {
-            if cfg.tunnel_mode == "tailscale" && cfg.tailscale_serve_wanted {
+            if cfg.tunnel_mode == "cloudflare" && cfg.cloudflare_wanted {
+                maybe_restore_cloudflare_tunnel(Some(app.clone()), &cfg, port);
+                let _ = app.emit("mobile-workbench-status", ());
+            } else if cfg.tunnel_mode == "tailscale" && cfg.tailscale_serve_wanted {
                 maybe_restore_tailscale_serve(&sess, &cfg, port);
                 let _ = app.emit("mobile-workbench-status", ());
             } else if cfg.tunnel_mode == "tailscale" {
@@ -1972,7 +2554,7 @@ pub(crate) fn start_at_setup(app: tauri::AppHandle) {
     });
 }
 
-/// 应用退出时停止本地监听并清理 Mesa 自己挂接的 Tailscale Serve 端口
+/// 应用退出时停止本地监听并清理 Mesa 自己挂接的 Cloudflare / Tailscale 通道
 pub(crate) fn shutdown() {
     let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
     stop_server_locked(&mut rt);
@@ -2012,7 +2594,15 @@ pub async fn mobile_workbench_set_config(
         let cfg_after = with_config_mut(|cfg| {
             cfg.enabled = enabled;
             if let Some(ref mode) = tunnel_mode {
-                cfg.tunnel_mode = if mode == "custom" { "custom".into() } else { "tailscale".into() };
+                let next_mode = match mode.as_str() {
+                    "cloudflare" => "cloudflare",
+                    "custom" => "custom",
+                    _ => "tailscale",
+                };
+                if cfg.tunnel_mode == "cloudflare" && next_mode != "cloudflare" {
+                    cfg.cloudflare_wanted = false;
+                }
+                cfg.tunnel_mode = next_mode.to_string();
             }
             if let Some(p) = tailscale_https_port {
                 if p >= 443 {
@@ -2027,6 +2617,9 @@ pub async fn mobile_workbench_set_config(
         let started: Option<(Arc<RunningServer>, u16)> = {
             let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
             if enabled {
+                if cfg_after.tunnel_mode != "cloudflare" {
+                    stop_cloudflare_tunnel_locked(&mut rt);
+                }
                 let port = start_server_locked(&mut rt, Some(app.clone()), cfg_after.port)?;
                 if cfg_after.port == 0 {
                     let _ = with_config_mut(|c| {
@@ -2041,8 +2634,87 @@ pub async fn mobile_workbench_set_config(
             }
         };
         if let Some((sess, port)) = started {
-            maybe_restore_tailscale_serve(&sess, &cfg_after, port);
+            if cfg_after.tunnel_mode == "cloudflare" {
+                maybe_restore_cloudflare_tunnel(Some(app.clone()), &cfg_after, port);
+            } else {
+                maybe_restore_tailscale_serve(&sess, &cfg_after, port);
+            }
         }
+        let _ = app.emit("mobile-workbench-status", ());
+        Ok(current_status_sync())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mobile_workbench_cloudflare_tunnel(
+    app: tauri::AppHandle,
+    enable: bool,
+) -> Result<MobileWorkbenchStatusDto, String> {
+    if !enable {
+        return tauri::async_runtime::spawn_blocking(move || {
+            {
+                let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+                stop_cloudflare_tunnel_locked(&mut rt);
+                rt.last_error = None;
+            }
+            let _ = with_config_mut(|c| {
+                c.cloudflare_wanted = false;
+                Ok(())
+            });
+            let _ = app.emit("mobile-workbench-status", ());
+            Ok(current_status_sync())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+
+    let local_port = {
+        let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+        rt.running.as_ref().map(|s| s.port).unwrap_or(0)
+    };
+    if local_port == 0 {
+        return Err("请先开启手机工作台本机服务，再开启 Cloudflare 通道".into());
+    }
+
+    let bin = match resolve_cloudflared_binary() {
+        Some(b) => b,
+        None => install_cloudflared_async().await?,
+    };
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let already_ok = {
+            let rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            rt.cloudflare
+                .as_ref()
+                .is_some_and(|c| c.local_port == local_port)
+        };
+        if !already_ok {
+            {
+                let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+                stop_cloudflare_tunnel_locked(&mut rt);
+            }
+            let tunnel = start_cloudflare_tunnel_sync(&bin, Some(app.clone()), local_port)?;
+            let mut rt = runtime().lock().unwrap_or_else(|e| e.into_inner());
+            if rt.running.as_ref().is_some_and(|s| s.port == local_port) {
+                rt.cloudflare = Some(tunnel);
+                rt.last_error = None;
+            } else {
+                tunnel.stop.store(true, Ordering::Release);
+                crate::pty::kill_process_tree(tunnel.pid);
+                if let Ok(mut ch) = tunnel.child.lock() {
+                    let _ = ch.kill();
+                    let _ = ch.wait();
+                }
+                return Err("手机工作台已关闭，取消启动 Cloudflare 通道".into());
+            }
+        }
+        let _ = with_config_mut(|c| {
+            c.tunnel_mode = "cloudflare".into();
+            c.cloudflare_wanted = true;
+            Ok(())
+        });
         let _ = app.emit("mobile-workbench-status", ());
         Ok(current_status_sync())
     })
@@ -2174,12 +2846,37 @@ mod tests {
         assert!(!info2.https_ready);
         assert!(info2.hint.contains("HTTPS Certificates"));
 
-        let running_ok = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail123.ts.net."},"TailscaleIPs":["100.64.1.2"],"CertDomains":["mac.tail123.ts.net"]}"#;
+        let running_ok = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail123.ts.net."},"TailscaleIPs":["100.64.1.2"],"CertDomains":["mac.tail123.ts.net"],"Peer":{"k1":{"OS":"iOS","Online":true},"k2":{"OS":"android","Online":false},"k3":{"OS":"macOS","Online":true}}}"#;
         let serve_on = r#"{"TCP":{"8443":{"HTTPS":true}}}"#;
         let info3 = parse_tailscale_status_json(running_ok, Some(serve_on), 8443, None);
         assert!(info3.https_ready);
         assert!(info3.serve_active);
+        assert_eq!(info3.mobile_peers_total, 2);
+        assert_eq!(info3.mobile_peers_online, 1);
         assert_eq!(info3.serve_url.as_deref(), Some("https://mac.tail123.ts.net:8443"));
+
+        let no_mobile = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail123.ts.net."},"TailscaleIPs":["100.64.1.2"],"CertDomains":["mac.tail123.ts.net"],"Peer":{"k1":{"OS":"macOS","Online":true}}}"#;
+        let info4 = parse_tailscale_status_json(no_mobile, Some(serve_on), 8443, None);
+        assert_eq!(info4.mobile_peers_total, 0);
+        assert_eq!(info4.mobile_peers_online, 0);
+        assert!(info4.hint.contains("手机节点"));
+    }
+
+    #[test]
+    fn extract_trycloudflare_url_strictly_matches_valid_quick_tunnel_domains() {
+        assert_eq!(
+            extract_trycloudflare_url("INF |  https://calm-river-lake-tree.trycloudflare.com  |").as_deref(),
+            Some("https://calm-river-lake-tree.trycloudflare.com")
+        );
+        assert_eq!(
+            extract_trycloudflare_url("前缀中文 https://other.example.com 以及 https://Abc-123.trycloudflare.com/").as_deref(),
+            Some("https://abc-123.trycloudflare.com")
+        );
+        assert_eq!(extract_trycloudflare_url("http://calm-river.trycloudflare.com"), None);
+        assert_eq!(extract_trycloudflare_url("https://a.b.trycloudflare.com"), None);
+        assert_eq!(extract_trycloudflare_url("https://-bad.trycloudflare.com"), None);
+        assert_eq!(extract_trycloudflare_url("https://trycloudflare.com"), None);
+        assert_eq!(extract_trycloudflare_url("https://evil-trycloudflare.com"), None);
     }
 
     #[test]
