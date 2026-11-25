@@ -3,18 +3,26 @@ import assert from "node:assert/strict";
 import {
   ASIDE_FALLBACK_CHAR_CAP,
   ASIDE_HISTORY_LIMIT,
+  ASIDE_NEW_THREAD_TITLE,
+  ASIDE_PANE_MAX_WIDTH,
+  ASIDE_PANE_MIN_WIDTH,
   asideMethodHint,
   asideModeBadge,
+  asideThreadTitleFromQuestion,
   buildFallbackTranscript,
   canAskAside,
+  clampAsidePaneWidth,
+  createAsideThread,
   parseBtwInput,
+  removeAsideThread,
+  summarizeAsidePane,
   toAsideHistory,
   type AsideTurn,
 } from "../src/chat-aside.ts";
 import type { ChatMessageDto } from "../src/types.ts";
 
 describe("parseBtwInput", () => {
-  it("bare /btw opens the side-question card", () => {
+  it("bare /btw opens the side-question pane", () => {
     assert.deepEqual(parseBtwInput("/btw"), { kind: "open" });
     assert.deepEqual(parseBtwInput("  /BTW   "), { kind: "open" });
   });
@@ -35,6 +43,71 @@ describe("parseBtwInput", () => {
   });
 });
 
+describe("multi-thread management & pane geometry", () => {
+  it("generates compact single-line thread titles from first question", () => {
+    assert.equal(asideThreadTitleFromQuestion("   "), ASIDE_NEW_THREAD_TITLE);
+    assert.equal(asideThreadTitleFromQuestion("为什么改了\n这个列名？"), "为什么改了 这个列名？");
+    const long = "请帮我详细核对一下这段代码里为什么会出现竞态条件问题";
+    const title = asideThreadTitleFromQuestion(long, 12);
+    assert.equal(title, "请帮我详细核对一下这段代…");
+  });
+
+  it("removes active or inactive threads cleanly and reports empty when last removed", () => {
+    const t1 = createAsideThread("sq-1");
+    const t2 = createAsideThread("sq-2");
+    const t3 = createAsideThread("sq-3");
+
+    const r1 = removeAsideThread([t1, t2, t3], "sq-2", "sq-2");
+    assert.deepEqual(
+      r1.threads.map((t) => t.id),
+      ["sq-1", "sq-3"],
+    );
+    assert.equal(r1.activeId, "sq-3");
+
+    const r2 = removeAsideThread(r1.threads, "sq-3", "sq-1");
+    assert.deepEqual(
+      r2.threads.map((t) => t.id),
+      ["sq-3"],
+    );
+    assert.equal(r2.activeId, "sq-3");
+
+    const r3 = removeAsideThread(r2.threads, "sq-3", "sq-3");
+    assert.deepEqual(r3.threads, []);
+    assert.equal(r3.activeId, null);
+  });
+
+  it("clamps pane width against min, max, and half-container budget", () => {
+    assert.equal(clampAsidePaneWidth(100, 1400), ASIDE_PANE_MIN_WIDTH);
+    assert.equal(clampAsidePaneWidth(999, 1400), ASIDE_PANE_MAX_WIDTH);
+    assert.equal(clampAsidePaneWidth(500, 800), 416); // 52% of 800
+  });
+
+  it("summarizes active and busy threads for the top bar indicator", () => {
+    const empty = createAsideThread("sq-1");
+    const busy = { ...createAsideThread("sq-2"), pendingQuestion: "做到哪了？" };
+    const answered = {
+      ...createAsideThread("sq-3"),
+      turns: [
+        {
+          id: "1",
+          question: "Q",
+          answer: "A",
+          how: "fork",
+          costUsd: null,
+          responderAgent: "claude-code",
+          responderProfile: null,
+        },
+      ],
+    };
+    assert.deepEqual(summarizeAsidePane(false, [empty]), { open: false, activeThreads: 0, busy: false });
+    assert.deepEqual(summarizeAsidePane(true, [empty, busy, answered]), {
+      open: true,
+      activeThreads: 2,
+      busy: true,
+    });
+  });
+});
+
 describe("canAskAside & hints", () => {
   it("blocks empty chats and allows chats with session, file, or messages", () => {
     const empty = canAskAside({ sessionId: null, filePath: null, messageCount: 0 });
@@ -46,9 +119,9 @@ describe("canAskAside & hints", () => {
 
   it("returns tailored hints per agent family", () => {
     assert.match(asideMethodHint("claude-code"), /只读分身/);
-    assert.match(asideMethodHint("codex"), /同一条连接只读回答/);
-    assert.match(asideMethodHint("kimi"), /同一条连接只读回答/);
-    assert.match(asideMethodHint("grok"), /同一条连接只读回答/);
+    assert.match(asideMethodHint("codex"), /Codex 只读副本/);
+    assert.match(asideMethodHint("kimi"), /Kimi Code 只读副本/);
+    assert.match(asideMethodHint("grok"), /Grok Build 只读副本/);
     assert.match(asideMethodHint("gemini"), /代答/);
     assert.match(asideMethodHint("agy"), /代答/);
   });

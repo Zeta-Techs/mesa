@@ -79,6 +79,7 @@ import { runLayout } from "../run-layout";
 import { sidebarChatTitle, type RailStep } from "../sidebar-chats";
 import { tidySessionTitle } from "../session-title";
 import { lastContextSnapshot, lastContextTokens, type MesaCommand } from "../composer-assist";
+import type { AsidePaneSummary } from "../chat-aside";
 import { allLanesDone, FANOUT_EXPIRE_MS, FANOUT_STORAGE_PREFIX, lanesToHeal, type FanOutPending } from "../fan-out";
 import { openTerminalInTurn } from "../terminal-queue";
 import { slashCommandsFor } from "../slash-commands";
@@ -102,6 +103,7 @@ import {
   FolderTree,
   History,
   Maximize2,
+  MessageSquareQuote,
   Minimize2,
   PanelRightClose,
   PanelTopOpen,
@@ -759,6 +761,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   >({});
   const [chatSearchByTab, setChatSearchByTab] = useState<Record<string, number>>({});
   const openChatSearch = useCallback((id: string) => setChatSearchByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 })), []);
+  const [chatAsideToggleByTab, setChatAsideToggleByTab] = useState<Record<string, number>>({});
+  const [chatAsideStateByTab, setChatAsideStateByTab] = useState<Record<string, AsidePaneSummary>>({});
+  const toggleChatAside = useCallback((id: string) => {
+    setChatAsideToggleByTab((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  }, []);
+  const reportChatAsideState = useCallback((id: string, next: AsidePaneSummary) => {
+    setChatAsideStateByTab((prev) => {
+      const cur = prev[id];
+      if (cur && cur.open === next.open && cur.activeThreads === next.activeThreads && cur.busy === next.busy) {
+        return prev;
+      }
+      return { ...prev, [id]: next };
+    });
+  }, []);
   const conversationInsert = useCallback(
     (tabId: string, text: string, opts: { send: boolean }) => {
       const mode = surfaceModeRef.current[tabId] ?? defaultSurfaceRef.current;
@@ -3720,6 +3736,48 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               >_ 终端（亮着 = 正看着这段对话的终端）、± 改动（右栏改动窗格，有改动带数字）、⋯ 更多（分屏、查找、启动配置行、文件预览）。
               「成果面板」一词取消：文件预览由左边点文件打开，改动由 ± 打开，右栏自己带收起 */}
           <span className="ml-auto flex shrink-0 items-center gap-0.5">
+            {(() => {
+              const aside = focusedId ? chatAsideStateByTab[focusedId] : undefined;
+              const asideOpen = focusedSurfaceMode === "chat" && Boolean(aside?.open);
+              const asideBusy = Boolean(aside?.busy);
+              const asideCount = aside?.activeThreads ?? 0;
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!focusedId) return;
+                    if (focusedSurfaceMode !== "chat") {
+                      switchSurface("chat");
+                      if (!aside?.open) toggleChatAside(focusedId);
+                      return;
+                    }
+                    toggleChatAside(focusedId);
+                  }}
+                  aria-pressed={asideOpen}
+                  title={
+                    asideOpen
+                      ? "收起侧边提问栏（保留当前记录）"
+                      : asideCount > 0
+                        ? `侧边提问（不打断主对话 · 已有 ${asideCount} 条）`
+                        : "侧边提问（Side Question /btw：在右侧独立分栏随口问一句，不打断主对话）"
+                  }
+                  aria-label={asideOpen ? "收起侧边提问栏" : "打开侧边提问栏"}
+                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
+                    asideOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                  }`}
+                >
+                  <MessageSquareQuote size={15} strokeWidth={1.8} aria-hidden="true" />
+                  {!asideOpen && (asideBusy || asideCount > 0) && (
+                    <span
+                      className={`absolute right-1 top-1 size-1.5 rounded-full ${
+                        asideBusy ? "animate-pulse bg-mesa-amber" : "bg-l3"
+                      }`}
+                      aria-hidden="true"
+                    />
+                  )}
+                </button>
+              );
+            })()}
             <button
               type="button"
               onClick={(e) => {
@@ -4107,6 +4165,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         tabId={t.id}
                         sessionId={statuses[t.id]?.sessionId ?? sessionByTab[t.id]?.sessionId ?? t.resumeSessionId ?? null}
                         sessionFile={sessionByTab[t.id]?.file ?? null}
+                        asideToggleRequest={chatAsideToggleByTab[t.id] ?? 0}
+                        onAsideStateChange={(summary) => reportChatAsideState(t.id, summary)}
                         searchRequest={chatSearchByTab[t.id] ?? 0}
                         metaSlots={chatOn && !peek ? (chatMetaSlots[t.id] ?? null) : null}
                         hasStatusBar={chatOn && !peek && (appSettings?.statusBar ?? true)}

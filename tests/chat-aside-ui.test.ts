@@ -4,8 +4,8 @@ import test from "node:test";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
-// 聊天页「问它一句（不打断）」浮卡 UI 行为测试（components/ChatAsideCard.tsx）：
-// 覆盖直发 /btw、多轮追问带 history、代答徽标展示、带入主输入框、收起展开与关闭清空。
+// 聊天页右侧全高「侧边提问（Side Question）」分栏 UI 行为测试（components/ChatAsideCard.tsx）：
+// 覆盖顶栏开合、多页签新建与隔离历史、收起保留记录、关单条、带入主框与切主会话重置。
 const bundle = await build({
   stdin: {
     contents: `import { createElement } from 'react';
@@ -22,12 +22,14 @@ const bundle = await build({
           model: props.model ?? 'claude-sonnet-4-5',
           cwd: props.cwd ?? '/repo/demo',
           messages: props.messages ?? [{ role: 'user', timestamp: null, blocks: [{ kind: 'text', text: '帮我改下列名' }] }],
-          narrow: false,
+          containerWidth: props.containerWidth ?? 1200,
+          toggleRequest: props.toggleRequest ?? 0,
+          onSummaryChange: (s) => { window.__aside.summary = s; },
           onInsertToMain: (text) => window.__aside.inserted.push(text),
           onReturnFocus: () => { window.__aside.returnedFocus += 1; },
         });
         window.__aside.latest = aside;
-        return createElement('div', null, aside.panel);
+        return createElement('div', null, aside.pane);
       }`,
     resolveDir: process.cwd(),
     loader: "tsx",
@@ -60,6 +62,7 @@ async function mount(initialProps: Record<string, unknown> = {}) {
     window: dom.window,
     document: dom.window.document,
     navigator: dom.window.navigator,
+    localStorage: dom.window.localStorage,
     HTMLElement: dom.window.HTMLElement,
     Node: dom.window.Node,
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
@@ -74,6 +77,7 @@ async function mount(initialProps: Record<string, unknown> = {}) {
     calls: [] as Array<Record<string, any>>,
     inserted: [] as string[],
     returnedFocus: 0,
+    summary: null as any,
     latest: null as any,
     nextReply: {
       text: "目前改到了第 2 个字段。",
@@ -104,14 +108,15 @@ async function mount(initialProps: Record<string, unknown> = {}) {
   const { act, createRoot, createElement: h, Harness } = compiled.exports;
   const el = dom.window.document.getElementById("root")!;
   const root = createRoot(el);
-  const props = { sessionId: "sid-1", agentId: "claude-code", ...initialProps };
-  await act(async () => root.render(h(Harness, props)));
+  let curProps: Record<string, unknown> = { sessionId: "sid-1", agentId: "claude-code", ...initialProps };
+  await act(async () => root.render(h(Harness, curProps)));
   return {
     el,
     host,
     act,
     rerender: async (next: Record<string, unknown>) => {
-      await act(async () => root.render(h(Harness, { ...props, ...next })));
+      curProps = { ...curProps, ...next };
+      await act(async () => root.render(h(Harness, curProps)));
     },
     cleanup: async () => {
       await act(async () => root.unmount());
@@ -124,28 +129,32 @@ async function mount(initialProps: Record<string, unknown> = {}) {
   };
 }
 
-test("聊天侧边浮卡：直发 /btw、多轮追问带 history、带入主框与关闭清空", async () => {
+test("右侧 Side Question 分栏：多页签独立历史、收起保留记录、关闭单条与带入主框", async () => {
   const ctx = await mount({ sessionId: "sid-1", sessionFile: "/tmp/s1.jsonl", agentId: "claude-code" });
   try {
-    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-card"]'), null);
+    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-pane"]'), null);
 
-    // 1. 直接带问题打开（模拟主框敲 `/btw 做到哪了？`）
+    // 1. 顶栏按钮翻转展开右侧分栏，进入极简空态
+    await ctx.rerender({ toggleRequest: 1 });
+    const pane = () => ctx.el.querySelector<HTMLElement>('[data-testid="chat-aside-pane"]');
+    assert.ok(pane());
+    assert.match(pane()!.textContent!, /不打断主对话，在旁边随口问一句/);
+    assert.equal(ctx.host.summary.open, true);
+
+    // 2. 第一条线程提问（自动把首问设为页签标题）
     await ctx.act(async () => {
       ctx.host.latest.openCard("做到哪了？");
       await new Promise((r) => setTimeout(r, 10));
     });
     assert.equal(ctx.host.calls.length, 1);
-    assert.equal(ctx.host.calls[0].question, "做到哪了？");
-    assert.equal(ctx.host.calls[0].filePath, "/tmp/s1.jsonl");
     assert.deepEqual(ctx.host.calls[0].history, []);
-    const card = ctx.el.querySelector<HTMLElement>('[data-testid="chat-aside-card"]')!;
-    assert.ok(card);
-    assert.match(card.textContent!, /只读分身/);
-    assert.match(card.textContent!, /目前改到了第 2 个字段/);
+    assert.match(pane()!.textContent!, /做到哪了？/);
+    assert.match(pane()!.textContent!, /只读分身/);
+    assert.match(pane()!.textContent!, /目前改到了第 2 个字段/);
 
-    // 2. 卡内追问第二句：自动把第一轮问答带进 history
+    // 3. 在同一线程里连续追问 → 自动带上第一轮 history
     ctx.host.nextReply = {
-      text: "因为旧列名带空格，导出 CSV 会错位。",
+      text: "旧列名含空格会导致 CSV 错位。",
       how: "delegate",
       costUsd: null,
       responderAgent: "codex",
@@ -159,38 +168,76 @@ test("聊天侧边浮卡：直发 /btw、多轮追问带 history、带入主框�
     assert.deepEqual(ctx.host.calls[1].history, [
       { question: "做到哪了？", answer: "目前改到了第 2 个字段。" },
     ]);
-    assert.match(card.textContent!, /Codex 代答/);
+    assert.match(pane()!.textContent!, /Codex 代答/);
 
-    // 3. 点「带入主输入框」：把对应回答传给主输入框并自动折叠浮卡
-    const insertBtns = Array.from(card.querySelectorAll<HTMLButtonElement>("button")).filter((b) =>
+    // 4. 点顶部「+」新建第二条独立侧边提问线程：上下文完全隔离，history 为空
+    const addBtn = pane()!.querySelector<HTMLButtonElement>('button[aria-label="新建侧边提问"]')!;
+    await ctx.act(async () => addBtn.click());
+    assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 2);
+    assert.match(pane()!.textContent!, /不打断主对话，在旁边随口问一句/);
+
+    ctx.host.nextReply = {
+      text: "一共改了 3 个测试文件。",
+      how: "fork",
+      costUsd: 0.002,
+      responderAgent: "claude-code",
+      responderProfile: "Claude 主号",
+    };
+    await ctx.act(async () => {
+      ctx.host.latest.openCard("动了几个测试文件？");
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    assert.equal(ctx.host.calls.length, 3);
+    assert.deepEqual(ctx.host.calls[2].history, []);
+    assert.equal(ctx.host.summary.activeThreads, 2);
+
+    // 5. 点「带入主输入框」传给主框
+    const insertBtn = Array.from(pane()!.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
       b.textContent?.includes("带入主输入框"),
-    );
-    assert.equal(insertBtns.length, 2);
-    await ctx.act(async () => insertBtns[1].click());
-    assert.deepEqual(ctx.host.inserted, ["因为旧列名带空格，导出 CSV 会错位。"]);
-    assert.match(card.textContent!, /2 轮/);
+    )!;
+    await ctx.act(async () => insertBtn.click());
+    assert.deepEqual(ctx.host.inserted, ["一共改了 3 个测试文件。"]);
 
-    // 4. 点关闭钮：浮卡消失并归还焦点给主框
-    const closeBtn = card.querySelector<HTMLButtonElement>('button[aria-label="关闭侧边问答"]')!;
-    await ctx.act(async () => closeBtn.click());
-    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-card"]'), null);
+    // 6. 收起右侧栏：记录保留、上报 activeThreads 仍为 2、焦点还给主框
+    const collapseBtn = pane()!.querySelector<HTMLButtonElement>('button[aria-label="收起侧边提问栏"]')!;
+    await ctx.act(async () => collapseBtn.click());
+    assert.equal(pane(), null);
+    assert.equal(ctx.host.summary.open, false);
+    assert.equal(ctx.host.summary.activeThreads, 2);
     assert.equal(ctx.host.returnedFocus, 1);
+
+    // 7. 再次通过顶栏打开：2 条页签记录完整保留
+    await ctx.rerender({ toggleRequest: 2 });
+    assert.ok(pane());
+    assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 2);
+
+    // 8. 关掉第二条页签，切回第一条；再关掉第一条，自动收起分栏
+    const closeSecond = pane()!.querySelector<HTMLButtonElement>('button[aria-label="关闭「动了几个测试文件？」"]')!;
+    await ctx.act(async () => closeSecond.click());
+    assert.equal(pane()!.querySelectorAll('[role="tab"]').length, 1);
+    assert.match(pane()!.textContent!, /目前改到了第 2 个字段/);
+
+    const closeFirst = pane()!.querySelector<HTMLButtonElement>('button[aria-label="关闭「做到哪了？」"]')!;
+    await ctx.act(async () => closeFirst.click());
+    assert.equal(pane(), null);
+    assert.equal(ctx.host.summary.activeThreads, 0);
   } finally {
     await ctx.cleanup();
   }
 });
 
-test("聊天侧边浮卡：切到另一段会话自动重置，不串台", async () => {
+test("右侧 Side Question 分栏：切到另一段主会话自动清空不串台", async () => {
   const ctx = await mount({ sessionId: "sid-A", agentId: "gemini" });
   try {
     await ctx.act(async () => {
       ctx.host.latest.openCard("总结一下这段");
       await new Promise((r) => setTimeout(r, 10));
     });
-    assert.ok(ctx.el.querySelector('[data-testid="chat-aside-card"]'));
+    assert.ok(ctx.el.querySelector('[data-testid="chat-aside-pane"]'));
 
     await ctx.rerender({ sessionId: "sid-B" });
-    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-card"]'), null);
+    assert.equal(ctx.el.querySelector('[data-testid="chat-aside-pane"]'), null);
+    assert.equal(ctx.host.summary.activeThreads, 0);
   } finally {
     await ctx.cleanup();
   }

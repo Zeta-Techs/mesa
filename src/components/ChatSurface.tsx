@@ -9,6 +9,7 @@ import { locateChatQuote, messageIdentity } from "../chat-navigation";
 import { ChatImageCaptionContext, ChatImageEditContext, ChatStepStartContext } from "./ChatMarkdown";
 import { useChatImageGen } from "./ChatImageGen";
 import { useChatAside } from "./ChatAsideCard";
+import type { AsidePaneSummary } from "../chat-aside";
 import { splitImageGenDirective } from "../chat-image-gen";
 import { goStartDiscussedStep } from "../discuss-step-start";
 import { relayChipText, type RelayTarget } from "../chat-relay";
@@ -217,6 +218,8 @@ export default function ChatSurface({
   tabId = null,
   sessionId = null,
   sessionFile = null,
+  asideToggleRequest = 0,
+  onAsideStateChange,
 }: {
   messages: ChatMessageDto[];
   state: "idle" | "detecting" | "linked" | "timeout";
@@ -399,8 +402,24 @@ export default function ChatSurface({
   sessionId?: string | null;
   /** 已关联的会话文件路径：聊天页「问它一句」直读原记录，免等扫描缓存 */
   sessionFile?: string | null;
+  /** 顶栏侧边提问图标触发的开合请求序号（递增翻转） */
+  asideToggleRequest?: number;
+  /** 上报侧边提问栏开合与活跃状态给顶栏图标点亮 */
+  onAsideStateChange?: (summary: AsidePaneSummary) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [rootWidth, setRootWidth] = useState<number | null>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    setRootWidth(el.clientWidth || null);
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && w > 0) setRootWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followRef = useRef(true);
@@ -1382,7 +1401,9 @@ export default function ChatSurface({
     model: asideModel,
     cwd: cwd ?? null,
     messages,
-    narrow: emptyLayout,
+    containerWidth: rootWidth,
+    toggleRequest: asideToggleRequest,
+    onSummaryChange: onAsideStateChange,
     onInsertToMain: insertAsideToMain,
     onReturnFocus: focusMainComposer,
   });
@@ -1779,8 +1800,9 @@ export default function ChatSurface({
     <div
       ref={rootRef}
       data-chat-drop="1"
-      className="relative flex h-full min-h-0 w-full flex-col bg-canvas"
+      className="relative flex h-full min-h-0 w-full bg-canvas"
     >
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       {searchOpen && <ChatSearch messages={messages} request={searchRequest} hasOlder={hasOlder} loadingOlder={loadingOlder}
         onLoadOlder={onLoadOlder ? () => { followRef.current = false; void loadOlder(); } : undefined}
         onFocus={focusMessage}
@@ -2181,7 +2203,6 @@ export default function ChatSurface({
         )}
       </div>
 
-      {aside.panel}
       <ChatComposer
         disabled={!canSend}
         busy={busy}
@@ -2299,6 +2320,8 @@ export default function ChatSurface({
           下方是同一会话的终端 · 点此收起
         </button>
       )}
+      </div>
+      {aside.pane}
     </div>
   );
 }

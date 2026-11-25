@@ -116,9 +116,9 @@ pages/TerminalView.tsx     # 运行页里一个标签：xterm 终端 + 聊天层
                              #   对比几个（compare / pickMulti，最多 MAX_COMPARE，只在前端，按标签存 localStorage）：headerAction「对比几个 / 只用一个」，onEditImage 挑中结果回单个模型；
                              #   出图进度 ImageGenProgress（生成中每 2 秒读调用记录，inflightCalls 每条一根估算进度，耗时与连接页共用 ccode.imageGen.durations）
                              #   （tests/chat-image-gen-ui.test.ts）
-  components/ChatAsideCard.tsx # 聊天页「问它一句（不打断）」（Side Question，2026-11-25）：useChatAside 给 ChatSurface 用——输入框正上方同中轴独立浮卡、
-                             #   不覆盖主框草稿、支持主框 `/btw <问题>` 直发 / 斜杠 `/btw`（Tab 补全）/「+」菜单呼出；支持卡内连续追问（最近 8 轮）、ChatMarkdown 渲染、
-                             #   收起成单行、清空、复制、带入主输入框与 Esc 关闭丢弃，切换会话自动重置不串台（tests/chat-aside-ui.test.ts）
+  components/ChatAsideCard.tsx # 聊天页「侧边提问 / 问它一句（不打断）」（Side Question，2026-11-25）：useChatAside + ChatAsidePane 右侧全高独立分栏
+                             #   （可拖宽记 localStorage，窄容器自动叠加，底部输入框与左侧主框齐平）；顶部支持多条独立侧边提问页签（+ 新建 / × 关单条 / 首问自动标题 / 并发隔离），
+                             #   联动顶栏开合按钮与微点状态；支持主框 `/btw <问题>` 直发 / 斜杠 `/btw`（Tab 补全）/「+」菜单呼出、ChatMarkdown 渲染、复制与带入主输入框（tests/chat-aside-ui.test.ts）
   components/ImageModelMark.tsx # 聊天出图模式里出图模型的标识：vendorForModel 认得出画 VendorIcon，认不出 / 没选画 Lucide Palette（不用图片图标，
                              #   放「+」旁像附件）；胶囊、「+」菜单「画图」、消息上方「出图 · 模型」三处共用；尺寸只收 12/13/14（Tailwind 类名写死）
   components/ImageModelPicker.tsx # 出图模型选择浮层：搜索 → 最近用过 → 推荐（各家最新）→ 按家族折叠；下方放不下翻到上方；
@@ -786,7 +786,8 @@ agent-colors.ts            # agent 识别色唯一在用色相表 AGENT_BRAND（
                              #   imageGenBlocks、calledSince（这一轮调过出图工具没有）、captionsByPath（图 → 模型，键 pathKey）、
                              #   producerOf（这张图是哪次调用出的）、inflightCalls / finishedDurations / waitedText（出图进度）；对比时那一行点名几个模型（「A、B 各出一版对比」）
                              #   schematicSourceOf：figures/<图名>/<图名>.png 认作示意图，接着改时 attachmentLines 加「图纸：」「可编辑文件：」两行
-  chat-aside.ts              # 聊天页「问它一句（不打断）」纯逻辑（tests/chat-aside.test.ts）：parseBtwInput（主框 `/btw` 与 `/btw 问题` 识别）、
+  chat-aside.ts              # 聊天页「侧边提问 / 问它一句（不打断）」纯逻辑（tests/chat-aside.test.ts）：parseBtwInput（主框 `/btw` 与 `/btw 问题` 识别）、
+                             #   多线程管理（createAsideThread / asideThreadTitleFromQuestion / removeAsideThread / summarizeAsidePane / clampAsidePaneWidth）、
                              #   canAskAside、asideMethodHint、asideModeBadge（fork/copy/delegate/text 四档徽标与说明）、toAsideHistory 与未落盘兜底记录拼接 buildFallbackTranscript
   chat-reply.ts              # 聊天长回复按小标题分段（带级别；识别代码围栏；有 ## 时冒号行不当标题）、正文里像文件路径的段（fileRefPath /
                              # findFileRefs，真假由 existing_files 核实）与本机音频（mentionedAudioFiles → ChatMarkdown 播放条）、本机视频（mentionedVideoFiles → 视频卡）、本机图片（mentionedImageFiles → 正文下图片卡，读不到不出卡）、
