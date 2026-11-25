@@ -157,7 +157,7 @@ CAP_RAW=1 CAP_COLS=150 CAP_ROWS=53 REPLY_PROMPT="TRIGGER_LONG 写长一点" REPL
 用真 xterm.js 回放、每块按 Mesa 口径调 `terminalHasInputBox`。2026-11-25 九家结论（同一份长回复 + 停着得焦 / 失焦，再各发一次 `/rename`）：
 Claude 2.1.326「────… 名字 ─」、Qwen 0.28.4「────… 名字 ──」、Grok 1.0.92「╭──… 名字 ─╮」起名后原先读成没有输入框（已修，样本在
 tests/fixtures/screens/<家>/darwin-<版本>-renamed-idle.json）；Codex 把名字写在底栏、Kimi / Antigravity 只在对话里回一句，Gemini 没有 `/rename`，都不受影响；
-失焦、`/recap`、长回复本身不影响任何一家。OpenCode / CodeBuddy / Cursor 没有画面布局表，不按读屏判断输入框；Cursor 不收第三方网关的钥匙，跑不了假网关。
+失焦、`/recap`、长回复本身不影响任何一家。抓屏接着交给 scripts/chat-replay/（输入框逐块核对、驱动真聊天层看显示），见那边的 README。OpenCode / CodeBuddy / Cursor 没有画面布局表，不按读屏判断输入框；Cursor 不收第三方网关的钥匙，跑不了假网关。
 
 **Windows 上跑**（2026-10-20）：依赖装到临时目录 `python -m pip install --target <目录> pyte pywinpty`，`PYTE_DIR` / `PYWINPTY_DIR` 都指向它；
 三个坑——①中文系统必须 `python -I -X utf8`（不加时读计划 JSON 按 GBK 报错；`-I` 会忽略 `PYTHONUTF8` 环境变量）；

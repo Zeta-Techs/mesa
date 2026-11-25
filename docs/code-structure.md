@@ -879,6 +879,8 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
   （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
+  （scripts/chat-replay/：聊天层回放台——timeline.ts 把抓屏原文按 Mesa 读屏节奏变成实时预览序列、surface.mjs 用它驱动真 ChatSurface
+   （JSDOM，Tauri 打桩）并按会话文件落盘时机接上最终消息，每 40ms 判重复 / 闪没 / 消失 / 等你卡；box-check.ts 逐块判输入框认没认出；见其 README）
   （scripts/chat-layout-measure/：聊天区量测——本机真实对话（sessions.rs 的 ignored 测试 dump_chat_layout_samples 写进 harness.local/）
    在屏外真 WKWebView（host.swift）里跑聊天层，逐帧看切过去之后字动没动（switch）、往上翻有没有错位（scroll）；改聊天区后跑，只在 Mac；见其 README）
   （scripts/mirror-latest-json.mjs：应用内更新国内镜像——把 Release 的 latest.json 下载地址改写成镜像地址，签名原样、缺签名拒绝；
