@@ -27,6 +27,7 @@ import { isLightTheme } from "../themes";
 import { MesaMark, MesaStatusLead } from "./MesaMark";
 import { LiveScreenPreview, StreamingMarkdown } from "./ChatLivePreview";
 import ChatModelMenu from "./ChatModelMenu";
+import ChatQuotaRing from "./ChatQuotaRing";
 import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
 import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
 import { nextPermissionTier, rememberChatPermission } from "../chat-permission";
@@ -1555,7 +1556,24 @@ export default function ChatSurface({
       )}
     </>
   );
-  // 「模型 · 思考」菜单：开聊前、运行中、停了可接着聊同一个菜单（ChatModelMenu）
+  // 「模型 · 思考」菜单 + 当前账号订阅余量/网关余额静默微环：开聊前、运行中、停了可接着聊统一展示
+  const activeQuotaProfileId =
+    (launchPickOpen || resumePickOpen || launching) && launchPick?.profileId
+      ? launchPick.profileId
+      : runtime?.status?.profileId ?? launchPick?.profileId ?? null;
+  const onQuotaSwitchProfile =
+    (launchPickOpen || resumePickOpen) && onPickLaunch
+      ? (id: string) => onPickLaunch.profile(id)
+      : onSwitchConnection && runtime?.status?.sessionId
+        ? onSwitchConnection
+        : null;
+  const quotaRing = activeQuotaProfileId ? (
+    <ChatQuotaRing
+      profileId={activeQuotaProfileId}
+      onSwitchProfile={onQuotaSwitchProfile}
+    />
+  ) : null;
+
   const metaRight =
     (launchPickOpen || resumePickOpen || launching) && onPickLaunch ? (
       <>
@@ -1579,47 +1597,51 @@ export default function ChatSurface({
           onImageWarning={setImageWarning}
           onOpenTerminal={onOpenTerminal}
         />
+        {quotaRing}
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
-      <ChatModelMenu
-        kind="runtime"
-        channel={channel}
-        live={running}
-        status={runtime.status}
-        profileModels={runtime.profileModels}
-        modelSwitch={modelSwitch ?? null}
-        effort={runtime.effort}
-        submitCsiU={runtime.submitCsiU}
-        onTuiCommand={onTuiCommand}
-        onPicker={openPicker}
-        contextUsed={contextUsed}
-        // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
-        showRing={!metaSlotted}
-        onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
-        onRelaunch={runtime.onRelaunch}
-        // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
-        onSwitchConnection={onSwitchConnection && runtime.status?.sessionId ? onSwitchConnection : null}
-        busy={generating}
-        relay={relayMenu}
-        imageKind={imageKind}
-        onImageWarning={setImageWarning}
-        onOpenTerminal={onOpenTerminal}
-        onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
-        // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
-        next={
-          !running && canResume && launchPick && onPickLaunch
-            ? {
-                models: launchPick.models,
-                model: launchPick.model,
-                onModel: onPickLaunch.model,
-                effortLevels: launchPick.effortLevels,
-                effort: launchPick.effort,
-                onEffort: onPickLaunch.effort,
-              }
-            : null
-        }
-      />
-    ) : null;
+      <>
+        <ChatModelMenu
+          kind="runtime"
+          channel={channel}
+          live={running}
+          status={runtime.status}
+          profileModels={runtime.profileModels}
+          modelSwitch={modelSwitch ?? null}
+          effort={runtime.effort}
+          submitCsiU={runtime.submitCsiU}
+          onTuiCommand={onTuiCommand}
+          onPicker={openPicker}
+          contextUsed={contextUsed}
+          // 挂进状态栏时圆环由状态栏画（它有本段用量与连接名，悬停一起说）
+          showRing={!metaSlotted}
+          onCompact={mesaCommands.find((c) => c.cmd === "/compact")?.run ?? null}
+          onRelaunch={runtime.onRelaunch}
+          // 换同家另一条连接接着聊：有会话可接回才给（标签动作 switchConnection，同终端「这次启动」卡）
+          onSwitchConnection={onSwitchConnection && runtime.status?.sessionId ? onSwitchConnection : null}
+          busy={generating}
+          relay={relayMenu}
+          imageKind={imageKind}
+          onImageWarning={setImageWarning}
+          onOpenTerminal={onOpenTerminal}
+          onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
+          // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
+          next={
+            !running && canResume && launchPick && onPickLaunch
+              ? {
+                  models: launchPick.models,
+                  model: launchPick.model,
+                  onModel: onPickLaunch.model,
+                  effortLevels: launchPick.effortLevels,
+                  effort: launchPick.effort,
+                  onEffort: onPickLaunch.effort,
+                }
+              : null
+          }
+        />
+        {quotaRing}
+      </>
+    ) : quotaRing;
 
   return (
     <div

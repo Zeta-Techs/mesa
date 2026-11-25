@@ -1,0 +1,630 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { useAppStore } from "../store";
+import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
+import {
+  listSameAgentPeers,
+  profileQuotaKind,
+  resolveChatQuotaView,
+  type ChatQuotaTone,
+} from "../chat-quota";
+import {
+  planAbsoluteQuotaPair,
+  planCapsuleLabel,
+  planLevelLabel,
+  planProviderLabel,
+  planQuotaDataAt,
+  planResetRemain,
+  planWindowLabel,
+  quotaBarLevel,
+} from "../plan-quota";
+import {
+  formatBalanceAmount,
+  formatBalanceAmountMasked,
+  walletAmountCaption,
+} from "../gateway-balance";
+import AgentIcon from "./AgentIcon";
+import VendorIcon from "./VendorIcon";
+import { vendorForPlanProvider } from "../vendor-icon";
+
+const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
+const WALLET_CACHE_KEY = "ccode.stats.walletRowsCache";
+const FRESH_TTL_MS = 120_000;
+const EMPTY_STRINGS: readonly string[] = [];
+
+let planInflight: Promise<PlanQuotaDto[]> | null = null;
+let planFetchedAt = 0;
+let walletInflight: Promise<GatewayBalanceDto[]> | null = null;
+let walletFetchedAt = 0;
+
+function readCachedPlans(): PlanQuotaDto[] {
+  try {
+    const raw = localStorage.getItem(PLAN_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is PlanQuotaDto => Boolean(r && typeof r === "object" && typeof r.gatewayId === "string"))
+      .map((r) => ({ ...r, fromCache: true }));
+  } catch {
+    return [];
+  }
+}
+
+function readCachedWallets(): GatewayBalanceDto[] {
+  try {
+    const raw = localStorage.getItem(WALLET_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r): r is GatewayBalanceDto => Boolean(r && typeof r === "object" && typeof r.gatewayId === "string"))
+      .map((r) => ({ ...r, fromCache: true }));
+  } catch {
+    return [];
+  }
+}
+
+function writeCache(key: string, rows: unknown[]) {
+  try {
+    if (rows.length === 0) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(rows));
+  } catch {
+    // 忽略本地配额异常
+  }
+}
+
+async function fetchPlanQuota(force: boolean): Promise<PlanQuotaDto[]> {
+  if (!force && planInflight) return planInflight;
+  const req = invoke<PlanQuotaDto[]>("plan_quota_overview", { force })
+    .then((rows) => {
+      planFetchedAt = Date.now();
+      useAppStore.getState().setPlanQuotaRows(rows);
+      writeCache(PLAN_CACHE_KEY, rows);
+      return rows;
+    })
+    .finally(() => {
+      if (planInflight === req) planInflight = null;
+    });
+  planInflight = req;
+  return req;
+}
+
+async function fetchWalletBalance(force: boolean): Promise<GatewayBalanceDto[]> {
+  if (!force && walletInflight) return walletInflight;
+  const req = invoke<GatewayBalanceDto[]>("gateway_balance_overview", { force })
+    .then((rows) => {
+      walletFetchedAt = Date.now();
+      useAppStore.getState().setWalletBalanceRows(rows);
+      writeCache(WALLET_CACHE_KEY, rows);
+      return rows;
+    })
+    .finally(() => {
+      if (walletInflight === req) walletInflight = null;
+    });
+  walletInflight = req;
+  return req;
+}
+
+/** 正常态静默中性灰，只有 ≥70%（警示）或 ≥90%（危急）才透出语义色 */
+function ringStrokeClass(tone: ChatQuotaTone, secondary = false): string {
+  if (tone === "danger") return "text-err-text";
+  if (tone === "warn") return "text-warn-text";
+  return secondary ? "text-l3" : "text-l2";
+}
+
+function textToneClass(tone: ChatQuotaTone): string {
+  if (tone === "danger") return "text-err-text";
+  if (tone === "warn") return "text-warn-text";
+  return "text-l3";
+}
+
+/** 16px 微型同心双环（单窗时自动退化为单细环），形态与单环 ContextRing 做出清晰语义区隔 */
+function ConcentricMicroRing({
+  outerPct,
+  outerTone,
+  innerPct,
+  innerTone,
+}: {
+  outerPct: number;
+  outerTone: ChatQuotaTone;
+  innerPct?: number | null;
+  innerTone?: ChatQuotaTone;
+}) {
+  const dual = innerPct != null;
+  const r1 = dual ? 6.4 : 6;
+  const c1 = 2 * Math.PI * r1;
+  const p1 = Math.min(100, Math.max(0, outerPct));
+
+  const r2 = 3.5;
+  const c2 = 2 * Math.PI * r2;
+  const p2 = innerPct != null ? Math.min(100, Math.max(0, innerPct)) : 0;
+
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="size-4 shrink-0 -rotate-90">
+      <circle
+        cx="8"
+        cy="8"
+        r={r1}
+        fill="none"
+        strokeWidth={dual ? 1.65 : 1.8}
+        stroke="currentColor"
+        className="text-l1/12"
+      />
+      {p1 > 0 && (
+        <circle
+          cx="8"
+          cy="8"
+          r={r1}
+          fill="none"
+          strokeWidth={dual ? 1.65 : 1.8}
+          strokeLinecap="round"
+          stroke="currentColor"
+          strokeDasharray={`${(c1 * p1) / 100} ${c1}`}
+          className={ringStrokeClass(outerTone)}
+        />
+      )}
+      {dual && (
+        <>
+          <circle
+            cx="8"
+            cy="8"
+            r={r2}
+            fill="none"
+            strokeWidth={1.5}
+            stroke="currentColor"
+            className="text-l1/10"
+          />
+          {p2 > 0 && (
+            <circle
+              cx="8"
+              cy="8"
+              r={r2}
+              fill="none"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              stroke="currentColor"
+              strokeDasharray={`${(c2 * p2) / 100} ${c2}`}
+              className={ringStrokeClass(innerTone ?? "ok", true)}
+            />
+          )}
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** 浮层内的 22px 单窗小环 */
+function PopoverMiniRing({ pct, tone }: { pct: number; tone: ChatQuotaTone }) {
+  const r = 8.5;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(100, Math.max(0, pct));
+  return (
+    <svg viewBox="0 0 22 22" aria-hidden="true" className="size-[22px] shrink-0 -rotate-90">
+      <circle cx="11" cy="11" r={r} fill="none" strokeWidth="2.2" stroke="currentColor" className="text-l1/12" />
+      {p > 0 && (
+        <circle
+          cx="11"
+          cy="11"
+          r={r}
+          fill="none"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          stroke="currentColor"
+          strokeDasharray={`${(c * p) / 100} ${c}`}
+          className={ringStrokeClass(tone)}
+        />
+      )}
+    </svg>
+  );
+}
+
+/**
+ * 聊天输入框底栏右侧的「订阅余量 / 网关余额」静默微环（方案 A）：
+ * - 平时保持中性灰阶 + 16px 双同心细环，仅 ≥70% 提示黄 / ≥90% 危急红；
+ * - 悬停出轻量提示，点击弹出 .ccode-float-surface 玻璃浮层查看双窗倒计时、刷新、同厂备选号快切与「查看全部 ↗」；
+ * - 当前连接无套餐/钱包余量时自动隐藏，绝不占空位。
+ */
+export default function ChatQuotaRing({
+  profileId,
+  onSwitchProfile,
+}: {
+  profileId: string | null | undefined;
+  /** 浮层里点击同厂其他账号直接切号（开聊前切换启动连接 / 运行中走 switchConnection） */
+  onSwitchProfile?: ((profileId: string) => void) | null;
+}) {
+  const profiles = useAppStore((s) => s.profiles);
+  const gateways = useAppStore((s) => s.gateways);
+  const planRows = useAppStore((s) => s.planQuotaRows);
+  const walletRows = useAppStore((s) => s.walletBalanceRows);
+  const hiddenProfileIds = useAppStore((s) => s.settings?.hiddenProfiles ?? EMPTY_STRINGS);
+
+  const profile = useMemo(
+    () => (profileId ? profiles.find((p) => p.id === profileId) ?? null : null),
+    [profiles, profileId],
+  );
+  const expectedKind = useMemo(() => profileQuotaKind(profile, gateways), [profile, gateways]);
+
+  // 首次进聊天未去过用量页时：先读 localStorage 快照秒出，再静默后台拉一次（带 2 分钟 TTL 防抖）
+  useEffect(() => {
+    if (!expectedKind) return;
+    if (expectedKind === "plan") {
+      if (useAppStore.getState().planQuotaRows.length === 0) {
+        const cached = readCachedPlans();
+        if (cached.length > 0) useAppStore.getState().setPlanQuotaRows(cached);
+      }
+      if (Date.now() - planFetchedAt > FRESH_TTL_MS) {
+        void fetchPlanQuota(false).catch(() => {});
+      }
+    } else {
+      if (useAppStore.getState().walletBalanceRows.length === 0) {
+        const cached = readCachedWallets();
+        if (cached.length > 0) useAppStore.getState().setWalletBalanceRows(cached);
+      }
+      if (Date.now() - walletFetchedAt > FRESH_TTL_MS) {
+        void fetchWalletBalance(false).catch(() => {});
+      }
+    }
+  }, [expectedKind]);
+
+  const view = useMemo(
+    () => resolveChatQuotaView(profile, planRows, walletRows),
+    [profile, planRows, walletRows],
+  );
+
+  const peers = useMemo(
+    () =>
+      view?.kind === "plan" && onSwitchProfile
+        ? listSameAgentPeers(profile, profiles, planRows, hiddenProfileIds, 3)
+        : [],
+    [view?.kind, onSwitchProfile, profile, profiles, planRows, hiddenProfileIds],
+  );
+
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [tip, setTip] = useState<{ x: number; y: number } | null>(null);
+  const [panel, setPanel] = useState<{ x: number; y: number } | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const anchor = (el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    return { x: Math.max(276, rect.right + 4), y: rect.top - 6 };
+  };
+
+  useEffect(() => {
+    if (!panel) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
+      setPanel(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPanel(null);
+    };
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [panel]);
+
+  const handleRefresh = useCallback(async () => {
+    if (!view || refreshing) return;
+    setRefreshing(true);
+    try {
+      if (view.kind === "plan") await fetchPlanQuota(true);
+      else await fetchWalletBalance(true);
+    } catch {
+      // 静默忽略，保留当前展示数据
+    } finally {
+      setRefreshing(false);
+    }
+  }, [view, refreshing]);
+
+  if (!view) return null;
+
+  const now = Date.now();
+  const hideWallet =
+    typeof localStorage !== "undefined" && localStorage.getItem("ccode.stats.hideQuota") === "1";
+
+  const isPlan = view.kind === "plan";
+  const sameProviderCount = isPlan
+    ? planRows.filter((r) => r.provider === view.row.provider).length
+    : 1;
+  const hasProviderIcon =
+    isPlan && (view.row.provider === "agy" || Boolean(vendorForPlanProvider(view.row.provider)));
+  const titleText = isPlan
+    ? planCapsuleLabel(view.row, sameProviderCount, hasProviderIcon)
+    : view.row.gatewayName;
+  const levelText = isPlan ? planLevelLabel(view.row.planLevel) : null;
+  const dataAt = planQuotaDataAt(view.row.queriedAt, view.row.fromCache);
+
+  const compactLabel = isPlan
+    ? `${view.pct}%`
+    : hideWallet
+      ? formatBalanceAmountMasked(view.row.currency)
+      : view.remainPct != null
+        ? `${Math.round(view.remainPct)}%`
+        : view.row.remaining != null
+          ? formatBalanceAmount(view.row.remaining, view.row.currency)
+          : "不限";
+
+  const ariaLabel = isPlan
+    ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}已用 ${view.pct}%，点开查看详情`
+    : `${view.row.gatewayName} 网关余额 ${compactLabel}，点开查看详情`;
+
+  const resetCardCount =
+    isPlan && view.row.resetCardsSupported && view.row.resetCards.ok
+      ? view.row.resetCards.fiveHour + view.row.resetCards.weekly + view.row.resetCards.general
+      : 0;
+
+  return (
+    <button
+      ref={btnRef}
+      type="button"
+      className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 outline-none transition-colors hover:bg-hover focus-visible:ring-2 focus-visible:ring-cta"
+      aria-label={ariaLabel}
+      aria-haspopup="dialog"
+      aria-expanded={Boolean(panel)}
+      onClick={() => {
+        if (panel) {
+          setPanel(null);
+          return;
+        }
+        if (!btnRef.current) return;
+        setTip(null);
+        setPanel(anchor(btnRef.current));
+      }}
+      onMouseEnter={(e) => !panel && setTip(anchor(e.currentTarget))}
+      onMouseLeave={() => setTip(null)}
+    >
+      {isPlan ? (
+        <ConcentricMicroRing
+          outerPct={view.primary.usedPercent}
+          outerTone={view.tone}
+          innerPct={view.secondary?.usedPercent ?? null}
+          innerTone={view.secondary ? quotaBarLevel(view.secondary.usedPercent) : undefined}
+        />
+      ) : (
+        <ConcentricMicroRing
+          outerPct={view.remainPct ?? 100}
+          outerTone={view.tone}
+        />
+      )}
+      <span className={`text-micro font-medium tabular-nums ${textToneClass(view.tone)}`}>
+        {compactLabel}
+      </span>
+
+      {/* 轻量悬停提示 */}
+      {tip &&
+        !panel &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-70"
+            style={{ left: tip.x, top: tip.y, transform: "translate(-100%, -100%)" }}
+          >
+            <div
+              role="tooltip"
+              className="ccode-float-surface w-max max-w-[16.5rem] rounded-lg border border-field px-2.5 py-2 text-xs shadow-lg"
+            >
+              <div className="flex items-center gap-1.5 font-medium text-l1">
+                <span className="truncate">{titleText}</span>
+                {levelText && <span className="text-micro font-normal text-l3">· {levelText}</span>}
+              </div>
+              {isPlan ? (
+                <div className="mt-1 space-y-0.5 tabular-nums text-l3">
+                  {view.windows.map((w) => {
+                    const remain = planResetRemain(w.resetsAt, now);
+                    const wt = quotaBarLevel(w.usedPercent);
+                    return (
+                      <div key={w.window} className="flex items-center justify-between gap-3">
+                        <span>{planWindowLabel(w.window)}已用</span>
+                        <span className={wt === "ok" ? "text-l2" : textToneClass(wt)}>
+                          {Math.round(w.usedPercent)}%
+                          {remain ? <span className="ml-1 text-micro text-l4">· {remain}</span> : null}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="mt-1 tabular-nums text-l3">
+                  {walletAmountCaption(view.row.source)}{" "}
+                  <span className="text-l1">
+                    {hideWallet
+                      ? formatBalanceAmountMasked(view.row.currency)
+                      : view.row.remaining != null
+                        ? formatBalanceAmount(view.row.remaining, view.row.currency)
+                        : "不限"}
+                  </span>
+                  {view.usedPct != null ? `（已消耗 ${Math.round(view.usedPct)}%）` : ""}
+                </div>
+              )}
+            </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* 点击展开的精致玻璃浮层 */}
+      {panel &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="fixed z-70"
+            style={{ left: panel.x, top: panel.y, transform: "translate(-100%, -100%)" }}
+          >
+            <div
+              ref={panelRef}
+              role="dialog"
+              aria-label="当前账号余量详情"
+              onClick={(e) => e.stopPropagation()}
+              className="ccode-float-surface w-[16.5rem] rounded-xl border border-field p-3 text-left text-xs shadow-lg"
+            >
+              {/* 浮层顶栏：品牌图标 + 名称 + 刷新 */}
+              <div className="flex items-center justify-between gap-2 border-b border-hairline pb-2">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {isPlan &&
+                    (view.row.provider === "agy" ? (
+                      <AgentIcon agent="agy" label="Antigravity" size={14} />
+                    ) : (
+                      vendorForPlanProvider(view.row.provider) && (
+                        <VendorIcon
+                          vendor={vendorForPlanProvider(view.row.provider)}
+                          name={planProviderLabel(view.row.provider)}
+                          className="h-3.5 w-3.5 shrink-0"
+                        />
+                      )
+                    ))}
+                  <span className="truncate font-medium text-l1">{titleText}</span>
+                  {levelText && (
+                    <span className="shrink-0 rounded-full bg-inset px-1.5 py-px text-micro text-l3">
+                      {levelText}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={refreshing}
+                  onClick={() => void handleRefresh()}
+                  title="立即刷新余量"
+                  aria-label="立即刷新余量"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:opacity-50"
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
+                  />
+                </button>
+              </div>
+
+              {/* 浮层主体：双窗微环明细 或 网关钱包余额 */}
+              {isPlan ? (
+                <div className="mt-2.5 space-y-2.5">
+                  {view.windows.map((w) => {
+                    const wt = quotaBarLevel(w.usedPercent);
+                    const remain = planResetRemain(w.resetsAt, now);
+                    const absPair = planAbsoluteQuotaPair(w.used, w.total);
+                    return (
+                      <div key={w.window} className="flex items-center gap-2.5">
+                        <PopoverMiniRing pct={w.usedPercent} tone={wt} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <span className="truncate text-l2">{planWindowLabel(w.window)}已用</span>
+                            <span
+                              className={`shrink-0 font-semibold tabular-nums ${
+                                wt === "ok" ? "text-l1" : textToneClass(wt)
+                              }`}
+                            >
+                              {Math.round(w.usedPercent)}%
+                            </span>
+                          </div>
+                          {(remain || absPair) && (
+                            <div className="mt-0.5 flex items-center justify-between gap-2 text-micro tabular-nums text-l4">
+                              <span className="truncate">{remain ?? ""}</span>
+                              {absPair && <span className="shrink-0">{absPair}</span>}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {resetCardCount > 0 && view.pct >= 80 && (
+                    <div className="rounded-md bg-inset px-2 py-1 text-micro text-l3">
+                      还有 {resetCardCount} 张重置卡可用，可在用量页使用
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-2.5">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-l3">{walletAmountCaption(view.row.source)}</span>
+                    <span className="text-base font-semibold tabular-nums text-l1">
+                      {hideWallet
+                        ? formatBalanceAmountMasked(view.row.currency)
+                        : view.row.remaining != null || view.row.total != null
+                          ? formatBalanceAmount(
+                              view.row.remaining ?? view.row.total ?? NaN,
+                              view.row.currency,
+                            )
+                          : "不限"}
+                    </span>
+                  </div>
+                  {view.remainPct != null && (
+                    <>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-l1/10">
+                        <div
+                          className={`h-full rounded-full ${
+                            view.tone === "danger"
+                              ? "bg-err-text"
+                              : view.tone === "warn"
+                                ? "bg-warn-text"
+                                : "bg-l2"
+                          }`}
+                          style={{ width: `${view.remainPct}%` }}
+                        />
+                      </div>
+                      {view.usedPct != null && (
+                        <div className="mt-1 text-micro tabular-nums text-l4">
+                          已消耗 {Math.round(view.usedPct)}%
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 同厂备选账号一键切号 */}
+              {peers.length > 0 && onSwitchProfile && (
+                <div className="mt-2.5 border-t border-hairline pt-2">
+                  <div className="mb-1 text-micro text-l4">切换同家其他账号</div>
+                  <div className="space-y-0.5">
+                    {peers.map((peer) => (
+                      <button
+                        key={peer.profile.id}
+                        type="button"
+                        onClick={() => {
+                          setPanel(null);
+                          onSwitchProfile(peer.profile.id);
+                        }}
+                        className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-hover"
+                      >
+                        <span className="min-w-0 flex-1 truncate text-l2">{peer.profile.name}</span>
+                        <span
+                          className={`shrink-0 text-micro tabular-nums ${
+                            peer.usedPct == null ? "text-l4" : textToneClass(peer.tone)
+                          }`}
+                        >
+                          {peer.usedPct == null ? "未知" : `已用 ${peer.usedPct}%`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 浮层底栏：时间戳 + 查看全部 */}
+              <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-hairline pt-2 text-micro text-l4">
+                <span className="truncate">{dataAt ?? "实时数据"}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanel(null);
+                    useAppStore.getState().setPage("stats");
+                  }}
+                  className="inline-flex shrink-0 items-center gap-0.5 text-l3 transition-colors hover:text-l1"
+                >
+                  查看全部
+                  <ArrowUpRight aria-hidden="true" className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </button>
+  );
+}

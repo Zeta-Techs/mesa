@@ -852,6 +852,8 @@ function saveCachedPlanRows(rows: PlanQuotaDto[]) {
 }
 
 function loadCachedWalletRows(): GatewayBalanceDto[] {
+  const mem = useAppStore.getState().walletBalanceRows;
+  if (mem.length > 0) return mem;
   try {
     const raw = localStorage.getItem(WALLET_CACHE_KEY);
     if (!raw) return [];
@@ -1979,6 +1981,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
   const profiles = useAppStore((s2) => s2.profiles);
   const agents = useAppStore((s2) => s2.agents);
   const setPlanQuotaRows = useAppStore((s2) => s2.setPlanQuotaRows);
+  const setWalletBalanceRows = useAppStore((s2) => s2.setWalletBalanceRows);
   const hasPlanSource = useMemo(
     () =>
       gateways.some((g) => gatewayHasPlanQuota(g)) ||
@@ -2012,6 +2015,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
       });
       if (seq !== walletSeq.current) return;
       setWalletRows(rows);
+      setWalletBalanceRows(rows);
       saveCachedWalletRows(rows);
       setWalletError(null);
     } catch (e) {
@@ -2019,7 +2023,7 @@ export default function StatsPage({ visible }: { visible: boolean }) {
     } finally {
       if (seq === walletSeq.current) setWalletLoading(false);
     }
-  }, []);
+  }, [setWalletBalanceRows]);
 
   const loadPlans = useCallback(
     async (force: boolean) => {

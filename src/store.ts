@@ -62,6 +62,7 @@ import type {
   BindingInput,
   DetectResult,
   Gateway,
+  GatewayBalanceDto,
   GatewayInput,
   PlanQuotaDto,
   Profile,
@@ -640,9 +641,12 @@ export function runInboxAction(item: InboxItem) {
 interface AppState {
   profiles: Profile[];
   gateways: Gateway[];
-  /** 用量页最近一次查回的订阅余量缓存（供对话满额换号轻提示条复用，不额外轮询） */
+  /** 用量页最近一次查回的订阅余量缓存（供对话满额换号轻提示条与底栏微环复用，不额外轮询） */
   planQuotaRows: PlanQuotaDto[];
   setPlanQuotaRows: (rows: PlanQuotaDto[]) => void;
+  /** 用量页最近一次查回的网关钱包余额缓存（供聊天底栏微环复用） */
+  walletBalanceRows: GatewayBalanceDto[];
+  setWalletBalanceRows: (rows: GatewayBalanceDto[]) => void;
   agents: DetectResult[];
   sessions: SessionMetaDto[];
   /** 已添加项目路径（注册表）；快速开聊随手聊历史现算用，启动时拉一次 */
@@ -1070,6 +1074,8 @@ export const useAppStore = create<AppState>((set, get) => {
   gateways: [],
   planQuotaRows: [],
   setPlanQuotaRows: (rows) => set({ planQuotaRows: rows }),
+  walletBalanceRows: [],
+  setWalletBalanceRows: (rows) => set({ walletBalanceRows: rows }),
   agents: [],
   sessions: [],
   projectPaths: [],
