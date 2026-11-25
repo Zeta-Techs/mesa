@@ -208,7 +208,7 @@ const menuItem = (ui: { el: HTMLElement }, text: string) => {
   return found as HTMLButtonElement;
 };
 
-test("权限菜单四档：本机设置对应的那档打勾并标注，没有的置灰，完全访问要二次确认", async () => {
+test("权限菜单四档：只显示四个权限档位，没有的置灰，完全访问要二次确认", async () => {
   const ui = await mount();
   try {
     const picks: unknown[][] = [];
@@ -225,16 +225,14 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     await ui.render(ui.h(ui.Badge, props));
     assert.match(ui.el.textContent ?? "", /完全访问/);
     await ui.click("完全访问");
-    assert.match(ui.el.textContent ?? "", /假如它要/, "拿一件具体的事说明四档（2026-10-22）");
-    assert.match(menuItem(ui, "先出方案").textContent ?? "", /不建，告诉你怎么做/, "没传哪一家：照旧的说法");
-    // 2026-10-26「只讨论」改名「先出方案」（目标 / 聊想法里的只讨论另是一回事，不跟着改）
+    // 精简聊天层文字说明：权限菜单只显示四个档位，不附举例抬头、右侧结果与底部长说明
+    assert.doesNotMatch(ui.el.textContent ?? "", /假如它要|只管这一段对话|本机设置|了解更多/);
     assert.equal(ui.el.textContent?.includes("只讨论"), false);
-    for (const label of ["先出方案", "请求批准", "帮我批准", "完全访问"]) menuItem(ui, label);
+    for (const label of ["先出方案", "请求批准", "帮我批准", "完全访问"]) {
+      assert.equal(menuItem(ui, label).textContent?.trim(), label);
+    }
     assert.doesNotMatch(ui.el.textContent ?? "", /自动改文件|按本机设置|先问再改/, "旧的五档已收掉");
     assert.equal(menuItem(ui, "完全访问").getAttribute("aria-checked"), "true");
-    assert.match(menuItem(ui, "完全访问").textContent ?? "", /本机设置/);
-    // 2026-10-18 用户：去掉「了解更多」
-    assert.doesNotMatch(ui.el.textContent ?? "", /了解更多/);
     // 切到完全访问以外的档不用确认
     await ui.act(async () => menuItem(ui, "帮我批准").click());
     assert.deepEqual(picks.at(-1), ["write_tree", "auto"]);
@@ -250,7 +248,7 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     await ui.click("请求批准");
     await ui.act(async () => menuItem(ui, "完全访问").click());
     assert.deepEqual(picks.at(-1), ["write_tree", "full"]);
-    // 这家没有的档置灰；本机设置对应不上任何一档时不打勾、底部写原话
+    // 这家没有的档置灰并把原因放进悬停提示；本机设置对应不上任何一档时不打勾
     await ui.render(
       ui.h(ui.Badge, {
         ...props,
@@ -260,9 +258,8 @@ test("权限菜单四档：本机设置对应的那档打勾并标注，没有�
     );
     await ui.click("自动改文件");
     assert.equal(menuItem(ui, "请求批准").disabled, true);
-    assert.match(menuItem(ui, "请求批准").textContent ?? "", /没有这一档/);
+    assert.match(menuItem(ui, "请求批准").getAttribute("title") ?? "", /没有这一档/);
     assert.equal(ui.el.querySelectorAll('[aria-checked="true"]').length, 0);
-    assert.match(ui.el.textContent ?? "", /现在按本机设置：本机 Claude Code 设为自动接受改文件/);
     // 运行中：生成时只显示；空闲时换档要确认「会重开」，确认后先改权限再重开
     let restarts = 0;
     await ui.render(ui.h(ui.Badge, { ...props, editable: false, mode: "ask", note: null, live: { busy: true, onRestart: () => restarts++ } }));
@@ -519,7 +516,7 @@ test("模型菜单运行中：会写回 CLI 全局配置的切换改走重开接
     };
     await ui.render(ui.h(ui.Menu, props));
     await ui.click("glm-5.3 · high");
-    assert.match(ui.el.textContent ?? "", /不改它的全局配置/);
+    assert.doesNotMatch(ui.el.textContent ?? "", /不改它的全局配置/);
     await openModels(ui);
     await ui.click("glm-5.2");
     assert.deepEqual(relaunched, [{ model: "glm-5.2" }]);

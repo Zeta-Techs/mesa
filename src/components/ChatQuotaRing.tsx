@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { ArrowUpRight, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { useAppStore } from "../store";
 import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
-  listSameAgentPeers,
   profileQuotaKind,
   resolveChatQuotaView,
   type ChatQuotaTone,
@@ -15,7 +14,6 @@ import {
   planCapsuleLabel,
   planLevelLabel,
   planProviderLabel,
-  planQuotaDataAt,
   planResetRemain,
   planWindowLabel,
 } from "../plan-quota";
@@ -31,7 +29,6 @@ import { vendorForPlanProvider } from "../vendor-icon";
 const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
 const WALLET_CACHE_KEY = "ccode.stats.walletRowsCache";
 const FRESH_TTL_MS = 120_000;
-const EMPTY_STRINGS: readonly string[] = [];
 
 let planInflight: Promise<PlanQuotaDto[]> | null = null;
 let planFetchedAt = 0;
@@ -221,24 +218,20 @@ function PopoverMiniRing({
 }
 
 /**
- * 聊天输入框底栏右侧的「订阅余量 / 网关余额」静默微环（方案 A）：
- * - 平时保持中性灰阶 + 16px 双同心细环，仅 ≥70% 提示黄 / ≥90% 危急红；
- * - 悬停出轻量提示，点击弹出 .ccode-float-surface 玻璃浮层查看双窗倒计时、刷新、同厂备选号快切与「查看全部 ↗」；
+ * 聊天底栏「订阅余量 / 网关余额」静默单环：
+ * - 平时保持低饱和克制态，本周剩余用同色系浅深双调环、5 小时剩余用中性灰轨单环，仅警示/危急时着色；
+ * - 悬停出轻量提示，点击弹出 .ccode-float-surface 精简玻璃浮层查看各窗剩余、倒计时与手动刷新；
  * - 当前连接无套餐/钱包余量时自动隐藏，绝不占空位。
  */
 export default function ChatQuotaRing({
   profileId,
-  onSwitchProfile,
 }: {
   profileId: string | null | undefined;
-  /** 浮层里点击同厂其他账号直接切号（开聊前切换启动连接 / 运行中走 switchConnection） */
-  onSwitchProfile?: ((profileId: string) => void) | null;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const gateways = useAppStore((s) => s.gateways);
   const planRows = useAppStore((s) => s.planQuotaRows);
   const walletRows = useAppStore((s) => s.walletBalanceRows);
-  const hiddenProfileIds = useAppStore((s) => s.settings?.hiddenProfiles ?? EMPTY_STRINGS);
 
   const profile = useMemo(
     () => (profileId ? profiles.find((p) => p.id === profileId) ?? null : null),
@@ -271,14 +264,6 @@ export default function ChatQuotaRing({
   const view = useMemo(
     () => resolveChatQuotaView(profile, planRows, walletRows, gateways),
     [profile, planRows, walletRows, gateways],
-  );
-
-  const peers = useMemo(
-    () =>
-      view?.kind === "plan" && onSwitchProfile
-        ? listSameAgentPeers(profile, profiles, planRows, hiddenProfileIds, 3)
-        : [],
-    [view?.kind, onSwitchProfile, profile, profiles, planRows, hiddenProfileIds],
   );
 
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -339,7 +324,6 @@ export default function ChatQuotaRing({
     ? planCapsuleLabel(view.row, sameProviderCount, hasProviderIcon)
     : view.row.gatewayName;
   const levelText = isPlan ? planLevelLabel(view.row.planLevel) : null;
-  const dataAt = planQuotaDataAt(view.row.queriedAt, view.row.fromCache);
 
   const walletLabel = !isPlan
     ? hideWallet
@@ -556,51 +540,6 @@ export default function ChatQuotaRing({
                   )}
                 </div>
               )}
-
-              {/* 同厂备选账号一键切号 */}
-              {peers.length > 0 && onSwitchProfile && (
-                <div className="mt-2.5 border-t border-hairline pt-2">
-                  <div className="mb-1 text-micro text-l4">切换同家其他账号</div>
-                  <div className="space-y-0.5">
-                    {peers.map((peer) => (
-                      <button
-                        key={peer.profile.id}
-                        type="button"
-                        onClick={() => {
-                          setPanel(null);
-                          onSwitchProfile(peer.profile.id);
-                        }}
-                        className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-hover"
-                      >
-                        <span className="min-w-0 flex-1 truncate text-l2">{peer.profile.name}</span>
-                        <span
-                          className={`shrink-0 text-micro tabular-nums ${
-                            peer.remainPct == null ? "text-l4" : textToneClass(peer.tone)
-                          }`}
-                        >
-                          {peer.remainPct == null ? "未知" : `剩余 ${peer.remainPct}%`}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 浮层底栏：时间戳 + 查看全部 */}
-              <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-hairline pt-2 text-micro text-l4">
-                <span className="truncate">{dataAt ?? "实时数据"}</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPanel(null);
-                    useAppStore.getState().setPage("stats");
-                  }}
-                  className="inline-flex shrink-0 items-center gap-0.5 text-l3 transition-colors hover:text-l1"
-                >
-                  查看全部
-                  <ArrowUpRight aria-hidden="true" className="h-3 w-3" />
-                </button>
-              </div>
             </div>
           </div>,
           document.body,

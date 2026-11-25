@@ -497,43 +497,28 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
     return null;
   })();
 
-  // 底部说明压到一两行，完整原委放悬停提示（原先 Claude 的说明三行，比菜单本身还抢眼）
-  // 打开旧对话还没发第一句（resumePick）不再写底部说明（2026-11-05 用户问「这个提示是干嘛的」）：
-  // 「Agent 不能换」写在换配置那一层；主屏那一行前面原先写「接回用」，2026-11-16 用户删掉（悬停提示里仍说明）
-  const footer: { short: string; full: string } | null = launch
+  // 仅在不可操作（正在生成）或存在全局副作用（把思考档存成 CLI 默认）时显示一行提示；常驻流程说明已精简
+  const footer: { short: string; full: string } | null = launch || next
     ? null
-    : next
+    : relaunchWaiting
       ? {
-          short: "Agent 已经停了。发下一句时按这里的选择接回原来的对话。",
-          full: "Agent 已经停了。发下一句时按这里的选择接回原来的对话。",
+          short: "正在生成，等这一轮结束再换。",
+          full:
+            rt.modelByRelaunch || rt.effortByRelaunch
+              ? `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}要停下 ${agentLabel} 再接回这段对话，正在生成时换会打断这一轮。`
+              : `${agentLabel} 正在生成时不接受切换命令，等这一轮结束再换。`,
         }
-      : relaunchWaiting
+      : rt.nextTurnOnly && !rt.modelByRelaunch && !rt.effortByRelaunch
         ? {
-            short: "正在生成，等这一轮结束再换。",
-            full:
-              rt.modelByRelaunch || rt.effortByRelaunch
-                ? `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}要停下 ${agentLabel} 再接回这段对话，正在生成时换会打断这一轮。`
-                : `${agentLabel} 正在生成时不接受切换命令，等这一轮结束再换。`,
+            short: "正在生成，现在换从下一轮起生效。",
+            full: `${agentLabel} 正在生成时也收切换，这一轮照旧用原来的设置，下一轮起换成新的。`,
           }
-        : rt.nextTurnOnly && !rt.modelByRelaunch && !rt.effortByRelaunch
+        : !rt.modelByRelaunch && !rt.effortByRelaunch && rt.effortPersistsViaCommand
           ? {
-              short: "正在生成，现在换从下一轮起生效，只管这一段对话。",
-              full: `${agentLabel} 正在生成时也收切换，这一轮照旧用原来的设置，下一轮起换成新的；只管这一段对话，不改它的全局配置。`,
+              short: `换思考档会写进终端执行；${agentLabel} 会把它存成以后的默认。`,
+              full: `这个连接和模型启动时注不进思考档，只能用 ${agentLabel} 自己的命令换；它会把选择写回它的全局配置，以后在终端里直接运行它也会用这一档。`,
             }
-        : rt.modelByRelaunch || rt.effortByRelaunch
-          ? {
-              short: `换${rt.modelByRelaunch && rt.effortByRelaunch ? "模型或思考档" : rt.modelByRelaunch ? "模型" : "思考档"}会停下 ${agentLabel}，用新设置接回这段对话（要几秒），不改它的全局配置。`,
-              full: `${agentLabel} 自己的切换命令会把选择写回它的全局配置（以后在终端里直接运行它也会用这个）。Mesa 改成停下它、带着新的启动参数接回原来这段对话，聊过的内容不会丢；接回时会重读整段对话。`,
-            }
-          : rt.effortPersistsViaCommand
-            ? {
-                short: `换思考档会写进终端执行；${agentLabel} 会把它存成以后的默认。`,
-                full: `这个连接和模型启动时注不进思考档，只能用 ${agentLabel} 自己的命令换；它会把选择写回它的全局配置，以后在终端里直接运行它也会用这一档。`,
-              }
-            : {
-                short: "切换会写进终端执行；要你确认时，对话末尾会出现确认卡。",
-                full: "切换会写进终端执行；CLI 要你确认时，对话末尾会出现确认卡。",
-              };
+          : null;
 
   // 主屏大字下面那一行：「M · 连接 · 模型 ›」，点进模型屏（换模型、Agent、连接都从这里进）
   const noConn = Boolean(launch && launch.pick.profiles.length === 0);
@@ -749,11 +734,9 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   </button>
                 ))}
               </div>
-              <p className={note}>
-                {runtime?.busy
-                  ? `${agentLabel} 正在回复，等这一轮结束再换。`
-                  : `会停下 ${agentLabel}，用新配置接回这段对话；要换 Agent 回上一层点「换 Agent」。`}
-              </p>
+              {runtime?.busy && (
+                <p className={note}>{agentLabel} 正在回复，等这一轮结束再换。</p>
+              )}
             </>
           ) : view === "beta" ? (
             <>

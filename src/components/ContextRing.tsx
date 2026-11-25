@@ -2,10 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { Bot, Minimize2 } from "lucide-react";
-import { AGENTS } from "../types";
 import type { ContextSnapshot } from "../composer-assist";
 import {
-  breakdownSupported,
   contextView,
   fmtRatio,
   imageWeightNote,
@@ -84,15 +82,12 @@ export default function ContextRing({
   ratio,
   used,
   window: win,
-  agentId,
   breakdown = null,
   onCompact,
   color,
   warnColor,
   trackColor = "var(--color-field)",
   className = "",
-  totalTokens = null,
-  profileName = null,
   showPercent = false,
   imageBytes = null,
   snapshot = null,
@@ -136,7 +131,6 @@ export default function ContextRing({
   const warn = (hasWindow && safeRatio >= 0.8) || heavy !== null;
   const stroke = warn ? warnColor : color;
   const pct = hasWindow ? Math.round(safeRatio * 100) : null;
-  const label = AGENTS.find((a) => a.id === agentId)?.label ?? agentId;
   const ringRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   // 浮层右缘对齐圆环右缘、底边在圆环上方 6px（用 translate 往左上挪，不依赖视口高度）
@@ -211,28 +205,19 @@ export default function ContextRing({
   const usedRows = view.rows.filter((r) => r.tone !== "reserve" && r.tone !== "free");
   const capRows = view.rows.filter((r) => r.tone === "reserve" || r.tone === "free");
   const splitRows = usedRows.length > 1 && capRows.length > 0;
-  const hasMeta = Boolean(totalTokens || profileName);
   const longHint = longContextHint(used);
-  const supported = breakdownSupported(agentId);
   const compactions = Math.max(breakdownData?.compactions ?? 0, snapshot?.compactions ?? 0);
   const cacheRead = breakdownData?.cacheRead ?? snapshot?.cacheRead ?? 0;
   const freshInput = breakdownData?.freshInput ?? snapshot?.freshInput ?? 0;
   const cacheTotal = cacheRead + freshInput;
   const subagents = breakdownData?.subagents ?? [];
-  const note =
-    detail.state === "ok"
-      ? agentId === "agy"
-        ? "分类来自本地会话日志与子智能体库（秒读估算）"
-        : "分类由 /context 估算，与实际略有出入"
-      : detail.state === "loading"
-        ? agentId === "agy"
-          ? "正在读取本地上下文与子智能体明细…"
-          : `正在向 ${label} 要分类明细…`
-        : detail.state === "error"
-          ? `没读到分类明细：${detail.message}`
-          : supported
-            ? "还没接上会话文件，暂时只有总量"
-            : `${label} 不提供分类明细`;
+  const statusNote =
+    detail.state === "loading"
+      ? "正在读取明细…"
+      : detail.state === "error"
+        ? `没读到分类明细：${detail.message}`
+        : null;
+  const hasFooter = Boolean(onCompact || statusNote);
 
   const renderRow = (row: (typeof view.rows)[number], muted = false) => (
     <div key={row.label} className="flex items-center gap-2 tabular-nums leading-[20px]">
@@ -482,60 +467,41 @@ export default function ContextRing({
                   </div>
                 )}
               </div>
-              {/* 卡底浅托盘（2026-11-20 重排）：累计与连接同一行左右对齐，压缩上下文独立满宽次级钮，最底两行小字说明。
-                  字号/字重挂在按钮外层：全站 button { font: inherit } 会吞掉按钮自己的 text-* / font-* */}
-              <div className="border-t border-hairline bg-strip/60 px-3.5 py-3">
-                {hasMeta && (
-                  <div className="flex items-center justify-between gap-2 text-xs leading-[18px]">
-                    {totalTokens ? (
-                      <span className="shrink-0 tabular-nums text-l3">累计 {totalTokens} token</span>
-                    ) : (
-                      <span />
-                    )}
-                    {profileName && (
-                      <span
-                        className="inline-flex min-w-0 max-w-[10.5rem] items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-micro leading-[14px] text-l3 ring-1 ring-inset ring-hairline"
-                        title={`经「${profileName}」连接`}
+              {/* 仅在有操作（「压缩上下文」）或加载/报错时显示卡底托盘；常驻说明已精简 */}
+              {hasFooter && (
+                <div className="border-t border-hairline bg-strip/60 px-3.5 py-2.5">
+                  {onCompact && (
+                    <div className="text-xs font-medium">
+                      <button
+                        type="button"
+                        className={`flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-2.5 transition-colors ${
+                          warn
+                            ? "border-warn-text/40 bg-warn/40 text-warn-text hover:bg-warn/70"
+                            : "border-field bg-raised text-l2 hover:border-l4 hover:bg-hover hover:text-l1"
+                        }`}
+                        title="把前面的对话压成摘要，腾出上下文"
+                        onClick={() => {
+                          setPanel(null);
+                          onCompact();
+                        }}
                       >
-                        <span className="shrink-0 text-l4">经</span>
-                        <span className="truncate">{profileName}</span>
-                      </span>
-                    )}
-                  </div>
-                )}
-                {onCompact && (
-                  <div className={`${hasMeta ? "mt-2.5" : ""} text-xs font-medium`}>
-                    <button
-                      type="button"
-                      className={`flex h-7 w-full items-center justify-center gap-1.5 rounded-md border px-2.5 transition-colors ${
-                        warn
-                          ? "border-warn-text/40 bg-warn/40 text-warn-text hover:bg-warn/70"
-                          : "border-field bg-raised text-l2 hover:border-l4 hover:bg-hover hover:text-l1"
-                      }`}
-                      title="把前面的对话压成摘要，腾出上下文"
-                      onClick={() => {
-                        setPanel(null);
-                        onCompact();
-                      }}
-                    >
-                      <Minimize2 size={12} strokeWidth={1.8} aria-hidden="true" />
-                      压缩上下文
-                    </button>
-                  </div>
-                )}
-                {/* 说明一律短句（2026-11-20 用户）；只说一句「你好」也有几万 token，用户会以为算错了（2026-10-30） */}
-                <div className={`${hasMeta || onCompact ? "mt-2.5" : ""} space-y-0.5 text-micro leading-[16px] text-l4`}>
-                  <div>首轮已含系统提示、技能和工具定义</div>
-                  <div>
-                    {note}
-                    {detail.state === "error" && (
-                      <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
-                        重试
+                        <Minimize2 size={12} strokeWidth={1.8} aria-hidden="true" />
+                        压缩上下文
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
+                  {statusNote && (
+                    <div className={`${onCompact ? "mt-2" : ""} text-micro leading-[16px] text-l4`}>
+                      {statusNote}
+                      {detail.state === "error" && (
+                        <button type="button" className="ml-1 text-l3 underline-offset-2 hover:underline" onClick={fetchDetail}>
+                          重试
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
+              )}
             </div>
           </div>,
           document.body,

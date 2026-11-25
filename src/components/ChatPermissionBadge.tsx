@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { confirmDialog } from "./ConfirmDialog";
 import { useMenuKeyNav } from "../menu-key-nav";
 import { clipBounds, pickPopoverSide } from "../popover-side";
-import { permissionExample } from "../chat-permission";
 import type { StarterContext } from "../chat-empty-start";
 import type { CliPermissionNote, NativePermissionMode } from "../pages/TerminalPage";
 import type { InSessionPermission } from "../switch-strategy";
@@ -123,9 +122,7 @@ export default function ChatPermissionBadge({
   onPermission,
   live = null,
   inline = null,
-  cycleOnly = false,
   observed = null,
-  context = "general",
   cycleHint = false,
   flash = false,
   remember = false,
@@ -214,17 +211,6 @@ export default function ChatPermissionBadge({
   const explain = selectedOnly
     ? `Mesa 记录的权限选择。暂不能持续读取这家 CLI 的当前权限；在终端里改过后，以终端显示为准。\n${settingExplain}`
     : settingExplain;
-  const ex = permissionExample(context, agentId);
-  // 菜单底部那句：会话里直接换的家说什么时候生效；要重开的家说为什么
-  const switchNote = !live
-    ? ""
-    : inSession
-      ? live.busy && inSession.spec.midTurn !== "now"
-        ? "这一轮结束后生效；先出方案要重开。"
-        : "不用重开；先出方案要重开。"
-      : cycleOnly
-        ? `${agentLabel} 在对话里只能轮着换档，换权限会重开并接回。`
-        : "开聊后换会重开并接回。";
 
   async function choose(id: Tier) {
     setOpen(false);
@@ -288,21 +274,21 @@ export default function ChatPermissionBadge({
         <div
           ref={menuRef}
           role="menu"
-          aria-label="AI 动手前怎么问你"
+          aria-label="权限档位"
           // 字号挂在容器上：全站 button { font: inherit } 会吞掉按钮自己的 text-*
-          className={`absolute left-0 z-30 w-[21rem] rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-normal ${
+          className={`absolute left-0 z-30 w-40 rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-nowrap ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
         >
-          <div className="flex items-center gap-1 px-2 pb-1 pt-1 text-xs text-l4">
-            假如它要{ex.verb}
-            <code className="rounded-sm bg-inset px-1 font-mono text-micro text-l3">{ex.target}</code>
-          </div>
-          {selectedOnly && <p className="px-2 py-1 text-xs text-l3">这里显示 Mesa 记录的选择；在终端里改过权限后，以终端显示为准。</p>}
           {PERMISSION_TIERS.map((t) => {
             const ok = available(t.id);
             const selected = current === t.id;
             const danger = t.id === "full";
+            const rowTitle = ok
+              ? t.desc
+              : live?.busy && (t.id === "discuss" ? readonlySupported : modes.includes(t.id))
+                ? "这一轮结束后再换"
+                : `${agentLabel} 没有这一档`;
             return (
               <button
                 key={t.id}
@@ -311,38 +297,16 @@ export default function ChatPermissionBadge({
                 aria-checked={selected}
                 disabled={!ok}
                 onClick={() => void choose(t.id)}
-                title={ok ? t.desc : undefined}
+                title={rowTitle}
                 className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left outline-none disabled:cursor-not-allowed disabled:opacity-40 ${
                   selected ? "bg-seg-sel text-l1" : "text-l2 hover:bg-hover hover:text-l1 focus-visible:bg-hover"
                 }`}
               >
                 <PermissionGlyph tier={t.id} className={danger ? "text-caution-text" : selected ? "text-l2" : "text-l3"} />
                 <span className="shrink-0">{t.label}</span>
-                {followsLocal && note?.tier === t.id && (
-                  <span className="shrink-0 rounded-sm bg-inset px-1 text-micro leading-4 text-l3">本机设置</span>
-                )}
-                <span className={`ml-auto min-w-0 truncate text-xs ${selected ? "text-l3" : "text-l4"}`}>
-                  {ok
-                    ? ex.outcomes[t.id]
-                    : live?.busy && (t.id === "discuss" ? readonlySupported : modes.includes(t.id))
-                      ? "这一轮结束后再换"
-                      : `${agentLabel} 没有这一档`}
-                </span>
               </button>
             );
           })}
-          <p className="mx-1 mt-1 flex items-start justify-between gap-2 border-t border-hairline px-1 pb-0.5 pt-1.5 text-micro leading-4 text-l4">
-            <span>
-              {followsLocal && note && !note.tier && !live
-                ? `现在按本机设置：${note.detail}。选一档只管这一段对话。`
-                : `只管这一段对话，不改 ${agentLabel} 的设置。${switchNote}`}
-            </span>
-            {cycleHint && !live && (
-              <span className="shrink-0 whitespace-nowrap">
-                <kbd className="rounded-sm bg-inset px-1 font-mono text-l3">⇧Tab</kbd> 轮换
-              </span>
-            )}
-          </p>
         </div>
       )}
     </div>

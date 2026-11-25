@@ -1562,18 +1562,7 @@ export default function ChatSurface({
     (launchPickOpen || resumePickOpen || launching) && launchPick?.profileId
       ? launchPick.profileId
       : runtime?.status?.profileId ?? launchPick?.profileId ?? null;
-  const onQuotaSwitchProfile =
-    (launchPickOpen || resumePickOpen) && onPickLaunch
-      ? (id: string) => onPickLaunch.profile(id)
-      : onSwitchConnection && runtime?.status?.sessionId
-        ? onSwitchConnection
-        : null;
-  const quotaRing = activeQuotaProfileId ? (
-    <ChatQuotaRing
-      profileId={activeQuotaProfileId}
-      onSwitchProfile={onQuotaSwitchProfile}
-    />
-  ) : null;
+  const quotaRing = activeQuotaProfileId ? <ChatQuotaRing profileId={activeQuotaProfileId} /> : null;
 
   const metaRight =
     (launchPickOpen || resumePickOpen || launching) && onPickLaunch ? (
