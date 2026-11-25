@@ -607,7 +607,7 @@ function QuotaSummary({
       onClick={inactive ? undefined : onOpen}
       tabIndex={inactive ? -1 : undefined}
       aria-hidden={inactive || undefined}
-      className={`mt-3 flex w-full flex-wrap items-center gap-x-8 gap-y-3 rounded-md text-left ${inactive ? "pointer-events-none" : ""}`}
+      className={`flex w-full flex-wrap items-center gap-x-8 gap-y-3 rounded-md text-left ${inactive ? "pointer-events-none" : ""}`}
       title={inactive ? undefined : "展开看详情"}
     >
       {items.length === 0 ? (
@@ -633,73 +633,48 @@ function QuotaSummary({
   );
 }
 
-/** 收起态多账号轮播的轻分页指示条（圆点 + 左右轻切钮），不抢视觉也不放标签 */
+/** 多账号紧凑切号控件（`< 1 / 5 >`）：收起态贴摘要行右侧、展开态进卡头，不占底部额外高度 */
 function QuotaPager({
   count,
   activeIdx,
   labels,
   onPrev,
   onNext,
-  onSelect,
 }: {
   count: number;
   activeIdx: number;
   labels: string[];
   onPrev: () => void;
   onNext: () => void;
-  onSelect: (idx: number) => void;
 }) {
   if (count <= 1) return null;
+  const prevLabel = activeIdx > 0 ? labels[activeIdx - 1] : null;
+  const nextLabel = activeIdx < count - 1 ? labels[activeIdx + 1] : null;
   return (
-    <div className="mt-2.5 flex items-center justify-between gap-2">
-      <div className="flex items-center gap-1" role="tablist" aria-label="切换账号">
-        {labels.map((label, i) => {
-          const selected = i === activeIdx;
-          return (
-            <button
-              key={`${i}-${label}`}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-label={label}
-              title={label}
-              onClick={() => onSelect(i)}
-              className="flex h-4 items-center px-0.5"
-            >
-              <span
-                className={`block h-1 rounded-full transition-all duration-200 ${
-                  selected ? "w-3.5 bg-l2" : "w-1 bg-l4/50 hover:bg-l3"
-                }`}
-              />
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex items-center gap-0.5 text-micro tabular-nums text-l4">
-        <button
-          type="button"
-          disabled={activeIdx <= 0}
-          onClick={onPrev}
-          aria-label="上一项"
-          title="上一项"
-          className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-        >
-          <ChevronLeft aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
-        <span className="px-0.5">
-          {activeIdx + 1} / {count}
-        </span>
-        <button
-          type="button"
-          disabled={activeIdx >= count - 1}
-          onClick={onNext}
-          aria-label="下一项"
-          title="下一项"
-          className="flex h-5 w-5 items-center justify-center rounded-sm text-l3 hover:bg-hover hover:text-l1 disabled:opacity-30"
-        >
-          <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
-        </button>
-      </div>
+    <div className="flex shrink-0 items-center gap-0.5 text-micro tabular-nums text-l4">
+      <button
+        type="button"
+        disabled={activeIdx <= 0}
+        onClick={onPrev}
+        aria-label={prevLabel ? `上一项：${prevLabel}` : "上一项"}
+        title={prevLabel ? `上一项（${prevLabel}）` : "已是第一项"}
+        className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-30"
+      >
+        <ChevronLeft aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
+      <span className="min-w-[2.25rem] text-center">
+        {activeIdx + 1} / {count}
+      </span>
+      <button
+        type="button"
+        disabled={activeIdx >= count - 1}
+        onClick={onNext}
+        aria-label={nextLabel ? `下一项：${nextLabel}` : "下一项"}
+        title={nextLabel ? `下一项（${nextLabel}）` : "已是最后一项"}
+        className="flex h-6 w-6 items-center justify-center rounded-sm text-l3 transition-colors hover:bg-hover hover:text-l1 disabled:pointer-events-none disabled:opacity-30"
+      >
+        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -970,7 +945,7 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
         anchor: { left: r.left, top: r.top, right: r.left + Math.min(r.width, 160), bottom: r.bottom },
         place: "below",
         title: "可以左右滑动",
-        body: `在这张卡上两指左右轻扫（或按住拖），在 ${names} 之间切换；展开后上面也有切换标签。`,
+        body: `在这张卡上两指左右轻扫（或按住拖），在 ${names} 之间切换；也可点右侧切换按钮切号。`,
         actions: [{ label: "知道了", onClick: () => {} }],
         scrollRoot: scrollParent(el),
       });
@@ -1083,6 +1058,15 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
         </span>
         {dataAt && <span className="hidden shrink-0 whitespace-nowrap text-micro text-l4 sm:inline">{dataAt}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {planOpen && planRowsVisible.length > 1 && (
+            <QuotaPager
+              count={planRowsVisible.length}
+              activeIdx={planSwipe.activeIdx}
+              labels={planRowsVisible.map((r) => planTabLabel(r, providerCounts[r.provider] ?? 1))}
+              onPrev={() => planSwipe.go(-1)}
+              onNext={() => planSwipe.go(1)}
+            />
+          )}
           {planOpen && rows.length > 1 && (
             <button
               type="button"
@@ -1118,13 +1102,13 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
       {error && (
         <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
       )}
-      {/* 收起时只看各窗已用（5 小时 / 本周…），多家时 GPU 连续轨道左右滑动切换、不放标签；
-          展开才有大数字、进度条、重置卡、多家切换标签 */}
+      {/* 收起时只看各窗已用（5 小时 / 本周…），多家时 GPU 连续轨道左右滑动切换、右侧同排轻切钮；
+          展开后卡头切号，不再铺多行供应商标签栏 */}
       {!planOpen ? (
-        <>
+        <div className="mt-3 flex items-center gap-3">
           <div
             ref={summaryRef}
-            className="overflow-hidden select-none touch-pan-y"
+            className="min-w-0 flex-1 overflow-hidden select-none touch-pan-y"
             {...planSwipe.areaHandlers}
             tabIndex={planRowsVisible.length > 1 ? 0 : undefined}
             title={planRowsVisible.length > 1 ? `左右滑动切换（${planSwipe.activeIdx + 1} / ${planRowsVisible.length}）` : undefined}
@@ -1157,12 +1141,11 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
             labels={planRowsVisible.map((r) => planTabLabel(r, providerCounts[r.provider] ?? 1))}
             onPrev={() => planSwipe.go(-1)}
             onNext={() => planSwipe.go(1)}
-            onSelect={(idx) => planSwipe.goToIndex(idx)}
           />
-        </>
+        </div>
       ) : (
         <>
-          {planFilterOpen && rows.length > 1 ? (
+          {planFilterOpen && rows.length > 1 && (
             <QuotaOrderPanel
               title="轮播显示与排序"
               hasCustom={
@@ -1203,22 +1186,6 @@ const PlanQuotaCard = memo(function PlanQuotaCard({
               onReset={() => updatePlanPrefs(EMPTY_QUOTA_PREFS)}
               onDone={() => setPlanFilterOpen(false)}
             />
-          ) : (
-            planRowsVisible.length > 1 && (
-              <div className="mt-3">
-                <SegTabs
-                  variant="boxed"
-                  size="sm"
-                  wrap
-                  items={planRowsVisible.map((r) => ({
-                    id: r.gatewayId,
-                    label: planTabLabel(r, providerCounts[r.provider] ?? 1),
-                  }))}
-                  value={row.gatewayId}
-                  onChange={setPlanActive}
-                />
-              </div>
-            )
           )}
           <div key={row.gatewayId} className="mt-3">
             {(row.accountHint || row.isActiveSlot != null) && (
@@ -1514,16 +1481,23 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
       <div className="flex min-h-8 items-center gap-2">
         <QuotaFold open={walletOpen} onToggle={toggleWalletOpen} label="网关余额" />
         <h2 className="shrink-0 text-base font-medium text-l1">网关余额</h2>
-        {(walletGroupsVisible.length === 1 || !walletOpen) && (
-          <span
-            className="min-w-0 truncate text-xs text-l2"
-            title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
-          >
-            {walletAccountTitle(group)}
-          </span>
-        )}
+        <span
+          className="min-w-0 truncate text-xs text-l2"
+          title={`${walletAccountTitle(group)} · ${walletKindLabel(row.kind)}`}
+        >
+          {walletAccountTitle(group)}
+        </span>
         {dataAt && <span className="shrink-0 whitespace-nowrap text-micro text-l4">{dataAt}</span>}
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {walletOpen && walletGroupsVisible.length > 1 && (
+            <QuotaPager
+              count={walletGroupsVisible.length}
+              activeIdx={walletSwipe.activeIdx}
+              labels={walletGroupsVisible.map((g) => walletAccountTitle(g, true))}
+              onPrev={() => walletSwipe.go(-1)}
+              onNext={() => walletSwipe.go(1)}
+            />
+          )}
           {walletOpen && walletGroups.length > 1 && (
             <button
               type="button"
@@ -1570,9 +1544,9 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
         <InlineNotice tone="err" className="mt-2">{error}</InlineNotice>
       )}
       {!walletOpen ? (
-        <>
+        <div className="mt-3 flex items-center gap-3">
           <div
-            className="overflow-hidden select-none touch-pan-y"
+            className="min-w-0 flex-1 overflow-hidden select-none touch-pan-y"
             {...walletSwipe.areaHandlers}
             tabIndex={walletGroupsVisible.length > 1 ? 0 : undefined}
             title={walletGroupsVisible.length > 1 ? `左右滑动切换（${walletSwipe.activeIdx + 1} / ${walletGroupsVisible.length}）` : undefined}
@@ -1620,12 +1594,11 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
             labels={walletGroupsVisible.map((g) => walletAccountTitle(g, true))}
             onPrev={() => walletSwipe.go(-1)}
             onNext={() => walletSwipe.go(1)}
-            onSelect={(idx) => walletSwipe.goToIndex(idx)}
           />
-        </>
+        </div>
       ) : (
         <>
-          {walletFilterOpen && walletGroups.length > 1 ? (
+          {walletFilterOpen && walletGroups.length > 1 && (
             <QuotaOrderPanel
               title="账户显示与排序"
               hasCustom={
@@ -1651,22 +1624,6 @@ const WalletBalanceCard = memo(function WalletBalanceCard({
               onReset={() => updateWalletPrefs(EMPTY_QUOTA_PREFS)}
               onDone={() => setWalletFilterOpen(false)}
             />
-          ) : (
-            walletGroupsVisible.length > 1 && (
-              <div className="mt-3">
-                <SegTabs
-                  variant="boxed"
-                  size="sm"
-                  wrap
-                  items={walletGroupsVisible.map((g) => ({
-                    id: g.key,
-                    label: walletAccountTitle(g, true),
-                  }))}
-                  value={group.key}
-                  onChange={setWalletActive}
-                />
-              </div>
-            )
           )}
           <div key={group.key} className="mt-3">
             {row.error && (
