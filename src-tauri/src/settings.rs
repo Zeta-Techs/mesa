@@ -455,35 +455,43 @@ impl AppSettingsDto {
 
 pub const DEFAULT_NO_PROXY: &str = "localhost,127.0.0.1,::1";
 
-/// 出网代理须是 http(s) / socks 地址。空串视为未配置。
+/// 出网代理须是合法的 http(s) / socks URL。空串视为未配置。
 pub fn validate_outbound_proxy(raw: &str) -> Result<(), String> {
     let t = raw.trim();
     if t.is_empty() {
         return Ok(());
     }
-    let lower = t.to_ascii_lowercase();
-    let ok_scheme = [
-        "http://",
-        "https://",
-        "socks5://",
-        "socks5h://",
-        "socks4://",
-    ]
-    .iter()
-    .any(|s| lower.starts_with(s));
-    if !ok_scheme {
+    let parsed = reqwest::Url::parse(t).map_err(|_| {
+        "出网代理地址格式不对，须是 http(s):// 或 socks5:// 地址，例如 http://127.0.0.1:7890".to_string()
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h" | "socks4") {
         return Err("出网代理须是 http(s):// 或 socks5:// 地址，例如 http://127.0.0.1:7890".into());
     }
-    let after = t.splitn(2, "://").nth(1).unwrap_or("");
-    let hostport = after.split('/').next().unwrap_or("");
-    let host = hostport.rsplit('@').next().unwrap_or("");
-    if host.is_empty() || host.starts_with(':') {
+    if parsed.host_str().is_none_or(|h| h.is_empty()) {
         return Err("出网代理缺少主机".into());
+    }
+    // 含空白字符（Url::parse 会静默吞掉部分路径空白或换行）直接拒收
+    if t.chars().any(char::is_whitespace) {
+        return Err("出网代理地址不能包含空格或换行".into());
     }
     Ok(())
 }
 
+/// 构造带 NO_PROXY 的 reqwest::Proxy（统一出网代理口径，支持 http(s)/socks 与不走代理列表）
+pub(crate) fn build_reqwest_proxy(
+    proxy_url: &str,
+    no_proxy: Option<&str>,
+) -> Result<reqwest::Proxy, String> {
+    let mut proxy = reqwest::Proxy::all(proxy_url).map_err(|e| format!("出网代理不可用：{e}"))?;
+    if let Some(np) = no_proxy.map(str::trim).filter(|v| !v.is_empty()) {
+        proxy = proxy.no_proxy(reqwest::NoProxy::from_string(np));
+    }
+    Ok(proxy)
+}
+
 /// 由设置算出官方账号要注入的代理 env（不含 extra_env 覆盖）。
+/// 大小写成对注入：避免进程从登录 shell 继承了小写 https_proxy 时，与大写 HTTPS_PROXY 冲突导致
+/// curl / Go / 部分运行时仍走旧代理（与 download_proxy_env_from 同口径）。
 pub fn official_outbound_env_from(s: &AppSettingsDto) -> Vec<(String, String)> {
     let Some(proxy) = s
         .outbound_proxy
@@ -504,9 +512,13 @@ pub fn official_outbound_env_from(s: &AppSettingsDto) -> Vec<(String, String)> {
         .unwrap_or(DEFAULT_NO_PROXY);
     vec![
         ("HTTPS_PROXY".into(), proxy.to_string()),
+        ("https_proxy".into(), proxy.to_string()),
         ("HTTP_PROXY".into(), proxy.to_string()),
+        ("http_proxy".into(), proxy.to_string()),
         ("ALL_PROXY".into(), proxy.to_string()),
+        ("all_proxy".into(), proxy.to_string()),
         ("NO_PROXY".into(), no_proxy.to_string()),
+        ("no_proxy".into(), no_proxy.to_string()),
     ]
 }
 
@@ -600,10 +612,11 @@ pub fn download_proxy_env_from(
     .collect()
 }
 
-/// 生产路径：用户环境已自带任一代理变量（终端手 export 后拉起 Mesa 的场景）时不覆盖；
+/// 生产路径：优先采用设置页填写的出网代理（大小写成对覆盖继承环境，与官方启动 / 线路体检同优先级）；
+/// 设置留空时返回空 Vec，子进程自然沿用登录 shell 继承的代理变量。
 /// 单测返回空（避免本机代理污染 PTY/子进程断言）。
 pub fn download_proxy_env(extra_no_proxy: &[&str]) -> Vec<(String, String)> {
-    if cfg!(test) || inherited_proxy() {
+    if cfg!(test) {
         return Vec::new();
     }
     download_proxy_env_from(&read_current(), extra_no_proxy)
@@ -650,12 +663,15 @@ const COMMON_PROXY_PORTS: &[(u16, bool, &str)] = &[
     (7890, true, "Clash 混合端口"),
     (7897, true, "Clash Verge 默认混合端口"),
     (10809, true, "V2RayN HTTP"),
+    (10808, false, "V2RayN SOCKS"),
+    (1087, true, "V2rayU / SS HTTP"),
     (8118, true, "Privoxy"),
     (6152, true, "Surge HTTP"),
     (1080, false, "SOCKS 常用端口"),
 ];
 
-/// TCP 探测代理端口是否在监听（400ms；host:port 解析失败按不在线处理）
+/// TCP 探测代理端口是否在监听（400ms；host:port 解析失败按不在线处理）。
+/// 遍历全部解析地址（避免 localhost 优先解析为 [::1] 而代理只听 127.0.0.1 时误报未运行）。
 pub(crate) fn proxy_url_alive(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
@@ -667,12 +683,9 @@ pub(crate) fn proxy_url_alive(url: &str) -> bool {
     let Ok(mut addrs) = format!("{host}:{port}").to_socket_addrs() else {
         return false;
     };
-    addrs
-        .next()
-        .and_then(|addr| {
-            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)).ok()
-        })
-        .is_some()
+    addrs.any(|addr| {
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)).is_ok()
+    })
 }
 
 /// 环境变量值归一成代理 URL：没带 scheme 的补 http://（ socks5: 前缀已带 scheme 的原样）
@@ -684,6 +697,17 @@ fn normalize_proxy_env_value(value: &str) -> String {
     format!("http://{t}")
 }
 
+/// IPv6 裸主机拼 URL 时补方括号（`::1` → `[::1]`）
+fn format_proxy_host_port(scheme: &str, host: &str, port: &str) -> String {
+    let h = host.trim();
+    let p = port.trim();
+    if h.contains(':') && !h.starts_with('[') {
+        format!("{scheme}://[{h}]:{p}")
+    } else {
+        format!("{scheme}://{h}:{p}")
+    }
+}
+
 /// macOS scutil --proxy 输出解析：HTTPEnable/HTTPProxy/HTTPPort、HTTPS 同款、SOCKS 同款，
 /// 启用（Enable : 1）才产出。纯函数供单测。
 /// 系统设置里的「HTTPS 代理」是「给 HTTPS 流量用的代理」，代理本身照样讲明文 HTTP（CONNECT），
@@ -691,11 +715,10 @@ fn normalize_proxy_env_value(value: &str) -> String {
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn parse_scutil_proxy(text: &str) -> Vec<String> {
     let get = |key: &str| -> Option<String> {
-        text.lines()
-            .map(str::trim)
-            .find(|l| l.starts_with(key))
-            .and_then(|l| l.split(':').nth(1))
-            .map(|v| v.trim().to_string())
+        text.lines().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            (k.trim() == key).then(|| v.trim().to_string())
+        })
     };
     let mut out = Vec::new();
     for (enable_key, host_key, port_key, scheme) in [
@@ -708,7 +731,7 @@ fn parse_scutil_proxy(text: &str) -> Vec<String> {
         }
         if let (Some(host), Some(port)) = (get(host_key), get(port_key)) {
             if !host.is_empty() && !port.is_empty() {
-                out.push(format!("{scheme}://{host}:{port}"));
+                out.push(format_proxy_host_port(scheme, &host, &port));
             }
         }
     }
@@ -732,25 +755,38 @@ fn parse_windows_reg_proxy(text: &str) -> Vec<String> {
     let Some(server) = value_of("ProxyServer") else {
         return Vec::new();
     };
+    let with_scheme = |v: &str, default_scheme: &str| -> String {
+        if v.contains("://") {
+            v.to_string()
+        } else {
+            format!("{default_scheme}://{v}")
+        }
+    };
     if server.contains('=') {
-        // 分协议形式：优先 https，其次 http，再 socks
+        // 分协议形式：按 https → http → socks 顺序列出全部去重后的可用项
         let seg = |k: &str| {
             server
                 .split(';')
-                .find_map(|s| s.trim().strip_prefix(&format!("{k}=")))
-                .map(|v| v.trim().to_string())
+                .find_map(|s| {
+                    let (pk, pv) = s.trim().split_once('=')?;
+                    pk.trim().eq_ignore_ascii_case(k).then(|| pv.trim().to_string())
+                })
                 .filter(|v| !v.is_empty())
         };
+        let mut out = Vec::new();
         for k in ["https", "http", "socks"] {
             if let Some(v) = seg(k) {
                 // https= 段同 macOS：代理本身是 http（见 parse_scutil_proxy）
                 let scheme = if k == "socks" { "socks5" } else { "http" };
-                return vec![format!("{scheme}://{v}")];
+                let url = with_scheme(&v, scheme);
+                if !out.contains(&url) {
+                    out.push(url);
+                }
             }
         }
-        Vec::new()
+        out
     } else if !server.is_empty() {
-        vec![format!("http://{server}")]
+        vec![with_scheme(&server, "http")]
     } else {
         Vec::new()
     }
@@ -794,8 +830,9 @@ fn gsettings_proxy() -> Vec<String> {
 }
 
 fn detect_outbound_proxy_inner() -> Result<Vec<OutboundProxyCandidateDto>, String> {
-    let mut urls: Vec<(String, String)> = Vec::new(); // (url, source)
-                                                      // 1) 系统代理设置
+    // (url, source, known_alive)
+    let mut urls: Vec<(String, String, Option<bool>)> = Vec::new();
+    // 1) 系统代理设置
     #[cfg(target_os = "macos")]
     {
         if let Ok(out) = crate::process::background_command("scutil")
@@ -804,7 +841,7 @@ fn detect_outbound_proxy_inner() -> Result<Vec<OutboundProxyCandidateDto>, Strin
         {
             if out.status.success() {
                 for url in parse_scutil_proxy(&String::from_utf8_lossy(&out.stdout)) {
-                    urls.push((url, "系统代理".into()));
+                    urls.push((url, "系统代理".into(), None));
                 }
             }
         }
@@ -820,16 +857,17 @@ fn detect_outbound_proxy_inner() -> Result<Vec<OutboundProxyCandidateDto>, Strin
         {
             if out.status.success() {
                 for url in parse_windows_reg_proxy(&String::from_utf8_lossy(&out.stdout)) {
-                    urls.push((url, "系统代理".into()));
+                    urls.push((url, "系统代理".into(), None));
                 }
             }
         }
     }
     #[cfg(target_os = "linux")]
     for url in gsettings_proxy() {
-        urls.push((url, "系统代理（GNOME）".into()));
+        urls.push((url, "系统代理（GNOME）".into(), None));
     }
-    // 2) 环境变量（GUI 启动常拿不到 shell 的，但终端里起 Mesa 的场景有值）
+    // 2) 环境变量（GUI 启动常拿不到 shell 的，但终端里起 Mesa 或导入登录 shell 环境的场景有值；
+    //    出站给前端前去掉账密，避免环境变量凭据明文回显或落入非 0600 的 settings.json）
     for key in [
         "HTTPS_PROXY",
         "https_proxy",
@@ -839,27 +877,35 @@ fn detect_outbound_proxy_inner() -> Result<Vec<OutboundProxyCandidateDto>, Strin
         "all_proxy",
     ] {
         if let Ok(v) = std::env::var(key) {
-            let url = normalize_proxy_env_value(&v);
-            if !url.is_empty() {
-                urls.push((url, format!("环境变量 {key}")));
+            let raw = normalize_proxy_env_value(&v);
+            if !raw.is_empty() && validate_outbound_proxy(&raw).is_ok() {
+                let redacted = crate::route_check::redact_proxy(&raw);
+                let has_auth = reqwest::Url::parse(&raw)
+                    .is_ok_and(|u| !u.username().is_empty() || u.password().is_some());
+                let source = if has_auth {
+                    format!("环境变量 {key}（已隐藏账密）")
+                } else {
+                    format!("环境变量 {key}")
+                };
+                urls.push((redacted, source, None));
             }
         }
     }
-    // 3) 本机常见代理端口：只有探测到在监听才列（不摆死端口）
+    // 3) 本机常见代理端口：只有探测到在监听才列（不摆死端口），直接复用活性结果不重复建连
     for (port, is_http, hint) in COMMON_PROXY_PORTS {
         let scheme = if *is_http { "http" } else { "socks5" };
         let url = format!("{scheme}://127.0.0.1:{port}");
         if proxy_url_alive(&url) {
-            urls.push((url, format!("本机端口 · {hint}")));
+            urls.push((url, format!("本机端口 · {hint}"), Some(true)));
         }
     }
     // 去重（同 URL 保留首个来源），统一补 TCP 活性
     let mut out: Vec<OutboundProxyCandidateDto> = Vec::new();
-    for (url, source) in urls {
+    for (url, source, known_alive) in urls {
         if out.iter().any(|c| c.url == url) {
             continue;
         }
-        let alive = proxy_url_alive(&url);
+        let alive = known_alive.unwrap_or_else(|| proxy_url_alive(&url));
         out.push(OutboundProxyCandidateDto { url, source, alive });
     }
     Ok(out)
@@ -1736,6 +1782,7 @@ pub async fn update_settings(
     let zoom_changed = patch.ui_zoom.is_some();
     let pet_changed = patch.desk_pet_enabled.is_some() || patch.desk_pet_size.is_some() || patch.desk_pet_say.is_some()
         || patch.desk_pet_motion.is_some() || patch.buddy_style.is_some();
+    let proxy_changed = patch.outbound_proxy.is_some() || patch.outbound_no_proxy.is_some();
     let out = {
         // 与 profiles 共用同一把读-改-写锁，防并发 patch 互相覆盖；
         // 本函数持锁期间不再获取其他锁，与全局写入（GLOBAL_CONFIG_MUTEX 内不调 profiles）锁序一致
@@ -1771,6 +1818,9 @@ pub async fn update_settings(
     // 建窗要等主线程把网页视图建好，放后台做，设置先回给前端——开关当场翻过去，不等小窗出来
     if pet_changed {
         crate::desk_pet::sync_in_background(app.clone());
+    }
+    if proxy_changed {
+        crate::route_check::invalidate_cache();
     }
     Ok(out)
 }
@@ -1936,12 +1986,12 @@ mod tests {
 
     #[test]
     fn scutil_proxy_parsing_takes_enabled_entries() {
-        let text = "<dictionary> {\n  HTTPEnable : 0\n  HTTPProxy : 0.0.0.0\n  HTTPPort : 0\n  HTTPSEnable : 1\n  HTTPSProxy : 127.0.0.1\n  HTTPSPort : 7890\n  SOCKSEnable : 1\n  SOCKSProxy : 127.0.0.1\n  SOCKSPort : 1080\n}\n";
+        let text = "<dictionary> {\n  HTTPEnable : 0\n  HTTPProxy : 0.0.0.0\n  HTTPPort : 0\n  HTTPSEnable : 1\n  HTTPSProxy : 127.0.0.1\n  HTTPSPort : 7890\n  SOCKSEnable : 1\n  SOCKSProxy : ::1\n  SOCKSPort : 1080\n}\n";
         assert_eq!(
             parse_scutil_proxy(text),
             vec![
                 "http://127.0.0.1:7890".to_string(),
-                "socks5://127.0.0.1:1080".to_string(),
+                "socks5://[::1]:1080".to_string(),
             ]
         );
         // 全关：无产出
@@ -1955,10 +2005,14 @@ mod tests {
             parse_windows_reg_proxy(plain),
             vec!["http://127.0.0.1:7890".to_string()]
         );
-        let per_proto = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=127.0.0.1:7890;https=127.0.0.1:7891;socks=127.0.0.1:1080\n";
+        let per_proto = "    ProxyEnable    REG_DWORD    0x1\n    ProxyServer    REG_SZ    http=http://127.0.0.1:7890;https=127.0.0.1:7891;socks=127.0.0.1:1080\n";
         assert_eq!(
             parse_windows_reg_proxy(per_proto),
-            vec!["http://127.0.0.1:7891".to_string()]
+            vec![
+                "http://127.0.0.1:7891".to_string(),
+                "http://127.0.0.1:7890".to_string(),
+                "socks5://127.0.0.1:1080".to_string(),
+            ]
         );
         // 未启用：无产出
         let off =
@@ -2670,10 +2724,14 @@ mod tests {
         assert!(validate_outbound_proxy("").is_ok());
         assert!(validate_outbound_proxy("  http://127.0.0.1:7890  ").is_ok());
         assert!(validate_outbound_proxy("socks5://127.0.0.1:7891").is_ok());
+        assert!(validate_outbound_proxy("socks5h://[::1]:1080").is_ok());
         assert!(validate_outbound_proxy("https://proxy.example.com:443").is_ok());
         assert!(validate_outbound_proxy("ftp://127.0.0.1:21").is_err());
         assert!(validate_outbound_proxy("127.0.0.1:7890").is_err());
         assert!(validate_outbound_proxy("http://").is_err());
+        assert!(validate_outbound_proxy("http://127.0.0.1:abc").is_err());
+        assert!(validate_outbound_proxy("http://127.0.0.1:99999").is_err());
+        assert!(validate_outbound_proxy("http://127.0.0.1 7890").is_err());
 
         let empty = official_outbound_env_from(&AppSettingsDto::default());
         assert!(empty.is_empty());
@@ -2687,11 +2745,16 @@ mod tests {
             env,
             vec![
                 ("HTTPS_PROXY".into(), "http://127.0.0.1:7890".into()),
+                ("https_proxy".into(), "http://127.0.0.1:7890".into()),
                 ("HTTP_PROXY".into(), "http://127.0.0.1:7890".into()),
+                ("http_proxy".into(), "http://127.0.0.1:7890".into()),
                 ("ALL_PROXY".into(), "http://127.0.0.1:7890".into()),
+                ("all_proxy".into(), "http://127.0.0.1:7890".into()),
                 ("NO_PROXY".into(), DEFAULT_NO_PROXY.into()),
+                ("no_proxy".into(), DEFAULT_NO_PROXY.into()),
             ]
         );
+        assert!(build_reqwest_proxy("socks5://127.0.0.1:1080", Some("localhost,claude.ai")).is_ok());
 
         let custom = official_outbound_env_from(&AppSettingsDto {
             outbound_proxy: Some("http://127.0.0.1:7890".into()),

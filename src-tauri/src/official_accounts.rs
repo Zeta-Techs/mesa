@@ -961,8 +961,9 @@ pub async fn agy_access_token_for_quota(snapshot_id: &str) -> Result<String, Str
         .get("HTTPS_PROXY")
         .or_else(|| outbound.get("ALL_PROXY"))
         .or_else(|| outbound.get("HTTP_PROXY"));
+    let no_proxy = outbound.get("NO_PROXY").map(String::as_str);
     if let Some(p) = proxy_url {
-        if let Ok(proxy) = reqwest::Proxy::all(p) {
+        if let Ok(proxy) = crate::settings::build_reqwest_proxy(p, no_proxy) {
             builder = builder.proxy(proxy);
         }
     }

@@ -4098,8 +4098,8 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         <Row
           label="出网代理"
           align="start"
-          hint="官方登录与更新下载用；空 = 不使用"
-          labelTitle="用于官方账号登录与安装、更新下载；用网关的连接不走它，国内镜像自动直连。能自动找到 Clash、V2Ray 等本机代理"
+          hint="官方账号启动、登录与更新下载用；留空沿用终端环境或直连"
+          labelTitle="用于官方账号启动、登录与安装、更新下载（支持 http(s):// 与 socks5://）；用网关的连接不走它，国内镜像自动直连。能自动找到 Clash、V2Ray 等本机代理"
         >
           <div className="flex max-w-[34rem] flex-col gap-2">
             <div className="flex items-center gap-2">
@@ -4112,8 +4112,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
                   setOutboundProxy(e.target.value);
                 }}
                 onBlur={() => {
-                  draftDirty.current.delete("outboundProxy");
-                  void patch({ outboundProxy: outboundProxy.trim() });
+                  const trimmed = outboundProxy.trim();
+                  const dirty = draftDirty.current.delete("outboundProxy");
+                  if (!dirty && trimmed === (settings?.outboundProxy ?? "").trim()) return;
+                  void patch({ outboundProxy: trimmed });
                 }}
                 onKeyDown={(e) => {
                   if (e.key !== "Enter") return;
@@ -4168,9 +4170,13 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           label="线路体检"
           align="start"
           hint="官方账号从哪出去、通不通"
-          labelTitle="用官方账号启动时的同一套代理，访问这家服务自己的地址（如 claude.ai）。代理按网站分流时，用别的网站查出口不准。不带账号信息。"
+          labelTitle="用官方账号启动时的同一套代理（含不走代理列表），访问这家服务自己的地址（如 claude.ai）。代理按网站分流时，用别的网站查出口不准。不带账号信息。"
           // 列表比左侧说明高得多：放行下方全宽区（同字体安装日志），不挤在右侧控件位、左边空一大片
-          extra={<RouteCheckCard proxyKey={settings?.outboundProxy ?? ""} />}
+          extra={
+            <RouteCheckCard
+              proxyKey={`${settings?.outboundProxy ?? ""}|${settings?.outboundNoProxy ?? ""}`}
+            />
+          }
         >
           {null}
         </Row>
@@ -4188,8 +4194,10 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
               setOutboundNoProxy(e.target.value);
             }}
             onBlur={() => {
-              draftDirty.current.delete("outboundNoProxy");
-              void patch({ outboundNoProxy: outboundNoProxy.trim() });
+              const trimmed = outboundNoProxy.trim();
+              const dirty = draftDirty.current.delete("outboundNoProxy");
+              if (!dirty && trimmed === (settings?.outboundNoProxy ?? "").trim()) return;
+              void patch({ outboundNoProxy: trimmed });
             }}
             onKeyDown={(e) => {
               if (e.key !== "Enter") return;

@@ -439,12 +439,17 @@ fn parse_codex_usage(
 // ===== 查询 =====
 
 fn official_client() -> reqwest::Client {
-    let proxy = crate::settings::official_outbound_env()
-        .into_iter()
+    let outbound = crate::settings::official_outbound_env();
+    let proxy = outbound
+        .iter()
         .find(|(k, _)| k == "HTTPS_PROXY")
-        .map(|(_, v)| v);
+        .map(|(_, v)| v.as_str());
+    let no_proxy = outbound
+        .iter()
+        .find(|(k, _)| k == "NO_PROXY")
+        .map(|(_, v)| v.as_str());
     let mut builder = reqwest::Client::builder().timeout(HTTP_TIMEOUT);
-    if let Some(p) = proxy.and_then(|p| reqwest::Proxy::all(p).ok()) {
+    if let Some(p) = proxy.and_then(|p| crate::settings::build_reqwest_proxy(p, no_proxy).ok()) {
         builder = builder.proxy(p);
     }
     builder.build().unwrap_or_else(|_| reqwest::Client::new())

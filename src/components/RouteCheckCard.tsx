@@ -12,15 +12,19 @@ import {
   exitTypeText,
   latencyText,
   nativeText,
+  proxyHeaderSummary,
   proxySourceText,
   routeCheckTargets,
   routeFixLabel,
+  routeProxyKey,
   routeRowMain,
+  routeTargetKey,
   serviceConfirmText,
   serviceConfirmTip,
   type ExitType,
   type RouteCheck,
   type RouteFix,
+  type RouteTarget,
 } from "../route-check";
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import { toast } from "../toast";
@@ -36,12 +40,11 @@ const DOT_CLASS = { pass: "bg-ok-text", block: "bg-err-text", review: "bg-warn-t
  *  拦下的原因较长，占地区 / 用时 / 确认三列的位置 */
 const ROW_GRID = "grid grid-cols-[0.5rem_8rem_9rem_3.5rem_minmax(0,1fr)_auto] items-center gap-x-3";
 
-/** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行，经与启动同源的代理访问这家服务自己的地址。
- *  进页面先用 5 分钟内的结果，出网代理改了（proxyKey 变）或点「重测」才真去测。
- *  二期：换了地区给「记为常用出口」；代理没在运行给一个修复按钮（换成检测到的代理 / 打开代理软件）。
- *  三期：「查出口类型」（要把出口 IP 发给 ipinfo.io，所以只在点了才查）。
- *  2026-11-06 用户嫌粗糙重排：四列对齐、状态只看点、用时单列等宽、确认与出口类型收进第二行小字、探测地址进悬停
- *  2026-11-08 外形对齐设置页：按钮统一细边、行高同设置页卡内行 */
+/** 设置 → 网络「线路体检」：每家配了官方账号的 Agent 一行（同家多号配不同代理时分别测），
+ *  经与启动同源的代理访问这家服务自己的地址。
+ *  进页面先用 5 分钟内的结果，出网代理/NO_PROXY 改了（proxyKey 变）或点「重测」才真去测。
+ *  二期：换了地区给「记为常用出口」；代理没在运行给修复按钮（换成在跑代理 / 打开软件 / 改走直连）。
+ *  三期：「查出口类型」（要把出口 IP 发给 ipinfo.io，所以只在点了才查）。 */
 export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const profiles = useAppStore((s) => s.profiles);
   const [agents, setAgents] = useState<string[] | null>(null);
@@ -52,6 +55,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   const [exitTypes, setExitTypes] = useState<Record<string, ExitType | string>>({});
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const firstRun = useRef(true);
+  const runSeqRef = useRef(0);
 
   useEffect(() => {
     invoke<string[]>("route_check_agents").then(setAgents, () => setAgents([]));
@@ -61,30 +65,55 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
   }, []);
 
   const targets = useMemo(() => (agents ? routeCheckTargets(profiles, agents) : []), [profiles, agents]);
-  const targetsKey = targets.map((t) => `${t.agent}:${t.profileId}`).join(",");
+  const targetsKey = targets.map((t) => `${routeTargetKey(t)}:${t.profileName ?? ""}`).join(",");
 
-  async function run(maxAgeSecs: number) {
+  async function probeTarget(t: RouteTarget, maxAgeSecs: number): Promise<{ row: Row; fix: RouteFix | null }> {
+    let row: Row;
+    try {
+      row = await invoke<RouteCheck>("route_check", {
+        agentId: t.agent,
+        profileId: t.profileId,
+        maxAgeSecs,
+      });
+    } catch (e) {
+      row = { agent: t.agent, error: String(e) };
+    }
+    let fix: RouteFix | null = null;
+    if (!("error" in row)) {
+      setRouteAlertFromCheck(row);
+      fix = await findRouteFix(row).catch(() => null);
+    }
+    return { row, fix };
+  }
+
+  async function run(maxAgeSecs: number, subset?: readonly RouteTarget[]) {
+    const seq = ++runSeqRef.current;
+    const list = subset ?? targets;
     setRunning(true);
+    if (maxAgeSecs === 0) {
+      if (subset) {
+        const drop = new Set(subset.map(routeTargetKey));
+        setExitTypes((prev) => {
+          const next = { ...prev };
+          for (const k of drop) delete next[k];
+          return next;
+        });
+      } else {
+        setExitTypes({});
+      }
+    }
     await Promise.all(
-      targets.map(async (t) => {
-        let row: Row;
-        try {
-          row = await invoke<RouteCheck>("route_check", {
-            agentId: t.agent,
-            profileId: t.profileId,
-            maxAgeSecs,
-          });
-        } catch (e) {
-          row = { agent: t.agent, error: String(e) };
-        }
-        setRows((prev) => ({ ...prev, [t.agent]: row }));
+      list.map(async (t) => {
+        const key = routeTargetKey(t);
+        const { row, fix } = await probeTarget(t, maxAgeSecs);
+        if (runSeqRef.current !== seq) return;
+        setRows((prev) => ({ ...prev, [key]: row }));
         if (!("error" in row)) {
-          setRouteAlertFromCheck(row);
-          const fix = await findRouteFix(row).catch(() => null);
-          setFixes((prev) => ({ ...prev, [t.agent]: fix }));
+          setFixes((prev) => ({ ...prev, [key]: fix }));
         }
       }),
     );
+    if (runSeqRef.current !== seq) return;
     setNow(Math.floor(Date.now() / 1000));
     setRunning(false);
   }
@@ -93,18 +122,41 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
     if (!targets.length) return;
     void run(firstRun.current ? PREFLIGHT_MAX_AGE_SECS : 0);
     firstRun.current = false;
-    // targetsKey 代表 targets；proxyKey 变 = 出网代理刚保存过，要重测
+    // targetsKey 代表 targets；proxyKey 变 = 出网代理或 NO_PROXY 刚保存过，要重测
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [targetsKey, proxyKey]);
 
-  async function doFix(agent: string, profileId: string, fix: RouteFix) {
-    setBusy(agent);
+  async function doFix(t: RouteTarget, fix: RouteFix) {
+    const key = routeTargetKey(t);
+    setBusy(key);
     try {
-      const r = await applyRouteFix(fix, agent, profileId);
+      // 改 settings 的修复直接保存设置，由 proxyKey 变化统一触发全卡重测，避免并发双测
+      if (fix.kind === "switchProxy") {
+        await useAppStore.getState().updateSettings({ outboundProxy: fix.url });
+        return;
+      }
+      if (fix.kind === "clearProxy") {
+        await useAppStore.getState().updateSettings({ outboundProxy: "" });
+        return;
+      }
+      const r = await applyRouteFix(fix, t.agent, t.profileId);
       if (r) {
-        setRows((prev) => ({ ...prev, [agent]: r }));
-        setFixes((prev) => ({ ...prev, [agent]: null }));
-        if (r.verdict === "block") toast(`还是不通：${r.reason}`, "warning");
+        setRows((prev) => ({ ...prev, [key]: r }));
+        setFixes((prev) => ({ ...prev, [key]: null }));
+        if (r.verdict === "block") {
+          toast(`还是不通：${r.reason}`, "warning");
+        } else {
+          // 代理软件拉起成功后，顺带把同卡内其他被拦住的行重测一遍，避免其余行仍停在红点
+          const blockedOthers = targets.filter((other) => {
+            const ok = routeTargetKey(other);
+            if (ok === key) return false;
+            const prevRow = rows[ok];
+            return prevRow && !("error" in prevRow) && prevRow.verdict === "block";
+          });
+          if (blockedOthers.length) {
+            void run(0, blockedOthers);
+          }
+        }
       }
     } catch (e) {
       toast(`没修成：${String(e)}`, "error");
@@ -113,21 +165,27 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
     }
   }
 
-  async function lookupExitType(agent: string) {
-    setExitTypes((prev) => ({ ...prev, [agent]: "查询中…" }));
+  async function lookupExitType(t: RouteTarget) {
+    const key = routeTargetKey(t);
+    setExitTypes((prev) => ({ ...prev, [key]: "查询中…" }));
     try {
-      const t = await invoke<ExitType>("route_exit_type", { agentId: agent });
-      setExitTypes((prev) => ({ ...prev, [agent]: t }));
+      const res = await invoke<ExitType>("route_exit_type", {
+        agentId: t.agent,
+        profileId: t.profileId,
+      });
+      setExitTypes((prev) => ({ ...prev, [key]: res }));
     } catch (e) {
-      setExitTypes((prev) => ({ ...prev, [agent]: String(e) }));
+      setExitTypes((prev) => ({ ...prev, [key]: String(e) }));
     }
   }
 
-  async function acceptRegion(agent: string) {
-    setBusy(agent);
+  async function acceptRegion(t: RouteTarget) {
+    const key = routeTargetKey(t);
+    setBusy(key);
     try {
-      await invoke("route_accept_region", { agentId: agent });
-      await run(0);
+      await invoke("route_accept_region", { agentId: t.agent });
+      const sameAgent = targets.filter((x) => x.agent === t.agent);
+      await run(0, sameAgent);
     } catch (e) {
       toast(String(e), "error");
     } finally {
@@ -141,16 +199,21 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
       <p className="py-2 text-sm text-l3">还没有官方账号连接。在连接页添加官方账号后，这里会测它从哪里出去</p>
     );
   }
-  const checks = targets.map((t) => rows[t.agent]).filter((r): r is RouteCheck => !!r && !("error" in r));
-  const anyCheck = checks[0];
+  const checks = targets
+    .map((t) => rows[routeTargetKey(t)])
+    .filter((r): r is RouteCheck => !!r && !("error" in r));
+  const header = proxyHeaderSummary(checks);
   const oldest = checks.length ? Math.min(...checks.map((c) => c.checkedAt)) : null;
-  const labelOf = (id: string) => AGENTS.find((a) => a.id === id)?.label ?? id;
+  const labelOf = (t: RouteTarget) => {
+    const base = AGENTS.find((a) => a.id === t.agent)?.label ?? t.agent;
+    return t.profileName ? `${base} · ${t.profileName}` : base;
+  };
 
   return (
     <div className="w-full">
       <div className="flex items-center gap-3 pb-2">
         <p className="min-w-0 flex-1 truncate text-xs text-l3">
-          {anyCheck ? proxySourceText(anyCheck) : "体检中…"}
+          {header.text}
           {oldest != null && !running && <span className="text-l4"> · {checkedAgoText(oldest, now)}</span>}
         </p>
         <button
@@ -164,19 +227,28 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
         </button>
       </div>
       <ul className="divide-y divide-hairline border-t border-hairline">
-        {targets.map((t) => (
-          <RouteRow
-            key={t.agent}
-            name={labelOf(t.agent)}
-            row={rows[t.agent]}
-            fix={fixes[t.agent] ?? null}
-            busy={busy === t.agent}
-            exitType={exitTypes[t.agent]}
-            onFix={(f) => void doFix(t.agent, t.profileId, f)}
-            onAccept={() => void acceptRegion(t.agent)}
-            onLookup={() => void lookupExitType(t.agent)}
-          />
-        ))}
+        {targets.map((t) => {
+          const key = routeTargetKey(t);
+          const row = rows[key];
+          const rowProxyNote =
+            row && !("error" in row) && (header.baseKey === null || routeProxyKey(row) !== header.baseKey)
+              ? proxySourceText(row)
+              : null;
+          return (
+            <RouteRow
+              key={key}
+              name={labelOf(t)}
+              row={row}
+              rowProxyNote={rowProxyNote}
+              fix={fixes[key] ?? null}
+              busy={busy === key}
+              exitType={exitTypes[key]}
+              onFix={(f) => void doFix(t, f)}
+              onAccept={() => void acceptRegion(t)}
+              onLookup={() => void lookupExitType(t)}
+            />
+          );
+        })}
       </ul>
     </div>
   );
@@ -185,6 +257,7 @@ export default function RouteCheckCard({ proxyKey }: { proxyKey: string }) {
 function RouteRow({
   name,
   row,
+  rowProxyNote,
   fix,
   busy,
   exitType,
@@ -194,6 +267,7 @@ function RouteRow({
 }: {
   name: string;
   row: Row | undefined;
+  rowProxyNote: string | null;
   fix: RouteFix | null;
   busy: boolean;
   exitType: ExitType | string | undefined;
@@ -207,7 +281,7 @@ function RouteRow({
   const confirmTip = useHoverTip(confirmRef);
   const check = row && !("error" in row) ? row : null;
   const tipText = check
-    ? `${VERDICT_LABEL[check.verdict]} · 探测 ${check.probeHost}`
+    ? `${VERDICT_LABEL[check.verdict]} · 探测 ${check.probeHost}${rowProxyNote ? ` · ${rowProxyNote}` : ""}`
     : row && "error" in row
       ? "没测成"
       : "体检中";
@@ -240,9 +314,12 @@ function RouteRow({
   const confirm = serviceConfirmText(check);
   const typed = typeof exitType === "object" ? exitType : null;
   const native = typed ? nativeText(typed) : null;
+  const hasExitMeta = Boolean(check.exitRegion || exitType !== undefined);
   const meta =
-    confirm || check.exitRegion || exitType !== undefined ? (
+    rowProxyNote || confirm || hasExitMeta ? (
       <span className="flex min-w-0 items-center gap-1.5 text-micro text-l4">
+        {rowProxyNote && <span className="truncate text-l3">{rowProxyNote}</span>}
+        {rowProxyNote && (confirm || hasExitMeta) && <span aria-hidden="true">·</span>}
         {confirm && (
           <span
             ref={confirmRef}
@@ -282,8 +359,11 @@ function RouteRow({
           ))}
       </span>
     ) : null;
+  // 设置里的代理端口未运行但装了代理软件：多半是软件没开或改用了纯 TUN 透明代理，补一个「改走直连」次按钮
+  const showDirectFallback =
+    check.stage === "proxy" && check.proxySource === "settings" && fix?.kind === "openApp";
   const actions =
-    check.regionChanged || fix ? (
+    check.regionChanged || fix || showDirectFallback ? (
       <span className="flex justify-end gap-2">
         {check.regionChanged && (
           <button type="button" disabled={busy} onClick={onAccept} className={paneOutlineButtonClass}>
@@ -293,6 +373,17 @@ function RouteRow({
         {fix && (
           <button type="button" disabled={busy} onClick={() => onFix(fix)} className={paneOutlineButtonClass}>
             {busy ? "处理中…" : routeFixLabel(fix)}
+          </button>
+        )}
+        {showDirectFallback && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onFix({ kind: "clearProxy" })}
+            title="已改用 TUN 透明代理或不再需要代理时，清空出网代理改走直连"
+            className={paneOutlineButtonClass}
+          >
+            改走直连
           </button>
         )}
       </span>
@@ -306,7 +397,10 @@ function RouteRow({
       <span className={`size-2 rounded-full ${DOT_CLASS[check.verdict]}`} />
       {nameCell}
       {blocked ? (
-        <span className="col-span-3 truncate text-sm text-l1">{routeRowMain(check)}</span>
+        <span className="col-span-3 truncate text-sm text-l1">
+          {routeRowMain(check)}
+          {rowProxyNote && <span className="ml-2 text-micro text-l4">· {rowProxyNote}</span>}
+        </span>
       ) : (
         <>
           <span className="truncate text-sm text-l1">{routeRowMain(check)}</span>

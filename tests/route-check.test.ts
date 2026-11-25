@@ -5,10 +5,12 @@ import {
   preflightBlockMessage,
   preflightFixMessage,
   preflightReviewNote,
+  proxyHeaderSummary,
   proxySourceText,
   routeCheckTargets,
   routeFixLabel,
   routeInboxFields,
+  routeProxyKey,
   runningOfficialTargets,
   exitTypeText,
   nativeText,
@@ -46,14 +48,53 @@ test("代理来源四种说法，shell 带进来的要点明不是 Mesa 设的",
   assert.equal(proxySourceText({ proxySource: "none", proxy: null }), "直连");
 });
 
-test("体检卡只列有探测点、且配了官方账号的那几家，每家取第一条官方连接", () => {
+test("体检卡只列有探测点、且配了官方账号的那几家；同家多号配不同代理时分别测", () => {
   const profiles = [
     { id: "a", agent: "claude-code", accountType: "api" as const },
-    { id: "b", agent: "claude-code", accountType: "official" as const },
-    { id: "c", agent: "claude-code", accountType: "official" as const },
+    { id: "b", agent: "claude-code", accountType: "official" as const, name: "主号" },
+    { id: "c", agent: "claude-code", accountType: "official" as const, name: "同代理副号" },
     { id: "d", agent: "kimi", accountType: "official" as const },
   ];
   assert.deepEqual(routeCheckTargets(profiles, ["claude-code", "codex"]), [{ agent: "claude-code", profileId: "b" }]);
+
+  const withCustomProxy = [
+    ...profiles,
+    {
+      id: "e",
+      agent: "claude-code",
+      accountType: "official" as const,
+      name: "独立代理号",
+      extraEnv: { HTTPS_PROXY: "http://10.0.0.2:3128" },
+    },
+  ];
+  assert.deepEqual(routeCheckTargets(withCustomProxy, ["claude-code"]), [
+    { agent: "claude-code", profileId: "b", profileName: "主号" },
+    { agent: "claude-code", profileId: "e", profileName: "独立代理号" },
+  ]);
+});
+
+test("顶部代理汇总：全部一致照常显示，部分连接单独覆盖时标明并支持行内区分", () => {
+  const same = proxyHeaderSummary([
+    { proxySource: "settings", proxy: "http://127.0.0.1:7897" },
+    { proxySource: "settings", proxy: "http://127.0.0.1:7897" },
+  ]);
+  assert.equal(same.text, "出网代理 http://127.0.0.1:7897");
+  assert.equal(same.baseKey, routeProxyKey({ proxySource: "settings", proxy: "http://127.0.0.1:7897" }));
+
+  const mixed = proxyHeaderSummary([
+    { proxySource: "connection", proxy: "http://10.0.0.2:3128" },
+    { proxySource: "settings", proxy: "http://127.0.0.1:7897" },
+    { proxySource: "settings", proxy: "http://127.0.0.1:7897" },
+  ]);
+  assert.equal(mixed.text, "出网代理 http://127.0.0.1:7897（部分连接单独配置）");
+  assert.equal(mixed.baseKey, routeProxyKey({ proxySource: "settings", proxy: "http://127.0.0.1:7897" }));
+
+  const allConn = proxyHeaderSummary([
+    { proxySource: "connection", proxy: "http://10.0.0.2:3128" },
+    { proxySource: "connection", proxy: null },
+  ]);
+  assert.equal(allConn.text, "各连接代理不同");
+  assert.equal(allConn.baseKey, null);
 });
 
 test("拦下时确认框首行是标题、带原因；通过不提示、待你判断才提示", () => {
@@ -107,7 +148,11 @@ test("修复只在代理没在运行时给：设置里的代理优先换成在�
   assert.deepEqual(sw, { kind: "switchProxy", url: "http://127.0.0.1:7897", source: "Clash Verge 默认混合端口" });
   assert.equal(routeFixLabel(sw!), "换成 http://127.0.0.1:7897");
   assert.deepEqual(pickRouteFix(dead, [], apps), { kind: "openApp", name: "Clash Verge", path: "/Applications/Clash Verge.app" });
+  assert.deepEqual(pickRouteFix(dead, [], []), { kind: "clearProxy" }, "既无在跑代理也无已知软件时（如纯 TUN）兜底清空代理改直连");
+  assert.equal(routeFixLabel({ kind: "clearProxy" }), "清空代理改直连");
+  assert.match(preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", { kind: "clearProxy" }), /TUN/);
   assert.deepEqual(pickRouteFix({ ...dead, proxySource: "shell" }, cands, apps)?.kind, "openApp", "shell 带进来的代理不替你改设置");
+  assert.equal(pickRouteFix({ ...dead, proxySource: "shell" }, [], []), null, "shell 带进来的代理不给清空设置");
   assert.equal(pickRouteFix({ ...dead, stage: "reach" }, cands, apps), null, "连不上服务不是本机代理的问题，不乱修");
   const msg = preflightFixMessage({ ...base, verdict: "block", reason: "代理 127.0.0.1:7888 没开" }, "Claude Code", sw!);
   assert.match(msg, /7897 在运行/);
@@ -122,6 +167,11 @@ test("服务方确认可用才标「Claude 支持这个地区」；没这项检�
   assert.equal(serviceConfirmText({ ...base, serviceSays: "unknown" }), null);
   assert.equal(serviceConfirmText({ ...base, serviceSays: null }), null);
   assert.equal(serviceConfirmText({ ...base, verdict: "block", serviceSays: "blocked" }), null);
+  assert.equal(
+    serviceConfirmText({ ...base, verdict: "review", serviceSays: "allowed", reason: "香港（接口出口不同）" }),
+    null,
+    "网页与接口分流出口不同时不并排显示绿盾「支持这个地区」",
+  );
 });
 
 test("体检卡一行：通过只写地区，用时单列；网络名收短；测过多久", () => {

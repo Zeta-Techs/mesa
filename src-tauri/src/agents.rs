@@ -129,7 +129,14 @@ fn env_preview_source(name: &str, profile: &Profile) -> &'static str {
         "ANTHROPIC_MODEL" | "CODEBUDDY_MODEL" | "KIMI_MODEL_NAME" => "默认模型",
         n if n.contains("BASE_URL") || n == "CURSOR_API_ENDPOINT" => "端点",
         n if n.contains("API_KEY") || n.contains("AUTH_TOKEN") => "密钥注入",
-        "HTTPS_PROXY" | "HTTP_PROXY" | "ALL_PROXY" | "NO_PROXY" => "出网代理",
+        "HTTPS_PROXY"
+        | "https_proxy"
+        | "HTTP_PROXY"
+        | "http_proxy"
+        | "ALL_PROXY"
+        | "all_proxy"
+        | "NO_PROXY"
+        | "no_proxy" => "出网代理",
         _ => "内置注入",
     }
 }
@@ -2087,6 +2094,76 @@ fn gemini_auth_blocker_for(selected: Option<&str>, has_base: bool, interactive: 
     }
 }
 
+/// 官方账号启动的出网代理合并（与 route_check::resolve_proxy 同源）：
+/// - `extra_env` 未动核心代理变量：注入全部 `settings_env`（含大小写，覆盖 shell 继承的旧值）；
+/// - `extra_env` 把核心代理变量显式清空（直连意图）：不注入 settings 代理，且把 6 个大小写代理键全加进
+///   `env_remove`，清除 shell 继承，确保 CLI 真正直连；
+/// - `extra_env` 显式设了非空代理：跳过 settings 旧代理值，并把 `extra_env` 未写的冲突代理键加进
+///   `env_remove`，避免 settings / shell 的另一大小写（如小写 https_proxy）与连接代理打架。
+pub(crate) fn apply_official_proxy_env(
+    plan: &mut LaunchPlan,
+    settings_env: Vec<(String, String)>,
+    extra_env: &std::collections::HashMap<String, String>,
+) {
+    const CORE_PROXY_KEYS: &[&str] = &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"];
+    const ALL_PROXY_KEYS: &[&str] = &[
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ];
+    const NO_PROXY_KEYS: &[&str] = &["NO_PROXY", "no_proxy"];
+
+    let extra_core = CORE_PROXY_KEYS
+        .iter()
+        .find_map(|k| extra_env.get(*k).map(|v| v.trim()));
+    let extra_sets_no_proxy = NO_PROXY_KEYS.iter().any(|k| extra_env.contains_key(*k));
+
+    match extra_core {
+        Some("") => {
+            // 连接显式清空代理 = 强制直连：跳过 settings 代理并清除继承代理
+            for k in ALL_PROXY_KEYS {
+                if !plan.env_remove.iter().any(|x| x == k) {
+                    plan.env_remove.push((*k).to_string());
+                }
+            }
+        }
+        Some(_) => {
+            // 连接显式覆盖代理：跳过 settings 旧代理，只保留未被 extra_env 覆盖的 NO_PROXY，
+            // 并清除 shell 中可能残留的另一大小写/其他协议代理键
+            if !extra_sets_no_proxy {
+                for (k, v) in settings_env {
+                    if NO_PROXY_KEYS.contains(&k.as_str()) {
+                        plan.env.push((k, v));
+                    }
+                }
+            }
+            for k in ALL_PROXY_KEYS {
+                if !extra_env.contains_key(*k) && !plan.env_remove.iter().any(|x| x == k) {
+                    plan.env_remove.push((*k).to_string());
+                }
+            }
+        }
+        None => {
+            for (k, v) in settings_env {
+                if extra_sets_no_proxy && NO_PROXY_KEYS.contains(&k.as_str()) {
+                    continue;
+                }
+                plan.env.push((k, v));
+            }
+        }
+    }
+    if extra_sets_no_proxy {
+        for k in NO_PROXY_KEYS {
+            if !extra_env.contains_key(*k) && !plan.env_remove.iter().any(|x| x == k) {
+                plan.env_remove.push((*k).to_string());
+            }
+        }
+    }
+}
+
 pub fn launch_plan(
     profile: &Profile,
     key: Option<String>,
@@ -2103,13 +2180,18 @@ pub fn launch_plan(
         if let Some(spec) = agent_spec(&profile.agent) {
             apply_official_inject(&mut plan, spec, profile, model);
         }
-        // 出网代理：只给官方账号（网关启动不走）。extra_env 同名键排在后面覆盖。
-        for (k, v) in crate::settings::official_outbound_env() {
-            plan.env.push((k, v));
-        }
+        // 出网代理：只给官方账号（网关启动不走）。与 extra_env 冲突消解同 route_check::resolve_proxy。
+        apply_official_proxy_env(
+            &mut plan,
+            crate::settings::official_outbound_env(),
+            &profile.extra_env,
+        );
         plan.env.extend(shared_env());
-        // extra_env 依旧最后注入（用户显式覆盖的逃生口，与 api 模式一致）
+        // extra_env 依旧最后注入（用户显式覆盖的逃生口，与 api 模式一致；被 env_remove 接管的空代理键不再塞入）
         for (k, v) in &profile.extra_env {
+            if plan.env_remove.iter().any(|r| r == k) {
+                continue;
+            }
             plan.env.push((k.clone(), v.clone()));
         }
         return Ok(plan);

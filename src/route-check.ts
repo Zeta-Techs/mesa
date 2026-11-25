@@ -57,15 +57,95 @@ export function proxySourceText(check: Pick<RouteCheck, "proxySource" | "proxy">
   }
 }
 
-/** 体检卡每家一行：取这家第一条官方账号连接（同一家多条官方连接共用出网代理，附加环境变量不同才有差别） */
+export interface RouteTarget {
+  agent: string;
+  profileId: string;
+  /** 同一 Agent 存在多个不同代理配置的官方账号时带上连接名区分 */
+  profileName?: string;
+}
+
+const PROXY_EXTRA_KEYS = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+  "NO_PROXY",
+  "no_proxy",
+] as const;
+
+function proxyExtraSignature(extraEnv?: Record<string, string>): string {
+  if (!extraEnv) return "";
+  return PROXY_EXTRA_KEYS.filter((k) => k in extraEnv)
+    .map((k) => `${k}=${(extraEnv[k] ?? "").trim()}`)
+    .join(";");
+}
+
+/** 体检卡行键：支持同一家 Agent 多个独立代理的官方账号并行展示 */
+export function routeTargetKey(t: Pick<RouteTarget, "agent" | "profileId">): string {
+  return `${t.agent}:${t.profileId}`;
+}
+
+/** 体检卡目标：每家第一条官方账号必测；同一家后续官方连接若在 extraEnv 里配了不同代理也一并测 */
 export function routeCheckTargets(
-  profiles: Pick<Profile, "id" | "agent" | "accountType">[],
+  profiles: (Pick<Profile, "id" | "agent" | "accountType"> & {
+    name?: string;
+    extraEnv?: Record<string, string>;
+  })[],
   agents: string[],
-): { agent: string; profileId: string }[] {
+): RouteTarget[] {
   return agents.flatMap((agent) => {
-    const p = profiles.find((x) => x.agent === agent && x.accountType === "official");
-    return p ? [{ agent, profileId: p.id }] : [];
+    const officials = profiles.filter((x) => x.agent === agent && x.accountType === "official");
+    if (!officials.length) return [];
+    const picked = [officials[0]];
+    const seenSigs = new Set([proxyExtraSignature(officials[0].extraEnv)]);
+    for (const p of officials.slice(1)) {
+      const sig = proxyExtraSignature(p.extraEnv);
+      if (sig && !seenSigs.has(sig)) {
+        seenSigs.add(sig);
+        picked.push(p);
+      }
+    }
+    if (picked.length === 1) {
+      return [{ agent, profileId: picked[0].id }];
+    }
+    return picked.map((p) => ({
+      agent,
+      profileId: p.id,
+      ...(p.name ? { profileName: p.name } : {}),
+    }));
   });
+}
+
+export function routeProxyKey(check: Pick<RouteCheck, "proxySource" | "proxy">): string {
+  return `${check.proxySource}|${check.proxy ?? ""}`;
+}
+
+/** 体检卡顶部代理汇总：全部一致直接显示；各行代理不同时选主流基准，与基准不同的行在行内单标 */
+export function proxyHeaderSummary(
+  checks: readonly Pick<RouteCheck, "proxySource" | "proxy">[],
+): { text: string; baseKey: string | null } {
+  if (!checks.length) return { text: "体检中…", baseKey: null };
+  const groups = new Map<string, { check: Pick<RouteCheck, "proxySource" | "proxy">; count: number }>();
+  for (const c of checks) {
+    const key = routeProxyKey(c);
+    const cur = groups.get(key);
+    if (cur) cur.count += 1;
+    else groups.set(key, { check: c, count: 1 });
+  }
+  if (groups.size === 1) {
+    const first = checks[0];
+    return { text: proxySourceText(first), baseKey: routeProxyKey(first) };
+  }
+  const nonConn = [...groups.entries()]
+    .filter(([, g]) => g.check.proxySource !== "connection")
+    .sort((a, b) => b[1].count - a[1].count);
+  if (nonConn.length > 0) {
+    const [baseKey, g] = nonConn[0];
+    return { text: `${proxySourceText(g.check)}（部分连接单独配置）`, baseKey };
+  }
+  return { text: "各连接代理不同", baseKey: null };
 }
 
 /** 正在运行的官方账号会话 → 要后台复查的（每家一条，取第一个会话用的连接） */
@@ -127,11 +207,13 @@ export function checkedAgoText(checkedAt: number, nowSecs: number): string {
 /** 会问服务方的那几家，界面上写谁（与后端 ServiceCheck 对应） */
 const SERVICE_NAME: Record<string, string> = { "claude-code": "Claude", codex: "OpenAI" };
 
-/** 服务方确认这个地区可用时补一个小标记「Claude 支持这个地区」；其余情况不显示（被拒已经写在原因里）。
+/** 服务方确认这个地区可用时补一个小标记「Claude 支持这个地区」；其余情况不显示（被拒已经写在原因里，
+ *  网页与接口分流出口不一致时也不并排展示，避免出现「香港 · Claude 支持这个地区」）。
  *  2026-11-07 用户问「官方确认是啥意思」：改写成谁、确认了什么，和官方「支持的国家和地区」同一说法，
  *  也不会被读成「账号安全」 */
-export function serviceConfirmText(check: Pick<RouteCheck, "agent" | "serviceSays" | "verdict">): string | null {
+export function serviceConfirmText(check: Pick<RouteCheck, "agent" | "serviceSays" | "verdict" | "reason">): string | null {
   if (check.serviceSays !== "allowed" || check.verdict === "block") return null;
+  if (check.reason.includes("接口出口不同")) return null;
   return `${SERVICE_NAME[check.agent] ?? "服务方"} 支持这个地区`;
 }
 
@@ -165,10 +247,11 @@ export function nativeText(t: Pick<ExitType, "native" | "registeredCountryName">
   return null;
 }
 
-/** 修复动作：换成检测到的代理（设置里的不在运行、本机另有在跑的），或打开已装的代理软件 */
+/** 修复动作：换成检测到的代理（设置里的不在运行、本机另有在跑的）、打开已装代理软件、或清空改直连（TUN 模式） */
 export type RouteFix =
   | { kind: "switchProxy"; url: string; source: string }
-  | { kind: "openApp"; name: string; path: string };
+  | { kind: "openApp"; name: string; path: string }
+  | { kind: "clearProxy" };
 
 /** 只在「代理没在运行」时给修复；连接附加环境变量 / shell 带进来的代理 Mesa 不替你改，只给打开软件 */
 export function pickRouteFix(
@@ -181,11 +264,15 @@ export function pickRouteFix(
     const live = candidates.find((c) => c.alive && c.url !== check.proxy);
     if (live) return { kind: "switchProxy", url: live.url, source: live.source };
   }
-  return apps[0] ? { kind: "openApp", name: apps[0].name, path: apps[0].path } : null;
+  if (apps[0]) return { kind: "openApp", name: apps[0].name, path: apps[0].path };
+  if (check.proxySource === "settings") return { kind: "clearProxy" };
+  return null;
 }
 
 export function routeFixLabel(fix: RouteFix): string {
-  return fix.kind === "switchProxy" ? `换成 ${fix.url}` : `打开 ${fix.name}`;
+  if (fix.kind === "switchProxy") return `换成 ${fix.url}`;
+  if (fix.kind === "openApp") return `打开 ${fix.name}`;
+  return "清空代理改直连";
 }
 
 /** 启动预检被拦下时的确认框正文（confirmDialog 首行为标题） */
@@ -195,7 +282,12 @@ export function preflightBlockMessage(check: RouteCheck, agentName: string): str
 
 /** 拦下且有修复办法时先问的那一句：确定 = 修好再启动；取消再落到「仍要启动？」 */
 export function preflightFixMessage(check: RouteCheck, agentName: string, fix: RouteFix): string {
-  const how = fix.kind === "switchProxy" ? `本机 ${fix.url} 在运行，可以换成它。` : `可以先打开 ${fix.name}（最多等 20 秒）。`;
+  const how =
+    fix.kind === "switchProxy"
+      ? `本机 ${fix.url} 在运行，可以换成它。`
+      : fix.kind === "openApp"
+        ? `可以先打开 ${fix.name}（最多等 20 秒）。`
+        : "如果已改用 TUN 透明代理或不再需要代理，可以清空出网代理改走直连。";
   return [`${agentName} 官方账号可能用不了`, "", check.reason, "", how].join("\n");
 }
 

@@ -399,7 +399,7 @@ npm 装的后台更新后要求退出重启——`launch_plan_with_prompt`（内
 Grok（`GROK_DISABLE_AUTOUPDATER`）、Cursor（隐藏参数 `--disable-auto-update`）都有开关但不设；Gemini 只有设置文件开关（系统层要 root），本来也关不了。
 OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉检测到的二进制），照旧。
 
-**出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`/`NO_PROXY`）。网关 API 启动不走。连接 `extraEnv` 同名键最后覆盖。不建本地反代理，官方失败不回落中转。
+**出网代理**（设置 `outbound_proxy`）：只注入官方启动与组头登录（大小写成对注入 `HTTPS_PROXY`/`https_proxy`/`HTTP_PROXY`/`http_proxy`/`ALL_PROXY`/`all_proxy`/`NO_PROXY`/`no_proxy`，防登录 shell 继承小写代理与设置打架；连接 `extra_env` 覆盖或显式清空时由 `agents::apply_official_proxy_env` 同步清冲突键与 `env_remove`，与体检同源）。下载侧 `download_proxy_env` 同口径优先采用设置里的出网代理，留空才沿用 shell 继承。`reqwest` 启用 `socks` 特性，全链路原生支持 `socks5://` / `socks5h://` / `socks4://` 与 `NO_PROXY`。网关 API 启动不走。不建本地反代理，官方失败不回落中转。
 
 **线路体检（2026-11-06 用户拍板「按建议做」，设计稿 `docs/design-outbound-route.md`）**：判官方账号能不能用看**结果**不看配置——
 经与官方启动同源的代理（`route_check::resolve_proxy`：连接 extra_env > 设置 > 登录 shell 继承）访问**这家服务自己的**公开诊断地址
@@ -421,6 +421,7 @@ OpenCode 的 `OPENCODE_DISABLE_AUTOUPDATE` 是另一条理由（启动时换掉�
 Claude `POST api.anthropic.com/v1/messages` 回 401 authentication_error = 放行、403 forbidden「Request not allowed」= 地区被拒；
 OpenAI `GET api.openai.com/compliance/cookie_requirements` 带 unsupported_country = 被拒、有 cookie_consent_required = 放行。服务方明确答复以它为准（放行不再按名单拦），界面写「Claude 支持这个地区」/「英国，Claude 不支持这个地区」（2026-11-07 用户嫌「官方确认」看不懂，与官方「支持的国家和地区」同一说法），
 没答复（网络错、Cloudflare 拦脚本）才用 `AI_UNSUPPORTED_REGIONS` 兜底。不做：抓取第三方站点内嵌密钥查风险分、ip-api 免费版（禁商用）、时区不一致算风险（无证据）。
+**2026-11-25 线路体检与出网代理系统修复**：`reqwest` 开启 `socks` 后全链路直测 SOCKS 代理不再降级；体检与服务方探测同步生效 `NO_PROXY` 并在缓存键比对 `(proxy_source, proxy, no_proxy)`、改设置即清缓存；`proxy_url_alive` 遍历 `ToSocketAddrs` 全地址消除 `localhost` IPv6 误报；非地区探测拦 `407` / `5xx` / 明确地理封锁 `403` 防假绿；网页 trace 落不支持地区而服务方放行判 `Review`「接口出口不同」防矛盾标绿；`Block` 地区不写入 `route-history.json`；`route_exit_type` 按 `agent|profile` 精准命中本次探测地区与同源代理、并行查 ipinfo + RDAP 且仅缓存 2xx 响应；体检卡支持同家多代理官方号、分代理行内标注、请求代次防竞态、重测清旧出口类型与 TUN「改走直连」修复，`useRouteWatch` 监听代理变化即时消警。
 **对话太长的慢**：`context-breakdown.ts::longContextHint` 过 30 万 token 在上下文圆环弹层提示新开对话（实测 54 万 token 首字 30–176 秒）。
 Mesa 不切代理节点、不调代理软件接口、不写系统代理。
 

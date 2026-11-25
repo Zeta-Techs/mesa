@@ -72,11 +72,13 @@ pub enum ProbeOutcome {
     Ok { loc: Option<String>, ip: Option<String>, addr: Option<String>, latency_ms: u64 },
     Timeout,
     Failed(String),
-    /// 这个代理形态测不了（SOCKS：reqwest 没开 socks 特性），不当失败
+    /// 保留给未来可能无法直接探测的代理形态，不当失败
+    #[allow(dead_code)]
     Unsupported(String),
 }
 
 const PROXY_KEYS: [&str; 4] = ["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"];
+const NO_PROXY_KEYS: [&str; 2] = ["NO_PROXY", "no_proxy"];
 
 /// 按官方启动的注入顺序算出 CLI 实际会用的代理：extra_env 最后注入（同名覆盖）> 设置 > 继承的进程环境。
 /// 连接里把代理变量显式填空 = 这条连接不走代理
@@ -100,6 +102,49 @@ pub fn resolve_proxy(
         }
     }
     (ProxySource::None, None)
+}
+
+/// 同源解析 NO_PROXY：extra_env > 设置 > 继承环境（extra_env 显式清空视为不豁免）
+pub fn resolve_no_proxy(
+    settings_env: &[(String, String)],
+    extra_env: &HashMap<String, String>,
+    inherited: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    for key in NO_PROXY_KEYS {
+        if let Some(v) = extra_env.get(key) {
+            let v = v.trim();
+            return (!v.is_empty()).then(|| v.to_string());
+        }
+    }
+    if let Some((_, v)) = settings_env.iter().find(|(k, _)| k == "NO_PROXY") {
+        let v = v.trim();
+        if !v.is_empty() {
+            return Some(v.to_string());
+        }
+    }
+    for key in NO_PROXY_KEYS {
+        if let Some(v) = inherited(key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// 按当前解析出的代理与 NO_PROXY 构造 HTTP 客户端：没代理时显式直连，不让 reqwest 偷读进程环境
+fn build_http_client(
+    proxy: Option<&str>,
+    no_proxy: Option<&str>,
+    connect_timeout: Duration,
+    timeout: Duration,
+) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(timeout);
+    builder = match proxy {
+        Some(p) => builder.proxy(crate::settings::build_reqwest_proxy(p, no_proxy)?),
+        None => builder.no_proxy(),
+    };
+    builder.build().map_err(|e| e.to_string())
 }
 
 /// 代理地址去掉账号密码（界面与日志都只用这个）
@@ -276,19 +321,11 @@ fn service_label(check: ServiceCheck) -> &'static str {
     }
 }
 
-/// 问服务方：与体检同一个代理，不带任何密钥 / Cookie；网络出错当「没答复」，不当被拒
-async fn ask_service(check: ServiceCheck, proxy: Option<&str>) -> ServiceSays {
-    let mut builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(4))
-        .timeout(Duration::from_secs(6));
-    builder = match proxy {
-        Some(p) => match reqwest::Proxy::all(p) {
-            Ok(px) => builder.proxy(px),
-            Err(_) => return ServiceSays::Unknown,
-        },
-        None => builder.no_proxy(),
+/// 问服务方：与体检同一个代理（含 NO_PROXY），不带任何密钥 / Cookie；网络出错当「没答复」，不当被拒
+async fn ask_service(check: ServiceCheck, proxy: Option<&str>, no_proxy: Option<&str>) -> ServiceSays {
+    let Ok(client) = build_http_client(proxy, no_proxy, Duration::from_secs(4), Duration::from_secs(6)) else {
+        return ServiceSays::Unknown;
     };
-    let Ok(client) = builder.build() else { return ServiceSays::Unknown };
     let req = match check {
         ServiceCheck::AnthropicKeyless => client
             .post("https://api.anthropic.com/v1/messages")
@@ -375,6 +412,10 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
             let listed = input.probe.unsupported_regions.contains(&loc.as_str());
             let (verdict, stage, reason) = if listed && input.service != Some(ServiceSays::Allowed) {
                 (Verdict::Block, Some(Stage::Region), format!("{name}，不支持这个地区"))
+            } else if listed && input.service == Some(ServiceSays::Allowed) {
+                // 网页 trace 落在不支持地区、但 API 接口回放行：多半是代理规则把网页域名与 API 域名分到了不同节点，
+                // 不按名单硬拦，但也绝不标绿「香港 · 支持这个地区」误导用户
+                (Verdict::Review, None, format!("{name}（接口出口不同）"))
             } else if let Some(usual) = input.usual.filter(|u| *u != loc.as_str()) {
                 (Verdict::Review, None, format!("{name}（常用{}）", region_name(usual)))
             } else {
@@ -385,20 +426,56 @@ pub fn judge(input: &JudgeInput) -> (Verdict, Option<Stage>, String, Option<Stri
     }
 }
 
-/// 单次探测请求：不需读地区时收到响应头即可判定连通，不浪费时间等 HTML 响应体
+/// 识别非地区探测接口（如 Google / Cursor）返回 403 时是否明确为地区封锁（避免误杀正常的缺凭据 403）
+pub(crate) fn is_geo_block_403(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    lower.contains("user location is not supported")
+        || lower.contains("not available in your country")
+        || lower.contains("not available in your region")
+        || lower.contains("unsupported_country")
+        || lower.contains("region is not supported")
+}
+
+/// 非地区探测接口的状态码核验：407（代理需账密）、5xx（上游/网关故障）、明确地理封锁 403 不得判「连得上」
+pub(crate) fn check_non_region_status(status: u16, body: &str) -> Result<(), String> {
+    if status == 407 {
+        return Err("代理需要账号密码（HTTP 407）".into());
+    }
+    if (500..=599).contains(&status) {
+        return Err(format!("HTTP {status}"));
+    }
+    if status == 403 && is_geo_block_403(body) {
+        return Err("服务拒绝此出口地区（HTTP 403）".into());
+    }
+    Ok(())
+}
+
+/// 单次探测请求：不需读地区时正常状态收到响应头即可判定连通；407 / 5xx / 明确地区封锁 403 判失败
 async fn probe_once(client: &reqwest::Client, url: &str, reports_region: bool) -> ProbeOutcome {
     let started = std::time::Instant::now();
     match client.get(url).send().await {
         Ok(resp) => {
             let latency_ms = started.elapsed().as_millis() as u64;
             let status = resp.status();
-            let body = if reports_region {
-                resp.text().await.unwrap_or_default()
-            } else {
-                String::new()
-            };
-            if reports_region && !status.is_success() && parse_trace_loc(&body).is_none() {
-                return ProbeOutcome::Failed(format!("HTTP {}", status.as_u16()));
+            let code = status.as_u16();
+            if code == 407 {
+                return ProbeOutcome::Failed("代理需要账号密码（HTTP 407）".into());
+            }
+            if !reports_region {
+                if status.is_server_error() {
+                    return ProbeOutcome::Failed(format!("HTTP {code}"));
+                }
+                if code == 403 {
+                    let body = resp.text().await.unwrap_or_default();
+                    if let Err(why) = check_non_region_status(code, &body) {
+                        return ProbeOutcome::Failed(why);
+                    }
+                }
+                return ProbeOutcome::Ok { loc: None, ip: None, addr: None, latency_ms };
+            }
+            let body = resp.text().await.unwrap_or_default();
+            if !status.is_success() && parse_trace_loc(&body).is_none() {
+                return ProbeOutcome::Failed(format!("HTTP {code}"));
             }
             ProbeOutcome::Ok {
                 loc: parse_trace_loc(&body),
@@ -413,27 +490,12 @@ async fn probe_once(client: &reqwest::Client, url: &str, reports_region: bool) -
     }
 }
 
-/// 真去访问一次：与启动同源的代理；没代理时显式直连（不让 reqwest 自己读进程环境里的代理变量）。
+/// 真去访问一次：与启动同源的代理（支持 HTTP/HTTPS/SOCKS 与 NO_PROXY）；没代理时显式直连。
 /// 偶发超时时立刻重试一次，避免代理节点冷启动/瞬时抖动误报「连不上」
-async fn probe(url: &str, proxy: Option<&str>, reports_region: bool) -> ProbeOutcome {
-    if let Some(p) = proxy {
-        if p.trim_start().to_ascii_lowercase().starts_with("socks") {
-            return ProbeOutcome::Unsupported("SOCKS 代理，只确认了端口开着".into());
-        }
-    }
-    let mut builder = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(4))
-        .timeout(Duration::from_secs(6));
-    builder = match proxy {
-        Some(p) => match reqwest::Proxy::all(p) {
-            Ok(px) => builder.proxy(px),
-            Err(e) => return ProbeOutcome::Failed(format!("代理地址不可用：{e}")),
-        },
-        None => builder.no_proxy(),
-    };
-    let client = match builder.build() {
+async fn probe(url: &str, proxy: Option<&str>, no_proxy: Option<&str>, reports_region: bool) -> ProbeOutcome {
+    let client = match build_http_client(proxy, no_proxy, Duration::from_secs(4), Duration::from_secs(6)) {
         Ok(c) => c,
-        Err(e) => return ProbeOutcome::Failed(e.to_string()),
+        Err(e) => return ProbeOutcome::Failed(e),
     };
     match probe_once(&client, url, reports_region).await {
         ProbeOutcome::Timeout => probe_once(&client, url, reports_region).await,
@@ -451,11 +513,46 @@ fn short_error(e: &reqwest::Error) -> String {
     s.chars().take(80).collect()
 }
 
-static CACHE: Mutex<Option<HashMap<String, RouteCheckDto>>> = Mutex::new(None);
-/// 每家最近一次的完整出口 IP（只在内存，Mesa 关了就没了）
-static LAST_ADDR: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
-/// 出口类型查询结果，按 IP 缓存 24 小时
-static EXIT_TYPE_CACHE: Mutex<Option<HashMap<String, (i64, ExitTypeDto)>>> = Mutex::new(None);
+#[derive(Clone, Debug)]
+struct CachedRoute {
+    dto: RouteCheckDto,
+    proxy_source: ProxySource,
+    proxy_raw: Option<String>,
+    no_proxy: Option<String>,
+}
+
+/// 最近一次探测到的完整出口上下文（只在内存，Mesa 关了就没了）：供「查出口类型」用
+#[derive(Clone, Debug)]
+struct LastProbeMeta {
+    addr: String,
+    exit_region: Option<String>,
+    proxy: Option<String>,
+    no_proxy: Option<String>,
+}
+
+/// 不含 native 的出口网络元数据，按 IP 缓存 24 小时；native 结合本次探测地区现算
+#[derive(Clone, Debug)]
+struct CachedExitInfo {
+    kind: &'static str,
+    label: &'static str,
+    org: String,
+    registered_country: Option<String>,
+    ipinfo_country: Option<String>,
+}
+
+static CACHE: Mutex<Option<HashMap<String, CachedRoute>>> = Mutex::new(None);
+static LAST_ADDR: Mutex<Option<HashMap<String, LastProbeMeta>>> = Mutex::new(None);
+static EXIT_TYPE_CACHE: Mutex<Option<HashMap<String, (i64, CachedExitInfo)>>> = Mutex::new(None);
+
+/// 设置里的出网代理或 NO_PROXY 改动时清掉内存缓存与上次出口 IP，避免 5 分钟内命中旧代理结果
+pub(crate) fn invalidate_cache() {
+    if let Ok(mut c) = CACHE.lock() {
+        *c = None;
+    }
+    if let Ok(mut m) = LAST_ADDR.lock() {
+        *m = None;
+    }
+}
 
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
@@ -493,15 +590,21 @@ pub async fn route_check(
         Some(id) => store.get(id)?.extra_env,
         None => HashMap::new(),
     };
+    let settings_env = crate::settings::official_outbound_env();
+    let (source, proxy) = resolve_proxy(&settings_env, &extra_env, |k| std::env::var(k).ok());
+    let no_proxy = resolve_no_proxy(&settings_env, &extra_env, |k| std::env::var(k).ok());
     let cache_key = format!("{agent_id}|{}", profile_id.as_deref().unwrap_or(""));
     if let Some(max_age) = max_age_secs.filter(|s| *s > 0) {
         let cached = CACHE.lock().ok().and_then(|c| c.as_ref()?.get(&cache_key).cloned());
-        if let Some(dto) = cached.filter(|d| usable_cached_route(d, now_secs(), max_age)) {
-            return Ok(dto);
+        if let Some(entry) = cached.filter(|e| {
+            e.proxy_source == source
+                && e.proxy_raw == proxy
+                && e.no_proxy == no_proxy
+                && usable_cached_route(&e.dto, now_secs(), max_age)
+        }) {
+            return Ok(entry.dto);
         }
     }
-    let settings_env = crate::settings::official_outbound_env();
-    let (source, proxy) = resolve_proxy(&settings_env, &extra_env, |k| std::env::var(k).ok());
     let proxy_down = match proxy.as_deref() {
         Some(p) => {
             let p = p.to_string();
@@ -516,10 +619,12 @@ pub async fn route_check(
     let outcome = if proxy_down.is_some() {
         None
     } else {
-        Some(probe(probe_spec.url, proxy.as_deref(), probe_spec.reports_region).await)
+        Some(probe(probe_spec.url, proxy.as_deref(), no_proxy.as_deref(), probe_spec.reports_region).await)
     };
     let service = match (&outcome, probe_spec.service_check) {
-        (Some(ProbeOutcome::Ok { .. }), Some(check)) => Some(ask_service(check, proxy.as_deref()).await),
+        (Some(ProbeOutcome::Ok { .. }), Some(check)) => {
+            Some(ask_service(check, proxy.as_deref(), no_proxy.as_deref()).await)
+        }
         _ => None,
     };
     let now = now_secs();
@@ -536,11 +641,10 @@ pub async fn route_check(
         Some(ProbeOutcome::Ok { ip, .. }) => ip.clone(),
         _ => None,
     };
-    if let Some(ProbeOutcome::Ok { addr: Some(addr), .. }) = &outcome {
-        if let Ok(mut m) = LAST_ADDR.lock() {
-            m.get_or_insert_with(HashMap::new).insert(agent_id.clone(), addr.clone());
-        }
-    }
+    let probed_addr = match &outcome {
+        Some(ProbeOutcome::Ok { addr: Some(addr), .. }) => Some(addr.clone()),
+        _ => None,
+    };
     let (verdict, stage, reason, exit_region, latency_ms) = judge(&JudgeInput {
         probe: probe_spec,
         source,
@@ -550,17 +654,35 @@ pub async fn route_check(
         usual: usual.as_deref(),
         service,
     });
+    if let Ok(mut m) = LAST_ADDR.lock() {
+        let map = m.get_or_insert_with(HashMap::new);
+        if let Some(addr) = probed_addr {
+            map.insert(
+                cache_key.clone(),
+                LastProbeMeta {
+                    addr,
+                    exit_region: exit_region.clone(),
+                    proxy: proxy.clone(),
+                    no_proxy: no_proxy.clone(),
+                },
+            );
+        } else {
+            map.remove(&cache_key);
+        }
+    }
     let region_changed = matches!((&exit_region, &usual), (Some(e), Some(u)) if e != u)
         && verdict == Verdict::Review;
-    // 拿到出口地区才记（连不上的那次不算一次出口）
-    if let Some(region) = exit_region.clone() {
-        if let Ok(_g) = HISTORY_LOCK.lock() {
-            let mut h = read_history();
-            let list = h.records.entry(agent_id.clone()).or_default();
-            list.push(ExitRecord { region, prefix: probed_prefix, at: now });
-            let excess = list.len().saturating_sub(HISTORY_KEEP);
-            list.drain(..excess);
-            write_history(&h);
+    // 只把非拦下（可用/待判断）且拿到地区的出口写进常用记忆，避免 HK/CN 等被拦地区污染常用出口
+    if verdict != Verdict::Block {
+        if let Some(region) = exit_region.clone() {
+            if let Ok(_g) = HISTORY_LOCK.lock() {
+                let mut h = read_history();
+                let list = h.records.entry(agent_id.clone()).or_default();
+                list.push(ExitRecord { region, prefix: probed_prefix, at: now });
+                let excess = list.len().saturating_sub(HISTORY_KEEP);
+                list.drain(..excess);
+                write_history(&h);
+            }
         }
     }
     let dto = RouteCheckDto {
@@ -581,7 +703,10 @@ pub async fn route_check(
         checked_at: now,
     };
     if let Ok(mut c) = CACHE.lock() {
-        c.get_or_insert_with(HashMap::new).insert(cache_key, dto.clone());
+        c.get_or_insert_with(HashMap::new).insert(
+            cache_key,
+            CachedRoute { dto: dto.clone(), proxy_source: source, proxy_raw: proxy, no_proxy },
+        );
     }
     Ok(dto)
 }
@@ -673,23 +798,25 @@ pub fn parse_rdap_country(v: &serde_json::Value) -> Option<String> {
     })
 }
 
-/// 依次直连、经出网代理 GET 一个 JSON；都不通为 None
-async fn fetch_json(url: &str) -> Option<serde_json::Value> {
-    let settings_proxy = crate::settings::official_outbound_env()
-        .into_iter()
-        .find(|(k, _)| k == "HTTPS_PROXY")
-        .map(|(_, v)| v);
-    for proxy in [None, settings_proxy.as_deref()] {
-        let mut b = reqwest::Client::builder().timeout(Duration::from_secs(8));
-        b = match proxy {
-            Some(p) => match reqwest::Proxy::all(p) {
-                Ok(px) => b.proxy(px),
-                Err(_) => continue,
-            },
-            None => b.no_proxy(),
+/// 依次尝试直连与本次体检同源代理 GET 一个 JSON；只接受 2xx（防止 429 限流错误 JSON 被当成正常结果缓存）
+async fn fetch_json(url: &str, proxy: Option<&str>, no_proxy: Option<&str>) -> Option<serde_json::Value> {
+    let mut tries: Vec<Option<&str>> = vec![None];
+    if let Some(p) = proxy {
+        tries.push(Some(p));
+    }
+    for p in tries {
+        let Ok(client) = build_http_client(p, no_proxy, Duration::from_secs(4), Duration::from_secs(8)) else {
+            continue;
         };
-        let Ok(client) = b.build() else { continue };
-        if let Ok(resp) = client.get(url).header("Accept", "application/rdap+json, application/json").send().await {
+        if let Ok(resp) = client
+            .get(url)
+            .header("Accept", "application/rdap+json, application/json")
+            .send()
+            .await
+        {
+            if !resp.status().is_success() {
+                continue;
+            }
             if let Ok(v) = resp.json::<serde_json::Value>().await {
                 return Some(v);
             }
@@ -698,52 +825,81 @@ async fn fetch_json(url: &str) -> Option<serde_json::Value> {
     None
 }
 
+/// 组装 ExitTypeDto：native 由注册国家与本次体检测到的所在地现算，不串缓存
+fn build_exit_type_dto(info: &CachedExitInfo, probed_region: Option<&str>) -> ExitTypeDto {
+    let located = probed_region
+        .map(str::to_ascii_uppercase)
+        .or_else(|| info.ipinfo_country.clone());
+    let native = match (&info.registered_country, &located) {
+        (Some(r), Some(l)) if r.len() == 2 => Some(r == l),
+        _ => None,
+    };
+    ExitTypeDto {
+        kind: info.kind,
+        label: info.label,
+        org: info.org.clone(),
+        registered_country_name: info.registered_country.as_deref().map(region_name),
+        registered_country: info.registered_country.clone(),
+        native,
+    }
+}
+
 /// 「查出口类型」：把这家最近一次的出口 IP 发给 ipinfo.io 查所属网络。只在用户点按钮时查（要把 IP 发给第三方），
-/// 顺带查 RDAP 注册国家判原生 IP；结果按 IP 缓存 24 小时；先直连查，不通再经出网代理
+/// 顺带并行查 RDAP 注册国家判原生 IP；网络元数据按 IP 缓存 24 小时；先直连查，不通再经本次体检同源代理
 #[tauri::command]
-pub async fn route_exit_type(agent_id: String) -> Result<ExitTypeDto, String> {
-    let addr = LAST_ADDR
+pub async fn route_exit_type(agent_id: String, profile_id: Option<String>) -> Result<ExitTypeDto, String> {
+    let exact_key = format!("{agent_id}|{}", profile_id.as_deref().unwrap_or(""));
+    let prefix = format!("{agent_id}|");
+    let meta = LAST_ADDR
         .lock()
         .ok()
-        .and_then(|m| m.as_ref()?.get(&agent_id).cloned())
+        .and_then(|m| {
+            let map = m.as_ref()?;
+            map.get(&exact_key)
+                .or_else(|| {
+                    profile_id
+                        .is_none()
+                        .then(|| map.iter().find(|(k, _)| k.starts_with(&prefix)).map(|(_, v)| v))
+                        .flatten()
+                })
+                .cloned()
+        })
         .ok_or("先测一次线路")?;
+    let addr = meta.addr;
     if addr.parse::<std::net::IpAddr>().is_err() {
         return Err("出口地址不对".into());
     }
     let now = now_secs();
-    if let Some((at, dto)) = EXIT_TYPE_CACHE.lock().ok().and_then(|m| m.as_ref()?.get(&addr).cloned()) {
+    if let Some((at, info)) = EXIT_TYPE_CACHE.lock().ok().and_then(|m| m.as_ref()?.get(&addr).cloned()) {
         if now - at < 24 * 3600 {
-            return Ok(dto);
+            return Ok(build_exit_type_dto(&info, meta.exit_region.as_deref()));
         }
     }
-    let v = fetch_json(&format!("https://ipinfo.io/{addr}/json")).await.ok_or("查不到（ipinfo.io 连不上）")?;
+    let ipinfo_url = format!("https://ipinfo.io/{addr}/json");
+    let rdap_url = format!("https://rdap.db.ripe.net/ip/{addr}");
+    // 并行查询 ipinfo 与 RDAP（从 RIPE 入口会重定向到对应 RIR；rdap.org 国内直连不通）
+    let p1 = meta.proxy.clone();
+    let np1 = meta.no_proxy.clone();
+    let p2 = meta.proxy;
+    let np2 = meta.no_proxy;
+    let ipinfo_task = tauri::async_runtime::spawn(async move {
+        fetch_json(&ipinfo_url, p1.as_deref(), np1.as_deref()).await
+    });
+    let rdap_task = tauri::async_runtime::spawn(async move {
+        fetch_json(&rdap_url, p2.as_deref(), np2.as_deref()).await
+    });
+    let ipinfo_res = ipinfo_task.await.ok().flatten();
+    let rdap_res = rdap_task.await.ok().flatten();
+    let v = ipinfo_res.ok_or("查不到（ipinfo.io 连不上或限流）")?;
     let org = v.get("org").and_then(|x| x.as_str()).unwrap_or("").to_string();
     let hostname = v.get("hostname").and_then(|x| x.as_str()).unwrap_or("");
     let (kind, label) = classify_exit(&org, hostname);
-    // 原生 IP：查公开注册信息（从 RIPE 的 RDAP 进，它会转到这段地址所属的注册机构；rdap.org 国内直连不通），和这次测到的所在地比；所在地以探测为准（服务方看到的也是它）
-    let registered_country = match fetch_json(&format!("https://rdap.db.ripe.net/ip/{addr}")).await {
-        Some(r) => parse_rdap_country(&r),
-        None => None,
-    };
-    let located = CACHE
-        .lock()
-        .ok()
-        .and_then(|m| m.as_ref()?.get(&agent_id)?.exit_region.clone())
-        .or_else(|| v.get("country").and_then(|x| x.as_str()).map(str::to_ascii_uppercase));
-    let native = match (&registered_country, &located) {
-        (Some(r), Some(l)) if r.len() == 2 => Some(r == l),
-        _ => None,
-    };
-    let dto = ExitTypeDto {
-        kind,
-        label,
-        org,
-        registered_country_name: registered_country.as_deref().map(region_name),
-        registered_country,
-        native,
-    };
+    let registered_country = rdap_res.as_ref().and_then(parse_rdap_country);
+    let ipinfo_country = v.get("country").and_then(|x| x.as_str()).map(str::to_ascii_uppercase);
+    let info = CachedExitInfo { kind, label, org, registered_country, ipinfo_country };
+    let dto = build_exit_type_dto(&info, meta.exit_region.as_deref());
     if let Ok(mut m) = EXIT_TYPE_CACHE.lock() {
-        m.get_or_insert_with(HashMap::new).insert(addr, (now, dto.clone()));
+        m.get_or_insert_with(HashMap::new).insert(addr, (now, info));
     }
     Ok(dto)
 }
@@ -861,6 +1017,18 @@ mod tests {
         let mut cleared = HashMap::new();
         cleared.insert("HTTPS_PROXY".to_string(), " ".to_string());
         assert_eq!(resolve_proxy(&settings, &cleared, shell), (ProxySource::Connection, None), "连接里显式填空 = 不走代理");
+
+        // NO_PROXY 同源优先级：extra_env > settings > shell；extra_env 显式填空 = 不豁免
+        let settings_np = vec![("NO_PROXY".to_string(), "localhost,127.0.0.1".to_string())];
+        let shell_np = |k: &str| (k == "no_proxy").then(|| "internal.local".to_string());
+        assert_eq!(resolve_no_proxy(&settings_np, &none, shell_np).as_deref(), Some("localhost,127.0.0.1"));
+        assert_eq!(resolve_no_proxy(&[], &none, shell_np).as_deref(), Some("internal.local"));
+        let mut extra_np = HashMap::new();
+        extra_np.insert("no_proxy".to_string(), "claude.ai".to_string());
+        assert_eq!(resolve_no_proxy(&settings_np, &extra_np, shell_np).as_deref(), Some("claude.ai"));
+        let mut cleared_np = HashMap::new();
+        cleared_np.insert("NO_PROXY".to_string(), " ".to_string());
+        assert_eq!(resolve_no_proxy(&settings_np, &cleared_np, shell_np), None);
     }
 
     #[test]
@@ -965,7 +1133,9 @@ mod tests {
         let ok_hk = || Some(ProbeOutcome::Ok { loc: Some("HK".into()), ip: None, addr: None, latency_ms: 300 });
         let mut i = input(ok_hk());
         i.service = Some(ServiceSays::Allowed);
-        assert_eq!(judge(&i).0, Verdict::Pass, "服务方放行就不按名单拦");
+        let (v, stage, reason, ..) = judge(&i);
+        assert_eq!((v, stage), (Verdict::Review, None), "网页落不支持地区而接口放行 = 规则分流出口不同，不硬拦也不标绿");
+        assert_eq!(reason, "香港（接口出口不同）");
         let mut gb = input(Some(ProbeOutcome::Ok { loc: Some("GB".into()), ip: None, addr: None, latency_ms: 300 }));
         gb.service = Some(ServiceSays::Blocked);
         let (v, stage, reason, ..) = judge(&gb);
@@ -974,6 +1144,35 @@ mod tests {
         let mut unknown = input(ok_hk());
         unknown.service = Some(ServiceSays::Unknown);
         assert_eq!(judge(&unknown).0, Verdict::Block, "服务方没答复时名单兜底");
+    }
+
+    #[test]
+    fn non_region_status_blocks_proxy_auth_5xx_and_geo_403_only() {
+        assert!(check_non_region_status(200, "").is_ok());
+        assert!(check_non_region_status(401, "").is_ok());
+        assert!(check_non_region_status(404, "").is_ok());
+        assert!(check_non_region_status(403, "missing api key").is_ok(), "普通缺凭据 403 不误杀");
+        assert!(check_non_region_status(403, r#"{"error":{"message":"User location is not supported"}}"#).is_err());
+        assert!(check_non_region_status(407, "").unwrap_err().contains("407"));
+        assert!(check_non_region_status(502, "").unwrap_err().contains("502"));
+        assert!(check_non_region_status(503, "").unwrap_err().contains("503"));
+    }
+
+    #[test]
+    fn exit_type_native_uses_probed_region_over_ipinfo_country() {
+        let info = CachedExitInfo {
+            kind: "residential",
+            label: "住宅",
+            org: "AS2856 British Telecommunications Limited".into(),
+            registered_country: Some("US".into()),
+            ipinfo_country: Some("US".into()),
+        };
+        let via_gb = build_exit_type_dto(&info, Some("GB"));
+        assert_eq!(via_gb.native, Some(false), "探测所在地为英国而注册在美国，须判非原生");
+        let via_us = build_exit_type_dto(&info, Some("US"));
+        assert_eq!(via_us.native, Some(true));
+        let fallback = build_exit_type_dto(&info, None);
+        assert_eq!(fallback.native, Some(true), "无探测地区时回落 ipinfo country");
     }
 
     #[test]
@@ -1012,19 +1211,19 @@ mod tests {
     fn real_probe_smoke() {
         let proxy = std::env::var("ROUTE_CHECK_PROXY").ok();
         for url in ["https://claude.ai/cdn-cgi/trace", "https://chatgpt.com/cdn-cgi/trace"] {
-            let out = tauri::async_runtime::block_on(probe(url, proxy.as_deref(), true));
+            let out = tauri::async_runtime::block_on(probe(url, proxy.as_deref(), None, true));
             println!("{url} via {proxy:?} → {out:?}");
         }
         for check in [ServiceCheck::AnthropicKeyless, ServiceCheck::OpenAiCompliance] {
-            println!("{check:?} 经 {proxy:?} → {:?}", tauri::async_runtime::block_on(ask_service(check, proxy.as_deref())));
-            println!("{check:?} 直连 → {:?}", tauri::async_runtime::block_on(ask_service(check, None)));
+            println!("{check:?} 经 {proxy:?} → {:?}", tauri::async_runtime::block_on(ask_service(check, proxy.as_deref(), None)));
+            println!("{check:?} 直连 → {:?}", tauri::async_runtime::block_on(ask_service(check, None, None)));
         }
         for ip in ["8.8.8.8", "31.94.12.1", "1.1.1.1"] {
-            let r = tauri::async_runtime::block_on(fetch_json(&format!("https://rdap.db.ripe.net/ip/{ip}")));
+            let r = tauri::async_runtime::block_on(fetch_json(&format!("https://rdap.db.ripe.net/ip/{ip}"), proxy.as_deref(), None));
             println!("RDAP {ip} → {:?}", r.as_ref().and_then(parse_rdap_country));
         }
         println!("本机代理软件 → {:?}", route_proxy_apps());
-        let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1"), true));
+        let dead = tauri::async_runtime::block_on(probe(PROBE.url, Some("http://127.0.0.1:1"), None, true));
         println!("死代理 → {dead:?}");
         assert!(matches!(dead, ProbeOutcome::Failed(_) | ProbeOutcome::Timeout));
     }

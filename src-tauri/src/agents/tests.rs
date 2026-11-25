@@ -1749,6 +1749,50 @@ fn official_plan_keeps_extra_env_as_escape_hatch() {
             "http://127.0.0.1:7890".to_string()
         )]
     );
+    assert!(
+        plan.env_remove.iter().any(|k| k == "https_proxy")
+            && plan.env_remove.iter().any(|k| k == "ALL_PROXY"),
+        "连接显式设 HTTPS_PROXY 时须清掉可能残留的小写/其他代理键"
+    );
+}
+
+#[test]
+fn official_proxy_env_clears_or_overrides_settings_consistently() {
+    let settings = crate::settings::official_outbound_env_from(&crate::settings::AppSettingsDto {
+        outbound_proxy: Some("http://127.0.0.1:7897".into()),
+        outbound_no_proxy: Some("localhost".into()),
+        ..Default::default()
+    });
+    // 1) 未覆盖：大小写成对全注入
+    let mut plan_default = LaunchPlan::default();
+    apply_official_proxy_env(
+        &mut plan_default,
+        settings.clone(),
+        &std::collections::HashMap::new(),
+    );
+    assert!(plan_default.env.contains(&("https_proxy".into(), "http://127.0.0.1:7897".into())));
+    assert!(plan_default.env.contains(&("HTTPS_PROXY".into(), "http://127.0.0.1:7897".into())));
+    assert!(plan_default.env_remove.is_empty());
+
+    // 2) 连接显式清空 HTTPS_PROXY：跳过 settings 代理并把全部 6 个代理键加入 env_remove
+    let mut plan_clear = LaunchPlan::default();
+    let cleared: std::collections::HashMap<String, String> =
+        [("HTTPS_PROXY".into(), " ".into())].into();
+    apply_official_proxy_env(&mut plan_clear, settings.clone(), &cleared);
+    assert!(plan_clear.env.is_empty());
+    for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+        assert!(plan_clear.env_remove.iter().any(|r| r == k), "清空直连时应移除 {k}");
+    }
+
+    // 3) 连接覆盖为新代理：跳过旧 settings 代理，保留 settings NO_PROXY，并清冲突代理键
+    let mut plan_override = LaunchPlan::default();
+    let over: std::collections::HashMap<String, String> =
+        [("HTTPS_PROXY".into(), "http://10.0.0.2:3128".into())].into();
+    apply_official_proxy_env(&mut plan_override, settings, &over);
+    assert!(!plan_override.env.iter().any(|(_, v)| v.contains("7897")));
+    assert!(plan_override.env.contains(&("NO_PROXY".into(), "localhost".into())));
+    assert!(plan_override.env_remove.iter().any(|r| r == "https_proxy"));
+    assert!(!plan_override.env_remove.iter().any(|r| r == "HTTPS_PROXY"));
 }
 
 #[test]
