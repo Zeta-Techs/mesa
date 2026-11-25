@@ -12,7 +12,7 @@ import {
   ChevronDown,
   Copy,
   CornerDownLeft,
-  MessageSquareQuote,
+  MessagesSquare,
   PanelRightClose,
   Plus,
   RotateCcw,
@@ -786,7 +786,7 @@ function ChatAsidePane({
                   title={t.title}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                 >
-                  <MessageSquareQuote
+                  <MessagesSquare
                     size={12}
                     strokeWidth={1.8}
                     aria-hidden="true"
@@ -854,7 +854,7 @@ function ChatAsidePane({
       <div ref={bodyRef} className="ccode-chat-scroll flex min-h-0 flex-1 flex-col overflow-auto px-3.5 py-4">
         {!hasContent ? (
           <div className="m-auto flex max-w-[18rem] flex-col items-center gap-2 py-8 text-center">
-            <MessageSquareQuote size={22} strokeWidth={1.6} aria-hidden="true" className="text-l4" />
+            <MessagesSquare size={22} strokeWidth={1.6} aria-hidden="true" className="text-l4" />
             <p className="text-xs leading-5 text-l3">不打断主对话，在旁边随口问一句</p>
             <p className="text-micro leading-relaxed text-l4">{emptyHint}</p>
           </div>

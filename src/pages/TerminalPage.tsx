@@ -103,8 +103,9 @@ import {
   FolderTree,
   History,
   Maximize2,
-  MessageSquareQuote,
+  MessagesSquare,
   Minimize2,
+  PanelRight,
   PanelRightClose,
   PanelTopOpen,
   RefreshCw,
@@ -965,13 +966,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     persistRightOpen(false);
   }
 
-  /** 对话头「文件」钮：亮着就收起右栏，否则打开右栏并停在文件窗格（树 / 预览停在上次的位置） */
-  function toggleFilesPane() {
-    if (rightOpen && rightTab === "preview") {
+  /** 对话头「右栏（文件与改动）」钮：开着就收起，否则按上次停着的页签展开 */
+  function toggleRightPane() {
+    if (rightOpen) {
       closeRightPanel();
       return;
     }
-    setRightTab("preview");
     persistRightOpen(true);
   }
 
@@ -3748,9 +3748,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               </div>
             );
           })()}
-          {/* 右上角三个（2026-10-24 照 Claude 客户端「一个图标管一块，亮着就是开着」重做，原 聊天/终端 · 成果面板 · 分屏 · 查找 四个）：
-              >_ 终端（亮着 = 正看着这段对话的终端）、± 改动（右栏改动窗格，有改动带数字）、⋯ 更多（分屏、查找、启动配置行、文件预览）。
-              「成果面板」一词取消：文件预览由左边点文件打开，改动由 ± 打开，右栏自己带收起 */}
+          {/* 右上角 4 颗精简分组（2026-11-25 用户拍板方案 B）：
+              左组「>_ 终端 · 侧边提问」| 右组「◨ 文件与改动（合并右栏，有改动点小点）· ⋯ 更多（仅留当前层搜索与关闭）」 */}
           <span className="ml-auto flex shrink-0 items-center gap-0.5">
             <button
               type="button"
@@ -3800,7 +3799,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     asideOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
-                  <MessageSquareQuote size={15} strokeWidth={1.8} aria-hidden="true" />
+                  <MessagesSquare size={15} strokeWidth={1.8} aria-hidden="true" />
                   {!asideOpen && (asideBusy || asideCount > 0) && (
                     <span
                       className={`absolute right-1 top-1 size-1.5 rounded-full ${
@@ -3812,55 +3811,32 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 </button>
               );
             })()}
+            <span className="mx-1 h-3.5 w-px bg-hairline" aria-hidden="true" />
             {(() => {
-              const changesOpen = rightOpen && rightTab === "git";
               const count = gitTotals?.isRepo ? gitTotals.files.length : 0;
               const hasLines = Boolean(gitTotals && (gitTotals.add > 0 || gitTotals.del > 0));
               return (
                 <button
                   type="button"
-                  onClick={() => {
-                    if (changesOpen) closeRightPanel();
-                    else {
-                      setRightTab("git");
-                      persistRightOpen(true);
-                    }
-                  }}
-                  aria-pressed={changesOpen}
+                  onClick={toggleRightPane}
+                  aria-pressed={rightOpen}
                   title={
-                    changesOpen
-                      ? "收起改动"
+                    rightOpen
+                      ? "收起右栏（文件与改动）"
                       : count > 0
-                        ? `改动：这个文件夹里 ${count} 个文件没提交${hasLines ? `（+${gitTotals!.add} −${gitTotals!.del}）` : ""}`
-                        : "改动"
+                        ? `文件与改动：${count} 个文件未提交${hasLines ? `（+${gitTotals!.add} −${gitTotals!.del}）` : ""}`
+                        : "文件与改动：在右侧打开文件树、预览或改动"
                   }
-                  aria-label={changesOpen ? "收起改动" : "看改动"}
+                  aria-label={rightOpen ? "收起右栏" : "打开文件与改动"}
                   className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
-                    changesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                    rightOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                   }`}
                 >
-                  <FileDiff size={15} strokeWidth={1.8} aria-hidden="true" />
-                  {/* 有改动只点一个小点，个数放悬停（含纯二进制/空文件改动；文件夹里别的会话的改动也算在内） */}
-                  {count > 0 && !changesOpen && (
+                  <PanelRight size={15} strokeWidth={1.8} aria-hidden="true" />
+                  {/* 有改动只点一个小点，个数与增删行放悬停 */}
+                  {count > 0 && !rightOpen && (
                     <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
                   )}
-                </button>
-              );
-            })()}
-            {(() => {
-              const filesOpen = rightOpen && rightTab === "preview";
-              return (
-                <button
-                  type="button"
-                  onClick={toggleFilesPane}
-                  aria-pressed={filesOpen}
-                  title={filesOpen ? "收起文件" : "文件：这段对话文件夹里的文件，点开就在右边看"}
-                  aria-label={filesOpen ? "收起文件" : "看文件"}
-                  className={`flex size-7 items-center justify-center rounded-md transition-colors ${
-                    filesOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-                  }`}
-                >
-                  <FolderTree size={15} strokeWidth={1.8} aria-hidden="true" />
                 </button>
               );
             })()}
@@ -3872,7 +3848,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               }}
               aria-haspopup="menu"
               aria-expanded={headMenu != null}
-              title="更多：分屏对照、查找终端输出、关掉这段对话…"
+              title={focusedSurfaceMode === "chat" ? "更多：搜索聊天、关掉这段对话" : "更多：查找终端输出、关掉这段对话"}
               aria-label="更多操作"
               className={`flex size-7 items-center justify-center rounded-md transition-colors ${
                 headMenu ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l2"
@@ -3888,39 +3864,31 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               alignRight
               onClose={() => setHeadMenu(null)}
               items={[
-                {
-                  label: "搜索聊天",
-                  icon: Search,
-                  title: "在这段对话的消息、命令和输出里找字",
-                  onSelect: () => { if (focusedSurfaceMode !== "chat") switchSurface("chat"); openChatSearch(focusedId); },
-                },
-                {
-                  label: splitActive ? "退出分屏" : "分屏对照",
-                  icon: Columns2,
-                  disabled: !splitActive && tabs.length < 2,
-                  title:
-                    !splitActive && tabs.length < 2
-                      ? "先开着两段对话；或在侧栏对话 ⋯ 里选「在右侧分屏打开」"
-                      : splitActive
-                        ? "回到一段"
-                        : "左右两段对着看",
-                  onSelect: () => {
-                    if (focusedSurfaceMode === "chat") switchSurface("terminal");
-                    toggleSplit();
-                  },
-                },
-                {
-                  label: "查找终端输出",
-                  icon: Search,
-                  title: "在这段对话的终端输出里找字（会切到终端）",
-                  onSelect: () => {
-                    if (focusedSurfaceMode === "chat" && !peekByTab[focusedId]) {
-                      switchSurface("terminal");
+                focusedSurfaceMode === "chat"
+                  ? {
+                      label: "搜索聊天",
+                      icon: Search,
+                      hint: IS_MAC ? "⌘F" : "Ctrl+F",
+                      title: "在这段对话的消息、命令和输出里找字",
+                      onSelect: () => openChatSearch(focusedId),
                     }
-                    tabActionsRef.current.get(focusedId)?.search();
-                  },
-                },
-                ...(compactBarHidden
+                  : {
+                      label: "查找终端输出",
+                      icon: Search,
+                      title: "在这段对话的终端输出里找字",
+                      onSelect: () => tabActionsRef.current.get(focusedId)?.search(),
+                    },
+                ...(splitActive
+                  ? [
+                      {
+                        label: "退出分屏",
+                        icon: Columns2,
+                        title: "回到单段对话视图",
+                        onSelect: toggleSplit,
+                      },
+                    ]
+                  : []),
+                ...(focusedSurfaceMode !== "chat" && compactBarHidden
                   ? [
                       {
                         label: "显示启动配置行",
@@ -4693,31 +4661,92 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         </span>
                       );
                     })()}
+                    <button
+                      type="button"
+                      onClick={() => setRightTab("git")}
+                      title={
+                        gitTotals?.isRepo && gitTotals.files.length > 0
+                          ? `切换到改动（${gitTotals.files.length} 个文件未提交）`
+                          : "切换到改动"
+                      }
+                      aria-label="切换到改动"
+                      className="ml-0.5 flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                    >
+                      <FileDiff size={14} strokeWidth={1.8} aria-hidden="true" />
+                      {gitTotals?.isRepo && gitTotals.files.length > 0 && (
+                        <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
+                          {gitTotals.files.length}
+                        </span>
+                      )}
+                    </button>
                   </>
                 ) : (
-                  <span
-                    onDoubleClick={toggleRightExpanded}
-                    title={`文件；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
-                    className="flex h-7 shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium text-l1"
-                  >
-                    <FolderTree size={14} strokeWidth={1.8} className="text-l3" aria-hidden="true" />
-                    <span>文件</span>
-                  </span>
+                  <div className="flex items-center gap-0.5" role="tablist" aria-label="右栏视图">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected
+                      onClick={() => setRightTab("preview")}
+                      onDoubleClick={toggleRightExpanded}
+                      title={`文件；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
+                      className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-seg-sel px-2 text-xs font-medium text-l1 transition-colors"
+                    >
+                      <FolderTree size={14} strokeWidth={1.8} className="text-l2" aria-hidden="true" />
+                      <span>文件</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={false}
+                      onClick={() => setRightTab("git")}
+                      title={
+                        gitTotals?.isRepo && gitTotals.files.length > 0
+                          ? `改动（${gitTotals.files.length} 个文件未提交）`
+                          : "改动"
+                      }
+                      className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                    >
+                      <FileDiff size={14} strokeWidth={1.8} aria-hidden="true" />
+                      <span>改动</span>
+                      {gitTotals?.isRepo && gitTotals.files.length > 0 && (
+                        <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
+                          {gitTotals.files.length}
+                        </span>
+                      )}
+                    </button>
+                  </div>
                 )
               ) : (
-                <span
-                  onDoubleClick={toggleRightExpanded}
-                  title={`改动；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
-                  className="flex h-7 shrink-0 items-center gap-1.5 px-1.5 text-xs font-medium text-l1"
-                >
-                  <FileDiff size={14} strokeWidth={1.8} className="text-l3" aria-hidden="true" />
-                  <span>改动</span>
-                  {gitTotals?.isRepo && gitTotals.files.length > 0 && (
-                    <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
-                      {gitTotals.files.length}
-                    </span>
-                  )}
-                </span>
+                <div className="flex items-center gap-0.5" role="tablist" aria-label="右栏视图">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={false}
+                    onClick={() => setRightTab("preview")}
+                    title={preview ? `回到文件（${preview.name}）` : "文件"}
+                    className="flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    <FolderTree size={14} strokeWidth={1.8} aria-hidden="true" />
+                    <span>文件</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected
+                    onClick={() => setRightTab("git")}
+                    onDoubleClick={toggleRightExpanded}
+                    title={`改动；双击${rightExpanded ? "退出右栏铺满" : "进入右栏铺满"}`}
+                    className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-seg-sel px-2 text-xs font-medium text-l1 transition-colors"
+                  >
+                    <FileDiff size={14} strokeWidth={1.8} className="text-l2" aria-hidden="true" />
+                    <span>改动</span>
+                    {gitTotals?.isRepo && gitTotals.files.length > 0 && (
+                      <span className="rounded-full bg-inset px-1.5 py-px text-micro tabular-nums text-l2">
+                        {gitTotals.files.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
               )}
               {/* 右侧动作区：打开文件时保留高频「新窗口」「并排」与「⋯ 更多菜单」；未打开预览时保留「铺满 / 收起」。 */}
               <span className="ml-auto flex min-w-0 items-center gap-0.5 pl-1">

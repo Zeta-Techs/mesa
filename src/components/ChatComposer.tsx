@@ -7,7 +7,7 @@ import {
   BookmarkPlus,
   Maximize2,
   Minimize2,
-  MessageSquareQuote,
+  MessagesSquare,
   MessageSquareText,
   Paperclip,
   Plus,
@@ -340,7 +340,7 @@ function AddMenu({
                     onAside();
                   }}
                 >
-                  <MessageSquareQuote size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
+                  <MessagesSquare size={14} strokeWidth={1.8} aria-hidden="true" className="shrink-0 text-l3" />
                   问它一句
                   <span className="ml-auto text-micro text-l4">/btw · 不打断</span>
                 </button>
