@@ -20,6 +20,14 @@ export const PERMISSION_TIERS: { id: Tier; label: string; desc: string }[] = [
   { id: "full", label: "完全访问", desc: "改文件、跑命令都不再问你" },
 ];
 
+/** 权限菜单内每档右侧的一句极短说明（不额外加抬头和脚注） */
+const PERMISSION_SHORT_DESC: Record<Tier, string> = {
+  discuss: "只读规划，不改文件",
+  ask: "改文件、跑命令先问",
+  auto: "常规放行，风险才问",
+  full: "全部操作不再询问",
+};
+
 /**
  * 权限符号「界线」（2026-10-22 用户选定方案 A，不与 Codex 的眼睛 / 手掌 / 盾牌撞）：竖线是「要你点头的那条线」，
  * 小块是 Mesa 的光标（M▁ 那一道）。空心块停在线外 = 只看不动；实心块抵住线 = 到线前先问；
@@ -276,7 +284,7 @@ export default function ChatPermissionBadge({
           role="menu"
           aria-label="权限档位"
           // 字号挂在容器上：全站 button { font: inherit } 会吞掉按钮自己的 text-*
-          className={`absolute left-0 z-30 w-40 rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-nowrap ${
+          className={`absolute left-0 z-30 w-[16rem] rounded-xl border border-field ccode-float-surface p-1 text-sm shadow-lg whitespace-nowrap ${
             side === "below" ? "top-full mt-2" : "bottom-full mb-2"
           }`}
         >
@@ -304,6 +312,9 @@ export default function ChatPermissionBadge({
               >
                 <PermissionGlyph tier={t.id} className={danger ? "text-caution-text" : selected ? "text-l2" : "text-l3"} />
                 <span className="shrink-0">{t.label}</span>
+                <span className={`ml-auto truncate text-micro ${selected ? "text-l3" : "text-l4"}`}>
+                  {PERMISSION_SHORT_DESC[t.id]}
+                </span>
               </button>
             );
           })}

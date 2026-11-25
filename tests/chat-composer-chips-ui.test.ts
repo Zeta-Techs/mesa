@@ -225,11 +225,16 @@ test("权限菜单四档：只显示四个权限档位，没有的置灰，完�
     await ui.render(ui.h(ui.Badge, props));
     assert.match(ui.el.textContent ?? "", /完全访问/);
     await ui.click("完全访问");
-    // 精简聊天层文字说明：权限菜单只显示四个档位，不附举例抬头、右侧结果与底部长说明
+    // 精简聊天层文字说明：权限菜单保留四个档位与每档一句短说明，不附举例抬头与底部长说明
     assert.doesNotMatch(ui.el.textContent ?? "", /假如它要|只管这一段对话|本机设置|了解更多/);
     assert.equal(ui.el.textContent?.includes("只讨论"), false);
-    for (const label of ["先出方案", "请求批准", "帮我批准", "完全访问"]) {
-      assert.equal(menuItem(ui, label).textContent?.trim(), label);
+    for (const [label, desc] of [
+      ["先出方案", "只读规划，不改文件"],
+      ["请求批准", "改文件、跑命令先问"],
+      ["帮我批准", "常规放行，风险才问"],
+      ["完全访问", "全部操作不再询问"],
+    ]) {
+      assert.match(menuItem(ui, label).textContent ?? "", new RegExp(desc));
     }
     assert.doesNotMatch(ui.el.textContent ?? "", /自动改文件|按本机设置|先问再改/, "旧的五档已收掉");
     assert.equal(menuItem(ui, "完全访问").getAttribute("aria-checked"), "true");
