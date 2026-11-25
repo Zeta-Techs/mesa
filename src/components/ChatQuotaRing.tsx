@@ -107,11 +107,15 @@ async function fetchWalletBalance(force: boolean): Promise<GatewayBalanceDto[]> 
   return req;
 }
 
-/** 正常态静默中性灰；警示档走哑光琥珀 caution-text（替代刺眼纯黄 warn-text），危急档走珊瑚红 */
-function ringStrokeClass(tone: ChatQuotaTone): string {
+/** 5 小时窗走静默中性灰；警示档走哑光琥珀 caution-text，危急档走珊瑚红 */
+function ringStrokeClass(tone: ChatQuotaTone, tinted = false): string {
   if (tone === "danger") return "text-err-text";
   if (tone === "warn") return "text-caution-text";
-  return "text-l2";
+  return tinted ? "text-ok-text" : "text-l2";
+}
+
+function isWeeklyWindow(window: string): boolean {
+  return window === "weekly" || window === "agy_argon_weekly" || window === "monthly";
 }
 
 function textToneClass(tone: ChatQuotaTone): string {
@@ -120,27 +124,36 @@ function textToneClass(tone: ChatQuotaTone): string {
   return "text-l3";
 }
 
-/** 14px 极简细单环：画剩余比例（满圈 = 充足、快空变黄/红），中心留白干净不发挤 */
+/** 14px 极简单环：5 小时保持中性灰轨 + 细弧；本周剩余改为同色系浅弧 + 深轨（一眼区分窗口周期） */
 function SingleMicroRing({
   remainPct,
   tone,
+  tinted = false,
 }: {
   remainPct: number;
   tone: ChatQuotaTone;
+  tinted?: boolean;
 }) {
-  const r = 5.4;
+  const r = tinted ? 5.1 : 5.4;
+  const sw = tinted ? 1.9 : 1.5;
   const c = 2 * Math.PI * r;
   const p = Math.min(100, Math.max(0, remainPct));
+  const hueClass = ringStrokeClass(tone, tinted);
   return (
-    <svg viewBox="0 0 14 14" aria-hidden="true" className="size-3.5 shrink-0 -rotate-90">
+    <svg
+      viewBox="0 0 14 14"
+      aria-hidden="true"
+      className={`size-3.5 shrink-0 -rotate-90 ${tinted ? hueClass : ""}`}
+    >
       <circle
         cx="7"
         cy="7"
         r={r}
         fill="none"
-        strokeWidth="1.5"
+        strokeWidth={sw}
         stroke="currentColor"
-        className="text-l1/12"
+        strokeOpacity={tinted ? 0.28 : undefined}
+        className={tinted ? undefined : "text-l1/12"}
       />
       {p > 0 && (
         <circle
@@ -148,36 +161,58 @@ function SingleMicroRing({
           cy="7"
           r={r}
           fill="none"
-          strokeWidth="1.5"
+          strokeWidth={sw}
           strokeLinecap="round"
           stroke="currentColor"
           strokeDasharray={`${(c * p) / 100} ${c}`}
-          className={ringStrokeClass(tone)}
+          className={tinted ? undefined : hueClass}
         />
       )}
     </svg>
   );
 }
 
-/** 浮层内的 20px 细单环（同向画剩余比例） */
-function PopoverMiniRing({ remainPct, tone }: { remainPct: number; tone: ChatQuotaTone }) {
+/** 浮层内的 20px 单环（与底栏同一视觉语言：本周浅深双调、5 小时中性灰轨） */
+function PopoverMiniRing({
+  remainPct,
+  tone,
+  tinted = false,
+}: {
+  remainPct: number;
+  tone: ChatQuotaTone;
+  tinted?: boolean;
+}) {
   const r = 7.8;
   const c = 2 * Math.PI * r;
   const p = Math.min(100, Math.max(0, remainPct));
+  const hueClass = ringStrokeClass(tone, tinted);
   return (
-    <svg viewBox="0 0 20 20" aria-hidden="true" className="size-5 shrink-0 -rotate-90">
-      <circle cx="10" cy="10" r={r} fill="none" strokeWidth="1.9" stroke="currentColor" className="text-l1/12" />
+    <svg
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      className={`size-5 shrink-0 -rotate-90 ${tinted ? hueClass : ""}`}
+    >
+      <circle
+        cx="10"
+        cy="10"
+        r={r}
+        fill="none"
+        strokeWidth="2.1"
+        stroke="currentColor"
+        strokeOpacity={tinted ? 0.28 : undefined}
+        className={tinted ? undefined : "text-l1/12"}
+      />
       {p > 0 && (
         <circle
           cx="10"
           cy="10"
           r={r}
           fill="none"
-          strokeWidth="1.9"
+          strokeWidth="2.1"
           strokeLinecap="round"
           stroke="currentColor"
           strokeDasharray={`${(c * p) / 100} ${c}`}
-          className={ringStrokeClass(tone)}
+          className={tinted ? undefined : hueClass}
         />
       )}
     </svg>
@@ -348,17 +383,11 @@ export default function ChatQuotaRing({
         <SingleMicroRing
           remainPct={isPlan ? view.remainPct : (view.remainPct ?? 100)}
           tone={view.tone}
+          tinted={isPlan && isWeeklyWindow(view.primary.window)}
         />
-        {isPlan ? (
-          <span className="inline-flex items-baseline gap-0.5 text-micro font-normal tabular-nums">
-            <span className="text-l4">余</span>
-            <span className={textToneClass(view.tone)}>{view.remainPct}%</span>
-          </span>
-        ) : (
-          <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
-            {walletLabel}
-          </span>
-        )}
+        <span className={`text-micro font-normal tabular-nums ${textToneClass(view.tone)}`}>
+          {isPlan ? `${view.remainPct}%` : walletLabel}
+        </span>
       </button>
       <span aria-hidden="true" className="h-3 w-px shrink-0 bg-hairline" />
 
@@ -465,7 +494,11 @@ export default function ChatQuotaRing({
                     const absPair = planAbsoluteQuotaPair(w.used, w.total);
                     return (
                       <div key={w.window} className="flex items-center gap-2.5">
-                        <PopoverMiniRing remainPct={w.remainPct} tone={w.tone} />
+                        <PopoverMiniRing
+                          remainPct={w.remainPct}
+                          tone={w.tone}
+                          tinted={isWeeklyWindow(w.window)}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-2">
                             <span className="truncate text-l2">{planWindowLabel(w.window)}剩余</span>
