@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw, Wallet } from "lucide-react";
+import { Eye, EyeOff, RefreshCw, Wallet } from "lucide-react";
 import { useAppStore } from "../store";
 import type { GatewayBalanceDto, PlanQuotaDto } from "../types";
 import {
@@ -35,6 +35,28 @@ import { vendorForPlanProvider } from "../vendor-icon";
 const PLAN_CACHE_KEY = "ccode.stats.planRowsCache";
 const WALLET_CACHE_KEY = "ccode.stats.walletRowsCache";
 const FRESH_TTL_MS = 120_000;
+/** 底栏钱包只显示图标、不写金额（本机偏好，对所有钱包网关生效；订阅百分比不受影响） */
+const WALLET_ICON_ONLY_KEY = "ccode.chat.walletIconOnly";
+const WALLET_ICON_ONLY_EVENT = "ccode-wallet-icon-only";
+
+function readWalletIconOnly(): boolean {
+  try {
+    return localStorage.getItem(WALLET_ICON_ONLY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeWalletIconOnly(on: boolean) {
+  try {
+    if (on) localStorage.setItem(WALLET_ICON_ONLY_KEY, "1");
+    else localStorage.removeItem(WALLET_ICON_ONLY_KEY);
+  } catch {
+    // 存不住就只在本次生效
+  }
+  // 多个聊天标签各有一颗芯片，一起切
+  window.dispatchEvent(new CustomEvent(WALLET_ICON_ONLY_EVENT, { detail: on }));
+}
 
 let planInflight: Promise<PlanQuotaDto[]> | null = null;
 let planFetchedAt = 0;
@@ -180,6 +202,12 @@ export default function ChatQuotaRing({
   const closeTimerRef = useRef<number | null>(null);
   const [panel, setPanel] = useState<{ x: number; y: number } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [walletIconOnly, setWalletIconOnly] = useState(readWalletIconOnly);
+  useEffect(() => {
+    const sync = (e: Event) => setWalletIconOnly(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener(WALLET_ICON_ONLY_EVENT, sync);
+    return () => window.removeEventListener(WALLET_ICON_ONLY_EVENT, sync);
+  }, []);
 
   const anchor = (el: HTMLElement) => {
     const rect = el.getBoundingClientRect();
@@ -348,9 +376,12 @@ export default function ChatQuotaRing({
         {isPlan && shortWindowTag(view.primary.window) && (
           <span className="text-micro font-normal tabular-nums opacity-60">{shortWindowTag(view.primary.window)}</span>
         )}
-        <span className="text-micro font-normal tabular-nums">
-          {isPlan ? `${view.usedPct}%` : walletLabel}
-        </span>
+        {/* 钱包可切成只留图标（余额低时图标照样变黄 / 红，金额在浮层里看） */}
+        {(isPlan || !walletIconOnly) && (
+          <span className="text-micro font-normal tabular-nums">
+            {isPlan ? `${view.usedPct}%` : walletLabel}
+          </span>
+        )}
       </button>
 
       {/* 悬停直出详情浮层（点击可固定展开；外层 pb-1.5 形成隐形悬停桥） */}
@@ -401,6 +432,27 @@ export default function ChatQuotaRing({
                     </span>
                   )}
                 </div>
+                <div className="flex shrink-0 items-center">
+                {!isPlan && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !walletIconOnly;
+                      setWalletIconOnly(next);
+                      writeWalletIconOnly(next);
+                    }}
+                    title={walletIconOnly ? "底栏显示金额" : "底栏不显示金额"}
+                    aria-label={walletIconOnly ? "底栏显示金额" : "底栏不显示金额"}
+                    aria-pressed={walletIconOnly}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 transition-colors hover:bg-hover hover:text-l1"
+                  >
+                    {walletIconOnly ? (
+                      <EyeOff aria-hidden="true" className="h-3 w-3" />
+                    ) : (
+                      <Eye aria-hidden="true" className="h-3 w-3" />
+                    )}
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={refreshing}
@@ -414,6 +466,7 @@ export default function ChatQuotaRing({
                     className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`}
                   />
                 </button>
+                </div>
               </div>
 
               {/* 浮层主体：各窗「标签 · 重置时刻 · 已用%」+ 已用横条（倒计时放悬停） 或 网关钱包余额 */}
