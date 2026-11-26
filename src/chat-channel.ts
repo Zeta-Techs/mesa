@@ -75,17 +75,18 @@ export function channelTurnOpen(snap: ChatChannelSnapshot | null): boolean {
   return s === "running" || s === "awaiting_approval";
 }
 
-/**
- * 原生模式这句能不能经通道发出（chat_channel_send）：Codex 的私有服务连着、已认出这段对话、这一轮没在跑。
- * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
- */
 /** 原生模式下这句该不该经通道发：斜杠 / ! 命令是终端自己的功能，照旧打进终端 */
 export function wantsChannelSend(native: boolean, message: string): boolean {
   return native && !/^[/!]/.test(message.trim());
 }
 
+/**
+ * 原生模式这句能不能经通道发出（chat_channel_send）：Codex 的私有服务连着、已认出这段对话。
+ * 这一轮还在跑也走通道：后端改发 turn/steer 插进这一轮（同终端里回合中按回车）。
+ * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
+ */
 export function canSendViaChannel(snap: ChatChannelSnapshot | null | undefined): boolean {
-  return !!snap && snap.kind === "codex" && snap.connection === "connected" && !!snap.sessionId && !channelTurnOpen(snap);
+  return !!snap && snap.kind === "codex" && snap.connection === "connected" && !!snap.sessionId;
 }
 
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */

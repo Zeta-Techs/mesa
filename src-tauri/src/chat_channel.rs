@@ -3438,14 +3438,27 @@ fn send_impl(tab_id: &str, text: &str) -> Result<(), String> {
         return Ok(());
     }
     let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请切到终端发送")?;
-    {
+    let running = {
         let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
         if t.snap.kind != "codex" || t.snap.connection != Some("connected") {
             return Err("实时通道不可用，请切到终端发送".into());
         }
-        if is_open(&t.snap.turn) {
-            return Err("这一轮还没结束，等它结束或先停止再发".into());
-        }
+        is_open(&t.snap.turn)
+    };
+    if running {
+        // 这一轮还在跑：同终端里回合中按回车，插进正在跑的这一轮（turn/steer，带当前回合 id 作前提，
+        // 回合刚好换了就被拒、不会插错轮）
+        let turn = ch
+            .codex
+            .lock()
+            .map_err(|_| "实时通道不可用")?
+            .turn
+            .clone()
+            .ok_or("这一轮还没结束，等它结束或先停止再发")?;
+        codex_request(&ch, "turn/steer", |thread| {
+            json!({ "threadId": thread, "expectedTurnId": turn, "input": [{ "type": "text", "text": text }] })
+        })?;
+        return Ok(());
     }
     let result = codex_request(&ch, "turn/start", |thread| {
         json!({ "threadId": thread, "input": [{ "type": "text", "text": text }] })
@@ -5100,6 +5113,9 @@ mod e2e {
         let interrupt_ms: Option<u64> = std::env::var("E2E_INTERRUPT_MS").ok().and_then(|v| v.parse().ok());
         let mut esc_at: Option<Instant> = None;
         let mut interrupt_settled = false;
+        // E2E_STEER_MS（配 E2E_NATIVE）：发出后过这么久经通道再说一句（回合还在跑 → turn/steer 插进这一轮）
+        let steer_ms: Option<u64> = std::env::var("E2E_STEER_MS").ok().and_then(|v| v.parse().ok());
+        let mut steered = false;
         while started.elapsed() < Duration::from_secs(60) {
             std::thread::sleep(Duration::from_millis(300));
             if let (Some(ms), None) = (interrupt_ms, esc_at) {
@@ -5120,6 +5136,13 @@ mod e2e {
                         esc_at = Some(Instant::now());
                         println!("{agent}: 按了 Esc");
                     }
+                }
+            }
+            if let (Some(ms), false, true) = (steer_ms, steered, native) {
+                if started.elapsed() >= Duration::from_millis(ms) {
+                    let r = send_impl("e2e-tab", "STEER_MARK 补一句");
+                    println!("{agent}: 回合中经通道插话 → {r:?}");
+                    steered = true;
                 }
             }
             if let Some(at) = esc_at.filter(|_| !interrupt_settled) {

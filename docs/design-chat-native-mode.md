@@ -145,9 +145,9 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 
 1. 用户在 Mesa Dev 里核对四步：开关 → 发第二句看终端同步 → 停止 → 确认卡批准后终端菜单跟着撤。
 2. ✓（2026-11-26）接回旧对话后的第一句：原生模式等通道认出对话（`deliverAfterRelaunch`，最多 8 秒）后经 `turn/start` 发，等不到再退回打字；`E2E_RESUME=1 E2E_NATIVE=1` 实测接回后经通道发出、回合走完。
-3. 回合进行中再发话：现在退回终端打字排队；先核实 app-server 有没有插话 / 排队的方法，有就走接口。
-4. `/model`、`/effort` 一类切换：现在打进终端；改为随下一轮 `turn/start` 带模型与思考档。
-5. 启动时的信任目录、更新提示仍靠读屏：原生模式下用启动参数预先处理掉。
+3. ✓（2026-11-26）回合进行中再发话：app-server 有 `turn/steer`（`expectedTurnId` 作前提，回合换了就拒），后端回合中改发它，插进正在跑的这一轮（同终端里回合中按回车）；`E2E_STEER_MS` 实测插话被收下、下一条模型请求里带着这句，仍是同一轮。
+4. ✓ 评估后不改（2026-11-26）：`/model … --reasoning …` 在远程 TUI 里是线程级生效，实测 TUI 里切到 `e2e-default` / `low` 后，Mesa 经 `turn/start` 发起的那一轮请求里就是 `e2e-default` / `low`。这是一条整行命令（不挪菜单、不读屏选项），与斜杠命令同口径交给终端；`turn/start` 的 `model` / `effort` 留作纯协议运行时用。
+5. ✓ 评估后不改（2026-11-26）：更新提示 Mesa 早已用 `-c check_for_update_on_startup=false` 关掉；信任目录是用户对这个文件夹的同意，不能替用户用参数跳过，照旧出 Mesa 的信任卡由人点。
 6. Windows 实测：ConPTY 下远程 TUI 与第二个客户端是否同样同步。
 7. ✓（2026-11-26）金丝雀加原生层：`canary.py native_phase` 用 `E2E_NATIVE` 跑发出 + 审批、发出 + 停止两趟，四项只进检查、不进指纹；先只在 macOS 跑（Windows 等第 6 项实测）。本机 Codex 0.172 全过、与基线无变化。
 
