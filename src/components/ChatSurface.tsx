@@ -115,6 +115,7 @@ import {
   approvalPreview,
   approvalTitle,
   menuOutgrowsChannel,
+  nativeRuntimeKind,
   quietScreenMayBeWaiting,
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
@@ -784,7 +785,8 @@ export default function ChatSurface({
   const genElapsed = genStartedAt === null ? 0 : Math.floor((Date.now() - genStartedAt) / 1000);
   // 「这一轮现在在做什么」（chat-status.ts）：说在做的事，不说阶段；过程里已经在动的那一行不在这里重复
   const activity = channel?.activity ?? null;
-  const thinking = channel?.thinking ?? null;
+  // 原生模式（Kimi、Claude）的思考是原文、整段显示在预览位置（shownThinking）：状态行同终端模式只写「思考中」，不拿原文第一句重复
+  const thinking = nativeRuntimeKind(channel?.kind) ? null : (channel?.thinking ?? null);
   const statusLine = channel?.statusLine ?? null;
   const statusInput = useMemo(
     () => ({
@@ -831,7 +833,7 @@ export default function ChatSurface({
   const [progressAt, setProgressAt] = useState(() => Date.now());
   useEffect(() => {
     setProgressAt(Date.now());
-  }, [messages.length, liveReply, liveThinking, activity?.startedAt, thinking, statusLine]);
+  }, [messages.length, liveReply, liveThinking, channel?.thinkingLive, activity?.startedAt, thinking, statusLine]);
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
   const liveReplyCapable = liveReplySupported(agentId ?? "");
@@ -922,16 +924,18 @@ export default function ChatSurface({
   const { livePreview, livePreviewStyled } = generating || settling ? previewCandidate : emptyPreview;
   // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
   // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
+  // 原生模式（Kimi、Claude 没有终端界面）：屏上没有思考框可读，思考原文由协议给（channel.thinkingLive），显示法同上
+  const shownThinking = liveThinking || (nativeRuntimeKind(channel?.kind) ? (channel?.thinkingLive ?? null) : null);
   const thinkingPreview =
     livePreview.length === 0 &&
     generating &&
-    liveThinking &&
+    shownThinking &&
     attention !== "confirm" &&
     !trustPrompt &&
     !connIssue &&
     !menuPrompt &&
     !tuiPanel
-      ? liveThinking
+      ? shownThinking
       : "";
   // 实时预览多出一行：贴着底的就当帧跟到底。原先只在消息列表变化时贴底（生成中 700ms 一次的轮询），新出的那一行先落在
   // 底部留白和渐隐里，等下一次轮询整段才往上跳一行，看着像那一行在原位闪一下才出新内容（2026-10-22 用户 Claude 长回复）

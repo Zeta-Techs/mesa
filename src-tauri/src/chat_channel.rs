@@ -49,6 +49,8 @@ const STATUS_LINE_CAP: usize = 240;
 const LIVE_TEXT_CAP: usize = 24_000;
 /// 一段思考摘要最多留多少字节（聊天层只取开头一句当状态）
 const THINKING_CAP: usize = 2_000;
+/// 原生模式思考原文留多少字节（只给正文出来前的预览用，正文以会话文件为准）
+const THINKING_LIVE_CAP: usize = 16_000;
 /// 正在跑的工具的参数里，单个字符串最多留多少字符（认得出命令 / 文件就够，差异正文不要）
 const ACTIVITY_STR_CAP: usize = 1_200;
 /// 审批卡里命令 / 差异 / 参数的长度上限
@@ -140,6 +142,9 @@ pub struct ChannelSnapshot {
     pub activity: Option<ActivityDto>,
     /// 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 的思考增量）；工具开始或正文开始写就清掉
     pub thinking: Option<String>,
+    /// 原生模式（没有终端界面的 Kimi ACP、Claude -p）这一段思考的原文（留最近 THINKING_LIVE_CAP 字节）：终端模式下这段靠读屏
+    /// 照终端原样显示在回复预览的位置，原生模式没有屏可读，改由协议的思考增量给；清掉的时机同 thinking
+    pub thinking_live: Option<String>,
     /// CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉
     pub status_line: Option<String>,
     pub retry: Option<String>,
@@ -282,6 +287,7 @@ impl Tracker {
         self.finished.clear();
         self.snap.activity = None;
         self.snap.thinking = None;
+        self.snap.thinking_live = None;
         self.snap.status_line = None;
         self.snap.retry = None;
         self.prompt_queued = false;
@@ -481,6 +487,7 @@ impl Tracker {
                 }
                 // 想完了、动手了：这一段思考的摘要不再是「现在」
                 self.snap.thinking = None;
+                self.snap.thinking_live = None;
             }
             ChannelEvent::ToolEnd { call_id } => match call_id {
                 Some(id) => {
@@ -495,8 +502,12 @@ impl Tracker {
                 // 开始写回复：工具都跑完了，思考也结束了
                 self.running.clear();
                 self.snap.thinking = None;
+                self.snap.thinking_live = None;
             }
-            ChannelEvent::ThinkingBreak => self.snap.thinking = None,
+            ChannelEvent::ThinkingBreak => {
+                self.snap.thinking = None;
+                self.snap.thinking_live = None;
+            }
             ChannelEvent::ThinkingDelta(text) if !text.is_empty() => {
                 let cur = self.snap.thinking.get_or_insert_with(String::new);
                 if cur.len() < THINKING_CAP {
@@ -506,10 +517,21 @@ impl Tracker {
                         cur.truncate(end);
                     }
                 }
+                // 没有终端界面的原生模式：思考原文另留一份最近的，给聊天层照终端模式的样子显示
+                if matches!(self.snap.kind, "acp" | "claude-native") {
+                    let live = self.snap.thinking_live.get_or_insert_with(String::new);
+                    live.push_str(text);
+                    if live.len() > THINKING_LIVE_CAP {
+                        let cut = live.len() - THINKING_LIVE_CAP;
+                        let start = (cut..live.len()).find(|i| live.is_char_boundary(*i)).unwrap_or(live.len());
+                        live.drain(..start);
+                    }
+                }
             }
             ChannelEvent::TurnEnd { .. } => {
                 self.running.clear();
                 self.snap.thinking = None;
+                self.snap.thinking_live = None;
             }
             _ => {}
         }
@@ -533,6 +555,7 @@ impl Tracker {
                 self.snap.live_text = None;
                 self.snap.activity = None;
                 self.snap.thinking = None;
+                self.snap.thinking_live = None;
                 self.snap.status_line = None;
                 self.snap.retry = None;
                 self.running.clear();
@@ -555,6 +578,7 @@ impl Tracker {
                     self.snap.approval = None;
                     self.snap.live_text = None;
                     self.snap.thinking = None;
+                    self.snap.thinking_live = None;
                     self.snap.activity = None;
                     self.snap.status_line = None;
                     self.snap.retry = None;
@@ -825,11 +849,12 @@ fn slim_input(input: &Value) -> String {
 /// 出站前的快照：会话文本（实时文字、思考摘要）在 Rust 层脱敏再给前端（AGENTS.md 硬约束；工具参数在登记时已脱敏）
 fn outbound(snap: &ChannelSnapshot) -> ChannelSnapshot {
     let mut out = snap.clone();
-    if out.live_text.is_some() || out.thinking.is_some() || out.status_line.is_some() {
+    if out.live_text.is_some() || out.thinking.is_some() || out.thinking_live.is_some() || out.status_line.is_some() {
         let secrets = secrets_for_redact();
         let redact = |t: String| crate::sessions::redact_sensitive_text_with(&t, &secrets);
         out.live_text = out.live_text.map(redact);
         out.thinking = out.thinking.map(redact);
+        out.thinking_live = out.thinking_live.map(redact);
         out.status_line = out.status_line.map(redact);
     }
     out
@@ -4345,6 +4370,27 @@ mod tests {
         assert!(matches!(&evs[0], ChannelEvent::Session { id, .. } if id == "ses_9"));
     }
 
+    /// 原生模式没有终端可读：思考原文由协议的思考增量另留一份（只留最近的），正文一写就清；终端模式的家不留
+    #[test]
+    fn native_runtime_keeps_live_thinking_tail_until_text_starts() {
+        let mut t = Tracker::new("tab-k", "kimi", "acp");
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(ChannelEvent::ThinkingDelta("先看一下".into()), 2);
+        t.apply(ChannelEvent::ThinkingDelta("目录结构。".into()), 3);
+        assert_eq!(t.snap.thinking_live.as_deref(), Some("先看一下目录结构。"));
+        // 很长的思考只留最近的，且不切坏字
+        t.apply(ChannelEvent::ThinkingDelta("想".repeat(THINKING_LIVE_CAP)), 4);
+        let live = t.snap.thinking_live.clone().unwrap();
+        assert!(live.len() <= THINKING_LIVE_CAP && live.ends_with('想'));
+        t.apply(ChannelEvent::TextDelta("好的".into()), 5);
+        assert_eq!(t.snap.thinking_live, None, "正文开始写就让位");
+        let mut c = Tracker::new("tab-c", "codex", "codex");
+        c.apply(ChannelEvent::TurnStart, 1);
+        c.apply(ChannelEvent::ThinkingDelta("**规划**".into()), 2);
+        assert_eq!(c.snap.thinking_live, None, "Codex 的是推理摘要，照旧只当状态");
+        assert!(c.snap.thinking.is_some());
+    }
+
     /// 原生模式：经通道发起 / 停止时要知道当前回合 id，且我们请求的回包要原样交给等着的那一方
     #[test]
     fn codex_native_tracks_turn_id_and_routes_replies_to_waiters() {
@@ -5475,6 +5521,10 @@ mod e2e {
                     thoughts.push(t.clone());
                 }
             }
+        }
+        // 原生模式的思考原文（聊天层照终端模式的思考框显示）：取最长的那一截
+        if let Some(live) = all.iter().filter_map(|s| s.thinking_live.clone()).max_by_key(|t| t.len()) {
+            println!("{agent}: 思考原文 {live:?}");
         }
         Run {
             done,

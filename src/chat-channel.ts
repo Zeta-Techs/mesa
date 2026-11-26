@@ -67,6 +67,8 @@ export interface ChatChannelSnapshot {
   /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
   statusLine?: string | null;
   retry?: string | null;
+  /** 原生模式（没有终端界面的 Kimi、Claude）这一段思考的原文（最近一截，已脱敏）：照终端模式读屏的思考框那样显示；旧版后端没有 */
+  thinkingLive?: string | null;
   /** 这条旁路能不能替聊天层发话（后端按家与版本定：Codex、Qwen、OpenCode 1.x、原生模式的 Kimi / Claude）；旧版后端没有这个字段 */
   canSend?: boolean;
 }
