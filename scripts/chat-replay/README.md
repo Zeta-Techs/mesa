@@ -37,7 +37,7 @@ for d in -300 0 350 1500 4500; do node scripts/chat-replay/surface.mjs /tmp/tl.j
 ## 常用场景
 
 - **会话文件落盘时机**：`--delay` 取 −300 / 0 / 350 / 700 / 1500 / 4500，覆盖「文件先到、信号后到」到「晚过收尾时限」。
-- **不读屏的家**：`timeline.ts --markdown samples/three-files.md /tmp/tl-md.json`，再 `surface.mjs /tmp/tl-md.json … --agent codex`。
+- **不读屏的家**：`timeline.ts --markdown samples/three-files.md /tmp/tl-md.json`，再 `surface.mjs /tmp/tl-md.json … --agent codex`（原生模式再加 `--channel claude-native` / `acp` / `codex` / `qwen` / `opencode`，同步喂实时思考与旁路状态）。
 - **带工具调用的一轮**：假网关起时加 `E2E_PROBE_CMD="sleep 3; echo mesa > mesa_probe.txt"` 与 `E2E_DONE_TEXT=<回复>`，
   抓屏用完全访问档 `full`、`REPLY_PROMPT="TRIGGER_TOOL 跑一下"`；`timeline.ts … --mark TRIGGER_TOOL`，
   `surface.mjs … <回复.md> --tool-flow 0.85,3.6`（工具头画出来、工具跑完的时刻，从 `--snap` 或抓屏里看）。

@@ -10,6 +10,7 @@
  * 用法：node scripts/chat-replay/surface.mjs <序列.json> <最终回复.md> [选项]
  *   --delay <毫秒>      会话文件比回合结束晚多少毫秒落盘（默认 350）；先于结束信号写负数，要连等号：--delay=-300
  *   --agent <id>        传给 ChatSurface 的 agentId（默认取序列里的 agent）
+ *   --channel <kind>    同步喂一份结构化旁路快照（如 claude-native / acp / codex / qwen / opencode），模拟原生模式实时思考与流式通道
  *   --keys "a|b|c"      判定用的几句（默认从最终回复里自动挑：首、中、尾几行的开头）
  *   --tool-flow a,b     这一轮先调工具：a 秒落 tool_use、b 秒落 tool_result，回复正文照 --delay 落（工具说明见 --tool-desc）
  *   --tool-desc <字>    工具调用的说明文字（默认「写一个探针文件」）
@@ -31,6 +32,7 @@ const { values: opt, positionals } = parseArgs({
   options: {
     delay: { type: "string", default: "350" },
     agent: { type: "string" },
+    channel: { type: "string" },
     keys: { type: "string" },
     "tool-flow": { type: "string" },
     "tool-desc": { type: "string", default: "写一个探针文件" },
@@ -153,14 +155,46 @@ const autoKeys = () => {
 };
 const KEYS = opt.keys ? opt.keys.split("|") : autoKeys();
 
-let state = { messages: [...history, user], attention: "working", liveReply: null, liveReplyStyled: null, liveReplySource: null };
+const agentId = opt.agent ?? tl.agent ?? "claude-code";
+const makeChannel = (patch = {}) =>
+  opt.channel
+    ? {
+        tabId: "t1",
+        agent: agentId,
+        kind: opt.channel,
+        connection: "connected",
+        sessionId: "s1",
+        transcriptPath: "/tmp/s1.jsonl",
+        sessionSeq: 1,
+        sessionSource: null,
+        turn: { seq: 1, status: "running", stopReason: null, startedAt: 1, endedAt: null },
+        approval: null,
+        liveText: null,
+        notice: null,
+        activity: null,
+        thinking: null,
+        thinkingLive: null,
+        canSend: true,
+        backgroundStarted: 0,
+        ...patch,
+      }
+    : null;
+let state = {
+  messages: [...history, user],
+  attention: "working",
+  liveReply: null,
+  liveReplyStyled: null,
+  liveReplySource: null,
+  channel: makeChannel({ thinkingLive: "先梳理三个文件各自负责的边界…" }),
+};
 const noop = () => {};
 const props = () => ({
   messages: state.messages, state: "linked", syncState: "watching", loading: false, active: true,
-  agentId: opt.agent ?? tl.agent ?? "claude-code", cwd: "/tmp/w", running: true, canResume: false, attention: state.attention,
+  agentId, cwd: "/tmp/w", running: true, canResume: false, attention: state.attention,
   readOnly: false, readonlySupported: true, skills: [], mcps: [], onSend: async () => null, onAllowWrite: noop,
   onOpenTerminal: noop, onInterrupt: noop, onApprovalKey: noop, hooksEnabled: true, ptyQuiet: false,
   liveReply: state.liveReply, liveReplySource: state.liveReplySource, liveReplyStyled: state.liveReplyStyled,
+  channel: state.channel, nativeOn: opt.channel ? true : null,
   tabId: "t1", sessionId: "s1", hasStatusBar: true,
 });
 const rootEl = w.document.getElementById("root");
@@ -211,9 +245,31 @@ for (const st of opt.snap.split(",").filter(Boolean).map(Number)) {
 // —— 事件：预览逐帧 → 回合结束（attention done，hooks Stop / 程序状态 idle）→ 会话文件落盘 ——
 const events = [];
 for (const f of frames) {
-  events.push([f.t, () => (state = { ...state, liveReply: f.lines, liveReplyStyled: f.styled, liveReplySource: tl.source ?? "screen" })]);
+  events.push([
+    f.t,
+    () =>
+      (state = {
+        ...state,
+        liveReply: f.lines,
+        liveReplyStyled: f.styled,
+        liveReplySource: tl.source ?? "screen",
+        channel: makeChannel({ liveText: f.lines.join("\n"), thinkingLive: null }),
+      }),
+  ]);
 }
-events.push([endAt, () => (state = { ...state, attention: "done" })]);
+events.push([
+  endAt,
+  () =>
+    (state = {
+      ...state,
+      attention: "done",
+      channel: makeChannel({
+        turn: { seq: 1, status: "completed", stopReason: "end_turn", startedAt: 1, endedAt: 2 },
+        liveText: null,
+        thinkingLive: null,
+      }),
+    }),
+]);
 if (opt["tool-flow"]) {
   const [tUse, tRes] = opt["tool-flow"].split(",").map(Number);
   const use = { role: "assistant", blocks: [{ kind: "tool_use", text: JSON.stringify({ command: "echo mesa > mesa_probe.txt", description: opt["tool-desc"] }), toolName: "Bash", callId: "b1" }], timestamp: ts(11), usage: null, id: "a-11" };
