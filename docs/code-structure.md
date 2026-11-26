@@ -1061,6 +1061,7 @@ stats-trend.ts             # 用量页「每日用量」折线的自适应日期
                              #   布局：heatCellPx 9–28 夹紧、整数倍屏按 1/dpr 分档（2026-10-16 单模，rail/wide 三档判定已撤销）；
                              #   口径铁律：着色、活跃、streak 恒只算非 internal（official 计入），着色量=四类合计（tests/usage-activity.test.ts）
   gateway-balance.ts         # 网关余额卡纯逻辑：主机命中 / 站点币种金额 / 已用百分比 /
+                             #   聊天底栏钱包浮层明细 walletPopoverDetail（站点域名、累计已用、密钥额度、到期）+ walletUpdatedAgo /
                              #   大数字拆币种符号 splitBalanceAmount（整串 2xl 头重脚轻、tokens 更长）/
                              #   同站账户合并 groupWalletAccounts（**分组键 = origin + account，不能只按
                              #   origin**：同站两个账户必须分开；认不出账户的行并进本站第一组不丢行）+

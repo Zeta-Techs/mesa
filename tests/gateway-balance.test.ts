@@ -22,6 +22,8 @@ import {
   walletUrl,
   walletUsedPercent,
   WALLET_UNLIMITED_BAR_CAP,
+  walletPopoverDetail,
+  walletUpdatedAgo,
 } from "../src/gateway-balance.ts";
 
 function gw(url: string) {
@@ -309,4 +311,44 @@ test("密钥额度：有 token 数据用它，billing 兜底用提升值，钱�
     ),
     null,
   );
+});
+
+test("钱包浮层数据时间：刚刚 / N 分钟前 / 今天时刻 / 跨天日期", () => {
+  const now = new Date(2026, 10, 26, 15, 0, 0).getTime();
+  assert.equal(walletUpdatedAgo(now - 20_000, now), "刚刚更新");
+  assert.equal(walletUpdatedAgo(now - 12 * 60_000, now), "12 分钟前更新");
+  assert.equal(walletUpdatedAgo(new Date(2026, 10, 26, 9, 5).getTime(), now), "09:05 更新");
+  assert.equal(walletUpdatedAgo(new Date(2026, 10, 25, 14, 5).getTime(), now), "11-25 14:05 更新");
+  assert.equal(walletUpdatedAgo(0, now), null);
+});
+
+test("钱包浮层明细：站点标签、累计已用、密钥额度与到期", () => {
+  const now = new Date(2026, 10, 26, 15, 0, 0).getTime();
+  const base = {
+    gatewayId: "g", gatewayName: "Codex", origin: "https://api.example.com/", account: "me", ok: true,
+    source: "wallet", unlimited: false, currency: "CNY", remaining: 4917.31, used: 1082.69, total: 6000,
+    tokenUnlimited: false, tokenRemaining: 150, tokenUsed: 50, tokenTotal: 200, tokenName: "codex-key",
+    expiresAt: null as number | null, queriedAt: now - 5 * 60_000,
+  };
+  const d = walletPopoverDetail(base, now);
+  assert.equal(d.host, "api.example.com");
+  assert.equal(d.spentLine, "累计已用 ¥1,082.69");
+  assert.deepEqual(d.key, { amount: "剩余 ¥150.00 / ¥200.00", usedPct: 25, tone: "ok", title: "codex-key" });
+  assert.equal(d.expiry, null);
+  assert.equal(d.updated, "5 分钟前更新");
+  // 不限额度的密钥：写已用，不画条
+  const open = walletPopoverDetail({ ...base, tokenUnlimited: true, tokenTotal: null, tokenRemaining: null }, now);
+  assert.equal(open.key?.usedPct, null);
+  assert.match(open.key?.amount ?? "", /^不限 · 已用 /);
+  // 主数字本身就是密钥额度（source=token）：不再重复一行密钥额度、也没有累计已用
+  const token = walletPopoverDetail({ ...base, source: "token" }, now);
+  assert.equal(token.key, null);
+  assert.equal(token.spentLine, null);
+  // 隐藏额度：金额全打码
+  assert.equal(walletPopoverDetail(base, now, true).spentLine, "累计已用 ¥•••");
+  // 3 天后到期 / 已过期
+  assert.equal(walletPopoverDetail({ ...base, expiresAt: now + 2.5 * 86_400_000 }, now).expiry, "密钥 3 天后到期");
+  assert.equal(walletPopoverDetail({ ...base, expiresAt: now - 1 }, now).expiry, "密钥已过期");
+  // 网关名就是域名时不重复标签
+  assert.equal(walletPopoverDetail({ ...base, gatewayName: "api.example.com" }, now).host, null);
 });

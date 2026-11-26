@@ -23,6 +23,9 @@ import {
   formatBalanceAmount,
   formatBalanceAmountMasked,
   walletAmountCaption,
+  walletKeyAmountLine,
+  walletPopoverDetail,
+  walletUpdatedAgo,
 } from "../gateway-balance";
 import AgentIcon from "./AgentIcon";
 import VendorIcon from "./VendorIcon";
@@ -303,6 +306,9 @@ export default function ChatQuotaRing({
           : "不限"
     : "";
 
+  const walletDetail = !isPlan ? walletPopoverDetail(view.row, now, hideWallet) : null;
+  const updatedText = walletUpdatedAgo(view.row.queriedAt, now);
+
   const ariaLabel = isPlan
     ? `${planProviderLabel(view.row.provider)} ${planWindowLabel(view.primary.window)}已用 ${view.usedPct}%`
     : `${view.row.gatewayName} 钱包余额 ${walletLabel}`;
@@ -385,6 +391,15 @@ export default function ChatQuotaRing({
                       {levelText}
                     </span>
                   )}
+                  {/* 钱包写站点域名：网关名常和 Agent 同名（如「Codex」），读不出是哪个站 */}
+                  {walletDetail?.host && (
+                    <span
+                      className="min-w-0 truncate rounded-full bg-inset px-1.5 py-px text-micro text-l3"
+                      title={view.kind === "wallet" ? view.row.origin : undefined}
+                    >
+                      {walletDetail.host}
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -448,27 +463,71 @@ export default function ChatQuotaRing({
                   )}
                 </div>
               ) : (
-                <div className="mt-2.5">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-l3">{walletAmountCaption(view.row.source)}</span>
-                    <span className="text-base font-semibold tabular-nums text-l1">
-                      {walletLabel}
-                    </span>
-                  </div>
-                  {view.ringUsedPct != null && (
-                    <>
-                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-l1/10">
+                <div className="mt-2.5 space-y-3">
+                  {/* 主行：余额（或这把密钥的额度）；余额低才着色，平时不上色 */}
+                  <div>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate text-l2">{walletAmountCaption(view.row.source)}</span>
+                      <span
+                        className={`shrink-0 text-base font-semibold tabular-nums ${
+                          view.tone === "ok" ? "text-l1" : textToneClass(view.tone)
+                        }`}
+                      >
+                        {walletLabel}
+                      </span>
+                    </div>
+                    {view.ringUsedPct != null && (
+                      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-l1/10">
                         <div
                           className={`h-full rounded-full ${barToneClass(view.tone)}`}
                           style={{ width: `${view.ringUsedPct}%` }}
                         />
                       </div>
-                      <div className="mt-1 text-micro tabular-nums text-l4">
-                        已用 {view.ringUsedPct}%
+                    )}
+                    {walletDetail?.spentLine ? (
+                      <div className="mt-1 text-micro tabular-nums text-l4">{walletDetail.spentLine}</div>
+                    ) : (
+                      view.ringUsedPct != null && (
+                        <div className="mt-1 text-micro tabular-nums text-l4">
+                          已用 {walletKeyAmountLine(false, view.row.used, view.row.total, view.row.currency, hideWallet) || `${view.ringUsedPct}%`}
+                        </div>
+                      )
+                    )}
+                  </div>
+                  {/* 账户钱包下再列这把推理密钥自己的额度（同一钱包可挂多把密钥，限额的会先用完） */}
+                  {walletDetail?.key && (
+                    <div title={walletDetail.key.title ? `令牌：${walletDetail.key.title}` : undefined}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-l2">密钥额度</span>
+                        <span
+                          className={`shrink-0 text-micro tabular-nums ${
+                            walletDetail.key.tone === "ok" ? "text-l3" : textToneClass(walletDetail.key.tone)
+                          }`}
+                        >
+                          {walletDetail.key.amount}
+                        </span>
                       </div>
-                    </>
+                      {walletDetail.key.usedPct != null && (
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-l1/10">
+                          <div
+                            className={`h-full rounded-full ${barToneClass(walletDetail.key.tone)}`}
+                            style={{ width: `${Math.max(walletDetail.key.usedPct > 0 ? 2 : 0, walletDetail.key.usedPct)}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {walletDetail?.expiry && (
+                    <div className="rounded-md bg-inset px-2 py-1 text-micro text-caution-text">
+                      {walletDetail.expiry}，到站点续期
+                    </div>
                   )}
                 </div>
+              )}
+
+              {/* 数据时间（两种浮层同一处）：点右上角刷新可重查 */}
+              {updatedText && (
+                <div className="mt-3 border-t border-hairline pt-2 text-micro text-l4">{updatedText}</div>
               )}
             </div>
           </div>,

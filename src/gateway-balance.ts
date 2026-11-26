@@ -367,3 +367,90 @@ export function walletMissingHint(hasWalletToken: boolean): string {
     ? "令牌查不到钱包，去连接页核对"
     : "账户钱包要系统访问令牌，去连接页填";
 }
+
+// ===== 聊天底栏钱包浮层（2026-11-26 用户：浮层只重复底栏那个数，照订阅浮层的行式补明细） =====
+
+/** 数据时间：「刚刚更新」/「12 分钟前更新」/ 今天「14:05 更新」/ 跨天「11-25 14:05 更新」 */
+export function walletUpdatedAgo(queriedAt: number, now: number): string | null {
+  if (!Number.isFinite(queriedAt) || queriedAt <= 0) return null;
+  const diff = now - queriedAt;
+  if (diff < 60_000) return "刚刚更新";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前更新`;
+  const d = new Date(queriedAt);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return new Date(now).toDateString() === d.toDateString()
+    ? `${clock} 更新`
+    : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${clock} 更新`;
+}
+
+export interface WalletPopoverDetail {
+  /** 顶栏站点标签；与网关名相同或取不到时为 null */
+  host: string | null;
+  /** 账户钱包的累计已用（「累计已用 ¥X」）；不是钱包来源或没数时 null */
+  spentLine: string | null;
+  /** 这把推理密钥自己的额度行；主数字本身就是密钥额度（source=token）或没数据时 null */
+  key: {
+    /** 右侧金额：限额「剩余 ¥a / ¥b」，不限「不限 · 已用 ¥x」 */
+    amount: string;
+    /** 已用比例（0–100），不限额度为 null（不画条） */
+    usedPct: number | null;
+    tone: "ok" | "warn" | "danger";
+    /** 悬停：站点上的令牌名 */
+    title: string | null;
+  } | null;
+  /** 密钥 14 天内到期（含已过期）时的一句提醒 */
+  expiry: string | null;
+  updated: string | null;
+}
+
+function spendLevel(pct: number): "ok" | "warn" | "danger" {
+  if (pct >= 90) return "danger";
+  if (pct >= 80) return "warn";
+  return "ok";
+}
+
+export function walletPopoverDetail(
+  row: WalletMemberRow & {
+    currency: string;
+    expiresAt?: number | null;
+    tokenName?: string | null;
+    queriedAt: number;
+  },
+  now: number,
+  hide = false,
+): WalletPopoverDetail {
+  const money = (v: number) => (hide ? formatBalanceAmountMasked(row.currency) : formatBalanceAmount(v, row.currency));
+  const host = endpointHost(row.origin) || null;
+  const isWallet = row.source === "wallet";
+  const spentLine =
+    isWallet && row.used != null && Number.isFinite(row.used) ? `累计已用 ${money(row.used)}` : null;
+  let key: WalletPopoverDetail["key"] = null;
+  if (isWallet) {
+    const q = walletTokenQuota(row);
+    if (q?.unlimited) {
+      key = { amount: walletUnlimitedLine(q.used, row.currency, hide), usedPct: null, tone: "ok", title: row.tokenName ?? null };
+    } else if (q && q.total != null && q.used != null) {
+      const pct = q.pct ?? 0;
+      key = {
+        amount: `剩余 ${money(Math.max(0, q.total - q.used))} / ${money(q.total)}`,
+        usedPct: Math.round(pct),
+        tone: spendLevel(pct),
+        title: row.tokenName ?? null,
+      };
+    }
+  }
+  const expiry =
+    row.expiresAt != null && walletExpirySoon(row.expiresAt, now)
+      ? row.expiresAt <= now
+        ? "密钥已过期"
+        : `密钥 ${Math.max(1, Math.ceil((row.expiresAt - now) / 86_400_000))} 天后到期`
+      : null;
+  return {
+    host: host && host !== row.gatewayName ? host : null,
+    spentLine,
+    key,
+    expiry,
+    updated: walletUpdatedAgo(row.queriedAt, now),
+  };
+}
