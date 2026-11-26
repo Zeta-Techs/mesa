@@ -168,9 +168,9 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 
 ### 四、第 3 期：Claude（只对 API 密钥 / 中转网关连接）
 
-1. `-p` 双向 stream-json + `--permission-prompt-tool stdio`：审批、提问表单、计划确认都在聊天里接。
-2. `--include-partial-messages` 拿边写边显示。
-3. 官方订阅连接不出开关，写明原因（§1 条款）。
+1. ✓（2026-11-26，分支 feat/chat-native-2）`chat_channel/claude_native.rs`：桥里起 `claude -p` 双向 stream-json + `--permission-prompt-tool stdio`，can_use_tool 出卡、提问表单（`src/native-ask.ts` 照终端同一种表单画、答案经 updatedInput.answers 交回）、计划确认都在聊天里接；「本会话都允许」把建议规则落点改成 session，不写设置文件。e2e_channel E2E_NATIVE=1（Claude 2.1.326 + 假网关）审批、提问表单（答案原样到了模型）、停止、`-r` 接回都过。
+2. ✓ `--include-partial-messages` 拿边写边显示（text_delta / thinking_delta）。
+3. ✓ 官方订阅连接不出开关（`nativeModeAllowed`），后端 pty.rs 再挡一道。
 4. 列清原生模式下用不了的终端面板与命令；`/context`、`/compact` 照常。
 5. 金丝雀盯隐藏参数与 `can_use_tool` 的形状。
 

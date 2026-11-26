@@ -103,6 +103,7 @@ import {
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
   canSendViaChannel,
+  nativeRuntimeKind,
   wantsChannelSend,
   channelAttention,
   channelCanAnswer,
@@ -6878,7 +6879,7 @@ export const TerminalView = memo(function TerminalView({
   /** 这一句该交给通道：纯协议运行时（原生模式的 Kimi，没有终端界面）连斜杠命令都只能走通道；
       Codex 原生模式只把说的话交给通道（斜杠 / ! 命令是终端自己的功能） */
   function channelOwnsSend(text: string): boolean {
-    if (channelRef.current?.kind === "acp" || launchedNativeRef.current) return true;
+    if (nativeRuntimeKind(channelRef.current?.kind) || launchedNativeRef.current) return true;
     return wantsChannelSend(nativeModeRef.current, text);
   }
 
@@ -6893,7 +6894,7 @@ export const TerminalView = memo(function TerminalView({
         await new Promise((r) => setTimeout(r, 150));
       }
       if (!mountedRef.current) return { error: null };
-      if (channelRef.current?.kind === "acp" || launchedNativeRef.current) {
+      if (nativeRuntimeKind(channelRef.current?.kind) || launchedNativeRef.current) {
         return { error: "原生模式还没连上，稍等再发；一直不行就关掉原生模式" };
       }
     }

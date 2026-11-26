@@ -27,10 +27,11 @@ const ACCEPT_TIMEOUT: Duration = Duration::from_secs(20);
 const CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) struct AcpPrep {
-    listener: TcpListener,
-    token: String,
-    cwd: String,
-    resume: Option<String>,
+    pub(super) listener: TcpListener,
+    pub(super) token: String,
+    pub(super) cwd: String,
+    /// 接回的会话 id（Claude 原生模式另用它记启动参数里定下的会话 id）
+    pub(super) resume: Option<String>,
     /// 开会话后切到的 ACP 模式（按 Mesa 的权限档换算；None = 默认）
     mode: Option<&'static str>,
     /// 「只讨论」档：计划模式里要执行 / 改文件的审批直接拒
@@ -54,6 +55,13 @@ pub(crate) struct AcpState {
     discuss: bool,
     /// 会话文件找到了没有（新会话第一轮之后才落盘）
     transcript: Option<String>,
+}
+
+impl AcpPrep {
+    /// 只用到监听口与令牌的桥（Claude 原生模式）：`resume` 记启动参数里定下的会话 id
+    pub(super) fn bridge_only(listener: TcpListener, token: String, cwd: &str, resume: Option<String>) -> Self {
+        Self { listener, token, cwd: cwd.to_string(), resume, mode: None, discuss: false, expect_model: None }
+    }
 }
 
 impl AcpState {
@@ -145,14 +153,14 @@ pub(crate) fn prepare(
     Some((helper, bridge_args, env, prepared))
 }
 
-fn write_line(stream: &Mutex<TcpStream>, msg: &Value) -> Result<(), String> {
+pub(super) fn write_line(stream: &Mutex<TcpStream>, msg: &Value) -> Result<(), String> {
     let mut s = stream.lock().map_err(|_| "实时通道已关闭")?;
     let mut line = msg.to_string();
     line.push('\n');
     s.write_all(line.as_bytes()).map_err(|e| format!("发不出去：{e}"))
 }
 
-fn writer_of(ch: &Channel) -> Result<Arc<Mutex<TcpStream>>, String> {
+pub(super) fn writer_of(ch: &Channel) -> Result<Arc<Mutex<TcpStream>>, String> {
     match ch.replier.lock().map_err(|_| "实时通道已关闭")?.as_ref() {
         Some(Replier::Acp { stream }) => Ok(stream.clone()),
         _ => Err("实时通道已断开".into()),
@@ -222,7 +230,7 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     super::disconnect(&ch);
 }
 
-fn accept(ch: &Channel, listener: &TcpListener, token: &str) -> Option<TcpStream> {
+pub(super) fn accept(ch: &Channel, listener: &TcpListener, token: &str) -> Option<TcpStream> {
     listener.set_nonblocking(true).ok()?;
     let deadline = Instant::now() + ACCEPT_TIMEOUT;
     while Instant::now() < deadline && !ch.stop.load(Ordering::Acquire) {

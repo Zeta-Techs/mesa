@@ -734,6 +734,7 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # > 会话里还没回结果的调用（已有那一行时 M▁ 直接领衔该行，状态栏不重复）/ 计划进行中一项（activeForm）/ 刚落盘的思考
                              # > CLI 自己报的现状 statusLine（程序状态旁路，只等于「在等 / 在想」的不用）> 「思考中」（一发出就写）；
                              # settleStatus 状态字最短停留 800ms、statusCaretMotion / activityCaretMotion 五态光标编舞、chatStatusParts 结构化语义片段；
+  native-ask.ts              # 原生模式 Claude 的提问表单（2026-11-26，tests/native-ask.test.ts）：AskUserQuestion 题目结构 → 终端模式同一种 ClaudeAsk 表单，表单操作 → 已选 / 最终答案（单题单选选了就交，多题多选到确认页交）
   chat-fidelity.ts           # 聊天层对十家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）/
                              # baselineKey（OpenCode 2.x 比 opencode2 那份基线）；nativeModeAvailable = 能开「原生模式」的家（2026-11-26 首批 Codex，
@@ -1522,6 +1523,7 @@ src-tauri/src/
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
   stdio_bridge.rs            # 原生模式的 stdio 桥（2026-11-26，docs/design-chat-native-mode.md）：mesa_helper stdio-bridge -- <CLI>，连回 Mesa 的 127.0.0.1 一次性口（令牌经 MESA_BRIDGE_TOKEN），接 CLI 标准输入输出，标准错误打到终端页；不监听、不读密钥
+  chat_channel/claude_native.rs # 原生模式的 Claude Code（2026-11-26，只对 API 密钥 / 中转网关连接）：prepare（桥里起 claude -p 双向 stream-json）、run（读 system / stream_event / assistant / user / control_request / result）、map_message / result_events / permission_reply / session_only（纯函数，单测）、send / cancel（interrupt）/ reply（带提问表单答案）
   chat_channel/acp.rs        # 原生模式的 ACP 客户端（2026-11-26，首家 Kimi）：prepare（PTY 改起桥）、run（等桥连回、initialize / session/new|load / set_mode / 模型核对）、map_update / approval_event / pick_option（纯函数，单测）、send / cancel / reply
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
                              #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode 1.x --port + 口令、

@@ -27,7 +27,7 @@ import {
 import type { TerminalProgress } from "../terminal-notify";
 import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
 import { currentVerifiedVersion } from "../cli-verified";
-import { chatFidelity, nativeModeAvailable, nativeRuntime, tierLabel, versionTrust } from "../chat-fidelity";
+import { chatFidelity, nativeModeAllowed, nativeModeAvailable, nativeRuntime, tierLabel, versionTrust } from "../chat-fidelity";
 import {
   MISMATCH_EVENT,
   MISMATCH_TEMPLATE,
@@ -1159,9 +1159,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   /** TerminalView 镜像当前对话数据；引用没变就不更新 */
   /** 聊天层「等你决定」卡上点了按钮：经这家 CLI 官方的回复通道送回（Qwen / OpenCode / Codex）；
    *  终端里已经答过的，CLI 会丢掉这条，卡片随「已处理」事件消失 */
-  async function replyChannel(tabId: string, requestId: string, decision: ChannelReplyDecision) {
+  /** 这个标签现在这家、这条连接能不能开原生模式（Claude 的官方订阅账号不能，chat-fidelity.ts nativeModeAllowed） */
+  function nativeAllowedFor(t: Tab): boolean {
+    const agent = statuses[t.id]?.agentId ?? t.initialAgentId;
+    const pid = statuses[t.id]?.profileId ?? t.initialProfileId;
+    return nativeModeAllowed(agent, profiles.find((p) => p.id === pid)?.accountType ?? null);
+  }
+
+  async function replyChannel(
+    tabId: string,
+    requestId: string,
+    decision: ChannelReplyDecision,
+    answers?: Record<string, string>,
+  ) {
     try {
-      await invoke("chat_channel_reply", { tabId, requestId, decision });
+      await invoke("chat_channel_reply", { tabId, requestId, decision, answers: answers ?? null });
     } catch (e) {
       toast(`没能送到：${String(e)}，可以在终端里回答`, "error");
     }
@@ -4009,7 +4021,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 }
                 effortOverride={t.effort ?? undefined}
                 permissionMode={writableForks[t.id] ? null : (t.permissionMode ?? null)}
-                nativeMode={!!t.nativeMode && nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId)}
+                nativeMode={!!t.nativeMode && nativeAllowedFor(t)}
                 submitCsiU={
                   agents.find(
                     (a) => a.id === (statuses[t.id]?.agentId ?? t.initialAgentId),
@@ -4284,12 +4296,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           appSettings?.hooksAttention?.[agentKey ?? ""] || sessionByTab[t.id]?.channel,
                         )}
                         channel={sessionByTab[t.id]?.channel ?? null}
-                        nativeOn={
-                          nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId) ? !!t.nativeMode : null
-                        }
+                        nativeOn={nativeAllowedFor(t) ? !!t.nativeMode : null}
                         onNativeToggle={(on) => void setTabNativeMode(t.id, on)}
-                        onChannelReply={(requestId, decision) => {
-                          void replyChannel(t.id, requestId, decision);
+                        onChannelReply={(requestId, decision, answers) => {
+                          void replyChannel(t.id, requestId, decision, answers);
                         }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}

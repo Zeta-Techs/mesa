@@ -1277,6 +1277,7 @@ fn pty_spawn_sync(
         channel_env_full.push((crate::image_gen_chat::TAB_ENV.to_string(), tab.clone()));
     }
     // 原生模式：PTY 里起 mesa_helper 的 stdio 桥（它再起协议模式的 CLI），首条消息不进参数、由聊天层经通道发
+    // Claude 原生模式只对 API 密钥 / 中转网关连接：官方订阅账号这里就挡掉、照旧终端模式（设计稿 §1 条款）
     let native_plan = native
         .then(|| {
             crate::chat_channel::prepare_native(
@@ -1287,6 +1288,16 @@ fn pty_spawn_sync(
                 &command_args,
                 resume_session_id.as_deref(),
             )
+            .or_else(|| {
+                crate::chat_channel::prepare_claude_native(
+                    &agent_id,
+                    link_claim_id.as_deref(),
+                    &expand_tilde(&cwd),
+                    &binary_path,
+                    &command_args,
+                    profile.account_type != profiles::AccountType::Official,
+                )
+            })
         })
         .flatten();
     let mut program = binary_path.clone();
