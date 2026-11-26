@@ -87,6 +87,7 @@ import {
   liveActivityLine,
   orderLikeSidebar,
   orderByNeed,
+  splitFilteredCards,
   cardNeedLevel,
   scheduleOverview,
   type ScheduleOverviewRow,
@@ -1159,11 +1160,11 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   const shownCards = orderByNeed(orderLikeSidebarSafe(filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS)));
   // 安静的项目收成一行（2026-10-27 精修）：「有活的」里不出现的、以及其余筛选下什么都没在动的
   //（只有没开始的步骤、落后基准的分支这类事实，2026-11-05 起也收进这一行），分组只给有事可看的
-  const groupCards = cardFilter === "active" ? shownCards : shownCards.filter((card) => card.tasks.length > 0 && cardNeedLevel(card) > 0);
-  const quietCards = (cardFilter === "active"
+  const filteredSplit = splitFilteredCards(shownCards, activeCardPaths, IS_WINDOWS);
+  const groupCards = cardFilter === "active" ? shownCards : filteredSplit.group;
+  const quietCards = cardFilter === "active"
     ? orderLikeSidebarSafe(cards.filter((card) => card.registered && !activeCardPaths.some((p) => samePath(p, card.path, IS_WINDOWS))))
-    : shownCards.filter((card) => card.tasks.length === 0 || cardNeedLevel(card) === 0)
-  ).filter((card) => card.registered);
+    : filteredSplit.quiet;
   /** 页头「项目助手」能问的项目：登记过的，要你出手多的在前（与下面分组同序），再接安静的 */
   const assistProjects = [...groupCards, ...quietCards].filter(
     (card, i, list) => card.registered && list.findIndex((c) => samePath(c.path, card.path, IS_WINDOWS)) === i,

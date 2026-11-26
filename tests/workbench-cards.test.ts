@@ -10,6 +10,7 @@ import {
   scheduleTimeline,
   scheduleTimelineGroups,
   filterCards,
+  splitFilteredCards,
   liveActivityLine,
   turnElapsedMs,
   type CardRunInput,
@@ -247,6 +248,19 @@ test("filterCards：有活的按传入顺序，其余筛选把有活的排前", 
   assert.deepEqual(filterCards(cards, ["/c", "/b"], "active").map((c) => c.path), ["/c", "/b"]);
   assert.deepEqual(filterCards(cards, ["/c"], "research").map((c) => c.path), ["/c", "/a"]);
   assert.deepEqual(filterCards(cards, ["/b"], "all").map((c) => c.path), ["/b", "/a", "/c"]);
+});
+
+test("splitFilteredCards：进行中的项目在其余筛选里也画卡，安静行只收登记过的", () => {
+  const card = (path: string, registered = true) =>
+    buildProjectCard({ ...base, project: { path, name: path, registered, workMode: "research" } });
+  // /a 进行中但此刻没有要出手的任务（最近在做 / 开着研讨）；/b 安静；/c 没登记也不在进行中
+  const shown = [card("/a"), card("/b"), card("/c", false)];
+  const { group, quiet } = splitFilteredCards(shown, ["/a"]);
+  assert.deepEqual(group.map((c) => c.path), ["/a"]);
+  assert.deepEqual(quiet.map((c) => c.path), ["/b"]);
+  // 没登记但在进行中的照样画卡，不会两头都不进
+  const loose = splitFilteredCards([card("/x", false)], ["/x"]);
+  assert.deepEqual(loose.group.map((c) => c.path), ["/x"]);
 });
 
 test("liveActivityLine：工具 > 思考 > CLI 状态；没在跑不说", () => {
