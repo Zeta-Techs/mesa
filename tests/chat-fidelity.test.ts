@@ -80,8 +80,9 @@ test("联网前移的核对版本与随包的取较新，一边读不出取另�
   assert.equal(newerVersion(null, null), null);
 });
 
-test("原生模式首批只点亮 Codex（2026-11-26 拍板：Codex → Kimi → Claude 逐家点亮，agy 先不做）", () => {
+test("原生模式逐家点亮：Codex、Kimi 已开（2026-11-26 拍板：Codex → Kimi → Claude，agy 先不做）", () => {
   assert.equal(nativeModeAvailable("codex"), true);
-  for (const id of ["claude-code", "kimi", "agy", "opencode", "qwen", "gemini", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+  assert.equal(nativeModeAvailable("kimi"), true);
+  for (const id of ["claude-code", "agy", "opencode", "qwen", "gemini", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
   assert.equal(nativeModeAvailable(null), false);
 });

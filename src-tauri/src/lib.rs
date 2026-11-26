@@ -73,11 +73,18 @@ pub fn helper_launch(args: &[String]) -> i32 {
     agents::helper_launch_cli(args)
 }
 
+/// helper 原生模式的 stdio 桥（`mesa_helper stdio-bridge -- <CLI> <参数…>`）：PTY 里起它，它连回 Mesa、把协议模式 CLI 的
+/// 标准输入输出接过去（stdio_bridge.rs，docs/design-chat-native-mode.md）
+pub fn helper_stdio_bridge(args: &[String]) -> i32 {
+    stdio_bridge::helper_stdio_bridge_cli(args)
+}
+
 /// helper 项目助手专属只读/提议 MCP Server（`mesa_helper assistant-mcp --project <path> [--proposals <file>]`）
 pub fn helper_assistant_mcp(args: &[String]) -> i32 {
     assistant_mcp::helper_mcp_cli(args)
 }
 mod codex_continuity;
+mod stdio_bridge;
 mod image_gen;
 mod image_gen_chat;
 mod peek;

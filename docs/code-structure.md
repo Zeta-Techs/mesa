@@ -1521,6 +1521,8 @@ src-tauri/src/
                              #   一个请求可分段写（段间 2ms，回执等待随段数加长）
   context_breakdown.rs       # 上下文分类明细（2026-10-20）：用标签同一套启动参数在后台跑 CLI 自带的 /context（Claude Code `-p --resume --no-session-persistence`，
                              # 关 hooks；Qwen `-p --resume`），解析分类表；不调用模型、不改会话文件。只有这两家能无头跑，其余家前端只显示总量
+  stdio_bridge.rs            # 原生模式的 stdio 桥（2026-11-26，docs/design-chat-native-mode.md）：mesa_helper stdio-bridge -- <CLI>，连回 Mesa 的 127.0.0.1 一次性口（令牌经 MESA_BRIDGE_TOKEN），接 CLI 标准输入输出，标准错误打到终端页；不监听、不读密钥
+  chat_channel/acp.rs        # 原生模式的 ACP 客户端（2026-11-26，首家 Kimi）：prepare（PTY 改起桥）、run（等桥连回、initialize / session/new|load / set_mode / 模型核对）、map_update / approval_event / pick_option（纯函数，单测）、send / cancel / reply
   chat_channel.rs            # 聊天层结构化旁路（2026-10-20，docs/design-chat-structured-channels.md）：pty_spawn 起进程前
                              #   prepare 按家改参数（Claude / CodeBuddy --settings hooks、Qwen Dual Output、OpenCode 1.x --port + 口令、
                              #   OpenCode 2.x 自起私有 serve（start_opencode2_server，stdin 租约）+ TUI --server、

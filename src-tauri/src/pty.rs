@@ -632,6 +632,8 @@ pub struct SpawnResult {
     pub resume_unwritten: bool,
     /// 官方账号启动注入的本机出网代理没在监听（`主机:端口`）：前端提示「代理没开」，CLI 报网络错误时不至于摸不着头脑
     pub proxy_down: Option<String>,
+    /// 这次按原生模式的纯协议运行时起了（PTY 里是 stdio 桥）；要了原生但这家 / 这个版本不支持、找不到桥时为 false（照旧终端模式）
+    pub native_runtime: bool,
 }
 
 /// 支持 --session-id <uuid> 的 agent（AgentSpec.fixed_session_id；matrix：claude-code、qwen、codebuddy），
@@ -944,6 +946,7 @@ pub async fn pty_spawn(
     cols: Option<u16>,
     rows: Option<u16>,
     fork_session_id: Option<String>,
+    native: Option<bool>,
 ) -> Result<SpawnResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _turn = spawn_turn();
@@ -970,6 +973,7 @@ pub async fn pty_spawn(
             cols,
             rows,
             fork_session_id,
+            native.unwrap_or(false),
         )
     })
     .await
@@ -1015,6 +1019,9 @@ fn pty_spawn_sync(
     // 原生分叉（2026-10-31）：把这段会话整段复制成新会话接着聊（各家 CLI 自己的 fork），与恢复互斥；
     // 新会话的认领同全新会话（能定 ID 的当场锁定，其余按标签认领），不注入初始 prompt
     fork_session_id: Option<String>,
+    // 原生模式（docs/design-chat-native-mode.md）：要走纯协议运行时的家（chat_channel::prepare_native，Kimi 起）
+    // PTY 里改起 stdio 桥、聊天层直接说协议；不支持的家（Codex 是双客户端，不用这条）照旧
+    native: bool,
 ) -> Result<SpawnResult, String> {
     // 恢复出的标签指着已经没了的工作副本（保存归档后收起、人删了）：先放回来再起（workspaces::doctor）
     crate::workspaces::doctor::heal_missing_worktree(&cwd)?;
@@ -1242,6 +1249,7 @@ fn pty_spawn_sync(
                 adopted: true,
                 resume_unwritten: unwritten_session.is_some(),
                 proxy_down: None,
+                native_runtime: false,
             });
         }
         crate::runs::claim_interactive_start(id, false)?;
@@ -1268,22 +1276,49 @@ fn pty_spawn_sync(
     if let Some(tab) = &image_tab {
         channel_env_full.push((crate::image_gen_chat::TAB_ENV.to_string(), tab.clone()));
     }
-    let (channel_env, channel) = crate::chat_channel::prepare(
-        &agent_id,
-        link_claim_id.as_deref(),
-        &expand_tilde(&cwd),
-        &binary_path,
-        &mut command_args,
-        &channel_env_full,
-        &plan.env_remove,
-    );
-    if resume_session_id.is_none() {
-        // 初始 prompt 放最后：位置参数形态（claude/codex）必须是命令行最后一个参数
-        for arg in &plan.prompt_args {
-            command_args.push(arg.clone());
+    // 原生模式：PTY 里起 mesa_helper 的 stdio 桥（它再起协议模式的 CLI），首条消息不进参数、由聊天层经通道发
+    let native_plan = native
+        .then(|| {
+            crate::chat_channel::prepare_native(
+                &agent_id,
+                link_claim_id.as_deref(),
+                &expand_tilde(&cwd),
+                &binary_path,
+                &command_args,
+                resume_session_id.as_deref(),
+            )
+        })
+        .flatten();
+    let mut program = binary_path.clone();
+    let mut prompt_dropped = plan.prompt_dropped;
+    let native_runtime = native_plan.is_some();
+    let (channel_env, channel) = match native_plan {
+        Some((helper, bridge_args, env, prepared)) => {
+            program = helper;
+            command_args = bridge_args;
+            prompt_dropped = true;
+            (env, Some(prepared))
         }
-    }
-    let mut cmd = crate::process::pty_command(&binary_path, &command_args);
+        None => {
+            let (env, prepared) = crate::chat_channel::prepare(
+                &agent_id,
+                link_claim_id.as_deref(),
+                &expand_tilde(&cwd),
+                &binary_path,
+                &mut command_args,
+                &channel_env_full,
+                &plan.env_remove,
+            );
+            if resume_session_id.is_none() {
+                // 初始 prompt 放最后：位置参数形态（claude/codex）必须是命令行最后一个参数
+                for arg in &plan.prompt_args {
+                    command_args.push(arg.clone());
+                }
+            }
+            (env, prepared)
+        }
+    };
+    let mut cmd = crate::process::pty_command(&program, &command_args);
     for (k, v) in &plan.env {
         cmd.env(k, v);
     }
@@ -1370,12 +1405,13 @@ fn pty_spawn_sync(
     Ok(SpawnResult {
         pty_id,
         session_hint,
-        prompt_dropped: plan.prompt_dropped,
+        prompt_dropped,
         model,
         run_id: opened_id,
         adopted: false,
         resume_unwritten: unwritten_session.is_some(),
         proxy_down,
+        native_runtime,
     })
 }
 
@@ -1599,6 +1635,7 @@ fn pty_spawn_custom_sync(
         adopted: false,
         resume_unwritten: false,
         proxy_down: None,
+        native_runtime: false,
     })
 }
 

@@ -153,16 +153,16 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 
 ### 二、公共件（第 2、3 期共用，先于第 2 期）
 
-1. 不绑终端的运行时：标签现在都绑一个 PTY；协议进程要另有一套起进程、退出、重启、关标签收掉、Mesa 崩溃后清残留。
-2. 空闲时切换模式：回合结束且没有后台任务才允许，停进程按会话 id 接回；后台任务（Claude 后台命令、子 Agent、Monitor）的检测未验证。
-3. 切换后核对模型 / 思考档 / 权限档，对不上就提示（agy 实测会变，§3.3）。
+1. ✓（2026-11-26，分支 feat/chat-native-2）不绑终端的运行时：PTY 里改起 `mesa_helper stdio-bridge -- <CLI> <参数>`（stdio_bridge.rs），桥连回 Mesa 在 127.0.0.1 开的一次性口（令牌经环境变量），把 CLI 标准输入输出接过来，标签起停 / 关标签 / 退出清理沿用 PTY；后端 SpawnResult.native_runtime 告诉前端这次是不是真按原生起的。
+2. ✓（2026-11-26，未在界面实测）空闲时切换模式：Kimi 正在跑时翻开关先确认（写明后台命令会一起停），空闲就停下按会话接回，这一轮在跑就等它结束（TerminalView maybeSwitchNative）；后台任务仍检测不了，靠确认框告知。
+3. ✓（2026-11-26，部分）切换后核对：ACP 开会话后比对 configOptions 的模型与 Mesa 选的（-m），能改就 set_config_option、改不了就提示；权限档 set_mode 失败提示；思考档未核对。
 4. 聊天层分档与说明：原生模式单列一档，定摘「测试版」的条件（`chat-fidelity.ts`、`design-chat-fidelity.md`）。
 
 ### 三、第 2 期：Kimi（ACP）
 
-1. Rust 通用 ACP 客户端：initialize、session/new|load、prompt、request_permission、cancel、set_mode / set_config_option，后续各家复用。
-2. 模式映射照 §3.2 修正（终端 `--yolo` ↔ ACP `auto`、终端 `--auto` ↔ ACP `yolo`）；「只讨论」档下计划模式的审批由 Mesa 直接拒。
-3. 审批卡三选项（允许一次 / 本会话都允许 / 拒绝），命令原文从 content 文字里拆。
+1. ✓（2026-11-26，分支 feat/chat-native-2）Rust 通用 ACP 客户端 `chat_channel/acp.rs`：initialize、session/new|load（回放期间不当实时事件）、prompt、request_permission、cancel、set_mode、set_config_option；e2e_channel E2E_NATIVE=1 实测 Kimi 发出 + 聊天里答审批 + 停止 + 接回都过，Mesa 解析器读得出 ACP 写的会话文件。
+2. ✓ 模式映射已按 §3.2 修正（acp::mode_from_args，单测钉住）；「只讨论」档下要执行 / 改文件的审批由 Mesa 直接拒并提示。
+3. ✓ 审批卡三选项（后端给 alwaysLabel「本会话都允许」），命令原文从前面 tool_call 的 content JSON 里补。
 4. 没登录时引导去终端登录（authMethods 是 terminal 类）。
 5. 金丝雀 ACP 层与 Windows 实测。
 

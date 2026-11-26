@@ -9,7 +9,7 @@ import { samePath } from "./path-utils.ts";
 import { lineDiff, parsePatch, unwrapPowerShell, type DiffLine } from "./tool-activity.ts";
 
 /** program-status = CLI 自己写进终端流的程序状态（OSC 7501，program_status.rs）：没有别的旁路时用，2026-10-22 起 Grok */
-export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex" | "program-status";
+export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex" | "program-status" | "acp";
 
 /**
  * 这条旁路的审批只是「在等确认」的信号，答不了、也不带菜单（hooks、程序状态）：卡片按屏上菜单原文给按钮，
@@ -86,7 +86,7 @@ export function wantsChannelSend(native: boolean, message: string): boolean {
  * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
  */
 export function canSendViaChannel(snap: ChatChannelSnapshot | null | undefined): boolean {
-  return !!snap && snap.kind === "codex" && snap.connection === "connected" && !!snap.sessionId;
+  return !!snap && (snap.kind === "codex" || snap.kind === "acp") && snap.connection === "connected" && !!snap.sessionId;
 }
 
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */
@@ -294,11 +294,11 @@ export function approvalChoices(
   agent: string | null,
 ): Array<{ decision: ChannelReplyDecision; label: string; primary?: boolean }> {
   if (!a.replyable || !a.requestId) return [];
-  const always =
-    agent === "opencode" ? "总是允许这类操作" : null;
+  // 后端给了说法（原生模式 ACP 的「本会话都允许」）就用它；OpenCode 另有固定说法
+  const always = a.alwaysLabel ?? (agent === "opencode" ? "总是允许这类操作" : null);
   return [
     { decision: "allow", label: "允许", primary: true },
-    ...(always ? [{ decision: "allow_always" as const, label: a.alwaysLabel ?? always }] : []),
+    ...(always ? [{ decision: "allow_always" as const, label: always }] : []),
     { decision: "deny", label: "拒绝" },
   ];
 }
@@ -309,6 +309,7 @@ export function channelSourceNote(snap: ChatChannelSnapshot | null | undefined):
   if (snap?.connection === "disconnected") return "实时通道已断开，当前按会话文件和终端画面更新；实时状态可能延迟，可切到终端继续。";
   if (snap?.connection === "connecting") return "正在连接实时通道，当前按会话文件和终端画面更新。";
   if (!snap) return "本次未接入实时通道，当前按会话文件和终端画面更新。";
+  if (snap.kind === "acp") return "本次是原生模式：对话、停止和确认都经 CLI 官方协议在聊天里完成；终端页只显示运行日志。";
   if (snap.kind === "hooks") return "本次通过 CLI 事件与会话文件更新；确认选项仍以终端菜单为准。";
   if (snap.kind === "program-status") return "本次通过终端程序状态与会话文件更新。";
   return "本次已接入 CLI 实时通道。";

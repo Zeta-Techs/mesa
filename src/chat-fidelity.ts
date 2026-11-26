@@ -208,8 +208,18 @@ export function versionTrust(installed: string | null | undefined, verified: str
  * 能开「原生模式」的家（2026-11-26 拍板，docs/design-chat-native-mode.md）：聊天经这家官方接口发消息、停止、答审批，
  * 不往终端里打字、不读屏；终端照样连着同一段对话。按家逐个点亮（首批 Codex → Kimi → Claude），默认关
  */
-const NATIVE_MODE_AGENTS = new Set(["codex"]);
+const NATIVE_MODE_AGENTS = new Set(["codex", "kimi"]);
 
 export function nativeModeAvailable(agentId: string | null | undefined): boolean {
   return !!agentId && NATIVE_MODE_AGENTS.has(agentId);
+}
+
+/**
+ * 原生模式下没有终端界面的家（纯协议运行时：PTY 里起的是 stdio 桥，CLI 跑 ACP / 双向 stream-json）：
+ * 发话、斜杠命令都只能经通道；切换模式要在空闲时停下进程、按会话接回。Codex 能双客户端，不在这里
+ */
+const NATIVE_RUNTIME_AGENTS = new Set(["kimi"]);
+
+export function nativeRuntime(agentId: string | null | undefined): boolean {
+  return !!agentId && NATIVE_RUNTIME_AGENTS.has(agentId);
 }
