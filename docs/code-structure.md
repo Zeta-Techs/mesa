@@ -877,6 +877,9 @@ model-caps-override.ts     # 网关库模型行「能力声明」编辑表单纯
    global_config 的 e2e_write_global_config 把真写计划写进临时 HOME、不经 Mesa 起 CLI，核对模型与密钥；2026-11-04 加「上游通道雷达」：
    upstream_phase 看伪终端探询 / --help / 更新日志里的结构化通道线索，与 upstream.json 的结论比，新线索不算红、upstream_issue.py 开 / 追加 issue（2026-11-25 起由工作流的 upstream-radar 任务在两平台跑完后按顺序发）；
    2026-11-25 Windows 上不接旁路的 Grok / Kimi / agy 抓屏留临时 HOME（CAP_KEEP），chat_channel 的 e2e_parse_kept_home 取会话交解析器核对；见其 README）
+  （scripts/native-probe/：聊天层原生模式第 0 步探针（2026-11-26，docs/design-chat-native-mode.md）——prepare.py 起假网关并按 e2e_dump_launch_plans
+   出计划；claude_probe.py 驱动 claude -p 双向 stream-json（can_use_tool 审批 / 提问表单 / 计划模式 / 斜杠命令 / 续接）；acp_probe.py 是通用 ACP 客户端
+   （initialize / session/new|load / prompt / request_permission，Kimi、agy 实测）；tui_resume.py 在伪终端里用 TUI 接回协议会话，看请求带不带旧轮；不进任何测试基线）
   （docs/agent-skills/：维护 Mesa 仓库本身的 Agent 技能（不随应用分发）；mesa-cli-canary = 金丝雀日常维护，装法见其 README）
   （scripts/screen-corpus/：抓屏语料库——corpus.ts 读一屏（菜单 / 信任 / 实时预览 / 输入框）、add-from-capture.ts 从抓屏挑三屏存进
    tests/fixtures/screens/<agent>/，tests/screen-corpus.test.ts 逐份重读；规则见 tests/fixtures/screens/README.md）
