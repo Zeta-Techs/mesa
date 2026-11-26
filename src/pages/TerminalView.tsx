@@ -2651,6 +2651,8 @@ export const TerminalView = memo(function TerminalView({
       }
       const term = termRef.current;
       if (!term || ptyKindRef.current !== "agent") return;
+      // 原生模式的纯协议运行时没有信任菜单可读（运行日志那一屏）
+      if (launchedNativeRef.current) return;
       const lines = screenLines();
       const next = parseTrustPrompt(lines);
       if (next) trustOptionsRef.current = next.options;
@@ -2850,6 +2852,20 @@ export const TerminalView = memo(function TerminalView({
   function runMenuScan() {
     menuScanTimerRef.current = null;
     if (!termRef.current || ptyKindRef.current !== "agent") return;
+    // 原生模式的纯协议运行时：终端页只是运行日志，没有 CLI 界面可读——菜单、通知、面板、「终端在等你」这些读屏的卡一律不出
+    // （2026-11-26 用户截图：运行日志被当成「终端在等你」）
+    if (launchedNativeRef.current) {
+      setSpecialScreenState(null);
+      setTuiNoticeLines(null);
+      setPanelOpen(false);
+      setWaitScreenState(null);
+      setPromptIdle(false);
+      if (menuPromptRef.current) {
+        menuPromptRef.current = null;
+        setMenuPrompt(null);
+      }
+      return;
+    }
     // 提问表单的键还没按完：屏上是半路的样子，等按完再读
     const keysLeft = askKeysDoneAtRef.current - Date.now();
     if (keysLeft > 0) {
@@ -5145,6 +5161,8 @@ export const TerminalView = memo(function TerminalView({
     if (kind === "agent") {
       // 记录可恢复的会话 id（一键恢复按钮用）
       lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
+      // 这个进程退了：之后起的（回落的 shell、自定义运行时）不是原生模式的桥，读屏照常
+      launchedNativeRef.current = false;
       // agent 退出（含手动停止）→ 同一终端自动回落到登录 shell。
       // 异常横幅只认 code > 0：负数（-1 等）是 pty_kill/丢弃/等待超时的「原因未知」
       // 哨兵（exit-code.ts），手动「停止」正是走它——code≠0 会把每次停止都误报成崩溃
@@ -6568,7 +6586,11 @@ export const TerminalView = memo(function TerminalView({
         setAdvancedLaunchOpen(false);
         setBarExpanded(false);
         const droppedPty = res.ptyId;
-        void writeChatMessage(droppedPty, launchPrompt).then((sent) => {
+        // 原生模式（纯协议运行时）经通道发；没有首条指令就什么都不补（补的会是一个空回车）
+        if (!launchPrompt.trim()) {
+          disarmPtyWorking();
+          setPendingReply(false);
+        } else void deliverAfterRelaunch(droppedPty, launchPrompt).then((sent) => {
           if (!sent.error || !mountedRef.current || ptyIdRef.current !== droppedPty) return;
           disarmPtyWorking();
           setPendingReply(false);

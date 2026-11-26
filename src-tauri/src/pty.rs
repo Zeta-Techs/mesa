@@ -1307,7 +1307,9 @@ fn pty_spawn_sync(
         Some((helper, bridge_args, env, prepared)) => {
             program = helper;
             command_args = bridge_args;
-            prompt_dropped = true;
+            // 首条指令不进桥的参数、由聊天层经通道发：只有真带了首条指令才算「没带进去」，
+            // 没带时前端不能补打——补的是一个空回车，落进运行日志那一屏（2026-11-26 用户截图 `^[[13u`）
+            prompt_dropped = plan.prompt_dropped || !plan.prompt_args.is_empty();
             (env, Some(prepared))
         }
         None => {
