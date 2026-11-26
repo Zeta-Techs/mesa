@@ -47,6 +47,8 @@ const PROGRAM_STATUS_MIN: &[(&str, (u32, u32, u32))] = &[
 const STATUS_LINE_CAP: usize = 240;
 /// 这一轮实时文字最多留多少字符（只给预览用，正文以会话文件为准）
 const LIVE_TEXT_CAP: usize = 24_000;
+/// 纯协议原生模式（Kimi ACP / Claude -p）科研长文输出窗口更大，避免大表格或长段预览截头
+const LIVE_TEXT_NATIVE_CAP: usize = 96_000;
 /// 一段思考摘要最多留多少字节（聊天层只取开头一句当状态）
 const THINKING_CAP: usize = 2_000;
 /// 原生模式思考原文留多少字节（只给正文出来前的预览用，正文以会话文件为准）
@@ -744,8 +746,13 @@ impl Tracker {
                 }
                 self.pending_break = false;
                 live.push_str(&text);
-                if live.len() > LIVE_TEXT_CAP {
-                    let cut = live.len() - LIVE_TEXT_CAP;
+                let cap = if matches!(self.snap.kind, "acp" | "claude-native") {
+                    LIVE_TEXT_NATIVE_CAP
+                } else {
+                    LIVE_TEXT_CAP
+                };
+                if live.len() > cap {
+                    let cut = live.len() - cap;
                     let cut = (cut..live.len()).find(|i| live.is_char_boundary(*i)).unwrap_or(0);
                     live.drain(..cut);
                 }
@@ -3526,6 +3533,30 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
 /// Codex 经通道发请求等回包的上限（turn/start、turn/interrupt 本机实测都在 0.1 秒内回）
 const CODEX_CALL_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 原生模式会话内热切权限（不重启进程、不打断后台任务）：Kimi ACP 走 session/set_mode，Claude 走 set_permission_mode
+#[tauri::command]
+pub async fn chat_channel_set_permission(tab_id: String, tier: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_permission_impl(&tab_id, &tier))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn set_permission_impl(tab_id: &str, tier: &str) -> Result<(), String> {
+    let ch = channel_for_tab(tab_id).ok_or("实时通道不可用")?;
+    let kind = {
+        let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
+        if t.snap.connection != Some("connected") {
+            return Err("实时通道未连上，请稍后再试".into());
+        }
+        t.snap.kind
+    };
+    match kind {
+        "acp" => acp::set_permission(&ch, tier),
+        "claude-native" => claude_native::set_permission(&ch, tier),
+        _ => Err("当前模式不支持经通道热切权限".into()),
+    }
+}
+
 /// 原生模式（docs/design-chat-native-mode.md）：聊天层经 Codex 官方通道发起这一轮，不往终端里敲键。
 /// 终端里的远程 TUI 是同一线程的另一个客户端，照样显示这一轮、照样能答审批（2026-11-26 0.172 实测）
 #[tauri::command]
@@ -4478,6 +4509,19 @@ mod tests {
         c.apply(ChannelEvent::ThinkingDelta("**规划**".into()), 2);
         assert_eq!(c.snap.thinking_live, None, "Codex 的是推理摘要，照旧只当状态");
         assert!(c.snap.thinking.is_some());
+    }
+
+    /// 纯协议原生模式（ACP / Claude -p）长文实时预览保留更大窗口，避免科研长表格截头
+    #[test]
+    fn native_live_text_keeps_larger_window() {
+        let mut t = Tracker::new("tab-long", "claude-code", "claude-native");
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(ChannelEvent::TextDelta("a".repeat(40_000)), 2);
+        assert_eq!(t.snap.live_text.as_deref().map(str::len), Some(40_000));
+        let mut q = Tracker::new("tab-q", "qwen", "qwen");
+        q.apply(ChannelEvent::TurnStart, 1);
+        q.apply(ChannelEvent::TextDelta("b".repeat(40_000)), 2);
+        assert_eq!(q.snap.live_text.as_deref().map(str::len), Some(LIVE_TEXT_CAP));
     }
 
     /// 原生模式：经通道发起 / 停止时要知道当前回合 id，且我们请求的回包要原样交给等着的那一方

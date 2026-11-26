@@ -1172,11 +1172,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     decision: ChannelReplyDecision,
     answers?: Record<string, string>,
     message?: string,
-  ) {
+  ): Promise<boolean> {
     try {
       await invoke("chat_channel_reply", { tabId, requestId, decision, answers: answers ?? null, message: message ?? null });
+      return true;
     } catch (e) {
-      toast(`没能送到：${String(e)}，可以在终端里回答`, "error");
+      const hint = statuses[tabId]?.nativeRuntime ? "" : "，可以在终端里回答";
+      toast(`没能送到：${String(e)}${hint}`, "error");
+      return false;
     }
   }
 
@@ -4155,7 +4158,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                       className={
                         chatOn && peek
                           ? "relative order-2 min-h-[7.5rem] shrink-0 overflow-hidden border-t border-hairline"
-                          : "absolute inset-0"
+                          : !chatOn && statuses[t.id]?.nativeRuntime
+                            ? "absolute inset-0 flex flex-col"
+                            : "absolute inset-0"
                       }
                       style={
                         chatOn && peek
@@ -4163,7 +4168,34 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           : undefined
                       }
                     >
-                      {view}
+                      {!chatOn && statuses[t.id]?.nativeRuntime && (
+                        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline bg-strip px-3 py-1.5 text-xs text-l2">
+                          <span className="truncate">
+                            原生模式运行日志 · 对话、审批和提问都在聊天里进行
+                          </span>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => switchSurface("chat")}
+                              className="h-6 rounded-md bg-cta px-2 text-xs font-medium text-cta-ink hover:opacity-90"
+                            >
+                              回聊天
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void setTabNativeMode(t.id, false)}
+                              className="h-6 rounded-md border border-field bg-inset px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+                            >
+                              切回终端模式
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {!chatOn && statuses[t.id]?.nativeRuntime ? (
+                        <div className="relative min-h-0 flex-1">{view}</div>
+                      ) : (
+                        view
+                      )}
                     </div>
                     <div
                       className={
@@ -4307,9 +4339,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         channel={sessionByTab[t.id]?.channel ?? null}
                         nativeOn={nativeAllowedFor(t) ? !!t.nativeMode : null}
                         onNativeToggle={(on) => void setTabNativeMode(t.id, on)}
-                        onChannelReply={(requestId, decision, answers, message) => {
-                          void replyChannel(t.id, requestId, decision, answers, message);
-                        }}
+                        onChannelReply={(requestId, decision, answers, message) =>
+                          replyChannel(t.id, requestId, decision, answers, message)
+                        }
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}
                         onLoadOlder={(settle) =>

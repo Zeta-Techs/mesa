@@ -100,6 +100,25 @@ export function nativeRuntimeKind(kind: ChannelKind | null | undefined): boolean
   return kind === "acp" || kind === "claude-native";
 }
 
+/**
+ * 原生模式下能经官方协议「原地热切、不重启进程」的权限档（与 switch-strategy InSessionPermission 同形）：
+ * - Kimi ACP（2.8.0 实测）：session/set_mode 支持 default / auto / yolo 三档原地热切
+ * - Claude 原生（2.1.326 实测）：set_permission_mode 支持 default / auto 原地热切；
+ *   bypassPermissions 未带 --dangerously-skip-permissions 启动会被拒（bypass_not_launched），切完全访问照旧走重开
+ */
+export function nativeInlinePermissionSpec(
+  kind: ChannelKind | null | undefined,
+  agentId: string | null | undefined,
+): { command: string; args: Partial<Record<"ask" | "auto" | "full", string>>; midTurn: "now" } | null {
+  if (kind === "acp" && agentId === "kimi") {
+    return { command: "", args: { ask: "default", auto: "auto", full: "yolo" }, midTurn: "now" };
+  }
+  if (kind === "claude-native") {
+    return { command: "", args: { ask: "default", auto: "auto" }, midTurn: "now" };
+  }
+  return null;
+}
+
 export interface InterruptRoute {
   viaChannel: boolean;
   sessionId: string | null;
@@ -234,12 +253,18 @@ export function sessionSwitchNote(source: string | null): string {
   return "已切到新的会话";
 }
 
-/** 旁路本身直接推送流式回复正文的家（Qwen / OpenCode / Codex）；hooks 与 program-status 只报回合/工具/审批状态，正文仍靠读屏实时预览 */
+/** 旁路本身直接推送流式回复正文的家（Qwen / OpenCode / Codex / 原生 ACP / Claude 原生）；hooks 与 program-status 只报回合/工具/审批状态，正文仍靠读屏实时预览 */
 export function channelDeliversLiveText(
   snap: Pick<ChatChannelSnapshot, "kind" | "connection"> | null | undefined,
 ): boolean {
   if (!snap || snap.connection === "disconnected") return false;
-  return snap.kind === "qwen" || snap.kind === "opencode" || snap.kind === "codex";
+  return (
+    snap.kind === "qwen" ||
+    snap.kind === "opencode" ||
+    snap.kind === "codex" ||
+    snap.kind === "acp" ||
+    snap.kind === "claude-native"
+  );
 }
 
 /** 旁路送来的这一轮实时文字（Qwen / OpenCode / Codex）；保留首行缩进（缩进代码块 / 嵌套列表），只去掉开头空行与尾部空白 */

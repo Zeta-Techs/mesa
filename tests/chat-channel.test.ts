@@ -6,6 +6,7 @@ import {
   approvalTitle,
   canSendViaChannel,
   interruptRoute,
+  nativeInlinePermissionSpec,
   nativeSwitchWarning,
   wantsChannelSend,
   channelAttention,
@@ -274,14 +275,31 @@ test("channelLiveLines：保留首行缩进（缩进代码块 / 嵌套列表）�
   assert.deepEqual(channelLiveLines(indented), ["    def f():", "        return 1"]);
 });
 
-test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hooks 只报状态，不挡 xterm 实时扫描", () => {
+test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hooks 只报状态，不挡 xterm 实时扫描；原生 ACP / Claude 也带流式文字", () => {
   assert.equal(channelDeliversLiveText(null), false);
   assert.equal(channelDeliversLiveText(snap({ kind: "hooks", turn: turn("running") })), false);
   assert.equal(channelDeliversLiveText(snap({ agent: "agy", kind: "program-status", turn: turn("running") })), false);
   assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", turn: turn("running") })), true);
   assert.equal(channelDeliversLiveText(snap({ agent: "opencode", kind: "opencode", turn: turn("running") })), true);
   assert.equal(channelDeliversLiveText(snap({ agent: "qwen", kind: "qwen", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "kimi", kind: "acp", connection: "connected", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "claude-code", kind: "claude-native", connection: "connected", turn: turn("running") })), true);
+  assert.equal(channelDeliversLiveText(snap({ agent: "claude-code", kind: "claude-native", connection: "disconnected" })), false);
   assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", connection: "disconnected" })), false);
+});
+
+test("原生模式原地热切权限能力：Kimi ACP 三档直切，Claude 原生 ask/auto 直切、full 仍走重开", () => {
+  assert.deepEqual(nativeInlinePermissionSpec("acp", "kimi")?.args, {
+    ask: "default",
+    auto: "auto",
+    full: "yolo",
+  });
+  assert.deepEqual(nativeInlinePermissionSpec("claude-native", "claude-code")?.args, {
+    ask: "default",
+    auto: "auto",
+  });
+  assert.equal(nativeInlinePermissionSpec("hooks", "claude-code"), null);
+  assert.equal(nativeInlinePermissionSpec("codex", "codex"), null);
 });
 
 test("CLI 自己报过这一轮结束，读屏没认出输入框也不当成在等人", () => {

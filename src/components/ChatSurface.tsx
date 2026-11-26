@@ -116,6 +116,7 @@ import {
   approvalPreview,
   approvalTitle,
   menuOutgrowsChannel,
+  nativeInlinePermissionSpec,
   nativeRuntimeKind,
   quietScreenMayBeWaiting,
   type ChannelReplyDecision,
@@ -394,7 +395,7 @@ export default function ChatSurface({
     answers?: Record<string, string>,
     /** 拒绝时交给模型的话（原生模式 Claude 计划卡「接着改方案」的意见） */
     message?: string,
-  ) => void;
+  ) => void | Promise<boolean>;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
   onSendNow?: (keys: string) => void;
   /** 终端里「在等你」的那一块（terminal-wait.ts waitScreenOf）；noInputBox = 这家有画面布局表且屏上没有它的输入框 */
@@ -1166,12 +1167,12 @@ export default function ChatSurface({
       ? planDecision(planMenu)
       : nativePlanId && !trustPrompt
       ? {
-          // 原生模式 Claude 的计划确认（ExitPlanMode 经通道来，方案全文在审批里）：同终端模式的方案卡，开工 = 批准、接着改 = 带意见拒绝
+          // 原生模式 Claude 的计划确认（ExitPlanMode 经通道来，方案全文在审批里）：开工 = 批准并按所选权限档接着走、接着改 = 带意见拒绝
           key: `native-plan:${nativePlanId}`,
           title: "方案写好了，要按它开工吗？",
           hint: planStartBlocked
             ? "这是只讨论的目标 / 想法，这里不开工：要动手回项目页点「开工」，或把目标改成要验收的，在那边做"
-            : "开工后这段对话接着按原来的那一档走",
+            : "开工后这段对话按你选的权限档接着走，不用重开",
           options: [],
           plan: {
             text: channelApproval?.plan ?? null,
@@ -1182,16 +1183,33 @@ export default function ChatSurface({
               ? []
               : [
                   {
-                    label: "按方案开工",
+                    label: "按方案开工（帮我批准）",
+                    description: "日常操作自动放行，有风险才问你",
                     primary: true,
                     onClick: () => {
-                      onChannelReply?.(nativePlanId, "allow");
-                      onPlanLeft?.(null);
+                      void Promise.resolve(onChannelReply?.(nativePlanId, "allow")).then((ok) => {
+                        if (ok === false) return;
+                        onPlanLeft?.("auto");
+                        onInlinePermission?.("auto");
+                      });
+                    },
+                  },
+                  {
+                    label: "按方案开工（每次问我）",
+                    description: "改文件、跑命令前都先问你",
+                    primary: false,
+                    onClick: () => {
+                      void Promise.resolve(onChannelReply?.(nativePlanId, "allow")).then((ok) => {
+                        if (ok === false) return;
+                        onPlanLeft?.("ask");
+                      });
                     },
                   },
                 ],
             others: [],
-            onRevise: (feedback: string) => onChannelReply?.(nativePlanId, "deny", undefined, feedback),
+            onRevise: (feedback: string) => {
+              void onChannelReply?.(nativePlanId, "deny", undefined, feedback);
+            },
           },
         }
       : nativeAskId && nativeAskState && !trustPrompt
@@ -1564,9 +1582,12 @@ export default function ChatSurface({
   // 权限写在输入框身上：切到完全访问时上沿细线亮一下、只讨论虚线框（其余档不加东西）
   const launchAgentLabel = AGENTS.find((a) => a.id === launchPick?.agentId)?.label ?? "这家 CLI";
   const launchAgentVersion = useAppStore((s) => s.agents.find((a) => a.id === launchPick?.agentId)?.version ?? null);
-  // 纯协议运行时没有终端选择器，不走 /permission 读屏路径
-  const inlinePermission =
-    launchPick && !isNativeRuntime ? inSessionPermissionSwitch(launchPick.agentId, launchAgentVersion) : null;
+  // 纯协议运行时直接走官方协议原地热切权限（Kimi 三档、Claude ask/auto；不走 /permission 读屏路径）
+  const inlinePermission = launchPick
+    ? isNativeRuntime
+      ? nativeInlinePermissionSpec(channel?.kind, launchPick.agentId)
+      : inSessionPermissionSwitch(launchPick.agentId, launchAgentVersion)
+    : null;
   const permTier =
     launchPick && !readOnly
       ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)

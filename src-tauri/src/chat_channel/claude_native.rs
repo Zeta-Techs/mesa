@@ -20,15 +20,19 @@ use std::io::{BufRead, BufReader};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
+use std::time::Duration;
 
 /// 实测过的起点版本（2.1.326 起 `--permission-prompts host` 在 --help 里）
 const CLAUDE_NATIVE_MIN: (u32, u32, u32) = (2, 1, 326);
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
 pub(crate) struct ClaudeState {
     session: Option<String>,
     next_id: i64,
+    /// 发出去等回包的控制请求（set_permission_mode 等）：request_id → 回包通道
+    waiters: HashMap<String, mpsc::Sender<Value>>,
     /// 未答的 can_use_tool：request_id → (原始 input, permission_suggestions)
     pending: HashMap<String, (Value, Value)>,
     /// 会话文件找到了没有（第一轮之后才落盘）
@@ -135,7 +139,7 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     }
     feed(&ch, events);
     // SDK 宿主开头先发 initialize（控制协议握手；回包里有命令清单，这里不用）
-    let init = next_request(&ch, json!({ "subtype": "initialize" }));
+    let (_, init) = next_request(&ch, json!({ "subtype": "initialize" }));
     let _ = write_line(&writer, &init);
     for line in BufReader::new(read_half).lines() {
         if ch.stop.load(Ordering::Acquire) {
@@ -151,7 +155,7 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     super::disconnect(&ch);
 }
 
-fn next_request(ch: &Channel, request: Value) -> Value {
+fn next_request(ch: &Channel, request: Value) -> (String, Value) {
     let id = ch
         .claude
         .lock()
@@ -160,7 +164,52 @@ fn next_request(ch: &Channel, request: Value) -> Value {
             st.next_id
         })
         .unwrap_or(0);
-    json!({ "type": "control_request", "request_id": format!("mesa-{id}"), "request": request })
+    let rid = format!("mesa-{id}");
+    let msg = json!({ "type": "control_request", "request_id": rid, "request": request });
+    (rid, msg)
+}
+
+/// 发控制请求并等回包（set_permission_mode 等）
+fn call_control(ch: &Channel, request: Value) -> Result<Value, String> {
+    let writer = writer_of(ch)?;
+    let (tx, rx) = mpsc::channel();
+    let (rid, msg) = next_request(ch, request);
+    {
+        let mut st = ch.claude.lock().map_err(|_| "实时通道已关闭")?;
+        st.waiters.insert(rid.clone(), tx);
+    }
+    let got = write_line(&writer, &msg)
+        .and_then(|_| rx.recv_timeout(CONTROL_TIMEOUT).map_err(|_| "Claude 没有回应切换请求".to_string()));
+    if let Ok(mut st) = ch.claude.lock() {
+        st.waiters.remove(&rid);
+    }
+    let reply = got?;
+    if reply.pointer("/response/subtype").and_then(Value::as_str) == Some("error") {
+        let err = reply
+            .pointer("/response/error")
+            .and_then(Value::as_str)
+            .unwrap_or("Claude 拒绝了这次请求");
+        return Err(crate::sessions::redact_sensitive_text(err));
+    }
+    Ok(reply)
+}
+
+/// Mesa 权限档 → Claude 原生热切模式（2026-11-26 2.1.326 假网关实测：default / auto / plan 可热切；
+/// bypassPermissions 未带 --dangerously-skip-permissions 启动时会报 bypass_not_launched，必须走重开）
+pub(crate) fn mode_for_tier(tier: &str) -> Option<&'static str> {
+    match tier {
+        "ask" => Some("default"),
+        "auto" => Some("auto"),
+        "discuss" => Some("plan"),
+        _ => None,
+    }
+}
+
+/// 原生模式会话内热切权限（ask / auto / discuss，不重启进程）
+pub(crate) fn set_permission(ch: &Channel, tier: &str) -> Result<(), String> {
+    let mode = mode_for_tier(tier).ok_or("切到完全访问需要重新启动进程")?;
+    call_control(ch, json!({ "subtype": "set_permission_mode", "mode": mode }))?;
+    Ok(())
 }
 
 /// Claude 的会话本体：`<根>/projects/<目录编码>/<会话 id>.jsonl`（不自己编码目录，按 id 找，免得 /tmp → /private/tmp 一类对不上）
@@ -231,6 +280,14 @@ fn handle(ch: &Arc<Channel>, msg: &Value) {
                 }],
             );
         }
+        Some("control_response") => {
+            if let Some(rid) = msg.pointer("/response/request_id").and_then(Value::as_str) {
+                let waiter = ch.claude.lock().ok().and_then(|mut st| st.waiters.remove(rid));
+                if let Some(tx) = waiter {
+                    let _ = tx.send(msg.clone());
+                }
+            }
+        }
         Some("control_cancel_request") => {
             if let Some(rid) = msg.get("request_id").and_then(Value::as_str) {
                 if let Ok(mut st) = ch.claude.lock() {
@@ -249,7 +306,15 @@ fn handle(ch: &Arc<Channel>, msg: &Value) {
             }
             feed(ch, events);
         }
-        _ => feed(ch, map_message(msg)),
+        _ => {
+            let mut events = map_message(msg);
+            if matches!(msg.get("type").and_then(Value::as_str), Some("assistant" | "user")) {
+                if let Some(ev) = refresh_transcript(ch) {
+                    events.push(ev);
+                }
+            }
+            feed(ch, events);
+        }
     }
 }
 
@@ -429,7 +494,7 @@ pub(crate) fn send(ch: &Channel, text: &str) -> Result<(), String> {
 
 pub(crate) fn cancel(ch: &Channel) -> Result<(), String> {
     let writer = writer_of(ch)?;
-    let msg = next_request(ch, json!({ "subtype": "interrupt" }));
+    let (_, msg) = next_request(ch, json!({ "subtype": "interrupt" }));
     write_line(&writer, &msg)?;
     let stale: Vec<String> = ch.claude.lock().map(|mut s| s.pending.drain().map(|(k, _)| k).collect()).unwrap_or_default();
     feed(ch, stale.into_iter().map(|k| ChannelEvent::ApprovalResolved { request_id: Some(k) }).collect());
@@ -497,5 +562,14 @@ mod tests {
         let r = permission_reply("r2", "allow", &ask, &Value::Null, Some(&json!({"颜色？":"绿"})), None);
         assert_eq!(r["response"]["response"]["updatedInput"]["answers"]["颜色？"], "绿");
         assert_eq!(r["response"]["response"]["updatedInput"]["questions"], ask["questions"]);
+    }
+
+    #[test]
+    fn hot_permission_modes_match_verified_claude_behavior() {
+        assert_eq!(mode_for_tier("ask"), Some("default"));
+        assert_eq!(mode_for_tier("auto"), Some("auto"));
+        assert_eq!(mode_for_tier("discuss"), Some("plan"));
+        // bypassPermissions 未带 --dangerously-skip-permissions 启动会被拒，不走热切
+        assert_eq!(mode_for_tier("full"), None);
     }
 }

@@ -79,6 +79,20 @@ pub(crate) fn supported(agent: &str) -> bool {
     ACP_MIN.iter().any(|(a, min)| *a == agent && super::version_at_least(agent, *min))
 }
 
+/// Mesa 的权限档（ask / auto / full / discuss）→ ACP 模式 id 与是否「只讨论」
+pub(crate) fn mode_for_tier(agent: &str, tier: &str) -> Option<(&'static str, bool)> {
+    if agent != "kimi" {
+        return None;
+    }
+    match tier {
+        "discuss" => Some(("plan", true)),
+        "ask" => Some(("default", false)),
+        "auto" => Some(("auto", false)),
+        "full" => Some(("yolo", false)),
+        _ => None,
+    }
+}
+
 /// Mesa 的权限档（启动参数里的终端旗标）→ ACP 模式；只讨论档另记 discuss
 pub(crate) fn mode_from_args(agent: &str, args: &[String]) -> (Option<&'static str>, bool) {
     if agent != "kimi" {
@@ -501,7 +515,16 @@ fn handle(ch: &Arc<Channel>, writer: &Mutex<TcpStream>, msg: &Value) {
                 return;
             }
             if let Some(update) = msg.pointer("/params/update") {
-                feed(ch, map_update(update));
+                let mut events = map_update(update);
+                if matches!(
+                    update.get("sessionUpdate").and_then(Value::as_str),
+                    Some("tool_call" | "tool_call_update")
+                ) {
+                    if let Some(ev) = refresh_transcript(ch) {
+                        events.push(ev);
+                    }
+                }
+                feed(ch, events);
             }
         }
         _ => {}
@@ -690,6 +713,29 @@ pub(crate) fn send(ch: &Channel, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 原生模式会话内热切权限（不重启进程、不打断后台任务）：2026-11-26 Kimi 2.8.0 实测 session/set_mode 四档均立即生效
+pub(crate) fn set_permission(ch: &Channel, tier: &str) -> Result<(), String> {
+    let (agent, sid) = {
+        let st = ch.acp.lock().map_err(|_| "实时通道已关闭")?;
+        let sid = st.session.clone().ok_or("还没开好这段对话，稍等一下再切换")?;
+        (st.agent.clone(), sid)
+    };
+    let (mode, discuss) = mode_for_tier(&agent, tier).ok_or("这一档需要重新启动进程才能切换")?;
+    let r = call(
+        ch,
+        "session/set_mode",
+        json!({ "sessionId": sid, "modeId": mode }),
+        Duration::from_secs(10),
+    )?;
+    if let Some(e) = error_text(&r) {
+        return Err(format!("没能切换权限：{e}"));
+    }
+    if let Ok(mut st) = ch.acp.lock() {
+        st.discuss = discuss;
+    }
+    Ok(())
+}
+
 /// 停下这一轮：session/cancel 是通知，回合由 session/prompt 的回包（stopReason = cancelled）收
 pub(crate) fn cancel(ch: &Channel) -> Result<(), String> {
     let writer = writer_of(ch)?;
@@ -715,6 +761,11 @@ mod tests {
         assert_eq!(mode_from_args("kimi", &a(&["-m", "x", "--auto"])), (Some("yolo"), false));
         assert_eq!(mode_from_args("kimi", &a(&["-m", "x", "--plan"])), (Some("plan"), true));
         assert_eq!(mode_from_args("claude-code", &a(&["--plan"])), (None, false));
+        assert_eq!(mode_for_tier("kimi", "ask"), Some(("default", false)));
+        assert_eq!(mode_for_tier("kimi", "auto"), Some(("auto", false)));
+        assert_eq!(mode_for_tier("kimi", "full"), Some(("yolo", false)));
+        assert_eq!(mode_for_tier("kimi", "discuss"), Some(("plan", true)));
+        assert_eq!(mode_for_tier("claude-code", "ask"), None);
     }
 
     #[test]

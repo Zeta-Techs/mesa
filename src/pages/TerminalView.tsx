@@ -3424,8 +3424,18 @@ export const TerminalView = memo(function TerminalView({
    * 返回 false = 这家这个版本不能在会话里换
    */
   async function switchPermissionInSession(tier: "ask" | "auto" | "full"): Promise<boolean> {
-    // 原生模式的纯协议运行时没有终端选择器可按，不走 /permission 读屏路径
-    if (launchedNativeRef.current) return false;
+    // 原生模式的纯协议运行时（Kimi ACP / Claude -p）：直接经官方协议原地热切权限，不重开、不打断后台任务
+    if (launchedNativeRef.current) {
+      try {
+        await invoke("chat_channel_set_permission", { tabId, tier });
+        setObservedTier(tier);
+        setNotice(null);
+        return true;
+      } catch (e) {
+        setNotice(`没能切换权限：${String(e)}`);
+        return false;
+      }
+    }
     const spec = inSessionPermissionSwitch(launchAgentRef.current ?? "", launchAgentDetRef.current?.version);
     if (!spec || !ptyIdRef.current) return false;
     if (spec.args) {

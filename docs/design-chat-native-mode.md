@@ -187,3 +187,11 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 - ✓ Claude 计划确认：ExitPlanMode 经通道来时用终端模式同一张方案卡（整篇方案、按方案开工 = 批准、接着改方案 = 带意见拒绝，`chat_channel_reply` 加 `message`）；e2e 实测审批里带着方案全文。
 - ✓ 斜杠命令结果：Claude `-p` 把 `/context` 等的结果写进会话文件（`system/local_command`），Mesa 解析器照常出「命令 + 结果」；Kimi ACP 的斜杠命令结果只经文字增量来、不写会话文件，这一轮一结束就留成本地的「命令 + 结果」（同 Codex `/status` 的本地记录）。实测 `/usage`、`/help`。
 
+### 七、边界加固与原地热切优化（2026-11-26）
+
+- ✓ 边界六项修复（`4def56bd`）：`close_channel` 主动断开 `Replier::Acp` 唤醒读线程；`stdio-bridge` 强制退出清子进程树、Windows 经 `background_command` + `spawn_tied_to_app`；接回运行中 PTY 保留 `native_runtime` 标记；停止路由改按实际运行进程形态判（回合中刚翻开关不发错通道、Claude 首句报 id 前也可停）；输入框接管原生提问表单与原生方案卡改方案意见；Kimi ACP 回合中禁排队提示与去除无效的 Esc/Ctrl+S 立即发送按钮。
+- ✓ 假网关实测原地热切权限（Claude 2.1.326、Kimi 2.8.0）：
+  - Kimi ACP：`session/set_mode` 支持 `default` / `auto` / `yolo` / `plan` 四档会话内原地切换（无需重启进程、不打断后台任务）。
+  - Claude `-p`：`control_request` `set_permission_mode` 支持 `default` / `auto` / `plan` 原地切换；切到 `bypassPermissions` 在未带 `--dangerously-skip-permissions` 启动时返回 `bypass_not_launched`，仍走重开确认；`ExitPlanMode` 允许后 Claude 自动回落 `permissionMode: "default"`，原生方案卡提供「按方案开工（帮我批准）」（批准后顺手切 `auto`）与「按方案开工（每次问我）」两档。
+- ✓ 流式与视图体验补齐：`channelDeliversLiveText` 纳入 `acp` / `claude-native`（走流式 Markdown、停止日志屏读屏扫描、新回合清残留预览）；原生首轮工具开始时即提前锁定会话文件；原生 `live_text` 上限抬至 96 KB 避免科研长表格预览截头；纯协议原生模式切到「终端」视图时顶部给「回聊天 / 切回终端模式」引导条。
+
