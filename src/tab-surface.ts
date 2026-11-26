@@ -26,8 +26,11 @@ export function launchSurface(input: {
   prefillCommand?: string | null;
   reused: boolean;
   setting: string | null | undefined;
+  /** 目标标签正跑在纯协议原生模式（没有终端交互界面，只有桥日志）：「去终端回答」类入口改落聊天页点审批卡 */
+  nativeRuntime?: boolean;
 }): SurfaceMode | null {
   if (input.shellOnly || input.prefillCommand) return "terminal";
+  if (input.nativeRuntime && input.surface === "terminal") return "chat";
   if (input.surface) return input.surface;
   if (input.reused) return null;
   return openSurfaceDefault(input.setting);

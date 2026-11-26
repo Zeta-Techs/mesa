@@ -132,6 +132,7 @@ import {
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
 import { launchSurface, openSurfaceDefault } from "../tab-surface";
+import { invalidateResumeLookup } from "../quick-chat-launch";
 import { tabRunInput, type RunOverviewInput } from "../run-overview";
 import type {
   ChatMessageDto,
@@ -1674,6 +1675,18 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     setTabs((prev) =>
       prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on, followNativeDefault: false } : t)),
     );
+    const curTab = tabs.find((t) => t.id === tabId);
+    const linkedAgent = sessionByTab[tabId]?.agentId ?? statuses[tabId]?.agentId ?? curTab?.initialAgentId;
+    const linkedSid = sessionByTab[tabId]?.sessionId ?? statuses[tabId]?.sessionId ?? curTab?.resumeSessionId;
+    if (linkedAgent && linkedSid) {
+      invalidateResumeLookup(linkedAgent, linkedSid);
+      void invoke("set_session_profile_command", {
+        agent: linkedAgent,
+        sessionId: linkedSid,
+        profileId: statuses[tabId]?.profileId ?? "",
+        nativeMode: on,
+      }).catch(() => {});
+    }
   }
 
   async function sendChatToActive(text: string): Promise<string | null> {
@@ -1793,6 +1806,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       runId?: string;
       taskId?: string;
       preview?: boolean;
+      nativeMode?: boolean;
     }): string => {
       const t: Tab = {
         id: crypto.randomUUID(),
@@ -1824,9 +1838,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         preview: init?.preview,
         ...(init?.shellOnly || init?.customRuntimeId
           ? {}
-          : useAppStore.getState().settings?.chatNativeDefault
-            ? { nativeMode: true }
-            : {}),
+          : typeof init?.nativeMode === "boolean"
+            ? { nativeMode: init.nativeMode }
+            : useAppStore.getState().settings?.chatNativeDefault
+              ? { nativeMode: true }
+              : {}),
       };
       setTabs((prev) => [...prev, t]);
       setActiveId(t.id);
@@ -1885,6 +1901,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const source = sessionByTab[fromTabId];
     const status = statuses[fromTabId];
     if (!source?.file || !source.sessionId || !source.agentId || !status) return;
+    const fromTab = tabs.find((t) => t.id === fromTabId);
     await forkSession(
       {
         agentId: source.agentId,
@@ -1894,6 +1911,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         cwd: status.cwd,
         profileId: status.profileId,
         model: status.model,
+        nativeMode: fromTab?.nativeMode,
       },
       untilText,
     );
@@ -1914,6 +1932,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       profileId?: string | null;
       model?: string | null;
       provider?: string | null;
+      nativeMode?: boolean;
     },
     untilText?: string,
   ) {
@@ -1931,6 +1950,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (!profileId) {
         throw new Error(`找不到 ${agentLabel(source.agentId)} 的连接配置，请先在连接页创建或恢复配置`);
       }
+      const savedConfig =
+        typeof source.nativeMode === "boolean"
+          ? null
+          : await invoke<{ nativeMode?: boolean | null }>("session_resume_config", {
+              agent: source.agentId,
+              sessionId: source.sessionId,
+              filePath: source.file,
+            }).catch(() => null);
+      const inheritedNative =
+        typeof source.nativeMode === "boolean"
+          ? source.nativeMode
+          : typeof savedConfig?.nativeMode === "boolean"
+            ? savedConfig.nativeMode
+            : undefined;
       const target = await invoke<HandoffTargetDto[]>("handoff_targets")
         .then((targets) => targets.find((t) => t.id === source.agentId))
         .catch(() => undefined);
@@ -1945,6 +1978,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           forkSessionId: source.sessionId,
           forkSource: { agent: source.agentId, sessionId: source.sessionId },
           autoStart: true,
+          nativeMode: inheritedNative,
         });
         setSurfaceModeByTab((prev) => ({ ...prev, [forkTabId]: "chat" }));
         // 分出来的新会话发第一句才落盘（Claude 等），之前聊天层没东西可画、只剩一片空白（2026-10-31 用户实测「黑屏」）：
@@ -1979,6 +2013,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       });
       const prompt = `读 ${relativeBriefPath(brief.filePath, source.cwd)} 分叉简报，在此基础上继续完成任务`;
       const promptSupported = target ? target.promptSupported : source.agentId !== "kimi";
+      const chosenAcct = profiles.find((p) => p.id === profileId)?.accountType ?? null;
+      const forkWillRunNative =
+        Boolean(inheritedNative ?? useAppStore.getState().settings?.chatNativeDefault) &&
+        nativeModeAllowed(source.agentId, chosenAcct) &&
+        nativeRuntime(source.agentId);
       const forkTabId = addTab({
         cwd: source.cwd,
         title: `分叉 · ${source.title || "当前对话"}`,
@@ -1990,12 +2029,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         permission: "discuss",
         forkSource: { agent: source.agentId, sessionId: source.sessionId },
         autoStart: true,
+        nativeMode: inheritedNative,
       });
-      // 不支持启动注入的 CLI（当前为 Kimi）直接落到终端：分叉指令由终端等输入框就绪后自动写进去，
-      // 写不进去会复制并在终端报错，留在终端面上看得见。
+      // 不支持启动注入的 CLI（终端模式 Kimi）落到终端等输入框就绪自动写；纯协议原生模式经通道发，直接落聊天页
       setSurfaceModeByTab((prev) => ({
         ...prev,
-        [forkTabId]: promptSupported === false ? "terminal" : "chat",
+        [forkTabId]: forkWillRunNative || promptSupported !== false ? "chat" : "terminal",
       }));
       return forkTabId;
     } catch (e) {
@@ -2361,6 +2400,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         runId: pt.runId,
         taskId: pt.taskId,
         preview: Boolean(pt.resume && pt.resumeLazy) || undefined,
+        nativeMode: pt.nativeMode,
       });
       // 从列表点开一段对话：刚才看着的那个标签若只是看了没说 / 还没说过话的空白新对话、输入框没字，切走后收掉
       // （等新标签切到前台再关，见 dropBlankAfterOpenRef）。
@@ -2383,12 +2423,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       // 新开的跟设置「打开对话时先显示」——新开时就钉住，之后改设置不把正在用的标签翻过去
       // 闭包不保留 let 的收窄：进回调前用 const 固定，否则 [tabId] 推宽回 string | null 报 TS2464
       const launchedTabId = tabId;
+      const targetNativeRuntime = Boolean(
+        launchedTabId &&
+          (statusesRef.current[launchedTabId]?.nativeRuntime ||
+            (!reused &&
+              Boolean(pt.nativeMode ?? useAppStore.getState().settings?.chatNativeDefault) &&
+              nativeModeAllowed(launchAgentId, profiles.find((p) => p.id === profileId)?.accountType ?? null) &&
+              nativeRuntime(launchAgentId))),
+      );
       const nextSurface = launchSurface({
         surface: pt.surface,
         shellOnly: pt.shellOnly,
         prefillCommand: pt.prefillCommand,
         reused,
         setting: useAppStore.getState().settings?.openSurface,
+        nativeRuntime: targetNativeRuntime,
       });
       if (launchedTabId && nextSurface) {
         setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: nextSurface }));

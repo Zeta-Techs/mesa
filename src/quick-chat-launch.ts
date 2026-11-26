@@ -193,7 +193,7 @@ export async function openChatWithProfile(profile: {
 
 type ResumeLookup = {
   run: RunDto | null;
-  config: { model: string | null; effort: string | null } | null;
+  config: { model: string | null; effort: string | null; nativeMode?: boolean | null } | null;
   /** 调用方没给项目连接预填时按会话目录现找（工作台「最近对话」、对话页「继续」不知道项目） */
   projects: ProjectDto[];
 };
@@ -206,6 +206,10 @@ function resumeLookupKey(s: SessionMetaDto): string {
   return `${s.agent}\n${s.sessionId}`;
 }
 
+export function invalidateResumeLookup(agent: string, sessionId: string): void {
+  resumeLookups.drop(`${agent}\n${sessionId}`);
+}
+
 async function fetchResumeLookup(s: SessionMetaDto): Promise<ResumeLookup> {
   const [run, config, projects] = await Promise.all([
     invoke<RunDto | null>("run_find", {
@@ -213,7 +217,7 @@ async function fetchResumeLookup(s: SessionMetaDto): Promise<ResumeLookup> {
       agent: s.agent,
       sessionId: s.sessionId,
     }).catch(() => null),
-    invoke<{ model: string | null; effort: string | null }>("session_resume_config", {
+    invoke<{ model: string | null; effort: string | null; nativeMode?: boolean | null }>("session_resume_config", {
       agent: s.agent,
       sessionId: s.sessionId,
       filePath: s.filePath,
@@ -403,6 +407,7 @@ export function resumeSessionInTerminal(
       ...choice,
       model: resumeModelChoice(config?.model, chosen),
       effort: config?.effort?.trim() || null,
+      ...(typeof config?.nativeMode === "boolean" ? { nativeMode: config.nativeMode } : {}),
       resumeLazy: opts?.lazy || undefined,
       split: opts?.split || undefined,
     });

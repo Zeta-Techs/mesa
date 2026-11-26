@@ -25,7 +25,15 @@ test("入口写死的照写：新对话固定聊天，MCP 登录这类固定终�
   assert.equal(launchSurface({ surface: "terminal", reused: true, setting: "chat" }), "terminal");
 });
 
-test("登录、更新、run 脚本永远落终端", () => {
+test("登录、更新、run 脚本永远落终端；纯协议原生运行中点「去终端回答」改落聊天页", () => {
   assert.equal(launchSurface({ shellOnly: true, reused: false, setting: "chat" }), "terminal");
   assert.equal(launchSurface({ prefillCommand: "claude update", surface: "chat", reused: true, setting: "chat" }), "terminal");
+  assert.equal(
+    launchSurface({ surface: "terminal", reused: true, setting: "terminal", nativeRuntime: true }),
+    "chat",
+  );
+  assert.equal(
+    launchSurface({ shellOnly: true, surface: "terminal", reused: false, setting: "chat", nativeRuntime: true }),
+    "terminal",
+  );
 });

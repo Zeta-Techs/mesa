@@ -5700,13 +5700,14 @@ export const TerminalView = memo(function TerminalView({
     if (rid) {
       invoke("run_attach_session", { id: rid, sessionId }).catch(() => {});
     }
-    // 连同这次启动的模型与思考档一起记：下次从侧栏点开这段对话，输入框默认就是它（session_resume_config）
+    // 连同这次启动的模型、思考档与原生模式选择一起记：关掉标签后再从侧栏重开这段对话，照上次的选择接回
     const rec = launchRecordRef.current;
     void invoke("set_session_profile_command", {
       agent: ctx.agentId,
       sessionId,
       profileId,
       ...(rec ? { model: rec.model, effort: rec.effort } : {}),
+      nativeMode: nativeModeRef.current,
     });
     void startSessionWatcher(filePath, ctx.agentId);
     // 侧栏要马上把这段收进对话列表：不刷的话它一直画成「开着、列表里还没有」的行，只有 ×、没有 ⋯，

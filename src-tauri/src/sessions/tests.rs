@@ -3212,10 +3212,15 @@ fn resume_config_prefers_file_model_and_falls_back_to_launch_record() {
     assert_eq!(cfg.model.as_deref(), Some("gpt-5.5"));
     assert_eq!(cfg.effort.as_deref(), Some("xhigh"));
 
-    // 旧调用只记连接：不动已记的模型
+    // 旧调用只记连接：不动已记的模型与原生模式开关
+    set_session_native_mode_at(&conn, "codex", "x1", true).unwrap();
     set_session_profile_at(&conn, "codex", "x1", "p-codex-2", None).unwrap();
     let cfg = session_resume_config_at(&conn, "codex", "x1", "/no/such/file.jsonl");
     assert_eq!(cfg.model.as_deref(), Some("gpt-5.4"));
+    assert_eq!(cfg.native_mode, Some(true));
+    set_session_native_mode_at(&conn, "codex", "x1", false).unwrap();
+    let cfg2 = session_resume_config_at(&conn, "codex", "x1", "/no/such/file.jsonl");
+    assert_eq!(cfg2.native_mode, Some(false));
     std::fs::remove_dir_all(&dir).ok();
 }
 

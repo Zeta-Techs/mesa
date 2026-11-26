@@ -2190,6 +2190,7 @@ pub(crate) fn migrate_session_meta(conn: &Connection) {
         "launch_model TEXT",
         "launch_effort TEXT",
         "title_basis TEXT",
+        "native_mode INTEGER",
     ] {
         let _ = conn.execute_batch(&format!("ALTER TABLE session_meta ADD COLUMN {col}"));
     }
@@ -3179,6 +3180,25 @@ fn set_session_profile_at(
     .map_err(|e| format!("写入会话连接归属失败: {e}"))
 }
 
+pub(crate) fn set_session_native_mode_at(
+    conn: &Connection,
+    agent: &str,
+    session_id: &str,
+    native_mode: bool,
+) -> Result<(), String> {
+    let sid = session_id.trim();
+    if agent.trim().is_empty() || sid.is_empty() {
+        return Ok(());
+    }
+    conn.execute(
+        "INSERT INTO session_meta(agent, session_id, native_mode) VALUES(?1, ?2, ?3)
+         ON CONFLICT(agent, session_id) DO UPDATE SET native_mode=?3",
+        params![agent, sid, i64::from(native_mode)],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("写入会话原生模式失败: {e}"))
+}
+
 #[tauri::command]
 pub async fn set_session_profile_command(
     agent: String,
@@ -3186,10 +3206,13 @@ pub async fn set_session_profile_command(
     profile_id: String,
     model: Option<String>,
     effort: Option<String>,
+    native_mode: Option<bool>,
 ) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || set_session_profile_command_sync(agent, session_id, profile_id, model, effort))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        set_session_profile_command_sync(agent, session_id, profile_id, model, effort, native_mode)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 fn set_session_profile_command_sync(
     agent: String,
@@ -3197,11 +3220,19 @@ fn set_session_profile_command_sync(
     profile_id: String,
     model: Option<String>,
     effort: Option<String>,
+    native_mode: Option<bool>,
 ) -> Result<(), String> {
-    let launch = model
-        .as_deref()
-        .map(|m| (m, effort.as_deref().unwrap_or("")));
-    set_session_profile(&agent, &session_id, &profile_id, launch)
+    if !profile_id.trim().is_empty() {
+        let launch = model
+            .as_deref()
+            .map(|m| (m, effort.as_deref().unwrap_or("")));
+        set_session_profile(&agent, &session_id, &profile_id, launch)?;
+    }
+    if let Some(on) = native_mode {
+        let conn = open_db()?;
+        set_session_native_mode_at(&conn, &agent, &session_id, on)?;
+    }
+    Ok(())
 }
 
 /// Mesa 启动这段对话时记下的模型（研究记录在用量还没索引到时兜底）
@@ -3223,6 +3254,8 @@ pub(crate) fn launch_model_of(agent: &str, session_id: &str) -> Option<String> {
 pub struct SessionResumeConfigDto {
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// 这段对话上次开没开「原生模式」（关掉标签后再从侧栏 / 对话页重开仍记住；未记过为 None，跟全局默认走）
+    pub native_mode: Option<bool>,
 }
 
 /// 模型：会话文件里最后一轮实际用的（CLI 里中途 /model 换过的也算），读不到用 Mesa 启动时记下的；
@@ -3233,13 +3266,19 @@ fn session_resume_config_at(
     session_id: &str,
     file_path: &str,
 ) -> SessionResumeConfigDto {
-    let (launch_model, launch_effort) = conn
+    let (launch_model, launch_effort, native_raw) = conn
         .query_row(
-            "SELECT launch_model, launch_effort FROM session_meta WHERE agent=?1 AND session_id=?2",
+            "SELECT launch_model, launch_effort, native_mode FROM session_meta WHERE agent=?1 AND session_id=?2",
             params![agent, session_id],
-            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?)),
+            |r| {
+                Ok((
+                    r.get::<_, Option<String>>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                ))
+            },
         )
-        .unwrap_or((None, None));
+        .unwrap_or((None, None, None));
     let file_effort = if agent == "codex" {
         crate::usage::last_codex_effort(file_path)
     } else {
@@ -3281,6 +3320,7 @@ fn session_resume_config_at(
     SessionResumeConfigDto {
         model,
         effort: file_effort.or(agy_inferred_effort).or(launch_effort),
+        native_mode: native_raw.map(|v| v != 0),
     }
 }
 

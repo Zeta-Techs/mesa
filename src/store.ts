@@ -357,6 +357,8 @@ export interface PendingTerminal {
      *  "ccode" = 内联 provider 会话，必须用带 Base URL 的配置（见 resume-profile.ts） */
     provider?: string | null;
   };
+  /** 恢复或分叉时沿用原对话记下的「原生模式」开关（未指定时新建对话按全局默认走） */
+  nativeMode?: boolean;
   /** 指定启动配置（未给则按 ccode.lastProfile → 该 Agent 首个配置兜底） */
   autoLaunchProfileId?: string;
   /** 预填启动栏（工作区记住上次配置） */

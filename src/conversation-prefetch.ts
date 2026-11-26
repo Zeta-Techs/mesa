@@ -38,6 +38,9 @@ export class OneShotPrefetch<T> {
     if (hit && this.now() - hit.at < this.ttlMs) return hit.value;
     return load();
   }
+  drop(key: string): void {
+    this.entries.delete(key);
+  }
 }
 
 /** 按版本认的结果缓存（记录页）：版本一样就复用，取失败的不留；超过上限扔最久没用的 */
