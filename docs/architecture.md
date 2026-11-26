@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-26 · 订阅余量 Claude / Codex 令牌过期时代调官方 CLI 续期，没配出网代理不调
+
+用户问「为什么不能直接显示额度」：卡上写着 Claude 登录凭证已过期。原因是用户平时经网关用 Claude Code，官方登录没人用就没人续期，而 2026-10-31 定下 Mesa 不刷新令牌（刷新会轮换令牌＝改 CLI 登录存储）。本机实测找到两家官方 CLI 的零消耗续期入口：Claude Code 2.1.326 的 `claude -p /usage` 是本地命令（`local_command: "usage"`、0 轮、0 token），令牌过期时会先续期（`claude auth status` 不续期）；Codex 0.172.0 的 `codex app-server` `account/read {refreshToken:true}` 会在返回前主动续期，不建会话。用户担心清掉网关变量触发风控，结论是这与用户自己敲一次 `/usage` 相同（官方客户端、官方接口、无模型调用、约 8 小时一次），真正的风险在出口地区，于是拍板：**设置里没配出网代理就不调**。定下：新模块 `official_renew.rs` 只拉起 CLI、由 CLI 自己续期写回，Mesa 仍不碰令牌；Claude 不加载任何设置源（用户级 settings.json 的 env 可能写着网关地址）并关 hooks，Codex 暂存回落的凭证不调；同一行 10 分钟内只试一次；续上后重读凭证照常查用量接口，不解析 CLI 的文字输出。Grok / Kimi 本机无官方登录、没实测零消耗续期命令，暂不接入。细则 safety.md「官方账号余量」。
+
 ### 2026-11-26 · 聊天层原生模式扩至全十家、加默认开启开关并纳入双平台金丝雀
 
 在首批五家落地后，用户拍板将剩余规划一并补齐：① 设置 → AI 与 Agent 增加可选开关 **新建对话默认开启原生模式**（`chatNativeDefault`，默认关，已开对话不受影响，仍严格受连接资格护栏约束），「测试版」标签继续保留至双平台金丝雀连续两周全绿；② **Antigravity（`agy`）** 与 Claude 严格对称，只对官方 Google 登录账号开放 `agy acp`（前后端双重拦第三方网关）；③ 逐家真 CLI 探针验证后，维护级四家全部复用通用 ACP 客户端接入（`gemini --acp`、`codebuddy --acp`、`grok agent --no-leader stdio`、`cursor-agent acp` + `cursor_login` 握手），Grok 原生模式停止走 `session/cancel` 不再隐藏停止按钮；④ 核对真实 `opencode 2.4.2` OpenAPI（`POST /api/session/{sessionID}/prompt`）并端到端实测通过 OpenCode 2.x 原生发话；⑤ `scripts/cli-canary/canary.py` 放开 Windows `native_phase` 并覆盖全部 9 路可连假网关原生对象。详见 `docs/design-chat-native-mode.md` §八。

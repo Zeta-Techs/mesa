@@ -1738,8 +1738,10 @@ scan_persist.rs            # 扫描缓存落盘层（2026-10-16，app.db scan_me
                              #   Claude（默认 + 全部隔离 CLAUDE_CONFIG_DIR，缓存命中免调 Keychain）、
                              #   Codex（默认 + 全部隔离 CODEX_HOME，重置卡 use_codex_reset_card 按行 ID 定向消费对应目录 auth.json）、
                              #   Grok / Kimi（默认 + 隔离）与 Antigravity（默认 `agy --print /usage` / 托管号 daily-cloudcode-pa 仅映射自家 Gemini 桶过滤 3p-*）；
-                             #   Claude/Codex/Grok/Kimi 严格只读凭证绝不刷新回写；Antigravity 非激活副本仅在本地副本刷新 access_token 不回写钥匙串；
+                             #   Claude/Codex/Grok/Kimi 凭证只读、Mesa 自己绝不刷新回写（Claude/Codex 过期时经 official_renew 代调 CLI 续期后重读）；Antigravity 非激活副本仅在本地副本刷新 access_token 不回写钥匙串；
                              #   令牌不进 DTO / 日志；走设置里的出网代理（与官方账号启动同源）
+  official_renew.rs          # 官方账号令牌过期时代调官方 CLI 零消耗命令让其自己续期（2026-11-26）：Claude `-p /usage`（须为本地命令）、
+                             #   Codex `app-server` account/read refreshToken；设置里没配出网代理不调、清网关变量、每行 10 分钟节流；Mesa 不碰令牌
   gateway_balance.rs         # 网关余额查询（用量页「网关余额」卡，与订阅余量并列，2026-09-20）：
                              #   New API 兼容预付钱包，出卡零配置（槽 URL 主机命中 zetatechs.com 即出；加站点 = WALLET_HOSTS 加一条）；
                              #   公开 GET {origin}/api/status 取 quota_display_type / quota_per_unit；

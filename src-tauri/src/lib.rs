@@ -168,6 +168,7 @@ mod storage;
 mod subscription_quota;
 mod official_accounts;
 mod official_quota;
+mod official_renew;
 mod task_review;
 mod tray;
 mod ui_zoom;

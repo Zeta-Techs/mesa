@@ -21,9 +21,10 @@
 //!   rate_limit_reset_credits.applicable_available_count 是「此刻能用」的张数——没被限额卡住时恒 0。
 //!   用卡 POST wham/rate-limit-reset-credits/consume，body {credit_id, redeem_request_id}（codex2api / ai-tools-mng 两家实现一致；
 //!   redeem_request_id 是幂等键）。消费性写操作：只经显式命令 + 前端确认触发，挑最早过期的那张；此刻用不了时不发请求。
-//! 纪律：令牌只在本模块内存里经过，不进 DTO / 日志；**绝不刷新、绝不回写**——令牌过期就请用户跑一次 CLI 或重新登录，
-//! 由 CLI 自己续期（刷新会轮换令牌，等于改 CLI 的登录存储）。查询走设置里的出网代理（与官方账号启动同源），
-//! 没配就按系统环境直连。
+//! 纪律：令牌只在本模块内存里经过，不进 DTO / 日志；**Mesa 自己绝不刷新、绝不回写**（刷新会轮换令牌，等于改 CLI
+//! 的登录存储）。Claude / Codex 令牌过期时（2026-11-26 起），配了出网代理就经 `official_renew` 拉起官方 CLI 的零消耗
+//! 命令，由 CLI 自己续期写回，再重读凭证查询；没配代理或续不上，照旧提示用户跑一次 CLI 或重新登录。
+//! 查询走设置里的出网代理（与官方账号启动同源），没配就按系统环境直连。
 
 use crate::subscription_quota::{
     cache_get, now_ms, settle_fresh, PlanQuotaDto, PlanQuotaWindowDto, PlanResetCardsDto,
@@ -75,6 +76,21 @@ struct ClaudeCreds {
 struct CodexCreds {
     token: String,
     account_id: Option<String>,
+    /// access_token（JWT）里的 exp，毫秒；解不出为 None
+    expires_at: Option<i64>,
+    /// 来自 cc-switch 暂存（auth.json 已被移走）时为 false：CLI 读不到这份登录，代为续期无从谈起
+    renewable: bool,
+}
+
+/// 取 JWT 载荷里的 exp（秒 → 毫秒）；只解码不验签，仅用来判断是否已过期
+fn jwt_exp_ms(token: &str) -> Option<i64> {
+    use base64::Engine;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("exp").and_then(|x| x.as_i64()).map(|s| s * 1000)
 }
 
 // ===== 凭证（只读） =====
@@ -244,6 +260,8 @@ fn parse_codex_creds_value(v: &serde_json::Value) -> Option<CodexCreds> {
         return None;
     }
     Some(CodexCreds {
+        expires_at: jwt_exp_ms(&token),
+        renewable: true,
         token,
         account_id: tokens
             .get("account_id")
@@ -268,7 +286,9 @@ fn parse_codex_stash(text: &str) -> Option<CodexCreds> {
     if last.is_empty() {
         return None;
     }
-    parse_codex_creds_value(v.get("logins")?.get(last)?)
+    let mut creds = parse_codex_creds_value(v.get("logins")?.get(last)?)?;
+    creds.renewable = false;
+    Some(creds)
 }
 
 /// 读指定 Codex 目录的 auth.json（`codex_home == None` 走默认目录 + cc-switch stash 回落；隔离目录不回落 stash）
@@ -502,12 +522,34 @@ async fn get_json(req: reqwest::RequestBuilder) -> Result<(u16, serde_json::Valu
     Ok((status, serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)))
 }
 
+/// 令牌过期时代为续期失败 / 不调的提示（`who` = Claude Code / Codex）
+fn renew_hint(who: &str, outcome: crate::official_renew::RenewOutcome) -> String {
+    match outcome {
+        crate::official_renew::RenewOutcome::NoProxy => {
+            format!("在设置里配好出网代理后 Mesa 会代为续期；也可以用一次 {who} 再回来刷新")
+        }
+        _ => format!("Mesa 代为续期没有成功：用一次 {who}，或到连接页重新登录后再刷新"),
+    }
+}
+
+/// 阻塞：代为续期 Claude 登录后重读凭证；续上（令牌在、没过期）才返回新凭证
+fn renew_claude_creds(row_id: &str, config_dir: Option<&std::path::Path>) -> Result<ClaudeCreds, crate::official_renew::RenewOutcome> {
+    let outcome = crate::official_renew::renew_claude(row_id, config_dir);
+    if outcome != crate::official_renew::RenewOutcome::Ran {
+        return Err(outcome);
+    }
+    read_claude_creds_for_dir(config_dir)
+        .filter(|c| !c.token.is_empty() && !c.expires_at.is_some_and(|t| t <= now_ms()))
+        .ok_or(crate::official_renew::RenewOutcome::Failed)
+}
+
 async fn query_claude_named(
     row_id: &str,
     row_name: &str,
     binding_id: Option<String>,
     account_hint: Option<String>,
-    creds: ClaudeCreds,
+    mut creds: ClaudeCreds,
+    config_dir: Option<std::path::PathBuf>,
 ) -> PlanQuotaDto {
     let mut dto = blank_official_row(
         row_id,
@@ -526,8 +568,17 @@ async fn query_claude_named(
         return dto;
     }
     if creds.expires_at.is_some_and(|t| t <= now_ms()) {
-        dto.error = Some("Claude 登录凭证已过期：用一次 Claude Code 会自动续期，再回来刷新".into());
-        return dto;
+        let id = row_id.to_string();
+        let renewed = tauri::async_runtime::spawn_blocking(move || renew_claude_creds(&id, config_dir.as_deref()))
+            .await
+            .unwrap_or(Err(crate::official_renew::RenewOutcome::Failed));
+        match renewed {
+            Ok(fresh) => creds = fresh,
+            Err(outcome) => {
+                dto.error = Some(format!("Claude 登录凭证已过期：{}", renew_hint("Claude Code", outcome)));
+                return dto;
+            }
+        }
     }
     let req = official_client()
         .get(CLAUDE_USAGE_URL)
@@ -907,13 +958,39 @@ async fn query_codex_cards(creds: &CodexCreds) -> Result<Vec<(String, Option<i64
     }
 }
 
+/// 代为续期 Codex 登录后重读凭证；暂存回落的凭证（auth.json 已被移走）不调 CLI
+async fn renew_codex_creds(
+    row_id: &str,
+    codex_home: Option<std::path::PathBuf>,
+    creds: &CodexCreds,
+) -> Result<CodexCreds, crate::official_renew::RenewOutcome> {
+    use crate::official_renew::RenewOutcome;
+    if !creds.renewable {
+        return Err(RenewOutcome::Failed);
+    }
+    let id = row_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = crate::official_renew::renew_codex(&id, codex_home.as_deref());
+        if outcome != RenewOutcome::Ran {
+            return Err(outcome);
+        }
+        read_codex_creds_for_dir(codex_home.as_deref())
+            .filter(|c| c.renewable && !c.expires_at.is_some_and(|t| t <= now_ms()))
+            .ok_or(RenewOutcome::Failed)
+    })
+    .await
+    .unwrap_or(Err(RenewOutcome::Failed))
+}
+
 async fn query_codex_named(
     row_id: &str,
     row_name: &str,
     binding_id: Option<String>,
     account_hint: Option<String>,
-    creds: CodexCreds,
+    mut creds: CodexCreds,
+    codex_home: Option<std::path::PathBuf>,
 ) -> PlanQuotaDto {
+    use crate::official_renew::RenewOutcome;
     let mut dto = blank_official_row(
         row_id,
         row_name,
@@ -925,30 +1002,59 @@ async fn query_codex_named(
         None,
     );
     dto.reset_cards_supported = true;
-    match get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await {
-        Ok((status, body)) if (200..300).contains(&status) => match parse_codex_usage(&body, now_ms()) {
-            Ok((plan, windows)) => {
-                dto.ok = true;
-                dto.plan_level = plan;
-                dto.windows = windows;
-                dto.reset_cards.general_applicable = codex_applicable_cards(&body);
-                match query_codex_cards(&creds).await {
-                    Ok(cards) => {
-                        dto.reset_cards.ok = true;
-                        dto.reset_cards.general = cards.len() as u32;
-                        dto.reset_cards.general_expires_at = cards.first().and_then(|(_, at)| *at);
-                    }
-                    Err(e) => dto.reset_cards.error = Some(e),
-                }
+    // 已过期先代为续期；没过期但被拒（401/403）再试一次。每行最多续一次
+    let mut renewed: Option<RenewOutcome> = None;
+    if creds.expires_at.is_some_and(|t| t <= now_ms()) {
+        match renew_codex_creds(row_id, codex_home.clone(), &creds).await {
+            Ok(fresh) => {
+                creds = fresh;
+                renewed = Some(RenewOutcome::Ran);
             }
-            Err(e) => dto.error = Some(e),
-        },
-        Ok((401 | 403, _)) => {
-            dto.error = Some("Codex 登录已过期或失效：用一次 Codex 会自动续期，仍不行就到连接页重新登录".into())
+            Err(outcome) => renewed = Some(outcome),
         }
-        Ok((429, _)) => dto.error = Some("查询太频繁，Codex 暂时拒绝了，稍后再刷新".into()),
-        Ok((status, _)) => dto.error = Some(format!("Codex 用量接口返回 HTTP {status}")),
-        Err(e) => dto.error = Some(e),
+    }
+    loop {
+        match get_json(codex_request(reqwest::Method::GET, CODEX_USAGE_URL, &creds)).await {
+            Ok((status, body)) if (200..300).contains(&status) => match parse_codex_usage(&body, now_ms()) {
+                Ok((plan, windows)) => {
+                    dto.ok = true;
+                    dto.plan_level = plan;
+                    dto.windows = windows;
+                    dto.reset_cards.general_applicable = codex_applicable_cards(&body);
+                    match query_codex_cards(&creds).await {
+                        Ok(cards) => {
+                            dto.reset_cards.ok = true;
+                            dto.reset_cards.general = cards.len() as u32;
+                            dto.reset_cards.general_expires_at = cards.first().and_then(|(_, at)| *at);
+                        }
+                        Err(e) => dto.reset_cards.error = Some(e),
+                    }
+                }
+                Err(e) => dto.error = Some(e),
+            },
+            Ok((401 | 403, _)) => {
+                if renewed.is_none() {
+                    match renew_codex_creds(row_id, codex_home.clone(), &creds).await {
+                        Ok(fresh) => {
+                            creds = fresh;
+                            renewed = Some(RenewOutcome::Ran);
+                            continue;
+                        }
+                        Err(outcome) => renewed = Some(outcome),
+                    }
+                }
+                let hint = match renewed {
+                    Some(RenewOutcome::Ran) => "Mesa 已代为续期但仍被拒绝：到连接页重新登录".to_string(),
+                    Some(outcome) => renew_hint("Codex", outcome),
+                    None => renew_hint("Codex", RenewOutcome::Failed),
+                };
+                dto.error = Some(format!("Codex 登录已过期或失效：{hint}"));
+            }
+            Ok((429, _)) => dto.error = Some("查询太频繁，Codex 暂时拒绝了，稍后再刷新".into()),
+            Ok((status, _)) => dto.error = Some(format!("Codex 用量接口返回 HTTP {status}")),
+            Err(e) => dto.error = Some(e),
+        }
+        break;
     }
     dto
 }
@@ -1039,7 +1145,7 @@ pub async fn use_codex_reset_card(row_id: &str) -> Result<PlanQuotaDto, String> 
     }
     crate::subscription_quota::cache_invalidate(row_id);
     Ok(settle_fresh(
-        query_codex_named(row_id, &row_name, binding_id, account_hint, creds).await,
+        query_codex_named(row_id, &row_name, binding_id, account_hint, creds, iso_dir).await,
     ))
 }
 
@@ -1895,7 +2001,7 @@ pub(crate) async fn official_rows_streaming(
                 .await
                 .ok()
                 .flatten()?;
-            let dto = settle_fresh(query_claude_named(CLAUDE_ROW_ID, &name, bid, hint, creds).await);
+            let dto = settle_fresh(query_claude_named(CLAUDE_ROW_ID, &name, bid, hint, creds, None).await);
             if let Some(ref sk) = s {
                 sk.push(order, dto.clone());
             }
@@ -1924,15 +2030,16 @@ pub(crate) async fn official_rows_streaming(
                 }
             }
             let Some(dir) = dir else { return None };
+            let read_dir = dir.clone();
             let (creds, hint) = tauri::async_runtime::spawn_blocking(move || {
-                let c = read_claude_creds_for_dir(Some(&dir));
-                let h = preset_hint.or_else(|| crate::official_accounts::read_claude_account_hint(&dir));
+                let c = read_claude_creds_for_dir(Some(&read_dir));
+                let h = preset_hint.or_else(|| crate::official_accounts::read_claude_account_hint(&read_dir));
                 (c, h)
             })
             .await
             .ok()?;
             let creds = creds?;
-            let dto = settle_fresh(query_claude_named(&row_id, &name, Some(bid), hint, creds).await);
+            let dto = settle_fresh(query_claude_named(&row_id, &name, Some(bid), hint, creds, Some(dir)).await);
             if let Some(ref sk) = s {
                 sk.push(order, dto.clone());
             }
@@ -1967,7 +2074,7 @@ pub(crate) async fn official_rows_streaming(
                 .await
                 .ok()
                 .flatten()?;
-            let dto = settle_fresh(query_codex_named(CODEX_ROW_ID, &name, bid, hint, creds).await);
+            let dto = settle_fresh(query_codex_named(CODEX_ROW_ID, &name, bid, hint, creds, None).await);
             if let Some(ref sk) = s {
                 sk.push(order, dto.clone());
             }
@@ -1996,15 +2103,16 @@ pub(crate) async fn official_rows_streaming(
                 }
             }
             let Some(dir) = dir else { return None };
+            let read_dir = dir.clone();
             let (creds, hint) = tauri::async_runtime::spawn_blocking(move || {
-                let c = read_codex_creds_for_dir(Some(&dir));
-                let h = preset_hint.or_else(|| crate::official_accounts::probe_isolated_codex(&dir).1);
+                let c = read_codex_creds_for_dir(Some(&read_dir));
+                let h = preset_hint.or_else(|| crate::official_accounts::probe_isolated_codex(&read_dir).1);
                 (c, h)
             })
             .await
             .ok()?;
             let creds = creds?;
-            let dto = settle_fresh(query_codex_named(&row_id, &name, Some(bid), hint, creds).await);
+            let dto = settle_fresh(query_codex_named(&row_id, &name, Some(bid), hint, creds, Some(dir)).await);
             if let Some(ref sk) = s {
                 sk.push(order, dto.clone());
             }
@@ -2407,11 +2515,35 @@ mod tests {
         .unwrap();
         assert_eq!(stashed.token, "st");
         assert_eq!(stashed.account_id.as_deref(), Some("acc"));
+        // auth.json 已被移走：CLI 读不到这份登录，不能代为续期
+        assert!(c.renewable);
+        assert!(!stashed.renewable);
         // 真在 Codex 登出后 last 为空：不复活旧暂存
         assert!(parse_codex_stash(
             r#"{"last":null,"logins":{"sub:u|account:acc":{"tokens":{"access_token":"st"}}}}"#,
         )
         .is_none());
+    }
+
+    #[test]
+    fn codex_jwt_exp_read_without_verifying() {
+        use base64::Engine;
+        let enc = |v: serde_json::Value| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string());
+        let token = format!("{}.{}.sig", enc(serde_json::json!({"alg":"RS256"})), enc(serde_json::json!({"exp": 1_765_000_000})));
+        assert_eq!(jwt_exp_ms(&token), Some(1_765_000_000_000));
+        let c = parse_codex_creds(&format!(r#"{{"tokens":{{"access_token":"{token}"}}}}"#)).unwrap();
+        assert_eq!(c.expires_at, Some(1_765_000_000_000));
+        // 不是 JWT（或载荷里没有 exp）：不判过期，交给接口 401 兜底
+        assert_eq!(jwt_exp_ms("opaque"), None);
+        assert_eq!(jwt_exp_ms(&format!("x.{}.y", enc(serde_json::json!({"sub":"u"})))), None);
+    }
+
+    #[test]
+    fn renew_hint_says_why_not_renewed() {
+        use crate::official_renew::RenewOutcome;
+        assert!(renew_hint("Codex", RenewOutcome::NoProxy).contains("出网代理"));
+        assert!(renew_hint("Claude Code", RenewOutcome::Failed).contains("没有成功"));
+        assert!(renew_hint("Claude Code", RenewOutcome::CoolingDown).contains("用一次 Claude Code"));
     }
 
     #[test]
