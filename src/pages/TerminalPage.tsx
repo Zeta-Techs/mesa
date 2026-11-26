@@ -243,6 +243,8 @@ interface Tab {
   permissionMode?: NativePermissionMode | null;
   /** 这段对话开了「原生模式」（docs/design-chat-native-mode.md）：按对话记、进持久化白名单；这家没点亮时不起作用 */
   nativeMode?: boolean;
+  /** 冷启动首帧设置尚未落盘回来时的空白标签标记：设置读到后按 chatNativeDefault 填一次即清掉 */
+  followNativeDefault?: boolean;
   /** 开工弹层的本次思考档覆盖（不进持久化白名单）：launch 经 pty_spawn
       effortOverride 注入；空 = 绑定逐模型策略/端点默认 */
   effort?: string | null;
@@ -282,7 +284,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const cutOff = parseQuitCutOff(localStorage.getItem(QUIT_CUT_OFF_STORAGE_KEY));
     localStorage.removeItem(QUIT_CUT_OFF_STORAGE_KEY);
     if (saved.tabs.length === 0) {
-      const tab: Tab = { id: crypto.randomUUID() };
+      const defNative = useAppStore.getState().settings?.chatNativeDefault;
+      const tab: Tab = {
+        id: crypto.randomUUID(),
+        ...(defNative === true ? { nativeMode: true } : defNative === undefined ? { followNativeDefault: true } : {}),
+      };
       return { tabs: [tab], activeId: tab.id };
     }
     const restoredTabs: Tab[] = saved.tabs.map((tab) => ({
@@ -311,6 +317,23 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   });
   const [tabs, setTabs] = useState<Tab[]>(initialState.tabs);
   const [activeId, setActiveId] = useState(initialState.activeId);
+  const chatNativeDefault = useAppStore((s) => s.settings?.chatNativeDefault);
+  // 冷启动首帧 settings 还在路上时创建的空白标签，settings 一到达就按「新建对话默认开启原生模式」落一次（已起进程的绝不改）
+  useEffect(() => {
+    if (chatNativeDefault === undefined) return;
+    setTabs((prev) => {
+      if (!prev.some((t) => t.followNativeDefault)) return prev;
+      return prev.map((t) =>
+        t.followNativeDefault
+          ? {
+              ...t,
+              followNativeDefault: false,
+              nativeMode: t.nativeMode ?? (chatNativeDefault && !t.shellOnly && !t.customRuntimeId ? true : undefined),
+            }
+          : t,
+      );
+    });
+  }, [chatNativeDefault]);
   // 启动时清一次孤儿回放：崩溃/强退残留的 replay-* 只保留本次恢复的标签，
   // 否则目录随历史标签无限堆积（2026-10-10 修；正常运行中关标签即 drop，不靠这里）
   useEffect(() => {
@@ -1648,7 +1671,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       );
       if (!ok) return;
     }
-    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on } : t)));
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on, followNativeDefault: false } : t)),
+    );
   }
 
   async function sendChatToActive(text: string): Promise<string | null> {
@@ -1797,6 +1822,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         runId: init?.runId,
         taskId: init?.taskId,
         preview: init?.preview,
+        ...(init?.shellOnly || init?.customRuntimeId
+          ? {}
+          : useAppStore.getState().settings?.chatNativeDefault
+            ? { nativeMode: true }
+            : {}),
       };
       setTabs((prev) => [...prev, t]);
       setActiveId(t.id);
@@ -3498,6 +3528,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const fresh: Tab = {
       id: crypto.randomUUID(),
       skipSeed: true,
+      ...(useAppStore.getState().settings?.chatNativeDefault ? { nativeMode: true } : {}),
     };
     let nextActiveId = activeId;
     setTabs((prev) => {

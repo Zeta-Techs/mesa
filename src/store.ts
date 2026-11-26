@@ -120,6 +120,8 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** 会话自动命名（默认开）：聊完起名 + 打开对话页补名去重；关 = 全停，手改标题不受影响 */
   autoTitleSessions?: boolean;
+  /** 新建对话默认开启聊天层原生模式（默认关）：仅影响新建对话，已开对话保留各自选择 */
+  chatNativeDefault?: boolean;
   /** 关主窗口时留在后台（默认开；Mac 藏窗口、Windows 收进托盘）；false = 关窗口即退出。见 window_close.rs */
   closeToBackground?: boolean;
   /** 桌宠（2026-11-09，desk_pet.rs）：在桌面上显示小桌；冒话 important | quiet；大小 small | normal | large */

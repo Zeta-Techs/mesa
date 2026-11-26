@@ -3934,6 +3934,18 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
           />
         </Row>
 
+        <Row
+          label="新建对话默认开启原生模式"
+          hint="支持原生协议且当前连接允许的家默认开启；已开对话不受影响"
+          labelTitle="打开后，新建对话会默认启用聊天层原生模式（仍受各家与连接类型约束，例如官方订阅版 Claude、第三方网关版 Antigravity 自动保持终端模式）；关闭后默认仍是终端模式"
+        >
+          <Toggle
+            label="新建对话默认开启原生模式"
+            checked={settings?.chatNativeDefault ?? false}
+            onChange={(v) => patch({ chatNativeDefault: v })}
+          />
+        </Row>
+
         {IS_WINDOWS && (
           <Row
             label="定时任务里 Codex 用 Windows 沙箱"
