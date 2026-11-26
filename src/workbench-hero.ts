@@ -12,6 +12,7 @@ import {
   pickRecoverableRun,
 } from "./run-model.ts";
 import { goalBucket } from "./project-tasks.ts";
+import { pipelineStepSaved } from "./workbench-cards.ts";
 import { userSaid } from "./chat-relay.ts";
 import { projectNowLine } from "./project-status.ts";
 import { sessionExcludedFromProjectList } from "./session-filter.ts";
@@ -683,11 +684,7 @@ export function openStepProgress(
   const name = firstOpenStepName(steps, workspaces);
   if (name === null) return null;
   const total = steps.length;
-  const open = steps.findIndex((step) => {
-    if (step.seedComplete) return false;
-    const ws = workspaces.find((w) => w.name === step.workspaceName && w.status !== "archived");
-    return !(ws && ws.status === "active" && ws.mergedAt);
-  });
+  const open = steps.findIndex((step) => !pipelineStepSaved(step, workspaces));
   if (open < 0) return { name, index: total, total, done: true };
   return { name, index: open + 1, total, done: false };
 }
@@ -719,12 +716,7 @@ export function firstOpenStepName(
 ): string | null {
   if (steps.length === 0) return null;
   for (const step of steps) {
-    if (step.seedComplete) continue;
-    const ws = workspaces.find(
-      (w) => w.name === step.workspaceName && w.status !== "archived",
-    );
-    const done = Boolean(ws && ws.status === "active" && ws.mergedAt);
-    if (!done) return step.name;
+    if (!pipelineStepSaved(step, workspaces)) return step.name;
   }
   return steps[steps.length - 1]!.name;
 }

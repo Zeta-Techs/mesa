@@ -88,6 +88,20 @@ export interface CardWorkspaceInput {
   mergedAt: string | null;
 }
 
+/** 流程步骤算不算「已保存进项目」，与项目页 deriveStepStatus 同口径：
+ *  开着的工作副本以它为准（已合并才算）；没有开着的时，保存进项目后又归档的也算完成
+ *  （评审「保存并归档」，2026-11-05 项目页已改；工作台卡片与首卡 2026-11-26 跟上，
+ *  原先五步全归档的课题在工作台显示「第一步还没开始」）；预置完成的检索步同理 */
+export function pipelineStepSaved(
+  step: { workspaceName: string; seedComplete?: boolean },
+  workspaces: readonly { name: string; status: string; mergedAt: string | null }[],
+): boolean {
+  const mine = workspaces.filter((w) => w.name === step.workspaceName);
+  const open = mine.find((w) => w.status !== "archived");
+  if (open) return open.status === "active" && !!open.mergedAt;
+  return Boolean(step.seedComplete) || mine.some((w) => !!w.mergedAt);
+}
+
 export interface CardStepInput {
   name: string;
   workspaceName: string;
@@ -202,9 +216,8 @@ export function buildProjectCard(input: {
     return run;
   };
 
-  const mineWs = input.workspaces.filter(
-    (w) => w.status !== "archived" && samePath(w.repoPath, project.path, win),
-  );
+  const projectWs = input.workspaces.filter((w) => samePath(w.repoPath, project.path, win));
+  const mineWs = projectWs.filter((w) => w.status !== "archived");
   const mineGoals = input.goals.filter(
     (g) => !g.archivedAt && g.projectRoot && samePath(g.projectRoot, project.path, win),
   );
@@ -220,7 +233,7 @@ export function buildProjectCard(input: {
     let current = -1;
     const states = steps.map((step, i) => {
       const ws = mineWs.find((w) => w.name === step.workspaceName);
-      const done = Boolean(step.seedComplete || (ws && ws.status === "active" && ws.mergedAt));
+      const done = pipelineStepSaved(step, projectWs);
       if (!done && current < 0) current = i;
       return { step, ws, done };
     });

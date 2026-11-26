@@ -214,6 +214,19 @@ test("orderLikeSidebar：置顶在前按置顶先后，其余按拖动顺序，�
   );
 });
 
+test("科研流程：五步都保存进项目后归档，卡片写都已完成，不再列「还没开始」", () => {
+  const names = ["lit-search", "lit-notes", "outline", "draft", "polish"];
+  const card = buildProjectCard({
+    ...base,
+    project: { path: "/p", name: "硼化物析氢", registered: true, workMode: "research" },
+    steps: names.map((n) => ({ name: n, workspaceName: n })),
+    workspaces: names.map((n, i) => ({ id: `w${i}`, repoPath: "/p", name: n, worktreePath: `/wt/${n}`, status: "archived", mergedAt: "2026-11-23T00:00:00Z" })),
+  });
+  assert.deepEqual(card.tasks, []);
+  assert.deepEqual(card.vitals.find((v) => v.label === "进行到"), { label: "进行到", value: "5 步都已完成" });
+  assert.ok(card.track?.every((t) => t.state === "done"));
+});
+
 test("步骤措辞：当前这一步与提前开的分开写；目标与分支带最后一次动它的时间", () => {
   const card = buildProjectCard({
     ...base,

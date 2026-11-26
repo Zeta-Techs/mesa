@@ -296,6 +296,27 @@ test("firstOpenStepName 取第一个未合并步骤，全完成回末步", () =>
   );
 });
 
+test("保存进项目后又归档的步骤算完成，与项目页同口径", () => {
+  const steps = [
+    { name: "文献检索与筛选", workspaceName: "lit-search" },
+    { name: "润色与定稿", workspaceName: "polish" },
+  ];
+  const allArchived = [
+    { name: "lit-search", status: "archived", mergedAt: "2026-11-22T02:25:02Z" },
+    { name: "polish", status: "archived", mergedAt: "2026-11-23T09:55:35Z" },
+  ];
+  assert.deepEqual(openStepProgress(steps, allArchived), { name: "润色与定稿", index: 2, total: 2, done: true });
+  // 没保存就归档的仍算没开始
+  const dropped = [{ name: "lit-search", status: "archived", mergedAt: null }];
+  assert.equal(firstOpenStepName(steps, dropped), "文献检索与筛选");
+  // 归档过一轮又重开、新工作副本还没保存：以开着的为准
+  const reopened = [
+    { name: "lit-search", status: "archived", mergedAt: "a" },
+    { name: "lit-search", status: "active", mergedAt: null },
+  ];
+  assert.equal(firstOpenStepName(steps, reopened), "文献检索与筛选");
+});
+
 test("namedSessionTitle 丢掉未命名对话", () => {
   assert.equal(namedSessionTitle({ customTitle: "方向", title: "hi" }), "方向");
   assert.equal(namedSessionTitle({ customTitle: null, title: "  " }), null);
