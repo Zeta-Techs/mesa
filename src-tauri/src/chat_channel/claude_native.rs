@@ -362,10 +362,19 @@ pub(crate) fn session_only(suggestions: &Value) -> Value {
     )
 }
 
-/// 回 can_use_tool 的那一条（纯函数）：answers 是提问表单的答案（题目 → 选项），合进 updatedInput
-pub(crate) fn permission_reply(request_id: &str, decision: &str, input: &Value, suggestions: &Value, answers: Option<&Value>) -> Value {
+/// 回 can_use_tool 的那一条（纯函数）：answers 是提问表单的答案（题目 → 选项），合进 updatedInput；
+/// message 是拒绝时交给模型的话（计划卡「接着改方案」写的意见）
+pub(crate) fn permission_reply(
+    request_id: &str,
+    decision: &str,
+    input: &Value,
+    suggestions: &Value,
+    answers: Option<&Value>,
+    message: Option<&str>,
+) -> Value {
     let response = if decision == "deny" {
-        json!({ "behavior": "deny", "message": "用户在 Mesa 里拒绝了这一步" })
+        let text = message.map(str::trim).filter(|m| !m.is_empty()).unwrap_or("用户在 Mesa 里拒绝了这一步");
+        json!({ "behavior": "deny", "message": text })
     } else {
         let mut updated = input.clone();
         if let (Some(a), Some(o)) = (answers.filter(|a| a.is_object()), updated.as_object_mut()) {
@@ -380,7 +389,13 @@ pub(crate) fn permission_reply(request_id: &str, decision: &str, input: &Value, 
     json!({ "type": "control_response", "response": { "subtype": "success", "request_id": request_id, "response": response } })
 }
 
-pub(crate) fn reply(ch: &Channel, request_id: &str, decision: &str, answers: Option<&Value>) -> Result<(), String> {
+pub(crate) fn reply(
+    ch: &Channel,
+    request_id: &str,
+    decision: &str,
+    answers: Option<&Value>,
+    message: Option<&str>,
+) -> Result<(), String> {
     let writer = writer_of(ch)?;
     let (input, suggestions) = ch
         .claude
@@ -389,7 +404,7 @@ pub(crate) fn reply(ch: &Channel, request_id: &str, decision: &str, answers: Opt
         .pending
         .remove(request_id)
         .ok_or("这条请求已经处理过了")?;
-    write_line(&writer, &permission_reply(request_id, decision, &input, &suggestions, answers))?;
+    write_line(&writer, &permission_reply(request_id, decision, &input, &suggestions, answers, message))?;
     feed(ch, vec![ChannelEvent::ApprovalResolved { request_id: Some(request_id.to_string()) }]);
     Ok(())
 }
@@ -464,19 +479,22 @@ mod tests {
     fn permission_reply_shapes_allow_deny_always_and_answers() {
         let input = json!({"command":"echo mesa > a.txt"});
         let sugg = json!([{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"echo mesa *"}],"behavior":"allow","destination":"localSettings"}]);
-        let r = permission_reply("r1", "allow", &input, &sugg, None);
+        let r = permission_reply("r1", "allow", &input, &sugg, None, None);
         assert_eq!(r["response"]["request_id"], "r1");
         assert_eq!(r["response"]["response"]["behavior"], "allow");
         assert_eq!(r["response"]["response"]["updatedInput"], input);
         assert!(r["response"]["response"].get("updatedPermissions").is_none());
         // 本会话都允许：不写 localSettings
-        let r = permission_reply("r1", "allow_always", &input, &sugg, None);
+        let r = permission_reply("r1", "allow_always", &input, &sugg, None, None);
         assert_eq!(r["response"]["response"]["updatedPermissions"][0]["destination"], "session");
-        let r = permission_reply("r1", "deny", &input, &sugg, None);
+        let r = permission_reply("r1", "deny", &input, &sugg, None, None);
         assert_eq!(r["response"]["response"]["behavior"], "deny");
+        // 计划卡「接着改方案」：意见原样交给模型
+        let r = permission_reply("r1", "deny", &input, &sugg, None, Some("第二步改成先备份"));
+        assert_eq!(r["response"]["response"]["message"], "第二步改成先备份");
         // 提问表单：答案合进 updatedInput
         let ask = json!({"questions":[{"question":"颜色？","options":[{"label":"红"},{"label":"绿"}]}]});
-        let r = permission_reply("r2", "allow", &ask, &Value::Null, Some(&json!({"颜色？":"绿"})));
+        let r = permission_reply("r2", "allow", &ask, &Value::Null, Some(&json!({"颜色？":"绿"})), None);
         assert_eq!(r["response"]["response"]["updatedInput"]["answers"]["颜色？"], "绿");
         assert_eq!(r["response"]["response"]["updatedInput"]["questions"], ask["questions"]);
     }

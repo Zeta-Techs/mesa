@@ -1287,6 +1287,7 @@ fn pty_spawn_sync(
                 &binary_path,
                 &command_args,
                 resume_session_id.as_deref(),
+                profile.request_policy.reasoning_effort.as_deref(),
             )
             .or_else(|| {
                 crate::chat_channel::prepare_claude_native(

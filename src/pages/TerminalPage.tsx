@@ -37,7 +37,7 @@ import {
   type MismatchReport,
 } from "../chat-mismatch";
 import { AGENTS } from "../types";
-import { channelSourceNote, channelTurnOpen, type ChannelReplyDecision } from "../chat-channel";
+import { channelSourceNote, channelTurnOpen, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
 import { normSep, pathWithin as pathWithinDialect, revealFolderLabel, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
@@ -1171,9 +1171,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     requestId: string,
     decision: ChannelReplyDecision,
     answers?: Record<string, string>,
+    message?: string,
   ) {
     try {
-      await invoke("chat_channel_reply", { tabId, requestId, decision, answers: answers ?? null });
+      await invoke("chat_channel_reply", { tabId, requestId, decision, answers: answers ?? null, message: message ?? null });
     } catch (e) {
       toast(`没能送到：${String(e)}，可以在终端里回答`, "error");
     }
@@ -1637,8 +1638,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
     if (nativeRuntime(agent) && statuses[tabId]?.running) {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? "这家 Agent";
+      const warning = nativeSwitchWarning(sessionByTab[tabId]?.channel ?? null);
       const ok = await confirmDialog(
-        `${on ? "切到原生模式" : "切回终端模式"}？\n\n${label} 会先停下，再接回这段对话，对话内容不丢。\n\n注意：它在后台跑着的命令会一起停掉。`,
+        `${on ? "切到原生模式" : "切回终端模式"}？\n\n${label} 会先停下，再接回这段对话，对话内容不丢。${warning ? `\n\n${warning}` : ""}`,
         { confirmText: "切换" },
       );
       if (!ok) return;
@@ -4298,8 +4300,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         channel={sessionByTab[t.id]?.channel ?? null}
                         nativeOn={nativeAllowedFor(t) ? !!t.nativeMode : null}
                         onNativeToggle={(on) => void setTabNativeMode(t.id, on)}
-                        onChannelReply={(requestId, decision, answers) => {
-                          void replyChannel(t.id, requestId, decision, answers);
+                        onChannelReply={(requestId, decision, answers, message) => {
+                          void replyChannel(t.id, requestId, decision, answers, message);
                         }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}

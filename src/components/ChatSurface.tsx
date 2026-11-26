@@ -386,7 +386,13 @@ export default function ChatSurface({
   onNativeToggle?: (on: boolean) => void;
   /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
   /** answers：原生模式 Claude 提问表单的答案（题目 → 答案，native-ask.ts） */
-  onChannelReply?: (requestId: string, decision: ChannelReplyDecision, answers?: Record<string, string>) => void;
+  onChannelReply?: (
+    requestId: string,
+    decision: ChannelReplyDecision,
+    answers?: Record<string, string>,
+    /** 拒绝时交给模型的话（原生模式 Claude 计划卡「接着改方案」的意见） */
+    message?: string,
+  ) => void;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
   onSendNow?: (keys: string) => void;
   /** 终端里「在等你」的那一块（terminal-wait.ts waitScreenOf）；noInputBox = 这家有画面布局表且屏上没有它的输入框 */
@@ -964,6 +970,11 @@ export default function ChatSurface({
   const [nativeAsk, setNativeAsk] = useState<{ id: string; st: NativeAskState } | null>(null);
   const nativeAskId =
     nativeQs.length > 0 && channelApproval?.replyable && channelApproval.requestId ? channelApproval.requestId : null;
+  // 原生模式 Claude 的计划确认（ExitPlanMode 带方案全文、能从聊天答）
+  const nativePlanId =
+    nativeRuntimeKind(channel?.kind) && channelApproval?.plan && channelApproval.replyable && channelApproval.requestId
+      ? channelApproval.requestId
+      : null;
   const nativeAskState = nativeAskId
     ? nativeAsk?.id === nativeAskId
       ? nativeAsk.st
@@ -1151,6 +1162,36 @@ export default function ChatSurface({
       : // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
     planMenu && !trustPrompt
       ? planDecision(planMenu)
+      : nativePlanId && !trustPrompt
+      ? {
+          // 原生模式 Claude 的计划确认（ExitPlanMode 经通道来，方案全文在审批里）：同终端模式的方案卡，开工 = 批准、接着改 = 带意见拒绝
+          key: `native-plan:${nativePlanId}`,
+          title: "方案写好了，要按它开工吗？",
+          hint: planStartBlocked
+            ? "这是只讨论的目标 / 想法，这里不开工：要动手回项目页点「开工」，或把目标改成要验收的，在那边做"
+            : "开工后这段对话接着按原来的那一档走",
+          options: [],
+          plan: {
+            text: channelApproval?.plan ?? null,
+            fromScreen: false,
+            path: channelApproval?.path ? (channelApproval.path.split(/[\\/]/).pop() ?? channelApproval.path) : null,
+            cwd,
+            go: planStartBlocked
+              ? []
+              : [
+                  {
+                    label: "按方案开工",
+                    primary: true,
+                    onClick: () => {
+                      onChannelReply?.(nativePlanId, "allow");
+                      onPlanLeft?.(null);
+                    },
+                  },
+                ],
+            others: [],
+            onRevise: (feedback: string) => onChannelReply?.(nativePlanId, "deny", undefined, feedback),
+          },
+        }
       : nativeAskId && nativeAskState && !trustPrompt
       ? {
           key: `native-ask:${nativeAskId}`,

@@ -65,15 +65,17 @@ export function useRuntimeModelEffort(opts: {
   const { status, profileId, launchModel, modelSwitch, effort, submitCsiU, send, relaunch } = opts;
   const agentId = status?.agentId ?? "";
   const cliVersion = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
+  /** 原生模式的纯协议运行时（Kimi、Claude 没有终端界面）：没有 TUI 可打命令，换模型 / 思考档一律停下按会话接回 */
+  const native = status?.nativeRuntime === true;
   /** 新版 Codex 等：会话里直接切、不写全局配置的命令（switch-strategy.ts） */
-  const sessionModelCmd = inSessionSwitchCommand(agentId, "model", cliVersion);
+  const sessionModelCmd = native ? null : inSessionSwitchCommand(agentId, "model", cliVersion);
   // Kimi 的会话内切换要经标签动作 runTuiCommand 改走选择器；没有它（直接写终端）就不能用，否则带参数的 /effort 会存成默认
-  const sessionEffortRaw = inSessionSwitchCommand(agentId, "effort", cliVersion);
+  const sessionEffortRaw = native ? null : inSessionSwitchCommand(agentId, "effort", cliVersion);
   const sessionEffortCmd = sessionEffortRaw === KIMI_EFFORT_PICK && !send ? null : sessionEffortRaw;
   /** 生成中也收会话内切换命令、下一轮生效（Codex 0.166+、Kimi 2.5.3）：不必等这一轮结束 */
   const midTurnOk = inSessionSwitchMidTurn(agentId, cliVersion);
   /** 换模型走重开接回（Mesa 自己列连接里的模型，不唤 CLI 的选择器、不写 CLI 的全局配置） */
-  const modelByRelaunch = Boolean(relaunch) && switchByRelaunch(agentId, "model", true, cliVersion);
+  const modelByRelaunch = Boolean(relaunch) && (native || switchByRelaunch(agentId, "model", true, cliVersion));
   /** 能带参直切（写一条命令就换到指定模型）：菜单直接列连接里的模型，不唤 CLI 的选择器 */
   const modelDirect = Boolean(sessionModelCmd) || modelSwitch?.kind === "direct";
   /** 这一轮还在生成：重开会打断它，等这一轮结束再换；Codex 生成中也不收斜杠命令（「'/model' is disabled while a task
@@ -196,9 +198,12 @@ export function useRuntimeModelEffort(opts: {
   const effortLive = sessionEffort ?? (comboReady && combo?.showNativeEffort === true ? effort : null);
   /** 换思考档走重开接回：会写回全局配置、且这个组合启动时能注入思考档 */
   const effortByRelaunch =
-    Boolean(relaunch) && switchByRelaunch(agentId, "effort", combo?.injectEffortAllowed === true, cliVersion);
-  /** 中途切会写回全局配置、但启动时又注不进去：只能用命令，菜单底部要写明会存成默认 */
-  const effortPersistsViaCommand = switchPersists(agentId, "effort", cliVersion) && !effortByRelaunch;
+    Boolean(relaunch) &&
+    (native
+      ? combo?.injectEffortAllowed === true
+      : switchByRelaunch(agentId, "effort", combo?.injectEffortAllowed === true, cliVersion));
+  /** 中途切会写回全局配置、但启动时又注不进去：只能用命令，菜单底部要写明会存成默认（原生模式没有命令可打，不走这条） */
+  const effortPersistsViaCommand = !native && switchPersists(agentId, "effort", cliVersion) && !effortByRelaunch;
 
   const nativeLevels =
     combo?.effortLevels && combo.effortLevels.length > 0

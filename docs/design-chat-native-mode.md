@@ -154,8 +154,8 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 ### 二、公共件（第 2、3 期共用，先于第 2 期）
 
 1. ✓（2026-11-26，分支 feat/chat-native-2）不绑终端的运行时：PTY 里改起 `mesa_helper stdio-bridge -- <CLI> <参数>`（stdio_bridge.rs），桥连回 Mesa 在 127.0.0.1 开的一次性口（令牌经环境变量），把 CLI 标准输入输出接过来，标签起停 / 关标签 / 退出清理沿用 PTY；后端 SpawnResult.native_runtime 告诉前端这次是不是真按原生起的。
-2. ✓（2026-11-26，未在界面实测）空闲时切换模式：Kimi 正在跑时翻开关先确认（写明后台命令会一起停），空闲就停下按会话接回，这一轮在跑就等它结束（TerminalView maybeSwitchNative）；后台任务仍检测不了，靠确认框告知。
-3. ✓（2026-11-26，部分）切换后核对：ACP 开会话后比对 configOptions 的模型与 Mesa 选的（-m），能改就 set_config_option、改不了就提示；权限档 set_mode 失败提示；思考档未核对。
+2. ✓（2026-11-26，未在界面实测）空闲时切换模式：Kimi / Claude 正在跑时翻开关先确认，空闲就停下按会话接回，这一轮在跑就等它结束（TerminalView maybeSwitchNative）。后台任务按工具参数数（`run_in_background` 的命令 / 子 Agent、Claude 的 Monitor，快照 `backgroundStarted`）：确认框写「起过 N 个后台任务，会一起停掉」，看得到工具参数而一个没起过就不提；看不到的旁路照旧泛泛提醒（`nativeSwitchWarning`）。只数起过、不知道是否已跑完。
+3. ✓（2026-11-26）切换后核对：ACP 开会话后比对 configOptions 的模型（-m）与思考开关（Mesa 的思考档换算成 on / off，`thinking_switch`），能改就 set_config_option、改不了就提示；权限档 set_mode 失败提示。另：原生模式下没有终端可打命令，模型菜单换模型 / 思考档一律停下按会话接回（TabStatus.nativeRuntime → runtime-model-effort.ts）。
 4. ✓（2026-11-26）聊天层分档与说明：`design-chat-fidelity.md` 加「原生模式」一段（承诺与摘测试版条件）；说明页在 Kimi / Claude 开着原生时换成官方协议的说法（`nativeFidelityNote`）。
 
 ### 三、第 2 期：Kimi（ACP）
@@ -180,4 +180,10 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 - 等上游：agy（ACP 不认 Mesa 的第三方自定义模型、缺「帮我批准」），或先只开官方登录线。
 - 维护级尽力而为：Gemini、CodeBuddy、Cursor、Grok 的 ACP。
 - 一直没验过的：真模型、Windows 全部、切换时后台任务会不会被杀。
+
+### 六、原生模式收尾（2026-11-26，分支 feat/chat-native-3）
+
+- ✓ 思考原文：Kimi ACP 的 agent_thought_chunk、Claude 的 thinking_delta 进快照 `thinking_live`（最近 16000 字节、出站脱敏），聊天层照终端模式读屏的思考框显示（已合并进 main）。
+- ✓ Claude 计划确认：ExitPlanMode 经通道来时用终端模式同一张方案卡（整篇方案、按方案开工 = 批准、接着改方案 = 带意见拒绝，`chat_channel_reply` 加 `message`）；e2e 实测审批里带着方案全文。
+- ✓ 斜杠命令结果：Claude `-p` 把 `/context` 等的结果写进会话文件（`system/local_command`），Mesa 解析器照常出「命令 + 结果」；Kimi ACP 的斜杠命令结果只经文字增量来、不写会话文件，这一轮一结束就留成本地的「命令 + 结果」（同 Codex `/status` 的本地记录）。实测 `/usage`、`/help`。
 

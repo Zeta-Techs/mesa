@@ -38,6 +38,8 @@ pub(crate) struct AcpPrep {
     discuss: bool,
     /// Mesa 这次选的模型（启动参数里的 -m）：开会话后核对，对不上就改过来或说一声
     expect_model: Option<String>,
+    /// Mesa 这次选的思考档换算成 ACP 的 thinking 开关（on / off）；没选为 None，不核对
+    expect_thinking: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -60,7 +62,7 @@ pub(crate) struct AcpState {
 impl AcpPrep {
     /// 只用到监听口与令牌的桥（Claude 原生模式）：`resume` 记启动参数里定下的会话 id
     pub(super) fn bridge_only(listener: TcpListener, token: String, cwd: &str, resume: Option<String>) -> Self {
-        Self { listener, token, cwd: cwd.to_string(), resume, mode: None, discuss: false, expect_model: None }
+        Self { listener, token, cwd: cwd.to_string(), resume, mode: None, discuss: false, expect_model: None, expect_thinking: None }
     }
 }
 
@@ -103,6 +105,7 @@ pub(crate) fn prepare(
     binary: &Path,
     args: &[String],
     resume: Option<&str>,
+    effort: Option<&str>,
 ) -> Option<(PathBuf, Vec<String>, Vec<(String, String)>, Prepared)> {
     if !supported(agent) {
         return None;
@@ -148,6 +151,7 @@ pub(crate) fn prepare(
             mode,
             discuss,
             expect_model,
+            expect_thinking: thinking_switch(effort),
         }),
         session: None,
     };
@@ -194,7 +198,7 @@ fn error_text(reply: &Value) -> Option<String> {
 
 /// 旁路线程：等桥连回来、核对令牌，开会话，然后一直读
 pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
-    let AcpPrep { listener, token, cwd, resume, mode, discuss, expect_model } = prep;
+    let AcpPrep { listener, token, cwd, resume, mode, discuss, expect_model, expect_thinking } = prep;
     let Some(stream) = accept(&ch, &listener, &token) else {
         super::disconnect(&ch);
         return;
@@ -217,7 +221,7 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
         let writer = writer.clone();
         std::thread::spawn(move || read_loop(&ch, &writer, read_half))
     };
-    match open_session(&ch, &cwd, resume.as_deref(), mode, expect_model.as_deref()) {
+    match open_session(&ch, &cwd, resume.as_deref(), mode, expect_model.as_deref(), expect_thinking) {
         Ok(()) => {}
         Err(message) => {
             feed(&ch, vec![ChannelEvent::Notice(message)]);
@@ -266,6 +270,7 @@ fn open_session(
     resume: Option<&str>,
     mode: Option<&'static str>,
     expect_model: Option<&str>,
+    expect_thinking: Option<&str>,
 ) -> Result<(), String> {
     let init = call(
         ch,
@@ -336,20 +341,31 @@ fn open_session(
             feed(ch, vec![ChannelEvent::Notice(format!("没切到对应的权限档：{e}"))]);
         }
     }
-    // 切换模式后核对模型（设计稿公共件 3）：会话报的当前模型不是 Mesa 选的，能改就改过来，改不了就说一声
-    match model_check(&opened, expect_model) {
-        ModelCheck::Fine => {}
-        ModelCheck::Switch(want) => {
-            let r = call(ch, "session/set_config_option", json!({ "sessionId": sid, "configId": "model", "value": want }), CALL_TIMEOUT)?;
-            if let Some(e) = error_text(&r) {
-                feed(ch, vec![ChannelEvent::Notice(format!("没能换成 Mesa 选的模型 {want}：{e}"))]);
+    // 切换模式后核对模型与思考档（设计稿公共件 3）：会话报的当前值不是 Mesa 选的，能改就改过来，改不了就说一声
+    for (id, want, what) in [("model", expect_model, "模型"), ("thinking", expect_thinking, "思考档")] {
+        match config_check(&opened, id, want) {
+            ModelCheck::Fine => {}
+            ModelCheck::Switch(want) => {
+                let r = call(ch, "session/set_config_option", json!({ "sessionId": sid, "configId": id, "value": want }), CALL_TIMEOUT)?;
+                if let Some(e) = error_text(&r) {
+                    feed(ch, vec![ChannelEvent::Notice(format!("没能换成 Mesa 选的{what} {want}：{e}"))]);
+                }
             }
-        }
-        ModelCheck::Missing { want, current } => {
-            feed(ch, vec![ChannelEvent::Notice(format!("这次可用的模型里没有 Mesa 选的 {want}，正在用 {current}"))]);
+            ModelCheck::Missing { want, current } => {
+                feed(ch, vec![ChannelEvent::Notice(format!("这次可选的{what}里没有 Mesa 选的 {want}，正在用 {current}"))]);
+            }
         }
     }
     Ok(())
+}
+
+/// Mesa 的思考档（启动选择 / 绑定策略）→ ACP 的 thinking 开关；认不出（如策略占位）不核对
+pub(crate) fn thinking_switch(effort: Option<&str>) -> Option<&'static str> {
+    match effort?.trim().to_lowercase().as_str() {
+        "off" | "none" | "disabled" | "false" | "0" => Some("off"),
+        "on" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "enabled" | "true" => Some("on"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -359,13 +375,13 @@ pub(crate) enum ModelCheck {
     Missing { want: String, current: String },
 }
 
-/// session/new|load 的回包里 configOptions 的 model 一项 vs Mesa 选的模型（纯函数）
-pub(crate) fn model_check(opened: &Value, want: Option<&str>) -> ModelCheck {
+/// session/new|load 的回包里 configOptions 的某一项（model / thinking）vs Mesa 选的（纯函数）
+pub(crate) fn config_check(opened: &Value, id: &str, want: Option<&str>) -> ModelCheck {
     let Some(want) = want else { return ModelCheck::Fine };
     let Some(opt) = opened
         .pointer("/result/configOptions")
         .and_then(Value::as_array)
-        .and_then(|a| a.iter().find(|o| o.get("id").and_then(Value::as_str) == Some("model")))
+        .and_then(|a| a.iter().find(|o| o.get("id").and_then(Value::as_str) == Some(id)))
     else {
         return ModelCheck::Fine;
     };
@@ -759,14 +775,20 @@ mod tests {
     fn model_check_switches_or_reports_when_session_model_differs() {
         let opened = |cur: &str| json!({"result":{"configOptions":[{"id":"model","currentValue":cur,
             "options":[{"value":"__kimi_env_model__"},{"value":"kimi-k3"}]}]}});
-        assert_eq!(model_check(&opened("__kimi_env_model__"), Some("__kimi_env_model__")), ModelCheck::Fine);
-        assert_eq!(model_check(&opened("kimi-k3"), Some("__kimi_env_model__")), ModelCheck::Switch("__kimi_env_model__".into()));
+        assert_eq!(config_check(&opened("__kimi_env_model__"), "model", Some("__kimi_env_model__")), ModelCheck::Fine);
+        assert_eq!(config_check(&opened("kimi-k3"), "model", Some("__kimi_env_model__")), ModelCheck::Switch("__kimi_env_model__".into()));
         assert_eq!(
-            model_check(&opened("kimi-k3"), Some("gpt-x")),
+            config_check(&opened("kimi-k3"), "model", Some("gpt-x")),
             ModelCheck::Missing { want: "gpt-x".into(), current: "kimi-k3".into() }
         );
-        assert_eq!(model_check(&opened("kimi-k3"), None), ModelCheck::Fine, "没选模型不核对");
-        assert_eq!(model_check(&json!({"result":{}}), Some("x")), ModelCheck::Fine, "不报模型的家不核对");
+        assert_eq!(config_check(&opened("kimi-k3"), "model", None), ModelCheck::Fine, "没选模型不核对");
+        assert_eq!(config_check(&json!({"result":{}}), "model", Some("x")), ModelCheck::Fine, "不报模型的家不核对");
+        // 思考档：Kimi 的 thinking 开关只有 on / off
+        let thinking = json!({"result":{"configOptions":[{"id":"thinking","currentValue":"on","options":[{"value":"off"},{"value":"on"}]}]}});
+        assert_eq!(config_check(&thinking, "thinking", thinking_switch(Some("off"))), ModelCheck::Switch("off".into()));
+        assert_eq!(config_check(&thinking, "thinking", thinking_switch(Some("high"))), ModelCheck::Fine);
+        assert_eq!(thinking_switch(Some("inject")), None, "策略占位不核对");
+        assert_eq!(thinking_switch(None), None);
     }
 
     #[test]

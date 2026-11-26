@@ -50,7 +50,7 @@ if os.environ.get("SETMODEL") and sid:
     report["set_model"] = rpc.call("session/set_model", {"sessionId": sid, "modelId": m}, timeout=30)
     report["set_config_option"] = rpc.call("session/set_config_option", {"sessionId": sid, "configId": "model", "value": m}, timeout=30)
 PROMPTS = {"tool": "TRIGGER_TOOL 写一个探针文件", "ask": "TRIGGER_ASK 问我一个问题", "slow": "TRIGGER_SLOW 慢慢说",
-           "plan": "TRIGGER_PLAN 先做个方案", "slash": "/help"}
+           "plan": "TRIGGER_PLAN 先做个方案", "slash": "/usage", "help": "/help"}
 for t in turns:
     if not sid:
         break
