@@ -928,21 +928,29 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     })
 }
 
-/// 更新命令的失败输出是否是连不上更新源（Go 程序的 `Get "https://…": EOF`、npm 的 ECONNRESET 等）
+/// 更新命令的失败输出是否是连不上更新源（Go 程序的 `Get "https://…": EOF`、npm 的 ECONNRESET、
+/// macOS brew 经 curl 的 `Failed to connect` / `Connection reset by peer` / `Operation timed out` 等）。不分大小写
 fn network_failure(output: &str) -> bool {
-    const MARKERS: [&str; 10] = [
-        "ECONNRESET",
-        "ETIMEDOUT",
-        "ECONNREFUSED",
-        "ENOTFOUND",
-        "EAI_AGAIN",
-        "ENETUNREACH",
-        "\": EOF",
+    const MARKERS: [&str; 15] = [
+        "econnreset",
+        "etimedout",
+        "econnrefused",
+        "enotfound",
+        "eai_again",
+        "enetunreach",
+        "\": eof",
         "connection reset",
         "i/o timeout",
-        "Could not resolve host",
+        "could not resolve host",
+        "failed to fetch manifest",
+        // brew（curl）：curl: (7) Failed to connect…、(28) Operation timed out…、(35) SSL_ERROR_SYSCALL…
+        "failed to connect to",
+        "operation timed out",
+        "ssl_error_syscall",
+        "failed to download resource",
     ];
-    MARKERS.iter().any(|m| output.contains(m)) || output.contains("failed to fetch manifest")
+    let lower = output.to_lowercase();
+    MARKERS.iter().any(|m| lower.contains(m))
 }
 
 /// 构建结果并经 `agent-update-done-<agent_id>` 推送（前端以事件为准，invoke 返回值兜底）
@@ -1671,6 +1679,13 @@ mod tests {
         let agy = "Error: failed to check for updates: failed to fetch manifest: Get \"https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/windows_amd64.json\": EOF";
         assert!(network_failure(agy));
         assert!(network_failure("npm error code ECONNRESET"));
+        // macOS brew 经 curl 拉包 / 刷新软件包信息
+        assert!(network_failure("curl: (56) Recv failure: Connection reset by peer"));
+        assert!(network_failure("curl: (7) Failed to connect to ghcr.io port 443 after 75003 ms: Couldn't connect to server"));
+        assert!(network_failure("curl: (28) Operation timed out after 15000 milliseconds with 0 bytes received"));
+        assert!(network_failure("curl: (35) LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to ghcr.io:443"));
+        assert!(network_failure("Error: claude-code: Failed to download resource \"claude-code\""));
+        assert!(!network_failure("Error: Cask 'claude-code' is not installed."));
         assert!(!network_failure("npm error code EBUSY: resource busy or locked"));
         assert!(!network_failure("命令跑完了，版本仍是 1.0.0"));
     }
