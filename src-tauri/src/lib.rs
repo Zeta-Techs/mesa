@@ -1158,6 +1158,7 @@ pub fn run() {
             chat_channel::chat_channel_settle_interrupted,
             chat_channel::chat_channel_reply,
             chat_channel::chat_channel_interrupt,
+            chat_channel::chat_channel_send,
             context_breakdown::context_breakdown,
             ai::ai_prompt,
             ai::ai_commit_message,

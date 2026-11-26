@@ -21,6 +21,8 @@ export interface RecoverableTerminalTab {
   forkOf?: string | null;
   /** 原生分叉还没落盘（一句没发）：重启后再分一次，不去接那个还不存在的新会话 */
   forkPending?: boolean;
+  /** 这段对话开了「原生模式」（2026-11-26，docs/design-chat-native-mode.md）：按对话记，重启后照旧 */
+  nativeMode?: boolean;
 }
 
 export interface RecoverableTerminalState {
@@ -61,6 +63,7 @@ function parseTab(value: unknown): RecoverableTerminalTab | null {
     ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
     ...(textField(tab.forkOf, 256) ? { forkOf: textField(tab.forkOf, 256) } : {}),
     ...(tab.forkPending === true && textField(tab.forkOf, 256) ? { forkPending: true } : {}),
+    ...(tab.nativeMode === true ? { nativeMode: true } : {}),
   };
 }
 
@@ -110,6 +113,7 @@ export function serializeRecoverableTerminalState(
     ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
     ...(tab.forkOf ? { forkOf: tab.forkOf.slice(0, 256) } : {}),
     ...(tab.forkOf && tab.forkPending ? { forkPending: true } : {}),
+    ...(tab.nativeMode ? { nativeMode: true } : {}),
   }));
   const activeIndex = tabs.length > 0
     ? Math.min(Math.max(Math.trunc(state.activeIndex), 0), tabs.length - 1)

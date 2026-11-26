@@ -4,6 +4,7 @@ import {
   approvalChoices,
   approvalPreview,
   approvalTitle,
+  canSendViaChannel,
   channelAttention,
   channelSourceNote,
   channelOutcome,
@@ -295,4 +296,15 @@ test("CLI 自己报过这一轮结束，读屏没认出输入框也不当成在�
   const ended = snap({ turn: turn("completed") }); // endedAt = 2
   assert.equal(quietScreenMayBeWaiting(ended, 1), false);
   assert.equal(quietScreenMayBeWaiting(ended, 3), true);
+});
+
+test("原生模式：Codex 通道连着、认出对话、这一轮没在跑才经通道发，其余照旧打进终端", () => {
+  const ready = snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1" });
+  assert.equal(canSendViaChannel(ready), true);
+  assert.equal(canSendViaChannel({ ...ready, sessionId: null }), false, "还没认出对话（第一句）");
+  assert.equal(canSendViaChannel({ ...ready, connection: "disconnected" }), false);
+  assert.equal(canSendViaChannel({ ...ready, turn: { seq: 1, status: "running", stopReason: null, error: null, startedAt: 1, endedAt: null } }), false);
+  assert.equal(canSendViaChannel({ ...ready, turn: { seq: 1, status: "completed", stopReason: "end_turn", error: null, startedAt: 1, endedAt: 2 } }), true);
+  assert.equal(canSendViaChannel(snap({ agent: "opencode", kind: "opencode", connection: "connected", sessionId: "s" })), false, "首批只有 Codex");
+  assert.equal(canSendViaChannel(null), false);
 });

@@ -27,7 +27,7 @@ import {
 import type { TerminalProgress } from "../terminal-notify";
 import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
 import { currentVerifiedVersion } from "../cli-verified";
-import { chatFidelity, tierLabel, versionTrust } from "../chat-fidelity";
+import { chatFidelity, nativeModeAvailable, tierLabel, versionTrust } from "../chat-fidelity";
 import {
   MISMATCH_EVENT,
   MISMATCH_TEMPLATE,
@@ -241,6 +241,8 @@ interface Tab {
   discussOnly?: boolean;
   /** 聊天权限徽标选的原生权限档（不进持久化白名单：完全访问不该跨重启自动带上）；null = 按本机设置 */
   permissionMode?: NativePermissionMode | null;
+  /** 这段对话开了「原生模式」（docs/design-chat-native-mode.md）：按对话记、进持久化白名单；这家没点亮时不起作用 */
+  nativeMode?: boolean;
   /** 开工弹层的本次思考档覆盖（不进持久化白名单）：launch 经 pty_spawn
       effortOverride 注入；空 = 绑定逐模型策略/端点默认 */
   effort?: string | null;
@@ -299,6 +301,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       taskId: tab.taskId ?? undefined,
       reuseKey: tab.reuseKey ?? undefined,
       restored: true,
+      nativeMode: tab.nativeMode,
       cutOff: !!tab.id && cutOff.has(tab.id) && !!tab.sessionId && !tab.customRuntimeId && !tab.forkPending,
     }));
     return {
@@ -1266,6 +1269,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             reuseKey: tab.reuseKey ?? null,
             forkOf: tab.forkSource?.sessionId ?? null,
             forkPending: Boolean(tab.forkSessionId),
+            nativeMode: Boolean(tab.nativeMode),
           },
         },
       ];
@@ -1615,6 +1619,11 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void action.sendMessage(pending.prompt);
   }, [injectTick, statuses]);
 
+  /** 模型菜单底部「原生模式」开关：只改这个标签往后怎么发，不重启、不打断这一轮 */
+  const setTabNativeMode = useCallback((tabId: string, on: boolean) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on } : t)));
+  }, []);
+
   async function sendChatToActive(text: string): Promise<string | null> {
     const action = tabActionsRef.current.get(focusedId);
     if (!action) return "这段对话还没准备好，稍等再试";
@@ -1635,8 +1644,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const interruptBusyRef = useRef(new Set<string>());
   function chatInterrupt() {
     const tabId = focusedId;
-    const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
-    if (agent === "opencode") {
+    const tab = tabs.find((t) => t.id === tabId);
+    const agent = statuses[tabId]?.agentId ?? tab?.initialAgentId;
+    // 原生模式的 Codex 同 OpenCode：经官方接口停这一轮，不往终端里按 Esc
+    if (agent === "opencode" || (tab?.nativeMode && nativeModeAvailable(agent))) {
       if (interruptBusyRef.current.has(tabId)) return;
       const snap = sessionByTab[tabId]?.channel;
       if (!snap || snap.connection !== "connected" || !snap.sessionId || !snap.turn) {
@@ -3988,6 +3999,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 }
                 effortOverride={t.effort ?? undefined}
                 permissionMode={writableForks[t.id] ? null : (t.permissionMode ?? null)}
+                nativeMode={!!t.nativeMode && nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId)}
                 submitCsiU={
                   agents.find(
                     (a) => a.id === (statuses[t.id]?.agentId ?? t.initialAgentId),
@@ -4262,6 +4274,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           appSettings?.hooksAttention?.[agentKey ?? ""] || sessionByTab[t.id]?.channel,
                         )}
                         channel={sessionByTab[t.id]?.channel ?? null}
+                        nativeOn={
+                          nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId) ? !!t.nativeMode : null
+                        }
+                        onNativeToggle={(on) => setTabNativeMode(t.id, on)}
                         onChannelReply={(requestId, decision) => {
                           void replyChannel(t.id, requestId, decision);
                         }}

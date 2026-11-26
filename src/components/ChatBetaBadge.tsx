@@ -4,6 +4,7 @@ import { AGENTS } from "../types";
 import { chatFidelity, fidelityBadge, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
+import { Toggle } from "./PageFrame";
 
 /**
  * 聊天层「测试版」说明（2026-10-22 用户：聊天层要不要标一个测试版）：说清楚这一家在聊天里能做到哪一步、
@@ -21,16 +22,24 @@ export function useChatBeta(agentId: string | null) {
   return { badge, newer, heading, summary, warn };
 }
 
+/** 这段对话的「原生模式」开关（docs/design-chat-native-mode.md）；这家还没点亮时不传 */
+export interface NativeModeToggle {
+  on: boolean;
+  onToggle: (on: boolean) => void;
+}
+
 export function ChatBetaNotes({
   agentId,
   channel,
   live = false,
+  native,
   onOpenTerminal,
   onReportMismatch,
 }: {
   agentId: string | null;
   channel?: ChatChannelSnapshot | null;
   live?: boolean;
+  native?: NativeModeToggle | null;
   onOpenTerminal?: () => void;
   /** 「对不上？反馈」：带上两边当时的内容打开反馈表单（chat-mismatch.ts） */
   onReportMismatch?: () => void;
@@ -47,6 +56,18 @@ export function ChatBetaNotes({
         聊天是 Mesa 从终端整理出来的，以终端为准：看不到、按不动的，切到终端都在
         {onReportMismatch ? "；和终端对不上时，请点下面反馈。" : "。"}
       </p>
+      {native && (
+        <div
+          className="mt-2 flex items-center gap-3"
+          title="终端照样连着这段对话，随时能切过去看；关掉就回到往终端里打字的做法"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-l2">原生模式 · 测试版</p>
+            <p>消息和停止直接交给 {label}，不往终端里打字</p>
+          </div>
+          <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
+        </div>
+      )}
       {live && <p className="mt-2 text-l2">{channelSourceNote(channel)}</p>}
       {fidelity && (
         <>

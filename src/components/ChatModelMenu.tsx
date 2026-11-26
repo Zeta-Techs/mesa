@@ -18,7 +18,7 @@ import EffortMark from "./EffortMark";
 import { effortDepth } from "../effort-depth";
 import type { LaunchCombo } from "../launch-combos";
 import { breakdownRequest } from "../context-breakdown";
-import { ChatBetaNotes, useChatBeta } from "./ChatBetaBadge";
+import { ChatBetaNotes, useChatBeta, type NativeModeToggle } from "./ChatBetaBadge";
 import RelayPicker, { AgentMark, type RelayMenuProps } from "./RelayPicker";
 import { confirmDialog } from "./ConfirmDialog";
 import { HoverTip, useHoverTip } from "./HoverTip";
@@ -69,6 +69,8 @@ type SharedProps = {
   onOpenTerminal?: () => void;
   /** 同一处的「和终端对不上？反馈」（chat-mismatch.ts；只有运行中的会话给） */
   onReportMismatch?: () => void;
+  /** 同一处的「原生模式」开关（这家已点亮才给，chat-fidelity.ts nativeModeAvailable） */
+  native?: NativeModeToggle | null;
 };
 
 type RuntimeProps = {
@@ -756,6 +758,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   agentId={agentId || null}
                   channel={props.channel}
                   live={props.live}
+                  native={props.native}
                   onOpenTerminal={
                     props.onOpenTerminal
                       ? () => {

@@ -36,6 +36,7 @@ import { isLightTheme } from "../themes";
 import { MesaMark, MesaStatusLead } from "./MesaMark";
 import { LiveScreenPreview, StreamingMarkdown } from "./ChatLivePreview";
 import ChatModelMenu from "./ChatModelMenu";
+import type { NativeModeToggle } from "./ChatBetaBadge";
 import ChatQuotaRing from "./ChatQuotaRing";
 import ChatPermissionBadge, { confirmPermissionChoice, effectivePermissionTier } from "./ChatPermissionBadge";
 import ChatProjectPicker, { type DirPick } from "./ChatProjectPicker";
@@ -208,6 +209,8 @@ export default function ChatSurface({
   onForkFrom,
   onReportMismatch,
   channel = null,
+  nativeOn = null,
+  onNativeToggle,
   onChannelReply,
   onSendNow,
   waitScreen = null,
@@ -376,6 +379,9 @@ export default function ChatSurface({
   onReportMismatch?: (from: MismatchFrom, card?: { title: string; options: string[] } | null) => void;
   /** 结构化旁路快照（chat-channel.ts）：审批的结构化内容、能否从聊天层答 */
   channel?: ChatChannelSnapshot | null;
+  /** 这段对话开没开「原生模式」（模型菜单底部说明页里的开关）；这家还没点亮为 null，不出开关 */
+  nativeOn?: boolean | null;
+  onNativeToggle?: (on: boolean) => void;
   /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
   onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
@@ -420,6 +426,11 @@ export default function ChatSurface({
   onAsideStateChange?: (summary: AsidePaneSummary) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // 模型菜单底部的「原生模式」开关：这家没点亮（nativeOn 为 null）就不出
+  const native = useMemo<NativeModeToggle | null>(
+    () => (nativeOn == null || !onNativeToggle ? null : { on: nativeOn, onToggle: onNativeToggle }),
+    [nativeOn, onNativeToggle],
+  );
   const [rootWidth, setRootWidth] = useState<number | null>(null);
   useEffect(() => {
     // 宽屏挂进 pane-body 右列时量整个 pane-body（含左右两列）的宽度，避免打开右栏后左栏变窄触发 overlay 来回震荡
@@ -1766,6 +1777,7 @@ export default function ChatSurface({
           imageKind={imageKind}
           onImageWarning={setImageWarning}
           onOpenTerminal={onOpenTerminal}
+          native={native}
         />
       </>
     ) : (running || canResume) && runtime && onTuiCommand ? (
@@ -1797,6 +1809,7 @@ export default function ChatSurface({
           onImageWarning={setImageWarning}
           onOpenTerminal={onOpenTerminal}
           onReportMismatch={running && onReportMismatch ? () => onReportMismatch("notes") : undefined}
+          native={native}
           // 进程退出、还能接着聊：改选「接着聊用哪个模型」，写标签的启动选择（与终端启动栏同一份）
           next={
             !running && canResume && launchPick && onPickLaunch

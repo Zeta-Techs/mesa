@@ -75,6 +75,14 @@ export function channelTurnOpen(snap: ChatChannelSnapshot | null): boolean {
   return s === "running" || s === "awaiting_approval";
 }
 
+/**
+ * 原生模式这句能不能经通道发出（chat_channel_send）：Codex 的私有服务连着、已认出这段对话、这一轮没在跑。
+ * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
+ */
+export function canSendViaChannel(snap: ChatChannelSnapshot | null | undefined): boolean {
+  return !!snap && snap.kind === "codex" && snap.connection === "connected" && !!snap.sessionId && !channelTurnOpen(snap);
+}
+
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */
 export function channelAttention(snap: ChatChannelSnapshot | null): "working" | "confirm" | "done" | null {
   if (snap?.connection === "disconnected") return null;

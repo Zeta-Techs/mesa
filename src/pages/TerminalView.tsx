@@ -102,6 +102,7 @@ import {
 } from "../route-check";
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
+  canSendViaChannel,
   channelAttention,
   channelCanAnswer,
   channelDeliversLiveText,
@@ -874,6 +875,7 @@ export const TerminalView = memo(function TerminalView({
   permissionMode = null,
   effortOverride,
   submitCsiU = false,
+  nativeMode = false,
   restored,
   stepClaimName,
   reuseKey,
@@ -954,6 +956,8 @@ export const TerminalView = memo(function TerminalView({
   effortOverride?: string | null;
   /** 当前 Agent 的提交键是否使用 kitty CSI-u（目前 Kimi） */
   submitCsiU?: boolean;
+  /** 这段对话开了「原生模式」且这家已点亮（docs/design-chat-native-mode.md）：聊天发的话经 CLI 官方接口发起，不往终端里打字 */
+  nativeMode?: boolean;
   /** 应用重启后恢复出的占位标签；用户明确操作前不启动 PTY。 */
   restored?: boolean;
   /** 步骤认领（「跟 AI 商量一下」）：launch 时以最终 agent/cwd 登记会话归该步骤 */
@@ -2095,6 +2099,8 @@ export const TerminalView = memo(function TerminalView({
   permissionRef.current = permission;
   const permissionModeRef = useRef(permissionMode);
   permissionModeRef.current = permissionMode;
+  const nativeModeRef = useRef(nativeMode);
+  nativeModeRef.current = nativeMode;
   // 从会话文件读到的实际权限档（Kimi / Codex）：徽标写它，不加「已选 ·」
   const [observedTier, setObservedTier] = useState<"ask" | "auto" | "full" | null>(null);
   const launchEffortLevels = useMemo(
@@ -6965,7 +6971,15 @@ export const TerminalView = memo(function TerminalView({
         slashBaselineRef.current.set(shown, screenLines());
         slashMenuOwnerRef.current = { sent: shown, at: Date.now() };
       }
-      const result = await writeChatMessage(currentPtyId, message);
+      // 原生模式：通道连着、认出了对话就经 CLI 官方接口发起这一轮，不往终端里打字（终端那边照样画出来）。
+      // 斜杠 / ! 命令是终端自己的功能，照旧打进终端；第一句（还没认出对话）、通道断了也照旧
+      const viaChannel = nativeModeRef.current && !/^[/!]/.test(message) && canSendViaChannel(channelRef.current);
+      const result = viaChannel
+        ? await invoke("chat_channel_send", { tabId, text: message }).then(
+            () => ({ error: null }),
+            (e) => ({ error: `没发出去：${String(e)}` }),
+          )
+        : await writeChatMessage(currentPtyId, message);
       if (result.error) {
         disarmPtyWorking();
         retractOptimisticUserMessage(shown, wasPending);
