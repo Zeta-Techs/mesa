@@ -23,6 +23,7 @@ import {
   planQuotaDataAt,
   planResetCardHighlight,
   planResetFootnote,
+  planResetClock,
   planResetRemain,
   planTabLabel,
   planWindowCaption,
@@ -295,6 +296,18 @@ test("卡面倒计时只写还剩多久，时刻放悬停", () => {
   assert.equal(planResetRemain(in6d, NOW), "还有 7 天 3 小时");
   assert.equal(planResetRemain(NOW - 1, NOW), "已到重置时间");
   assert.equal(planResetRemain(null, NOW), null);
+});
+
+test("浮层行尾短重置时刻：今天只写时刻，明天写明天，一周内写周几，更远写日期", () => {
+  // NOW = 2026-09-19 周六 12:00
+  assert.equal(planResetClock(new Date(2026, 8, 19, 14, 0, 0).getTime(), NOW), "14:00 重置");
+  assert.equal(planResetClock(new Date(2026, 8, 20, 8, 5, 0).getTime(), NOW), "明天 08:05 重置");
+  assert.equal(planResetClock(new Date(2026, 8, 21, 5, 0, 0).getTime(), NOW), "周一 05:00 重置");
+  assert.equal(planResetClock(new Date(2026, 8, 25, 23, 0, 0).getTime(), NOW), "周五 23:00 重置");
+  // 第 7 天与今天同为周六，写日期免得读成今天
+  assert.equal(planResetClock(new Date(2026, 8, 26, 9, 0, 0).getTime(), NOW), "09-26 09:00 重置");
+  assert.equal(planResetClock(NOW - 1, NOW), "已到重置时间");
+  assert.equal(planResetClock(null, NOW), null);
 });
 
 test("重置卡期限附注：卡面只写日期，时刻放悬停", () => {

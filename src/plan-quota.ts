@@ -254,6 +254,27 @@ export function planResetRemain(resetsAt: number | null, now: number): string | 
   return `还有 ${cd.replace(/后重置$/, "")}`;
 }
 
+/** 浮层行尾的短重置时刻：今天「14:00 重置」、明天「明天 08:00 重置」、
+ *  一周内「周一 05:00 重置」、更远「12-03 05:00 重置」；已过返回「已到重置时间」，未知 null。
+ *  一周内只到 6 天：第 7 天与今天同为周几，写周几会读成今天 */
+export function planResetClock(resetsAt: number | null, now: number): string | null {
+  if (resetsAt == null) return null;
+  if (resetsAt - now <= 0) return "已到重置时间";
+  const d = new Date(resetsAt);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const startOf = (ms: number) => {
+    const x = new Date(ms);
+    return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  };
+  // 按日历日差算（夏令时那天不足 24 小时，四舍五入兜住）
+  const days = Math.round((startOf(resetsAt) - startOf(now)) / 86_400_000);
+  if (days === 0) return `${clock} 重置`;
+  if (days === 1) return `明天 ${clock} 重置`;
+  if (days < 7) return `周${"日一二三四五六"[d.getDay()]} ${clock} 重置`;
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${clock} 重置`;
+}
+
 /** 进度分档：<70 正常 / 70-90 警示 / ≥90 危急 */
 export function quotaBarLevel(usedPercent: number): "ok" | "warn" | "danger" {
   if (usedPercent >= 90) return "danger";

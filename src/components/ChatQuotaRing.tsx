@@ -15,6 +15,7 @@ import {
   planLevelLabel,
   planProviderLabel,
   planRemainingQuotaPair,
+  planResetClock,
   planResetRemain,
   planWindowLabel,
 } from "../plan-quota";
@@ -110,6 +111,13 @@ function textToneClass(tone: ChatQuotaTone): string {
   if (tone === "danger") return "text-err-text";
   if (tone === "warn") return "text-caution-text";
   return "text-l3";
+}
+
+/** 浮层横条：正常档用主强调色（与用量页订阅卡同色），警示 / 危急换语义色 */
+function barToneClass(tone: ChatQuotaTone): string {
+  if (tone === "danger") return "bg-err-text";
+  if (tone === "warn") return "bg-caution-text";
+  return "bg-cta";
 }
 
 /**
@@ -393,37 +401,43 @@ export default function ChatQuotaRing({
                 </button>
               </div>
 
-              {/* 浮层主体：各窗剩余小环明细 或 网关钱包余额 */}
+              {/* 浮层主体：各窗「标签 · 重置时刻 · 已用%」+ 已用横条（倒计时放悬停） 或 网关钱包余额 */}
               {isPlan ? (
-                <div className="mt-2.5 space-y-2.5">
+                <div className="mt-2.5 space-y-3">
                   {view.windows.map((w) => {
+                    const usedPct = 100 - w.remainPct;
+                    const resetAt = planResetClock(w.resetsAt, now);
                     const remain = planResetRemain(w.resetsAt, now);
                     const remPair = planRemainingQuotaPair(w.used, w.total);
                     return (
-                      <div key={w.window} className="flex items-center gap-2.5">
-                        <MicroRing
-                          size="md"
-                          ratio={(100 - w.remainPct) / 100}
-                          className={w.tone === "ok" ? "text-l2" : textToneClass(w.tone)}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-baseline justify-between gap-2">
-                            <span className="truncate text-l2">{planWindowLabel(w.window)}已用</span>
+                      <div key={w.window}>
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="truncate text-l2">{planWindowLabel(w.window)}已用</span>
+                          <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
+                            {resetAt && (
+                              <span
+                                className="text-micro text-l4"
+                                title={remain && remain !== resetAt ? remain : undefined}
+                              >
+                                {resetAt}
+                              </span>
+                            )}
                             <span
-                              className={`shrink-0 font-medium tabular-nums ${
-                                w.tone === "ok" ? "text-l1" : textToneClass(w.tone)
-                              }`}
+                              className={`font-medium ${w.tone === "ok" ? "text-l1" : textToneClass(w.tone)}`}
                             >
-                              {100 - w.remainPct}%
+                              {usedPct}%
                             </span>
-                          </div>
-                          {(remain || remPair) && (
-                            <div className="mt-0.5 flex items-center justify-between gap-2 text-micro tabular-nums text-l4">
-                              <span className="truncate">{remain ?? ""}</span>
-                              {remPair && <span className="shrink-0">剩余 {remPair}</span>}
-                            </div>
-                          )}
+                          </span>
                         </div>
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-l1/10">
+                          <div
+                            className={`h-full rounded-full ${barToneClass(w.tone)}`}
+                            style={{ width: `${Math.max(usedPct > 0 ? 2 : 0, Math.min(100, usedPct))}%` }}
+                          />
+                        </div>
+                        {remPair && (
+                          <div className="mt-1 text-micro tabular-nums text-l4">剩余 {remPair}</div>
+                        )}
                       </div>
                     );
                   })}
@@ -443,15 +457,9 @@ export default function ChatQuotaRing({
                   </div>
                   {view.ringUsedPct != null && (
                     <>
-                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-l1/10">
+                      <div className="mt-2 h-1 overflow-hidden rounded-full bg-l1/10">
                         <div
-                          className={`h-full rounded-full ${
-                            view.tone === "danger"
-                              ? "bg-err-text"
-                              : view.tone === "warn"
-                                ? "bg-caution-text"
-                                : "bg-l2"
-                          }`}
+                          className={`h-full rounded-full ${barToneClass(view.tone)}`}
                           style={{ width: `${view.ringUsedPct}%` }}
                         />
                       </div>
