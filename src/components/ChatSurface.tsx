@@ -2432,6 +2432,7 @@ export default function ChatSurface({
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
         stopTitle={stopTitle(midTurn, agentId, { viaChannel: stopViaChannel })}
+        stopViaChannel={stopViaChannel}
         notice={relayNotice ?? cutOffNotice ?? imageMissNotice ?? cacheNotice}
         imageGen={readOnly ? null : imageGen.composer}
         onAside={aside.openCard}

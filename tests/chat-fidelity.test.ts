@@ -80,25 +80,39 @@ test("联网前移的核对版本与随包的取较新，一边读不出取另�
   assert.equal(newerVersion(null, null), null);
 });
 
-test("原生模式逐家点亮：Codex、Kimi、Claude 已开（2026-11-26 拍板：Codex → Kimi → Claude，agy 先不做）", () => {
-  for (const id of ["codex", "kimi", "claude-code", "qwen", "opencode"]) assert.equal(nativeModeAvailable(id), true, id);
-  for (const id of ["agy", "gemini", "grok", "codebuddy", "cursor", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
-  // Qwen 只有发话经通道，停止仍按 Esc
+test("原生模式十家全部点亮：按连接资格闸门控制（Claude 仅非官方，agy 仅官方），Qwen 停止仍走终端", () => {
+  for (const id of ["codex", "kimi", "claude-code", "qwen", "opencode", "agy", "gemini", "codebuddy", "grok", "cursor"]) {
+    assert.equal(nativeModeAvailable(id), true, id);
+  }
+  assert.equal(nativeModeAvailable("custom"), false);
+  // Qwen 只有发话经通道，停止仍按 Esc；其余九家停止都走通道
   assert.equal(nativeStopViaChannel("qwen"), false);
-  assert.equal(nativeStopViaChannel("opencode"), true);
-  // Kimi、Claude 原生模式没有终端界面（纯协议运行时）；Codex 双客户端
-  assert.equal(nativeRuntime("kimi"), true);
-  assert.equal(nativeRuntime("claude-code"), true);
-  assert.equal(nativeRuntime("codex"), false);
-  // Claude 只对 API 密钥 / 中转网关连接开放
+  for (const id of ["codex", "kimi", "claude-code", "opencode", "agy", "gemini", "codebuddy", "grok", "cursor"]) {
+    assert.equal(nativeStopViaChannel(id), true, id);
+  }
+  // 纯协议运行时（stdio 桥）vs 双客户端
+  for (const id of ["kimi", "claude-code", "agy", "gemini", "codebuddy", "grok", "cursor"]) {
+    assert.equal(nativeRuntime(id), true, id);
+  }
+  for (const id of ["codex", "qwen", "opencode"]) {
+    assert.equal(nativeRuntime(id), false, id);
+  }
+  // Claude 只对 API 密钥 / 中转网关连接开放；agy 只对官方登录账号开放
   assert.equal(nativeModeAllowed("claude-code", "official"), false);
   assert.equal(nativeModeAllowed("claude-code", "gateway"), true);
+  assert.equal(nativeModeAllowed("agy", "official"), true);
+  assert.equal(nativeModeAllowed("agy", "gateway"), false);
+  assert.equal(nativeModeAllowed("agy", "api_key"), false);
   assert.equal(nativeModeAllowed("codex", "official"), true);
+  assert.equal(nativeModeAllowed("gemini", "gateway"), true);
+  assert.equal(nativeModeAllowed("grok", "gateway"), true);
   assert.equal(nativeModeAvailable(null), false);
 });
 
 test("原生模式下没有终端界面的家，说明页换成官方协议的说法；双客户端的家照旧", () => {
-  assert.match(nativeFidelityNote("kimi")?.source ?? "", /原生模式/);
+  for (const id of ["kimi", "claude-code", "agy", "gemini", "codebuddy", "grok", "cursor"]) {
+    assert.match(nativeFidelityNote(id)?.source ?? "", /原生模式/, id);
+  }
   assert.match(nativeFidelityNote("claude-code")?.terminalOnly ?? "", /终端面板/);
   assert.equal(nativeFidelityNote("codex"), null);
   assert.equal(nativeFidelityNote(null), null);

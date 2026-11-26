@@ -5215,9 +5215,13 @@ mod e2e {
             args = bridge_args;
             (env, Some(p))
         } else if native_acp {
-            let resume = args.iter().position(|a| a == "-S" || a == "--session").and_then(|i| args.get(i + 1).cloned());
-            let (helper, bridge_args, env, p) = prepare_native(agent, Some("e2e-tab"), &cwd, bin, &args, resume.as_deref(), None)
-                .expect("原生模式应当接上（找不到 mesa_helper 时先 cargo build --bin mesa_helper）");
+            let resume = args
+                .iter()
+                .position(|a| matches!(a.as_str(), "-S" | "--session" | "-r" | "--resume" | "--conversation"))
+                .and_then(|i| args.get(i + 1).cloned());
+            let (helper, bridge_args, env, p) =
+                prepare_native(agent, Some("e2e-tab"), &cwd, bin, &args, resume.as_deref(), None, true)
+                    .expect("原生模式应当接上（找不到 mesa_helper 时先 cargo build --bin mesa_helper）");
             program = helper;
             args = bridge_args;
             (env, Some(p))

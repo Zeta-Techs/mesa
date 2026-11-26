@@ -449,6 +449,7 @@ export default function ChatComposer({
   onImageStageChange,
   queueHint = null,
   stopTitle = null,
+  stopViaChannel = false,
   suggestion = null,
   notice = null,
   imageGen = null,
@@ -510,6 +511,8 @@ export default function ChatComposer({
   queueHint?: { label: string; title: string; blocked?: boolean } | null;
   /** 停止块的悬停说明（按 Esc 的几家，有排着的话时停下就马上处理那句，mid-turn-send.ts stopTitle） */
   stopTitle?: string | null;
+  /** 停止走官方协议通道（原生模式 Grok 等不往终端发 Esc，因此即使 escInterruptSafe 为 false 也可安全停止） */
+  stopViaChannel?: boolean;
   /** CLI 猜的下一句（Claude 输入框里那行灰字，prompt-suggestion.ts）：输入框空着时当占位字灰着显示，Tab / → 填入 */
   suggestion?: string | null;
   /** 框上方一行提示 + 几个小按钮（缓存过期先压缩，prompt-cache.ts）；不改发送行为 */
@@ -1004,7 +1007,9 @@ export default function ChatComposer({
   }
 
   const canSubmit = !disabled && !busy && (value.trim() !== "" || attachments.length > 0 || quote !== null);
-  const showStop = Boolean(running && onInterrupt && !busy && (agentId == null || escInterruptSafe(agentId)));
+  const showStop = Boolean(
+    running && onInterrupt && !busy && (stopViaChannel || agentId == null || escInterruptSafe(agentId)),
+  );
 
   const submittingRef = useRef(false);
   // raw：斜杠命令原样写进终端，不套出图那一行

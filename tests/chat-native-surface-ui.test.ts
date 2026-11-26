@@ -655,6 +655,34 @@ test("原生模式权限热切与回合中发话：Claude 原地切 ask/auto、f
       pressEnter(env.w, codexTa);
     });
     assert.deepEqual(sentCodex, ["顺便把边界条件补上"], "Codex 原生生成中回车应直接走 onSend 插话");
+
+    // —— Grok 原生（ACP）：虽然终端模式下 escInterruptSafe=false，但原生走 session/cancel 应正常渲染停止按钮 ——
+    let grokStopped = 0;
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "grok",
+            attention: "working",
+            channel: baseChannel({
+              agent: "grok",
+              kind: "acp",
+              turn: { seq: 4, status: "running", stopReason: null, startedAt: 30, endedAt: null },
+            }),
+            onInterrupt: () => {
+              grokStopped += 1;
+            },
+          }),
+        ),
+      );
+    });
+    const grokStopBtn = Array.from(env.rootEl.querySelectorAll("button")).find((b) =>
+      (b.getAttribute("title") ?? "").includes("经官方协议请求停止"),
+    );
+    assert.ok(grokStopBtn, "Grok 原生模式应显示走官方协议的停止按钮");
+    await act(async () => grokStopBtn.click());
+    assert.equal(grokStopped, 1);
     assert.deepEqual(env.errors, []);
   } finally {
     await env.cleanup();

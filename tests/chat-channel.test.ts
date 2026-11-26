@@ -289,12 +289,25 @@ test("哪些旁路自带流式文字：program-status（agy/grok/kimi）与 hook
   assert.equal(channelDeliversLiveText(snap({ agent: "codex", kind: "codex", connection: "disconnected" })), false);
 });
 
-test("原生模式原地热切权限能力：Kimi ACP 三档直切，Claude 原生 ask/auto 直切、full 仍走重开", () => {
+test("原生模式原地热切权限能力：Kimi / CodeBuddy 三档直切，Gemini ask/full，agy ask，Claude ask/auto", () => {
   assert.deepEqual(nativeInlinePermissionSpec("acp", "kimi")?.args, {
     ask: "default",
     auto: "auto",
     full: "yolo",
   });
+  assert.deepEqual(nativeInlinePermissionSpec("acp", "codebuddy")?.args, {
+    ask: "default",
+    auto: "auto",
+    full: "bypassPermissions",
+  });
+  assert.deepEqual(nativeInlinePermissionSpec("acp", "gemini")?.args, {
+    ask: "default",
+    full: "yolo",
+  });
+  assert.deepEqual(nativeInlinePermissionSpec("acp", "agy")?.args, {
+    ask: "default",
+  });
+  assert.equal(nativeInlinePermissionSpec("acp", "grok"), null);
   assert.deepEqual(nativeInlinePermissionSpec("claude-native", "claude-code")?.args, {
     ask: "default",
     auto: "auto",

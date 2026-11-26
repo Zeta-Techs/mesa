@@ -19,8 +19,15 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// 走 ACP 原生模式的家与实测过的起点版本
-const ACP_MIN: &[(&str, (u32, u32, u32))] = &[("kimi", (2, 7, 0))];
+/// 走 ACP 原生模式的家与实测过的起点版本（2026-11-26 全部经本机真 CLI 探针核实）
+const ACP_MIN: &[(&str, (u32, u32, u32))] = &[
+    ("kimi", (2, 7, 0)),
+    ("agy", (1, 5, 17)),
+    ("gemini", (0, 71, 0)),
+    ("codebuddy", (2, 186, 0)),
+    ("grok", (1, 0, 92)),
+    ("cursor", (2026, 11, 0)),
+];
 /// 桥连回来的时限（PTY 起进程 + 桥启动，本机约 0.2 秒）
 const ACCEPT_TIMEOUT: Duration = Duration::from_secs(20);
 /// initialize / session/new|load / set_mode 等回包的时限（load 要回放整段历史，给长一点）
@@ -81,37 +88,169 @@ pub(crate) fn supported(agent: &str) -> bool {
 
 /// Mesa 的权限档（ask / auto / full / discuss）→ ACP 模式 id 与是否「只讨论」
 pub(crate) fn mode_for_tier(agent: &str, tier: &str) -> Option<(&'static str, bool)> {
-    if agent != "kimi" {
-        return None;
-    }
-    match tier {
-        "discuss" => Some(("plan", true)),
-        "ask" => Some(("default", false)),
-        "auto" => Some(("auto", false)),
-        "full" => Some(("yolo", false)),
+    match (agent, tier) {
+        ("kimi", "discuss") => Some(("plan", true)),
+        ("kimi", "ask") => Some(("default", false)),
+        ("kimi", "auto") => Some(("auto", false)),
+        ("kimi", "full") => Some(("yolo", false)),
+        // agy 1.5.18：ACP 无 auto 档，full 仅能起进程时带 --dangerously-skip-permissions（重开切换）
+        ("agy", "discuss") => Some(("plan", true)),
+        ("agy", "ask") => Some(("default", false)),
+        // gemini 0.71.1：ACP 模式 default / autoEdit / yolo / plan（autoEdit 只自动批改文件，不对应 AI 分类器 auto）
+        ("gemini", "discuss") => Some(("plan", true)),
+        ("gemini", "ask") => Some(("default", false)),
+        ("gemini", "full") => Some(("yolo", false)),
+        // codebuddy 2.186.0：四档全支持原地热切
+        ("codebuddy", "discuss") => Some(("plan", true)),
+        ("codebuddy", "ask") => Some(("default", false)),
+        ("codebuddy", "auto") => Some(("auto", false)),
+        ("codebuddy", "full") => Some(("bypassPermissions", false)),
         _ => None,
     }
 }
 
+/// 取形如 `--flag <val>` 或 `--flag=<val>` 的值
+fn flag_value<'a>(args: &'a [String], names: &[&str]) -> Option<&'a str> {
+    for (i, a) in args.iter().enumerate() {
+        if names.iter().any(|n| a == n) {
+            return args.get(i + 1).map(String::as_str);
+        }
+        for n in names {
+            if let Some(rest) = a.strip_prefix(n).and_then(|s| s.strip_prefix('=')) {
+                return Some(rest);
+            }
+        }
+    }
+    None
+}
+
 /// Mesa 的权限档（启动参数里的终端旗标）→ ACP 模式；只讨论档另记 discuss
 pub(crate) fn mode_from_args(agent: &str, args: &[String]) -> (Option<&'static str>, bool) {
-    if agent != "kimi" {
-        return (None, false);
-    }
     let has = |f: &str| args.iter().any(|a| a == f);
-    if has("--plan") {
-        (Some("plan"), true)
-    } else if has("--auto") {
-        (Some("yolo"), false)
-    } else if has("--yolo") {
-        (Some("auto"), false)
-    } else {
-        (None, false)
+    match agent {
+        "kimi" => {
+            if has("--plan") {
+                (Some("plan"), true)
+            } else if has("--auto") {
+                (Some("yolo"), false)
+            } else if has("--yolo") {
+                (Some("auto"), false)
+            } else {
+                (None, false)
+            }
+        }
+        "agy" => match flag_value(args, &["--mode"]) {
+            Some("plan") => (Some("plan"), true),
+            _ => (None, false),
+        },
+        "gemini" => match flag_value(args, &["--approval-mode"]) {
+            Some("plan") => (Some("plan"), true),
+            Some("yolo") => (Some("yolo"), false),
+            Some("default") => (Some("default"), false),
+            _ => (None, false),
+        },
+        "codebuddy" => {
+            if has("-y") || has("--dangerously-skip-permissions") {
+                return (Some("bypassPermissions"), false);
+            }
+            match flag_value(args, &["--permission-mode"]) {
+                Some("plan") => (Some("plan"), true),
+                Some("auto") => (Some("auto"), false),
+                Some("bypassPermissions") => (Some("bypassPermissions"), false),
+                Some("default") => (Some("default"), false),
+                _ => (None, false),
+            }
+        }
+        // grok agent stdio 没有 ACP modes 列表：只讨论档靠宿主拒改写审批，full 靠 --always-approve 启动旗标
+        "grok" => match flag_value(args, &["--permission-mode"]) {
+            Some("plan") => (None, true),
+            _ => (None, false),
+        },
+        "cursor" => {
+            if has("--plan") || flag_value(args, &["--mode"]) == Some("plan") {
+                (None, true)
+            } else {
+                (None, false)
+            }
+        }
+        _ => (None, false),
     }
 }
 
-/// pty_spawn 在起进程前调用（原生模式且这家支持时）：返回 PTY 要起的程序（随包的 mesa_helper）、参数、要加的环境变量与旁路句柄。
-/// 任一步不成就返回 None，调用方照旧按终端模式起
+/// 按各家 CLI 实测参数语法，构造交给 `mesa_helper stdio-bridge -- ...` 的命令行（纯函数，单测钉住）
+pub(crate) fn acp_cli_args(agent: &str, binary: &Path, args: &[String]) -> Vec<String> {
+    let mut out = vec!["stdio-bridge".to_string(), "--".to_string(), binary.to_string_lossy().into_owned()];
+    let push_pair = |out: &mut Vec<String>, flag: &str, val: Option<&str>| {
+        if let Some(v) = val.map(str::trim).filter(|s| !s.is_empty()) {
+            out.push(flag.to_string());
+            out.push(v.to_string());
+        }
+    };
+    let has = |f: &str| args.iter().any(|a| a == f);
+    match agent {
+        "kimi" => {
+            out.push("acp".into());
+        }
+        "agy" => {
+            out.push("acp".into());
+            if has("--dangerously-skip-permissions") {
+                out.push("--dangerously-skip-permissions".into());
+            }
+            if has("--sandbox") {
+                out.push("--sandbox".into());
+            }
+            push_pair(&mut out, "--gemini_dir", flag_value(args, &["--gemini_dir", "--gemini-dir"]));
+            for (i, a) in args.iter().enumerate() {
+                if a == "--add-dir" {
+                    if let Some(v) = args.get(i + 1) {
+                        out.push("--add-dir".into());
+                        out.push(v.clone());
+                    }
+                }
+            }
+        }
+        "gemini" => {
+            out.push("--acp".into());
+            push_pair(&mut out, "-m", flag_value(args, &["-m", "--model"]));
+            push_pair(&mut out, "--approval-mode", flag_value(args, &["--approval-mode"]));
+        }
+        "codebuddy" => {
+            out.push("--acp".into());
+            push_pair(&mut out, "--settings", flag_value(args, &["--settings"]));
+            push_pair(&mut out, "--model", flag_value(args, &["--model", "-m"]));
+            push_pair(&mut out, "--permission-mode", flag_value(args, &["--permission-mode"]));
+            if has("-y") || has("--dangerously-skip-permissions") {
+                out.push("-y".into());
+            }
+        }
+        "grok" => {
+            out.push("agent".into());
+            push_pair(&mut out, "-m", flag_value(args, &["-m", "--model"]));
+            push_pair(&mut out, "--reasoning-effort", flag_value(args, &["--reasoning-effort", "--effort"]));
+            if has("--always-approve")
+                || has("--yolo")
+                || flag_value(args, &["--permission-mode"]) == Some("bypassPermissions")
+            {
+                out.push("--always-approve".into());
+            }
+            out.push("--no-leader".into());
+            out.push("stdio".into());
+        }
+        "cursor" => {
+            push_pair(&mut out, "--model", flag_value(args, &["--model", "-m"]));
+            push_pair(&mut out, "--sandbox", flag_value(args, &["--sandbox"]));
+            out.push("acp".into());
+        }
+        _ => {
+            out.push("acp".into());
+        }
+    }
+    out
+}
+
+/// pty_spawn 在起进程前调用（原生模式且这家支持、当前连接允许时）：返回 PTY 要起的程序（随包的 mesa_helper）、参数、要加的环境变量与旁路句柄。
+/// `allowed` 负责连接级闸门（如 agy 仅对官方 Google 登录开放）。任一步不成就返回 None，调用方照旧按终端模式起
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare(
     agent: &str,
     tab_id: Option<&str>,
@@ -120,8 +259,9 @@ pub(crate) fn prepare(
     args: &[String],
     resume: Option<&str>,
     effort: Option<&str>,
+    allowed: bool,
 ) -> Option<(PathBuf, Vec<String>, Vec<(String, String)>, Prepared)> {
-    if !supported(agent) {
+    if !allowed || !supported(agent) {
         return None;
     }
     let tab = tab_id.map(super::sanitize_tab).filter(|t| !t.is_empty())?;
@@ -130,18 +270,11 @@ pub(crate) fn prepare(
     let addr = listener.local_addr().ok()?;
     let token = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     let (mode, discuss) = mode_from_args(agent, args);
-    let expect_model = args
-        .iter()
-        .position(|a| a == "-m" || a == "--model")
-        .and_then(|i| args.get(i + 1))
-        .filter(|m| !m.trim().is_empty())
-        .cloned();
-    let bridge_args = vec![
-        "stdio-bridge".to_string(),
-        "--".to_string(),
-        binary.to_string_lossy().into_owned(),
-        "acp".to_string(),
-    ];
+    let expect_model = flag_value(args, &["-m", "--model"])
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(String::from);
+    let bridge_args = acp_cli_args(agent, binary, args);
     let env = vec![
         ("CCODE_TAB_ID".to_string(), tab.clone()),
         (crate::stdio_bridge::ADDR_ENV.to_string(), addr.to_string()),
@@ -299,6 +432,19 @@ fn open_session(
     if let Some(e) = error_text(&init) {
         return Err(format!("没连上原生模式：{e}"));
     }
+    let agent = ch.acp.lock().map(|s| s.agent.clone()).unwrap_or_default();
+    // Cursor ACP 2026.11 实测：session/new 前须先用本机已登录凭证跑一次 authenticate(cursor_login)
+    if agent == "cursor"
+        && init
+            .pointer("/result/authMethods")
+            .and_then(Value::as_array)
+            .is_some_and(|arr| arr.iter().any(|m| m.get("id").and_then(Value::as_str) == Some("cursor_login")))
+    {
+        let auth = call(ch, "authenticate", json!({ "methodId": "cursor_login" }), CALL_TIMEOUT)?;
+        if error_text(&auth).is_some() {
+            return Err("还没登录：关掉原生模式，在终端里登录后再打开".into());
+        }
+    }
     let can_load = init.pointer("/result/agentCapabilities/loadSession").and_then(Value::as_bool) == Some(true);
     let opened: Value;
     let sid = match resume {
@@ -337,7 +483,6 @@ fn open_session(
     if let Ok(mut st) = ch.acp.lock() {
         st.session = Some(sid.clone());
     }
-    let agent = ch.acp.lock().map(|s| s.agent.clone()).unwrap_or_default();
     let path = find_transcript(&agent, &sid);
     if let Ok(mut st) = ch.acp.lock() {
         st.transcript = path.clone();
@@ -414,20 +559,99 @@ pub(crate) fn config_check(opened: &Value, id: &str, want: Option<&str>) -> Mode
     }
 }
 
-/// Kimi 的会话本体：`<根>/sessions/<目录哈希>/<会话 id>/agents/main/wire.jsonl`（新会话第一轮之后才落盘）
+/// 按会话 id 查找各家 ACP 的会话文件本体（新会话第一轮之后才落盘；与 sessions/*.rs 同一落点）
 fn find_transcript(agent: &str, sid: &str) -> Option<String> {
-    if agent != "kimi" || sid.is_empty() || sid.contains(['/', '\\']) {
+    if sid.is_empty() || sid.contains(['/', '\\']) {
         return None;
     }
     let roots = crate::sessions::SessionRoots::current()?;
-    let sessions = roots.kimi_code.join("sessions");
-    for e in std::fs::read_dir(&sessions).ok()?.flatten() {
-        let p = e.path().join(sid).join("agents").join("main").join("wire.jsonl");
-        if p.is_file() {
-            return Some(p.to_string_lossy().into_owned());
+    match agent {
+        "kimi" => {
+            let sessions = roots.kimi_code.join("sessions");
+            for e in std::fs::read_dir(&sessions).ok()?.flatten() {
+                let p = e.path().join(sid).join("agents").join("main").join("wire.jsonl");
+                if p.is_file() {
+                    return Some(p.to_string_lossy().into_owned());
+                }
+            }
+            None
         }
+        "agy" => {
+            for (root, _) in crate::sessions::agy_data_roots(&roots.agy) {
+                let logs = root.join("brain").join(sid).join(".system_generated").join("logs");
+                for name in ["transcript_full.jsonl", "transcript.jsonl"] {
+                    let p = logs.join(name);
+                    if p.is_file() {
+                        return Some(p.to_string_lossy().into_owned());
+                    }
+                }
+                if root.join("conversations").join(format!("{sid}.db")).is_file() {
+                    return Some(format!("{}#{sid}", root.join("conversation_summaries.db").to_string_lossy()));
+                }
+            }
+            None
+        }
+        "gemini" => {
+            let short = &sid[..sid.len().min(8)];
+            let mut dirs = vec![roots.gemini.join("tmp")];
+            for (_, iso) in crate::official_accounts::all_isolated_roots("gemini") {
+                dirs.push(iso.join(".gemini").join("tmp"));
+            }
+            for base in dirs {
+                let Ok(slugs) = std::fs::read_dir(&base) else { continue };
+                for slug in slugs.flatten() {
+                    let Ok(chats) = std::fs::read_dir(slug.path().join("chats")) else { continue };
+                    for f in chats.flatten() {
+                        let name = f.file_name().to_string_lossy().into_owned();
+                        if name.starts_with("session-")
+                            && (name.ends_with(&format!("-{short}.jsonl")) || name.ends_with(&format!("-{short}.json")))
+                            && f.path().is_file()
+                        {
+                            return Some(f.path().to_string_lossy().into_owned());
+                        }
+                    }
+                }
+            }
+            None
+        }
+        "codebuddy" => {
+            let mut dirs = vec![roots.codebuddy.join("projects")];
+            for (_, iso) in crate::official_accounts::all_isolated_roots("codebuddy") {
+                dirs.push(iso.join("projects"));
+            }
+            for base in dirs {
+                let Ok(slugs) = std::fs::read_dir(&base) else { continue };
+                for slug in slugs.flatten() {
+                    let p = slug.path().join(format!("{sid}.jsonl"));
+                    if p.is_file() {
+                        return Some(p.to_string_lossy().into_owned());
+                    }
+                }
+            }
+            None
+        }
+        "grok" => {
+            let sessions = roots.grok.join("sessions");
+            for e in std::fs::read_dir(&sessions).ok()?.flatten() {
+                let p = e.path().join(sid).join("updates.jsonl");
+                if p.is_file() {
+                    return Some(p.to_string_lossy().into_owned());
+                }
+            }
+            None
+        }
+        "cursor" => {
+            let projects = roots.cursor.join("projects");
+            for e in std::fs::read_dir(&projects).ok()?.flatten() {
+                let p = e.path().join("agent-transcripts").join(sid).join(format!("{sid}.jsonl"));
+                if p.is_file() {
+                    return Some(p.to_string_lossy().into_owned());
+                }
+            }
+            None
+        }
+        _ => None,
     }
-    None
 }
 
 fn read_loop(ch: &Arc<Channel>, writer: &Arc<Mutex<TcpStream>>, stream: TcpStream) {
@@ -573,24 +797,42 @@ fn content_text(v: &Value) -> Option<String> {
     }
 }
 
-/// 工具参数：有 rawInput 用它；Kimi 不给 rawInput、把参数 JSON 写在 content 文字里，能解析就用
+/// 工具参数：有 rawInput 用它；Kimi 不给 rawInput、把参数 JSON 写在 content 文字里；Gemini 把待执行命令直接放在 title 里
 fn tool_input(call: &Value) -> Value {
     if let Some(raw) = call.get("rawInput").filter(|v| !v.is_null()) {
         return raw.clone();
     }
-    content_text(call.get("content").unwrap_or(&Value::Null))
+    if let Some(obj) = content_text(call.get("content").unwrap_or(&Value::Null))
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .filter(Value::is_object)
-        .unwrap_or(Value::Null)
+    {
+        return obj;
+    }
+    if call.get("kind").and_then(Value::as_str) == Some("execute") {
+        let title = call.get("title").and_then(Value::as_str).unwrap_or("").trim();
+        if !title.is_empty()
+            && !matches!(title, "Bash" | "Shell" | "run_shell_command" | "execute" | "tool")
+        {
+            return json!({ "command": title });
+        }
+    }
+    Value::Null
 }
 
 /// ACP 的 kind（execute / edit / read …）与标题 → 旁路的工具名（approval_from_tool 按名字认命令 / 改文件）
 fn tool_name(call: &Value) -> String {
+    let meta = call.get("_meta");
+    let meta_name = meta
+        .and_then(|m| m.get("codebuddy.ai/toolName"))
+        .or_else(|| meta.and_then(|m| m.get("x.ai/tool")).and_then(|t| t.get("name")))
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let title = call.get("title").and_then(Value::as_str).unwrap_or("");
     match call.get("kind").and_then(Value::as_str) {
         Some("execute") if title.is_empty() || title.contains(' ') => "Bash".into(),
         Some("edit") if title.is_empty() => "Edit".into(),
         _ if !title.is_empty() => title.to_string(),
+        _ if !meta_name.is_empty() => meta_name.to_string(),
         Some(k) => k.to_string(),
         None => "tool".into(),
     }
@@ -766,6 +1008,74 @@ mod tests {
         assert_eq!(mode_for_tier("kimi", "full"), Some(("yolo", false)));
         assert_eq!(mode_for_tier("kimi", "discuss"), Some(("plan", true)));
         assert_eq!(mode_for_tier("claude-code", "ask"), None);
+        // agy：ask / discuss 支持原地热切；full 须带 --dangerously-skip-permissions 重开，无 auto
+        assert_eq!(mode_for_tier("agy", "ask"), Some(("default", false)));
+        assert_eq!(mode_for_tier("agy", "discuss"), Some(("plan", true)));
+        assert_eq!(mode_for_tier("agy", "auto"), None);
+        assert_eq!(mode_for_tier("agy", "full"), None);
+        assert_eq!(mode_from_args("agy", &a(&["--mode", "plan"])), (Some("plan"), true));
+        // gemini：ask / full / discuss
+        assert_eq!(mode_for_tier("gemini", "ask"), Some(("default", false)));
+        assert_eq!(mode_for_tier("gemini", "full"), Some(("yolo", false)));
+        assert_eq!(mode_for_tier("gemini", "discuss"), Some(("plan", true)));
+        assert_eq!(mode_for_tier("gemini", "auto"), None);
+        assert_eq!(mode_from_args("gemini", &a(&["--approval-mode", "yolo"])), (Some("yolo"), false));
+        // codebuddy：四档全支持
+        assert_eq!(mode_for_tier("codebuddy", "ask"), Some(("default", false)));
+        assert_eq!(mode_for_tier("codebuddy", "auto"), Some(("auto", false)));
+        assert_eq!(mode_for_tier("codebuddy", "full"), Some(("bypassPermissions", false)));
+        assert_eq!(mode_for_tier("codebuddy", "discuss"), Some(("plan", true)));
+        assert_eq!(mode_from_args("codebuddy", &a(&["--permission-mode", "auto"])), (Some("auto"), false));
+        // grok / cursor：无 ACP modes 列表，但只讨论档由宿主拒改写审批
+        assert_eq!(mode_from_args("grok", &a(&["--permission-mode", "plan"])), (None, true));
+        assert_eq!(mode_from_args("cursor", &a(&["--plan"])), (None, true));
+    }
+
+    #[test]
+    fn acp_cli_args_build_exact_per_agent_commands() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let bin = Path::new("/usr/local/bin/cli");
+        assert_eq!(acp_cli_args("kimi", bin, &a(&["-m", "x"])), a(&["stdio-bridge", "--", "/usr/local/bin/cli", "acp"]));
+        assert_eq!(
+            acp_cli_args("agy", bin, &a(&["--settings", "/s.json", "--dangerously-skip-permissions", "--gemini_dir=/g"])),
+            a(&["stdio-bridge", "--", "/usr/local/bin/cli", "acp", "--dangerously-skip-permissions", "--gemini_dir", "/g"]),
+        );
+        assert_eq!(
+            acp_cli_args("gemini", bin, &a(&["-m", "g3", "--approval-mode", "plan"])),
+            a(&["stdio-bridge", "--", "/usr/local/bin/cli", "--acp", "-m", "g3", "--approval-mode", "plan"]),
+        );
+        assert_eq!(
+            acp_cli_args("codebuddy", bin, &a(&["--settings", "/c.json", "--model", "m1", "-r", "old"])),
+            a(&["stdio-bridge", "--", "/usr/local/bin/cli", "--acp", "--settings", "/c.json", "--model", "m1"]),
+        );
+        assert_eq!(
+            acp_cli_args("grok", bin, &a(&["-m", "g1", "--effort", "high", "--permission-mode", "bypassPermissions"])),
+            a(&["stdio-bridge", "--", "/usr/local/bin/cli", "agent", "-m", "g1", "--reasoning-effort", "high", "--always-approve", "--no-leader", "stdio"]),
+        );
+        assert_eq!(
+            acp_cli_args("cursor", bin, &a(&["--model", "sonnet-4"])),
+            a(&["stdio-bridge", "--", "/usr/local/bin/cli", "--model", "sonnet-4", "acp"]),
+        );
+    }
+
+    #[test]
+    fn gemini_and_codebuddy_approval_payloads_extract_command_and_name() {
+        // Gemini：kind=execute 且无 rawInput，待执行命令在 title 里
+        match approval_event("g1", &json!({"toolCall":{"toolCallId":"t1","kind":"execute","title":"echo mesa > a.txt"}})) {
+            ChannelEvent::ApprovalAsked { name, input, .. } => {
+                assert_eq!(name.as_deref(), Some("Bash"));
+                assert_eq!(input["command"], "echo mesa > a.txt");
+            }
+            other => panic!("{other:?}"),
+        }
+        // CodeBuddy：工具名在 _meta["codebuddy.ai/toolName"]，参数在 rawInput
+        match approval_event("c1", &json!({"toolCall":{"toolCallId":"t2","rawInput":{"command":"ls"},"_meta":{"codebuddy.ai/toolName":"Bash"}}})) {
+            ChannelEvent::ApprovalAsked { name, input, .. } => {
+                assert_eq!(name.as_deref(), Some("Bash"));
+                assert_eq!(input["command"], "ls");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -113,6 +113,15 @@ export function nativeInlinePermissionSpec(
   if (kind === "acp" && agentId === "kimi") {
     return { command: "", args: { ask: "default", auto: "auto", full: "yolo" }, midTurn: "now" };
   }
+  if (kind === "acp" && agentId === "codebuddy") {
+    return { command: "", args: { ask: "default", auto: "auto", full: "bypassPermissions" }, midTurn: "now" };
+  }
+  if (kind === "acp" && agentId === "gemini") {
+    return { command: "", args: { ask: "default", full: "yolo" }, midTurn: "now" };
+  }
+  if (kind === "acp" && agentId === "agy") {
+    return { command: "", args: { ask: "default" }, midTurn: "now" };
+  }
   if (kind === "claude-native") {
     return { command: "", args: { ask: "default", auto: "auto" }, midTurn: "now" };
   }
