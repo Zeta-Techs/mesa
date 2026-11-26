@@ -1,10 +1,11 @@
+import { Flag, Info, ScrollText, SquareTerminal, TriangleAlert } from "lucide-react";
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
 import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeRuntime, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
-import { Toggle } from "./PageFrame";
+import { Toggle, ghostActionClass, rowActionClass } from "./PageFrame";
 
 /**
  * 聊天层「测试版」说明（2026-10-22 用户：聊天层要不要标一个测试版）：说清楚这一家在聊天里能做到哪一步、
@@ -60,7 +61,7 @@ export function ChatBetaNotes({
       : "以终端为准。";
   const lineTitle = fidelity ? `${label} · ${tierLabel(fidelity.tier)}：${nativeNote?.source ?? fidelity.source}` : undefined;
   const nativeLine = runtime
-    ? `改用 ${label} 官方协议，没有终端界面`
+    ? `改用 ${label} 官方协议，无终端界面`
     : nativeStopViaChannel(agentId)
       ? `消息和停止直接交给 ${label}`
       : `消息直接交给 ${label}，停止仍按 Esc`;
@@ -70,41 +71,59 @@ export function ChatBetaNotes({
       ? channelSourceNote(channel)
       : null;
   return (
-    <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
+    <div className="px-1.5 pb-1.5 pt-1 text-xs">
       {native && (
         <div
-          className="mb-2 flex items-center gap-3"
+          className="ccode-well rounded-lg px-3 py-2.5"
           title={
             runtime
               ? "聊着的时候翻开关：空闲时停下，再接回这段对话"
               : "终端照样连着这段对话，随时能切过去看"
           }
         >
-          <div className="min-w-0 flex-1">
-            <p className="text-l2">原生模式</p>
-            <p>{nativeLine}</p>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[13px] font-medium leading-5 text-l1">原生模式</span>
+            <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
           </div>
-          <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
+          <p className="mt-1 text-xs leading-[18px] text-l3">{nativeLine}</p>
         </div>
       )}
-      <p title={lineTitle}>{line}</p>
-      {channelIssue && <p className="mt-1 text-caution-text">{channelIssue}</p>}
-      {newer && (
-        <p className="mt-1 text-caution-text">
-          {runtimeOn
-            ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可暂时关掉原生模式。`
-            : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
-        </p>
+      <div
+        title={lineTitle}
+        className={`flex items-start gap-2 px-1.5 text-xs leading-[19px] text-l3 ${native ? "mt-2.5" : "mt-0.5"}`}
+      >
+        <Info size={13} strokeWidth={1.8} aria-hidden="true" className="mt-[3px] shrink-0 text-l4" />
+        <p className="min-w-0 flex-1">{line}</p>
+      </div>
+      {(channelIssue || newer) && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg bg-strip px-2.5 py-2 text-xs leading-[18px] text-caution-text">
+          <TriangleAlert size={13} strokeWidth={1.8} aria-hidden="true" className="mt-[2.5px] shrink-0" />
+          <div className="min-w-0 flex-1 space-y-1">
+            {channelIssue && <p>{channelIssue}</p>}
+            {newer && (
+              <p>
+                {runtimeOn
+                  ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可暂时关掉原生模式。`
+                  : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
+              </p>
+            )}
+          </div>
+        </div>
       )}
       {(onOpenTerminal || onReportMismatch) && (
-        <div className="mt-2 flex justify-end gap-1">
+        <div className="mt-3 flex items-center gap-2 border-t border-hairline pt-2">
           {onReportMismatch && (
             <button
               type="button"
               onClick={onReportMismatch}
-              title="把聊天里显示的和终端里的内容（已去掉密钥）附上，打开反馈表单"
-              className="h-7 rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+              title={
+                runtimeOn
+                  ? "把当前通道记录（已去掉密钥）附上，打开反馈表单"
+                  : "把聊天里显示的和终端里的内容（已去掉密钥）附上，打开反馈表单"
+              }
+              className={`${ghostActionClass} gap-1.5 text-l4 hover:text-l2`}
             >
+              <Flag size={12} strokeWidth={1.8} aria-hidden="true" />
               对不上？反馈
             </button>
           )}
@@ -112,9 +131,19 @@ export function ChatBetaNotes({
             <button
               type="button"
               onClick={onOpenTerminal}
-              className="h-7 rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+              className={`${rowActionClass} ml-auto gap-1.5 font-medium text-l1`}
             >
-              切到终端
+              {runtimeOn ? (
+                <>
+                  <ScrollText size={13} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
+                  查看运行日志
+                </>
+              ) : (
+                <>
+                  <SquareTerminal size={13} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
+                  切到终端
+                </>
+              )}
             </button>
           )}
         </div>

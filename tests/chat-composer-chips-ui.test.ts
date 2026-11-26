@@ -2208,6 +2208,29 @@ test("原生模式开关在模型菜单的说明页里：点亮的家才出，�
     } finally {
       await ui2.close();
     }
+
+    // 纯协议原生开启时：顶栏显「已启用」，底栏按钮切为「查看运行日志」
+    const ui3 = await mount();
+    try {
+      await ui3.render(
+        ui3.h(ui3.Menu, {
+          ...props,
+          status: status({ agentId: "claude-code", model: "claude-sonnet-4-5" }),
+          profileModels: ["claude-sonnet-4-5"],
+          native: { on: true, onToggle: () => {} },
+          onOpenTerminal: () => {},
+        }),
+      );
+      await ui3.click("claude-sonnet-4-5");
+      const hint = ui3.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
+      assert.ok(hint);
+      await ui3.act(async () => hint.click());
+      assert.match(ui3.el.textContent ?? "", /已启用/);
+      assert.match(ui3.el.textContent ?? "", /查看运行日志/);
+      assert.doesNotMatch(ui3.el.textContent ?? "", /切到终端/);
+    } finally {
+      await ui3.close();
+    }
   } catch (e) {
     await ui.close().catch(() => {});
     throw e;

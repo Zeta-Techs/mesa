@@ -747,10 +747,21 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
               <button
                 type="button"
                 onClick={() => setView("main")}
-                className="flex h-8 w-full shrink-0 items-center gap-1 rounded-lg px-2 text-left text-xs text-l3 outline-none hover:bg-hover hover:text-l1 focus-visible:bg-hover"
+                className="group flex h-8 w-full shrink-0 items-center gap-1.5 rounded-lg px-2 text-left outline-none hover:bg-hover focus-visible:bg-hover"
               >
-                <ChevronLeft size={14} strokeWidth={1.8} aria-hidden="true" />
-                <span className="text-xs">{beta.heading}</span>
+                <ChevronLeft
+                  size={14}
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                  className="shrink-0 text-l3 transition-colors group-hover:text-l1"
+                />
+                <span className="text-xs font-medium text-l1">{beta.heading}</span>
+                {props.native?.on && (
+                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-ok px-1.5 py-0.5 text-micro font-medium leading-none text-ok-text">
+                    <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />
+                    已启用
+                  </span>
+                )}
               </button>
               <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
               <div ref={bodyRef} className={scrollBody}>
