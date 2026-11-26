@@ -518,24 +518,25 @@ def global_phase(agent, gw, adir):
 
 
 # 原生模式（docs/design-chat-native-mode.md）点亮的家：双客户端的（终端照样画出这一轮）与纯协议运行时的（PTY 里是 stdio 桥）
-NATIVE_DUAL = {"codex", "qwen", "opencode"}
-NATIVE_RUNTIME = {"kimi", "claude-code"}
+# 注：agy 仅限官方 Google 登录、Cursor 仅走云端账号，均无法在临时 HOME 连假网关，因此不进无账号金丝雀 native_phase
+NATIVE_DUAL = {"codex", "qwen", "opencode", "opencode2"}
+NATIVE_RUNTIME = {"kimi", "claude-code", "gemini", "codebuddy", "grok"}
 # 停止也经通道的家（Qwen 的命令文件没有停止）
-NATIVE_STOP = {"codex", "opencode", "kimi", "claude-code"}
+NATIVE_STOP = {"codex", "opencode", "opencode2", "kimi", "claude-code", "gemini", "codebuddy", "grok"}
 
 
 def native_phase(agent, gw, out, adir):
-    """原生模式：聊天层经通道发起这一轮、在聊天里答审批、经通道停下，一个键都不往终端里敲（2026-11-26 起五家）。
+    """原生模式：聊天层经通道发起这一轮、在聊天里答审批、经通道停下，一个键都不往终端里敲（macOS / Windows 双平台）。
     e2e_channel 的 E2E_NATIVE 跑两趟（发出 + 审批、发出 + 停止；Qwen 没有停止只跑一趟）。双客户端的家另核对终端里的 TUI
     画出了这一轮；纯协议运行时的家要随包的 mesa_helper（stdio 桥），先 cargo build --bin mesa_helper。
-    OpenCode 认出对话要等第一句建会话：发出那趟用 E2E_RESUME 在接回的那段里经通道发。只进检查、不进指纹"""
+    OpenCode 1.x / 2.x 认出对话要等第一句建会话：发出那趟用 E2E_RESUME 在接回的那段里经通道发。只进检查、不进指纹"""
     checks = {}
     if agent in NATIVE_RUNTIME:
         code, text = run([cargo(), "build", "--bin", "mesa_helper"], cwd=os.path.join(ROOT, "src-tauri"), timeout=1800)
         if code != 0:
             open(os.path.join(adir, "native-helper.log"), "w", encoding="utf-8").write(text)
             return {"原生：建得出 stdio 桥（mesa_helper）": False}
-    runs = [("native", {"E2E_RESUME": "1"} if agent == "opencode" else {})]
+    runs = [("native", {"E2E_RESUME": "1"} if agent in ("opencode", "opencode2") else {})]
     if agent in NATIVE_STOP:
         runs.append(("native-stop", {"E2E_INTERRUPT_MS": "2500", "E2E_PROMPT": "TRIGGER_LONG 讲长一点"}))
     for name, extra in runs:
@@ -543,6 +544,8 @@ def native_phase(agent, gw, out, adir):
         keep = os.path.join(adir, name)
         env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=mesa(agent), E2E_CLEAN_HOME="1",
                    E2E_KEEP=keep, E2E_NATIVE="1", **extra)
+        if agent in OFFLINE:
+            env["E2E_EXTRA_ENV"] = ";".join(f"{k}={v}" for k, v in OFFLINE_ENV.items())
         code, text = run([cargo(), "test", "--lib", "e2e_channel", "--", "--ignored", "--nocapture"],
                          cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=600)
         open(os.path.join(adir, f"{name}.log"), "w", encoding="utf-8").write(text)
@@ -639,8 +642,8 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
-    # Windows 上原生模式还没实测过（设计稿剩余路线 一.6），实测过再放开
-    if agent in NATIVE_DUAL | NATIVE_RUNTIME and PLATFORM != "win32":
+    # 原生模式检查（macOS / Windows 双平台均跑；只进 checks 不进指纹，不破坏已有基线对比）
+    if agent in NATIVE_DUAL | NATIVE_RUNTIME:
         log(f"[{agent}] 原生模式：经通道发出、审批、停止…")
         checks.update(native_phase(agent, gw, out, adir))
     if agent in GLOBAL_CMD and agent not in NO_GATEWAY:

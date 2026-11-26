@@ -195,3 +195,16 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
   - Claude `-p`：`control_request` `set_permission_mode` 支持 `default` / `auto` / `plan` 原地切换；切到 `bypassPermissions` 在未带 `--dangerously-skip-permissions` 启动时返回 `bypass_not_launched`，仍走重开确认；`ExitPlanMode` 允许后 Claude 自动回落 `permissionMode: "default"`，原生方案卡提供「按方案开工（帮我批准）」（批准后顺手切 `auto`）与「按方案开工（每次问我）」两档。
 - ✓ 流式与视图体验补齐：`channelDeliversLiveText` 纳入 `acp` / `claude-native`（走流式 Markdown、停止日志屏读屏扫描、新回合清残留预览）；原生首轮工具开始时即提前锁定会话文件；原生 `live_text` 上限抬至 96 KB 避免科研长表格预览截头；纯协议原生模式切到「终端」视图时顶部给「回聊天 / 切回终端模式」引导条。
 
+### 八、全十家原生覆盖、默认开关与双平台金丝雀（2026-11-26）
+
+- ✓ **默认开启开关**：设置 → AI 与 Agent 新增 **新建对话默认开启原生模式**（`chatNativeDefault`，默认关）；仅影响新建对话，已开对话各自保留原选择，且仍严格服从各家与连接类型闸门。
+- ✓ **Antigravity（`agy` 1.5.18）官方账号原生模式**：与 Claude 严格对称——仅对 **官方 Google 登录账号** 开放 `agy acp`（前后端双重挡掉第三方中转 / API 密钥连接）；支持 `ask`（`default`）/ `discuss`（`plan`）原地热切，`full` 仍走 `--dangerously-skip-permissions` 重开；透传 `--gemini_dir` / `--sandbox` / `--add-dir`。
+- ✓ **维护级四家全部实测接入 ACP**（全部经本机真 CLI 探针验证 `protocolVersion: 1`、`loadSession: true`）：
+  - **Gemini 0.71.1**（`gemini --acp`）：真机假网关 `e2e_channel E2E_NATIVE=1` 全通（发话、聊天答审批、锁定 `session-*-<sid8>.jsonl`）；支持 `ask` / `full` / `discuss` 原地热切，从 `kind=execute` 的 `title` 提取命令原文。
+  - **CodeBuddy 2.186.0**（`codebuddy --acp --settings ... --model ...`）：真机假网关 `e2e_channel E2E_NATIVE=1` 全通；四档（`default` / `auto` / `bypassPermissions` / `plan`）全支持原地热切，从 `_meta["codebuddy.ai/toolName"]` 与 `rawInput` 还原审批工具与命令。
+  - **Grok Build 1.0.92**（`grok agent [-m ...] [--reasoning-effort ...] [--always-approve] --no-leader stdio`）：实测 `grok agent stdio` 即标准 ACP，`e2e_channel E2E_NATIVE=1` 与 `session/load` 全通；原生模式下停止走 `session/cancel`（不再受终端 Esc 退出确认限制，`ChatComposer` 显示停止按钮）。
+  - **Cursor 2026.11.22**（`cursor-agent acp`）：实测 `session/new` 前须先执行 `authenticate({ methodId: "cursor_login" })`；已接入握手与 `~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl` 定位（无假网关，需已登录 Cursor 账号使用）。
+- ✓ **OpenCode 2.x 原生发话**：核对真实 `opencode 2.4.2` OpenAPI（`POST /api/session/{sessionID}/prompt`，体 `{"text": ...}`，默认 `steer`），补齐 `Replier::OpenCode2` 的 `can_send`、`opencode_prompt` 与 `--session` 接回识别。
+- ✓ **双平台金丝雀原生层**：`scripts/cli-canary/canary.py` 放开 Windows `native_phase`，并将原生检查扩至全部 9 路可连假网关对象（`codex`、`qwen`、`opencode`、`opencode2`、`kimi`、`claude-code`、`gemini`、`codebuddy`、`grok`）；同步更新 `upstream.json`。
+- 仍需外部条件：Windows 真机手动界面点检（待在 Windows 机拉最新 `main` 跑一遍）、连续两周金丝雀全绿后再摘掉「测试版」标签。
+

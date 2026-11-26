@@ -2717,6 +2717,12 @@ fn prepare_structured(
             let mut p = base("opencode");
             p.replier = Some(Replier::OpenCode2 { base: server_url, password });
             p.sidecar = Some(pid);
+            p.session = args
+                .iter()
+                .position(|a| a == "--session" || a == "-s")
+                .and_then(|i| args.get(i + 1))
+                .filter(|v| !v.starts_with('-'))
+                .cloned();
             (env, Some(p))
         }
         "opencode" if version_at_least(agent, OPENCODE_PORT_MIN) => {
@@ -2810,9 +2816,10 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
         acp,
         session,
     } = prepared;
-    // 能经旁路发话的：OpenCode 只有 1.x 的 prompt_async 实测过（2.x 的发送接口没在本机核实，照旧打进终端）
+    // 能经旁路发话的：Codex / Qwen / ACP / Claude 原生 / OpenCode 1.x（prompt_async）与 2.x（/api/session/<id>/prompt）
     let can_send = matches!(kind, "codex" | "qwen" | "acp" | "claude-native")
-        || (kind == "opencode" && matches!(replier, Some(Replier::OpenCode { .. })));
+        || (kind == "opencode"
+            && matches!(replier, Some(Replier::OpenCode { .. } | Replier::OpenCode2 { .. })));
     let channel = Arc::new(Channel {
         tab_id: tab_id.clone(),
         stop: AtomicBool::new(false),
@@ -3627,23 +3634,49 @@ fn qwen_submit(ch: &Channel, text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// OpenCode 1.x：`POST /session/<id>/prompt_async`（立即回 204，这一轮的进展照旧从 /event 来；1.19.5 OpenAPI 核对）
-fn opencode_prompt(ch: &Channel, text: &str) -> Result<(), String> {
-    let (port, password) = match ch.replier.lock().map_err(|_| "实时通道已关闭")?.as_ref() {
-        Some(Replier::OpenCode { port, password }) => (*port, password.clone()),
+/// OpenCode 1.x（`POST /session/<id>/prompt_async`）与 2.x（`POST /api/session/<id>/prompt`）发送请求的 URL 与请求体（纯函数，单测钉住）
+fn opencode_prompt_request(
+    replier: &Replier,
+    sid: &str,
+    text: &str,
+) -> Result<(reqwest::Url, String, Value), String> {
+    let (root, password, segments, body) = match replier {
+        Replier::OpenCode { port, password } => (
+            format!("http://127.0.0.1:{port}/"),
+            password.clone(),
+            vec!["session", sid, "prompt_async"],
+            json!({ "parts": [{ "type": "text", "text": text }] }),
+        ),
+        Replier::OpenCode2 { base, password } => (
+            format!("{}/", base.trim_end_matches('/')),
+            password.clone(),
+            vec!["api", "session", sid, "prompt"],
+            json!({ "text": text }),
+        ),
         _ => return Err("这版 OpenCode 还不能从聊天直接发，请关掉原生模式".into()),
     };
+    let mut url = reqwest::Url::parse(&root).map_err(|e| e.to_string())?;
+    url.path_segments_mut()
+        .map_err(|_| "无法构造发送请求")?
+        .extend(segments);
+    Ok((url, password, body))
+}
+
+/// OpenCode 1.x / 2.x 原生发话（1.x：1.19.5 OpenAPI `prompt_async`；2.x：2.4.2 OpenAPI `/api/session/<id>/prompt`，默认 steer）
+fn opencode_prompt(ch: &Channel, text: &str) -> Result<(), String> {
     let sid = ch
         .tracker
         .lock()
         .ok()
         .and_then(|t| t.snap.session_id.clone())
         .ok_or("还没认出这段对话，稍等一下再发")?;
-    let mut url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|e| e.to_string())?;
-    url.path_segments_mut()
-        .map_err(|_| "无法构造发送请求")?
-        .extend(["session", sid.as_str(), "prompt_async"]);
-    let body = json!({ "parts": [{ "type": "text", "text": text }] });
+    let (url, password, body) = {
+        let guard = ch.replier.lock().map_err(|_| "实时通道已关闭")?;
+        let replier = guard
+            .as_ref()
+            .ok_or_else(|| "这版 OpenCode 还不能从聊天直接发，请关掉原生模式".to_string())?;
+        opencode_prompt_request(replier, &sid, text)?
+    };
     let status = tauri::async_runtime::block_on(async move {
         reqwest::Client::builder()
             .no_proxy()
@@ -4436,6 +4469,22 @@ mod tests {
         // 同一个调用再报一次不重复数
         t.apply(ChannelEvent::ToolStart { call_id: Some("a".into()), name: "Bash".into(), input: json!({"command":"npm run dev","run_in_background":true}) }, 6);
         assert_eq!(t.snap.background_started, 3);
+    }
+
+    /// OpenCode 1.x（/session/<id>/prompt_async）与 2.x（/api/session/<id>/prompt）原生发话请求形状
+    #[test]
+    fn opencode_prompt_request_matches_v1_and_v2_openapi() {
+        let r1 = Replier::OpenCode { port: 18001, password: "p1".into() };
+        let (u1, pw1, b1) = opencode_prompt_request(&r1, "ses_1", "你好").unwrap();
+        assert_eq!(u1.as_str(), "http://127.0.0.1:18001/session/ses_1/prompt_async");
+        assert_eq!(pw1, "p1");
+        assert_eq!(b1, json!({ "parts": [{ "type": "text", "text": "你好" }] }));
+
+        let r2 = Replier::OpenCode2 { base: "http://127.0.0.1:18002".into(), password: "p2".into() };
+        let (u2, pw2, b2) = opencode_prompt_request(&r2, "ses_2", "继续检查").unwrap();
+        assert_eq!(u2.as_str(), "http://127.0.0.1:18002/api/session/ses_2/prompt");
+        assert_eq!(pw2, "p2");
+        assert_eq!(b2, json!({ "text": "继续检查" }));
     }
 
     /// 关标签 / 切换模式时 close_channel 也要主动断开原生模式的 ACP / Claude 连接，立即唤醒读线程

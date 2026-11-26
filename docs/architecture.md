@@ -458,6 +458,10 @@ MCP 页（⌘6，第六个页面入口；曾按旧页序称「第八页」）：
 
 ## 10. 决策记录
 
+### 2026-11-26 · 聊天层原生模式扩至全十家、加默认开启开关并纳入双平台金丝雀
+
+在首批五家落地后，用户拍板将剩余规划一并补齐：① 设置 → AI 与 Agent 增加可选开关 **新建对话默认开启原生模式**（`chatNativeDefault`，默认关，已开对话不受影响，仍严格受连接资格护栏约束），「测试版」标签继续保留至双平台金丝雀连续两周全绿；② **Antigravity（`agy`）** 与 Claude 严格对称，只对官方 Google 登录账号开放 `agy acp`（前后端双重拦第三方网关）；③ 逐家真 CLI 探针验证后，维护级四家全部复用通用 ACP 客户端接入（`gemini --acp`、`codebuddy --acp`、`grok agent --no-leader stdio`、`cursor-agent acp` + `cursor_login` 握手），Grok 原生模式停止走 `session/cancel` 不再隐藏停止按钮；④ 核对真实 `opencode 2.4.2` OpenAPI（`POST /api/session/{sessionID}/prompt`）并端到端实测通过 OpenCode 2.x 原生发话；⑤ `scripts/cli-canary/canary.py` 放开 Windows `native_phase` 并覆盖全部 9 路可连假网关原生对象。详见 `docs/design-chat-native-mode.md` §八。
+
 ### 2026-11-26 · 聊天层加「原生模式」：终端模式保留为默认，Codex → Kimi → Claude 逐家点亮
 
 用户问聊天层怎样做到原生消息、原生审批卡、绝不按错。只要终端是事实来源、聊天只在旁边看，审批菜单、提问表单、正在写的字就锁在 TUI 画面里，读屏随 CLI 改版会悄悄失效，到不了「绝不出错」。第 0 步探针（只连假网关，`docs/design-chat-native-mode.md`）实测 Claude Code `-p` 双向 stream-json、Kimi / agy 的 ACP：审批、提问表单、计划确认、边写边显示、斜杠命令、两向续接 Claude 与 Kimi 都齐；agy 的 ACP 不认 Mesa 的第三方自定义模型、缺「帮我批准」。用户拍板：加原生模式（CLI 跑协议模式、无 TUI、聊天层是会话主人），终端模式保留为默认，原生按家标「测试版」由用户按对话选；能双客户端的家同进程两种看法，其余空闲且无后台任务时停进程按会话 id 接回、切换后核对模型 / 思考档 / 权限档；首批 Codex → Kimi → Claude；Claude 原生只开放 API 密钥 / 中转网关连接（Anthropic 条款不允许第三方产品提供 claude.ai 登录）；agy 原生先不做。推翻 `design-chat-structured-channels.md` §11「ACP 不进交互聊天层」与 §12「切换界面就杀进程不借」。否决：原生设为默认（功能未对齐前会丢 TUI 独有的面板与命令）、经 `claude-agent-acp` / `codex-acp` 适配包接入（违背 `resolve_binary` 单一来源）、接各家 Node / Python SDK（后端是 Rust，SDK 底下也是同一套协议）。决策正文 `product-decisions.md`「聊天层原生模式」。
