@@ -2210,3 +2210,35 @@ test("原生模式开关在模型菜单的说明页里：点亮的家才出，�
     throw e;
   }
 });
+
+test("原生模式的纯协议运行时（Kimi）：换模型停下按会话接回，不往终端里打 /model（2026-11-26）", async () => {
+  const ui = await mount();
+  try {
+    const sent: string[] = [];
+    const relaunched: unknown[] = [];
+    const props = {
+      kind: "runtime",
+      status: status({ agentId: "kimi", model: "glm-5.3", launchModel: "glm-5.3", nativeRuntime: true }),
+      profileModels: ["glm-5.3", "glm-5.2"],
+      modelSwitch: { kind: "direct", command: "/model {model}" },
+      effort: null,
+      submitCsiU: true,
+      onTuiCommand: (cmd: string) => sent.push(cmd),
+      onRelaunch: (patch: unknown) => relaunched.push(patch),
+    };
+    await ui.render(ui.h(ui.Menu, props));
+    await ui.click("glm-5.3");
+    await openModels(ui);
+    await ui.click("glm-5.2");
+    assert.deepEqual(relaunched, [{ model: "glm-5.2" }]);
+    assert.deepEqual(sent, [], "没有终端界面可打命令");
+    // 终端模式的 Kimi 照旧打命令
+    await ui.render(ui.h(ui.Menu, { ...props, status: status({ agentId: "kimi", model: "glm-5.3", launchModel: "glm-5.3" }) }));
+    await ui.click("glm-5.3");
+    await openModels(ui);
+    await ui.click("glm-5.2");
+    assert.equal(sent.length, 1);
+  } finally {
+    await ui.close();
+  }
+});

@@ -121,6 +121,9 @@ pub struct ChannelSnapshot {
     pub agent: String,
     /// hooks | qwen | opencode | codex | program-status | acp | claude-native
     pub kind: &'static str,
+    /// 这个进程里起过几个后台任务（工具参数 run_in_background = true 的命令 / 子 Agent，以及 Claude 的 Monitor）：
+    /// 原生模式要停下进程按会话接回时，确认框据此说清会停掉什么（看不到工具参数的旁路恒为 0）
+    pub background_started: u32,
     /// 这条旁路能不能替聊天层发话（原生模式：Codex turn/start、Qwen submit、OpenCode 1.x prompt_async、ACP、Claude -p）；
     /// 能不能停另看 kind（Qwen 的命令文件没有停止）
     pub can_send: bool,
@@ -246,6 +249,8 @@ pub(crate) struct Tracker {
     pub(crate) always_labels: HashMap<String, String>,
     /// 原生模式 Claude 的提问表单：请求 id → questions（ApprovalDto.questions）
     pub(crate) native_questions: HashMap<String, Value>,
+    /// 数过的后台任务调用 id（snap.background_started 不重复数）
+    background_ids: std::collections::HashSet<String>,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -469,6 +474,11 @@ impl Tracker {
     fn track_activity(&mut self, ev: &ChannelEvent, now: i64) {
         match ev {
             ChannelEvent::ToolStart { call_id, name, input } => {
+                let background = input.get("run_in_background").and_then(Value::as_bool) == Some(true) || name == "Monitor";
+                // 同一个调用会再报（OpenCode 先 pending 后 running）：按调用 id 只数一次
+                if background && call_id.as_ref().is_none_or(|id| self.background_ids.insert(id.clone())) {
+                    self.snap.background_started += 1;
+                }
                 if call_id.as_ref().is_some_and(|id| self.finished.contains(id)) {
                     return;
                 }
@@ -3660,11 +3670,19 @@ pub async fn chat_channel_reply(
     decision: String,
     // 原生模式 Claude 提问表单的答案（题目 → 选项文字）；其余审批不带
     answers: Option<Value>,
+    // 原生模式 Claude 拒绝时交给模型的话（「接着改方案」写的意见）；不带用默认的一句
+    message: Option<String>,
 ) -> Result<(), String> {
-    reply_impl(&tab_id, &request_id, &decision, answers.as_ref()).await
+    reply_impl(&tab_id, &request_id, &decision, answers.as_ref(), message.as_deref()).await
 }
 
-async fn reply_impl(tab_id: &str, request_id: &str, decision: &str, answers: Option<&Value>) -> Result<(), String> {
+async fn reply_impl(
+    tab_id: &str,
+    request_id: &str,
+    decision: &str,
+    answers: Option<&Value>,
+    message: Option<&str>,
+) -> Result<(), String> {
     let (tab_id, request_id, decision) = (tab_id.to_string(), request_id.to_string(), decision.to_string());
     let ch = channel_for_tab(&tab_id).ok_or("这个标签没有可回复的旁路")?;
     let allow = matches!(decision.as_str(), "allow" | "allow_always");
@@ -3693,7 +3711,7 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str, answers: Opt
     match plan {
         Plan::Acp => {
             if ch.tracker.lock().map(|t| t.snap.kind == "claude-native").unwrap_or(false) {
-                claude_native::reply(&ch, &request_id, &decision, answers)?
+                claude_native::reply(&ch, &request_id, &decision, answers, message)?
             } else {
                 acp::reply(&ch, &request_id, &decision)?
             }
@@ -4368,6 +4386,20 @@ mod tests {
         let mut fresh = OpenCode2State::default();
         let evs = map_opencode2(&json!({"type":"session.execution.started","data":{"sessionID":"ses_9"}}), &mut fresh);
         assert!(matches!(&evs[0], ChannelEvent::Session { id, .. } if id == "ses_9"));
+    }
+
+    /// 起过的后台任务按工具参数数（原生模式切换前的确认框用）
+    #[test]
+    fn counts_background_launches_from_tool_inputs() {
+        let mut t = Tracker::new("tab-k", "kimi", "acp");
+        t.apply(ChannelEvent::TurnStart, 1);
+        t.apply(ChannelEvent::ToolStart { call_id: Some("a".into()), name: "Bash".into(), input: json!({"command":"npm run dev","run_in_background":true}) }, 2);
+        t.apply(ChannelEvent::ToolStart { call_id: Some("b".into()), name: "Bash".into(), input: json!({"command":"ls"}) }, 3);
+        t.apply(ChannelEvent::ToolStart { call_id: Some("c".into()), name: "Agent".into(), input: json!({"prompt":"x","run_in_background":true}) }, 4);
+        t.apply(ChannelEvent::ToolStart { call_id: Some("d".into()), name: "Monitor".into(), input: json!({}) }, 5);
+        // 同一个调用再报一次不重复数
+        t.apply(ChannelEvent::ToolStart { call_id: Some("a".into()), name: "Bash".into(), input: json!({"command":"npm run dev","run_in_background":true}) }, 6);
+        assert_eq!(t.snap.background_started, 3);
     }
 
     /// 原生模式没有终端可读：思考原文由协议的思考增量另留一份（只留最近的），正文一写就清；终端模式的家不留
@@ -5083,7 +5115,7 @@ mod e2e {
             (env, Some(p))
         } else if native_acp {
             let resume = args.iter().position(|a| a == "-S" || a == "--session").and_then(|i| args.get(i + 1).cloned());
-            let (helper, bridge_args, env, p) = prepare_native(agent, Some("e2e-tab"), &cwd, bin, &args, resume.as_deref())
+            let (helper, bridge_args, env, p) = prepare_native(agent, Some("e2e-tab"), &cwd, bin, &args, resume.as_deref(), None)
                 .expect("原生模式应当接上（找不到 mesa_helper 时先 cargo build --bin mesa_helper）");
             program = helper;
             args = bridge_args;
@@ -5387,7 +5419,7 @@ mod e2e {
                         }
                         Value::Object(m)
                     });
-                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow", answers.as_ref()));
+                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow", answers.as_ref(), None));
                     answered = Some(format!("聊天层回复（{r:?}）"));
                     if let Some(f) = &raw_log {
                         let line = json!({ "t": t0.elapsed().as_millis() as u64, "mark": "answered" }).to_string();
@@ -5543,6 +5575,9 @@ mod e2e {
         println!("{agent}{label}: 会话 {:?} 文件 {:?}", r.last.session_id, r.last.transcript_path);
         println!("{agent}{label}: 回合状态变化 {:?}", r.statuses);
         println!("{agent}{label}: 审批 {:?}", r.approval.as_ref().map(|a| (a.kind, a.command.clone(), a.replyable)));
+        if let Some(a) = r.approval.as_ref().filter(|a| a.plan.is_some() || a.questions.is_some()) {
+            println!("{agent}{label}: 审批卡带方案 {} 字、带提问 {}", a.plan.as_deref().map_or(0, |p| p.chars().count()), a.questions.is_some());
+        }
         if let Some(plan) = r.approval.as_ref().and_then(|a| a.plan.as_ref()) {
             println!("{agent}{label}: 审批带方案 {plan:?}");
         }

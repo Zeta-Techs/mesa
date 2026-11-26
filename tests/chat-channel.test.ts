@@ -5,6 +5,7 @@ import {
   approvalPreview,
   approvalTitle,
   canSendViaChannel,
+  nativeSwitchWarning,
   wantsChannelSend,
   channelAttention,
   channelSourceNote,
@@ -322,4 +323,11 @@ test("原生模式只把说的话交给通道，斜杠 / ! 命令照旧打进终
   assert.equal(wantsChannelSend(true, "/model gpt-5.3"), false);
   assert.equal(wantsChannelSend(true, "  !ls"), false);
   assert.equal(wantsChannelSend(false, "帮我改一下 README"), false);
+});
+
+test("原生模式切换前的提醒：看得到工具参数的按起过的后台任务说，没起过不提；看不到的泛泛提醒", () => {
+  assert.equal(nativeSwitchWarning(snap({ kind: "acp", backgroundStarted: 0 })), null);
+  assert.match(nativeSwitchWarning(snap({ kind: "claude-native", backgroundStarted: 2 })) ?? "", /起过 2 个后台任务/);
+  assert.match(nativeSwitchWarning(snap({ kind: "program-status" })) ?? "", /后台跑着的命令/);
+  assert.match(nativeSwitchWarning(null) ?? "", /后台跑着的命令/);
 });

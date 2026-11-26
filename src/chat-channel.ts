@@ -69,6 +69,8 @@ export interface ChatChannelSnapshot {
   retry?: string | null;
   /** 原生模式（没有终端界面的 Kimi、Claude）这一段思考的原文（最近一截，已脱敏）：照终端模式读屏的思考框那样显示；旧版后端没有 */
   thinkingLive?: string | null;
+  /** 这个进程里起过几个后台任务（run_in_background 的命令 / 子 Agent、Claude 的 Monitor）；看不到工具参数的旁路为 0；旧版后端没有 */
+  backgroundStarted?: number;
   /** 这条旁路能不能替聊天层发话（后端按家与版本定：Codex、Qwen、OpenCode 1.x、原生模式的 Kimi / Claude）；旧版后端没有这个字段 */
   canSend?: boolean;
 }
@@ -79,6 +81,18 @@ export function channelTurnOpen(snap: ChatChannelSnapshot | null): boolean {
   if (snap?.connection === "disconnected") return false;
   const s = snap?.turn?.status;
   return s === "running" || s === "awaiting_approval";
+}
+
+/**
+ * 原生模式切换（停下进程按会话接回）前确认框里的提醒：看得到工具参数的旁路按这个进程起过的后台任务说，一个没起过就不提；
+ * 看不到的（程序状态、读屏）照旧泛泛提醒一句
+ */
+export function nativeSwitchWarning(snap: ChatChannelSnapshot | null | undefined): string | null {
+  const knows = !!snap && (snap.kind === "acp" || snap.kind === "claude-native" || snap.kind === "hooks");
+  const n = snap?.backgroundStarted ?? 0;
+  if (knows && n === 0) return null;
+  if (knows) return `注意：这段对话里起过 ${n} 个后台任务（后台命令或子 Agent），切换会一起停掉。`;
+  return "注意：它在后台跑着的命令会一起停掉。";
 }
 
 /** 纯协议运行时的旁路（原生模式的 Kimi ACP、Claude -p 双向 stream-json）：没有终端界面，发话只能经通道 */

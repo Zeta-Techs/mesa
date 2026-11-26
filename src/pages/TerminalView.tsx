@@ -439,6 +439,8 @@ export interface TabStatus {
   ptyId: string | null;
   /** 会话尾部状态（P3c 注意力标记）；无联动/shell/已退出/未知时为 null */
   attention: "done" | "working" | "confirm" | null;
+  /** 当前进程按原生模式的纯协议运行时起的（PTY 里是 stdio 桥）：换模型 / 思考档一律停下按会话接回，不往终端里打命令 */
+  nativeRuntime?: boolean;
   /** shell 模式下存在可恢复的会话（空态「恢复任务」可用性） */
   canResume: boolean;
   /** 当前或最近一次关联的会话 id；只用于标签恢复元数据，不含会话文件内容。 */
@@ -3731,6 +3733,7 @@ export const TerminalView = memo(function TerminalView({
               ? "working"
               : attention
           : null,
+      nativeRuntime: running && !shellActive && launchedNativeRef.current,
       canResume: shellActive && lastResumeRef.current != null,
       startedAt,
       sessionId:
@@ -5819,6 +5822,14 @@ export const TerminalView = memo(function TerminalView({
     const turn = snap.turn;
     if (turn?.endedAt && turn.endedAt !== channelEndHandledRef.current) {
       channelEndHandledRef.current = turn.endedAt;
+      // 原生模式的 Kimi（ACP）：斜杠命令的结果只经协议的文字增量回来、不写进会话文件——这一轮一结束就留成「命令 + 结果」，
+      // 不然预览一收就什么都看不到了（2026-11-26 实测 /usage、/help）
+      if (snap.kind === "acp") {
+        const output = (snap.liveText ?? prev?.liveText ?? "").split("\n").filter((l, i, all) => l.trim() || (i > 0 && i < all.length - 1));
+        for (const pu of [...pendingUsersRef.current]) {
+          if (/^\/\S/.test(pu.blocks[0]?.text ?? "")) settleSlashLocally(pu, output.length ? output : ["已执行"]);
+        }
+      }
       void fetchConversation(true);
       if (pendingReplyRef.current) {
         const endedCtx = linkCtxRef.current;
