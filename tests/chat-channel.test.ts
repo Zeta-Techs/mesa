@@ -23,6 +23,7 @@ import {
   channelInfersApproval,
   menuOutgrowsChannel,
   quietScreenMayBeWaiting,
+  resolveExitResumeSessionId,
   sessionSwitchNote,
   type ChannelApproval,
   type ChatChannelSnapshot,
@@ -410,5 +411,45 @@ test("停止路由以当前进程实际形态为准：回合中刚翻开关尚�
       channel: snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1" }),
     }),
     { viaChannel: false, sessionId: null },
+  );
+});
+
+test("Agent 退出 / 重开时保留可恢复会话 id：刚接回或已聊过但尚未锁盘不丢会话，空壳新会话不误报", () => {
+  // 已锁盘：优先用锁盘 id
+  assert.equal(
+    resolveExitResumeSessionId({ lockedSessionId: "locked-1", channelSessionId: "ch-1", hint: "h-1" }),
+    "locked-1",
+  );
+  // 刚接回还没锁盘就换权限 / 切模式重开：沿用通道 id 或 hint，不清成空白
+  assert.equal(
+    resolveExitResumeSessionId({ lockedSessionId: null, hint: "resumed-1", resumed: true }),
+    "resumed-1",
+  );
+  // 原生新对话已聊过一轮但 500ms 锁盘未完成就换权限重开：沿用通道报出的会话 id
+  assert.equal(
+    resolveExitResumeSessionId({
+      lockedSessionId: null,
+      channelSessionId: "claude-s1",
+      hint: "claude-s1",
+      hadActivity: true,
+    }),
+    "claude-s1",
+  );
+  // 通道已确认磁盘文件存在：即使尚未锁盘也保留
+  assert.equal(
+    resolveExitResumeSessionId({ lockedSessionId: null, channelSessionId: "ch-file", channelHasFile: true }),
+    "ch-file",
+  );
+  // 刚启动一句没发的空壳会话退出：即使预分配了 hint 也不误亮恢复按钮
+  assert.equal(
+    resolveExitResumeSessionId({
+      lockedSessionId: null,
+      channelSessionId: "prealloc-1",
+      channelHasFile: false,
+      hint: "prealloc-1",
+      resumed: false,
+      hadActivity: false,
+    }),
+    null,
   );
 });

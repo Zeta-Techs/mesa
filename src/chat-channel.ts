@@ -418,3 +418,23 @@ export function channelOutcome(snap: ChatChannelSnapshot | null | undefined): st
   if (snap?.turn?.status === "cancelled") return "这一轮已中断，可以继续输入。";
   return null;
 }
+
+/** Agent 退出（含换权限 / 换模型 / 切原生模式重开）时决定接回哪段会话：
+ *  已锁盘直接用；尚未锁盘但通道已找到文件、或本段本就是接回的 / 已经聊过一轮，就回退到通道会话 id 或启动 hint，
+ *  避免「刚接回 / 刚发完就重开」把会话清成空白；一句没发的新会话退出仍返回 null，不误亮恢复按钮 */
+export function resolveExitResumeSessionId(input: {
+  lockedSessionId?: string | null;
+  channelSessionId?: string | null;
+  channelHasFile?: boolean;
+  hint?: string | null;
+  resumed?: boolean;
+  hadActivity?: boolean;
+}): string | null {
+  const locked = input.lockedSessionId?.trim();
+  if (locked) return locked;
+  const chId = input.channelSessionId?.trim();
+  const hint = input.hint?.trim();
+  if (chId && (input.channelHasFile || input.resumed || input.hadActivity)) return chId;
+  if (hint && (input.resumed || input.hadActivity)) return hint;
+  return null;
+}

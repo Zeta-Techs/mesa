@@ -104,6 +104,7 @@ import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-wa
 import {
   canSendViaChannel,
   nativeRuntimeKind,
+  resolveExitResumeSessionId,
   wantsChannelSend,
   channelAttention,
   channelCanAnswer,
@@ -1775,6 +1776,10 @@ export const TerminalView = memo(function TerminalView({
     /** 锁定的会话 id（liveSessions 登记用） */
     sessionId: string | null;
     createdAt: string | null;
+    /** 这次启动本就是接回已有对话（尚未锁盘前重开也不丢会话 id） */
+    resumed?: boolean;
+    /** 本段对话已实际发出消息或跑过回合（与刚开壳还没聊的空会话区分） */
+    hadTurn?: boolean;
   } | null>(null);
   const linkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // 只看不接（2026-10-23 侧栏挂对话第一期）：标签带着要接的会话、还没起进程时，先把这段对话从会话文件读出来摆着，
@@ -5174,8 +5179,16 @@ export const TerminalView = memo(function TerminalView({
     setLiveThinking(null);
     setSuggestion(null);
     if (kind === "agent") {
-      // 记录可恢复的会话 id（一键恢复按钮用）
-      lastResumeRef.current = linkCtxRef.current?.sessionId ?? null;
+      // 记录可恢复的会话 id（一键恢复按钮 + 换权限/换模型/切模式重开用）；
+      // 尚未锁盘但通道已找到文件、或本段本是接回/已聊过时回退到通道会话 id 或 hint，避免重开清成空白
+      lastResumeRef.current = resolveExitResumeSessionId({
+        lockedSessionId: linkCtxRef.current?.sessionId,
+        channelSessionId: channelRef.current?.sessionId,
+        channelHasFile: Boolean(channelRef.current?.transcriptPath),
+        hint: linkCtxRef.current?.hint,
+        resumed: Boolean(linkCtxRef.current?.resumed),
+        hadActivity: Boolean(linkCtxRef.current?.hadTurn),
+      });
       // 这个进程退了：之后起的（回落的 shell、自定义运行时）不是原生模式的桥，读屏照常
       launchedNativeRef.current = false;
       // agent 退出（含手动停止）→ 同一终端自动回落到登录 shell。
@@ -5792,6 +5805,7 @@ export const TerminalView = memo(function TerminalView({
     }
     const ctx = linkCtxRef.current;
     if (ctx && snap.agent === ctx.agentId) {
+      if (snap.turn) ctx.hadTurn = true;
       const rel = channelRelink(
         snap,
         { filePath: ctx.filePath, hint: ctx.hint, sessionId: ctx.sessionId, seenSeq: channelSeqSeenRef.current },
@@ -6360,6 +6374,8 @@ export const TerminalView = memo(function TerminalView({
           filePath: null,
           sessionId: null,
           createdAt: null,
+          resumed: Boolean(resumeFrom || runSessionId),
+          hadTurn: false,
         };
       }
       setLinkState("detecting");
@@ -6563,6 +6579,7 @@ export const TerminalView = memo(function TerminalView({
       // SessionLink：记录启动上下文，开始轮询会话文件
       channelSeqSeenRef.current = 0;
       channelEndHandledRef.current = null;
+      const launchedPrompt = (options?.prompt ?? promptText).trim();
       linkCtxRef.current = {
         agentId,
         cwd,
@@ -6570,6 +6587,8 @@ export const TerminalView = memo(function TerminalView({
         filePath: null,
         sessionId: null,
         createdAt: null,
+        resumed: isResume && !res.resumeUnwritten,
+        hadTurn: Boolean(launchedPrompt),
       };
       // 首次关联阶段使用短间隔，避免聊天层长时间停留在“识别中”；关联成功后
       // lockLink 会切回较宽松的兜底轮询，正常刷新由 session watcher 驱动。
@@ -6578,7 +6597,6 @@ export const TerminalView = memo(function TerminalView({
         reset: !res.adopted || Boolean(restored),
         reattach: Boolean(res.adopted),
       });
-      const launchedPrompt = (options?.prompt ?? promptText).trim();
       const armWorking = shouldArmWorkingOnLaunch({
         prompt: launchedPrompt,
         isResume: isResume && !res.resumeUnwritten,
@@ -6916,7 +6934,10 @@ export const TerminalView = memo(function TerminalView({
   function sendViaChannel(text: string): Promise<ChatSendResult> {
     lastSentRef.current = text;
     return invoke("chat_channel_send", { tabId, text }).then(
-      () => ({ error: null }),
+      () => {
+        if (linkCtxRef.current) linkCtxRef.current.hadTurn = true;
+        return { error: null };
+      },
       (e) => ({ error: `没发出去：${String(e)}` }),
     );
   }
@@ -6978,6 +6999,7 @@ export const TerminalView = memo(function TerminalView({
               ? "shift-enter"
               : null,
       });
+      if (linkCtxRef.current) linkCtxRef.current.hadTurn = true;
       void confirmSubmitted(ptyId, text);
       return { error: null };
     } catch (e) {
