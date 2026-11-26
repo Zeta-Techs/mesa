@@ -103,6 +103,7 @@ import {
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
   canSendViaChannel,
+  wantsChannelSend,
   channelAttention,
   channelCanAnswer,
   channelDeliversLiveText,
@@ -724,6 +725,8 @@ const CONVERSATION_ACTION_ICONS: Record<string, typeof SquarePen | undefined> = 
 
 /** 在跑、这么久没出一个字算「可能卡住了」（统一「卡在哪」的兜底） */
 const STALLED_MS = 10 * 60_000;
+/** 原生模式接回旧对话后，等通道认出这段对话的上限（Codex 接回后经 thread/loaded/list 认出，本机实测一两秒）；过了就照旧打进终端 */
+const NATIVE_RELAUNCH_WAIT_MS = 8000;
 export const RIGHT_PANEL_WIDTH_KEY = "ccode.terminalRightWidth";
 export const RIGHT_PANEL_DEFAULT_WIDTH = RIGHT_DEFAULT_PX;
 export const RIGHT_PANEL_MIN_WIDTH = RIGHT_MIN_PX;
@@ -6823,6 +6826,29 @@ export const TerminalView = memo(function TerminalView({
     }
   }
 
+  /** 原生模式：经 CLI 官方接口发起这一轮（chat_channel_send），不往终端里打字 */
+  function sendViaChannel(text: string): Promise<ChatSendResult> {
+    lastSentRef.current = text;
+    return invoke("chat_channel_send", { tabId, text }).then(
+      () => ({ error: null }),
+      (e) => ({ error: `没发出去：${String(e)}` }),
+    );
+  }
+
+  /** 接回旧对话之后送出这一句：原生模式等通道认出这段对话（最多 NATIVE_RELAUNCH_WAIT_MS）再经官方接口发；
+      不是原生、等不到或终端已换了一个，照旧打进终端（writeChatMessage 自己等输入框就绪） */
+  async function deliverAfterRelaunch(ptyId: string, text: string): Promise<ChatSendResult> {
+    if (wantsChannelSend(nativeModeRef.current, text)) {
+      const deadline = Date.now() + NATIVE_RELAUNCH_WAIT_MS;
+      while (Date.now() < deadline && mountedRef.current && ptyIdRef.current === ptyId) {
+        if (canSendViaChannel(channelRef.current)) return sendViaChannel(text);
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      if (!mountedRef.current) return { error: null };
+    }
+    return writeChatMessage(ptyId, text);
+  }
+
   async function writeChatMessage(ptyId: string, text: string): Promise<ChatSendResult> {
     await waitAgentInputReady(ptyId);
     if (ptyIdRef.current !== ptyId) {
@@ -6973,13 +6999,8 @@ export const TerminalView = memo(function TerminalView({
       }
       // 原生模式：通道连着、认出了对话就经 CLI 官方接口发起这一轮，不往终端里打字（终端那边照样画出来）。
       // 斜杠 / ! 命令是终端自己的功能，照旧打进终端；第一句（还没认出对话）、通道断了也照旧
-      const viaChannel = nativeModeRef.current && !/^[/!]/.test(message) && canSendViaChannel(channelRef.current);
-      const result = viaChannel
-        ? await invoke("chat_channel_send", { tabId, text: message }).then(
-            () => ({ error: null }),
-            (e) => ({ error: `没发出去：${String(e)}` }),
-          )
-        : await writeChatMessage(currentPtyId, message);
+      const viaChannel = wantsChannelSend(nativeModeRef.current, message) && canSendViaChannel(channelRef.current);
+      const result = viaChannel ? await sendViaChannel(message) : await writeChatMessage(currentPtyId, message);
       if (result.error) {
         disarmPtyWorking();
         retractOptimisticUserMessage(shown, wasPending);
@@ -6998,15 +7019,15 @@ export const TerminalView = memo(function TerminalView({
       }
       early.reRegister();
       // 恢复启动要经历进程引导/会话回放（可能还有信任提示）：等一拍再写，
-      // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去
-      await new Promise((r) => setTimeout(r, 1200));
+      // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去（原生模式不打字，改由 deliverAfterRelaunch 等通道）
+      if (!wantsChannelSend(nativeModeRef.current, message)) await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current) return { error: null };
       if (ptyIdRef.current !== res.ptyId) {
         early.retract();
         return { error: "终端已重新启动，这句没有发出，请再发一次" };
       }
       armPtyWorking();
-      const result = await writeChatMessage(res.ptyId, message);
+      const result = await deliverAfterRelaunch(res.ptyId, message);
       if (result.error) {
         disarmPtyWorking();
         early.retract();
@@ -7032,14 +7053,14 @@ export const TerminalView = memo(function TerminalView({
       }
       relayBackRef.current = null;
       early.reRegister();
-      await new Promise((r) => setTimeout(r, 1200));
+      if (!wantsChannelSend(nativeModeRef.current, message)) await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current) return { error: null };
       if (ptyIdRef.current !== res.ptyId) {
         early.retract();
         return { error: "终端已重新启动，这句没有发出，请再发一次" };
       }
       armPtyWorking();
-      const result = await writeChatMessage(res.ptyId, message);
+      const result = await deliverAfterRelaunch(res.ptyId, message);
       if (result.error) {
         disarmPtyWorking();
         early.retract();

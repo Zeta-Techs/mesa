@@ -5,6 +5,7 @@ import {
   approvalPreview,
   approvalTitle,
   canSendViaChannel,
+  wantsChannelSend,
   channelAttention,
   channelSourceNote,
   channelOutcome,
@@ -307,4 +308,11 @@ test("原生模式：Codex 通道连着、认出对话、这一轮没在跑才�
   assert.equal(canSendViaChannel({ ...ready, turn: { seq: 1, status: "completed", stopReason: "end_turn", error: null, startedAt: 1, endedAt: 2 } }), true);
   assert.equal(canSendViaChannel(snap({ agent: "opencode", kind: "opencode", connection: "connected", sessionId: "s" })), false, "首批只有 Codex");
   assert.equal(canSendViaChannel(null), false);
+});
+
+test("原生模式只把说的话交给通道，斜杠 / ! 命令照旧打进终端；没开原生一律打字", () => {
+  assert.equal(wantsChannelSend(true, "帮我改一下 README"), true);
+  assert.equal(wantsChannelSend(true, "/model gpt-5.3"), false);
+  assert.equal(wantsChannelSend(true, "  !ls"), false);
+  assert.equal(wantsChannelSend(false, "帮我改一下 README"), false);
 });
