@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeModeAllowed, nativeModeAvailable, nativeRuntime, nativeStopViaChannel, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeFidelityNote, nativeModeAllowed, nativeModeAvailable, nativeRuntime, nativeStopViaChannel, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("十家都写了聊天层能做到哪一步", () => {
   const ten = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"];
@@ -95,4 +95,11 @@ test("原生模式逐家点亮：Codex、Kimi、Claude 已开（2026-11-26 拍�
   assert.equal(nativeModeAllowed("claude-code", "gateway"), true);
   assert.equal(nativeModeAllowed("codex", "official"), true);
   assert.equal(nativeModeAvailable(null), false);
+});
+
+test("原生模式下没有终端界面的家，说明页换成官方协议的说法；双客户端的家照旧", () => {
+  assert.match(nativeFidelityNote("kimi")?.source ?? "", /原生模式/);
+  assert.match(nativeFidelityNote("claude-code")?.terminalOnly ?? "", /关掉原生模式/);
+  assert.equal(nativeFidelityNote("codex"), null);
+  assert.equal(nativeFidelityNote(null), null);
 });

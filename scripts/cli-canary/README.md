@@ -54,7 +54,7 @@
 | 旁路 | Mesa `chat_channel` 端到端：认出会话、回合状态序列（比较时不看一闪而过的 `running`）、审批形态 | `e2e_channel`（`E2E_CLEAN_HOME` + `E2E_KEEP`） |
 | 会话 | 会话文件的记录类型与字段；Mesa 解析器读出用户这句、工具调用 / 结果、回复 | 同上留下的 `transcript.jsonl` / `parsed.json` |
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
-| Codex 原生模式 | 聊天层经通道发起这一轮（`turn/start`）、在聊天里答审批、经通道停下（`turn/interrupt`），终端里的远程 TUI 照样画出；只进检查、不进指纹（2026-11-26，Windows 实测前只在 macOS 跑，`docs/design-chat-native-mode.md`） | `e2e_channel` 加 `E2E_NATIVE`（`native_phase`） |
+| 原生模式 | 聊天层经通道发起这一轮、在聊天里答审批、经通道停下，一个键都不往终端里敲：Codex（`turn/start` / `turn/interrupt`）、Qwen（Dual Output `submit`，没有停止）、OpenCode 1.x（`prompt_async`，发出那趟用 `E2E_RESUME` 在接回的那段里发）终端照样画出；Kimi（ACP）、Claude Code（`claude -p` 双向 stream-json）经 stdio 桥、没有终端界面，先 `cargo build --bin mesa_helper`。只进检查、不进指纹（2026-11-26，Windows 实测前只在 macOS 跑，`docs/design-chat-native-mode.md`） | `e2e_channel` 加 `E2E_NATIVE`（`native_phase`） |
 | Codex 提示词 | 本机 Codex 的默认提示词还取得到（Mesa 给 Codex 的 `base_instructions` 来源） | `codex_instructions_extract_real` |
 | Claude 模型别名 | `claude --help` 举的别名 Mesa 都收了（名单 `tests/fixtures/claude-model-aliases.json`）；每个别名都换得出型号 | `model_aliases_probe_real` |
 | Gemini 模型别名 | `tests/fixtures/gemini-model-aliases.json` 里每个别名都换得出型号（Gemini 帮助不列别名，新增别名靠更新日志） | `model_aliases_probe_real_gemini` |

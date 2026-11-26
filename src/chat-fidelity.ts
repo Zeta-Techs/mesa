@@ -233,6 +233,22 @@ export function nativeStopViaChannel(agentId: string | null | undefined): boolea
   return !!agentId && NATIVE_STOP_AGENTS.has(agentId);
 }
 
+/** 原生模式下没有终端界面的家，说明页换成这两句（数据来源是官方协议，终端独有的面板用不了） */
+const NATIVE_RUNTIME_NOTES: Record<string, Pick<ChatFidelity, "source" | "terminalOnly">> = {
+  kimi: {
+    source: "原生模式：回合、审批、正在写的字都来自 Kimi Code 的官方协议，确认和停止都在聊天里完成",
+    terminalOnly: "登录、只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+  },
+  "claude-code": {
+    source: "原生模式：回合、审批、提问表单、计划确认、正在写的字都来自 Claude Code 的官方协议，都在聊天里完成",
+    terminalOnly: "登录、/status 这类只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+  },
+};
+
+export function nativeFidelityNote(agentId: string | null | undefined): Pick<ChatFidelity, "source" | "terminalOnly"> | null {
+  return (agentId && NATIVE_RUNTIME_NOTES[agentId]) || null;
+}
+
 /**
  * 这条连接能不能开原生模式：Claude Code 只对 API 密钥 / 中转网关连接开放——Anthropic 不允许第三方产品提供
  * claude.ai 订阅登录（设计稿 §1），官方订阅账号的 Claude 只走终端模式（后端 pty.rs 同样挡）

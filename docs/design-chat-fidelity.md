@@ -25,6 +25,11 @@ CLI 官方的结构化通道最准、变得慢、坏了是明着坏（握不上�
 输入框左下的小标签点开就是这一张表里当前这家的一行。标签写什么（`fidelityBadge`）：`beta: true` 写「测试版」（第一、二档现在都是）；
 第三、四档写「简化」；第一、二档摘了测试版就不标，但 CLI 比核对过的新时标「未核对」。新增一家或某家换了通道，改 `CHAT_FIDELITY` 一处（测试钉住九家都在）。
 
+**原生模式**（2026-11-26 拍板，`docs/design-chat-native-mode.md`）：上表是终端模式的承诺。对话里打开「原生模式」后数据来源换成 CLI 的官方协议：
+Codex、Qwen Code、OpenCode 仍是第 1 档、终端照样连着，只是发话（Qwen 以外还有停止）改走接口；Kimi Code、Claude Code（只限 API 密钥 /
+中转网关连接）没有终端界面，回合、审批、提问表单、正在写的字全部来自协议，承诺是「聊天里都能做，终端独有的面板用不了」。说明页按开关
+换说法（`nativeFidelityNote`）。原生模式摘「测试版」另算：金丝雀原生层（`canary.py native_phase`）连续两周全绿，且没有「对不上」反馈。
+
 **平台差异**（`CHAT_FIDELITY_WINDOWS`，`chatFidelity(agent, isWindows)` 显式传平台）：Windows 上 Grok、Kimi 降到第 3 档——程序状态（OSC 7501）
 过不了 ConPTY，后端不接这条旁路（2026-10-25 本机实测，matrix「程序状态 OSC 7501」），和 Gemini、Kimi 一样靠读屏。只有两平台真不一样的家才写进这张表。
 

@@ -1,7 +1,7 @@
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, fidelityBadge, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
+import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
 import { Toggle } from "./PageFrame";
@@ -45,7 +45,10 @@ export function ChatBetaNotes({
   onReportMismatch?: () => void;
 }) {
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
-  const fidelity = chatFidelity(agentId, IS_WINDOWS);
+  const base = chatFidelity(agentId, IS_WINDOWS);
+  // 原生模式开着、这家没有终端界面（Kimi、Claude）：数据来源是官方协议，说明换成那两句
+  const nativeNote = native?.on ? nativeFidelityNote(agentId) : null;
+  const fidelity = base && nativeNote ? { ...base, ...nativeNote } : base;
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
   const verified = useVerifiedVersion(agentId);
   const newer = useCliNewer(agentId);
