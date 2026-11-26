@@ -453,22 +453,19 @@ export function filterCards(
   return pool.sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
 }
 
-/** 「进行中」之外的筛选里哪些画成项目卡、哪些收进「另有 N 个项目没有进行中的事」那一行：
- *  有要你出手 / 在跑 / 手上在做的任务画卡；「进行中」里出现的项目（含开着研讨、最近在做的那一个）也画卡——
- *  否则切到「全部」它两头都不进，整页只剩一行胶囊（2026-11-26 用户截图）。安静行只收登记过的项目 */
-export function splitFilteredCards<T extends ProjectCard>(
+/** 「进行中」之外的筛选（全部 / 科研 / 编程 / 工作）画哪些项目卡：登记过的项目每个一张，
+ *  不再把安静的收成一行项目名（2026-11-26 用户：全部展开成卡片）；没登记的文件夹只在进行中或有要你出手的任务时画 */
+export function filteredGroupCards<T extends ProjectCard>(
   shown: readonly T[],
   activePaths: readonly string[],
   isWindows = false,
-): { group: T[]; quiet: T[] } {
-  const group: T[] = [];
-  const quiet: T[] = [];
-  for (const card of shown) {
-    const active = activePaths.some((p) => samePath(p, card.path, isWindows));
-    if (active || (card.tasks.length > 0 && cardNeedLevel(card) > 0)) group.push(card);
-    else if (card.registered) quiet.push(card);
-  }
-  return { group, quiet };
+): T[] {
+  return shown.filter(
+    (card) =>
+      card.registered
+      || activePaths.some((p) => samePath(p, card.path, isWindows))
+      || (card.tasks.length > 0 && cardNeedLevel(card) > 0),
+  );
 }
 
 // ===== 第三批（2026-10-27）：任务行实时状态与花费、离开期间摘要 =====

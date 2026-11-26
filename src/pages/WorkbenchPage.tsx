@@ -87,7 +87,7 @@ import {
   liveActivityLine,
   orderLikeSidebar,
   orderByNeed,
-  splitFilteredCards,
+  filteredGroupCards,
   cardNeedLevel,
   scheduleOverview,
   type ScheduleOverviewRow,
@@ -1158,13 +1158,12 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
   }
   // 先按要你出手的程度（等你 > 在跑 > 手上在做），同一档再按侧栏顺序（2026-11-05 用户拍板，取代纯侧栏顺序）
   const shownCards = orderByNeed(orderLikeSidebarSafe(filterCards(cards, activeCardPaths, cardFilter, IS_WINDOWS)));
-  // 安静的项目收成一行（2026-10-27 精修）：「有活的」里不出现的、以及其余筛选下什么都没在动的
-  //（只有没开始的步骤、落后基准的分支这类事实，2026-11-05 起也收进这一行），分组只给有事可看的
-  const filteredSplit = splitFilteredCards(shownCards, activeCardPaths, IS_WINDOWS);
-  const groupCards = cardFilter === "active" ? shownCards : filteredSplit.group;
+  // 安静的项目收成一行只在「进行中」（2026-10-27 精修）；全部 / 各类筛选下登记过的项目每个一张卡
+  //（2026-11-26 用户：全部展开成卡片，取代 11-05「什么都没在动的也收进这一行」）
+  const groupCards = cardFilter === "active" ? shownCards : filteredGroupCards(shownCards, activeCardPaths, IS_WINDOWS);
   const quietCards = cardFilter === "active"
     ? orderLikeSidebarSafe(cards.filter((card) => card.registered && !activeCardPaths.some((p) => samePath(p, card.path, IS_WINDOWS))))
-    : filteredSplit.quiet;
+    : [];
   /** 页头「项目助手」能问的项目：登记过的，要你出手多的在前（与下面分组同序），再接安静的 */
   const assistProjects = [...groupCards, ...quietCards].filter(
     (card, i, list) => card.registered && list.findIndex((c) => samePath(c.path, card.path, IS_WINDOWS)) === i,
@@ -1932,7 +1931,7 @@ function WorkbenchPage({ visible }: { visible?: boolean }) {
                 {quietCards.length > 0 && (
                   <div className="flex flex-wrap items-center gap-1.5 px-3 py-1.5 text-xs text-l3">
                     <span>
-                      {cardFilter === "active" ? "其他" : "另有"} {quietCards.length} 个项目没有进行中的事：
+                      其他 {quietCards.length} 个项目没有进行中的事：
                     </span>
                     {quietCards.map((card) => (
                       <button
