@@ -736,7 +736,8 @@ skill-diff.ts              # 内置技能「本机与新版对照」diff（Skill
                              # settleStatus 状态字最短停留 800ms、statusCaretMotion / activityCaretMotion 五态光标编舞、chatStatusParts 结构化语义片段；
   chat-fidelity.ts           # 聊天层对十家能做到哪一步（2026-10-22，tests/chat-fidelity.test.ts，docs/design-chat-fidelity.md）：CHAT_FIDELITY 分档
                              # 单一出处、parseVersion / verifiedVersion（本平台基线优先）/ versionTrust（比核对过的新 = newer）/
-                             # baselineKey（OpenCode 2.x 比 opencode2 那份基线）
+                             # baselineKey（OpenCode 2.x 比 opencode2 那份基线）；nativeModeAvailable = 能开「原生模式」的家（2026-11-26 首批 Codex，
+                             # docs/design-chat-native-mode.md）
   chat-mismatch.ts           # 「聊天和终端对不上」一键对照反馈（2026-10-30，tests/chat-mismatch.test.ts）：入口标签、标题、详情脚手架、聊天侧 / 终端侧摘录与对照全文拼法；只拼不脱敏（出站前经 feedback.rs feedback_chat_snapshot），事件 mesa:report-chat-mismatch 由 App 接、打开 FeedbackModal
   cli-verified.ts            # 已核对 CLI 版本：构建时 import.meta.glob 读金丝雀基线的 version（测试里兜成空表），与后端 cli_verified_advanced 联网前移的取较新；useCliNewer 给降级用
 vite-env.d.ts              # Vite client 类型引用一行：import.meta.glob（cli-verified.ts 构建期读金丝雀基线用）与 import.meta.env 的 TS 类型来源
@@ -845,7 +846,7 @@ terminal-cwd.ts            # 目录读取错误统一人话（FileTree / Termina
                              # 防切聊天瞬间被静默计时器误杀）；动画禁 CSS rotate（WKWebView 转轴圆心晃）、也禁 dashoffset
                              # 关键帧（主线程重绘，xterm 出字满载时一卡一卡）——8 段虚线按相位差闪 opacity（合成器线程，
                              # 2026-09-15 实测重做）（tests/tab-working.test.ts）
-  terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env）；退出时做到一半的标签 id 另存一键（pickCutOffTabs）
+  terminal-tab-persistence.ts # 终端标签重启恢复白名单（不含 PTY/密钥/env，含按对话记的 nativeMode）；退出时做到一半的标签 id 另存一键（pickCutOffTabs）
   official-model-names.ts    # 官方账号模型别名的显示：用后端 official_model_aliases 实测表把别名显示成完整型号，测不出原样（启动仍传别名）
   agent-group-order.ts       # 连接页 Agent 分组顺序与组内连接顺序：存下的 id 列表合并默认顺序、只在看得见的项之间挪（localStorage）
   tab-drag.ts                # 标签条拖拽排序纯逻辑（侧栏项目树、连接页分组共用）：位移钳制 + 目标槽位判定（>= 中线守末槽边界）+ 高矮不一的块的让位 / 吸附
@@ -1528,7 +1529,8 @@ src-tauri/src/
                              #   快照另带 activity（正在跑的工具，track_activity 按开始 / 结束登记，参数 slim_input 截断脱敏）与 thinking
                              #   （Codex item/reasoning/summaryTextDelta、Qwen thinking_delta、OpenCode reasoning part）；出站 outbound 脱敏实时文字与思考；
                              #   审批 DTO 由 approval_from_tool 统一出（ExitPlanMode 另给 plan 方案原文与方案文件路径，2026-10-26）；
-                             #   chat_channel_reply 经官方通道回审批；chat_channel_interrupt 核对会话与回合后经 OpenCode 官方接口停止；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop、Kimi 2.6.1 起一轮说完都不发 Stop，
+                             #   chat_channel_reply 经官方通道回审批；chat_channel_interrupt 核对会话与回合后经 OpenCode 官方接口停止（原生模式的 Codex 经 turn/interrupt，2026-11-26）；
+                             #   chat_channel_send = 原生模式经 Codex 通道发起这一轮（turn/start，codex_request 发请求等回包，CodexState.turn 记当前回合 id）；chat_channel_settle_from_transcript（Claude 被拒绝 / Esc 打断不发 Stop、Kimi 2.6.1 起一轮说完都不发 Stop，
                              #   按会话文件里这一轮之后的收尾标记收回合）；chat_channel_settle_interrupted（按了 Esc、屏上确认停了才调：
                              #   还没出字就打断时会话文件也不留收尾）；close_for_pty 随 PTY 退出收旁路；e2e::e2e_channel（ignored）=
                              #   真 CLI + 假网关端到端（scripts/e2e-model-routing/README.md，三平台同一份）；

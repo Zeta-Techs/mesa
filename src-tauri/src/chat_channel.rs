@@ -1604,6 +1604,10 @@ pub(crate) struct CodexState {
     next_id: i64,
     /// 推理条目里出过摘要的：它的原始推理增量不再拼进思考摘要（两路混在一起读不通）
     summarized: std::collections::HashSet<String>,
+    /// 正在跑的回合 id（turn/started 或我们发起的 turn/start 回包记、turn/completed 清）：原生模式从聊天层停止时要带
+    turn: Option<String>,
+    /// 等回包的请求（原生模式经通道发消息 / 停止）：请求 id → 回包整条送到这里
+    waiters: HashMap<i64, std::sync::mpsc::Sender<Value>>,
 }
 
 impl CodexState {
@@ -1642,6 +1646,7 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
         st.pending.clear();
         st.summarized.clear();
         st.subscribed = false;
+        st.turn = None;
         st.thread = Some(id.clone());
         st.joined = true;
         out.push(ChannelEvent::Session {
@@ -1654,6 +1659,9 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
     match (method, msg.get("id")) {
         // 对我们请求的响应
         (None, Some(id)) => {
+            if let Some(tx) = id.as_i64().and_then(|n| st.waiters.remove(&n)) {
+                let _ = tx.send(msg.clone());
+            }
             let purpose = id.as_i64().and_then(|n| st.calls.remove(&n));
             if purpose == Some("loaded") && st.thread.is_none() {
                 let first = msg
@@ -1789,8 +1797,12 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
                     out.push(ChannelEvent::ErrorDetail(message.to_string()));
                 }
             }
-            "turn/started" => out.push(ChannelEvent::TurnStart),
+            "turn/started" => {
+                st.turn = params.pointer("/turn/id").and_then(Value::as_str).map(String::from);
+                out.push(ChannelEvent::TurnStart);
+            }
             "turn/completed" => {
+                st.turn = None;
                 let status = params
                     .get("turn")
                     .and_then(|t| t.get("status"))
@@ -3345,15 +3357,33 @@ pub async fn chat_channel_interrupt(tab_id: String, session_id: String, turn_seq
 
 async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result<(), String> {
     let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请到终端停止")?;
-    {
+    let kind = {
         let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
-        if t.snap.kind != "opencode" || t.snap.connection != Some("connected") {
+        if !matches!(t.snap.kind, "opencode" | "codex") || t.snap.connection != Some("connected") {
             return Err("这条实时通道不支持停止，请到终端处理".into());
         }
         if t.snap.session_id.as_deref() != Some(session_id)
             || t.snap.turn.as_ref().map(|t| t.seq) != Some(turn_seq) || !is_open(&t.snap.turn) {
             return Err("当前回合已经变化，请按最新状态操作".into());
         }
+        t.snap.kind
+    };
+    if kind == "codex" {
+        // 原生模式：turn/interrupt 停的是这一轮，不退出会话；回合由随后的 turn/completed（interrupted）收
+        let turn = ch
+            .codex
+            .lock()
+            .map_err(|_| "实时通道不可用")?
+            .turn
+            .clone()
+            .ok_or("找不到正在跑的这一轮，请到终端停止")?;
+        let ch2 = ch.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            codex_request(&ch2, "turn/interrupt", |thread| json!({ "threadId": thread, "turnId": turn }))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        return Ok(());
     }
     // 1.x：POST /session/<id>/abort；2.x：POST /api/session/<id>/interrupt
     let (root, password, segments) = {
@@ -3388,6 +3418,80 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
         }
     }
     Ok(())
+}
+
+/// Codex 经通道发请求等回包的上限（turn/start、turn/interrupt 本机实测都在 0.1 秒内回）
+const CODEX_CALL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 原生模式（docs/design-chat-native-mode.md）：聊天层经 Codex 官方通道发起这一轮，不往终端里敲键。
+/// 终端里的远程 TUI 是同一线程的另一个客户端，照样显示这一轮、照样能答审批（2026-11-26 0.172 实测）
+#[tauri::command]
+pub async fn chat_channel_send(tab_id: String, text: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || send_impl(&tab_id, &text))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn send_impl(tab_id: &str, text: &str) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+    let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请切到终端发送")?;
+    {
+        let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
+        if t.snap.kind != "codex" || t.snap.connection != Some("connected") {
+            return Err("实时通道不可用，请切到终端发送".into());
+        }
+        if is_open(&t.snap.turn) {
+            return Err("这一轮还没结束，等它结束或先停止再发".into());
+        }
+    }
+    let result = codex_request(&ch, "turn/start", |thread| {
+        json!({ "threadId": thread, "input": [{ "type": "text", "text": text }] })
+    })?;
+    if let Some(id) = result.pointer("/turn/id").and_then(Value::as_str) {
+        if let Ok(mut st) = ch.codex.lock() {
+            st.turn = Some(id.to_string());
+        }
+    }
+    // 新线程第一轮之前订阅不上（还没有 rollout），turn/started 可能收不到：回包到了就是回合已开，这里先开；
+    // 订阅由随后的 thread/status/changed（active）补上
+    feed(&ch, vec![ChannelEvent::TurnStart]);
+    Ok(())
+}
+
+/// 经 Codex 通道发一个请求并等它的回包；返回 result，出错时用 CLI 的原话（脱敏）。`params` 拿到当前线程 id
+fn codex_request(ch: &Channel, method: &str, params: impl FnOnce(&str) -> Value) -> Result<Value, String> {
+    let writer = match ch.replier.lock().map_err(|_| "实时通道已关闭")?.as_ref() {
+        Some(Replier::Codex { stream }) => stream.clone(),
+        _ => return Err("实时通道已断开，请切到终端".into()),
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (msg, id) = {
+        let mut st = ch.codex.lock().map_err(|_| "实时通道已关闭")?;
+        let thread = st.thread.clone().ok_or("还没认出这段对话，稍等一下再试")?;
+        let msg = st.call(method, params(&thread), "native");
+        let id = msg.get("id").and_then(Value::as_i64).unwrap_or_default();
+        st.waiters.insert(id, tx);
+        (msg, id)
+    };
+    let waited = ws_send(&writer, &msg).and_then(|_| {
+        rx.recv_timeout(CODEX_CALL_TIMEOUT)
+            .map_err(|_| "Codex 没有回应，请切到终端查看".to_string())
+    });
+    if let Ok(mut st) = ch.codex.lock() {
+        st.waiters.remove(&id);
+    }
+    codex_reply_result(waited?)
+}
+
+fn codex_reply_result(reply: Value) -> Result<Value, String> {
+    if let Some(e) = reply.get("error") {
+        let text = e.get("message").and_then(Value::as_str).unwrap_or("Codex 拒绝了这次请求");
+        return Err(crate::sessions::redact_sensitive_text(text));
+    }
+    Ok(reply.get("result").cloned().unwrap_or(Value::Null))
 }
 
 /// 聊天层「等你决定」卡上点了按钮：经这家官方的回复通道送回（decision = allow | allow_always | deny）。
@@ -4094,6 +4198,32 @@ mod tests {
         let mut fresh = OpenCode2State::default();
         let evs = map_opencode2(&json!({"type":"session.execution.started","data":{"sessionID":"ses_9"}}), &mut fresh);
         assert!(matches!(&evs[0], ChannelEvent::Session { id, .. } if id == "ses_9"));
+    }
+
+    /// 原生模式：经通道发起 / 停止时要知道当前回合 id，且我们请求的回包要原样交给等着的那一方
+    #[test]
+    fn codex_native_tracks_turn_id_and_routes_replies_to_waiters() {
+        let mut st = CodexState::default();
+        map_codex(&json!({"method":"thread/started","params":{"thread":{"id":"th1","threadSource":"user"}}}), &mut st);
+        map_codex(&json!({"method":"turn/started","params":{"threadId":"th1","turn":{"id":"u1"}}}), &mut st);
+        assert_eq!(st.turn.as_deref(), Some("u1"));
+        // 别的线程的回合不算
+        map_codex(&json!({"method":"turn/started","params":{"threadId":"th9","turn":{"id":"x"}}}), &mut st);
+        assert_eq!(st.turn.as_deref(), Some("u1"));
+        map_codex(&json!({"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"u1","status":"interrupted"}}}), &mut st);
+        assert_eq!(st.turn, None);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let msg = st.call("turn/start", json!({"threadId":"th1"}), "native");
+        let id = msg["id"].as_i64().unwrap();
+        st.waiters.insert(id, tx);
+        map_codex(&json!({"id": id, "result": {"turn": {"id": "u2"}}}), &mut st);
+        let got = rx.try_recv().expect("回包交给等着的一方");
+        assert_eq!(codex_reply_result(got).unwrap()["turn"]["id"], "u2");
+        assert!(st.waiters.is_empty() && !st.calls.contains_key(&id));
+        // 出错时用 CLI 的原话，密钥脱敏
+        let err = codex_reply_result(json!({"id":3,"error":{"code":-32600,"message":"bad token sk-live-secret-987654321"}})).unwrap_err();
+        assert!(err.starts_with("bad token") && !err.contains("987654321"), "{err}");
     }
 
     #[test]
@@ -4915,7 +5045,20 @@ mod e2e {
             send(b"\r");
             std::thread::sleep(Duration::from_millis(1500));
         }
-        if arg_prompt.is_none() {
+        // E2E_NATIVE=1（Codex，docs/design-chat-native-mode.md）：这句经通道发（turn/start）、停止经通道停（turn/interrupt），
+        // 一个键都不往终端里敲；终端里的远程 TUI 照样画这一轮
+        let native = std::env::var("E2E_NATIVE").is_ok() && agent == "codex";
+        if native && arg_prompt.is_none() {
+            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| "TRIGGER_TOOL TRIGGER_ESC 跑一下".to_string());
+            let wait = Instant::now();
+            while chat_channel_snapshot("e2e-tab".into()).and_then(|s| s.session_id).is_none()
+                && wait.elapsed() < Duration::from_secs(20)
+            {
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            send_impl("e2e-tab", &prompt).expect("经 Codex 通道发起这一轮");
+            println!("{agent}: 经通道发出（{} 毫秒认出线程）", wait.elapsed().as_millis());
+        } else if arg_prompt.is_none() {
             // E2E_PROMPT：换触发词（如 Codex 去掉 TRIGGER_ESC = 沙箱里直接跑、不走审批）
             let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
                 if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
@@ -4961,12 +5104,12 @@ mod e2e {
             std::thread::sleep(Duration::from_millis(300));
             if let (Some(ms), None) = (interrupt_ms, esc_at) {
                 if started.elapsed() >= Duration::from_millis(ms) {
-                    if agent == "opencode" {
+                    if agent == "opencode" || native {
                         let snap = chat_channel_snapshot("e2e-tab".into()).unwrap_or_default();
                         if let (Some(sid), Some(turn)) = (&snap.session_id, &snap.turn) {
                             if is_open(&snap.turn) {
                                 assert!(tauri::async_runtime::block_on(interrupt_impl("e2e-tab", sid, turn.seq + 1)).is_err(), "过期回合不能停止当前任务");
-                                tauri::async_runtime::block_on(interrupt_impl("e2e-tab", sid, turn.seq)).expect("OpenCode 官方停止接口");
+                                tauri::async_runtime::block_on(interrupt_impl("e2e-tab", sid, turn.seq)).expect("官方停止接口");
                                 esc_at = Some(Instant::now());
                                 interrupt_settled = true;
                                 println!("{agent}: 官方接口已确认停止");
@@ -5027,6 +5170,10 @@ mod e2e {
                 done = true;
                 break;
             }
+        }
+        if native {
+            let shown = crate::updater::strip_ansi_keep_cr(&screen.lock().unwrap());
+            println!("{agent}: 终端画出了通道发的这一轮：{}", shown.contains("TRIGGER"));
         }
         let mut cleared = None;
         if done && clear {

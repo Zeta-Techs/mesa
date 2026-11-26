@@ -203,3 +203,13 @@ export function versionTrust(installed: string | null | undefined, verified: str
   if (!a || !b) return "unknown";
   return cmp(a, b) > 0 ? "newer" : "verified";
 }
+
+/**
+ * 能开「原生模式」的家（2026-11-26 拍板，docs/design-chat-native-mode.md）：聊天经这家官方接口发消息、停止、答审批，
+ * 不往终端里打字、不读屏；终端照样连着同一段对话。按家逐个点亮（首批 Codex → Kimi → Claude），默认关
+ */
+const NATIVE_MODE_AGENTS = new Set(["codex"]);
+
+export function nativeModeAvailable(agentId: string | null | undefined): boolean {
+  return !!agentId && NATIVE_MODE_AGENTS.has(agentId);
+}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, baselineKey, chatFidelity, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeModeAvailable, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("十家都写了聊天层能做到哪一步", () => {
   const ten = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"];
@@ -78,4 +78,10 @@ test("联网前移的核对版本与随包的取较新，一边读不出取另�
   assert.equal(newerVersion(null, "2.1.320"), "2.1.320");
   assert.equal(newerVersion("2.1.316", null), "2.1.316");
   assert.equal(newerVersion(null, null), null);
+});
+
+test("原生模式首批只点亮 Codex（2026-11-26 拍板：Codex → Kimi → Claude 逐家点亮，agy 先不做）", () => {
+  assert.equal(nativeModeAvailable("codex"), true);
+  for (const id of ["claude-code", "kimi", "agy", "opencode", "qwen", "gemini", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+  assert.equal(nativeModeAvailable(null), false);
 });

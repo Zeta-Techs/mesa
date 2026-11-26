@@ -2163,3 +2163,50 @@ test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述�
     await ui.close();
   }
 });
+
+test("原生模式开关在模型菜单的说明页里：点亮的家才出，点一下只回报新值（2026-11-26）", async () => {
+  const ui = await mount();
+  try {
+    const flips: boolean[] = [];
+    const props = {
+      kind: "runtime",
+      status: status({ agentId: "codex", model: "gpt-5.3" }),
+      profileModels: ["gpt-5.3"],
+      modelSwitch: { kind: "direct", command: "/model {model}" },
+      effort: null,
+      submitCsiU: false,
+      onTuiCommand: () => {},
+    };
+    const openNotes = async () => {
+      await ui.click("gpt-5.3");
+      const hint = ui.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
+      assert.ok(hint);
+      await ui.act(async () => hint.click());
+    };
+    await ui.render(ui.h(ui.Menu, { ...props, native: { on: false, onToggle: (on: boolean) => flips.push(on) } }));
+    await openNotes();
+    assert.match(ui.el.textContent ?? "", /原生模式 · 测试版/);
+    assert.match(ui.el.textContent ?? "", /消息和停止直接交给 Codex，不往终端里打字/);
+    const sw = ui.el.querySelector<HTMLButtonElement>('[role="switch"][aria-label="原生模式"]');
+    assert.ok(sw);
+    assert.equal(sw.getAttribute("aria-checked"), "false");
+    await ui.act(async () => sw.click());
+    assert.deepEqual(flips, [true]);
+    await ui.close();
+
+    const ui2 = await mount();
+    try {
+      await ui2.render(ui2.h(ui2.Menu, props));
+      await ui2.click("gpt-5.3");
+      const hint = ui2.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
+      assert.ok(hint);
+      await ui2.act(async () => hint.click());
+      assert.doesNotMatch(ui2.el.textContent ?? "", /原生模式/, "没点亮的家不出开关");
+    } finally {
+      await ui2.close();
+    }
+  } catch (e) {
+    await ui.close().catch(() => {});
+    throw e;
+  }
+});

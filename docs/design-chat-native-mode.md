@@ -116,3 +116,24 @@ python3 <仓库>/scripts/native-probe/tui_resume.py claude-code c-tool "--resume
 2. Claude 原生模式只开放 API 密钥 / 中转网关连接（§1）。
 3. 默认模式（建议仍是终端）与首批点亮的家（建议 Codex → Kimi → Claude）。
 4. agy 原生模式先不做，还是只开官方登录线。
+
+## 第 1 期实施记录：Codex 原生模式（2026-11-26，分支 `feat/chat-native-codex`）
+
+Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI 照旧以 `--remote` 连上去，原生模式只改聊天层怎么发——
+不往终端里打字，改由 Mesa 这个客户端经 `turn/start` 发起这一轮、经 `turn/interrupt` 停止，审批本来就经通道回。终端不重启、不断开。
+
+先实测（codex 0.172，假网关，`chat_channel::e2e::e2e_channel` 加 `E2E_NATIVE=1`）：
+- TUI 一起来就建好线程（`thread/loaded/list` 有），但第一轮之前没有 rollout，`thread/resume` 报「no rollout found」；
+  第二个客户端发 `turn/start` 照样能跑，回包带回合 id，之后约 0.02 秒就能订阅上。所以发出后先在本地开回合，订阅由 `thread/status/changed` 补。
+- 第二个客户端发起的回合终端里照样画出（用户那句、命令、回复），审批菜单也画出；从 Mesa 批准后终端菜单跟着撤。
+- `turn/interrupt` 停的是这一轮，回合收成 cancelled，会话不退出；过期回合号被拒。
+
+落地：
+- 后端（`chat_channel.rs`）：`chat_channel_send`（async + spawn_blocking；Codex 通道连着、认出线程、这一轮没在跑才发）；
+  `codex_request` 发请求等回包（`CodexState.waiters`，10 秒上限，出错用 CLI 原话并脱敏）；`CodexState.turn` 记当前回合 id；
+  `chat_channel_interrupt` 放开 Codex。
+- 前端：标签 `nativeMode`（按对话记、进重启白名单）；`TerminalView.sendMessage` 原生模式且 `canSendViaChannel` 时走 `chat_channel_send`，
+  斜杠 / `!` 命令、还没认出对话的第一句、通道断了照旧打进终端；停止按钮原生模式经通道停；
+  开关在模型菜单说明页（`ChatBetaNotes`），只对 `nativeModeAvailable` 的家出。
+- 没做（留给后续期）：没有 TUI 的纯协议运行时（Kimi ACP、Claude `-p`）、空闲时切换模式、切换后核对设置、金丝雀的协议层指纹。
+
