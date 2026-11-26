@@ -4,7 +4,20 @@
  "checks": {
   "假网关收到主对话请求": true,
   "帮助里仍有 models 子命令": true,
-  "抓屏跑完": true
+  "抓屏留下会话文件": true,
+  "抓屏跑完": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "run_command"
+  ]
  },
  "platform": "win32",
  "request": {
@@ -24,7 +37,21 @@
    "path": "/agy/v1beta/models/e2e-picked:streamGenerateContent",
    "systemHeadings": [],
    "tools": [
-    ""
+    "ask_question",
+    "define_subagent",
+    "edit_file",
+    "invoke_subagent",
+    "manage_subagents",
+    "manage_task",
+    "read_file",
+    "run_command",
+    "run_workflow",
+    "schedule",
+    "search_web",
+    "send_message",
+    "swarm",
+    "update_steps",
+    "write_file"
    ]
   },
   "other": [
@@ -44,6 +71,33 @@
    "question": "Run this command?"
   },
   "previewReadable": true
+ },
+ "transcript": {
+  "PLANNER_RESPONSE": {
+   "keys": [
+    "cache_read_tokens",
+    "content",
+    "created_at",
+    "input_tokens",
+    "model",
+    "output_tokens",
+    "source",
+    "status",
+    "step_index",
+    "tool_calls",
+    "type"
+   ]
+  },
+  "USER_INPUT": {
+   "keys": [
+    "content",
+    "created_at",
+    "source",
+    "status",
+    "step_index",
+    "type"
+   ]
+  }
  },
  "version": "1.5.16"
 }

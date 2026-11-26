@@ -8,7 +8,20 @@
   "全局配置：外部 CLI 带的是 Mesa 写的自定义请求头": true,
   "全局配置：外部 CLI 带的是 Mesa 写的输出上限": true,
   "全局配置：外部 CLI 用的是 Mesa 写的模型": true,
-  "抓屏跑完": true
+  "抓屏留下会话文件": true,
+  "抓屏跑完": true,
+  "解析器读到工具调用": true,
+  "解析器读到用户这句": true
+ },
+ "parsed": {
+  "blockKinds": [
+   "assistant:text",
+   "assistant:tool_use",
+   "user:text"
+  ],
+  "toolNames": [
+   "run_terminal_command"
+  ]
  },
  "platform": "win32",
  "request": {
@@ -79,14 +92,24 @@
   "liveReplySupported": true,
   "menu": {
    "options": [
-    "Yes, and don't ask again for anything (always-approve mode)",
     "Yes, proceed",
     "No, reject (type to add feedback)",
-    "Never allow: echo"
+    "Never allow: echo",
+    "Yes, and don't ask again for anything (always-approve mode)"
    ],
    "question": "echo mesa > mesa_probe.txt"
   },
   "previewReadable": true
+ },
+ "transcript": {
+  "None": {
+   "keys": [
+    "method",
+    "params",
+    "timestamp",
+    "timestamp_us"
+   ]
+  }
  },
  "version": "1.0.92"
 }

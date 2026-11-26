@@ -1,6 +1,6 @@
 """金丝雀「上游通道雷达」的提醒：有新线索时开一条 issue，之后的新线索追加成评论；同一条（按键）只提醒一次。
 
-只在 CI（.github/workflows/cli-canary.yml，macOS 那一路）调：python3 scripts/cli-canary/upstream_issue.py <upstream-new.md>
+只在 CI（.github/workflows/cli-canary.yml 的 upstream-radar 任务，两个平台跑完后按顺序）调：python3 scripts/cli-canary/upstream_issue.py <upstream-new.md>
 需要 gh 已登录（工作流里用 GH_TOKEN = github.token，权限 issues: write）。
 看完线索后的处理见 scripts/cli-canary/README.md「上游通道雷达」：在 upstream.json 写结论，要接的照 Kimi 程序状态那次做。
 """

@@ -4,6 +4,7 @@ import {
   agentCardHeadline,
   agentHeaderUpdateState,
   agentNavUpdateState,
+  checkSaysOutdated,
   isAlreadyLatestResult,
 } from "../src/agent-update-ui.ts";
 
@@ -205,4 +206,18 @@ test("统一进度与结果卡标题区分更新完成、已是最新与安装",
     }),
     { tone: "ok", title: "安装完成（script）：1.5.8" },
   );
+});
+
+test("检查结果里的本机版本与列表当前版本对不上时不再判为有新版", () => {
+  // 更新前采样的检查结果晚到：本机已是 2.186.0，结果里还是 2.184.0
+  assert.equal(
+    checkSaysOutdated({ installed: "2.184.0", outdated: true }, "2.186.0"),
+    false,
+  );
+  assert.equal(checkSaysOutdated({ installed: "2.184.0", outdated: true }, "2.184.0"), true);
+  // 任一侧版本未知时照常采信
+  assert.equal(checkSaysOutdated({ installed: null, outdated: true }, "2.186.0"), true);
+  assert.equal(checkSaysOutdated({ installed: "2.184.0", outdated: true }, null), true);
+  assert.equal(checkSaysOutdated({ installed: "2.184.0", outdated: false }, "2.184.0"), false);
+  assert.equal(checkSaysOutdated(undefined, "2.184.0"), false);
 });

@@ -5,6 +5,19 @@ export function isAlreadyLatestResult(res: AgentCmdResult | null | undefined): b
   return Boolean(res?.ok && res.versionBefore && res.versionAfter && res.versionBefore === res.versionAfter);
 }
 
+/**
+ * 最新版检查结果是否仍应判为「有新版」。检查要跑十来秒，期间刚更新完的 CLI 会被一份
+ * 更新前采样的旧结果覆盖：检查里记的本机版本与列表当前版本对不上时，这份 outdated 已过时，不采信
+ */
+export function checkSaysOutdated(
+  info: { installed?: string | null; outdated: boolean } | null | undefined,
+  installedVersion: string | null | undefined,
+): boolean {
+  if (!info?.outdated) return false;
+  if (info.installed && installedVersion && info.installed !== installedVersion) return false;
+  return true;
+}
+
 export type AgentNavUpdateState =
   | { kind: "uninstalled" }
   | { kind: "running"; action: "install" | "update"; label: "安装中" | "更新中"; title: string }

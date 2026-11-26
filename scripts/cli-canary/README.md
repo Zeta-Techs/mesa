@@ -27,7 +27,7 @@
 聊天层能接近上游多少，取决于 CLI 给不给结构化通道（`docs/design-chat-fidelity.md`）。每次跑都会看三处线索：在伪终端里起一下 CLI、
 看它问不问程序状态（OSC 7501，只在 macOS / Linux）；`--help` 里的 ACP、stream-json、本机服务、远程、hooks 一类开关；基线版本到这一版之间
 更新日志里提到这些的条目。线索和 `upstream.json`（每家每条线索 Mesa 的结论：「用上：…」「不接：原因」「未定：…」）比，没登记过的、
-以及更新日志里提到 Mesa 还没用上的通道的条目，写进报告最后一节，CI（macOS 那一路）开 / 追加 issue，同一条只提醒一次
+以及更新日志里提到 Mesa 还没用上的通道的条目，写进报告最后一节，两个平台都跑完后由 CI 的 `upstream-radar` 任务按顺序开 / 追加 issue（2026-11-25 起 Windows 那一路的线索也发），同一条只提醒一次
 （`upstream_issue.py`）。结论写了「不接」的通道，更新日志里修 bug / 测试 / 文档 / 重构的条目（Fixed、Improved、`fix(…)`、`test`、`docs`、`perf`、`refactor`…，各家前缀写法见 `canary.py UPSTREAM_MINOR_RE`）只进报告、不开 issue，新增功能（`feat`、Add、Added）照旧提醒（2026-11-06，Claude 每版十来条 remote-control、`claude -p` 的修复天天开 issue）。2026-11-04 的来由：Kimi 2.4.0 的更新日志写了 OSC 7501，Mesa 隔了几版才偶然发现。
 
 收到提醒怎么办（也可以直接交给 Agent：「按 issue 里的上游通道线索评估并接上」）：
@@ -50,7 +50,7 @@
 
 | 层 | 看什么 | 来源 |
 |---|---|---|
-| 请求 | 主对话请求的工具清单、系统提示词小标题、用户这句之前注入的上下文标签、请求字段、`anthropic-beta` 等请求头 | 假网关 `E2E_DUMP` |
+| 请求 | 主对话请求的工具清单（Gemini / Antigravity 的 `functionDeclarations` 也展开成工具名，2026-11-25 起）、系统提示词小标题、用户这句之前注入的上下文标签、请求字段、`anthropic-beta` 等请求头 | 假网关 `E2E_DUMP` |
 | 旁路 | Mesa `chat_channel` 端到端：认出会话、回合状态序列（比较时不看一闪而过的 `running`）、审批形态 | `e2e_channel`（`E2E_CLEAN_HOME` + `E2E_KEEP`） |
 | 会话 | 会话文件的记录类型与字段；Mesa 解析器读出用户这句、工具调用 / 结果、回复 | 同上留下的 `transcript.jsonl` / `parsed.json` |
 | 画面 | 审批菜单认不认得出、实时预览读不读得到 | `chat-capture.py`（`CLEAN_HOME`）+ `capture-check.ts` |
@@ -81,8 +81,9 @@ npm run canary
 
 各家跑哪几层不一样：有结构化旁路的六家（Claude Code、CodeBuddy、Qwen、OpenCode、Codex、Grok）跑旁路端到端，
 请求、旁路、会话、画面四层都比；Gemini、Kimi 不开全局 hooks、Cursor 没有旁路，只抓屏，请求形状取抓屏那一趟。
-Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。**Windows 上 Grok 也只抓屏**：程序状态（OSC 7501）
-过不了 ConPTY，Mesa 在 Windows 不接这条旁路。Windows 上 Mesa 的会话扫描不认临时 HOME（`dirs::home_dir` 不看 HOME / USERPROFILE），
+Grok 的程序状态不带会话 id，「旁路认出会话」这项不查，会话文件从临时 HOME 里扫出来。**Windows 上 Grok、Kimi、Antigravity 只抓屏**：
+程序状态（OSC 7501）过不了 ConPTY，Mesa 在 Windows 不接这条旁路。会话层照样比（2026-11-25 起）：抓屏时把临时 HOME 留下（`CAP_KEEP`），
+`e2e_parse_kept_home` 在里面按 Mesa 的会话根目录取这家最新的会话本体、交给 Mesa 解析器读，检查「抓屏留下会话文件」「解析器读到用户这句」「解析器读到工具调用」（抓屏停在审批菜单就收，Grok、agy 的会话只写到工具调用，工具结果与回复看指纹里的 `parsed.blockKinds`）。Windows 上 Mesa 的会话扫描不认临时 HOME（`dirs::home_dir` 不看 HOME / USERPROFILE），
 旁路没报会话文件时（Qwen、OpenCode）改在临时 HOME 里按会话 id 找，不会读到本机自己的对话。
 
 不用真实密钥，请求只到本机假网关。临时 HOME **不拷本机配置**：用户自己的 MCP、插件、hooks 会改工具清单，那样各台机器和 CI 就没法比。

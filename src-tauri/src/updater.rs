@@ -899,6 +899,10 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
     if ok {
         agents::invalidate_detect_cache();
         invalidate_check_cache();
+    } else if network_failure(&output) {
+        output.push_str("
+
+没连上更新源（网络中断或代理断开），本机版本没有改动。稍后再点一次更新；一直失败就到设置页「网络」检查出网代理是否可用。");
     }
     // 自更新装不了时可能只打印手动命令、照样退出 0（kimi upgrade -y 碰上它不支持的装法）：
     // 若输出明确说了已是最新（如 agy update 打印 You are already on the latest version），保持 ok = true；
@@ -922,6 +926,23 @@ fn update_agent_sync(app: &AppHandle, agent_id: &str) -> Result<UpdateResultDto,
         version_before,
         version_after,
     })
+}
+
+/// 更新命令的失败输出是否是连不上更新源（Go 程序的 `Get "https://…": EOF`、npm 的 ECONNRESET 等）
+fn network_failure(output: &str) -> bool {
+    const MARKERS: [&str; 10] = [
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "ECONNREFUSED",
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ENETUNREACH",
+        "\": EOF",
+        "connection reset",
+        "i/o timeout",
+        "Could not resolve host",
+    ];
+    MARKERS.iter().any(|m| output.contains(m)) || output.contains("failed to fetch manifest")
 }
 
 /// 构建结果并经 `agent-update-done-<agent_id>` 推送（前端以事件为准，invoke 返回值兜底）
@@ -1568,8 +1589,22 @@ const CHECK_CACHE_TTL: Duration = Duration::from_secs(120);
 static CHECK_CACHE: std::sync::Mutex<Option<(std::time::Instant, Vec<AgentUpdateInfoDto>)>> =
     std::sync::Mutex::new(None);
 
+/// 缓存代号：每次失效 +1。检查要跑十来秒，期间某家更新完成会清缓存；更新前开跑的那次
+/// 检查回来时代号已变，结果里是旧版本号，不能再写回缓存（否则 2 分钟内一直挂着「新版」）
+static CHECK_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(crate) fn invalidate_check_cache() {
-    *CHECK_CACHE.lock().unwrap() = None;
+    let mut cache = CHECK_CACHE.lock().unwrap();
+    CHECK_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    *cache = None;
+}
+
+/// 检查结束时写缓存：开跑后缓存被失效过就丢弃这次结果
+fn store_check_cache(started_gen: u64, out: &[AgentUpdateInfoDto]) {
+    let mut cache = CHECK_CACHE.lock().unwrap();
+    if CHECK_GEN.load(std::sync::atomic::Ordering::SeqCst) == started_gen {
+        *cache = Some((std::time::Instant::now(), out.to_vec()));
+    }
 }
 
 /// 6+ 个 agent 并行查最新版（brew info 走本地元数据；npm view 限 8s fetch-timeout）
@@ -1579,14 +1614,15 @@ pub async fn check_agent_updates(force: Option<bool>) -> Vec<AgentUpdateInfoDto>
         invalidate_check_cache();
         agents::invalidate_detect_cache();
     }
-    {
+    let started_gen = {
         let cache = CHECK_CACHE.lock().unwrap();
         if let Some((ts, cached)) = &*cache {
             if ts.elapsed() < CHECK_CACHE_TTL {
                 return cached.clone();
             }
         }
-    }
+        CHECK_GEN.load(std::sync::atomic::Ordering::SeqCst)
+    };
     // 手动「重新检查」时 brew 软件包信息按 10 分钟口径刷新，平时 6 小时
     let brew_meta_ttl = if force == Some(true) { BREW_META_TTL_EAGER } else { BREW_META_TTL };
     let out = tauri::async_runtime::spawn_blocking(move || {
@@ -1604,7 +1640,7 @@ pub async fn check_agent_updates(force: Option<bool>) -> Vec<AgentUpdateInfoDto>
     })
     .await
     .unwrap_or_default();
-    *CHECK_CACHE.lock().unwrap() = Some((std::time::Instant::now(), out.clone()));
+    store_check_cache(started_gen, &out);
     out
 }
 
@@ -1628,6 +1664,30 @@ mod tests {
         assert!(!brew_meta_needs_refresh(None, recent, ttl));
         // 上次尝试也过期了 → 再刷
         assert!(brew_meta_needs_refresh(old, Some(Duration::from_secs(601)), ttl));
+    }
+
+    #[test]
+    fn network_failure_detects_agy_manifest_eof_and_npm_errors() {
+        let agy = "Error: failed to check for updates: failed to fetch manifest: Get \"https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/windows_amd64.json\": EOF";
+        assert!(network_failure(agy));
+        assert!(network_failure("npm error code ECONNRESET"));
+        assert!(!network_failure("npm error code EBUSY: resource busy or locked"));
+        assert!(!network_failure("命令跑完了，版本仍是 1.0.0"));
+    }
+
+    #[test]
+    fn stale_check_result_is_not_written_back_after_invalidation() {
+        invalidate_check_cache();
+        let started = CHECK_GEN.load(std::sync::atomic::Ordering::SeqCst);
+        // 检查进行中某家更新完成 → 失效；这次检查的旧结果不得回写
+        invalidate_check_cache();
+        store_check_cache(started, &[]);
+        assert!(CHECK_CACHE.lock().unwrap().is_none());
+        // 无失效时正常写入
+        let now = CHECK_GEN.load(std::sync::atomic::Ordering::SeqCst);
+        store_check_cache(now, &[]);
+        assert!(CHECK_CACHE.lock().unwrap().is_some());
+        invalidate_check_cache();
     }
 
     #[test]

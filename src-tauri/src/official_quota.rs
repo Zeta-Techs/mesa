@@ -673,6 +673,11 @@ async fn query_agy_row(force: bool, now: i64) -> Option<PlanQuotaDto> {
     if !force && !has_token_file && now < AGY_ABSENT_UNTIL.load(Ordering::Relaxed) {
         return None;
     }
+    // 确定没登录就不跑 `agy --print /usage`：未登录的打印模式会自己弹浏览器 OAuth（手动刷新也一样）
+    if tauri::async_runtime::spawn_blocking(crate::official_accounts::agy_credential_present).await.ok().flatten() == Some(false) {
+        AGY_ABSENT_UNTIL.store(now + 120_000, Ordering::Relaxed);
+        return None;
+    }
     let bin = tauri::async_runtime::spawn_blocking(|| crate::agents::resolve_binary("agy"))
         .await
         .ok()

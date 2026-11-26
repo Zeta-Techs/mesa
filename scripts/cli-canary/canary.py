@@ -48,6 +48,9 @@ PROGRAM_STATUS = {"grok", "kimi", "agy"}
 CHANNEL = {"claude-code", "codebuddy", "qwen", "opencode", "opencode2", "codex"} | (set() if PLATFORM == "win32" else PROGRAM_STATUS)
 # 旁路直接报会话 id 的家（程序状态不带会话 id）
 SESSION_ID = CHANNEL - PROGRAM_STATUS
+# Windows 上不接旁路的程序状态三家：抓屏留下临时 HOME，在里面找会话文件给 Mesa 解析器读（e2e_parse_kept_home），
+# 会话层与解析器照样核对（2026-11-25 前 Windows 上这三家的会话解析没人看着）
+SCREEN_SESSION = PROGRAM_STATUS - CHANNEL
 # 连不上假网关的家（Cursor 只走自家云端，临时 HOME 里也没登录）：只记版本，请求 / 画面都不比
 NO_GATEWAY = {"cursor"}
 # CI 标记变量不往下传：Gemini 见 CI / GITHUB_ACTIONS 就走无头模式（「No input provided via stdin」），Ink 写的界面
@@ -164,7 +167,10 @@ def tool_names(body):
     for t in body.get("tools") or []:
         if not isinstance(t, dict):
             continue
-        if isinstance(t.get("function"), dict):
+        # Gemini / Antigravity：工具都在一条 {"functionDeclarations": [...]} 里（2026-11-25 前只记成空名，工具增减报不出来）
+        if isinstance(t.get("functionDeclarations"), list):
+            out.extend(f.get("name", "") for f in t["functionDeclarations"] if isinstance(f, dict))
+        elif isinstance(t.get("function"), dict):
             out.append(t["function"].get("name", ""))
         else:
             out.append(t.get("name") or t.get("type") or "")
@@ -331,11 +337,13 @@ def ensure_screen_deps(out):
     return deps, None
 
 
-def screen_phase(agent, gw, out, adir, deps):
+def screen_phase(agent, gw, out, adir, deps, keep_home=None):
     plans = make_plans(gw, out)
     cap = os.path.join(adir, "screen.json")
     env = dict(os.environ, PYTE_DIR=deps, PYWINPTY_DIR=deps, CLEAN_HOME="1", TOOL_PROMPT=TOOL_PROMPT.get(agent, DEFAULT_TOOL_PROMPT),
                MSYS_NO_PATHCONV="1")
+    if keep_home:
+        env["CAP_KEEP"] = keep_home
     # Grok 认不认注入的密钥、为什么转去浏览器登录，只有它自己的日志看得出（2026-10-25 Windows CI 停在登录页，本机复现不了）
     if agent == "grok":
         env["GROK_LOG_FILE"] = os.path.join(adir, "grok-debug.log")
@@ -403,6 +411,33 @@ GLOBAL_POLICY_EXPECT = {
 }
 
 
+def _force_rm(func, path, _exc):
+    """Windows：临时 HOME 里有 git 写的只读文件，rmtree 删不掉；先去掉只读再删，仍被占用的留着"""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
+
+
+def screen_session_phase(agent, adir, home):
+    """抓屏留下的临时 HOME → 会话文件原件 + Mesa 解析器读出的对话（同旁路端到端的 E2E_KEEP 产物）"""
+    keep = os.path.join(adir, "screen-session")
+    env = dict(os.environ, E2E_AGENT=mesa(agent), E2E_PARSE_HOME=home, E2E_KEEP=keep)
+    code, text = run([cargo(), "test", "--lib", "e2e_parse_kept_home", "--", "--ignored", "--nocapture"],
+                     cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=1800)
+    open(os.path.join(adir, "screen-session.log"), "w", encoding="utf-8").write(text)
+    shutil.rmtree(home, onerror=_force_rm)
+    transcript = os.path.join(keep, "transcript.jsonl")
+    parsed, pchecks = parsed_fingerprint(os.path.join(keep, "parsed.json"))
+    checks = {"抓屏留下会话文件": code == 0 and os.path.exists(transcript)}
+    # 抓屏停在审批菜单就收（不批准）：Grok / agy 停着等批准，会话只写到工具调用；Kimi 无审批档、自己拒了才有结果和回复。
+    # 工具结果 / 回复不作硬检查，解析出的块种类进指纹（parsed.blockKinds），少读了照样报变化
+    pchecks = {k: v for k, v in (pchecks or {}).items() if k in ("解析器读到用户这句", "解析器读到工具调用")}
+    checks.update(pchecks or {"解析器读到用户这句": False})
+    return transcript_fingerprint(transcript), parsed, checks
+
+
 def global_phase(agent, gw, adir):
     """Mesa 的真实设为全局写计划写进临时 HOME（e2e_write_global_config），再像用户在外面那样直接起 CLI 问一句：
     假网关收到的请求要带这条连接的模型 e2e-global、密钥 sk-e2e-global 与已落盘的策略参数。这一层抓「写了但 CLI 不读」
@@ -456,15 +491,8 @@ def global_phase(agent, gw, adir):
     time.sleep(0.5)
     reqs = gw.since(mark)
     model_hit = [r for r in reqs if (r.get("body") or {}).get("model") == "e2e-global" or "/models/e2e-global" in r.get("path", "")]
-    # Windows：临时 HOME 里有 git 写的只读对象文件（Codex 插件克隆、OpenCode 快照），rmtree 删不掉只读文件，
-    # 不处理就每跑一次在用户目录里留一份（2026-10-31 本机实测）。删不掉的先去掉只读再删
-    def _force(func, path, _exc):
-        try:
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        except OSError:
-            pass  # 仍被占用的留着，不让清理拖垮这一轮核对
-    shutil.rmtree(home, onerror=_force)
+    # Windows：临时 HOME 里有 git 写的只读对象文件（Codex 插件克隆、OpenCode 快照），不处理就每跑一次在用户目录里留一份（2026-10-31 本机实测）
+    shutil.rmtree(home, onerror=_force_rm)
     try:
         os.rmdir(parent)
     except OSError:
@@ -579,10 +607,15 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     else:
         log(f"[{agent}] 抓屏…")
         mark = gw.mark()
-        s = screen_phase(agent, gw, out, adir, deps)
+        keep_home = os.path.join(adir, "screen-home") if agent in SCREEN_SESSION else None
+        s = screen_phase(agent, gw, out, adir, deps, keep_home)
         if agent not in CHANNEL:
             fp["request"] = request_fingerprint(gw.since(mark))
             checks["假网关收到主对话请求"] = fp["request"]["main"] is not None
+        if keep_home:
+            log(f"[{agent}] 读抓屏留下的会话…")
+            fp["transcript"], fp["parsed"], schecks = screen_session_phase(agent, adir, keep_home)
+            checks.update(schecks)
         checks["抓屏跑完"] = s is not None
         fp["screen"] = s and {
             "menu": s.get("menu") and {"question": s["menu"]["question"], "options": s["menu"]["options"]},
@@ -894,6 +927,8 @@ def main():
             compare = {k: v for k, v in fp.items() if k not in ("version", "checks")}
             if base and fp.get("screen") is None:
                 base = {**base, "screen": None}  # 这次没抓屏，不算画面变化
+            if base and agent in SCREEN_SESSION and "transcript" not in fp:
+                base = {k: v for k, v in base.items() if k not in ("transcript", "parsed")}  # 会话取自抓屏，同上
             changes = diff({k: v for k, v in base.items() if k not in ("version", "checks")}, compare) if base else []
             report += [f"## {agent}", "",
                        f"- 版本：{fp['version']}（基线核对到 {base['version'] if base else '无基线'}）",

@@ -134,6 +134,7 @@ import {
   agentCardHeadline,
   agentHeaderUpdateState,
   agentNavUpdateState,
+  checkSaysOutdated,
 } from "../agent-update-ui";
 import UpdateProgressBar from "../components/UpdateProgressBar";
 import { installNotes } from "../agent-install-notes";
@@ -3782,6 +3783,7 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
     {},
   );
 
+  const updateCheckSeqRef = useRef(0);
   async function refreshUpdateInfo(force = false) {
     if (force) {
       setConfirmedLatest({});
@@ -3791,10 +3793,13 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
         /* ignore */
       }
     }
+    // 多家同时更新时几次检查会并发：只采信最后发起的那次，先发后到的旧结果不覆盖
+    const seq = ++updateCheckSeqRef.current;
     try {
       const list = await invoke<AgentUpdateInfo[]>("check_agent_updates", {
         force,
       });
+      if (seq !== updateCheckSeqRef.current) return;
       setUpdateInfo(Object.fromEntries(list.map((i) => [i.id, i])));
     } catch {
       /* 检查失败（网络等）不影响页面 */
@@ -4820,7 +4825,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   updating: !!updating[agent.id],
                   cmdKind: cmdKind[agent.id],
                   result: updateResults[agent.id],
-                  outdated: !!updateInfo[agent.id]?.outdated,
+                  outdated: checkSaysOutdated(
+                    updateInfo[agent.id],
+                    agents.find((x) => x.id === agent.id)?.version,
+                  ),
                   latest: updateInfo[agent.id]?.latest,
                 });
                 const navDrag = dragSortStyle("navgroups", agent.id, navIndex);
@@ -4989,7 +4997,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                   updating: !!updating[agent.id],
                   cmdKind: cmdKind[agent.id],
                   result: updateResults[agent.id],
-                  outdated: !!updateInfo[agent.id]?.outdated,
+                  outdated: checkSaysOutdated(
+                    updateInfo[agent.id],
+                    agents.find((x) => x.id === agent.id)?.version,
+                  ),
                   latest: updateInfo[agent.id]?.latest,
                 });
                 const suffix =
@@ -5239,7 +5250,10 @@ export default function ProfilesPage({ visible }: { visible: boolean }) {
                         updating: !!updating[agent.id],
                         cmdKind: cmdKind[agent.id],
                         result: updateResults[agent.id],
-                        info,
+                        info: info && {
+                          latest: info.latest,
+                          outdated: checkSaysOutdated(info, det?.version),
+                        },
                         updateCheckReady,
                         confirmedVersion: confirmedLatest[agent.id],
                         tuiPrefill: interactiveUpdatePrefill(info),

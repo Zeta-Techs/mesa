@@ -5209,6 +5209,87 @@ mod e2e {
         None
     }
 
+    /// 程序状态旁路的三家（Grok / Kimi / agy）在 Windows 上不接旁路、金丝雀只抓屏：抓屏留下的临时 HOME 里
+    /// 只有这一段对话，按 Mesa 的会话根目录布局取这家最新的会话本体（不认会话 id）
+    fn kept_home_transcript(agent: &str, home: &Path) -> Option<String> {
+        fn newest(dir: &Path, depth: usize, want: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
+            let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+            let mut stack = vec![(dir.to_path_buf(), 0)];
+            while let Some((d, n)) = stack.pop() {
+                let Ok(entries) = std::fs::read_dir(&d) else { continue };
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        if n < depth {
+                            stack.push((p, n + 1));
+                        }
+                    } else if want(&p) {
+                        let Ok(t) = std::fs::metadata(&p).and_then(|m| m.modified()) else { continue };
+                        if best.as_ref().map_or(true, |(bt, _)| t > *bt) {
+                            best = Some((t, p));
+                        }
+                    }
+                }
+            }
+            best.map(|(_, p)| p)
+        }
+        let roots = crate::sessions::SessionRoots::at(home);
+        let named = |name: &'static str| move |p: &Path| p.file_name().is_some_and(|n| n == name);
+        let found = match agent {
+            "agy" => return temp_home_transcript(agent, home, None),
+            // sessions/<encoded-cwd>/<session-id>/updates.jsonl
+            "grok" => newest(&roots.grok.join("sessions"), 3, &named("updates.jsonl")),
+            // 新版 kimi-code：sessions/…/<sessionDir>/agents/main/wire.jsonl（agents/agent-* 是子 agent）
+            "kimi" => newest(&roots.kimi_code.join("sessions"), 6, &|p: &Path| {
+                p.file_name().is_some_and(|n| n == "wire.jsonl")
+                    && p.parent().and_then(|d| d.file_name()).is_some_and(|n| n == "main")
+            }),
+            _ => None,
+        };
+        found.map(|p| p.to_string_lossy().into_owned())
+    }
+
+    #[test]
+    fn kept_home_transcript_finds_grok_kimi_main_and_skips_subagents() {
+        let home = std::env::temp_dir().join(format!("ccode-kept-{}", uuid::Uuid::new_v4()));
+        let grok = home.join(".grok").join("sessions").join("C%3A%5Cwork").join("s1");
+        std::fs::create_dir_all(&grok).unwrap();
+        std::fs::write(grok.join("updates.jsonl"), "{}\n").unwrap();
+        std::fs::write(grok.join("chat_history.jsonl"), "{}\n").unwrap();
+        let kimi = home.join(".kimi-code").join("sessions").join("wd_work").join("session_1").join("agents");
+        std::fs::create_dir_all(kimi.join("main")).unwrap();
+        std::fs::create_dir_all(kimi.join("agent-x")).unwrap();
+        std::fs::write(kimi.join("main").join("wire.jsonl"), "{}\n").unwrap();
+        std::fs::write(kimi.join("agent-x").join("wire.jsonl"), "{}\n").unwrap();
+        let g = kept_home_transcript("grok", &home).unwrap();
+        assert!(g.ends_with("updates.jsonl"), "{g}");
+        let k = kept_home_transcript("kimi", &home).unwrap();
+        assert!(Path::new(&k).parent().unwrap().ends_with("main"), "{k}");
+        assert_eq!(kept_home_transcript("gemini", &home), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// E2E_PARSE_HOME=<抓屏留下的临时 HOME>、E2E_AGENT、E2E_KEEP（CLI 金丝雀，Windows 上的 Grok / Kimi / agy）：
+    /// 留下会话文件原件与 Mesa 解析器读出的对话，同 e2e_channel 的 E2E_KEEP 产物
+    #[test]
+    #[ignore]
+    fn e2e_parse_kept_home() {
+        let agent = std::env::var("E2E_AGENT").expect("E2E_AGENT");
+        let home = PathBuf::from(std::env::var("E2E_PARSE_HOME").expect("E2E_PARSE_HOME"));
+        let keep = PathBuf::from(std::env::var("E2E_KEEP").expect("E2E_KEEP"));
+        std::fs::create_dir_all(&keep).unwrap();
+        let path = kept_home_transcript(&agent, &home);
+        println!("{agent}: 临时 HOME 里的会话文件 {path:?}");
+        if let Some(p) = &path {
+            let _ = std::fs::copy(p, keep.join("transcript.jsonl"));
+        }
+        let parsed = path
+            .as_deref()
+            .map(|p| crate::sessions::conversation_impl_raw(&agent, p))
+            .unwrap_or_default();
+        std::fs::write(keep.join("parsed.json"), serde_json::to_string_pretty(&parsed).unwrap()).unwrap();
+    }
+
     /// E2E_CLEAR=1：走完再发 /clear 看会话跟随；E2E_RESUME=1：停掉后按 Mesa 的恢复参数接回这段对话再跑一轮
     #[test]
     #[ignore]

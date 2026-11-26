@@ -87,19 +87,6 @@ jobs:
         run: |
           cat "$RUNNER_TEMP/canary/report.md" >> "$GITHUB_STEP_SUMMARY" || true
           cat "$RUNNER_TEMP/canary-opencode2/report.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
-      # 上游通道雷达（不算红）：CLI 新出了能让聊天层更接近上游的通道（程序状态、本机服务、ACP…），或更新日志提到，
-      # 开一条 issue / 追加评论，同一条只提醒一次。只在 macOS 这一路发（程序状态要伪终端才探得到，也免得两路抢着发）
-      - name: 上游新通道提醒
-        if: always() && runner.os == 'macOS' && github.ref == 'refs/heads/main'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          sent=0
-          for f in "$RUNNER_TEMP/canary/upstream-new.md" "$RUNNER_TEMP/canary-opencode2/upstream-new.md"; do
-            if [ -s "$f" ]; then python3 -I scripts/cli-canary/upstream_issue.py "$f"; sent=1; fi
-          done
-          [ "$sent" = 1 ] || echo "没有要提醒的"
       - name: 核对版本前移的基线提交回主线
         if: always() && github.ref == 'refs/heads/main'
         shell: bash
@@ -124,3 +111,28 @@ jobs:
             ${{ runner.temp }}/canary
             ${{ runner.temp }}/canary-opencode2
           retention-days: 14
+
+  # 上游通道雷达（不算红）：CLI 新出了能让聊天层更接近上游的通道（程序状态、本机服务、ACP…），或更新日志提到，
+  # 开一条 issue / 追加评论，同一条（按键）只提醒一次。两个平台都跑完后在这里按顺序发：Windows 才有的线索（ConPTY、
+  # Windows 专属的更新日志条目）也能提醒，又不会两路同时开出两条 issue（2026-11-25 前只发 macOS 那一路）
+  upstream-radar:
+    name: 上游新通道提醒
+    needs: canary
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: canary-artifacts
+      - name: 发提醒
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sent=0
+          # 产物目录 canary-<平台>/canary[-opencode2]/；按名字排序 macOS 在前
+          for f in canary-artifacts/*/canary*/upstream-new.md; do
+            if [ -s "$f" ]; then python3 -I scripts/cli-canary/upstream_issue.py "$f"; sent=1; fi
+          done
+          [ "$sent" = 1 ] || echo "没有要提醒的"

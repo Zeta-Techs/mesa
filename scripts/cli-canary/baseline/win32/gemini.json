@@ -28,7 +28,22 @@
    "path": "/gemini/v1beta/models/e2e-picked:streamGenerateContent",
    "systemHeadings": [],
    "tools": [
-    ""
+    "activate_skill",
+    "ask_user",
+    "enter_plan_mode",
+    "glob",
+    "google_web_search",
+    "grep_search",
+    "invoke_agent",
+    "list_background_processes",
+    "list_directory",
+    "read_background_output",
+    "read_file",
+    "replace",
+    "run_shell_command",
+    "update_topic",
+    "web_fetch",
+    "write_file"
    ]
   },
   "other": [
