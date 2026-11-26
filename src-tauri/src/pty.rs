@@ -1286,7 +1286,9 @@ fn pty_spawn_sync(
     // 原生模式：PTY 里起 mesa_helper 的 stdio 桥（它再起协议模式的 CLI），首条消息不进参数、由聊天层经通道发
     // - Claude 原生模式只对 API 密钥 / 中转网关连接：官方订阅账号这里就挡掉、照旧终端模式（设计稿 §1 条款）
     // - Antigravity（agy）原生模式只对官方 Google 登录：上游 ACP 不认第三方自定义模型（设计稿 §3.3）
-    let acp_allowed = agent_id != "agy" || profile.account_type == profiles::AccountType::Official;
+    // - ACP 协议暂不支持 CLI --fork-session：若以原生分叉启动（如 CodeBuddy / Grok），不走 ACP 避免丢上下文
+    let acp_allowed = fork_session_id.is_none()
+        && (agent_id != "agy" || profile.account_type == profiles::AccountType::Official);
     let native_plan = native
         .then(|| {
             crate::chat_channel::prepare_native(

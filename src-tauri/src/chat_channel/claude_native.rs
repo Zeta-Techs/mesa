@@ -45,13 +45,16 @@ pub(crate) fn supported(agent: &str) -> bool {
     agent == "claude-code" && super::version_at_least(agent, CLAUDE_NATIVE_MIN)
 }
 
-/// 启动参数里定下的会话 id（`--session-id` 新开、`--resume` 接回）
+/// 启动参数里定下的会话 id（`--session-id` 新开 / 分叉的新会话优先，`--resume` / `-r` 接回）
 fn session_from_args(args: &[String]) -> Option<String> {
-    args.iter()
-        .position(|a| a == "--session-id" || a == "--resume" || a == "-r")
-        .and_then(|i| args.get(i + 1))
-        .filter(|v| !v.starts_with('-'))
-        .cloned()
+    let pick = |flags: &[&str]| {
+        args.iter()
+            .position(|a| flags.iter().any(|f| a == f))
+            .and_then(|i| args.get(i + 1))
+            .filter(|v| !v.starts_with('-'))
+            .cloned()
+    };
+    pick(&["--session-id"]).or_else(|| pick(&["--resume", "-r"]))
 }
 
 /// pty_spawn 在起进程前调用：`allowed` = 这条连接能用原生模式（官方订阅账号为 false）。不成返回 None，照旧终端模式
@@ -510,6 +513,11 @@ mod tests {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(session_from_args(&a(&["--settings", "x", "--session-id", "s1"])).as_deref(), Some("s1"));
         assert_eq!(session_from_args(&a(&["--resume", "s2", "--model", "m"])).as_deref(), Some("s2"));
+        // 原生分叉同时带 -r <原会话> --fork-session --session-id <新会话>：必须认新会话 id，不能锁回原对话
+        assert_eq!(
+            session_from_args(&a(&["-r", "orig-1", "--fork-session", "--session-id", "fork-2"])).as_deref(),
+            Some("fork-2"),
+        );
         assert_eq!(session_from_args(&a(&["--model", "m"])), None);
     }
 

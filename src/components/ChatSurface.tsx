@@ -843,9 +843,11 @@ export default function ChatSurface({
   useEffect(() => {
     setProgressAt(Date.now());
   }, [messages.length, liveReply, liveThinking, channel?.thinkingLive, activity?.startedAt, thinking, statusLine]);
+  // 当前实际是否在跑纯协议运行时（Kimi / Claude / Gemini 等）：没有终端交互画面、不往日志屏敲快捷键
+  const isNativeRuntime = Boolean(runtime?.status?.nativeRuntime || nativeRuntimeKind(channel?.kind));
   const quiet = generating && Date.now() - progressAt >= QUIET_HINT_MS;
   const extraHint = approvalExtraHint(agentId, hooksEnabled);
-  const liveReplyCapable = liveReplySupported(agentId ?? "");
+  const liveReplyCapable = liveReplySupported(agentId ?? "") || channelDeliversLiveText(channel) || isNativeRuntime;
   // 一轮刚结束、会话文件还没把最后一段写进来：预览和展开的过程再留一会儿，追上了（或时限到了，settleHoldMs）再收。
   // 原先一停就撤预览、过程同时收起，最后一段落盘前画面空一下才出来（2026-10-19 用户 Codex 实测）
   // 停下与进入收尾在同一次渲染里定（下方 prevGenerating）：原先 settling 在停下后的副作用里才置上，中间提交一帧
@@ -1465,7 +1467,7 @@ export default function ChatSurface({
       );
     }
     const event = slashHandoff(text, modelSwitch?.kind ?? null);
-    if (event === "picker_model") openPicker();
+    if (event === "picker_model" && !isNativeRuntime) openPicker();
     setLastSentAt(Date.now());
     // 自己发一句 = 要看接下来的回复：不管刚才翻到哪里都回到底部、接着跟（同各家聊天应用；2026-10-28 用户：
     // 发第一条之后画面停在上面，还得手拖下来看回复）
@@ -1474,8 +1476,6 @@ export default function ChatSurface({
     return onSend(text);
   }
 
-  // 当前实际是否在跑纯协议运行时（Kimi ACP / Claude -p）：没有终端选择器、不往日志屏敲快捷键
-  const isNativeRuntime = Boolean(runtime?.status?.nativeRuntime || nativeRuntimeKind(channel?.kind));
   const stopViaChannel = interruptRoute({
     agentId,
     nativeMode: Boolean(nativeOn),
@@ -2247,7 +2247,8 @@ export default function ChatSurface({
             <ChatDecisionCard
               decision={decision}
               onOpenTerminal={onOpenTerminal}
-              onPeek={onTogglePeek && !peek ? onTogglePeek : undefined}
+              onPeek={isNativeRuntime ? undefined : onTogglePeek && !peek ? onTogglePeek : undefined}
+              nativeRuntime={isNativeRuntime}
               onReportMismatch={
                 onReportMismatch
                   ? () => onReportMismatch("decision", { title: decision.title, options: decisionOptionLabels(decision) })

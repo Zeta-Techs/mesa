@@ -3505,10 +3505,15 @@ export const TerminalView = memo(function TerminalView({
     };
     window.setTimeout(() => wait(0), 150);
   }
-  /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档），随后盯 5 秒屏幕看 CLI 有没有弹确认 */
+  /** 写一条 TUI 命令（聊天层 / 底栏切模型、思考档、压缩上下文），随后盯 5 秒屏幕看 CLI 有没有弹确认；
+   *  纯协议原生模式没有可打字的终端，命令改走协议通道（/compact 等） */
   function runTuiCommand(cmd: string) {
     const id = ptyIdRef.current;
     if (!id) return;
+    if (launchedNativeRef.current || nativeRuntimeKind(channelRef.current?.kind)) {
+      void sendMessage(cmd);
+      return;
+    }
     // Kimi 换思考档：带参数的 /effort 会存成默认，改走选择器只改本段（switch-strategy kimiEffortPickLevel）
     const kimiLevel = kimiEffortPickLevel(launchAgentRef.current ?? "", launchAgentDetRef.current?.version, cmd);
     if (kimiLevel) {
@@ -7341,15 +7346,15 @@ export const TerminalView = memo(function TerminalView({
     }).finally(endEarlyBubbleLaunch);
     if (!res) return backToSource(launchCancelRef.current ?? error ?? "接回失败");
     early.reRegister();
-    await new Promise((r) => setTimeout(r, 1200));
+    const text = prepared.kind === "delta" && prepared.framing ? composeRelayPrompt(prepared.framing, message) : message;
+    if (!channelOwnsSend(text)) await new Promise((r) => setTimeout(r, 1200));
     if (!mountedRef.current) return { error: null };
     if (ptyIdRef.current !== res.ptyId) {
       early.retract();
       return { error: "终端已重新启动，这句没有发出，请再发一次" };
     }
-    const text = prepared.kind === "delta" && prepared.framing ? composeRelayPrompt(prepared.framing, message) : message;
     armPtyWorking();
-    const result = await writeChatMessage(res.ptyId, text);
+    const result = await deliverAfterRelaunch(res.ptyId, text);
     if (result.error) {
       disarmPtyWorking();
       early.retract();

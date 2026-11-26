@@ -787,8 +787,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       },
       {
         cmd: "/terminal",
-        label: "打开终端",
-        hint: "切到这段对话的终端画面",
+        label: st?.nativeRuntime ? "查看运行日志" : "打开终端",
+        hint: st?.nativeRuntime ? "切到协议运行日志（原生模式没有终端交互画面）" : "切到这段对话的终端画面",
         run: () => {
           setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
           useAppStore.getState().ackOnboarding("terminal");
@@ -1964,10 +1964,17 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           : typeof savedConfig?.nativeMode === "boolean"
             ? savedConfig.nativeMode
             : undefined;
+      const chosenAcct = profiles.find((p) => p.id === profileId)?.accountType ?? null;
+      const forkWillRunNative =
+        Boolean(inheritedNative ?? useAppStore.getState().settings?.chatNativeDefault) &&
+        nativeModeAllowed(source.agentId, chosenAcct) &&
+        nativeRuntime(source.agentId);
       const target = await invoke<HandoffTargetDto[]>("handoff_targets")
         .then((targets) => targets.find((t) => t.id === source.agentId))
         .catch(() => undefined);
-      if (untilText == null && target?.nativeFork) {
+      // 纯协议原生模式里只有 Claude 认 --fork-session；ACP 协议各家（CodeBuddy / Grok 等）不吃终端分叉参数，
+      // 走简报分叉既保留原生模式又带完整上下文
+      if (untilText == null && target?.nativeFork && (!forkWillRunNative || source.agentId === "claude-code")) {
         const forkTabId = addTab({
           cwd: source.cwd,
           // 同 Claude 客户端：分出来的那段先沿用原标题，侧栏挂在原对话下面
@@ -2013,11 +2020,6 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       });
       const prompt = `读 ${relativeBriefPath(brief.filePath, source.cwd)} 分叉简报，在此基础上继续完成任务`;
       const promptSupported = target ? target.promptSupported : source.agentId !== "kimi";
-      const chosenAcct = profiles.find((p) => p.id === profileId)?.accountType ?? null;
-      const forkWillRunNative =
-        Boolean(inheritedNative ?? useAppStore.getState().settings?.chatNativeDefault) &&
-        nativeModeAllowed(source.agentId, chosenAcct) &&
-        nativeRuntime(source.agentId);
       const forkTabId = addTab({
         cwd: source.cwd,
         title: `分叉 · ${source.title || "当前对话"}`,

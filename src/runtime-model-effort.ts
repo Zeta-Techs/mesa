@@ -195,7 +195,7 @@ export function useRuntimeModelEffort(opts: {
     sessionEffortCmd && comboReady && combo?.injectEffortAllowed === true
       ? { levels: [] as string[], command: sessionEffortCmd }
       : null;
-  const effortLive = sessionEffort ?? (comboReady && combo?.showNativeEffort === true ? effort : null);
+  const effortLive = native ? null : (sessionEffort ?? (comboReady && combo?.showNativeEffort === true ? effort : null));
   /** 换思考档走重开接回：会写回全局配置、且这个组合启动时能注入思考档 */
   const effortByRelaunch =
     Boolean(relaunch) &&

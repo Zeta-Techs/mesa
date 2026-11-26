@@ -324,12 +324,16 @@ test("Claude 原生模式：流式 Markdown + 审批卡（允许 / 本会话都�
                 alwaysLabel: "本会话都允许",
               },
             }),
+            onTogglePeek: () => {},
             onChannelReply,
           }),
         ),
       );
     });
     assert.ok(env.rootEl.textContent?.includes("echo mesa-ok > /tmp/probe.txt"), "审批卡应显示命令原文");
+    assert.equal(findButton(env.rootEl, "露出终端"), null, "纯协议原生审批卡不应再显示「露出终端」");
+    assert.equal(findButton(env.rootEl, "打开终端"), null, "纯协议原生审批卡不应再显示「打开终端」");
+    assert.ok(findButton(env.rootEl, "查看日志"), "纯协议原生审批卡右上角应显示「查看日志」");
     const allowBtn = findButton(env.rootEl, "允许");
     const alwaysBtn = findButton(env.rootEl, "本会话都允许");
     const denyBtn = findButton(env.rootEl, "拒绝");

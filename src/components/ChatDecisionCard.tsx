@@ -94,6 +94,8 @@ const PRIMARY_KEY = IS_MAC ? "⌘↵" : "Ctrl ↵";
  */
 /** 卡头「对不上？」（chat-mismatch.ts）：各种卡共用 CardShell，经 context 送下去，不必逐张卡传 */
 const ReportContext = createContext<(() => void) | null>(null);
+/** 纯协议原生运行时（没有可操作终端，只有协议日志）：收起「露出终端」、把「打开终端」改为「查看日志」 */
+const NativeRuntimeContext = createContext(false);
 
 /** 卡上给人看的按钮原文（「对不上」反馈附上，和终端里的菜单对照） */
 export function decisionOptionLabels(decision: ChatDecision): string[] {
@@ -108,6 +110,7 @@ export default function ChatDecisionCard({
   onOpenTerminal,
   onPeek,
   onReportMismatch,
+  nativeRuntime = false,
 }: {
   decision: ChatDecision;
   onOpenTerminal: () => void;
@@ -115,11 +118,15 @@ export default function ChatDecisionCard({
   onPeek?: () => void;
   /** 卡上的按钮和终端里的菜单对不上：带上两边当时的内容去反馈 */
   onReportMismatch?: () => void;
+  /** 纯协议原生模式运行中：右侧仅保留「查看日志」，不出「露出终端 / 打开终端」 */
+  nativeRuntime?: boolean;
 }) {
   return (
-    <ReportContext.Provider value={onReportMismatch ?? null}>
-      <DecisionBody decision={decision} onOpenTerminal={onOpenTerminal} onPeek={onPeek} />
-    </ReportContext.Provider>
+    <NativeRuntimeContext.Provider value={nativeRuntime}>
+      <ReportContext.Provider value={onReportMismatch ?? null}>
+        <DecisionBody decision={decision} onOpenTerminal={onOpenTerminal} onPeek={nativeRuntime ? undefined : onPeek} />
+      </ReportContext.Provider>
+    </NativeRuntimeContext.Provider>
   );
 }
 
@@ -279,6 +286,7 @@ function CardShell({
 }) {
   const ref = useRef<HTMLElement>(null);
   const onReport = useContext(ReportContext);
+  const nativeRuntime = useContext(NativeRuntimeContext);
   const primaryRef = useRef(onPrimary);
   primaryRef.current = onPrimary;
   useEffect(() => {
@@ -323,13 +331,17 @@ function CardShell({
             <button
               type="button"
               onClick={onReport}
-              title="卡上的内容或按钮和终端里的不一样？把两边当时的内容（已去掉密钥）附上去反馈"
+              title={
+                nativeRuntime
+                  ? "卡上的内容或按钮有异常？把当时通道记录（已去掉密钥）附上去反馈"
+                  : "卡上的内容或按钮和终端里的不一样？把两边当时的内容（已去掉密钥）附上去反馈"
+              }
               className="h-7 rounded-md px-2 text-l4 transition-colors hover:bg-hover hover:text-l1"
             >
               对不上？
             </button>
           )}
-          {onPeek && (
+          {onPeek && !nativeRuntime && (
             <button
               type="button"
               onClick={onPeek}
@@ -342,11 +354,15 @@ function CardShell({
           <button
             type="button"
             onClick={onOpenTerminal}
-            title="选项更多或按键没反应时，去终端里直接操作"
-            aria-label="打开终端"
+            title={
+              nativeRuntime
+                ? "查看协议运行日志（纯协议原生模式没有终端交互画面）"
+                : "选项更多或按键没反应时，去终端里直接操作"
+            }
+            aria-label={nativeRuntime ? "查看日志" : "打开终端"}
             className="h-7 rounded-md px-2 text-l3 transition-colors hover:bg-hover hover:text-l1"
           >
-            打开终端
+            {nativeRuntime ? "查看日志" : "打开终端"}
           </button>
         </div>
       </header>
