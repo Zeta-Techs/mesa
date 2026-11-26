@@ -318,6 +318,8 @@ idle ──提交──▶ submitted ──开始干活──▶ running ⇄ awa
 
 ## 11. ACP 放在哪里
 
+> **2026-11-26 更新**：本节「不进交互聊天层」与 §12 中「交互对话改走 ACP」「切换界面就杀进程」两条已被「聊天层原生模式」推翻——终端模式照本节不变，另加原生模式（`docs/design-chat-native-mode.md`、`product-decisions.md` 同名条）。
+
 **不进交互聊天层。** ACP 是「编辑器 ↔ agent」协议：agent 以 ACP 子进程运行，就没有 TUI 画面。这与「聊天与终端是同一进程两层」「终端是事实来源」两条已拍板的决策直接冲突。
 
 **现在就借的**：§4 的数据模型（kind / status / locations / diff / plan / stopReason / usage）。以后若真接 ACP，渲染层不用改。
