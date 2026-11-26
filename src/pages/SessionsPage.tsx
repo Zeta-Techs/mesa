@@ -1357,14 +1357,15 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [treeOpen, moreFiltersOpen]);
 
-  // 键盘切换/外部跳转后把选中行滚进可视区（block:nearest，在视野内则不动）
+  // 键盘切换/外部跳转后把选中行滚进可视区（block:nearest，在视野内则不动）。
+  // 只认「换了哪一段」：8 秒轮询会因选中会话 updatedAt 变了换一个新对象，按对象依赖会每次把列表
+  // 拽回选中行，还顺带滚动关掉刚弹出的「更多」菜单（2026-11-26 用户：列表自己往上跑、菜单点不出来在闪）
+  const selectedRowKey = selected ? `${selected.agent}:${selected.sessionId}` : null;
   useEffect(() => {
-    if (!selected) return;
-    const el = document.querySelector(
-      `[data-session-key="${CSS.escape(`${selected.agent}:${selected.sessionId}`)}"]`,
-    );
+    if (!selectedRowKey) return;
+    const el = document.querySelector(`[data-session-key="${CSS.escape(selectedRowKey)}"]`);
     el?.scrollIntoView({ block: "nearest" });
-  }, [selected]);
+  }, [selectedRowKey]);
 
   async function loadOlderMessages(settle?: () => Promise<void>) {
     if (!selected || conversationCursor === null || loadingOlder) return;
@@ -2537,7 +2538,8 @@ export default function SessionsPage({ visible }: { visible: boolean }) {
                       className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-nav-accent"
                     />
                   )}
-                  <div className="flex min-w-0 items-center gap-1.5">
+                  {/* 首行定高 24px：悬停换出的操作钮是 28px，不定高时每划过一行它就长高 4px、下面整片跟着抖 */}
+                  <div className="flex h-6 min-w-0 items-center gap-1.5">
                     {selecting && (
                       <span
                         onClick={(event) => event.stopPropagation()}
