@@ -145,38 +145,38 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 
 1. 用户在 Mesa Dev 里核对四步：开关 → 发第二句看终端同步 → 停止 → 确认卡批准后终端菜单跟着撤。
 2. ✓（2026-11-26）接回旧对话后的第一句：原生模式等通道认出对话（`deliverAfterRelaunch`，最多 8 秒）后经 `turn/start` 发，等不到再退回打字；`E2E_RESUME=1 E2E_NATIVE=1` 实测接回后经通道发出、回合走完。
-3. 回合进行中再发话：现在退回终端打字排队；先核实 app-server 有没有插话 / 排队的方法，有就走接口。
-4. `/model`、`/effort` 一类切换：现在打进终端；改为随下一轮 `turn/start` 带模型与思考档。
-5. 启动时的信任目录、更新提示仍靠读屏：原生模式下用启动参数预先处理掉。
+3. ✓（2026-11-26）回合进行中再发话：app-server 有 `turn/steer`（`expectedTurnId` 作前提，回合换了就拒），后端回合中改发它，插进正在跑的这一轮（同终端里回合中按回车）；`E2E_STEER_MS` 实测插话被收下、下一条模型请求里带着这句，仍是同一轮。
+4. ✓ 评估后不改（2026-11-26）：`/model … --reasoning …` 在远程 TUI 里是线程级生效，实测 TUI 里切到 `e2e-default` / `low` 后，Mesa 经 `turn/start` 发起的那一轮请求里就是 `e2e-default` / `low`。这是一条整行命令（不挪菜单、不读屏选项），与斜杠命令同口径交给终端；`turn/start` 的 `model` / `effort` 留作纯协议运行时用。
+5. ✓ 评估后不改（2026-11-26）：更新提示 Mesa 早已用 `-c check_for_update_on_startup=false` 关掉；信任目录是用户对这个文件夹的同意，不能替用户用参数跳过，照旧出 Mesa 的信任卡由人点。
 6. Windows 实测：ConPTY 下远程 TUI 与第二个客户端是否同样同步。
 7. ✓（2026-11-26）金丝雀加原生层：`canary.py native_phase` 用 `E2E_NATIVE` 跑发出 + 审批、发出 + 停止两趟，四项只进检查、不进指纹；先只在 macOS 跑（Windows 等第 6 项实测）。本机 Codex 0.172 全过、与基线无变化。
 
 ### 二、公共件（第 2、3 期共用，先于第 2 期）
 
-1. 不绑终端的运行时：标签现在都绑一个 PTY；协议进程要另有一套起进程、退出、重启、关标签收掉、Mesa 崩溃后清残留。
-2. 空闲时切换模式：回合结束且没有后台任务才允许，停进程按会话 id 接回；后台任务（Claude 后台命令、子 Agent、Monitor）的检测未验证。
-3. 切换后核对模型 / 思考档 / 权限档，对不上就提示（agy 实测会变，§3.3）。
-4. 聊天层分档与说明：原生模式单列一档，定摘「测试版」的条件（`chat-fidelity.ts`、`design-chat-fidelity.md`）。
+1. ✓（2026-11-26，分支 feat/chat-native-2）不绑终端的运行时：PTY 里改起 `mesa_helper stdio-bridge -- <CLI> <参数>`（stdio_bridge.rs），桥连回 Mesa 在 127.0.0.1 开的一次性口（令牌经环境变量），把 CLI 标准输入输出接过来，标签起停 / 关标签 / 退出清理沿用 PTY；后端 SpawnResult.native_runtime 告诉前端这次是不是真按原生起的。
+2. ✓（2026-11-26，未在界面实测）空闲时切换模式：Kimi 正在跑时翻开关先确认（写明后台命令会一起停），空闲就停下按会话接回，这一轮在跑就等它结束（TerminalView maybeSwitchNative）；后台任务仍检测不了，靠确认框告知。
+3. ✓（2026-11-26，部分）切换后核对：ACP 开会话后比对 configOptions 的模型与 Mesa 选的（-m），能改就 set_config_option、改不了就提示；权限档 set_mode 失败提示；思考档未核对。
+4. ✓（2026-11-26）聊天层分档与说明：`design-chat-fidelity.md` 加「原生模式」一段（承诺与摘测试版条件）；说明页在 Kimi / Claude 开着原生时换成官方协议的说法（`nativeFidelityNote`）。
 
 ### 三、第 2 期：Kimi（ACP）
 
-1. Rust 通用 ACP 客户端：initialize、session/new|load、prompt、request_permission、cancel、set_mode / set_config_option，后续各家复用。
-2. 模式映射照 §3.2 修正（终端 `--yolo` ↔ ACP `auto`、终端 `--auto` ↔ ACP `yolo`）；「只讨论」档下计划模式的审批由 Mesa 直接拒。
-3. 审批卡三选项（允许一次 / 本会话都允许 / 拒绝），命令原文从 content 文字里拆。
+1. ✓（2026-11-26，分支 feat/chat-native-2）Rust 通用 ACP 客户端 `chat_channel/acp.rs`：initialize、session/new|load（回放期间不当实时事件）、prompt、request_permission、cancel、set_mode、set_config_option；e2e_channel E2E_NATIVE=1 实测 Kimi 发出 + 聊天里答审批 + 停止 + 接回都过，Mesa 解析器读得出 ACP 写的会话文件。
+2. ✓ 模式映射已按 §3.2 修正（acp::mode_from_args，单测钉住）；「只讨论」档下要执行 / 改文件的审批由 Mesa 直接拒并提示。
+3. ✓ 审批卡三选项（后端给 alwaysLabel「本会话都允许」），命令原文从前面 tool_call 的 content JSON 里补。
 4. 没登录时引导去终端登录（authMethods 是 terminal 类）。
-5. 金丝雀 ACP 层与 Windows 实测。
+5. ✓（2026-11-26，macOS）金丝雀原生层扩到五家（`native_phase`）：本机 Kimi 2.8.0、Claude Code 2.1.326、Qwen 0.28.4、OpenCode 1.19.5 原生层全过。Windows 实测仍待做。
 
 ### 四、第 3 期：Claude（只对 API 密钥 / 中转网关连接）
 
-1. `-p` 双向 stream-json + `--permission-prompt-tool stdio`：审批、提问表单、计划确认都在聊天里接。
-2. `--include-partial-messages` 拿边写边显示。
-3. 官方订阅连接不出开关，写明原因（§1 条款）。
-4. 列清原生模式下用不了的终端面板与命令；`/context`、`/compact` 照常。
-5. 金丝雀盯隐藏参数与 `can_use_tool` 的形状。
+1. ✓（2026-11-26，分支 feat/chat-native-2）`chat_channel/claude_native.rs`：桥里起 `claude -p` 双向 stream-json + `--permission-prompt-tool stdio`，can_use_tool 出卡、提问表单（`src/native-ask.ts` 照终端同一种表单画、答案经 updatedInput.answers 交回）、计划确认都在聊天里接；「本会话都允许」把建议规则落点改成 session，不写设置文件。e2e_channel E2E_NATIVE=1（Claude 2.1.326 + 假网关）审批、提问表单（答案原样到了模型）、停止、`-r` 接回都过。
+2. ✓ `--include-partial-messages` 拿边写边显示（text_delta / thinking_delta）。
+3. ✓ 官方订阅连接不出开关（`nativeModeAllowed`），后端 pty.rs 再挡一道。
+4. ✓ 说明页写明原生模式下终端独有的面板用不了（`nativeFidelityNote`）；`/context` 这类命令经通道照常发。
+5. ✓ 金丝雀原生层每天跑 Claude 的发出 + 审批、发出 + 停止（隐藏参数没了或 `can_use_tool` 变形就红）。
 
 ### 五、其余各家
 
-- 顺手能做：Qwen（Dual Output）、OpenCode（自带服务）本来双客户端，同 Codex 第 1 期做法，发消息与停止改走各自接口。
+- ✓（2026-11-26，分支 feat/chat-native-2）Qwen、OpenCode 同 Codex 第 1 期做法：Qwen 发话走 Dual Output 的 `{"type":"submit"}`（官方只有 submit 与确认回复两种命令，停止仍按 Esc，开关说明写明）；OpenCode 1.x 发话走 `POST /session/<id>/prompt_async`（1.19.5 OpenAPI 核对），停止照旧 `/abort`，接回时会话 id 取自 `--session` 参数；OpenCode 2.x 的发送接口没在本机核实，后端不给 `canSend`，照旧打字。能不能发由后端快照的 `canSend` 定。e2e_channel E2E_NATIVE=1 E2E_RESUME=1 实测 Qwen 0.28.4 新开 / 接回、OpenCode 1.19.5 接回都经通道发出、回合走完。
 - 等上游：agy（ACP 不认 Mesa 的第三方自定义模型、缺「帮我批准」），或先只开官方登录线。
 - 维护级尽力而为：Gemini、CodeBuddy、Cursor、Grok 的 ACP。
 - 一直没验过的：真模型、Windows 全部、切换时后台任务会不会被杀。

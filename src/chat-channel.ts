@@ -9,7 +9,7 @@ import { samePath } from "./path-utils.ts";
 import { lineDiff, parsePatch, unwrapPowerShell, type DiffLine } from "./tool-activity.ts";
 
 /** program-status = CLI 自己写进终端流的程序状态（OSC 7501，program_status.rs）：没有别的旁路时用，2026-10-22 起 Grok */
-export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex" | "program-status";
+export type ChannelKind = "hooks" | "qwen" | "opencode" | "codex" | "program-status" | "acp" | "claude-native";
 
 /**
  * 这条旁路的审批只是「在等确认」的信号，答不了、也不带菜单（hooks、程序状态）：卡片按屏上菜单原文给按钮，
@@ -43,6 +43,8 @@ export interface ChannelApproval {
   alwaysLabel: string | null;
   /** Claude 计划模式出完方案、问要不要开工（ExitPlanMode）时的方案原文（Markdown）；旧版后端没有这个字段 */
   plan?: string | null;
+  /** 原生模式 Claude 的提问表单（AskUserQuestion 的 questions 原样，native-ask.ts 解析） */
+  questions?: unknown;
 }
 
 export interface ChatChannelSnapshot {
@@ -65,6 +67,8 @@ export interface ChatChannelSnapshot {
   /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
   statusLine?: string | null;
   retry?: string | null;
+  /** 这条旁路能不能替聊天层发话（后端按家与版本定：Codex、Qwen、OpenCode 1.x、原生模式的 Kimi / Claude）；旧版后端没有这个字段 */
+  canSend?: boolean;
 }
 
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";
@@ -75,17 +79,28 @@ export function channelTurnOpen(snap: ChatChannelSnapshot | null): boolean {
   return s === "running" || s === "awaiting_approval";
 }
 
-/**
- * 原生模式这句能不能经通道发出（chat_channel_send）：Codex 的私有服务连着、已认出这段对话、这一轮没在跑。
- * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
- */
+/** 纯协议运行时的旁路（原生模式的 Kimi ACP、Claude -p 双向 stream-json）：没有终端界面，发话只能经通道 */
+export function nativeRuntimeKind(kind: ChannelKind | null | undefined): boolean {
+  return kind === "acp" || kind === "claude-native";
+}
+
 /** 原生模式下这句该不该经通道发：斜杠 / ! 命令是终端自己的功能，照旧打进终端 */
 export function wantsChannelSend(native: boolean, message: string): boolean {
   return native && !/^[/!]/.test(message.trim());
 }
 
+/**
+ * 原生模式这句能不能经通道发出（chat_channel_send）：Codex 的私有服务连着、已认出这段对话。
+ * 这一轮还在跑也走通道：后端改发 turn/steer 插进这一轮（同终端里回合中按回车）。
+ * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
+ */
 export function canSendViaChannel(snap: ChatChannelSnapshot | null | undefined): boolean {
-  return !!snap && snap.kind === "codex" && snap.connection === "connected" && !!snap.sessionId && !channelTurnOpen(snap);
+  if (!snap?.canSend || snap.connection === "disconnected") return false;
+  // Qwen 是命令文件，没有连接状态；Claude 的会话 id 在第一句之后才报（没带 --session-id 时），连着就能发
+  if (snap.kind === "qwen") return true;
+  if (snap.connection !== "connected") return false;
+  if (snap.kind === "claude-native") return true;
+  return !!snap.sessionId;
 }
 
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */
@@ -293,11 +308,11 @@ export function approvalChoices(
   agent: string | null,
 ): Array<{ decision: ChannelReplyDecision; label: string; primary?: boolean }> {
   if (!a.replyable || !a.requestId) return [];
-  const always =
-    agent === "opencode" ? "总是允许这类操作" : null;
+  // 后端给了说法（原生模式 ACP 的「本会话都允许」）就用它；OpenCode 另有固定说法
+  const always = a.alwaysLabel ?? (agent === "opencode" ? "总是允许这类操作" : null);
   return [
     { decision: "allow", label: "允许", primary: true },
-    ...(always ? [{ decision: "allow_always" as const, label: a.alwaysLabel ?? always }] : []),
+    ...(always ? [{ decision: "allow_always" as const, label: always }] : []),
     { decision: "deny", label: "拒绝" },
   ];
 }
@@ -308,6 +323,7 @@ export function channelSourceNote(snap: ChatChannelSnapshot | null | undefined):
   if (snap?.connection === "disconnected") return "实时通道已断开，当前按会话文件和终端画面更新；实时状态可能延迟，可切到终端继续。";
   if (snap?.connection === "connecting") return "正在连接实时通道，当前按会话文件和终端画面更新。";
   if (!snap) return "本次未接入实时通道，当前按会话文件和终端画面更新。";
+  if (nativeRuntimeKind(snap.kind)) return "本次是原生模式：对话、停止和确认都经 CLI 官方协议在聊天里完成；终端页只显示运行日志。";
   if (snap.kind === "hooks") return "本次通过 CLI 事件与会话文件更新；确认选项仍以终端菜单为准。";
   if (snap.kind === "program-status") return "本次通过终端程序状态与会话文件更新。";
   return "本次已接入 CLI 实时通道。";

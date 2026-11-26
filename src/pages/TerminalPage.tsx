@@ -27,7 +27,7 @@ import {
 import type { TerminalProgress } from "../terminal-notify";
 import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
 import { currentVerifiedVersion } from "../cli-verified";
-import { chatFidelity, nativeModeAvailable, tierLabel, versionTrust } from "../chat-fidelity";
+import { chatFidelity, nativeModeAllowed, nativeRuntime, nativeStopViaChannel, tierLabel, versionTrust } from "../chat-fidelity";
 import {
   MISMATCH_EVENT,
   MISMATCH_TEMPLATE,
@@ -1159,9 +1159,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   /** TerminalView 镜像当前对话数据；引用没变就不更新 */
   /** 聊天层「等你决定」卡上点了按钮：经这家 CLI 官方的回复通道送回（Qwen / OpenCode / Codex）；
    *  终端里已经答过的，CLI 会丢掉这条，卡片随「已处理」事件消失 */
-  async function replyChannel(tabId: string, requestId: string, decision: ChannelReplyDecision) {
+  /** 这个标签现在这家、这条连接能不能开原生模式（Claude 的官方订阅账号不能，chat-fidelity.ts nativeModeAllowed） */
+  function nativeAllowedFor(t: Tab): boolean {
+    const agent = statuses[t.id]?.agentId ?? t.initialAgentId;
+    const pid = statuses[t.id]?.profileId ?? t.initialProfileId;
+    return nativeModeAllowed(agent, profiles.find((p) => p.id === pid)?.accountType ?? null);
+  }
+
+  async function replyChannel(
+    tabId: string,
+    requestId: string,
+    decision: ChannelReplyDecision,
+    answers?: Record<string, string>,
+  ) {
     try {
-      await invoke("chat_channel_reply", { tabId, requestId, decision });
+      await invoke("chat_channel_reply", { tabId, requestId, decision, answers: answers ?? null });
     } catch (e) {
       toast(`没能送到：${String(e)}，可以在终端里回答`, "error");
     }
@@ -1619,10 +1631,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void action.sendMessage(pending.prompt);
   }, [injectTick, statuses]);
 
-  /** 模型菜单底部「原生模式」开关：只改这个标签往后怎么发，不重启、不打断这一轮 */
-  const setTabNativeMode = useCallback((tabId: string, on: boolean) => {
+  /** 模型菜单底部「原生模式」开关。Codex 只改往后怎么发，不重启；Kimi 这类两种模式不能同一个进程的，
+      正在跑时要停下按这段对话接回（标签空闲时切、这一轮还在跑就等它结束，TerminalView maybeSwitchNative），先问一句 */
+  async function setTabNativeMode(tabId: string, on: boolean) {
+    const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
+    if (nativeRuntime(agent) && statuses[tabId]?.running) {
+      const label = AGENTS.find((a) => a.id === agent)?.label ?? "这家 Agent";
+      const ok = await confirmDialog(
+        `${on ? "切到原生模式" : "切回终端模式"}？\n\n${label} 会先停下，再接回这段对话，对话内容不丢。\n\n注意：它在后台跑着的命令会一起停掉。`,
+        { confirmText: "切换" },
+      );
+      if (!ok) return;
+    }
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on } : t)));
-  }, []);
+  }
 
   async function sendChatToActive(text: string): Promise<string | null> {
     const action = tabActionsRef.current.get(focusedId);
@@ -1647,7 +1669,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const tab = tabs.find((t) => t.id === tabId);
     const agent = statuses[tabId]?.agentId ?? tab?.initialAgentId;
     // 原生模式的 Codex 同 OpenCode：经官方接口停这一轮，不往终端里按 Esc
-    if (agent === "opencode" || (tab?.nativeMode && nativeModeAvailable(agent))) {
+    if (agent === "opencode" || (tab?.nativeMode && nativeStopViaChannel(agent))) {
       if (interruptBusyRef.current.has(tabId)) return;
       const snap = sessionByTab[tabId]?.channel;
       if (!snap || snap.connection !== "connected" || !snap.sessionId || !snap.turn) {
@@ -3999,7 +4021,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 }
                 effortOverride={t.effort ?? undefined}
                 permissionMode={writableForks[t.id] ? null : (t.permissionMode ?? null)}
-                nativeMode={!!t.nativeMode && nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId)}
+                nativeMode={!!t.nativeMode && nativeAllowedFor(t)}
                 submitCsiU={
                   agents.find(
                     (a) => a.id === (statuses[t.id]?.agentId ?? t.initialAgentId),
@@ -4274,12 +4296,10 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           appSettings?.hooksAttention?.[agentKey ?? ""] || sessionByTab[t.id]?.channel,
                         )}
                         channel={sessionByTab[t.id]?.channel ?? null}
-                        nativeOn={
-                          nativeModeAvailable(statuses[t.id]?.agentId ?? t.initialAgentId) ? !!t.nativeMode : null
-                        }
-                        onNativeToggle={(on) => setTabNativeMode(t.id, on)}
-                        onChannelReply={(requestId, decision) => {
-                          void replyChannel(t.id, requestId, decision);
+                        nativeOn={nativeAllowedFor(t) ? !!t.nativeMode : null}
+                        onNativeToggle={(on) => void setTabNativeMode(t.id, on)}
+                        onChannelReply={(requestId, decision, answers) => {
+                          void replyChannel(t.id, requestId, decision, answers);
                         }}
                         hasOlder={sessionByTab[t.id]?.convCursor != null}
                         loadingOlder={sessionByTab[t.id]?.loadingOlder ?? false}

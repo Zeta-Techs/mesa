@@ -1,8 +1,9 @@
 //! Mesa 的随包小助手（独立进程）：给 Agent 与各家 CLI 用的几件本机小事，按第一个参数分派——
 //! hook（Windows 上写 hooks 状态日志）、image（出图）、peek / tell（同项目看一眼、留话）、
-//! svg-render（科研做图）、codex-token（Codex 渠道现取密钥）、launch（不开 Mesa 在终端按连接直接起 CLI）。
+//! svg-render（科研做图）、codex-token（Codex 渠道现取密钥）、launch（不开 Mesa 在终端按连接直接起 CLI）、
+//! stdio-bridge（原生模式：把协议模式 CLI 的标准输入输出接回 Mesa 的本机连接）。
 //!
-//! 安全边界：不监听网络；除 image、codex-token、launch 外不读密钥（launch 只在本机进程内注入给子进程，不打印、不落明文）。
+//! 安全边界：不监听网络（stdio-bridge 只连 127.0.0.1 上 Mesa 开的口）；除 image、codex-token、launch 外不读密钥（launch 只在本机进程内注入给子进程，不打印、不落明文）。
 //! 2026-11-09 起不再做浏览器扩展的 native messaging 宿主（扩展与「存到 Mesa」已撤）。
 
 use std::io::{Read, Write};
@@ -102,6 +103,10 @@ fn main() {
     if args.get(1).map(String::as_str) == Some("assistant-mcp") {
         std::process::exit(ccode_lib::helper_assistant_mcp(&args[2..]));
     }
-    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token|launch|assistant-mcp …");
+    // `mesa_helper stdio-bridge -- <CLI> <参数…>`：原生模式下 PTY 里起的桥（地址与令牌只经环境变量给，stdio_bridge.rs）
+    if args.get(1).map(String::as_str) == Some("stdio-bridge") {
+        std::process::exit(ccode_lib::helper_stdio_bridge(&args[2..]));
+    }
+    eprintln!("用法：mesa_helper hook|image|peek|tell|svg-render|journal|codex-token|launch|assistant-mcp|stdio-bridge …");
     std::process::exit(2);
 }

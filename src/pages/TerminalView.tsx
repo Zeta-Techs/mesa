@@ -103,6 +103,7 @@ import {
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
   canSendViaChannel,
+  nativeRuntimeKind,
   wantsChannelSend,
   channelAttention,
   channelCanAnswer,
@@ -125,6 +126,7 @@ import { loadProjectContextPack } from "../project-context-load";
 import { normalizeWorkMode } from "../work-mode";
 import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
+import { nativeRuntime } from "../chat-fidelity";
 import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
 import InsertMenuItems from "../components/InsertMenuItems";
@@ -2104,6 +2106,8 @@ export const TerminalView = memo(function TerminalView({
   permissionModeRef.current = permissionMode;
   const nativeModeRef = useRef(nativeMode);
   nativeModeRef.current = nativeMode;
+  /** 当前这个进程是不是按纯协议运行时起的（PTY 里是 stdio 桥）：开关翻了但还没接回时，发话照旧按进程实际的样子走 */
+  const launchedNativeRef = useRef(false);
   // 从会话文件读到的实际权限档（Kimi / Codex）：徽标写它，不加「已选 ·」
   const [observedTier, setObservedTier] = useState<"ask" | "auto" | "full" | null>(null);
   const launchEffortLevels = useMemo(
@@ -6386,6 +6390,7 @@ export const TerminalView = memo(function TerminalView({
         adopted?: boolean;
         resumeUnwritten?: boolean;
         proxyDown?: string | null;
+        nativeRuntime?: boolean;
       }>("pty_spawn", {
         agentId,
         profileId,
@@ -6406,6 +6411,8 @@ export const TerminalView = memo(function TerminalView({
         // 会话恢复（无则全新会话）；换了目录 / Agent 不再接原会话
         resumeSessionId: resumeFrom ?? null,
         forkSessionId: forkFrom ?? null,
+        // 原生模式且这家走纯协议运行时（Kimi）：后端在 PTY 里改起 stdio 桥（chat_channel::prepare_native）
+        native: nativeModeRef.current && nativeRuntime(agentId),
         resumeProvider: relayLaunch ? relayLaunch.provider : sessionMoved ? null : (resumeProvider ?? null),
         // 一键开步的首条指令（恢复会话由后端忽略注入）
         initialPrompt: (options?.prompt ?? promptText).trim() || null,
@@ -6437,6 +6444,8 @@ export const TerminalView = memo(function TerminalView({
         rows: size.rows,
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
+      // 这个进程按原生模式的纯协议运行时起了没有（后端不支持时照旧终端模式，发话就照旧打字）
+      if (!res.adopted) launchedNativeRef.current = !!res.nativeRuntime;
       if (selectedProfile?.accountType === "official" && agentId === "agy") {
         void invoke("official_agy_register_session", {
           tabId,
@@ -6675,6 +6684,38 @@ export const TerminalView = memo(function TerminalView({
     permissionRestartRef.current = true;
     void stop();
   }
+  // 原生模式开关翻了、这家是纯协议运行时（Kimi：两种模式不能同一个进程）：空闲时停下、按这段对话接回成另一种模式；
+  // 这一轮还在跑就等它结束再换（docs/design-chat-native-mode.md 公共件 2）。Codex 双客户端不用重开，不进这里。
+  // 后台任务：父级翻开关前已经问过人（会一起停掉），这里只管时机
+  const nativeSwitchPendingRef = useRef(false);
+  function maybeSwitchNative() {
+    if (!nativeSwitchPendingRef.current) return;
+    if (ptyKindRef.current !== "agent" || !ptyIdRef.current || !nativeRuntime(launchAgentRef.current)) {
+      nativeSwitchPendingRef.current = false;
+      return;
+    }
+    if (launchedNativeRef.current === nativeModeRef.current) {
+      nativeSwitchPendingRef.current = false;
+      return;
+    }
+    if (channelTurnOpen(channelRef.current) || attention === "working" || attention === "confirm") {
+      setNotice("这一轮结束后切换模式");
+      return;
+    }
+    nativeSwitchPendingRef.current = false;
+    setNotice(null);
+    restartWithPermission();
+  }
+  useEffect(() => {
+    nativeSwitchPendingRef.current = true;
+    maybeSwitchNative();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nativeMode]);
+  useEffect(() => {
+    maybeSwitchNative();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attention, channel?.turn?.status]);
+
   useEffect(() => {
     if (!permissionRestartRef.current || running || !shellActive) return;
     permissionRestartRef.current = false;
@@ -6835,16 +6876,27 @@ export const TerminalView = memo(function TerminalView({
     );
   }
 
+  /** 这一句该交给通道：纯协议运行时（原生模式的 Kimi，没有终端界面）连斜杠命令都只能走通道；
+      Codex 原生模式只把说的话交给通道（斜杠 / ! 命令是终端自己的功能） */
+  function channelOwnsSend(text: string): boolean {
+    if (nativeRuntimeKind(channelRef.current?.kind) || launchedNativeRef.current) return true;
+    return wantsChannelSend(nativeModeRef.current, text);
+  }
+
   /** 接回旧对话之后送出这一句：原生模式等通道认出这段对话（最多 NATIVE_RELAUNCH_WAIT_MS）再经官方接口发；
-      不是原生、等不到或终端已换了一个，照旧打进终端（writeChatMessage 自己等输入框就绪） */
+      不是原生、等不到或终端已换了一个，照旧打进终端（writeChatMessage 自己等输入框就绪）。
+      纯协议运行时没有终端可打字：等不到就如实报错，不往运行日志里敲 */
   async function deliverAfterRelaunch(ptyId: string, text: string): Promise<ChatSendResult> {
-    if (wantsChannelSend(nativeModeRef.current, text)) {
+    if (channelOwnsSend(text)) {
       const deadline = Date.now() + NATIVE_RELAUNCH_WAIT_MS;
       while (Date.now() < deadline && mountedRef.current && ptyIdRef.current === ptyId) {
         if (canSendViaChannel(channelRef.current)) return sendViaChannel(text);
         await new Promise((r) => setTimeout(r, 150));
       }
       if (!mountedRef.current) return { error: null };
+      if (nativeRuntimeKind(channelRef.current?.kind) || launchedNativeRef.current) {
+        return { error: "原生模式还没连上，稍等再发；一直不行就关掉原生模式" };
+      }
     }
     return writeChatMessage(ptyId, text);
   }
@@ -6999,8 +7051,10 @@ export const TerminalView = memo(function TerminalView({
       }
       // 原生模式：通道连着、认出了对话就经 CLI 官方接口发起这一轮，不往终端里打字（终端那边照样画出来）。
       // 斜杠 / ! 命令是终端自己的功能，照旧打进终端；第一句（还没认出对话）、通道断了也照旧
-      const viaChannel = wantsChannelSend(nativeModeRef.current, message) && canSendViaChannel(channelRef.current);
-      const result = viaChannel ? await sendViaChannel(message) : await writeChatMessage(currentPtyId, message);
+      // 通道连着就立刻发；还没连上时等一会儿（纯协议运行时等不到如实报错，Codex 等不到退回打字）
+      const result = channelOwnsSend(message)
+        ? await deliverAfterRelaunch(currentPtyId, message)
+        : await writeChatMessage(currentPtyId, message);
       if (result.error) {
         disarmPtyWorking();
         retractOptimisticUserMessage(shown, wasPending);
@@ -7020,7 +7074,7 @@ export const TerminalView = memo(function TerminalView({
       early.reRegister();
       // 恢复启动要经历进程引导/会话回放（可能还有信任提示）：等一拍再写，
       // 否则正文+提交键落在尚未就绪的 TUI 上，表现为消息躺在输入框里没发出去（原生模式不打字，改由 deliverAfterRelaunch 等通道）
-      if (!wantsChannelSend(nativeModeRef.current, message)) await new Promise((r) => setTimeout(r, 1200));
+      if (!channelOwnsSend(message)) await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current) return { error: null };
       if (ptyIdRef.current !== res.ptyId) {
         early.retract();
@@ -7053,7 +7107,7 @@ export const TerminalView = memo(function TerminalView({
       }
       relayBackRef.current = null;
       early.reRegister();
-      if (!wantsChannelSend(nativeModeRef.current, message)) await new Promise((r) => setTimeout(r, 1200));
+      if (!channelOwnsSend(message)) await new Promise((r) => setTimeout(r, 1200));
       if (!mountedRef.current) return { error: null };
       if (ptyIdRef.current !== res.ptyId) {
         early.retract();
@@ -7099,7 +7153,8 @@ export const TerminalView = memo(function TerminalView({
         return { error: "终端已重新启动，这句没有发出，请再发一次" };
       }
       armPtyWorking();
-      const result = await writeChatMessage(res.ptyId, firstPrompt);
+      // 原生模式的 Kimi 首句经通道发（deliverAfterRelaunch 等它连上）；终端模式照旧打进去
+      const result = await deliverAfterRelaunch(res.ptyId, firstPrompt);
       if (result.error) {
         disarmPtyWorking();
         early.retract();
@@ -7200,7 +7255,7 @@ export const TerminalView = memo(function TerminalView({
           return { error: "终端已重新启动，这句没有发出，请再发一次" };
         }
         armPtyWorking();
-        const result = await writeChatMessage(res.ptyId, firstPrompt);
+        const result = await deliverAfterRelaunch(res.ptyId, firstPrompt);
         if (result.error) {
           disarmPtyWorking();
           early.retract();

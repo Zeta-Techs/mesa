@@ -102,6 +102,7 @@ import {
   type WaitScreen,
 } from "../terminal-wait";
 import type { AskAction } from "../tui-ask";
+import { applyNativeAsk, initialNativeAsk, nativeAskForm, parseNativeQuestions, type NativeAskState } from "../native-ask";
 import { classifierBillingNotice, classifierNoticeText, setClassifierNoticeAutoSkip } from "../cli-notices";
 import { isPlanMenu, latestPlanText, planCardChoices, planChoice, planFeedbackText, planMenuTitle } from "../plan-approval";
 import {
@@ -383,7 +384,8 @@ export default function ChatSurface({
   nativeOn?: boolean | null;
   onNativeToggle?: (on: boolean) => void;
   /** 经 CLI 官方通道回复审批（Qwen / OpenCode / Codex） */
-  onChannelReply?: (requestId: string, decision: ChannelReplyDecision) => void;
+  /** answers：原生模式 Claude 提问表单的答案（题目 → 答案，native-ask.ts） */
+  onChannelReply?: (requestId: string, decision: ChannelReplyDecision, answers?: Record<string, string>) => void;
   /** 往终端写一串键（「立即发送」：这家 CLI 让排着的那句马上处理的键，mid-turn-send.ts） */
   onSendNow?: (keys: string) => void;
   /** 终端里「在等你」的那一块（terminal-wait.ts waitScreenOf）；noInputBox = 这家有画面布局表且屏上没有它的输入框 */
@@ -953,6 +955,16 @@ export default function ChatSurface({
   // CLI 比 Mesa 核对过的新（cli-verified.ts）：卡上的选项是读屏认出来的，画面变了可能按不准，提醒一句
   const cliNewer = useCliNewer(agentId);
   const channelChoices = channelApproval ? approvalChoices(channelApproval, agentId ?? null) : [];
+  // 原生模式 Claude 的提问表单（AskUserQuestion 的题目结构由通道直接给）：照终端模式同一种表单画，答案一次经通道交回
+  const nativeQs = useMemo(() => parseNativeQuestions(channelApproval?.questions), [channelApproval?.questions]);
+  const [nativeAsk, setNativeAsk] = useState<{ id: string; st: NativeAskState } | null>(null);
+  const nativeAskId =
+    nativeQs.length > 0 && channelApproval?.replyable && channelApproval.requestId ? channelApproval.requestId : null;
+  const nativeAskState = nativeAskId
+    ? nativeAsk?.id === nativeAskId
+      ? nativeAsk.st
+      : initialNativeAsk(nativeQs)
+    : null;
   // 终端菜单的选项比旁路能回的多（Qwen 只收允许 / 拒绝）：让给下面照终端原文的菜单卡，命令原文照样画在卡上
   const menuOutgrows = Boolean(
     menuPrompt && !menuPrompt.ask && menuOutgrowsChannel(channel ?? null, agentId ?? null, menuPrompt.options.length),
@@ -1135,6 +1147,22 @@ export default function ChatSurface({
       : // 方案确认排在旁路审批前：Qwen 的结束计划旁路只给「允许 / 拒绝」，屏上那张有几种开工法
     planMenu && !trustPrompt
       ? planDecision(planMenu)
+      : nativeAskId && nativeAskState && !trustPrompt
+      ? {
+          key: `native-ask:${nativeAskId}`,
+          title: `${agentLabel(agentId)} 在问你`,
+          options: [],
+          ask: {
+            form: nativeAskForm(nativeQs, nativeAskState),
+            pending: false,
+            onAction: (action: AskAction) => {
+              const r = applyNativeAsk(nativeQs, nativeAskState, action);
+              setNativeAsk({ id: nativeAskId, st: r.state });
+              if (r.result?.kind === "submit") onChannelReply?.(nativeAskId, "allow", r.result.answers);
+              else if (r.result?.kind === "cancel") onChannelReply?.(nativeAskId, "deny");
+            },
+          },
+        }
       : channelApproval && channelChoices.length && !trustPrompt && !menuOutgrows
       ? {
           key: `channel:${channelApproval.requestId ?? ""}`,

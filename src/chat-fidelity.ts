@@ -208,8 +208,52 @@ export function versionTrust(installed: string | null | undefined, verified: str
  * 能开「原生模式」的家（2026-11-26 拍板，docs/design-chat-native-mode.md）：聊天经这家官方接口发消息、停止、答审批，
  * 不往终端里打字、不读屏；终端照样连着同一段对话。按家逐个点亮（首批 Codex → Kimi → Claude），默认关
  */
-const NATIVE_MODE_AGENTS = new Set(["codex"]);
+const NATIVE_MODE_AGENTS = new Set(["codex", "kimi", "claude-code", "qwen", "opencode"]);
 
 export function nativeModeAvailable(agentId: string | null | undefined): boolean {
   return !!agentId && NATIVE_MODE_AGENTS.has(agentId);
+}
+
+/**
+ * 原生模式下没有终端界面的家（纯协议运行时：PTY 里起的是 stdio 桥，CLI 跑 ACP / 双向 stream-json）：
+ * 发话、斜杠命令都只能经通道；切换模式要在空闲时停下进程、按会话接回。Codex 能双客户端，不在这里
+ */
+const NATIVE_RUNTIME_AGENTS = new Set(["kimi", "claude-code"]);
+
+export function nativeRuntime(agentId: string | null | undefined): boolean {
+  return !!agentId && NATIVE_RUNTIME_AGENTS.has(agentId);
+}
+
+/**
+ * 原生模式下「停止」也经通道（不往终端里按 Esc）的家。Qwen 的命令文件只有发话与确认回复两种命令，停止仍按 Esc
+ */
+const NATIVE_STOP_AGENTS = new Set(["codex", "kimi", "claude-code", "opencode"]);
+
+export function nativeStopViaChannel(agentId: string | null | undefined): boolean {
+  return !!agentId && NATIVE_STOP_AGENTS.has(agentId);
+}
+
+/** 原生模式下没有终端界面的家，说明页换成这两句（数据来源是官方协议，终端独有的面板用不了） */
+const NATIVE_RUNTIME_NOTES: Record<string, Pick<ChatFidelity, "source" | "terminalOnly">> = {
+  kimi: {
+    source: "原生模式：回合、审批、正在写的字都来自 Kimi Code 的官方协议，确认和停止都在聊天里完成",
+    terminalOnly: "登录、只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+  },
+  "claude-code": {
+    source: "原生模式：回合、审批、提问表单、计划确认、正在写的字都来自 Claude Code 的官方协议，都在聊天里完成",
+    terminalOnly: "登录、/status 这类只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+  },
+};
+
+export function nativeFidelityNote(agentId: string | null | undefined): Pick<ChatFidelity, "source" | "terminalOnly"> | null {
+  return (agentId && NATIVE_RUNTIME_NOTES[agentId]) || null;
+}
+
+/**
+ * 这条连接能不能开原生模式：Claude Code 只对 API 密钥 / 中转网关连接开放——Anthropic 不允许第三方产品提供
+ * claude.ai 订阅登录（设计稿 §1），官方订阅账号的 Claude 只走终端模式（后端 pty.rs 同样挡）
+ */
+export function nativeModeAllowed(agentId: string | null | undefined, accountType: string | null | undefined): boolean {
+  if (!nativeModeAvailable(agentId)) return false;
+  return !(agentId === "claude-code" && accountType === "official");
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeModeAvailable, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeFidelityNote, nativeModeAllowed, nativeModeAvailable, nativeRuntime, nativeStopViaChannel, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("十家都写了聊天层能做到哪一步", () => {
   const ten = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"];
@@ -80,8 +80,26 @@ test("联网前移的核对版本与随包的取较新，一边读不出取另�
   assert.equal(newerVersion(null, null), null);
 });
 
-test("原生模式首批只点亮 Codex（2026-11-26 拍板：Codex → Kimi → Claude 逐家点亮，agy 先不做）", () => {
-  assert.equal(nativeModeAvailable("codex"), true);
-  for (const id of ["claude-code", "kimi", "agy", "opencode", "qwen", "gemini", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+test("原生模式逐家点亮：Codex、Kimi、Claude 已开（2026-11-26 拍板：Codex → Kimi → Claude，agy 先不做）", () => {
+  for (const id of ["codex", "kimi", "claude-code", "qwen", "opencode"]) assert.equal(nativeModeAvailable(id), true, id);
+  for (const id of ["agy", "gemini", "grok", "codebuddy", "cursor", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+  // Qwen 只有发话经通道，停止仍按 Esc
+  assert.equal(nativeStopViaChannel("qwen"), false);
+  assert.equal(nativeStopViaChannel("opencode"), true);
+  // Kimi、Claude 原生模式没有终端界面（纯协议运行时）；Codex 双客户端
+  assert.equal(nativeRuntime("kimi"), true);
+  assert.equal(nativeRuntime("claude-code"), true);
+  assert.equal(nativeRuntime("codex"), false);
+  // Claude 只对 API 密钥 / 中转网关连接开放
+  assert.equal(nativeModeAllowed("claude-code", "official"), false);
+  assert.equal(nativeModeAllowed("claude-code", "gateway"), true);
+  assert.equal(nativeModeAllowed("codex", "official"), true);
   assert.equal(nativeModeAvailable(null), false);
+});
+
+test("原生模式下没有终端界面的家，说明页换成官方协议的说法；双客户端的家照旧", () => {
+  assert.match(nativeFidelityNote("kimi")?.source ?? "", /原生模式/);
+  assert.match(nativeFidelityNote("claude-code")?.terminalOnly ?? "", /关掉原生模式/);
+  assert.equal(nativeFidelityNote("codex"), null);
+  assert.equal(nativeFidelityNote(null), null);
 });

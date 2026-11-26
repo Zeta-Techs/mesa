@@ -23,6 +23,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
+/// 原生模式的 ACP 客户端（Kimi 起）：没有 TUI，聊天层经桥直接说 ACP
+mod acp;
+/// 原生模式的 Claude Code（`claude -p` 双向 stream-json，只对 API 密钥 / 中转网关连接）
+mod claude_native;
+pub(crate) use acp::prepare as prepare_native;
+pub(crate) use claude_native::prepare as prepare_claude_native;
+
 /// 本机实测过的旁路起点版本（低于它或查不到版本就不接，照旧启动）
 const QWEN_DUAL_MIN: (u32, u32, u32) = (0, 25, 2);
 const OPENCODE_PORT_MIN: (u32, u32, u32) = (1, 19, 3);
@@ -94,6 +101,8 @@ pub struct ApprovalDto {
     pub always_label: Option<String>,
     /// Claude 计划模式出完方案、问要不要开工（ExitPlanMode）时的方案原文（Markdown）
     pub plan: Option<String>,
+    /// 原生模式 Claude 的提问表单（AskUserQuestion 的 questions 原样）：聊天层照它画表单、答案经通道回
+    pub questions: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -108,8 +117,11 @@ pub struct NoticeDto {
 pub struct ChannelSnapshot {
     pub tab_id: String,
     pub agent: String,
-    /// hooks | qwen | opencode | codex | program-status
+    /// hooks | qwen | opencode | codex | program-status | acp | claude-native
     pub kind: &'static str,
+    /// 这条旁路能不能替聊天层发话（原生模式：Codex turn/start、Qwen submit、OpenCode 1.x prompt_async、ACP、Claude -p）；
+    /// 能不能停另看 kind（Qwen 的命令文件没有停止）
+    pub can_send: bool,
     /// 网络旁路的连接状态；文件 / hooks 旁路为 None。断开后本次运行回退到会话文件与读屏。
     pub connection: Option<&'static str>,
     pub session_id: Option<String>,
@@ -225,6 +237,10 @@ pub(crate) struct Tracker {
     /// 原先 Stop 把回合收掉，新的一轮一直没人点亮，聊天层停着、终端在跑（2026-11-09 用户实测，2.1.311 hooks 日志实证）。
     /// 所以之后的第一个收尾不认，交给会话文件核对（chat_channel_settle_from_transcript：队里还有没取出的不算收尾）
     prompt_queued: bool,
+    /// 这家这条审批支持「本会话都允许」时卡上的说法（ACP 的 allow_always 选项；按请求 id 记）
+    pub(crate) always_labels: HashMap<String, String>,
+    /// 原生模式 Claude 的提问表单：请求 id → questions（ApprovalDto.questions）
+    pub(crate) native_questions: HashMap<String, Value>,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -626,6 +642,12 @@ impl Tracker {
                 let mut dto = approval_from_tool(&tool, &args);
                 dto.request_id = request_id;
                 dto.replyable = replyable && dto.request_id.is_some();
+                if let Some(label) = dto.request_id.as_ref().and_then(|id| self.always_labels.get(id)) {
+                    dto.always_label = Some(label.clone());
+                }
+                if let Some(q) = dto.request_id.as_ref().and_then(|id| self.native_questions.get(id)) {
+                    dto.questions = Some(q.clone());
+                }
                 if dto.detail.is_none() {
                     dto.detail = detail.map(|d| crate::sessions::redact_sensitive_text(&d));
                 }
@@ -2012,6 +2034,8 @@ enum Replier {
     /// OpenCode 2.x：Mesa 自起的 `opencode serve` 地址（形如 http://127.0.0.1:端口）
     OpenCode2 { base: String, password: String },
     Codex { stream: Arc<Mutex<TcpStream>> },
+    /// 原生模式经桥连回来的 ACP 连接（逐行 JSON-RPC）
+    Acp { stream: Arc<Mutex<TcpStream>> },
 }
 
 struct Channel {
@@ -2021,6 +2045,8 @@ struct Channel {
     dirty: AtomicBool,
     replier: Mutex<Option<Replier>>,
     codex: Mutex<CodexState>,
+    acp: Mutex<acp::AcpState>,
+    claude: Mutex<claude_native::ClaudeState>,
     sidecar_pid: Mutex<Option<u32>>,
     dir: Option<PathBuf>,
 }
@@ -2147,6 +2173,10 @@ pub(crate) struct Prepared {
     codex: Option<(u16, String, u32)>,
     /// 旁路自起的服务进程（OpenCode 2.x 的 serve）：标签关时连进程树一起收
     sidecar: Option<u32>,
+    /// 原生模式（ACP）：等桥连回来的监听口与令牌（acp.rs）
+    acp: Option<acp::AcpPrep>,
+    /// 启动参数里已经定下的会话（OpenCode 接回 `--session <id>`）：旁路一开就认它，不必等第一条会话事件
+    session: Option<String>,
 }
 
 impl Prepared {
@@ -2528,6 +2558,8 @@ pub(crate) fn prepare(
                 replier: None,
                 codex: None,
                 sidecar: None,
+                acp: None,
+                session: None,
             }),
         ),
         _ => (env, None),
@@ -2557,6 +2589,8 @@ fn prepare_structured(
         replier: None,
         codex: None,
         sidecar: None,
+        acp: None,
+        session: None,
     };
     let hooks_channel = |p: &mut Prepared| {
         let log = crate::hooks::log_path_for(agent)?;
@@ -2657,6 +2691,12 @@ fn prepare_structured(
             env.push(("OPENCODE_SERVER_PASSWORD".into(), password.clone()));
             let mut p = base("opencode");
             p.replier = Some(Replier::OpenCode { port, password });
+            p.session = args
+                .iter()
+                .position(|a| a == "--session" || a == "-s")
+                .and_then(|i| args.get(i + 1))
+                .filter(|v| !v.starts_with('-'))
+                .cloned();
             (env, Some(p))
         }
         "codex" if version_at_least(agent, CODEX_REMOTE_MIN) => {
@@ -2725,18 +2765,27 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
         replier,
         codex,
         sidecar,
+        acp,
+        session,
     } = prepared;
+    // 能经旁路发话的：OpenCode 只有 1.x 的 prompt_async 实测过（2.x 的发送接口没在本机核实，照旧打进终端）
+    let can_send = matches!(kind, "codex" | "qwen" | "acp" | "claude-native")
+        || (kind == "opencode" && matches!(replier, Some(Replier::OpenCode { .. })));
     let channel = Arc::new(Channel {
         tab_id: tab_id.clone(),
         stop: AtomicBool::new(false),
         tracker: Mutex::new({
             let mut t = Tracker::new(&tab_id, &agent, kind);
             t.async_hooks = kind == "hooks" && crate::hooks::launch_hooks_async(&agent);
+            t.snap.can_send = can_send;
+            t.snap.session_id = session;
             t
         }),
         dirty: AtomicBool::new(true),
         replier: Mutex::new(replier),
         codex: Mutex::new(CodexState::default()),
+        acp: Mutex::new(acp::AcpState::default()),
+        claude: Mutex::new(claude_native::ClaudeState::default()),
         sidecar_pid: Mutex::new(codex.as_ref().map(|(_, _, pid)| *pid).or(sidecar)),
         dir,
     });
@@ -2809,6 +2858,14 @@ pub(crate) fn start_with_sink(pty_id: &str, prepared: Prepared, sink: Sink) {
     if let Some((port, token, _)) = codex {
         let ch = channel.clone();
         std::thread::spawn(move || codex_loop(ch, port, token));
+    }
+    if let Some(prep) = acp {
+        let ch = channel.clone();
+        if kind == "claude-native" {
+            std::thread::spawn(move || claude_native::run(ch, prep));
+        } else {
+            std::thread::spawn(move || acp::run(ch, prep));
+        }
     }
 }
 
@@ -3359,7 +3416,7 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
     let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请到终端停止")?;
     let kind = {
         let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
-        if !matches!(t.snap.kind, "opencode" | "codex") || t.snap.connection != Some("connected") {
+        if !matches!(t.snap.kind, "opencode" | "codex" | "acp" | "claude-native") || t.snap.connection != Some("connected") {
             return Err("这条实时通道不支持停止，请到终端处理".into());
         }
         if t.snap.session_id.as_deref() != Some(session_id)
@@ -3368,6 +3425,12 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
         }
         t.snap.kind
     };
+    if kind == "acp" {
+        return acp::cancel(&ch);
+    }
+    if kind == "claude-native" {
+        return claude_native::cancel(&ch);
+    }
     if kind == "codex" {
         // 原生模式：turn/interrupt 停的是这一轮，不退出会话；回合由随后的 turn/completed（interrupted）收
         let turn = ch
@@ -3438,14 +3501,34 @@ fn send_impl(tab_id: &str, text: &str) -> Result<(), String> {
         return Ok(());
     }
     let ch = channel_for_tab(tab_id).ok_or("实时通道不可用，请切到终端发送")?;
-    {
+    match ch.tracker.lock().map(|t| t.snap.kind).unwrap_or("") {
+        "acp" => return acp::send(&ch, text),
+        "claude-native" => return claude_native::send(&ch, text),
+        "qwen" => return qwen_submit(&ch, text),
+        "opencode" => return opencode_prompt(&ch, text),
+        _ => {}
+    }
+    let running = {
         let t = ch.tracker.lock().map_err(|_| "实时通道不可用")?;
         if t.snap.kind != "codex" || t.snap.connection != Some("connected") {
             return Err("实时通道不可用，请切到终端发送".into());
         }
-        if is_open(&t.snap.turn) {
-            return Err("这一轮还没结束，等它结束或先停止再发".into());
-        }
+        is_open(&t.snap.turn)
+    };
+    if running {
+        // 这一轮还在跑：同终端里回合中按回车，插进正在跑的这一轮（turn/steer，带当前回合 id 作前提，
+        // 回合刚好换了就被拒、不会插错轮）
+        let turn = ch
+            .codex
+            .lock()
+            .map_err(|_| "实时通道不可用")?
+            .turn
+            .clone()
+            .ok_or("这一轮还没结束，等它结束或先停止再发")?;
+        codex_request(&ch, "turn/steer", |thread| {
+            json!({ "threadId": thread, "expectedTurnId": turn, "input": [{ "type": "text", "text": text }] })
+        })?;
+        return Ok(());
     }
     let result = codex_request(&ch, "turn/start", |thread| {
         json!({ "threadId": thread, "input": [{ "type": "text", "text": text }] })
@@ -3458,6 +3541,55 @@ fn send_impl(tab_id: &str, text: &str) -> Result<(), String> {
     // 新线程第一轮之前订阅不上（还没有 rollout），turn/started 可能收不到：回包到了就是回合已开，这里先开；
     // 订阅由随后的 thread/status/changed（active）补上
     feed(&ch, vec![ChannelEvent::TurnStart]);
+    Ok(())
+}
+
+/// Qwen：命令文件追加一条 submit（Dual Output 官方命令，忙时 Qwen 自己排到下一轮；只有 submit 与确认回复两种命令，没有停止）
+fn qwen_submit(ch: &Channel, text: &str) -> Result<(), String> {
+    let input = match ch.replier.lock().map_err(|_| "实时通道已关闭")?.as_ref() {
+        Some(Replier::Qwen { input }) => input.clone(),
+        _ => return Err("实时通道不可用，请切到终端发送".into()),
+    };
+    let line = json!({ "type": "submit", "text": text }).to_string();
+    let mut f = std::fs::OpenOptions::new().append(true).open(&input).map_err(|e| format!("没发出去：{e}"))?;
+    writeln!(f, "{line}").map_err(|e| format!("没发出去：{e}"))?;
+    Ok(())
+}
+
+/// OpenCode 1.x：`POST /session/<id>/prompt_async`（立即回 204，这一轮的进展照旧从 /event 来；1.19.5 OpenAPI 核对）
+fn opencode_prompt(ch: &Channel, text: &str) -> Result<(), String> {
+    let (port, password) = match ch.replier.lock().map_err(|_| "实时通道已关闭")?.as_ref() {
+        Some(Replier::OpenCode { port, password }) => (*port, password.clone()),
+        _ => return Err("这版 OpenCode 还不能从聊天直接发，请关掉原生模式".into()),
+    };
+    let sid = ch
+        .tracker
+        .lock()
+        .ok()
+        .and_then(|t| t.snap.session_id.clone())
+        .ok_or("还没认出这段对话，稍等一下再发")?;
+    let mut url = reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|e| e.to_string())?;
+    url.path_segments_mut()
+        .map_err(|_| "无法构造发送请求")?
+        .extend(["session", sid.as_str(), "prompt_async"]);
+    let body = json!({ "parts": [{ "type": "text", "text": text }] });
+    let status = tauri::async_runtime::block_on(async move {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|e| e.to_string())?
+            .post(url)
+            .header("Authorization", basic_auth(&password))
+            .json(&body)
+            .send()
+            .await
+            .map(|r| r.status())
+            .map_err(|e| format!("没发出去：{e}"))
+    })?;
+    if !status.is_success() {
+        return Err(format!("没发出去（{status}）"));
+    }
     Ok(())
 }
 
@@ -3501,11 +3633,13 @@ pub async fn chat_channel_reply(
     tab_id: String,
     request_id: String,
     decision: String,
+    // 原生模式 Claude 提问表单的答案（题目 → 选项文字）；其余审批不带
+    answers: Option<Value>,
 ) -> Result<(), String> {
-    reply_impl(&tab_id, &request_id, &decision).await
+    reply_impl(&tab_id, &request_id, &decision, answers.as_ref()).await
 }
 
-async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<(), String> {
+async fn reply_impl(tab_id: &str, request_id: &str, decision: &str, answers: Option<&Value>) -> Result<(), String> {
     let (tab_id, request_id, decision) = (tab_id.to_string(), request_id.to_string(), decision.to_string());
     let ch = channel_for_tab(&tab_id).ok_or("这个标签没有可回复的旁路")?;
     let allow = matches!(decision.as_str(), "allow" | "allow_always");
@@ -3518,6 +3652,7 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
         OpenCode(u16, String),
         OpenCode2(String, String),
         Codex(Arc<Mutex<TcpStream>>),
+        Acp,
     }
     let plan = {
         let r = ch.replier.lock().map_err(|_| "旁路已关闭")?;
@@ -3526,10 +3661,18 @@ async fn reply_impl(tab_id: &str, request_id: &str, decision: &str) -> Result<()
             Some(Replier::OpenCode { port, password }) => Plan::OpenCode(*port, password.clone()),
             Some(Replier::OpenCode2 { base, password }) => Plan::OpenCode2(base.clone(), password.clone()),
             Some(Replier::Codex { stream }) => Plan::Codex(stream.clone()),
+            Some(Replier::Acp { .. }) => Plan::Acp,
             None => return Err("这一家只能在终端菜单里回答".into()),
         }
     };
     match plan {
+        Plan::Acp => {
+            if ch.tracker.lock().map(|t| t.snap.kind == "claude-native").unwrap_or(false) {
+                claude_native::reply(&ch, &request_id, &decision, answers)?
+            } else {
+                acp::reply(&ch, &request_id, &decision)?
+            }
+        }
         Plan::Qwen(input) => {
             let line = json!({ "type": "confirmation_response", "request_id": request_id, "allowed": allow })
                 .to_string();
@@ -3791,6 +3934,8 @@ mod tests {
             dirty: AtomicBool::new(false),
             replier: Mutex::new(None),
             codex: Mutex::new(CodexState::default()),
+            acp: Mutex::new(acp::AcpState::default()),
+            claude: Mutex::new(claude_native::ClaudeState::default()),
             sidecar_pid: Mutex::new(None),
             dir: None,
         })
@@ -4880,7 +5025,26 @@ mod e2e {
         need_probe: bool,
     ) -> Run {
         let cwd = work.to_string_lossy().into_owned();
-        let (extra, prepared) = prepare(agent, Some("e2e-tab"), &cwd, bin, &mut args, env, env_remove);
+        // E2E_NATIVE=1 且这家走 ACP（Kimi）：PTY 里起 stdio 桥（要先 cargo build --bin mesa_helper），聊天层直接说协议
+        let native_claude = std::env::var("E2E_NATIVE").is_ok() && claude_native::supported(agent);
+        let native_acp = std::env::var("E2E_NATIVE").is_ok() && (acp::supported(agent) || native_claude);
+        let mut program = bin.to_path_buf();
+        let (extra, prepared) = if native_claude {
+            let (helper, bridge_args, env, p) = prepare_claude_native(agent, Some("e2e-tab"), &cwd, bin, &args, true)
+                .expect("原生模式应当接上（找不到 mesa_helper 时先 cargo build --bin mesa_helper）");
+            program = helper;
+            args = bridge_args;
+            (env, Some(p))
+        } else if native_acp {
+            let resume = args.iter().position(|a| a == "-S" || a == "--session").and_then(|i| args.get(i + 1).cloned());
+            let (helper, bridge_args, env, p) = prepare_native(agent, Some("e2e-tab"), &cwd, bin, &args, resume.as_deref())
+                .expect("原生模式应当接上（找不到 mesa_helper 时先 cargo build --bin mesa_helper）");
+            program = helper;
+            args = bridge_args;
+            (env, Some(p))
+        } else {
+            prepare(agent, Some("e2e-tab"), &cwd, bin, &mut args, env, env_remove)
+        };
         let prepared = prepared.expect("这家应当接上旁路");
         // E2E_ARG_PROMPT=1：首条消息照 Mesa 快速开聊的做法放进启动参数（位置参数，必须最后），
         // 带换行、引号、|、%变量%、^——Windows 经 .cmd 包装时这些会被 cmd 拆坏
@@ -4894,7 +5058,7 @@ mod e2e {
         let pair = native_pty_system()
             .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
             .unwrap();
-        let mut cmd = crate::process::pty_command(bin, &args);
+        let mut cmd = crate::process::pty_command(&program, &args);
         cmd.cwd(work);
         for (k, _) in std::env::vars() {
             if k.starts_with("CLAUDE_CODE_") || k.starts_with("ANTHROPIC_") || k == "CLAUDECODE"
@@ -5047,18 +5211,31 @@ mod e2e {
         }
         // E2E_NATIVE=1（Codex，docs/design-chat-native-mode.md）：这句经通道发（turn/start）、停止经通道停（turn/interrupt），
         // 一个键都不往终端里敲；终端里的远程 TUI 照样画这一轮
-        let native = std::env::var("E2E_NATIVE").is_ok() && agent == "codex";
+        let native = std::env::var("E2E_NATIVE").is_ok() && (matches!(agent, "codex" | "qwen" | "opencode") || native_acp);
+        // 认出对话之前（OpenCode 第一句才建会话）经通道发不了：照前端口径退回打字
+        let mut native_sent = false;
         if native && arg_prompt.is_none() {
-            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| "TRIGGER_TOOL TRIGGER_ESC 跑一下".to_string());
+            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
+                if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
+            });
             let wait = Instant::now();
-            while chat_channel_snapshot("e2e-tab".into()).and_then(|s| s.session_id).is_none()
+            // Claude 原生模式的会话 id 在第一句之后才报：连上就能发
+            let ready = |s: ChannelSnapshot| s.session_id.is_some() || (s.kind == "claude-native" && s.connection == Some("connected"));
+            while !chat_channel_snapshot("e2e-tab".into()).is_some_and(ready)
                 && wait.elapsed() < Duration::from_secs(20)
             {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            send_impl("e2e-tab", &prompt).expect("经 Codex 通道发起这一轮");
-            println!("{agent}: 经通道发出（{} 毫秒认出线程）", wait.elapsed().as_millis());
-        } else if arg_prompt.is_none() {
+            match send_impl("e2e-tab", &prompt) {
+                Ok(()) => {
+                    native_sent = true;
+                    println!("{agent}: 经通道发出（{} 毫秒认出线程）", wait.elapsed().as_millis());
+                }
+                Err(e) if native_acp || agent == "codex" => panic!("经通道发起这一轮：{e}"),
+                Err(e) => println!("{agent}: 还不能经通道发（{e}），这句照旧打进终端"),
+            }
+        }
+        if !native_sent && arg_prompt.is_none() {
             // E2E_PROMPT：换触发词（如 Codex 去掉 TRIGGER_ESC = 沙箱里直接跑、不走审批）
             let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
                 if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
@@ -5100,6 +5277,9 @@ mod e2e {
         let interrupt_ms: Option<u64> = std::env::var("E2E_INTERRUPT_MS").ok().and_then(|v| v.parse().ok());
         let mut esc_at: Option<Instant> = None;
         let mut interrupt_settled = false;
+        // E2E_STEER_MS（配 E2E_NATIVE）：发出后过这么久经通道再说一句（回合还在跑 → turn/steer 插进这一轮）
+        let steer_ms: Option<u64> = std::env::var("E2E_STEER_MS").ok().and_then(|v| v.parse().ok());
+        let mut steered = false;
         while started.elapsed() < Duration::from_secs(60) {
             std::thread::sleep(Duration::from_millis(300));
             if let (Some(ms), None) = (interrupt_ms, esc_at) {
@@ -5122,6 +5302,13 @@ mod e2e {
                     }
                 }
             }
+            if let (Some(ms), false, true) = (steer_ms, steered, native) {
+                if started.elapsed() >= Duration::from_millis(ms) {
+                    let r = send_impl("e2e-tab", "STEER_MARK 补一句");
+                    println!("{agent}: 回合中经通道插话 → {r:?}");
+                    steered = true;
+                }
+            }
             if let Some(at) = esc_at.filter(|_| !interrupt_settled) {
                 if at.elapsed() >= Duration::from_millis(1500) {
                     let before = snaps.lock().unwrap().last().cloned().unwrap_or_default();
@@ -5141,7 +5328,20 @@ mod e2e {
                         std::thread::sleep(Duration::from_millis(ms));
                     }
                     let id = a.request_id.clone().unwrap();
-                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow"));
+                    // 原生模式 Claude 的提问表单：每题选第二项（假网关的颜色题即「绿」）
+                    let answers = a.questions.as_ref().and_then(Value::as_array).map(|qs| {
+                        let mut m = serde_json::Map::new();
+                        for q in qs {
+                            if let (Some(t), Some(o)) = (
+                                q.get("question").and_then(Value::as_str),
+                                q.pointer("/options/1/label").and_then(Value::as_str),
+                            ) {
+                                m.insert(t.to_string(), json!(o));
+                            }
+                        }
+                        Value::Object(m)
+                    });
+                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow", answers.as_ref()));
                     answered = Some(format!("聊天层回复（{r:?}）"));
                     if let Some(f) = &raw_log {
                         let line = json!({ "t": t0.elapsed().as_millis() as u64, "mark": "answered" }).to_string();
