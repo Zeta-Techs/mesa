@@ -137,3 +137,47 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
   开关在模型菜单说明页（`ChatBetaNotes`），只对 `nativeModeAvailable` 的家出。
 - 没做（留给后续期）：没有 TUI 的纯协议运行时（Kimi ACP、Claude `-p`）、空闲时切换模式、切换后核对设置、金丝雀的协议层指纹。
 
+## 剩余路线（2026-11-26 排定，做完一项在行首标 ✓ 并写日期）
+
+推进顺序：第 1 期收尾 1、2、7 → 公共件 1 → 第 2 期 Kimi；Qwen、OpenCode 穿插做。
+
+### 一、第 1 期收尾（Codex）
+
+1. 用户在 Mesa Dev 里核对四步：开关 → 发第二句看终端同步 → 停止 → 确认卡批准后终端菜单跟着撤。
+2. 接回旧对话后的第一句：接回要先起进程，现在等终端就绪后打进去；原生模式改为等通道认出对话后经 `turn/start` 发，等不到再退回打字。
+3. 回合进行中再发话：现在退回终端打字排队；先核实 app-server 有没有插话 / 排队的方法，有就走接口。
+4. `/model`、`/effort` 一类切换：现在打进终端；改为随下一轮 `turn/start` 带模型与思考档。
+5. 启动时的信任目录、更新提示仍靠读屏：原生模式下用启动参数预先处理掉。
+6. Windows 实测：ConPTY 下远程 TUI 与第二个客户端是否同样同步。
+7. 金丝雀加原生层：`e2e_channel` 的 `E2E_NATIVE` 进每天的金丝雀（发出、审批、停止），接口一变就报红。
+
+### 二、公共件（第 2、3 期共用，先于第 2 期）
+
+1. 不绑终端的运行时：标签现在都绑一个 PTY；协议进程要另有一套起进程、退出、重启、关标签收掉、Mesa 崩溃后清残留。
+2. 空闲时切换模式：回合结束且没有后台任务才允许，停进程按会话 id 接回；后台任务（Claude 后台命令、子 Agent、Monitor）的检测未验证。
+3. 切换后核对模型 / 思考档 / 权限档，对不上就提示（agy 实测会变，§3.3）。
+4. 聊天层分档与说明：原生模式单列一档，定摘「测试版」的条件（`chat-fidelity.ts`、`design-chat-fidelity.md`）。
+
+### 三、第 2 期：Kimi（ACP）
+
+1. Rust 通用 ACP 客户端：initialize、session/new|load、prompt、request_permission、cancel、set_mode / set_config_option，后续各家复用。
+2. 模式映射照 §3.2 修正（终端 `--yolo` ↔ ACP `auto`、终端 `--auto` ↔ ACP `yolo`）；「只讨论」档下计划模式的审批由 Mesa 直接拒。
+3. 审批卡三选项（允许一次 / 本会话都允许 / 拒绝），命令原文从 content 文字里拆。
+4. 没登录时引导去终端登录（authMethods 是 terminal 类）。
+5. 金丝雀 ACP 层与 Windows 实测。
+
+### 四、第 3 期：Claude（只对 API 密钥 / 中转网关连接）
+
+1. `-p` 双向 stream-json + `--permission-prompt-tool stdio`：审批、提问表单、计划确认都在聊天里接。
+2. `--include-partial-messages` 拿边写边显示。
+3. 官方订阅连接不出开关，写明原因（§1 条款）。
+4. 列清原生模式下用不了的终端面板与命令；`/context`、`/compact` 照常。
+5. 金丝雀盯隐藏参数与 `can_use_tool` 的形状。
+
+### 五、其余各家
+
+- 顺手能做：Qwen（Dual Output）、OpenCode（自带服务）本来双客户端，同 Codex 第 1 期做法，发消息与停止改走各自接口。
+- 等上游：agy（ACP 不认 Mesa 的第三方自定义模型、缺「帮我批准」），或先只开官方登录线。
+- 维护级尽力而为：Gemini、CodeBuddy、Cursor、Grok 的 ACP。
+- 一直没验过的：真模型、Windows 全部、切换时后台任务会不会被杀。
+
