@@ -41,7 +41,7 @@ export const CHAT_FIDELITY: Record<string, ChatFidelity> = {
     tier: 1,
     beta: true,
     source: "回合、审批、思考摘要、正在写的字都来自 Codex 官方通道，审批能直接在聊天里点",
-    terminalOnly: "登录、/status 这类只在终端里显示的面板",
+    terminalOnly: "登录、/status 这类终端面板",
   },
   qwen: {
     tier: 1,
@@ -237,11 +237,11 @@ export function nativeStopViaChannel(agentId: string | null | undefined): boolea
 const NATIVE_RUNTIME_NOTES: Record<string, Pick<ChatFidelity, "source" | "terminalOnly">> = {
   kimi: {
     source: "原生模式：回合、审批、正在写的字都来自 Kimi Code 的官方协议，确认和停止都在聊天里完成",
-    terminalOnly: "登录、只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+    terminalOnly: "登录这类终端面板",
   },
   "claude-code": {
     source: "原生模式：回合、审批、提问表单、计划确认、正在写的字都来自 Claude Code 的官方协议，都在聊天里完成",
-    terminalOnly: "登录、/status 这类只在终端界面里显示的面板（原生模式下没有终端界面，要用就关掉原生模式）",
+    terminalOnly: "登录、/status 这类终端面板",
   },
 };
 

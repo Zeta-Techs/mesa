@@ -1,7 +1,7 @@
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
+import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeRuntime, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
 import { Toggle } from "./PageFrame";
@@ -45,52 +45,53 @@ export function ChatBetaNotes({
   onReportMismatch?: () => void;
 }) {
   const installed = useAppStore((s) => s.agents.find((a) => a.id === agentId)?.version ?? null);
-  const base = chatFidelity(agentId, IS_WINDOWS);
-  // 原生模式开着、这家没有终端界面（Kimi、Claude）：数据来源是官方协议，说明换成那两句
-  const nativeNote = native?.on ? nativeFidelityNote(agentId) : null;
-  const fidelity = base && nativeNote ? { ...base, ...nativeNote } : base;
+  const fidelity = chatFidelity(agentId, IS_WINDOWS);
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
   const verified = useVerifiedVersion(agentId);
   const newer = useCliNewer(agentId);
+  // 2026-11-26 用户：说明乱七八糟，精简——一行开关、一句话、按钮；能做到哪一步与数据从哪来收进那句话的悬停提示
+  const runtime = nativeRuntime(agentId);
+  const runtimeOn = Boolean(native?.on && runtime);
+  const nativeNote = runtimeOn ? nativeFidelityNote(agentId) : null;
+  const line = nativeNote
+    ? `${nativeNote.terminalOnly}要先关掉原生模式。`
+    : fidelity
+      ? `以终端为准；${fidelity.terminalOnly}要回终端。`
+      : "以终端为准。";
+  const lineTitle = fidelity ? `${label} · ${tierLabel(fidelity.tier)}：${nativeNote?.source ?? fidelity.source}` : undefined;
+  const nativeLine = runtime
+    ? `改用 ${label} 官方协议，没有终端界面`
+    : nativeStopViaChannel(agentId)
+      ? `消息和停止直接交给 ${label}`
+      : `消息直接交给 ${label}，停止仍按 Esc`;
+  // 实时通道断了 / 还在连：例外才说
+  const channelIssue =
+    live && channel && (channel.connection === "disconnected" || channel.connection === "connecting")
+      ? channelSourceNote(channel)
+      : null;
   return (
     <div className="px-2 pb-1 pt-0.5 text-xs leading-5 text-l3">
-      {/* 2026-10-30 用户嫌字多：两段并成一句，「对不上？反馈」按钮自己说明会附什么（按钮 title） */}
-      <p>
-        聊天是 Mesa 从终端整理出来的，以终端为准：看不到、按不动的，切到终端都在
-        {onReportMismatch ? "；和终端对不上时，请点下面反馈。" : "。"}
-      </p>
       {native && (
         <div
-          className="mt-2 flex items-center gap-3"
-          title="终端照样连着这段对话，随时能切过去看；关掉就回到往终端里打字的做法"
+          className="mb-2 flex items-center gap-3"
+          title={
+            runtime
+              ? "聊着的时候翻开关：空闲时停下，再接回这段对话"
+              : "终端照样连着这段对话，随时能切过去看"
+          }
         >
           <div className="min-w-0 flex-1">
-            <p className="text-l2">原生模式 · 测试版</p>
-            <p>
-              {nativeStopViaChannel(agentId)
-                ? `消息和停止直接交给 ${label}，不往终端里打字`
-                : `消息直接交给 ${label}，不往终端里打字；停止仍在终端里按 Esc`}
-            </p>
+            <p className="text-l2">原生模式</p>
+            <p>{nativeLine}</p>
           </div>
           <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
         </div>
       )}
-      {live && <p className="mt-2 text-l2">{channelSourceNote(channel)}</p>}
-      {fidelity && (
-        <>
-          <p className="mt-2">
-            <span className="text-l2">
-              {label} · 通常能力：{tierLabel(fidelity.tier)}
-            </span>
-            ：{fidelity.source}。
-          </p>
-          <p className="mt-1">要回终端做的：{fidelity.terminalOnly}。</p>
-        </>
-      )}
+      <p title={lineTitle}>{line}</p>
+      {channelIssue && <p className="mt-1 text-caution-text">{channelIssue}</p>}
       {newer && (
-        <p className="mt-2 text-caution-text">
-          你装的 {label} {installed} 比 Mesa 核对过的 {verified} 新：它的画面要是变了，聊天里的确认按钮可能按不准。
-          这期间 Mesa 不替你自动按任何一步，按不对就点卡上的「露出终端」自己选。
+        <p className="mt-1 text-caution-text">
+          你装的 {label} {installed} 比 Mesa 核对过的 {verified} 新，确认按钮可能按不准，按不对就露出终端自己选。
         </p>
       )}
       {(onOpenTerminal || onReportMismatch) && (
@@ -106,13 +107,13 @@ export function ChatBetaNotes({
             </button>
           )}
           {onOpenTerminal && (
-          <button
-            type="button"
-            onClick={onOpenTerminal}
-            className="h-7 rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
-          >
-            切到终端
-          </button>
+            <button
+              type="button"
+              onClick={onOpenTerminal}
+              className="h-7 rounded-md px-2 text-xs text-l2 hover:bg-hover hover:text-l1"
+            >
+              切到终端
+            </button>
           )}
         </div>
       )}

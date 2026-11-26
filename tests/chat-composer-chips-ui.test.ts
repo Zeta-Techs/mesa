@@ -2164,7 +2164,7 @@ test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述�
   }
 });
 
-test("原生模式开关在模型菜单的说明页里：点亮的家才出，点一下只回报新值（2026-11-26）", async () => {
+test("原生模式开关在模型菜单的说明页里：点亮的家才出，点一下只回报新值；说明只剩一句（2026-11-26）", async () => {
   const ui = await mount();
   try {
     const flips: boolean[] = [];
@@ -2185,8 +2185,11 @@ test("原生模式开关在模型菜单的说明页里：点亮的家才出，�
     };
     await ui.render(ui.h(ui.Menu, { ...props, native: { on: false, onToggle: (on: boolean) => flips.push(on) } }));
     await openNotes();
-    assert.match(ui.el.textContent ?? "", /原生模式 · 测试版/);
-    assert.match(ui.el.textContent ?? "", /消息和停止直接交给 Codex，不往终端里打字/);
+    assert.match(ui.el.textContent ?? "", /原生模式/);
+    assert.match(ui.el.textContent ?? "", /消息和停止直接交给 Codex/);
+    // 精简后：一行开关、一句话，不再有「通常能力」「要回终端做的」两段（2026-11-26 用户）
+    assert.doesNotMatch(ui.el.textContent ?? "", /通常能力|要回终端做的|从终端整理出来/);
+    assert.match(ui.el.textContent ?? "", /以终端为准；.*要回终端。/);
     const sw = ui.el.querySelector<HTMLButtonElement>('[role="switch"][aria-label="原生模式"]');
     assert.ok(sw);
     assert.equal(sw.getAttribute("aria-checked"), "false");

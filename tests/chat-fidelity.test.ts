@@ -99,7 +99,7 @@ test("原生模式逐家点亮：Codex、Kimi、Claude 已开（2026-11-26 拍�
 
 test("原生模式下没有终端界面的家，说明页换成官方协议的说法；双客户端的家照旧", () => {
   assert.match(nativeFidelityNote("kimi")?.source ?? "", /原生模式/);
-  assert.match(nativeFidelityNote("claude-code")?.terminalOnly ?? "", /关掉原生模式/);
+  assert.match(nativeFidelityNote("claude-code")?.terminalOnly ?? "", /终端面板/);
   assert.equal(nativeFidelityNote("codex"), null);
   assert.equal(nativeFidelityNote(null), null);
 });
