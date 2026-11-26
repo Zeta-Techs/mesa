@@ -4157,10 +4157,8 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                     <div
                       className={
                         chatOn && peek
-                          ? "relative order-2 min-h-[7.5rem] shrink-0 overflow-hidden border-t border-hairline"
-                          : !chatOn && statuses[t.id]?.nativeRuntime
-                            ? "absolute inset-0 flex flex-col"
-                            : "absolute inset-0"
+                          ? "relative order-2 flex min-h-[7.5rem] shrink-0 flex-col overflow-hidden border-t border-hairline"
+                          : "absolute inset-0 flex flex-col"
                       }
                       style={
                         chatOn && peek
@@ -4168,8 +4166,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           : undefined
                       }
                     >
+                      {/* 原生日志引导条与终端宿主都带固定 key：切聊天/终端或状态变化只增删兄弟节点，
+                          TerminalView 始终原位更新、绝不因切换外壳而卸载重挂载（会杀掉运行中的 PTY） */}
                       {!chatOn && statuses[t.id]?.nativeRuntime && (
-                        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline bg-strip px-3 py-1.5 text-xs text-l2">
+                        <div
+                          key="native-log-bar"
+                          className="flex shrink-0 items-center justify-between gap-2 border-b border-hairline bg-strip px-3 py-1.5 text-xs text-l2"
+                        >
                           <span className="truncate">
                             原生模式运行日志 · 对话、审批和提问都在聊天里进行
                           </span>
@@ -4191,11 +4194,9 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                           </div>
                         </div>
                       )}
-                      {!chatOn && statuses[t.id]?.nativeRuntime ? (
-                        <div className="relative min-h-0 flex-1">{view}</div>
-                      ) : (
-                        view
-                      )}
+                      <div key="term-view-host" className="relative min-h-0 flex-1">
+                        <div className="absolute inset-0">{view}</div>
+                      </div>
                     </div>
                     <div
                       className={
