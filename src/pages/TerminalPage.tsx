@@ -37,7 +37,7 @@ import {
   type MismatchReport,
 } from "../chat-mismatch";
 import { AGENTS } from "../types";
-import { channelSourceNote, channelTurnOpen, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
+import { channelSourceNote, channelTurnOpen, interruptRoute, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
 import { normSep, pathWithin as pathWithinDialect, revealFolderLabel, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
@@ -1670,17 +1670,24 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const tabId = focusedId;
     const tab = tabs.find((t) => t.id === tabId);
     const agent = statuses[tabId]?.agentId ?? tab?.initialAgentId;
-    // 原生模式的 Codex 同 OpenCode：经官方接口停这一轮，不往终端里按 Esc
-    if (agent === "opencode" || (tab?.nativeMode && nativeStopViaChannel(agent))) {
+    const snap = sessionByTab[tabId]?.channel;
+    const route = interruptRoute({
+      agentId: agent,
+      nativeMode: !!tab?.nativeMode,
+      actualNativeRuntime: Boolean(statuses[tabId]?.nativeRuntime),
+      splitRuntimeAgent: nativeRuntime(agent),
+      stopViaChannel: nativeStopViaChannel(agent),
+      channel: snap,
+    });
+    if (route.viaChannel) {
       if (interruptBusyRef.current.has(tabId)) return;
-      const snap = sessionByTab[tabId]?.channel;
-      if (!snap || snap.connection !== "connected" || !snap.sessionId || !snap.turn) {
+      if (!snap || snap.connection !== "connected" || route.sessionId === null || !snap.turn) {
         toast("实时通道不可用，请切到终端停止这一轮", "error");
         return;
       }
       if (!channelTurnOpen(snap)) return;
       interruptBusyRef.current.add(tabId);
-      void invoke("chat_channel_interrupt", { tabId, sessionId: snap.sessionId, turnSeq: snap.turn.seq })
+      void invoke("chat_channel_interrupt", { tabId, sessionId: route.sessionId, turnSeq: snap.turn.seq })
         .catch((e) => toast(`没能停止：${String(e)}，可以在终端里处理`, "error"))
         .finally(() => interruptBusyRef.current.delete(tabId));
       return;

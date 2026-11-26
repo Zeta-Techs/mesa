@@ -9,7 +9,7 @@
  *   - after_turn：排到这一轮说完之后，当下一轮的提问
  */
 
-export type MidTurnDelivery = "next_step" | "after_turn" | "unknown";
+export type MidTurnDelivery = "next_step" | "after_turn" | "blocked" | "unknown";
 
 export interface MidTurnSendNow {
   /** 写进终端的键 */
@@ -35,9 +35,25 @@ const ESC_NOW: MidTurnSendNow = {
 
 /**
  * agentId → 这家的规矩。csiU = 终端开了 kitty 键盘（Kimi 起来就开，Ctrl+S 要按 CSI-u 写）。
+ * 原生模式（channelKind / nativeMode）不往终端敲 Esc / Ctrl+S：
+ *   - ACP（Kimi 原生）：一轮结束前协议拒收新 prompt（blocked）
+ *   - Claude 原生（-p 双向 stream-json）：新消息自动在下一步并入这一轮，没有 Esc 立即发送
+ *   - Codex 原生：回合中直接走 turn/steer 插进这一轮，不需要 Esc 立即发送
  * 没核实过的家（Cursor）delivery = unknown、不给「立即发送」
  */
-export function midTurnSpec(agentId: string | null | undefined, opts: { csiU: boolean }): MidTurnSpec {
+export function midTurnSpec(
+  agentId: string | null | undefined,
+  opts: { csiU: boolean; channelKind?: string | null; nativeMode?: boolean },
+): MidTurnSpec {
+  if (opts.channelKind === "acp") {
+    return { delivery: "blocked", sendNow: null };
+  }
+  if (opts.channelKind === "claude-native") {
+    return { delivery: "next_step", sendNow: null };
+  }
+  if (opts.channelKind === "codex" && opts.nativeMode) {
+    return { delivery: "next_step", sendNow: null };
+  }
   switch (agentId) {
     // Claude 2.1.292：回车 = 排上（「Press up to edit queued messages」），下一步工具调用结束时一起交给模型；
     // Esc / Ctrl+Enter 都是打断并马上发
@@ -101,13 +117,25 @@ export function queuedNote(spec: MidTurnSpec): { text: string; title: string } {
         text: "排队中 · 这一轮结束后处理",
         title: "已经交给 AI，它这一轮说完就接着处理；要撤回请到终端里改掉排着的那条",
       };
+    case "blocked":
+      return {
+        text: "请等这一轮结束",
+        title: "原生模式下当前回合结束前不能插话，等它说完或先停止再发",
+      };
     default:
       return { text: "已发送 · 处理时机由 AI 决定", title: "已经交给 AI，由它自己决定什么时候处理" };
   }
 }
 
 /** 生成中输入框里停止块旁那组「排队 + 发送块」的字（2026-10-22 输入框第二版的发送区） */
-export function queueSendHint(spec: MidTurnSpec): { label: string; title: string } {
+export function queueSendHint(spec: MidTurnSpec): { label: string; title: string; blocked?: boolean } {
+  if (spec.delivery === "blocked") {
+    return {
+      label: "等这轮结束",
+      title: "原生模式下当前回合结束前不能插话，请等它说完或先停止",
+      blocked: true,
+    };
+  }
   if (spec.delivery === "unknown") return { label: "发送", title: "发送给 AI，由它决定何时处理（Enter 也是）" };
   if (spec.delivery === "next_step") {
     return { label: "下一步交给它", title: "发出去，它做完手头这一步就会看到（Enter 也是）" };
@@ -118,15 +146,23 @@ export function queueSendHint(spec: MidTurnSpec): { label: string; title: string
   };
 }
 
-/** 停止块的悬停说明：按 Esc 的几家，有排着的话时停下就是马上处理那句（实测），写明 */
-export function stopTitle(spec: MidTurnSpec, agentId?: string | null): string {
+/** 停止块的悬停说明：走官方停止接口时写明经官方通道停，不再写「往终端发 Esc」 */
+export function stopTitle(
+  spec: MidTurnSpec,
+  agentId?: string | null,
+  opts?: { viaChannel?: boolean },
+): string {
   if (agentId === "opencode") return "请求 OpenCode 停止这一轮（会话保留）；实时通道不可用时请到终端处理";
+  if (opts?.viaChannel) return "经官方协议请求停止这一轮（会话保留，可继续输入）";
   const base = "暂停当前生成（往终端发送 Esc；会话保留，可继续输入）";
   return spec.sendNow?.keys === "\x1b" ? `${base}。有排着的话时，它会马上处理那句` : base;
 }
 
 /** 生成中输入框的占位字；mod = 输入框认「立即发送」快捷键时的平台修饰键写法（Mac「⌘」、Windows「Ctrl+」），不认传 null */
 export function runningPlaceholder(spec: MidTurnSpec, mod: string | null): string {
+  if (spec.delivery === "blocked") {
+    return "这一轮还在回复，等它结束或先点停止再发";
+  }
   const base =
     spec.delivery === "next_step"
       ? "还在回复；现在发的话它下一步就会看到"

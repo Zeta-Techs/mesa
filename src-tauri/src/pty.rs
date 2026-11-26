@@ -49,6 +49,8 @@ struct PtyEntry {
     cwd_file: Option<std::path::PathBuf>,
     /// 普通 shell 标签用的哪种 shell（pty_cd 按它拼 cd）；agent 与 run 脚本为 None
     shell_kind: Option<ShellKind>,
+    /// 该进程按原生模式纯协议运行时启动（PTY 里是 stdio-bridge）：重新接回已有 PTY 时照实回传，防退回读屏
+    native_runtime: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,8 +105,8 @@ impl PtyManager {
     }
 
     /// 这条 Run 已经有活 PTY（标签还在或热更新后前端丢了引用）。
-    /// 再 spawn 会抢锁报「此运行已在启动或执行中」——应把现成 PTY 交回去接着用。
-    pub(crate) fn pty_id_for_run(&self, run_id: &str) -> Option<String> {
+    /// 再 spawn 会抢锁报「此运行已在启动或执行中」——应把现成 PTY（含是否原生协议运行时）交回去接着用。
+    pub(crate) fn pty_for_run(&self, run_id: &str) -> Option<(String, bool)> {
         let id = run_id.trim();
         if id.is_empty() {
             return None;
@@ -114,7 +116,11 @@ impl PtyManager {
             .unwrap()
             .iter()
             .find(|(_, entry)| entry.run_id.as_deref() == Some(id))
-            .map(|(pty_id, _)| pty_id.clone())
+            .map(|(pty_id, entry)| (pty_id.clone(), entry.native_runtime))
+    }
+
+    pub(crate) fn pty_id_for_run(&self, run_id: &str) -> Option<String> {
+        self.pty_for_run(run_id).map(|(pty_id, _)| pty_id)
     }
 
     /// 返回指定工作区里仍存活、会阻止移除工作树的终端类型。
@@ -792,6 +798,7 @@ fn spawn_tracked(
             run_id: run_id.clone(),
             cwd_file,
             shell_kind: None,
+            native_runtime: false,
         },
     );
 
@@ -1238,7 +1245,7 @@ fn pty_spawn_sync(
     if let Some(id) = opened_id.as_deref() {
         // 这条 Run 的 Codex 还在跑（本机已有 `codex resume <id>`）：把现成 PTY 交回，
         // 不要再 claim/再拉起——否则报「此运行已在启动或执行中」，快速开聊无法恢复。
-        if let Some(existing_pty) = manager.inner().pty_id_for_run(id) {
+        if let Some((existing_pty, adopted_native)) = manager.inner().pty_for_run(id) {
             crate::sessions::invalidate_scan_cache();
             return Ok(SpawnResult {
                 pty_id: existing_pty,
@@ -1249,7 +1256,7 @@ fn pty_spawn_sync(
                 adopted: true,
                 resume_unwritten: unwritten_session.is_some(),
                 proxy_down: None,
-                native_runtime: false,
+                native_runtime: adopted_native,
             });
         }
         crate::runs::claim_interactive_start(id, false)?;
@@ -1365,7 +1372,14 @@ fn pty_spawn_sync(
         None,
         channel.as_ref().is_some_and(|c| c.program_status()),
     ) {
-        Ok(pty_id) => pty_id,
+        Ok(pty_id) => {
+            if native_runtime {
+                if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&pty_id) {
+                    entry.native_runtime = true;
+                }
+            }
+            pty_id
+        }
         Err(error) => {
             if let Some(channel) = channel {
                 channel.abort();

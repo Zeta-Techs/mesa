@@ -3273,7 +3273,7 @@ fn close_channel(pty_id: &str) -> Option<std::thread::JoinHandle<()>> {
     let ch = registry().lock().ok().and_then(|mut r| r.remove(pty_id))?;
     ch.stop.store(true, Ordering::Release);
     if let Ok(mut r) = ch.replier.lock() {
-        if let Some(Replier::Codex { stream }) = r.take() {
+        if let Some(Replier::Codex { stream } | Replier::Acp { stream }) = r.take() {
             if let Ok(s) = stream.lock() {
                 let _ = s.shutdown(std::net::Shutdown::Both);
             }
@@ -3454,8 +3454,13 @@ async fn interrupt_impl(tab_id: &str, session_id: &str, turn_seq: u32) -> Result
         if !matches!(t.snap.kind, "opencode" | "codex" | "acp" | "claude-native") || t.snap.connection != Some("connected") {
             return Err("这条实时通道不支持停止，请到终端处理".into());
         }
-        if t.snap.session_id.as_deref() != Some(session_id)
-            || t.snap.turn.as_ref().map(|t| t.seq) != Some(turn_seq) || !is_open(&t.snap.turn) {
+        // Claude 原生模式在首句 system:init 到达前 session_id 可能为空，此时前端传空串也允许立刻发 interrupt
+        let session_matches = t.snap.session_id.as_deref() == Some(session_id)
+            || (t.snap.kind == "claude-native" && t.snap.session_id.is_none() && session_id.is_empty());
+        if !session_matches
+            || t.snap.turn.as_ref().map(|t| t.seq) != Some(turn_seq)
+            || !is_open(&t.snap.turn)
+        {
             return Err("当前回合已经变化，请按最新状态操作".into());
         }
         t.snap.kind
@@ -4400,6 +4405,58 @@ mod tests {
         // 同一个调用再报一次不重复数
         t.apply(ChannelEvent::ToolStart { call_id: Some("a".into()), name: "Bash".into(), input: json!({"command":"npm run dev","run_in_background":true}) }, 6);
         assert_eq!(t.snap.background_started, 3);
+    }
+
+    /// 关标签 / 切换模式时 close_channel 也要主动断开原生模式的 ACP / Claude 连接，立即唤醒读线程
+    #[test]
+    fn close_channel_shuts_down_acp_stream() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let ch = test_channel("tab-close-acp");
+        {
+            let mut t = ch.tracker.lock().unwrap();
+            t.snap.agent = "kimi".into();
+            t.snap.kind = "acp";
+        }
+        *ch.replier.lock().unwrap() = Some(Replier::Acp { stream: Arc::new(Mutex::new(client)) });
+        registry().lock().unwrap().insert("pty-close-acp".into(), ch);
+        let _ = close_channel("pty-close-acp");
+        let mut buf = [0u8; 16];
+        assert_eq!(server.read(&mut buf).unwrap(), 0, "原生连接应当立刻收到 EOF");
+    }
+
+    /// Claude 原生模式首句还没报出 session_id 时，前端传空 session_id 也能经通道停止当前回合
+    #[test]
+    fn claude_native_interrupt_allowed_before_session_id() {
+        use std::io::BufRead;
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let ch = test_channel("tab-claude-stop");
+        {
+            let mut t = ch.tracker.lock().unwrap();
+            t.snap.agent = "claude-code".into();
+            t.snap.kind = "claude-native";
+            t.snap.connection = Some("connected");
+            t.apply(ChannelEvent::TurnStart, 1);
+            assert!(t.snap.session_id.is_none());
+        }
+        *ch.replier.lock().unwrap() = Some(Replier::Acp { stream: Arc::new(Mutex::new(client)) });
+        registry().lock().unwrap().insert("pty-claude-stop".into(), ch);
+        // 过期的回合号仍要拒绝
+        assert!(tauri::async_runtime::block_on(interrupt_impl("tab-claude-stop", "", 99)).is_err());
+        tauri::async_runtime::block_on(interrupt_impl("tab-claude-stop", "", 1)).unwrap();
+        let mut line = String::new();
+        std::io::BufReader::new(server).read_line(&mut line).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["type"], "control_request");
+        assert_eq!(v["request"]["subtype"], "interrupt");
+        let _ = close_channel("pty-claude-stop");
     }
 
     /// 原生模式没有终端可读：思考原文由协议的思考增量另留一份（只留最近的），正文一写就清；终端模式的家不留

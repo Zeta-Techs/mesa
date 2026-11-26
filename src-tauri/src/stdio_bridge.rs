@@ -10,7 +10,9 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::process::{Command, Stdio};
+#[cfg(not(windows))]
+use std::process::Command;
+use std::process::Stdio;
 use std::time::Duration;
 
 pub const ADDR_ENV: &str = "MESA_BRIDGE_ADDR";
@@ -50,15 +52,27 @@ pub fn helper_stdio_bridge_cli(args: &[String]) -> i32 {
     if writer.write_all(format!("{token}\n").as_bytes()).is_err() {
         return 1;
     }
-    let mut child = match Command::new(program)
+    #[cfg(windows)]
+    let spawned = {
+        let mut cmd = crate::process::background_command(program);
+        cmd.args(cli_args)
+            .env_remove(ADDR_ENV)
+            .env_remove(TOKEN_ENV)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        cmd.spawn_tied_to_app()
+    };
+    #[cfg(not(windows))]
+    let spawned = Command::new(program)
         .args(cli_args)
         .env_remove(ADDR_ENV)
         .env_remove(TOKEN_ENV)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-    {
+        .spawn();
+    let mut child = match spawned {
         Ok(c) => c,
         Err(e) => {
             println!("Mesa 原生模式：起不来 {program}：{e}");
@@ -115,6 +129,11 @@ pub fn helper_stdio_bridge_cli(args: &[String]) -> i32 {
                     // Mesa 那头断了：等 CLI 自己收尾一小会儿（标准输入关了，协议 CLI 会退出），不退就收掉
                     std::thread::sleep(Duration::from_millis(1500));
                     if matches!(child.try_wait(), Ok(None)) {
+                        // 连带收掉 CLI 自己拉起的子命令进程树，免得留后台孤儿（AGENTS.md 进程树约束）
+                        #[cfg(unix)]
+                        crate::pty::kill_descendants(child.id());
+                        #[cfg(windows)]
+                        crate::pty::kill_process_tree(child.id());
                         let _ = child.kill();
                     }
                     break child.wait().ok().and_then(|s| s.code()).unwrap_or(1);

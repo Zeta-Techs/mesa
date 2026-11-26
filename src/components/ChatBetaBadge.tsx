@@ -91,7 +91,9 @@ export function ChatBetaNotes({
       {channelIssue && <p className="mt-1 text-caution-text">{channelIssue}</p>}
       {newer && (
         <p className="mt-1 text-caution-text">
-          你装的 {label} {installed} 比 Mesa 核对过的 {verified} 新，确认按钮可能按不准，按不对就露出终端自己选。
+          {runtimeOn
+            ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可暂时关掉原生模式。`
+            : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
         </p>
       )}
       {(onOpenTerminal || onReportMismatch) && (

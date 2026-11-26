@@ -100,6 +100,43 @@ export function nativeRuntimeKind(kind: ChannelKind | null | undefined): boolean
   return kind === "acp" || kind === "claude-native";
 }
 
+export interface InterruptRoute {
+  viaChannel: boolean;
+  sessionId: string | null;
+}
+
+/**
+ * 点「停止」时走官方停止接口还是往终端发 Esc：必须按**当前进程的实际形态**判，不能只看开关——
+ * 回合中翻完原生开关还没空闲重开时，开关与实际进程暂时不一致。
+ * Claude 原生首句还没报出 sessionId 时给空串，后端同样放行 interrupt。
+ */
+export function interruptRoute(opts: {
+  agentId: string | null | undefined;
+  nativeMode: boolean;
+  actualNativeRuntime: boolean;
+  splitRuntimeAgent: boolean;
+  stopViaChannel: boolean;
+  channel: ChatChannelSnapshot | null | undefined;
+}): InterruptRoute {
+  const snap = opts.channel;
+  if (opts.actualNativeRuntime || nativeRuntimeKind(snap?.kind)) {
+    return {
+      viaChannel: true,
+      sessionId: snap?.kind === "claude-native" ? (snap.sessionId ?? "") : (snap?.sessionId ?? null),
+    };
+  }
+  if (opts.agentId === "opencode") {
+    return { viaChannel: true, sessionId: snap?.sessionId ?? null };
+  }
+  if (opts.splitRuntimeAgent) {
+    return { viaChannel: false, sessionId: null };
+  }
+  if (opts.nativeMode && opts.stopViaChannel) {
+    return { viaChannel: true, sessionId: snap?.sessionId ?? null };
+  }
+  return { viaChannel: false, sessionId: null };
+}
+
 /** 原生模式下这句该不该经通道发：斜杠 / ! 命令是终端自己的功能，照旧打进终端 */
 export function wantsChannelSend(native: boolean, message: string): boolean {
   return native && !/^[/!]/.test(message.trim());

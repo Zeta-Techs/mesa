@@ -3424,6 +3424,8 @@ export const TerminalView = memo(function TerminalView({
    * 返回 false = 这家这个版本不能在会话里换
    */
   async function switchPermissionInSession(tier: "ask" | "auto" | "full"): Promise<boolean> {
+    // 原生模式的纯协议运行时没有终端选择器可按，不走 /permission 读屏路径
+    if (launchedNativeRef.current) return false;
     const spec = inSessionPermissionSwitch(launchAgentRef.current ?? "", launchAgentDetRef.current?.version);
     if (!spec || !ptyIdRef.current) return false;
     if (spec.args) {
@@ -6473,8 +6475,8 @@ export const TerminalView = memo(function TerminalView({
         rows: size.rows,
       });
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
-      // 这个进程按原生模式的纯协议运行时起了没有（后端不支持时照旧终端模式，发话就照旧打字）
-      if (!res.adopted) launchedNativeRef.current = !!res.nativeRuntime;
+      // 这个进程按原生模式的纯协议运行时起了没有（含从已有运行中 PTY 接回时，由后端照实回传）
+      launchedNativeRef.current = !!res.nativeRuntime;
       if (selectedProfile?.accountType === "official" && agentId === "agy") {
         void invoke("official_agy_register_session", {
           tabId,

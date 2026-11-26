@@ -5,6 +5,7 @@ import {
   approvalPreview,
   approvalTitle,
   canSendViaChannel,
+  interruptRoute,
   nativeSwitchWarning,
   wantsChannelSend,
   channelAttention,
@@ -330,4 +331,66 @@ test("原生模式切换前的提醒：看得到工具参数的按起过的后�
   assert.match(nativeSwitchWarning(snap({ kind: "claude-native", backgroundStarted: 2 })) ?? "", /起过 2 个后台任务/);
   assert.match(nativeSwitchWarning(snap({ kind: "program-status" })) ?? "", /后台跑着的命令/);
   assert.match(nativeSwitchWarning(null) ?? "", /后台跑着的命令/);
+});
+
+test("停止路由以当前进程实际形态为准：回合中刚翻开关尚未重开时不会发错通道", () => {
+  // Kimi 正在跑终端模式，用户刚打开原生开关（等空闲才切换）：必须发 Esc 给真实终端
+  assert.deepEqual(
+    interruptRoute({
+      agentId: "kimi",
+      nativeMode: true,
+      actualNativeRuntime: false,
+      splitRuntimeAgent: true,
+      stopViaChannel: true,
+      channel: snap({ agent: "kimi", kind: "program-status", sessionId: null }),
+    }),
+    { viaChannel: false, sessionId: null },
+  );
+  // Kimi 正在跑原生模式，用户刚关掉原生开关（等空闲才切换）：必须仍走 ACP 通道停，绝不往日志屏发 Esc
+  assert.deepEqual(
+    interruptRoute({
+      agentId: "kimi",
+      nativeMode: false,
+      actualNativeRuntime: true,
+      splitRuntimeAgent: true,
+      stopViaChannel: true,
+      channel: snap({ agent: "kimi", kind: "acp", connection: "connected", sessionId: "k1" }),
+    }),
+    { viaChannel: true, sessionId: "k1" },
+  );
+  // Claude 原生首句还没报出 sessionId：仍走通道且 sessionId 给空串（后端放行）
+  assert.deepEqual(
+    interruptRoute({
+      agentId: "claude-code",
+      nativeMode: true,
+      actualNativeRuntime: true,
+      splitRuntimeAgent: true,
+      stopViaChannel: true,
+      channel: snap({ agent: "claude-code", kind: "claude-native", connection: "connected", sessionId: null }),
+    }),
+    { viaChannel: true, sessionId: "" },
+  );
+  // 双客户端 Codex 开着原生：直接走通道停；关着走 Esc
+  assert.deepEqual(
+    interruptRoute({
+      agentId: "codex",
+      nativeMode: true,
+      actualNativeRuntime: false,
+      splitRuntimeAgent: false,
+      stopViaChannel: true,
+      channel: snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1" }),
+    }),
+    { viaChannel: true, sessionId: "th1" },
+  );
+  assert.deepEqual(
+    interruptRoute({
+      agentId: "codex",
+      nativeMode: false,
+      actualNativeRuntime: false,
+      splitRuntimeAgent: false,
+      stopViaChannel: true,
+      channel: snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1" }),
+    }),
+    { viaChannel: false, sessionId: null },
+  );
 });

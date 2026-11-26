@@ -74,3 +74,20 @@ test("OpenCode 停止使用官方接口，说明不再承诺单次 Esc 能停止
   assert.match(title, /请求 OpenCode 停止/);
   assert.doesNotMatch(title, /发送 Esc/);
 });
+
+test("原生模式不提供往终端敲键的立即发送：Kimi ACP 回合中提示等待，Claude / Codex 原生无 Esc 钮", () => {
+  const kimiAcp = midTurnSpec("kimi", { csiU: true, channelKind: "acp", nativeMode: true });
+  assert.deepEqual(kimiAcp, { delivery: "blocked", sendNow: null });
+  assert.equal(queueSendHint(kimiAcp).blocked, true);
+  assert.match(runningPlaceholder(kimiAcp, "⌘"), /等它结束或先点停止再发/);
+
+  const claudeNative = midTurnSpec("claude-code", { csiU: false, channelKind: "claude-native", nativeMode: true });
+  assert.deepEqual(claudeNative, { delivery: "next_step", sendNow: null });
+
+  const codexNative = midTurnSpec("codex", { csiU: false, channelKind: "codex", nativeMode: true });
+  assert.deepEqual(codexNative, { delivery: "next_step", sendNow: null });
+
+  const nativeStop = stopTitle(claudeNative, "claude-code", { viaChannel: true });
+  assert.match(nativeStop, /官方协议/);
+  assert.doesNotMatch(nativeStop, /发送 Esc/);
+});

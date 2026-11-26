@@ -110,6 +110,7 @@ import {
   channelInfersApproval,
   channelSourceNote,
   channelOutcome,
+  interruptRoute,
   isQuestionApproval,
   approvalChoices,
   approvalPreview,
@@ -120,6 +121,7 @@ import {
   type ChannelReplyDecision,
   type ChatChannelSnapshot,
 } from "../chat-channel";
+import { nativeRuntime, nativeStopViaChannel } from "../chat-fidelity";
 
 /**
  * 对话区不陪 ChatSurface 重画（2026-11-25 打点）：实时预览逐帧放字、生成计时每秒一跳，ChatSurface 一直在重画，
@@ -1404,14 +1406,12 @@ export default function ChatSurface({
   }, [decisionKey]);
 
   async function sendFromComposer(text: string): Promise<string | null> {
-    // Claude 的提问表单开着时，输入框里写的就是答案：写进表单「自己写」那一行再交（直接打进终端的话，
-    // 回车会选中光标停着的那一项）。确认页没有地方写字，让人先在卡片上提交或取消
-    // 方案确认开着时，输入框里写的是对方案的意见：写进「Tell Claude what to change」那一行再交（直接打进终端，
-    // 回车会选中高亮的「开工」那一项）
-    if (planRevise && onAnswerMenu) {
+    // 方案确认开着时（终端菜单或原生模式 ExitPlanMode），输入框里写的是对方案的意见：
+    // 走方案卡的改方案出口，不让回车误触发「开工」或把意见当普通消息绕过审批
+    if (decision?.plan?.onRevise) {
       const t = planFeedbackText(text);
       if (!t) return "写下要改哪里";
-      revisePlan(t);
+      decision.plan.onRevise(t);
       return null;
     }
     // 卡片上的选项带序号时，输入框里只打一个序号 = 选那一项（2026-10-28 用户截图：连接出错卡上想选第 1 项，打了「1」「2」
@@ -1421,12 +1421,17 @@ export default function ChatSurface({
       decision!.options[Number(picked[1]) - 1].onClick();
       return null;
     }
-    const ask = menuPrompt?.ask;
-    if (ask && onAnswerAsk) {
-      if (menuPrompt?.pending) return "上一步还在交给终端，稍等一下再发";
-      if (ask.kind === "review") return "先在上面点「提交回答」或「整组不答」";
-      onAnswerAsk({ kind: "text", text, submit: true });
+    // 提问表单开着时（终端读屏或原生模式 AskUserQuestion），输入框里写的就是当前题的自由回答；
+    // 确认页没有地方写字，让人先在卡片上提交或取消
+    if (decision?.ask) {
+      if (decision.ask.pending) return "上一步还在交给终端，稍等一下再发";
+      if (decision.ask.form.kind === "review") return "先在上面点「提交回答」或「整组不答」";
+      decision.ask.onAction({ kind: "text", text, submit: true });
       return null;
+    }
+    // 原生 ACP 回合未结束前协议拒收新 prompt：在发出前直接给清楚提示
+    if (running && generating && midTurn.delivery === "blocked") {
+      return "这一轮还没结束，等它结束或先点停止再发";
     }
     // 从聊天层开聊：记下这套搭配，下次在这个项目里点一下就能换回来（launch-combos.ts）
     if (launchPickOpen && launchPick && cwd && launchPick.profileId) {
@@ -1451,8 +1456,23 @@ export default function ChatSurface({
     return onSend(text);
   }
 
-  // 生成中又发一句：这家 CLI 怎么处理（下一步就交 / 这一轮说完再交）、怎么「立即发送」（2026-10-22 逐家实测）
-  const midTurn = midTurnSpec(agentId, { csiU: runtime?.submitCsiU ?? false });
+  // 当前实际是否在跑纯协议运行时（Kimi ACP / Claude -p）：没有终端选择器、不往日志屏敲快捷键
+  const isNativeRuntime = Boolean(runtime?.status?.nativeRuntime || nativeRuntimeKind(channel?.kind));
+  const stopViaChannel = interruptRoute({
+    agentId,
+    nativeMode: Boolean(nativeOn),
+    actualNativeRuntime: isNativeRuntime,
+    splitRuntimeAgent: nativeRuntime(agentId),
+    stopViaChannel: nativeStopViaChannel(agentId),
+    channel,
+  }).viaChannel;
+
+  // 生成中又发一句：这家 CLI 怎么处理（下一步就交 / 这一轮说完再交 / 原生 ACP 等回合结束）、怎么「立即发送」
+  const midTurn = midTurnSpec(agentId, {
+    csiU: runtime?.submitCsiU ?? false,
+    channelKind: channel?.kind ?? null,
+    nativeMode: Boolean(nativeOn),
+  });
   const sendNow = running && generating && onSendNow ? midTurn.sendNow : null;
   // 点过「立即发送」的那一轮不再给钮（那句还要等会话文件记下才从「排队」变正式，期间别让人连点）
   const [sentNowAt, setSentNowAt] = useState<number | null>(null);
@@ -1544,7 +1564,9 @@ export default function ChatSurface({
   // 权限写在输入框身上：切到完全访问时上沿细线亮一下、只讨论虚线框（其余档不加东西）
   const launchAgentLabel = AGENTS.find((a) => a.id === launchPick?.agentId)?.label ?? "这家 CLI";
   const launchAgentVersion = useAppStore((s) => s.agents.find((a) => a.id === launchPick?.agentId)?.version ?? null);
-  const inlinePermission = launchPick ? inSessionPermissionSwitch(launchPick.agentId, launchAgentVersion) : null;
+  // 纯协议运行时没有终端选择器，不走 /permission 读屏路径
+  const inlinePermission =
+    launchPick && !isNativeRuntime ? inSessionPermissionSwitch(launchPick.agentId, launchAgentVersion) : null;
   const permTier =
     launchPick && !readOnly
       ? effectivePermissionTier(launchPick.permission, launchPick.permissionMode, launchPick.permissionNote)
@@ -2388,7 +2410,7 @@ export default function ChatSurface({
         draftTextRef={draftTextRef}
         onImageStageChange={setImageStageOpen}
         queueHint={queueSendHint(midTurn)}
-        stopTitle={stopTitle(midTurn, agentId)}
+        stopTitle={stopTitle(midTurn, agentId, { viaChannel: stopViaChannel })}
         notice={relayNotice ?? cutOffNotice ?? imageMissNotice ?? cacheNotice}
         imageGen={readOnly ? null : imageGen.composer}
         onAside={aside.openCard}

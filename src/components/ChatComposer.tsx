@@ -506,8 +506,8 @@ export default function ChatComposer({
   draftTextRef?: { current: string };
   /** 看图标注台开 / 关（调用方据此把居中空态换成输入框在底部，让图有地方放） */
   onImageStageChange?: (open: boolean) => void;
-  /** 生成中停止块旁那组的字：这家 CLI 是「下一步交给它」还是「排队」（mid-turn-send.ts queueSendHint）；不传写「排队」 */
-  queueHint?: { label: string; title: string } | null;
+  /** 生成中停止块旁那组的字：这家 CLI 是「下一步交给它」还是「排队」（mid-turn-send.ts queueSendHint）；blocked 表示当前回合中不能插话 */
+  queueHint?: { label: string; title: string; blocked?: boolean } | null;
   /** 停止块的悬停说明（按 Esc 的几家，有排着的话时停下就马上处理那句，mid-turn-send.ts stopTitle） */
   stopTitle?: string | null;
   /** CLI 猜的下一句（Claude 输入框里那行灰字，prompt-suggestion.ts）：输入框空着时当占位字灰着显示，Tab / → 填入 */
@@ -1645,18 +1645,24 @@ export default function ChatComposer({
                 }}
               />
               {showStop && canSubmit && (
-                <>
-                  {/* 写法按这家 CLI 的真实行为：Claude / Codex 等是「下一步交给它」，不是排到这一轮之后 */}
-                  <span className="shrink-0 text-micro text-l4">{queueHint?.label ?? "排队"}</span>
-                  <SendBlock
-                    disabled={false}
-                    busy={false}
-                    onClick={() => void submit()}
-                    queued
-                    queuedTitle={queueHint?.title}
-                    queuedLabel={queueHint?.label}
-                  />
-                </>
+                queueHint?.blocked ? (
+                  <span className="shrink-0 text-micro text-l4" title={queueHint.title}>
+                    {queueHint.label}
+                  </span>
+                ) : (
+                  <>
+                    {/* 写法按这家 CLI 的真实行为：Claude / Codex 等是「下一步交给它」，不是排到这一轮之后 */}
+                    <span className="shrink-0 text-micro text-l4">{queueHint?.label ?? "排队"}</span>
+                    <SendBlock
+                      disabled={false}
+                      busy={false}
+                      onClick={() => void submit()}
+                      queued
+                      queuedTitle={queueHint?.title}
+                      queuedLabel={queueHint?.label}
+                    />
+                  </>
+                )
               )}
             </div>
           </div>
