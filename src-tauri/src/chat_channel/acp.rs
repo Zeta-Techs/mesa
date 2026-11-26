@@ -149,6 +149,7 @@ pub(crate) fn prepare(
             discuss,
             expect_model,
         }),
+        session: None,
     };
     Some((helper, bridge_args, env, prepared))
 }

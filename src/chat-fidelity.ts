@@ -208,7 +208,7 @@ export function versionTrust(installed: string | null | undefined, verified: str
  * 能开「原生模式」的家（2026-11-26 拍板，docs/design-chat-native-mode.md）：聊天经这家官方接口发消息、停止、答审批，
  * 不往终端里打字、不读屏；终端照样连着同一段对话。按家逐个点亮（首批 Codex → Kimi → Claude），默认关
  */
-const NATIVE_MODE_AGENTS = new Set(["codex", "kimi", "claude-code"]);
+const NATIVE_MODE_AGENTS = new Set(["codex", "kimi", "claude-code", "qwen", "opencode"]);
 
 export function nativeModeAvailable(agentId: string | null | undefined): boolean {
   return !!agentId && NATIVE_MODE_AGENTS.has(agentId);
@@ -222,6 +222,15 @@ const NATIVE_RUNTIME_AGENTS = new Set(["kimi", "claude-code"]);
 
 export function nativeRuntime(agentId: string | null | undefined): boolean {
   return !!agentId && NATIVE_RUNTIME_AGENTS.has(agentId);
+}
+
+/**
+ * 原生模式下「停止」也经通道（不往终端里按 Esc）的家。Qwen 的命令文件只有发话与确认回复两种命令，停止仍按 Esc
+ */
+const NATIVE_STOP_AGENTS = new Set(["codex", "kimi", "claude-code", "opencode"]);
+
+export function nativeStopViaChannel(agentId: string | null | undefined): boolean {
+  return !!agentId && NATIVE_STOP_AGENTS.has(agentId);
 }
 
 /**

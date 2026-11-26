@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeModeAllowed, nativeModeAvailable, nativeRuntime, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
+import { CHAT_FIDELITY, baselineKey, chatFidelity, nativeModeAllowed, nativeModeAvailable, nativeRuntime, nativeStopViaChannel, newerVersion, parseVersion, verifiedVersion, versionTrust } from "../src/chat-fidelity.ts";
 
 test("十家都写了聊天层能做到哪一步", () => {
   const ten = ["claude-code", "codex", "gemini", "qwen", "opencode", "kimi", "codebuddy", "cursor", "grok", "agy"];
@@ -81,8 +81,11 @@ test("联网前移的核对版本与随包的取较新，一边读不出取另�
 });
 
 test("原生模式逐家点亮：Codex、Kimi、Claude 已开（2026-11-26 拍板：Codex → Kimi → Claude，agy 先不做）", () => {
-  for (const id of ["codex", "kimi", "claude-code"]) assert.equal(nativeModeAvailable(id), true, id);
-  for (const id of ["agy", "opencode", "qwen", "gemini", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+  for (const id of ["codex", "kimi", "claude-code", "qwen", "opencode"]) assert.equal(nativeModeAvailable(id), true, id);
+  for (const id of ["agy", "gemini", "grok", "codebuddy", "cursor", "custom"]) assert.equal(nativeModeAvailable(id), false, id);
+  // Qwen 只有发话经通道，停止仍按 Esc
+  assert.equal(nativeStopViaChannel("qwen"), false);
+  assert.equal(nativeStopViaChannel("opencode"), true);
   // Kimi、Claude 原生模式没有终端界面（纯协议运行时）；Codex 双客户端
   assert.equal(nativeRuntime("kimi"), true);
   assert.equal(nativeRuntime("claude-code"), true);

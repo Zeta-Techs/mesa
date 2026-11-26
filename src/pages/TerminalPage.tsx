@@ -27,7 +27,7 @@ import {
 import type { TerminalProgress } from "../terminal-notify";
 import { forkChatMessages, forkPreviewCovered, sessionModeTier } from "../chat-handoff";
 import { currentVerifiedVersion } from "../cli-verified";
-import { chatFidelity, nativeModeAllowed, nativeModeAvailable, nativeRuntime, tierLabel, versionTrust } from "../chat-fidelity";
+import { chatFidelity, nativeModeAllowed, nativeRuntime, nativeStopViaChannel, tierLabel, versionTrust } from "../chat-fidelity";
 import {
   MISMATCH_EVENT,
   MISMATCH_TEMPLATE,
@@ -1669,7 +1669,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const tab = tabs.find((t) => t.id === tabId);
     const agent = statuses[tabId]?.agentId ?? tab?.initialAgentId;
     // 原生模式的 Codex 同 OpenCode：经官方接口停这一轮，不往终端里按 Esc
-    if (agent === "opencode" || (tab?.nativeMode && nativeModeAvailable(agent))) {
+    if (agent === "opencode" || (tab?.nativeMode && nativeStopViaChannel(agent))) {
       if (interruptBusyRef.current.has(tabId)) return;
       const snap = sessionByTab[tabId]?.channel;
       if (!snap || snap.connection !== "connected" || !snap.sessionId || !snap.turn) {

@@ -300,13 +300,20 @@ test("CLI 自己报过这一轮结束，读屏没认出输入框也不当成在�
 });
 
 test("原生模式：Codex 通道连着、认出对话就经通道发（回合中由后端改成插话），其余照旧打进终端", () => {
-  const ready = snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1" });
+  const ready = snap({ agent: "codex", kind: "codex", connection: "connected", sessionId: "th1", canSend: true });
   assert.equal(canSendViaChannel(ready), true);
   assert.equal(canSendViaChannel({ ...ready, sessionId: null }), false, "还没认出对话（第一句）");
   assert.equal(canSendViaChannel({ ...ready, connection: "disconnected" }), false);
   assert.equal(canSendViaChannel({ ...ready, turn: { seq: 1, status: "running", stopReason: null, error: null, startedAt: 1, endedAt: null } }), true, "回合中插话");
   assert.equal(canSendViaChannel({ ...ready, turn: { seq: 1, status: "completed", stopReason: "end_turn", error: null, startedAt: 1, endedAt: 2 } }), true);
-  assert.equal(canSendViaChannel(snap({ agent: "opencode", kind: "opencode", connection: "connected", sessionId: "s" })), false, "首批只有 Codex");
+  // 能不能发由后端定（canSend）：OpenCode 2.x 的发送接口没核实，后端不给
+  assert.equal(canSendViaChannel(snap({ agent: "opencode", kind: "opencode", connection: "connected", sessionId: "s" })), false);
+  assert.equal(canSendViaChannel(snap({ agent: "opencode", kind: "opencode", connection: "connected", sessionId: "s", canSend: true })), true);
+  assert.equal(canSendViaChannel({ ...ready, canSend: false }), false);
+  // Qwen 命令文件没有连接状态；Claude 原生连着就能发（会话 id 第一句后才报）
+  assert.equal(canSendViaChannel(snap({ agent: "qwen", kind: "qwen", canSend: true })), true);
+  assert.equal(canSendViaChannel(snap({ agent: "claude-code", kind: "claude-native", connection: "connected", canSend: true })), true);
+  assert.equal(canSendViaChannel(snap({ agent: "claude-code", kind: "claude-native", connection: "connecting", canSend: true })), false);
   assert.equal(canSendViaChannel(null), false);
 });
 

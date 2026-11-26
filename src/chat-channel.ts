@@ -67,6 +67,8 @@ export interface ChatChannelSnapshot {
   /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
   statusLine?: string | null;
   retry?: string | null;
+  /** 这条旁路能不能替聊天层发话（后端按家与版本定：Codex、Qwen、OpenCode 1.x、原生模式的 Kimi / Claude）；旧版后端没有这个字段 */
+  canSend?: boolean;
 }
 
 export type ChannelReplyDecision = "allow" | "allow_always" | "deny";
@@ -93,10 +95,12 @@ export function wantsChannelSend(native: boolean, message: string): boolean {
  * 不行就照旧打进终端（还没认出对话的第一句、通道断了），不丢这句
  */
 export function canSendViaChannel(snap: ChatChannelSnapshot | null | undefined): boolean {
-  if (!snap || snap.connection !== "connected") return false;
-  // Claude 的会话 id 在第一句之后才报（没带 --session-id 时）；连着就能发
+  if (!snap?.canSend || snap.connection === "disconnected") return false;
+  // Qwen 是命令文件，没有连接状态；Claude 的会话 id 在第一句之后才报（没带 --session-id 时），连着就能发
+  if (snap.kind === "qwen") return true;
+  if (snap.connection !== "connected") return false;
   if (snap.kind === "claude-native") return true;
-  return (snap.kind === "codex" || snap.kind === "acp") && !!snap.sessionId;
+  return !!snap.sessionId;
 }
 
 /** 旁路的回合状态 → 标签注意力（working / confirm / done）；旁路没说过就 null（交回原来的推断） */

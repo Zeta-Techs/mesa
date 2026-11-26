@@ -103,6 +103,7 @@ pub(crate) fn prepare(
         codex: None,
         sidecar: None,
         acp: Some(AcpPrep::bridge_only(listener, token, cwd, session_from_args(args))),
+        session: None,
     };
     Some((helper, bridge_args, env, prepared))
 }

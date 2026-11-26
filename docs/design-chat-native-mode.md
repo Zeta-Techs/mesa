@@ -176,7 +176,7 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
 
 ### 五、其余各家
 
-- 顺手能做：Qwen（Dual Output）、OpenCode（自带服务）本来双客户端，同 Codex 第 1 期做法，发消息与停止改走各自接口。
+- ✓（2026-11-26，分支 feat/chat-native-2）Qwen、OpenCode 同 Codex 第 1 期做法：Qwen 发话走 Dual Output 的 `{"type":"submit"}`（官方只有 submit 与确认回复两种命令，停止仍按 Esc，开关说明写明）；OpenCode 1.x 发话走 `POST /session/<id>/prompt_async`（1.19.5 OpenAPI 核对），停止照旧 `/abort`，接回时会话 id 取自 `--session` 参数；OpenCode 2.x 的发送接口没在本机核实，后端不给 `canSend`，照旧打字。能不能发由后端快照的 `canSend` 定。e2e_channel E2E_NATIVE=1 E2E_RESUME=1 实测 Qwen 0.28.4 新开 / 接回、OpenCode 1.19.5 接回都经通道发出、回合走完。
 - 等上游：agy（ACP 不认 Mesa 的第三方自定义模型、缺「帮我批准」），或先只开官方登录线。
 - 维护级尽力而为：Gemini、CodeBuddy、Cursor、Grok 的 ACP。
 - 一直没验过的：真模型、Windows 全部、切换时后台任务会不会被杀。

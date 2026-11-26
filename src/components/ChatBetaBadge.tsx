@@ -1,7 +1,7 @@
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, fidelityBadge, tierLabel } from "../chat-fidelity";
+import { chatFidelity, fidelityBadge, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
 import { Toggle } from "./PageFrame";
@@ -63,7 +63,11 @@ export function ChatBetaNotes({
         >
           <div className="min-w-0 flex-1">
             <p className="text-l2">原生模式 · 测试版</p>
-            <p>消息和停止直接交给 {label}，不往终端里打字</p>
+            <p>
+              {nativeStopViaChannel(agentId)
+                ? `消息和停止直接交给 ${label}，不往终端里打字`
+                : `消息直接交给 ${label}，不往终端里打字；停止仍在终端里按 Esc`}
+            </p>
           </div>
           <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
         </div>
