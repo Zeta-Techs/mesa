@@ -517,6 +517,32 @@ def global_phase(agent, gw, adir):
     return out
 
 
+def native_phase(agent, gw, out, adir):
+    """Codex 原生模式（docs/design-chat-native-mode.md，2026-11-26）：聊天层经通道发起这一轮（turn/start）、答审批、停止（turn/interrupt），
+    一个键都不往终端里敲，终端里的远程 TUI 照样画出。e2e_channel 的 E2E_NATIVE 跑两趟（发出 + 审批、发出 + 停止）。
+    只进检查、不进指纹：请求 / 会话形状与旁路端到端同一份，不另立基线"""
+    checks = {}
+    runs = (("native", {}), ("native-stop", {"E2E_INTERRUPT_MS": "2500", "E2E_PROMPT": "TRIGGER_LONG 讲长一点"}))
+    for name, extra in runs:
+        plans = make_plans(gw, out)
+        keep = os.path.join(adir, name)
+        env = dict(os.environ, MESA_E2E_REAL_CLI="1", E2E_PLANS=plans, E2E_AGENT=mesa(agent), E2E_CLEAN_HOME="1",
+                   E2E_KEEP=keep, E2E_NATIVE="1", **extra)
+        code, text = run([cargo(), "test", "--lib", "e2e_channel", "--", "--ignored", "--nocapture"],
+                         cwd=os.path.join(ROOT, "src-tauri"), env=env, timeout=600)
+        open(os.path.join(adir, f"{name}.log"), "w", encoding="utf-8").write(text)
+        ch_path = os.path.join(keep, "channel.json")
+        ch = json.load(open(ch_path, encoding="utf-8")) if os.path.exists(ch_path) else {}
+        if name == "native":
+            checks["原生：经通道发出"] = code == 0 and "经通道发出" in text
+            checks["原生：终端画出这一轮"] = "终端画出了通道发的这一轮：true" in text
+            checks["原生：审批在聊天里答、这一轮走完"] = bool(ch.get("approvalReplyable")) and bool(ch.get("done"))
+        else:
+            checks["原生：经通道停下这一轮"] = (code == 0 and "官方接口已确认停止" in text
+                                              and (ch.get("statuses") or [])[-1:] == ["cancelled"])
+    return checks
+
+
 def codex_instructions_phase(adir):
     code, text = run([cargo(), "test", "--lib", "codex_instructions_extract_real", "--", "--ignored", "--nocapture"],
                      cwd=os.path.join(ROOT, "src-tauri"), timeout=600)
@@ -596,6 +622,10 @@ def probe_agent(agent, gw, out, skip_screen, deps):
     if agent == "codex":
         log(f"[{agent}] 取本机默认提示词…")
         checks["取得到 Codex 默认提示词"] = codex_instructions_phase(adir)
+    # Windows 上远程 TUI 与第二个客户端同步还没实测过（设计稿剩余路线 一.6），实测过再放开
+    if agent == "codex" and PLATFORM != "win32":
+        log(f"[{agent}] 原生模式：经通道发出、审批、停止…")
+        checks.update(native_phase(agent, gw, out, adir))
     if agent in GLOBAL_CMD and agent not in NO_GATEWAY:
         log(f"[{agent}] 设为全局后在外面直接用…")
         checks.update(global_phase(agent, gw, adir))
