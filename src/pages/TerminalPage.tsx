@@ -50,7 +50,7 @@ import { isBlankChatTab, isThrowawayTab } from "../quick-chat";
 import FileTree, { type DirEntryDto, type PathMutationEvent } from "../components/FileTree";
 import { FileTypeGlyph } from "../components/FileTypeMark";
 import GitPanel, { type GitSummary } from "../components/GitPanel";
-import { iconActionClass, LoadingRows } from "../components/PageFrame";
+import { ChatStopIcon, iconActionClass, LoadingRows } from "../components/PageFrame";
 import WorkspaceReviewView from "../components/WorkspaceReviewView";
 import ReaderOverlay from "../components/ReaderOverlay";
 import { buildWorkspaceTerminalRequest } from "../pipeline-start";
@@ -4029,7 +4029,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 { separator: true },
                 {
                   label: "关掉这段对话",
-                  icon: X,
+                  icon: ChatStopIcon,
                   hint: comboLabel(closeChatCombo(IS_MAC)),
                   title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
                   onSelect: () => {

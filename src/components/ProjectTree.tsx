@@ -39,6 +39,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "../store";
 import AgentIcon from "./AgentIcon";
+import { ChatStopIcon } from "./PageFrame";
 import {
   canDragChatToStep,
   canLeaveStep,
@@ -927,7 +928,7 @@ export default function ProjectTree({
             {
               // 流程步骤的对话叫「停下这一步」：用户要停步骤时找的是「停」，认不出「关掉对话」就是它（2026-11-05 实测差点点了删除）
               label: s.stepName ? "停下这一步" : "关掉这段对话",
-              icon: X,
+              icon: ChatStopIcon,
               title: s.stepName
                 ? "停下这一步的 AI、收起对话；工作区文件和记录都在，流程线上点「继续」接回（在干活的会先问你）"
                 : "停下这段对话的 Agent、收起它；记录还在，再点开发一句就接回（在干活的会先问你）",
@@ -1688,7 +1689,7 @@ export default function ProjectTree({
               }`}
               data-chat-close
             >
-              <X size={13} strokeWidth={1.8} aria-hidden="true" />
+              <ChatStopIcon size={14} strokeWidth={1.8} aria-hidden="true" />
             </button>
           )}
           {dot && (
@@ -1832,7 +1833,7 @@ export default function ProjectTree({
             }}
             className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-md text-l3 hover:bg-hover hover:text-l1 group-hover/chat:flex group-focus-within/chat:flex"
           >
-            <X size={13} strokeWidth={1.8} aria-hidden="true" />
+            <ChatStopIcon size={14} strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
       </div>

@@ -477,7 +477,10 @@ test("开着、列表里还没有的挂在文件夹最上面（新对话 / 终�
     // 不在任何项目里的终端：单列「其他打开的」
     const orphan = view.host.querySelector('[aria-label="其他打开的"]');
     assert.ok(orphan?.textContent?.includes("zsh"));
-    await view.act(async () => view.button("关掉「zsh」").click());
+    const orphanClose = view.button("关掉「zsh」");
+    assert.ok(orphanClose.querySelector("svg.lucide-chat-stop circle"), "打开行关闭钮应使用圆圈停止图标");
+    assert.ok(orphanClose.querySelector('svg.lucide-chat-stop rect[fill="currentColor"]'), "停止图标内部应为实心方块");
+    await view.act(async () => orphanClose.click());
     assert.deepEqual(closed, ["t-sh"]);
     // 点开着的那行：切过去
     await view.act(async () => view.button("zsh").click());
@@ -493,15 +496,19 @@ test("对话 ⋯ 里能在右侧分屏打开；开着的悬停出 ×（在 ⋯ �
   const view = await renderTree({ requestCloseTab: (id: string) => closed.push(id) });
   try {
     const close = view.button("关掉「镁硫电池第5篇精读」");
-    assert.match(close.className, /hidden group-hover\/chat:flex/, "× 平时藏着，悬停才出");
-    assert.equal(close.nextElementSibling?.hasAttribute("data-run-slot"), true, "× 在光标 / ⋯ 那一格左边");
-    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null, "没开着的没有 ×");
+    assert.match(close.className, /hidden group-hover\/chat:flex/, "停止图标平时藏着，悬停才出");
+    assert.ok(close.querySelector("svg.lucide-chat-stop circle"), "对话行关闭钮应使用圆圈停止图标");
+    assert.ok(close.querySelector('svg.lucide-chat-stop rect[fill="currentColor"]'), "停止图标内部应为实心方块");
+    assert.equal(close.nextElementSibling?.hasAttribute("data-run-slot"), true, "停止图标在光标 / ⋯ 那一格左边");
+    assert.equal(view.host.querySelector('[aria-label="关掉「镁硫电池第2篇精读」"]'), null, "没开着的没有停止图标");
     const slot = view.button("镁硫电池第5篇精读").parentElement!.querySelector("[data-run-slot]")!;
     assert.match(slot.className, /group-hover\/chat:hidden/, "悬停时光标让出那一格");
     await view.act(async () => close.click());
     assert.deepEqual(closed, ["t1"]);
     await view.act(async () => view.button("「镁硫电池第5篇精读」的更多操作").click());
-    await view.act(async () => view.button("关掉这段对话").click());
+    const menuClose = view.button("关掉这段对话");
+    assert.ok(menuClose.querySelector("svg.lucide-chat-stop"), "⋯ 菜单里的「关掉这段对话」应同步使用停止图标");
+    await view.act(async () => menuClose.click());
     assert.deepEqual(closed, ["t1", "t1"]);
     await view.act(async () => view.button("「镁硫电池第2篇精读」的更多操作").click());
     assert.ok(

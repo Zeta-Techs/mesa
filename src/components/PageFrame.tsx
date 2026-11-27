@@ -1,7 +1,7 @@
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, CircleCheck, CircleX, Info, Search, TriangleAlert, X, createLucideIcon } from "lucide-react";
 import { splitNoticeText } from "../notice-text";
 import { HoverTip, useHoverTip } from "./HoverTip";
 import { nextTabIndex, tabNavDelta, tabStopIndex } from "../tab-keys";
@@ -25,6 +25,12 @@ const WIDTHS = {
   /** 连续工作区页面（项目页）：使用主区全部可用宽度，内容自身维持固定密度。工作台 2026-10-27 起改用 wide。 */
   fluid: "max-w-none",
 } as const;
+
+/** 关掉 / 停下对话统一图标：外圆描边（对齐 Lucide 1.8 线宽）+ 内层实心小方块，比空心 CircleStop 在 13–14px 更清晰，也避免与删除「×」混淆 */
+export const ChatStopIcon = createLucideIcon("chat-stop", [
+  ["circle", { cx: "12", cy: "12", r: "10", key: "ring" }],
+  ["rect", { x: "8.5", y: "8.5", width: "7", height: "7", rx: "1", fill: "currentColor", stroke: "none", key: "core" }],
+]);
 
 export function PageFrame({
   children,
