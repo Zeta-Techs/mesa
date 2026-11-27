@@ -82,7 +82,7 @@ export function ChatBetaNotes({
           }
         >
           <div className="flex items-center justify-between gap-3">
-            <span className="text-[13px] font-medium leading-5 text-l1">原生模式</span>
+            <span className="text-sm font-medium leading-5 text-l1">原生模式</span>
             <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
           </div>
           <p className="mt-1 text-xs leading-[18px] text-l3">{nativeLine}</p>
