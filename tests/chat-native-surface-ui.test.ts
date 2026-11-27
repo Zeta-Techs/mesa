@@ -744,3 +744,245 @@ test("原生模式权限热切与回合中发话：Claude 原地切 ask/auto、f
     await env.cleanup();
   }
 });
+
+test("全八家原生通道综合验收：长思考不截断、中文路径审批拒/允、回合中插话矩阵、Kimi 斜杠命令灰字保留", async () => {
+  const env = mountDom();
+  const { createElement, act, ChatSurface } = env;
+  try {
+    // 1. 全八家（三家双客户端 + 五家纯协议原生）均按多句长 thinkingLive 完整渲染（超 48 字不截断）并在正文到来后让位
+    const channels: Array<[string, "codex" | "qwen" | "opencode" | "claude-native" | "acp"]> = [
+      ["codex", "codex"],
+      ["qwen", "qwen"],
+      ["opencode", "opencode"],
+      ["claude-code", "claude-native"],
+      ["kimi", "acp"],
+      ["gemini", "acp"],
+      ["codebuddy", "acp"],
+      ["grok", "acp"],
+    ];
+    let seq = 10;
+    for (const [agent, kind] of channels) {
+      seq += 1;
+      const chunk1 = `第一句先核对 ${agent} 场景。接下来对比 Python、Rust、TypeScript 在桌面工具开发里的打包体积与并发表现，`;
+      const chunk2 = `${chunk1}最后检查 Windows 中文路径归一化并收尾——尾段校验标记_${agent}。`;
+      await act(async () => {
+        env.root.render(
+          createElement(
+            ChatSurface,
+            baseProps({
+              agentId: agent,
+              attention: "working",
+              channel: baseChannel({
+                agent,
+                kind,
+                turn: { seq, status: "running", stopReason: null, startedAt: seq * 10, endedAt: null },
+                thinking: chunk1,
+                thinkingLive: chunk1,
+                liveText: null,
+              }),
+              liveReply: null,
+              liveReplySource: null,
+            }),
+          ),
+        );
+      });
+      await act(async () => {
+        env.root.render(
+          createElement(
+            ChatSurface,
+            baseProps({
+              agentId: agent,
+              attention: "working",
+              channel: baseChannel({
+                agent,
+                kind,
+                turn: { seq, status: "running", stopReason: null, startedAt: seq * 10, endedAt: null },
+                thinking: chunk2,
+                thinkingLive: chunk2,
+                liveText: null,
+              }),
+              liveReply: null,
+              liveReplySource: null,
+            }),
+          ),
+        );
+      });
+      // useRevealedText 对增量追加按 REVEAL_HORIZON_MS(220ms) 匀速放字，等待匀速动画放完
+      const marker = `尾段校验标记_${agent}`;
+      for (let i = 0; i < 25 && !env.rootEl.textContent?.includes(marker); i++) {
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 40));
+        });
+      }
+      assert.ok(
+        env.rootEl.textContent?.includes(marker),
+        `${agent}(${kind}) 实时思考流应完整输出超 48 字尾段`,
+      );
+      await act(async () => {
+        env.root.render(
+          createElement(
+            ChatSurface,
+            baseProps({
+              agentId: agent,
+              attention: "working",
+              channel: baseChannel({
+                agent,
+                kind,
+                turn: { seq, status: "running", stopReason: null, startedAt: seq * 10, endedAt: null },
+                thinking: null,
+                thinkingLive: null,
+                liveText: `正文已开始_${agent}`,
+              }),
+              liveReply: [`正文已开始_${agent}`],
+              liveReplySource: "markdown",
+            }),
+          ),
+        );
+      });
+      assert.ok(env.rootEl.textContent?.includes(`正文已开始_${agent}`), `${agent} 正文应立即接管预览`);
+      assert.ok(!env.rootEl.textContent?.includes(`尾段校验标记_${agent}`), `${agent} 正文开始后思考预览应让位`);
+    }
+
+    // 2. Windows 中文路径审批卡：命令原文清晰、无 \\?\、点击「拒绝」与「允许」均经 onChannelReply 精准回传
+    const replies: Array<{ rid: string; dec: string }> = [];
+    const winCmd = 'echo 原生测试 > "C:\\测试目录\\原生测试_中文.txt"';
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "gemini",
+            attention: "confirm",
+            cwd: "C:\\测试目录",
+            channel: baseChannel({
+              agent: "gemini",
+              kind: "acp",
+              turn: { seq: 30, status: "awaiting_approval", stopReason: null, startedAt: 300, endedAt: null },
+              approval: {
+                requestId: "req-win-zh",
+                callId: "call-win-zh",
+                kind: "execute",
+                toolName: "run_shell_command",
+                replyable: true,
+                command: winCmd,
+                path: null,
+                oldText: null,
+                newText: null,
+                diff: null,
+                detail: "写入中文测试文件",
+                alwaysLabel: "本会话都允许",
+              },
+            }),
+            onChannelReply: async (rid: string, dec: string) => {
+              replies.push({ rid, dec });
+              return true;
+            },
+          }),
+        ),
+      );
+    });
+    assert.ok(env.rootEl.textContent?.includes("原生测试_中文.txt"), "审批卡应无乱码展示 Windows 中文文件名");
+    assert.ok(!env.rootEl.textContent?.includes("\\\\?\\"), "审批卡不应泄漏 Windows verbatim 前缀");
+    const buttons = Array.from(env.rootEl.querySelectorAll("button"));
+    const denyBtn = buttons.find((b) => b.textContent?.trim() === "拒绝");
+    const allowBtn = buttons.find((b) => b.textContent?.trim().startsWith("允许"));
+    const alwaysBtn = buttons.find((b) => b.textContent?.trim() === "本会话都允许");
+    assert.ok(denyBtn && allowBtn && alwaysBtn, "ACP 审批卡应提供拒绝、允许与本会话都允许按钮");
+    await act(async () => denyBtn.click());
+    await act(async () => allowBtn.click());
+    await act(async () => alwaysBtn.click());
+    assert.deepEqual(replies, [
+      { rid: "req-win-zh", dec: "deny" },
+      { rid: "req-win-zh", dec: "allow" },
+      { rid: "req-win-zh", dec: "allow_always" },
+    ]);
+
+    // 3. 回合中插话矩阵：Qwen / OpenCode 双客户端原生可发；Gemini / CodeBuddy / Grok ACP 提示等本轮结束且回车不误发
+    for (const dual of ["qwen", "opencode"] as const) {
+      const sent: string[] = [];
+      await act(async () => {
+        env.root.render(
+          createElement(
+            ChatSurface,
+            baseProps({
+              agentId: dual,
+              attention: "working",
+              channel: baseChannel({
+                agent: dual,
+                kind: dual,
+                turn: { seq: 40, status: "running", stopReason: null, startedAt: 400, endedAt: null },
+              }),
+              onSend: async (t: string) => {
+                sent.push(t);
+                return null;
+              },
+            }),
+          ),
+        );
+      });
+      const ta = env.rootEl.querySelector("textarea") as HTMLTextAreaElement;
+      await act(async () => setTextareaValue(env.w, ta, `补充一句_${dual}`));
+      await act(async () => pressEnter(env.w, ta));
+      assert.deepEqual(sent, [`补充一句_${dual}`], `${dual} 原生回合中应支持经通道发送插话`);
+    }
+    for (const acpAgent of ["gemini", "codebuddy", "grok"] as const) {
+      const sent: string[] = [];
+      await act(async () => {
+        env.root.render(
+          createElement(
+            ChatSurface,
+            baseProps({
+              agentId: acpAgent,
+              attention: "working",
+              channel: baseChannel({
+                agent: acpAgent,
+                kind: "acp",
+                turn: { seq: 50, status: "running", stopReason: null, startedAt: 500, endedAt: null },
+              }),
+              onSend: async (t: string) => {
+                sent.push(t);
+                return null;
+              },
+            }),
+          ),
+        );
+      });
+      const ta = env.rootEl.querySelector("textarea") as HTMLTextAreaElement;
+      await act(async () => setTextareaValue(env.w, ta, `拦截_${acpAgent}`));
+      assert.ok(env.rootEl.textContent?.includes("等这轮结束"), `${acpAgent} ACP 回合中应提示等这轮结束`);
+      await act(async () => pressEnter(env.w, ta));
+      assert.equal(sent.length, 0, `${acpAgent} ACP 回合中回车不应误发`);
+    }
+
+    // 4. Kimi ACP 斜杠命令结果（/usage、/help）以 command_output 留在对话流中不消失
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "kimi",
+            attention: "done",
+            messages: [
+              {
+                role: "user",
+                blocks: [{ kind: "command_output", text: "/usage\n本月已用 12%", toolName: null }],
+                timestamp: "2026-11-27T04:50:00Z",
+                usage: null,
+              },
+            ],
+            channel: baseChannel({
+              agent: "kimi",
+              kind: "acp",
+              turn: { seq: 60, status: "completed", stopReason: "end_turn", startedAt: 600, endedAt: 601 },
+            }),
+          }),
+        ),
+      );
+    });
+    assert.ok(env.rootEl.textContent?.includes("/usage"), "Kimi 原生 /usage 命令记录应保留在对话里");
+    assert.ok(env.rootEl.textContent?.includes("本月已用 12%"), "Kimi 原生 /usage 结果内容应可见");
+    assert.deepEqual(env.errors, []);
+  } finally {
+    await env.cleanup();
+  }
+});

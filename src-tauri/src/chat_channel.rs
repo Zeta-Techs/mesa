@@ -5261,9 +5261,10 @@ mod e2e {
         cleared: Option<(Option<String>, Option<String>, Option<String>)>,
         /// E2E_ARG_PROMPT：启动参数里的首条消息是否原样进了会话
         arg_prompt_ok: Option<bool>,
-        /// 快照里出现过的「正在跑的工具」（名字 + 参数，去重按先后）与思考摘要
+        /// 快照里出现过的「正在跑的工具」（名字 + 参数，去重按先后）、思考摘要与最长实时思考原文
         activities: Vec<String>,
         thoughts: Vec<String>,
+        thinking_live: Option<String>,
     }
 
     /// 拉起一次、发「跑命令」、按快照答审批，等这一轮走完；clear = 走完再发 /clear 看会话跟随
@@ -5488,15 +5489,22 @@ mod e2e {
             send(b"\r");
             std::thread::sleep(Duration::from_millis(1500));
         }
+        let default_prompt = if agent == "codex" {
+            "TRIGGER_TOOL TRIGGER_ESC 跑一下"
+        } else {
+            "TRIGGER_TOOL 跑一下"
+        };
+        let prompt_text = std::env::var("E2E_PROMPT").unwrap_or_else(|_| default_prompt.to_string());
+        let deny_approval = std::env::var("E2E_DENY").is_ok();
+        // 只有发的是 TRIGGER_TOOL 且未刻意拒批时，才要求探针文件落盘（TRIGGER_ASK / TRIGGER_PLAN / 纯思考流不建探针文件）
+        let need_probe = need_probe && !deny_approval && (arg_prompt.is_some() || prompt_text.contains("TRIGGER_TOOL"));
         // E2E_NATIVE=1（Codex，docs/design-chat-native-mode.md）：这句经通道发（turn/start）、停止经通道停（turn/interrupt），
         // 一个键都不往终端里敲；终端里的远程 TUI 照样画这一轮
         let native = std::env::var("E2E_NATIVE").is_ok() && (matches!(agent, "codex" | "qwen" | "opencode") || native_acp);
         // 认出对话之前（OpenCode 第一句才建会话）经通道发不了：照前端口径退回打字
         let mut native_sent = false;
         if native && arg_prompt.is_none() {
-            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
-                if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
-            });
+            let prompt = prompt_text.clone();
             let wait = Instant::now();
             // Claude 原生模式的会话 id 在第一句之后才报：连上就能发
             let ready = |s: ChannelSnapshot| s.session_id.is_some() || (s.kind == "claude-native" && s.connection == Some("connected"));
@@ -5516,9 +5524,7 @@ mod e2e {
         }
         if !native_sent && arg_prompt.is_none() {
             // E2E_PROMPT：换触发词（如 Codex 去掉 TRIGGER_ESC = 沙箱里直接跑、不走审批）
-            let prompt = std::env::var("E2E_PROMPT").unwrap_or_else(|_| {
-                if agent == "codex" { "TRIGGER_TOOL TRIGGER_ESC 跑一下" } else { "TRIGGER_TOOL 跑一下" }.to_string()
-            });
+            let prompt = prompt_text.clone();
             // 输入框画出来了也可能还没接字（2026-10-25/26 Windows Codex 经 --remote 起，屏上停在空输入框、字被吞）：
             // 打完看回显里有没有触发词，4 秒没出现就隔一会再打，最多三次
             let marker = prompt.split_whitespace().next().unwrap_or("").to_string();
@@ -5620,8 +5626,9 @@ mod e2e {
                         }
                         Value::Object(m)
                     });
-                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, "allow", answers.as_ref(), None));
-                    answered = Some(format!("聊天层回复（{r:?}）"));
+                    let decision = if deny_approval { "deny" } else { "allow" };
+                    let r = tauri::async_runtime::block_on(reply_impl("e2e-tab", &id, decision, answers.as_ref(), None));
+                    answered = Some(format!("聊天层回复({decision})（{r:?}）"));
                     if let Some(f) = &raw_log {
                         let line = json!({ "t": t0.elapsed().as_millis() as u64, "mark": "answered" }).to_string();
                         let _ = writeln!(f.lock().unwrap(), "{line}");
@@ -5756,7 +5763,8 @@ mod e2e {
             }
         }
         // 原生模式的思考原文（聊天层照终端模式的思考框显示）：取最长的那一截
-        if let Some(live) = all.iter().filter_map(|s| s.thinking_live.clone()).max_by_key(|t| t.len()) {
+        let thinking_live = all.iter().filter_map(|s| s.thinking_live.clone()).max_by_key(|t| t.len());
+        if let Some(live) = &thinking_live {
             println!("{agent}: 思考原文 {live:?}");
         }
         Run {
@@ -5769,6 +5777,7 @@ mod e2e {
             arg_prompt_ok,
             activities,
             thoughts,
+            thinking_live,
         }
     }
 
@@ -6166,6 +6175,9 @@ mod e2e {
                 "approvalTool": a.and_then(|a| a.tool_name.clone()),
                 "approvalReplyable": a.map(|a| a.replyable),
                 "approvalCommand": a.and_then(|a| a.command.clone()),
+                "approvalPlanLen": a.and_then(|a| a.plan.as_deref()).map(|p| p.chars().count()),
+                "approvalHasQuestions": a.is_some_and(|a| a.questions.is_some()),
+                "thinkingLive": first.thinking_live,
                 "answered": first.answered,
             });
             std::fs::write(keep.join("channel.json"), serde_json::to_string_pretty(&channel).unwrap()).unwrap();

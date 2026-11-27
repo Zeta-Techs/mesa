@@ -11,6 +11,7 @@
  *   --delay <毫秒>      会话文件比回合结束晚多少毫秒落盘（默认 350）；先于结束信号写负数，要连等号：--delay=-300
  *   --agent <id>        传给 ChatSurface 的 agentId（默认取序列里的 agent）
  *   --channel <kind>    同步喂一份结构化旁路快照（如 claude-native / acp / codex / qwen / opencode），模拟原生模式实时思考与流式通道
+ *   --thinking-stream   在正文到来前按块流式喂入超过 120 字的多句实时思考原文，校验前端完整呈现（不被 48 字/首句截断）并在正文到来后让位
  *   --keys "a|b|c"      判定用的几句（默认从最终回复里自动挑：首、中、尾几行的开头）
  *   --tool-flow a,b     这一轮先调工具：a 秒落 tool_use、b 秒落 tool_result，回复正文照 --delay 落（工具说明见 --tool-desc）
  *   --tool-desc <字>    工具调用的说明文字（默认「写一个探针文件」）
@@ -34,6 +35,7 @@ const { values: opt, positionals } = parseArgs({
     delay: { type: "string", default: "350" },
     agent: { type: "string" },
     channel: { type: "string" },
+    "thinking-stream": { type: "boolean", default: false },
     keys: { type: "string" },
     "tool-flow": { type: "string" },
     "tool-desc": { type: "string", default: "写一个探针文件" },
@@ -180,13 +182,25 @@ const makeChannel = (patch = {}) =>
         ...patch,
       }
     : null;
+const THINKING_CHUNKS = [
+  "第一句先核对需求范围。",
+  "接下来对比 Python、Rust、TypeScript 在桌面工具开发中的打包体积、并发能力与生态成熟度，",
+  "同时检查 Windows 盘符路径、反斜杠归一化与中文文件名 UTF-8 编码是否一致，",
+  "最后整理成四列对比表与结论，确保思考过程完整输出不被截断。",
+];
+const THINKING_TAIL_KEY = "确保思考过程完整输出不被截断";
+const thinkLead = opt["thinking-stream"] && opt.channel ? 1.2 : 0;
 let state = {
   messages: [...history, user],
   attention: "working",
   liveReply: null,
   liveReplyStyled: null,
   liveReplySource: null,
-  channel: makeChannel({ thinkingLive: "先梳理三个文件各自负责的边界…" }),
+  channel: makeChannel(
+    thinkLead > 0
+      ? { thinking: THINKING_CHUNKS[0], thinkingLive: THINKING_CHUNKS[0] }
+      : { thinkingLive: "先梳理三个文件各自负责的边界…" },
+  ),
 };
 const noop = () => {};
 const props = () => ({
@@ -216,6 +230,7 @@ const sample = () => {
     len: text.length,
     collapse: rootEl.querySelectorAll(".ccode-collapse").length,
     wait: count(text, "终端在等你"),
+    thinkTail: thinkLead > 0 ? count(text, THINKING_TAIL_KEY) : 0,
     label: (text.match(/已思考[^，。\s]{0,8}|已工作[^，。\s]{0,8}/g) ?? []).join("|"),
   });
 };
@@ -243,23 +258,39 @@ for (const st of opt.snap.split(",").filter(Boolean).map(Number)) {
   }, st * 1000);
 }
 
-// —— 事件：预览逐帧 → 回合结束（attention done，hooks Stop / 程序状态 idle）→ 会话文件落盘 ——
+// —— 事件：实时思考逐块（可选）→ 预览逐帧 → 回合结束（attention done，hooks Stop / 程序状态 idle）→ 会话文件落盘 ——
 const events = [];
+if (thinkLead > 0) {
+  let acc = THINKING_CHUNKS[0];
+  for (let i = 1; i < THINKING_CHUNKS.length; i++) {
+    acc += THINKING_CHUNKS[i];
+    const snapText = acc;
+    events.push([
+      +(0.25 * i).toFixed(3),
+      () =>
+        (state = {
+          ...state,
+          channel: makeChannel({ thinking: snapText, thinkingLive: snapText, liveText: null }),
+        }),
+    ]);
+  }
+}
 for (const f of frames) {
   events.push([
-    f.t,
+    +(f.t + thinkLead).toFixed(3),
     () =>
       (state = {
         ...state,
         liveReply: f.lines,
         liveReplyStyled: f.styled,
         liveReplySource: tl.source ?? "screen",
-        channel: makeChannel({ liveText: f.lines.join("\n"), thinkingLive: null }),
+        channel: makeChannel({ liveText: f.lines.join("\n"), thinking: null, thinkingLive: null }),
       }),
   ]);
 }
+const endAtShifted = +(endAt + thinkLead).toFixed(3);
 events.push([
-  endAt,
+  endAtShifted,
   () =>
     (state = {
       ...state,
@@ -267,22 +298,23 @@ events.push([
       channel: makeChannel({
         turn: { seq: 1, status: "completed", stopReason: "end_turn", startedAt: 1, endedAt: 2 },
         liveText: null,
+        thinking: null,
         thinkingLive: null,
       }),
     }),
 ]);
 if (opt["tool-flow"]) {
-  const [tUse, tRes] = opt["tool-flow"].split(",").map(Number);
+  const [tUse, tRes] = opt["tool-flow"].split(",").map((v) => +(Number(v) + thinkLead).toFixed(3));
   const use = { role: "assistant", blocks: [{ kind: "tool_use", text: JSON.stringify({ command: "echo mesa > mesa_probe.txt", description: opt["tool-desc"] }), toolName: "Bash", callId: "b1" }], timestamp: ts(11), usage: null, id: "a-11" };
   const res = { role: "user", blocks: [{ kind: "tool_result", text: "ok", toolName: null, callId: "b1" }], timestamp: ts(14), usage: null, id: "u-14" };
   const text = { role: "assistant", blocks: [{ kind: "text", text: reply, toolName: null }], timestamp: ts(15), usage: null, id: "a-15" };
-  if (endAt + D < tRes) console.log(`注意：--delay 让回复正文早于工具结果（${(endAt + D).toFixed(2)}s < ${tRes}s），真实会话文件不会这样排`);
+  if (endAtShifted + D < tRes) console.log(`注意：--delay 让回复正文早于工具结果（${(endAtShifted + D).toFixed(2)}s < ${tRes}s），真实会话文件不会这样排`);
   events.push([tUse, () => (state = { ...state, messages: [...history, user, use] })]);
   events.push([tRes, () => (state = { ...state, messages: [...history, user, use, res] })]);
-  events.push([endAt + D, () => (state = { ...state, messages: [...history, user, use, res, text] })]);
+  events.push([endAtShifted + D, () => (state = { ...state, messages: [...history, user, use, res, text] })]);
 } else {
   const final = { role: "assistant", blocks: [{ kind: "thinking", text: "先想一下怎么组织。", toolName: null }, { kind: "text", text: reply, toolName: null }], timestamp: ts(20), usage: null, id: "a-20" };
-  events.push([endAt + D, () => (state = { ...state, messages: [...history, user, final] })]);
+  events.push([endAtShifted + D, () => (state = { ...state, messages: [...history, user, final] })]);
 }
 events.sort((a, b) => a[0] - b[0]);
 for (const [t, fn] of events) {
@@ -310,6 +342,13 @@ KEYS.forEach((k, i) => {
 });
 const waitFrames = samples.filter((s) => s.wait > 0).length;
 if (waitFrames) problems.push(`「终端在等你」出现 ${waitFrames} 帧`);
+if (thinkLead > 0) {
+  const thinkSeen = samples.filter((s) => s.thinkTail > 0).length;
+  if (!thinkSeen) problems.push(`实时思考尾句「${THINKING_TAIL_KEY}」从未出现（疑似 48 字/首句截断）`);
+  const lastSample = samples[samples.length - 1];
+  if (lastSample && lastSample.thinkTail > 0) problems.push("正文落盘结束后实时思考预览仍残留未让位");
+}
+if (errors.length) problems.push(`控制台错误 ${errors.length} 条`);
 const changes = (key) => {
   const out = [];
   let prev;
@@ -320,7 +359,7 @@ const drops = [];
 for (let i = 1; i < samples.length; i++) {
   if (samples[i].len < samples[i - 1].len - 40 && samples[i].t > 0.5) drops.push(`${samples[i].t}:${samples[i - 1].len}→${samples[i].len}`);
 }
-console.log(`延迟 ${opt.delay}ms，回合结束 ${endAt}s，采样 ${samples.length} 帧，判定句：${KEYS.map((k) => `「${k}」`).join("")}`);
+console.log(`延迟 ${opt.delay}ms，回合结束 ${endAtShifted}s，采样 ${samples.length} 帧，判定句：${KEYS.map((k) => `「${k}」`).join("")}`);
 console.log(problems.length ? problems.join("\n") : "未见重复 / 闪没 / 消失");
 console.log(`过程标签：${changes("label")}`);
 console.log(`折叠容器：${changes("collapse")}`);

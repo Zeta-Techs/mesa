@@ -153,7 +153,7 @@ def plan_step(tools, raw):
     plan_file = m.group(1) if m else (gdir.group(1).rstrip("/") + "/mesa-plan.md" if gdir else None)
     steps = (["write"] if plan_file else []) + ["exit"]
     n = len(TOOL_RESULT_RE.findall(raw))
-    if n >= len(steps):
+    if n >= len(steps) or b"User has approved your plan" in raw or b"Exited Plan Mode" in raw:
         return None
     if repl:
         code = (f"await Write({{ file_path: {json.dumps(plan_file)}, content: {json.dumps(PLAN_TEXT, ensure_ascii=False)} }}); return 'ok'"
@@ -259,9 +259,11 @@ class H(BaseHTTPRequestHandler):
             shell, call_args = (plan_call[0], None), plan_call[1]
         delay = 0.6 if mode == "slow" else LONG_DELAY if mode == "long" else 0
         parts = pieces(lines, LONG_CHUNK if mode == "long" else 0)
-        # TRIGGER_THINK：回答 / 调工具前先出一段思考（Responses 推理摘要、Anthropic thinking 块、Chat 的 reasoning_content），
-        # 核对聊天层「现在在想什么」那条线；工具结果回来之后的那次请求不再想
-        think = THINK_TEXT if b"TRIGGER_THINK" in raw and mode != "done" else None
+        # TRIGGER_THINK：回答 / 调工具前先出一段思考（Responses 推理摘要、Anthropic thinking 块、Chat 的 reasoning_content、Gemini thought）；
+        # TRIGGER_RAW_THINK：Responses 不给 summary，只发原始 reasoning_text.delta（模拟第三方网关经 Codex 的真实行为）；
+        # 核对聊天层「现在在想什么」与完整实时思考流；工具结果回来之后的那次请求不再想
+        raw_think = b"TRIGGER_RAW_THINK" in raw
+        think = THINK_TEXT if (b"TRIGGER_THINK" in raw or raw_think) and mode != "done" else None
         if "count_tokens" in p:
             return self._send(200, {"input_tokens": 10})
         if p.split("?")[0].endswith("/messages"):
@@ -281,15 +283,6 @@ class H(BaseHTTPRequestHandler):
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
                 self._ev({"type": "message_stop"}, "message_stop")
                 return
-            if mode == "ask":
-                ask = {"questions": [ASK_COLOR, ASK_FRUIT] if b"TRIGGER_ASK2" in raw else [ASK_FRUIT] if b"TRIGGER_ASKM" in raw else [ASK_COLOR]}
-                log(note="emit-ask", schema=json.dumps(dict(tool_list(body)).get("AskUserQuestion"), ensure_ascii=False)[:1500])
-                self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_ask", "name": "AskUserQuestion", "input": {}}}, "content_block_start")
-                self._ev({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": json.dumps(ask, ensure_ascii=False)}}, "content_block_delta")
-                self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
-                self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
-                self._ev({"type": "message_stop"}, "message_stop")
-                return
             bi = 0
             if think:
                 self._ev({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}, "content_block_start")
@@ -300,8 +293,18 @@ class H(BaseHTTPRequestHandler):
                 self._ev({"type": "content_block_stop", "index": 0}, "content_block_stop")
                 time.sleep(1.0)
                 bi = 1
+            if mode == "ask":
+                ask = {"questions": [ASK_COLOR, ASK_FRUIT] if b"TRIGGER_ASK2" in raw else [ASK_FRUIT] if b"TRIGGER_ASKM" in raw else [ASK_COLOR]}
+                log(note="emit-ask", schema=json.dumps(dict(tool_list(body)).get("AskUserQuestion"), ensure_ascii=False)[:1500])
+                self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "tool_use", "id": "toolu_ask", "name": "AskUserQuestion", "input": {}}}, "content_block_start")
+                self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "input_json_delta", "partial_json": json.dumps(ask, ensure_ascii=False)}}, "content_block_delta")
+                self._ev({"type": "content_block_stop", "index": bi}, "content_block_stop")
+                self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
+                self._ev({"type": "message_stop"}, "message_stop")
+                return
             if shell:
-                self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "tool_use", "id": "toolu_probe", "name": shell[0], "input": {}}}, "content_block_start")
+                tid = f"toolu_probe_{len(TOOL_RESULT_RE.findall(raw))}"
+                self._ev({"type": "content_block_start", "index": bi, "content_block": {"type": "tool_use", "id": tid, "name": shell[0], "input": {}}}, "content_block_start")
                 self._ev({"type": "content_block_delta", "index": bi, "delta": {"type": "input_json_delta", "partial_json": call_args}}, "content_block_delta")
                 self._ev({"type": "content_block_stop", "index": bi}, "content_block_stop")
                 self._ev({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None}, "usage": {"output_tokens": 1}}, "message_delta")
@@ -348,15 +351,27 @@ class H(BaseHTTPRequestHandler):
             self._ev({"type": "response.created", "response": resp}, "response.created")
             out, oi = [], 0
             if think:
-                rs = {"id": "rs_1", "type": "reasoning", "summary": [{"type": "summary_text", "text": think}]}
-                self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**rs, "summary": []}}, "response.output_item.added")
-                self._ev({"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}, "response.reasoning_summary_part.added")
-                for piece in think_pieces(think):
-                    self._ev({"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "delta": piece}, "response.reasoning_summary_text.delta")
-                    time.sleep(THINK_DELAY)
-                self._ev({"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "text": think}, "response.reasoning_summary_text.done")
-                self._ev({"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": think}}, "response.reasoning_summary_part.done")
-                self._ev({"type": "response.output_item.done", "output_index": 0, "item": rs}, "response.output_item.done")
+                if raw_think:
+                    # 模拟第三方网关经 Codex：summary 为空，仅逐块推送原始 reasoning_text.delta
+                    rs = {"id": "rs_1", "type": "reasoning", "summary": [], "content": [{"type": "reasoning_text", "text": think}]}
+                    self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**rs, "content": []}}, "response.output_item.added")
+                    self._ev({"type": "response.content_part.added", "item_id": "rs_1", "output_index": 0, "content_index": 0, "part": {"type": "reasoning_text", "text": ""}}, "response.content_part.added")
+                    for piece in think_pieces(think):
+                        self._ev({"type": "response.reasoning_text.delta", "item_id": "rs_1", "output_index": 0, "content_index": 0, "delta": piece}, "response.reasoning_text.delta")
+                        time.sleep(THINK_DELAY)
+                    self._ev({"type": "response.reasoning_text.done", "item_id": "rs_1", "output_index": 0, "content_index": 0, "text": think}, "response.reasoning_text.done")
+                    self._ev({"type": "response.content_part.done", "item_id": "rs_1", "output_index": 0, "content_index": 0, "part": {"type": "reasoning_text", "text": think}}, "response.content_part.done")
+                    self._ev({"type": "response.output_item.done", "output_index": 0, "item": rs}, "response.output_item.done")
+                else:
+                    rs = {"id": "rs_1", "type": "reasoning", "summary": [{"type": "summary_text", "text": think}]}
+                    self._ev({"type": "response.output_item.added", "output_index": 0, "item": {**rs, "summary": []}}, "response.output_item.added")
+                    self._ev({"type": "response.reasoning_summary_part.added", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}, "response.reasoning_summary_part.added")
+                    for piece in think_pieces(think):
+                        self._ev({"type": "response.reasoning_summary_text.delta", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "delta": piece}, "response.reasoning_summary_text.delta")
+                        time.sleep(THINK_DELAY)
+                    self._ev({"type": "response.reasoning_summary_text.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "text": think}, "response.reasoning_summary_text.done")
+                    self._ev({"type": "response.reasoning_summary_part.done", "item_id": "rs_1", "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": think}}, "response.reasoning_summary_part.done")
+                    self._ev({"type": "response.output_item.done", "output_index": 0, "item": rs}, "response.output_item.done")
                 time.sleep(1.0)
                 out.append(rs); oi = 1
             if shell:
@@ -388,6 +403,11 @@ class H(BaseHTTPRequestHandler):
                 return self._send(200, chunk)
             if "stream" in p:
                 self._sse_start()
+                if think:
+                    for piece in think_pieces(think):
+                        self._ev({"candidates": [{"content": {"role": "model", "parts": [{"text": piece, "thought": True}]}, "index": 0}]})
+                        time.sleep(THINK_DELAY)
+                    time.sleep(0.5)
                 for i, part in enumerate(parts):
                     last = i == len(parts) - 1
                     c = {"candidates": [{"content": {"role": "model", "parts": [{"text": part}]}, "index": 0, **({"finishReason": "STOP"} if last else {})}]}
