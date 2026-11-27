@@ -15,6 +15,8 @@ use tauri::{AppHandle, Emitter, Manager};
 const FRAME: Duration = Duration::from_millis(16);
 /// 隐藏标签的输出缓冲上限（1 MB）
 const BACKLOG_CAP: usize = 1024 * 1024;
+/// 纯协议原生模式（stdio-bridge）运行日志环形缓冲上限（64 KB）：整页重载/重挂或打开日志抽屉时回放
+const NATIVE_LOG_CAP: usize = 64 * 1024;
 /// 可见时合帧缓冲上限（256 KB）：超限无视帧周期立即 flush。
 /// 从 4 MB 收紧：高速输出下更早 flush，pending 不会在大块场景里堆到 MB 级
 const PENDING_CAP: usize = 256 * 1024;
@@ -324,11 +326,25 @@ fn drain_backlog(backlog: &mut Vec<u8>) -> Option<String> {
     Some(text)
 }
 
+/// 追加到纯协议原生日志环形缓冲；超限时从头部按 UTF-8 边界丢弃
+fn native_log_push(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(bytes);
+    if buf.len() > NATIVE_LOG_CAP {
+        let mut drop = buf.len() - NATIVE_LOG_CAP;
+        while drop < buf.len() && !is_utf8_boundary(buf[drop]) {
+            drop += 1;
+        }
+        buf.drain(..drop);
+    }
+}
+
 /// 前端的输出通道（pty_subscribe 交来，每次 attach 新建一条）与隐藏期积压放在同一把锁下：
-/// 补发严格先于之后的实时块。还没接上通道时与隐藏时一样进 backlog，接上再补发
+/// 补发严格先于之后的实时块。还没接上通道时与隐藏时一样进 backlog，接上再补发；
+/// 纯协议原生运行时（native_log = Some）额外保留最近 64 KB 环形日志，重挂或抽屉随时可回放
 #[derive(Default)]
 struct OutputSink {
     backlog: Vec<u8>,
+    native_log: Option<Vec<u8>>,
     channel: Option<Channel>,
 }
 
@@ -444,6 +460,9 @@ fn send_counted(flow: &FlowGate, units: usize, send: impl FnOnce() -> bool) -> b
 /// 与 pty_set_visible / pty_subscribe 共用 sink 锁，保证补发严格先于实时块。
 /// 返回值 = 要照发给后台标签的带外信号（调用方 emit pty-signal）
 fn route_output(sink: &mut OutputSink, visible: bool, flow: &FlowGate, text: String) -> Option<String> {
+    if let Some(log) = sink.native_log.as_mut() {
+        native_log_push(log, text.as_bytes());
+    }
     if visible && sink.channel.is_some() {
         if let Some(back) = drain_backlog(&mut sink.backlog) {
             send_frame(sink, flow, back);
@@ -705,6 +724,8 @@ fn spawn_tracked(
     cwd_file: Option<std::path::PathBuf>,
     // 这个标签用程序状态（OSC 7501，program_status.rs）当聊天层旁路：答探询、读报告
     program_status: bool,
+    // 纯协议原生运行时（PTY 里是 stdio-bridge）：原子置位 native_runtime 并开启 64 KB 环形运行日志
+    native_runtime: bool,
 ) -> Result<String, String> {
     if crate::process::shutting_down() {
         return Err("应用正在退出，拒绝启动终端".into());
@@ -777,7 +798,11 @@ fn spawn_tracked(
 
     let pty_id = uuid::Uuid::new_v4().to_string();
     let visible = Arc::new(AtomicBool::new(false)); // 默认不可见：前端随即按标签状态标记
-    let sink = Arc::new(Mutex::new(OutputSink::default()));
+    let sink = Arc::new(Mutex::new(OutputSink {
+        backlog: Vec::new(),
+        native_log: native_runtime.then(Vec::new),
+        channel: None,
+    }));
     let flow = Arc::new(FlowGate::default());
     let bracketed_paste = Arc::new(AtomicBool::new(false));
     LIVE_MANAGER.get_or_init(|| manager.clone());
@@ -798,7 +823,7 @@ fn spawn_tracked(
             run_id: run_id.clone(),
             cwd_file,
             shell_kind: None,
-            native_runtime: false,
+            native_runtime,
         },
     );
 
@@ -1376,15 +1401,9 @@ fn pty_spawn_sync(
         pty_size_from(cols, rows),
         None,
         channel.as_ref().is_some_and(|c| c.program_status()),
+        native_runtime,
     ) {
-        Ok(pty_id) => {
-            if native_runtime {
-                if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&pty_id) {
-                    entry.native_runtime = true;
-                }
-            }
-            pty_id
-        }
+        Ok(pty_id) => pty_id,
         Err(error) => {
             if let Some(channel) = channel {
                 channel.abort();
@@ -1540,6 +1559,7 @@ fn shell_spawn_sync(
         pty_size_from(cols, rows),
         cwd_file,
         false,
+        false,
     ) {
         Ok(id) => {
             if let Some(entry) = manager.inner().entries.lock().unwrap().get_mut(&id) {
@@ -1635,6 +1655,7 @@ fn pty_spawn_custom_sync(
         pty_size_from(cols, rows),
         None,
         false,
+        false,
     ) {
         Ok(id) => id,
         Err(error) => {
@@ -1672,11 +1693,22 @@ fn pty_spawn_custom_sync(
     })
 }
 
+/// 这条 Run 上已经在跑的 PTY 信息：含是否纯协议原生运行时，供整页重载/重挂接回时还原状态。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunPtyDto {
+    pub pty_id: String,
+    pub native_runtime: bool,
+}
+
 /// 这条 Run 上已经在跑的 PTY。只读，不启动、不改行列。
 /// 空 id 返回 None。前端在收起启动栏之前先问这一次，避免按矮格子新开进程。
 #[tauri::command]
-pub fn pty_id_for_run(manager: tauri::State<'_, PtyManager>, run_id: String) -> Option<String> {
-    manager.inner().pty_id_for_run(&run_id)
+pub fn pty_id_for_run(manager: tauri::State<'_, PtyManager>, run_id: String) -> Option<RunPtyDto> {
+    manager.inner().pty_for_run(&run_id).map(|(pty_id, native_runtime)| RunPtyDto {
+        pty_id,
+        native_runtime,
+    })
 }
 
 /// 登录 shell 的程序与参数（纯函数，便于单测）。
@@ -2310,23 +2342,94 @@ pub fn pty_set_visible(
     Ok(())
 }
 
+/// 去掉终端转义序列（CSI / OSC / 双字节 ESC）与多余 CR，供纯文本运行日志面板展示（ConPTY 会在开头注入控制序列）。
+fn clean_native_log_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek().copied() {
+                Some('[') => {
+                    chars.next();
+                    for ch in chars.by_ref() {
+                        if ('@'..='~').contains(&ch) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    chars.next();
+                    while let Some(ch) = chars.next() {
+                        if ch == '\x07' {
+                            break;
+                        }
+                        if ch == '\x1b' && chars.peek() == Some(&'\\') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
+            }
+            continue;
+        }
+        if c == '\r' {
+            if chars.peek() != Some(&'\n') {
+                out.push('\n');
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// 接上通道时按需把原生环形日志放回 backlog，使整页重载 / 重挂后的新 xterm 能完整看到启动引导与历史 stderr
+fn seed_native_replay(sink: &mut OutputSink, replay: bool) {
+    if replay {
+        if let Some(log) = sink.native_log.as_ref().filter(|b| !b.is_empty()) {
+            sink.backlog = log.clone();
+        }
+    }
+}
+
 /// 前端接上这个 PTY 的输出通道（attach 时每次新建一条；旧通道随 drop 通知前端收尾）。
-/// 接上之前与隐藏期间的输出都在 backlog 里，可见就当场补发
+/// 接上之前与隐藏期间的输出都在 backlog 里，可见就当场补发；重挂原生运行时（replay = true）
+/// 从 64 KB 环形日志补发历史输出，避免整页重载后变成黑屏
 #[tauri::command]
 pub fn pty_subscribe(
     manager: tauri::State<'_, PtyManager>,
     pty_id: String,
     channel: Channel,
+    replay: Option<bool>,
 ) -> Result<(), String> {
     let entries = manager.entries.lock().unwrap();
     let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
     let mut sink = entry.sink.lock().unwrap();
     sink.channel = Some(channel);
+    seed_native_replay(&mut sink, replay.unwrap_or(false));
     entry.flow.reset();
     if entry.visible.load(Ordering::Relaxed) {
         flush_backlog(&mut sink, &entry.flow);
     }
     Ok(())
+}
+
+/// 读取纯协议原生运行时（stdio-bridge）的 64 KB 环形运行日志（已去除终端控制序列，供纯文本日志抽屉展示）。
+#[tauri::command]
+pub fn pty_native_log(manager: tauri::State<'_, PtyManager>, pty_id: String) -> Result<String, String> {
+    let entries = manager.entries.lock().unwrap();
+    let entry = entries.get(&pty_id).ok_or("终端不存在或已退出")?;
+    let sink = entry.sink.lock().unwrap();
+    let raw = sink
+        .native_log
+        .as_deref()
+        .map(|b| String::from_utf8_lossy(b).into_owned())
+        .unwrap_or_default();
+    Ok(clean_native_log_text(&raw))
 }
 
 /// 前端画完了这么多字（UTF-16 码元）：流控确认，读线程按需恢复读取
@@ -2881,7 +2984,7 @@ mod tests {
     fn big_frames_go_raw_small_frames_go_json() {
         let flow = FlowGate::default();
         let (channel, got) = recording_channel();
-        let mut sink = OutputSink { backlog: Vec::new(), channel: Some(channel) };
+        let mut sink = OutputSink { backlog: Vec::new(), native_log: None, channel: Some(channel) };
         let big = "画".repeat(RAW_FRAME_MIN);
         route_output(&mut sink, true, &flow, "小帧\x1b[0m".into());
         route_output(&mut sink, true, &flow, big.clone());
@@ -3326,8 +3429,52 @@ mod tests {
     fn has_run_false_when_empty() {
         assert!(!PtyManager::default().has_run("run-1"));
         assert!(!PtyManager::default().has_run(""));
+        assert_eq!(PtyManager::default().pty_for_run("run-1"), None);
+        assert_eq!(PtyManager::default().pty_for_run(""), None);
         assert_eq!(PtyManager::default().pty_id_for_run("run-1"), None);
         assert_eq!(PtyManager::default().pty_id_for_run(""), None);
+        let dto = RunPtyDto { pty_id: "p1".into(), native_runtime: true };
+        let v = serde_json::to_value(&dto).unwrap();
+        assert_eq!(v["ptyId"], "p1");
+        assert_eq!(v["nativeRuntime"], true);
+    }
+
+    #[test]
+    fn native_log_ring_caps_utf8_and_replays_on_reattach() {
+        let flow = FlowGate::default();
+        let mut sink = OutputSink {
+            backlog: Vec::new(),
+            native_log: Some(Vec::new()),
+            channel: None,
+        };
+        let (ch1, got1) = recording_channel();
+        sink.channel = Some(ch1);
+        route_output(&mut sink, true, &flow, "\x1b[?25hMesa 原生模式：claude 运行中\r\n".into());
+        route_output(&mut sink, true, &flow, "[stderr] line-2\n".into());
+        assert_eq!(got1.lock().unwrap().len(), 2);
+        assert!(sink.backlog.is_empty(), "首次订阅已消费完 backlog");
+        let cleaned = clean_native_log_text(&String::from_utf8_lossy(sink.native_log.as_deref().unwrap()));
+        assert_eq!(cleaned, "Mesa 原生模式：claude 运行中\n[stderr] line-2\n");
+
+        // 模拟整页重载后重挂：新建 channel + replay = true，即使 backlog 为空也能完整回放历史日志
+        let (ch2, got2) = recording_channel();
+        sink.channel = Some(ch2);
+        seed_native_replay(&mut sink, true);
+        flush_backlog(&mut sink, &flow);
+        let replayed: Vec<String> = got2.lock().unwrap().iter().map(|(_, t)| t.clone()).collect();
+        assert_eq!(
+            replayed,
+            vec!["\x1b[?25hMesa 原生模式：claude 运行中\r\n[stderr] line-2\n".to_string()]
+        );
+
+        // 超出 64 KB 上限时按 UTF-8 字符边界从头截断（累计推入 >128 KB，确认封顶在 64 KB 内）
+        let mut ring = Vec::new();
+        let chunk = "中文日志块-".repeat(200);
+        for _ in 0..48 {
+            native_log_push(&mut ring, chunk.as_bytes());
+        }
+        assert!(ring.len() > NATIVE_LOG_CAP - 16 && ring.len() <= NATIVE_LOG_CAP);
+        assert!(std::str::from_utf8(&ring).is_ok(), "环形日志截断后必须保持合法 UTF-8");
     }
 
     #[cfg(unix)]

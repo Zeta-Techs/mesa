@@ -3755,7 +3755,8 @@ export const TerminalView = memo(function TerminalView({
               ? "working"
               : attention
           : null,
-      nativeRuntime: running && !shellActive && launchedNativeRef.current,
+      nativeRuntime:
+        running && !shellActive && (launchedNativeRef.current || nativeRuntimeKind(channel?.kind)),
       canResume: shellActive && lastResumeRef.current != null,
       startedAt,
       sessionId:
@@ -5080,8 +5081,9 @@ export const TerminalView = memo(function TerminalView({
       invoke("pty_kill", { ptyId }).catch(() => {});
       return;
     }
-    // 监听都挂好了再接通道：接上之前的输出在后端 backlog 里，可见就当场补发，不会丢开屏
-    await invoke("pty_subscribe", { ptyId, channel: output }).catch(() => {});
+    // 监听都挂好了再接通道：接上之前的输出在后端 backlog 里，可见就当场补发，不会丢开屏；
+    // 整页重载/重挂既有原生桥进程时带 replay=true，从后端 64 KB 环形日志补发启动引导与历史 stderr
+    await invoke("pty_subscribe", { ptyId, channel: output, replay: Boolean(opts?.reattach) }).catch(() => {});
     // Windows/ConPTY 吞掉 Agent 的 OSC 10/11 底色查询（两个方向都不通，见
     // docs/conventions/terminal.md），xterm 的内置回报永远送不到子进程。
     // 改为不等查询、attach 后主动推一次：浅色主题下把当前前景/底色告诉 Agent，
@@ -6160,10 +6162,13 @@ export const TerminalView = memo(function TerminalView({
           return null;
         }
         const probeRun = (runId ?? initialRunId ?? "").trim();
-        if (
-          probeRun &&
-          (await invoke<string | null>("pty_id_for_run", { runId: probeRun }))
-        ) {
+        const existingCustom = probeRun
+          ? await invoke<{ ptyId: string; nativeRuntime: boolean } | null>("pty_id_for_run", {
+              runId: probeRun,
+            })
+          : null;
+        if (existingCustom) {
+          launchedNativeRef.current = existingCustom.nativeRuntime;
           setNotice("已接回正在跑的进程，画面大小先不动");
           return null;
         }
@@ -6354,13 +6359,14 @@ export const TerminalView = memo(function TerminalView({
       advanced: advancedLaunchOpenRef.current,
     };
     const probeRun = freshRun ? "" : (runId ?? initialRunId ?? "").trim();
-    let existingPty: string | null = null;
+    let existingPty: { ptyId: string; nativeRuntime: boolean } | null = null;
     if (probeRun) {
-      existingPty = await invoke<string | null>("pty_id_for_run", {
+      existingPty = await invoke<{ ptyId: string; nativeRuntime: boolean } | null>("pty_id_for_run", {
         runId: probeRun,
       });
     }
     if (existingPty) {
+      launchedNativeRef.current = existingPty.nativeRuntime;
       resizeLatchRef.current = { kind: "frozen" };
       // 接回活进程也要先立关联上下文：标签重新挂载后 linkCtxRef 是空的，linkTick 见空直接返回，
       // 聊天层永远停在「正在连接当前会话…」、20 秒超时也不触发（2026-10-23 用户点随手聊会话实测）。
@@ -6388,7 +6394,7 @@ export const TerminalView = memo(function TerminalView({
       setSyncState("detecting");
       linkStartedAtRef.current = Date.now();
       startLinkPolling(500);
-      await attach(existingPty, "agent", { reset: Boolean(restored), reattach: true });
+      await attach(existingPty.ptyId, "agent", { reset: Boolean(restored), reattach: true });
       setExited(false);
       setExitCode(null);
       setShellActive(false);
@@ -6397,7 +6403,7 @@ export const TerminalView = memo(function TerminalView({
       setNotice("已接回正在跑的进程，画面大小先不动");
       if (restored) onRestoreComplete?.(tabId);
       if (resumeSessionId) onConsumeResume?.(tabId);
-      return { ptyId: existingPty, promptDropped: false };
+      return { ptyId: existingPty.ptyId, promptDropped: false };
     }
     if (chrome.kind === "collapse") {
       setAdvancedLaunchOpen(false);

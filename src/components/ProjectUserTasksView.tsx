@@ -523,7 +523,8 @@ export default function ProjectUserTasksView({
       if (run.runtime === "headless") {
         await invoke("run_cancel", { id: run.id });
       } else {
-        const ptyId = await invoke<string | null>("pty_id_for_run", { runId: run.id });
+        const live = await invoke<{ ptyId: string; nativeRuntime: boolean } | null>("pty_id_for_run", { runId: run.id });
+        const ptyId = live?.ptyId ?? null;
         if (!ptyId) {
           // 进程不在这个 Mesa 里（另一个 Mesa 开着、或正在启动）：不替它收尾，免得把别处还在跑的标成已停止
           setError("这个目标的 Agent 不在当前窗口里运行。点「继续」打开它，再在对话里停止。");

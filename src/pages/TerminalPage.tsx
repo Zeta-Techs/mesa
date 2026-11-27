@@ -3485,7 +3485,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       const drop = new Set<string>();
       for (const t of others) {
         const live = t.runId
-          ? await invoke<string | null>("pty_id_for_run", { runId: t.runId }).catch(() => null)
+          ? await invoke<{ ptyId: string; nativeRuntime: boolean } | null>("pty_id_for_run", { runId: t.runId }).catch(() => null)
           : null;
         if (!live) drop.add(t.id);
       }

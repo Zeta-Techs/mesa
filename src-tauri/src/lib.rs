@@ -767,6 +767,7 @@ pub fn run() {
             terminal_replay::prune_terminal_replays,
             pty::pty_set_visible,
             pty::pty_subscribe,
+            pty::pty_native_log,
             pty::pty_ack,
             pty::pty_get_cwd,
             pty::terminal_shell_options,

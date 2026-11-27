@@ -147,7 +147,9 @@ async function renderGoals(options: {
           return data.review;
         }
         if (command === "task_adopt_outputs") return;
-        if (command === "pty_id_for_run") return data.ptyForRun;
+        if (command === "pty_id_for_run") {
+          return data.ptyForRun ? { ptyId: data.ptyForRun, nativeRuntime: false } : null;
+        }
         if (command === "pty_kill" || command === "run_cancel") {
           data.tasks = data.tasks.map((task) => task.status === "running" ? { ...task, status: "stopped" } : task);
           return;
