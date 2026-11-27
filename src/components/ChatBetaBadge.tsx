@@ -2,28 +2,46 @@ import { Flag, Info, ScrollText, SquareTerminal, TriangleAlert } from "lucide-re
 import { channelSourceNote, type ChatChannelSnapshot } from "../chat-channel";
 import { useAppStore } from "../store";
 import { AGENTS } from "../types";
-import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeRuntime, nativeStopViaChannel, tierLabel } from "../chat-fidelity";
+import { chatFidelity, fidelityBadge, nativeFidelityNote, nativeRuntime, tierLabel } from "../chat-fidelity";
 import { useCliNewer, useVerifiedVersion } from "../cli-verified";
 import { IS_WINDOWS } from "../hotkeys";
-import { Toggle, ghostActionClass, rowActionClass } from "./PageFrame";
+import { ghostActionClass, rowActionClass } from "./PageFrame";
 
 /**
- * 聊天层「测试版」说明（2026-10-22 用户：聊天层要不要标一个测试版）：说清楚这一家在聊天里能做到哪一步、
- * 哪些事要回终端；用户装的 CLI 比 Mesa 核对过的新时多一句提醒（chat-fidelity.ts）。只说明，不挡任何操作。
- * 2026-10-23 起不再单独占输入框底下一格，收进模型菜单底部一行（点开是这里的正文）；CLI 比核对过的新时只在菜单里那一行带点，芯片上不挂（2026-11-20）
+ * 聊天层说明（2026-11-27 拍板：聊天模式默认原生且不再标「测试版」，兼容模式保留测试版标）：
+ * 说清楚当前这一家在聊天里能做到哪一步、哪些事需要改用终端模式打开；本机 CLI 比 Mesa 核对过的新时多一句提醒。
  */
-export function useChatBeta(agentId: string | null) {
+export function useChatBeta(agentId: string | null, nativeOn = false) {
   const fidelity = chatFidelity(agentId, IS_WINDOWS);
   const newer = useCliNewer(agentId);
-  const badge = fidelityBadge(fidelity, newer);
-  const heading = fidelity?.beta ? "聊天是测试版" : fidelity && fidelity.tier >= 3 ? "这家的聊天是简化的" : "聊天层说明";
+  const badge = fidelityBadge(fidelity, newer, nativeOn);
+  const runtime = nativeRuntime(agentId);
+  const nativeNote = nativeOn && runtime ? nativeFidelityNote(agentId) : null;
+  const isBeta = !nativeOn && Boolean(fidelity?.beta);
+  const heading = nativeOn
+    ? "原生聊天"
+    : fidelity?.beta
+      ? "聊天是测试版"
+      : fidelity && fidelity.tier >= 3
+        ? "这家的聊天是简化的"
+        : "聊天层说明";
   // 模型菜单右上角提示符号悬停时的一句话（2026-11-16 用户：说明简洁显示在上面，不用再点进去）
-  const summary = `${heading}，以终端为准${fidelity ? `；${fidelity.terminalOnly}要回终端` : ""}。`;
-  const warn = newer ? "你装的 CLI 比 Mesa 核对过的新，聊天里的确认按钮可能按不准。" : null;
-  return { badge, newer, heading, summary, warn };
+  const summary = nativeOn
+    ? nativeNote
+      ? `已启用原生协议；${nativeNote.terminalOnly}需要改用终端模式打开。`
+      : fidelity
+        ? `已启用原生通道；${fidelity.terminalOnly}需要改用终端模式打开。`
+        : "已启用原生聊天。"
+    : `${heading}，以终端为准${fidelity ? `；${fidelity.terminalOnly}要回终端` : ""}。`;
+  const warn = newer
+    ? nativeOn
+      ? "你装的 CLI 比 Mesa 核对过的新，原生协议若不兼容可改用终端模式打开。"
+      : "你装的 CLI 比 Mesa 核对过的新，聊天里的确认按钮可能按不准。"
+    : null;
+  return { badge, isBeta, newer, heading, summary, warn };
 }
 
-/** 这段对话的「原生模式」开关（docs/design-chat-native-mode.md）；这家还没点亮时不传 */
+/** 这段对话的原生状态与切回终端模式动作（2026-11-27 单一工作界面预设：不再在菜单内放开关，只提供回退动作） */
 export interface NativeModeToggle {
   on: boolean;
   onToggle: (on: boolean) => void;
@@ -53,22 +71,19 @@ export function ChatBetaNotes({
   const label = AGENTS.find((a) => a.id === agentId)?.label ?? "这家 Agent";
   const verified = useVerifiedVersion(agentId);
   const newer = useCliNewer(agentId);
-  // 2026-11-26 用户：说明乱七八糟，精简——一行开关、一句话、按钮；能做到哪一步与数据从哪来收进那句话的悬停提示
   const runtime = nativeRuntime(agentId);
-  const runtimeOn = Boolean(native?.on && runtime);
+  const nativeOn = Boolean(native?.on);
+  const runtimeOn = Boolean(nativeOn && runtime);
   const nativeNote = runtimeOn ? nativeFidelityNote(agentId) : null;
   const line = nativeNote
     ? `${nativeNote.terminalOnly}需要改用终端模式打开。`
-    : fidelity
-      ? `以终端为准；${fidelity.terminalOnly}要回终端。`
-      : "以终端为准。";
-  const switchTerminalAction = onSwitchToTerminalMode ?? (native ? () => native.onToggle(false) : undefined);
+    : nativeOn && fidelity
+      ? `已启用原生通道；${fidelity.terminalOnly}需要改用终端模式打开。`
+      : fidelity
+        ? `以终端为准；${fidelity.terminalOnly}要回终端。`
+        : "以终端为准。";
   const lineTitle = fidelity ? `${label} · ${tierLabel(fidelity.tier)}：${nativeNote?.source ?? fidelity.source}` : undefined;
-  const nativeLine = runtime
-    ? `改用 ${label} 官方协议，无终端界面`
-    : nativeStopViaChannel(agentId)
-      ? `消息和停止直接交给 ${label}`
-      : `消息直接交给 ${label}，停止仍按 Esc`;
+  const switchTerminalAction = onSwitchToTerminalMode ?? (native ? () => native.onToggle(false) : undefined);
   // 实时通道断了 / 还在连：例外才说
   const channelIssue =
     live && channel && (channel.connection === "disconnected" || channel.connection === "connecting")
@@ -76,25 +91,9 @@ export function ChatBetaNotes({
       : null;
   return (
     <div className="px-1.5 pb-1.5 pt-1 text-xs">
-      {native && (
-        <div
-          className="ccode-well rounded-lg px-3 py-2.5"
-          title={
-            runtime
-              ? "聊着的时候翻开关：空闲时停下，再接回这段对话"
-              : "终端照样连着这段对话，随时能切过去看"
-          }
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium leading-5 text-l1">原生模式</span>
-            <Toggle checked={native.on} onChange={native.onToggle} label="原生模式" />
-          </div>
-          <p className="mt-1 text-xs leading-[18px] text-l3">{nativeLine}</p>
-        </div>
-      )}
       <div
         title={lineTitle}
-        className={`flex items-start gap-2 px-1.5 text-xs leading-[19px] text-l3 ${native ? "mt-2.5" : "mt-0.5"}`}
+        className="mt-0.5 flex items-start gap-2 px-1.5 text-xs leading-[19px] text-l3"
       >
         <Info size={13} strokeWidth={1.8} aria-hidden="true" className="mt-[3px] shrink-0 text-l4" />
         <p className="min-w-0 flex-1">{line}</p>
@@ -107,11 +106,11 @@ export function ChatBetaNotes({
             {newer && (
               <div className="space-y-1.5">
                 <p>
-                  {runtimeOn
+                  {nativeOn
                     ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可改用终端模式打开。`
                     : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
                 </p>
-                {runtimeOn && switchTerminalAction && (
+                {nativeOn && switchTerminalAction && (
                   <button
                     type="button"
                     onClick={switchTerminalAction}

@@ -131,10 +131,13 @@ export function chatFidelity(agentId: string | null | undefined, isWindows = fal
 }
 
 /**
- * 输入框左下那个小标签写什么：还在测试的「测试版」；第三、四档「简化」；第一、二档摘了测试版就不标——
- * 但 CLI 比核对过的新时仍要标出来（「未核对」），点开能看到提醒。null = 不显示
+ * 输入框左下那个小标签写什么：
+ * - 原生模式（nativeOn = true，2026-11-27 拍板摘掉测试版）：不标「测试版」，仅在 CLI 比核对过的新时标「未核对」；
+ * - 兼容模式（读屏聊天层）：还在测试的写「测试版」，第三、四档写「简化」，第一、二档摘了测试版就不标（更新时标「未核对」）。
+ * null = 不显示
  */
-export function fidelityBadge(f: ChatFidelity | null, newer: boolean): string | null {
+export function fidelityBadge(f: ChatFidelity | null, newer: boolean, nativeOn = false): string | null {
+  if (nativeOn) return newer ? "未核对" : null;
   if (!f) return newer ? "未核对" : null;
   if (f.beta) return "测试版";
   if (f.tier >= 3) return "简化";

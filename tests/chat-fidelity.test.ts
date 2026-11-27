@@ -70,6 +70,10 @@ test("小标签：还在测试写「测试版」，第三四档写「简化」�
   assert.equal(fidelityBadge(null, false), null);
   assert.equal(fidelityBadge(chatFidelity("cursor"), false), "简化");
   assert.equal(fidelityBadge(chatFidelity("codex"), false), "测试版");
+  // 原生模式已摘掉「测试版」标，仅 CLI 比核对过的新时标「未核对」；兼容模式仍保留「测试版」
+  assert.equal(fidelityBadge(chatFidelity("claude-code"), false, true), null);
+  assert.equal(fidelityBadge(chatFidelity("claude-code"), true, true), "未核对");
+  assert.equal(fidelityBadge(chatFidelity("claude-code"), false, false), "测试版");
 });
 
 test("联网前移的核对版本与随包的取较新，一边读不出取另一边", () => {

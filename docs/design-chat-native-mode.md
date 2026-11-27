@@ -206,5 +206,5 @@ Codex 能双客户端：Mesa 的私有 app-server 照旧起、终端里的 TUI �
   - **Cursor 2026.11.22**（`cursor-agent acp`）：实测 `session/new` 前须先执行 `authenticate({ methodId: "cursor_login" })`；已接入握手与 `~/.cursor/projects/*/agent-transcripts/<sid>/<sid>.jsonl` 定位（无假网关，需已登录 Cursor 账号使用）。
 - ✓ **OpenCode 2.x 原生发话**：核对真实 `opencode 2.4.2` OpenAPI（`POST /api/session/{sessionID}/prompt`，体 `{"text": ...}`，默认 `steer`），补齐 `Replier::OpenCode2` 的 `can_send`、`opencode_prompt` 与 `--session` 接回识别。
 - ✓ **双平台金丝雀原生层**：`scripts/cli-canary/canary.py` 放开 Windows `native_phase`，并将原生检查扩至全部 9 路可连假网关对象（`codex`、`qwen`、`opencode`、`opencode2`、`kimi`、`claude-code`、`gemini`、`codebuddy`、`grok`）；同步更新 `upstream.json`。
-- 仍需外部条件：Windows 真机手动界面点检（待在 Windows 机拉最新 `main` 跑一遍）、连续两周金丝雀全绿后再摘掉「测试版」标签。
+- **2026-11-27 单一工作界面预设拍板（推翻上文「默认关 / 标测试版」）**：设置收口为单一 **工作界面：聊天 / 终端**（沿用 `openSurface`，默认聊天），移出 `chatNativeDefault` 与每对话原生开关；聊天模式默认原生且摘掉「测试版」标签，改为启动自动回落 + 每日金丝雀告警 + 新版 CLI 提示（附「改用终端模式打开」按钮）守护；受连接资格限制（Claude 官方订阅、Antigravity 第三方网关）或自动回落的对话走兼容模式并保留既有测试版标。
 

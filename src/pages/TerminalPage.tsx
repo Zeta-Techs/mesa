@@ -242,10 +242,10 @@ interface Tab {
   discussOnly?: boolean;
   /** 聊天权限徽标选的原生权限档（不进持久化白名单：完全访问不该跨重启自动带上）；null = 按本机设置 */
   permissionMode?: NativePermissionMode | null;
-  /** 这段对话开了「原生模式」（docs/design-chat-native-mode.md）：按对话记、进持久化白名单；这家没点亮时不起作用 */
+  /** 原生模式状态（默认聊天模式为 true，终端模式或自动回落/显式切终端后为 false；进持久化白名单） */
   nativeMode?: boolean;
-  /** 冷启动首帧设置尚未落盘回来时的空白标签标记：设置读到后按 chatNativeDefault 填一次即清掉 */
-  followNativeDefault?: boolean;
+  /** 冷启动首帧设置尚未落盘回来时的待定标签标记：设置读到后按工作界面预设（openSurface）填一次即清掉 */
+  followSurfaceDefault?: boolean;
   /** 开工弹层的本次思考档覆盖（不进持久化白名单）：launch 经 pty_spawn
       effortOverride 注入；空 = 绑定逐模型策略/端点默认 */
   effort?: string | null;
@@ -284,11 +284,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     // 读一次就删：之后还没处理的，下次退出时按标签上的 cutOff 再记
     const cutOff = parseQuitCutOff(localStorage.getItem(QUIT_CUT_OFF_STORAGE_KEY));
     localStorage.removeItem(QUIT_CUT_OFF_STORAGE_KEY);
+    const openSurfaceSetting = useAppStore.getState().settings?.openSurface;
     if (saved.tabs.length === 0) {
-      const defNative = useAppStore.getState().settings?.chatNativeDefault;
       const tab: Tab = {
         id: crypto.randomUUID(),
-        ...(defNative === true ? { nativeMode: true } : defNative === undefined ? { followNativeDefault: true } : {}),
+        ...(openSurfaceSetting !== undefined
+          ? { nativeMode: openSurfaceDefault(openSurfaceSetting) === "chat" }
+          : { followSurfaceDefault: true }),
       };
       return { tabs: [tab], activeId: tab.id };
     }
@@ -308,7 +310,13 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       taskId: tab.taskId ?? undefined,
       reuseKey: tab.reuseKey ?? undefined,
       restored: true,
-      nativeMode: tab.nativeMode,
+      ...(typeof tab.nativeMode === "boolean"
+        ? { nativeMode: tab.nativeMode }
+        : tab.customRuntimeId
+          ? {}
+          : openSurfaceSetting !== undefined
+            ? { nativeMode: openSurfaceDefault(openSurfaceSetting) === "chat" }
+            : { followSurfaceDefault: true }),
       cutOff: !!tab.id && cutOff.has(tab.id) && !!tab.sessionId && !tab.customRuntimeId && !tab.forkPending,
     }));
     return {
@@ -318,23 +326,24 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   });
   const [tabs, setTabs] = useState<Tab[]>(initialState.tabs);
   const [activeId, setActiveId] = useState(initialState.activeId);
-  const chatNativeDefault = useAppStore((s) => s.settings?.chatNativeDefault);
-  // 冷启动首帧 settings 还在路上时创建的空白标签，settings 一到达就按「新建对话默认开启原生模式」落一次（已起进程的绝不改）
+  const openSurfaceSetting = useAppStore((s) => s.settings?.openSurface);
+  // 冷启动首帧 settings 还在路上时创建的空白/旧版恢复标签，settings 一到达就按「工作界面」预设落一次（已起进程的绝不改）
   useEffect(() => {
-    if (chatNativeDefault === undefined) return;
+    if (openSurfaceSetting === undefined) return;
+    const defaultNative = openSurfaceDefault(openSurfaceSetting) === "chat";
     setTabs((prev) => {
-      if (!prev.some((t) => t.followNativeDefault)) return prev;
+      if (!prev.some((t) => t.followSurfaceDefault)) return prev;
       return prev.map((t) =>
-        t.followNativeDefault
+        t.followSurfaceDefault
           ? {
               ...t,
-              followNativeDefault: false,
-              nativeMode: t.nativeMode ?? (chatNativeDefault && !t.shellOnly && !t.customRuntimeId ? true : undefined),
+              followSurfaceDefault: false,
+              nativeMode: t.nativeMode ?? (!t.shellOnly && !t.customRuntimeId ? defaultNative : undefined),
             }
           : t,
       );
     });
-  }, [chatNativeDefault]);
+  }, [openSurfaceSetting]);
   // 启动时清一次孤儿回放：崩溃/强退残留的 replay-* 只保留本次恢复的标签，
   // 否则目录随历史标签无限堆积（2026-10-10 修；正常运行中关标签即 drop，不靠这里）
   useEffect(() => {
@@ -370,7 +379,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     (tabId: string, fb: { kind: "auth" | "compat"; reason: string; agentId: string }) => {
       if (fb.kind === "compat") {
         setTabs((prev) =>
-          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followNativeDefault: false } : t)),
+          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followSurfaceDefault: false } : t)),
         );
         return;
       }
@@ -399,7 +408,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
           /* 查询失败退回切当前标签到终端 */
         }
         setTabs((prev) =>
-          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followNativeDefault: false } : t)),
+          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followSurfaceDefault: false } : t)),
         );
         setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
         toast(fb.reason, "warning");
@@ -1350,7 +1359,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             reuseKey: tab.reuseKey ?? null,
             forkOf: tab.forkSource?.sessionId ?? null,
             forkPending: Boolean(tab.forkSessionId),
-            nativeMode: Boolean(tab.nativeMode),
+            ...(typeof tab.nativeMode === "boolean" ? { nativeMode: tab.nativeMode } : {}),
           },
         },
       ];
@@ -1700,22 +1709,22 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void action.sendMessage(pending.prompt);
   }, [injectTick, statuses]);
 
-  /** 模型菜单底部「原生模式」开关。Codex 只改往后怎么发，不重启；Kimi 这类两种模式不能同一个进程的，
-      正在跑时要停下按这段对话接回（标签空闲时切、这一轮还在跑就等它结束，TerminalView maybeSwitchNative），先问一句 */
+  /** 改用终端模式 / 改用聊天模式打开（Codex / Qwen / OpenCode 双客户端不重启当场切层；纯协议家在空闲时按会话 id 接回） */
   async function setTabNativeMode(tabId: string, on: boolean) {
     const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
     if (nativeRuntime(agent) && statuses[tabId]?.running) {
       const label = AGENTS.find((a) => a.id === agent)?.label ?? "这家 Agent";
       const warning = nativeSwitchWarning(sessionByTab[tabId]?.channel ?? null);
       const ok = await confirmDialog(
-        `${on ? "切到原生模式" : "切回终端模式"}？\n\n${label} 会先停下，再接回这段对话，对话内容不丢。${warning ? `\n\n${warning}` : ""}`,
+        `${on ? "改用聊天模式打开" : "改用终端模式打开"}？\n\n${label} 会先停下，再接回这段对话，对话内容不丢。${warning ? `\n\n${warning}` : ""}`,
         { confirmText: "切换" },
       );
       if (!ok) return;
     }
     setTabs((prev) =>
-      prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on, followNativeDefault: false } : t)),
+      prev.map((t) => (t.id === tabId ? { ...t, nativeMode: on, followSurfaceDefault: false } : t)),
     );
+    setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: on ? "chat" : "terminal" }));
     const curTab = tabs.find((t) => t.id === tabId);
     const linkedAgent = sessionByTab[tabId]?.agentId ?? statuses[tabId]?.agentId ?? curTab?.initialAgentId;
     const linkedSid = sessionByTab[tabId]?.sessionId ?? statuses[tabId]?.sessionId ?? curTab?.resumeSessionId;
@@ -1879,11 +1888,12 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         preview: init?.preview,
         ...(init?.shellOnly || init?.customRuntimeId
           ? {}
-          : typeof init?.nativeMode === "boolean"
-            ? { nativeMode: init.nativeMode }
-            : useAppStore.getState().settings?.chatNativeDefault
-              ? { nativeMode: true }
-              : {}),
+          : {
+              nativeMode:
+                typeof init?.nativeMode === "boolean"
+                  ? init.nativeMode
+                  : openSurfaceDefault(useAppStore.getState().settings?.openSurface) === "chat",
+            }),
       };
       setTabs((prev) => [...prev, t]);
       setActiveId(t.id);
@@ -2007,7 +2017,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             : undefined;
       const chosenAcct = profiles.find((p) => p.id === profileId)?.accountType ?? null;
       const forkWillRunNative =
-        Boolean(inheritedNative ?? useAppStore.getState().settings?.chatNativeDefault) &&
+        Boolean(inheritedNative ?? true) &&
         nativeModeAllowed(source.agentId, chosenAcct) &&
         nativeRuntime(source.agentId);
       const target = await invoke<HandoffTargetDto[]>("handoff_targets")
@@ -2417,6 +2427,15 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         if (running) adoptExisting(running);
       }
       const reused = tabId !== null;
+      const openSurfacePref = useAppStore.getState().settings?.openSurface;
+      const plannedSurface =
+        pt.shellOnly || pt.prefillCommand
+          ? "terminal"
+          : (pt.surface ?? openSurfaceDefault(openSurfacePref));
+      const plannedNative =
+        pt.shellOnly || pt.customRuntimeId
+          ? undefined
+          : (pt.nativeMode ?? (plannedSurface === "chat"));
       tabId ??= addTab({
         cwd: pt.cwd,
         extraEnv: pt.extraEnv,
@@ -2443,7 +2462,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         runId: pt.runId,
         taskId: pt.taskId,
         preview: Boolean(pt.resume && pt.resumeLazy) || undefined,
-        nativeMode: pt.nativeMode,
+        nativeMode: plannedNative,
       });
       // 从列表点开一段对话：刚才看着的那个标签若只是看了没说 / 还没说过话的空白新对话、输入框没字，切走后收掉
       // （等新标签切到前台再关，见 dropBlankAfterOpenRef）。
@@ -2463,14 +2482,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         setInjectTick((n) => n + 1);
       }
       // 显示哪一层（tab-surface.ts）：纯 shell / 脚本标签落终端；入口写死的照写；切回已开着的标签不动；
-      // 新开的跟设置「打开对话时先显示」——新开时就钉住，之后改设置不把正在用的标签翻过去
+      // 新开的跟设置「工作界面」——新开时就钉住，之后改设置不把正在用的标签翻过去
       // 闭包不保留 let 的收窄：进回调前用 const 固定，否则 [tabId] 推宽回 string | null 报 TS2464
       const launchedTabId = tabId;
       const targetNativeRuntime = Boolean(
         launchedTabId &&
           (statusesRef.current[launchedTabId]?.nativeRuntime ||
             (!reused &&
-              Boolean(pt.nativeMode ?? useAppStore.getState().settings?.chatNativeDefault) &&
+              Boolean(plannedNative) &&
               nativeModeAllowed(launchAgentId, profiles.find((p) => p.id === profileId)?.accountType ?? null) &&
               nativeRuntime(launchAgentId))),
       );
@@ -2479,7 +2498,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
         shellOnly: pt.shellOnly,
         prefillCommand: pt.prefillCommand,
         reused,
-        setting: useAppStore.getState().settings?.openSurface,
+        setting: openSurfacePref,
         nativeRuntime: targetNativeRuntime,
       });
       if (launchedTabId && nextSurface) {
@@ -3620,7 +3639,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     const fresh: Tab = {
       id: crypto.randomUUID(),
       skipSeed: true,
-      ...(useAppStore.getState().settings?.chatNativeDefault ? { nativeMode: true } : {}),
+      nativeMode: openSurfaceDefault(useAppStore.getState().settings?.openSurface) === "chat",
     };
     let nextActiveId = activeId;
     setTabs((prev) => {

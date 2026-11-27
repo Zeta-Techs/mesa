@@ -12,8 +12,6 @@ pub const DEFAULT_BREW_MIRROR: bool = true;
 pub const DEFAULT_NOTIFICATIONS_ENABLED: bool = true;
 /// 会话自动命名（聊完起名 + 打开对话页补名去重）默认开；关 = 全停，手改标题不受影响
 pub const DEFAULT_AUTO_TITLE_SESSIONS: bool = true;
-/// 新建对话默认开启聊天层原生模式（默认关：保持终端模式为默认；打开后对支持且当前连接允许的家默认开）
-pub const DEFAULT_CHAT_NATIVE_DEFAULT: bool = false;
 pub const DEFAULT_NAV_CAPSULE_RUN_ANNOUNCE: bool = true;
 /// 关主窗口默认留在后台（2026-10-31 用户拍板），见 window_close.rs
 pub const DEFAULT_CLOSE_TO_BACKGROUND: bool = true;
@@ -266,8 +264,6 @@ pub struct AppSettingsDto {
     /// 打开对话页的补名去重（ai_retitle_all_sessions）全停；已有标题保留，
     /// 手改标题（title_source=user）本就不被覆盖，与此开关无关。
     pub auto_title_sessions: Option<bool>,
-    /// 新建对话默认开启聊天层原生模式（设置页「集成」分区，默认关）；只影响新建对话，已开对话保留各自选择
-    pub chat_native_default: Option<bool>,
     /// 关主窗口时留在后台（2026-10-31，默认开）：Mac 藏窗口、程序坞点图标回来；Windows 收进托盘。
     /// 关 = 关窗口即退出 Mesa（同以前）。见 window_close.rs
     pub close_to_background: Option<bool>,
@@ -405,9 +401,8 @@ pub struct AppSettingsDto {
     /// 已废弃（2026-09-19）：仅保留读取迁移——statusBarInChat=false 老用户保持关闭；
     /// 前端不再写此字段，生效值一律看 status_bar
     pub status_bar_in_chat: Option<bool>,
-    /// 打开对话时先显示哪一层（2026-10-22）："chat" / "terminal"，缺省与未知值 = chat。
-    /// 问 AI、开始、商量、继续、接着聊、精读等进入 Agent 对话的入口都跟它走；
-    /// 「新对话」固定聊天，登录 / 脚本 / MCP 登录等没有对话可看的固定终端（前端 tab-surface.ts）
+    /// 工作界面预设（2026-11-27 单一工作界面预设，沿用 `openSurface` 键）："chat"（默认，聊天模式默认走各家官方原生协议）/ "terminal"（终端模式）。
+    /// 缺省与未知值 = chat；登录 / 更新 / 跑脚本等纯命令行任务始终在终端打开（前端 tab-surface.ts）
     pub open_surface: Option<String>,
     /// 向 agent 主动告知终端底色（Windows 专用，默认开）。ConPTY 双向都不转发
     /// OSC 10/11 底色查询——子进程的查询到不了 xterm，回报也回不去子进程——
@@ -1029,9 +1024,6 @@ fn with_defaults(s: AppSettingsDto) -> AppSettingsDto {
         auto_title_sessions: s
             .auto_title_sessions
             .or(Some(DEFAULT_AUTO_TITLE_SESSIONS)),
-        chat_native_default: s
-            .chat_native_default
-            .or(Some(DEFAULT_CHAT_NATIVE_DEFAULT)),
         close_to_background: s.close_to_background.or(Some(DEFAULT_CLOSE_TO_BACKGROUND)),
         close_hint_shown: s.close_hint_shown,
         desk_pet_enabled: s.desk_pet_enabled.or(Some(false)),
@@ -1225,9 +1217,6 @@ fn merge(cur: &mut AppSettingsDto, patch: AppSettingsDto) {
     }
     if patch.auto_title_sessions.is_some() {
         cur.auto_title_sessions = patch.auto_title_sessions;
-    }
-    if patch.chat_native_default.is_some() {
-        cur.chat_native_default = patch.chat_native_default;
     }
     if patch.close_to_background.is_some() {
         cur.close_to_background = patch.close_to_background;
@@ -2310,17 +2299,11 @@ mod tests {
     }
 
     #[test]
-    fn chat_native_default_toggle_roundtrip() {
+    fn legacy_chat_native_default_in_json_is_ignored_cleanly() {
         let p = tmp();
-        assert_eq!(with_defaults(read_from(&p)).chat_native_default, Some(false));
-        let mut cur = read_from(&p);
-        merge(&mut cur, AppSettingsDto { chat_native_default: Some(true), ..Default::default() });
-        write_to(&p, &cur).unwrap();
-        assert_eq!(with_defaults(read_from(&p)).chat_native_default, Some(true));
-        let mut cur2 = read_from(&p);
-        merge(&mut cur2, AppSettingsDto { chat_native_default: Some(false), ..Default::default() });
-        write_to(&p, &cur2).unwrap();
-        assert_eq!(with_defaults(read_from(&p)).chat_native_default, Some(false));
+        std::fs::write(&p, r#"{"chatNativeDefault":true,"openSurface":"terminal"}"#).unwrap();
+        let full = with_defaults(read_from(&p));
+        assert_eq!(full.open_surface.as_deref(), Some("terminal"));
         std::fs::remove_dir_all(p.parent().unwrap()).ok();
     }
 

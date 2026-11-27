@@ -149,13 +149,17 @@ test("quit cut-off round-trips and drops malformed ids", () => {
   assert.equal(parseQuitCutOff(null).size, 0);
 });
 
-test("原生模式按对话记，重启后照旧；没开的不写这个字段（2026-11-26）", () => {
+test("原生模式按对话记，重启后照旧；未显式指定的不写这个字段（2026-11-26 / 2026-11-27）", () => {
   const base = { label: "x", cwd: "/w", agentId: "codex", profileId: "p", model: "", sessionId: "th1", runId: null };
-  const raw = serializeRecoverableTerminalState({ tabs: [{ ...base, nativeMode: true }, { ...base }], activeIndex: 0 });
-  assert.ok(!raw.slice(raw.indexOf("},")).includes("nativeMode"), "没开的那条不写");
+  const raw = serializeRecoverableTerminalState({
+    tabs: [{ ...base, nativeMode: true }, { ...base, nativeMode: false }, { ...base }],
+    activeIndex: 0,
+  });
+  assert.ok(!raw.slice(raw.lastIndexOf("},")).includes("nativeMode"), "未指定的那条不写");
   const back = parseRecoverableTerminalState(raw).tabs;
   assert.equal(back[0].nativeMode, true);
-  assert.equal(back[1].nativeMode, undefined);
+  assert.equal(back[1].nativeMode, false);
+  assert.equal(back[2].nativeMode, undefined);
   // 手改坏的值不认
   const bad = parseRecoverableTerminalState(raw.replace('"nativeMode":true', '"nativeMode":"yes"')).tabs;
   assert.equal(bad[0].nativeMode, undefined);

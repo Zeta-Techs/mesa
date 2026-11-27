@@ -407,7 +407,6 @@ export function resumeSessionInTerminal(
       ...choice,
       model: resumeModelChoice(config?.model, chosen),
       effort: config?.effort?.trim() || null,
-      ...(typeof config?.nativeMode === "boolean" ? { nativeMode: config.nativeMode } : {}),
       resumeLazy: opts?.lazy || undefined,
       split: opts?.split || undefined,
     });

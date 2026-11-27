@@ -220,7 +220,7 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
   const connAlternatives = switchConn
     ? profiles.filter((p) => p.agent === agentId && p.id !== profileId && !(hiddenProfiles ?? []).includes(p.id))
     : [];
-  const beta = useChatBeta(agentId || null);
+  const beta = useChatBeta(agentId || null, Boolean(props.native?.on));
   // 连接名不再单写在底栏（2026-10-23）：芯片悬停里带上「经哪条连接」
   const via = profileLabel && profileId ? ` · 经「${profileLabel}」` : "";
 
@@ -560,11 +560,17 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
       <span>{footer.short}</span>
     </p>
   );
-  // 「测试版」（2026-10-23 从输入框底下收进菜单底部一行，2026-11-16 用户改成右上角一个提示符号）：
-  // 悬停就在上方显示一句话说明，不用点进去；点它仍能进二级看全文、反馈对不上
+  // 右上角说明图标：兼容模式标测试版时用烧瓶，原生模式已摘掉测试版改用中性信息图标（仍保留反馈与版本提醒入口）
   const betaHint = (top: string) =>
-    beta.badge && (
-      <BetaHint summary={beta.summary} warn={beta.warn} newer={beta.newer} top={top} onOpen={() => setView("beta")} />
+    (beta.badge || props.native?.on || props.onReportMismatch) && (
+      <BetaHint
+        summary={beta.summary}
+        warn={beta.warn}
+        newer={beta.newer}
+        isBeta={beta.isBeta}
+        top={top}
+        onOpen={() => setView("beta")}
+      />
     );
 
   // 换一家 Agent 接着做（接力）：模型那一屏里一行，点进「relay」屏（2026-11-10 用户：放在模型这一屏，不藏在换配置里）
@@ -756,12 +762,6 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                   className="shrink-0 text-l3 transition-colors group-hover:text-l1"
                 />
                 <span className="text-xs font-medium text-l1">{beta.heading}</span>
-                {props.native?.on && (
-                  <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-ok px-1.5 py-0.5 text-micro font-medium leading-none text-ok-text">
-                    <span aria-hidden="true" className="size-1.5 rounded-full bg-ok-text" />
-                    已启用
-                  </span>
-                )}
               </button>
               <div className="mx-1 my-1 h-px shrink-0 bg-hairline" />
               <div ref={bodyRef} className={scrollBody}>
@@ -1253,12 +1253,13 @@ function EffortHero({
   );
 }
 
-/** 模型菜单右上角的「测试版」提示符号：鼠标悬停在上方显示一句话说明，点进去看全文与反馈。
+/** 模型菜单右上角的说明图标：兼容模式测试版用烧瓶，原生模式用中性 Info 图标；悬停显示一句话说明，点进去看详情与反馈。
  *  不随获得焦点弹出：打开菜单时焦点可能落到它身上，一打开就冒提示（2026-11-16 用户截图）；读屏读 aria-label */
-function BetaHint({ summary, warn, newer, top, onOpen }: {
+function BetaHint({ summary, warn, newer, isBeta, top, onOpen }: {
   summary: string;
   warn: string | null;
   newer: boolean;
+  isBeta: boolean;
   /** 主屏贴菜单右上角；模型屏放在自己那一小行里 */
   top: string;
   onOpen: () => void;
@@ -1277,7 +1278,11 @@ function BetaHint({ summary, warn, newer, top, onOpen }: {
         onMouseLeave={hide}
         className={`absolute right-1.5 ${top} z-10 inline-flex size-6 items-center justify-center rounded-md text-l4 outline-none hover:bg-hover hover:text-l2 focus-visible:bg-hover`}
       >
-        <FlaskConical size={13} strokeWidth={1.8} aria-hidden="true" />
+        {isBeta ? (
+          <FlaskConical size={13} strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <Info size={13} strokeWidth={1.8} aria-hidden="true" />
+        )}
         {newer && <span aria-hidden="true" className="absolute right-1 top-1 size-1.5 rounded-full bg-caution-text" />}
       </button>
       <HoverTip tip={tip} text={summary} warn={warn} up />

@@ -63,7 +63,7 @@ function parseTab(value: unknown): RecoverableTerminalTab | null {
     ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
     ...(textField(tab.forkOf, 256) ? { forkOf: textField(tab.forkOf, 256) } : {}),
     ...(tab.forkPending === true && textField(tab.forkOf, 256) ? { forkPending: true } : {}),
-    ...(tab.nativeMode === true ? { nativeMode: true } : {}),
+    ...(typeof tab.nativeMode === "boolean" ? { nativeMode: tab.nativeMode } : {}),
   };
 }
 
@@ -113,7 +113,7 @@ export function serializeRecoverableTerminalState(
     ...(workspaceReuseKey(tab.reuseKey) ? { reuseKey: workspaceReuseKey(tab.reuseKey) } : {}),
     ...(tab.forkOf ? { forkOf: tab.forkOf.slice(0, 256) } : {}),
     ...(tab.forkOf && tab.forkPending ? { forkPending: true } : {}),
-    ...(tab.nativeMode ? { nativeMode: true } : {}),
+    ...(typeof tab.nativeMode === "boolean" ? { nativeMode: tab.nativeMode } : {}),
   }));
   const activeIndex = tabs.length > 0
     ? Math.min(Math.max(Math.trunc(state.activeIndex), 0), tabs.length - 1)

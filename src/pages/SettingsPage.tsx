@@ -2999,8 +2999,9 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
         </Row>
 
         <Row
-          label="打开对话时先显示"
-          labelTitle="问 AI、开始、商量、继续、精读都按这个。「新对话」总是聊天（选 Agent 和模型在聊天里）；登录、更新、运行脚本这类没有对话可看的总是终端。切回已经开着的标签时不改它当前的显示"
+          label="工作界面"
+          hint="聊天模式默认走各家官方原生协议；官方订阅版 Claude、第三方网关版 Antigravity 自动使用兼容模式"
+          labelTitle="按你的预设以「聊天」或「终端」作为工作界面。登录、更新、跑脚本这类命令行任务始终在终端打开；单段对话可在右上角 ⋯ 菜单临时改用另一种模式打开"
         >
           <SegTabs
             variant="boxed"
@@ -3931,18 +3932,6 @@ export default function SettingsPage({ visible }: { visible: boolean }) {
             label="会话自动命名"
             checked={settings?.autoTitleSessions ?? true}
             onChange={(v) => patch({ autoTitleSessions: v })}
-          />
-        </Row>
-
-        <Row
-          label="新建对话默认开启原生模式"
-          hint="支持原生协议且当前连接允许的家默认开启；已开对话不受影响"
-          labelTitle="打开后，新建对话会默认启用聊天层原生模式（仍受各家与连接类型约束，例如官方订阅版 Claude、第三方网关版 Antigravity 自动保持终端模式）；关闭后默认仍是终端模式"
-        >
-          <Toggle
-            label="新建对话默认开启原生模式"
-            checked={settings?.chatNativeDefault ?? false}
-            onChange={(v) => patch({ chatNativeDefault: v })}
           />
         </Row>
 

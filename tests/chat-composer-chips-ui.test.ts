@@ -2164,10 +2164,9 @@ test("出图模式：胶囊挂在输入框「+」旁边、占位字换成描述�
   }
 });
 
-test("原生模式开关在模型菜单的说明页里：点亮的家才出，点一下只回报新值；说明只剩一句（2026-11-26）", async () => {
+test("模型菜单说明页：移除每对话原生开关，原生模式摘掉测试版、兼容模式保留测试版（2026-11-27）", async () => {
   const ui = await mount();
   try {
-    const flips: boolean[] = [];
     const props = {
       kind: "runtime",
       status: status({ agentId: "codex", model: "gpt-5.3" }),
@@ -2183,33 +2182,16 @@ test("原生模式开关在模型菜单的说明页里：点亮的家才出，�
       assert.ok(hint);
       await ui.act(async () => hint.click());
     };
-    await ui.render(ui.h(ui.Menu, { ...props, native: { on: false, onToggle: (on: boolean) => flips.push(on) } }));
+    // 兼容模式：保留「聊天是测试版」，不再展示每对话原生模式开关
+    await ui.render(ui.h(ui.Menu, { ...props, native: { on: false, onToggle: () => {} } }));
     await openNotes();
-    assert.match(ui.el.textContent ?? "", /原生模式/);
-    assert.match(ui.el.textContent ?? "", /消息和停止直接交给 Codex/);
-    // 精简后：一行开关、一句话，不再有「通常能力」「要回终端做的」两段（2026-11-26 用户）
+    assert.match(ui.el.textContent ?? "", /聊天是测试版/);
     assert.doesNotMatch(ui.el.textContent ?? "", /通常能力|要回终端做的|从终端整理出来/);
     assert.match(ui.el.textContent ?? "", /以终端为准；.*要回终端。/);
-    const sw = ui.el.querySelector<HTMLButtonElement>('[role="switch"][aria-label="原生模式"]');
-    assert.ok(sw);
-    assert.equal(sw.getAttribute("aria-checked"), "false");
-    await ui.act(async () => sw.click());
-    assert.deepEqual(flips, [true]);
+    assert.equal(ui.el.querySelector('[role="switch"][aria-label="原生模式"]'), null);
     await ui.close();
 
-    const ui2 = await mount();
-    try {
-      await ui2.render(ui2.h(ui2.Menu, props));
-      await ui2.click("gpt-5.3");
-      const hint = ui2.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
-      assert.ok(hint);
-      await ui2.act(async () => hint.click());
-      assert.doesNotMatch(ui2.el.textContent ?? "", /原生模式/, "没点亮的家不出开关");
-    } finally {
-      await ui2.close();
-    }
-
-    // 纯协议原生开启时：顶栏显「已启用」，底栏按钮切为「查看运行日志」
+    // 纯协议原生开启时：摘掉「测试版」标改显「原生聊天」，底栏按钮切为「查看运行日志」
     const ui3 = await mount();
     try {
       await ui3.render(
@@ -2225,9 +2207,12 @@ test("原生模式开关在模型菜单的说明页里：点亮的家才出，�
       const hint = ui3.el.querySelector<HTMLButtonElement>("[data-beta-hint]");
       assert.ok(hint);
       await ui3.act(async () => hint.click());
-      assert.match(ui3.el.textContent ?? "", /已启用/);
+      assert.match(ui3.el.textContent ?? "", /原生聊天/);
+      assert.doesNotMatch(ui3.el.textContent ?? "", /测试版/);
+      assert.match(ui3.el.textContent ?? "", /需要改用终端模式打开/);
       assert.match(ui3.el.textContent ?? "", /查看运行日志/);
       assert.doesNotMatch(ui3.el.textContent ?? "", /切到终端/);
+      assert.equal(ui3.el.querySelector('[role="switch"]'), null);
     } finally {
       await ui3.close();
     }

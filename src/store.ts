@@ -120,8 +120,6 @@ export interface AppSettings {
   notificationsEnabled: boolean;
   /** 会话自动命名（默认开）：聊完起名 + 打开对话页补名去重；关 = 全停，手改标题不受影响 */
   autoTitleSessions?: boolean;
-  /** 新建对话默认开启聊天层原生模式（默认关）：仅影响新建对话，已开对话保留各自选择 */
-  chatNativeDefault?: boolean;
   /** 关主窗口时留在后台（默认开；Mac 藏窗口、Windows 收进托盘）；false = 关窗口即退出。见 window_close.rs */
   closeToBackground?: boolean;
   /** 桌宠（2026-11-09，desk_pet.rs）：在桌面上显示小桌；冒话 important | quiet；大小 small | normal | large */
@@ -230,7 +228,7 @@ export interface AppSettings {
   hotkeyPages?: Record<string, string>;
   /** 底部状态栏统一开关（默认开）：终端层与聊天层同进退；关 = 两层都不显示（旧 statusBarInChat 已迁移） */
   statusBar?: boolean;
-  /** 打开对话时先显示哪一层（默认聊天）：进入 Agent 对话的入口都跟它走，见 tab-surface.ts */
+  /** 工作界面预设（默认聊天，聊天模式默认走各家原生协议；终端模式走原生 TUI，见 tab-surface.ts） */
   openSurface?: "chat" | "terminal";
   /** 向 Agent 主动告知终端底色（Windows 专用，默认开）：ConPTY 吞掉 OSC 10/11
       底色查询，浅色主题下 Agent 会回落深色；开 = attach 后主动推当前主题前景/底色 */
