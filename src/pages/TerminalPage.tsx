@@ -37,7 +37,7 @@ import {
   type MismatchReport,
 } from "../chat-mismatch";
 import { AGENTS, type OfficialAccountStatusDto } from "../types";
-import { channelSourceNote, channelTurnOpen, interruptRoute, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
+import { channelSourceNote, channelTurnOpen, interruptRoute, nativeRuntimeKind, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
 import { normSep, pathWithin as pathWithinDialect, revealFolderLabel, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
 import { loadCodingOverview } from "../components/CodingProjectView";
@@ -109,6 +109,7 @@ import {
   PanelRightClose,
   PanelTopOpen,
   RefreshCw,
+  ScrollText,
   Search,
   Sparkles,
   FileDiff,
@@ -131,7 +132,8 @@ import {
   serializeRecoverableTerminalState,
   TERMINAL_TABS_STORAGE_KEY,
 } from "../terminal-tab-persistence";
-import { launchSurface, openSurfaceDefault } from "../tab-surface";
+import { launchSurface, openSurfaceDefault, topBarModeSpec, type TopBarModeSpec } from "../tab-surface";
+import NativeLogDrawer from "../components/NativeLogDrawer";
 import { invalidateResumeLookup } from "../quick-chat-launch";
 import { tabRunInput, type RunOverviewInput } from "../run-overview";
 import type {
@@ -757,6 +759,75 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     }
   }
 
+  /** 纯协议原生模式的纯文本「运行日志」抽屉当前打开在哪个标签（null = 收起） */
+  const [nativeLogTabId, setNativeLogTabId] = useState<string | null>(null);
+  useEffect(() => {
+    setNativeLogTabId((cur) => (cur && cur === focusedId ? cur : null));
+  }, [focusedId]);
+  /** 研讨结论「带回商量」落到终端模式时，等目标标签 PTY 起来再以 bracketed paste 填入终端输入框 */
+  const pendingTerminalPasteRef = useRef<{ tabId: string; text: string } | null>(null);
+  const [pasteTick, setPasteTick] = useState(0);
+
+  function topBarModeFor(tabId: string): TopBarModeSpec {
+    const tab = tabs.find((t) => t.id === tabId);
+    const st = statuses[tabId];
+    const ch = sessionByTab[tabId]?.channel ?? null;
+    const surface = surfaceModeByTab[tabId] ?? defaultSurface;
+    const agent = st?.agentId ?? tab?.initialAgentId ?? null;
+    const terminalOnly = Boolean(tab?.shellOnly || tab?.customRuntimeId);
+    const actualNativeRuntime = Boolean(st?.nativeRuntime || nativeRuntimeKind(ch?.kind));
+    const allowed = Boolean(tab && nativeAllowedFor(tab));
+    const plannedNativeRuntime = Boolean(!st?.ptyId && allowed && tab?.nativeMode && nativeRuntime(agent));
+    const dualClientNative = Boolean(!actualNativeRuntime && allowed && tab?.nativeMode && !nativeRuntime(agent));
+    return topBarModeSpec({
+      surface,
+      terminalOnly,
+      actualNativeRuntime,
+      plannedNativeRuntime,
+      dualClientNative,
+      hasPty: Boolean(st?.ptyId),
+    });
+  }
+
+  function openTabInTerminalMode(tabId: string) {
+    const tab = tabs.find((t) => t.id === tabId);
+    const st = statuses[tabId];
+    const ch = sessionByTab[tabId]?.channel ?? null;
+    const agent = st?.agentId ?? tab?.initialAgentId ?? null;
+    const isPureProtocol = Boolean(
+      st?.nativeRuntime ||
+        nativeRuntimeKind(ch?.kind) ||
+        (tab?.nativeMode && nativeRuntime(agent) && tab && nativeAllowedFor(tab)),
+    );
+    setNativeLogTabId(null);
+    if (isPureProtocol) {
+      void setTabNativeMode(tabId, false);
+      return;
+    }
+    setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
+    useAppStore.getState().ackOnboarding("terminal");
+  }
+
+  function openTabInChatMode(tabId: string) {
+    if (splitActive) {
+      setSplitTabId(null);
+      setActivePane("left");
+    }
+    const tab = tabs.find((t) => t.id === tabId);
+    const agent = statuses[tabId]?.agentId ?? tab?.initialAgentId ?? null;
+    const allowed = Boolean(tab && nativeAllowedFor(tab));
+    if (allowed && nativeRuntime(agent) && !tab?.nativeMode) {
+      void setTabNativeMode(tabId, true);
+      return;
+    }
+    if (allowed && !nativeRuntime(agent) && !tab?.nativeMode) {
+      setTabs((prev) =>
+        prev.map((x) => (x.id === tabId ? { ...x, nativeMode: true, followSurfaceDefault: false } : x)),
+      );
+    }
+    setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "chat" }));
+  }
+
   function switchSurface(mode: SurfaceMode) {
     if (mode === "chat" && splitActive) {
       setSplitTabId(null);
@@ -767,9 +838,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     if (mode === "terminal") useAppStore.getState().ackOnboarding("terminal");
   }
 
-  /** 右上角 >_ 与快捷键同一动作：聊天 ↔ 终端 */
+  /** 快捷键与顶栏按钮复用：纯协议原生走纯文本运行日志抽屉，其余按当前模式三路分流 */
   function toggleSurface() {
-    switchSurface(focusedSurfaceMode === "chat" ? "terminal" : "chat");
+    const spec = topBarModeFor(focusedId);
+    if (spec.primaryButton === "logs") {
+      setNativeLogTabId((cur) => (cur === focusedId ? null : focusedId));
+      return;
+    }
+    if (spec.primaryButton === "terminal") {
+      switchSurface("terminal");
+      return;
+    }
+    if (spec.menuSwitch) {
+      if (spec.menuSwitch.targetSurface === "terminal") openTabInTerminalMode(focusedId);
+      else openTabInChatMode(focusedId);
+    }
   }
 
   // 聊天层「Mesa」操作（斜杠面板上半组，docs/design-chat-layer.md §6）：由 Mesa 执行，不写进终端
@@ -837,12 +920,33 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       },
       {
         cmd: "/terminal",
-        label: st?.nativeRuntime ? "查看运行日志" : "打开终端",
-        hint: st?.nativeRuntime ? "切到协议运行日志（原生模式没有终端交互画面）" : "切到这段对话的终端画面",
-        run: () => {
-          setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
-          useAppStore.getState().ackOnboarding("terminal");
-        },
+        ...(() => {
+          const spec = topBarModeFor(tabId);
+          if (spec.primaryButton === "logs") {
+            return {
+              label: "查看运行日志",
+              hint: "打开协议运行日志（纯文本，非终端画面）",
+              run: () => setNativeLogTabId(tabId),
+            };
+          }
+          if (spec.primaryButton === "none" && spec.menuSwitch?.targetSurface === "terminal") {
+            return {
+              label: "改用终端模式打开",
+              hint: spec.menuSwitch.switchNative
+                ? "空闲时停下协议进程，按这段对话改用终端模式打开"
+                : "同一进程切到终端界面，不重启",
+              run: () => openTabInTerminalMode(tabId),
+            };
+          }
+          return {
+            label: "打开终端",
+            hint: "切到这段对话的终端画面",
+            run: () => {
+              setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
+              useAppStore.getState().ackOnboarding("terminal");
+            },
+          };
+        })(),
       },
     );
     return list;
@@ -894,20 +998,24 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   // 终端 ⋯ 里的「对话操作」：斜杠面板 Mesa 组去掉终端层用不着的（分叉已有「分叉成新对话」、「打开终端」），补「切到聊天」
   const mesaCommandsRef = useRef(mesaCommandsFor);
   mesaCommandsRef.current = mesaCommandsFor;
+  const openTabInChatModeRef = useRef(openTabInChatMode);
+  openTabInChatModeRef.current = openTabInChatMode;
   const getConversationActions = useCallback(
     (tabId: string): MesaCommand[] => [
       ...mesaCommandsRef.current(tabId).filter((c) => c.cmd !== "/terminal" && c.cmd !== "/fork"),
       {
         cmd: "/chat",
-        label: "切到聊天",
-        hint: "同一段对话换成聊天的样子看",
-        run: () => setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "chat" })),
+        label: "改用聊天模式打开",
+        hint: "把这段对话改用聊天模式打开",
+        run: () => openTabInChatModeRef.current(tabId),
       },
     ],
     [],
   );
 
   function setPeek(tabId: string, open: boolean, userToggle = false) {
+    // 纯协议原生运行时没有交互式 TUI，永不自动或手动拉起底部终端窥视栏
+    if (open && statusesRef.current[tabId]?.nativeRuntime) return;
     if (open && peekLocked[tabId] && !userToggle) return;
     setPeekByTab((prev) =>
       prev[tabId] === open ? prev : { ...prev, [tabId]: open },
@@ -1709,6 +1817,21 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
     void action.sendMessage(pending.prompt);
   }, [injectTick, statuses]);
 
+  // 研讨结论「带回商量」落到终端模式时：等目标标签终端就绪后写入 bracketed paste（不自动回车，让人核对）
+  useEffect(() => {
+    const pending = pendingTerminalPasteRef.current;
+    if (!pending) return;
+    const action = tabActionsRef.current.get(pending.tabId);
+    const st = statuses[pending.tabId];
+    if (!action || (!st?.running && !st?.alive)) return;
+    pendingTerminalPasteRef.current = null;
+    const text = pending.text;
+    window.setTimeout(() => {
+      tabActionsRef.current.get(pending.tabId)?.writePty(`\x1b[200~${text}\x1b[201~`);
+      toast("已将研讨结论填入终端输入框", "info");
+    }, 800);
+  }, [pasteTick, statuses]);
+
   /** 改用终端模式 / 改用聊天模式打开（Codex / Qwen / OpenCode 双客户端不重启当场切层；纯协议家在空闲时按会话 id 接回） */
   async function setTabNativeMode(tabId: string, on: boolean) {
     const agent = statuses[tabId]?.agentId ?? tabs.find((t) => t.id === tabId)?.initialAgentId;
@@ -2504,10 +2627,16 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
       if (launchedTabId && nextSurface) {
         setSurfaceModeByTab((prev) => ({ ...prev, [launchedTabId]: nextSurface }));
       }
-      // 放进聊天输入框不发送（研讨结论「带回商量」）：新开的标签聊天层挂上时照样消费（ChatSurface 按令牌处理一次）
+      // 放进输入框不发送（研讨结论「带回商量」）：聊天模式填进聊天输入框，终端模式等 PTY 就绪后以 bracketed paste 填入终端
       const carry = pt.composerInsert?.trim();
       if (launchedTabId && carry) {
-        setChatInsertByTab((prev) => ({ ...prev, [launchedTabId]: { text: carry, send: false, token: Date.now() } }));
+        const effSurface = nextSurface ?? surfaceModeRef.current[launchedTabId] ?? defaultSurfaceRef.current;
+        if (effSurface === "chat") {
+          setChatInsertByTab((prev) => ({ ...prev, [launchedTabId]: { text: carry, send: false, token: Date.now() } }));
+        } else {
+          pendingTerminalPasteRef.current = { tabId: launchedTabId, text: carry };
+          setPasteTick((n) => n + 1);
+        }
       }
       // run 脚本标签：登记 nonconcurrent 互斥追踪
       if (pt.wsId && tabId) setRunningScript(pt.wsId, tabId);
@@ -3935,175 +4064,216 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
               </div>
             );
           })()}
-          {/* 右上角 4 颗精简分组（2026-11-25 用户拍板方案 B）：
-              左组「>_ 终端 · 侧边提问」| 右组「◨ 文件与改动（合并右栏，有改动点小点）· ⋯ 更多（仅留当前层搜索与关闭）」 */}
-          <span className="ml-auto flex shrink-0 items-center gap-0.5">
-            <button
-              type="button"
-              onClick={(e) => {
-                // 用鼠标来回切到第 3 下时提醒快捷键（shortcut-nudges.tsx）：挂在按钮下面
-                noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
-                toggleSurface();
-              }}
-              aria-pressed={focusedSurfaceMode !== "chat"}
-              title={`${focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}${
-                toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""
-              }`}
-              aria-label={focusedSurfaceMode === "chat" ? "看这段对话的终端" : "回到聊天"}
-              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
-                focusedSurfaceMode !== "chat" ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-              }`}
-            >
-              <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-            {(() => {
-              const aside = focusedId ? chatAsideStateByTab[focusedId] : undefined;
-              const asideOpen = focusedSurfaceMode === "chat" && Boolean(aside?.open);
-              const asideBusy = Boolean(aside?.busy);
-              const asideCount = aside?.activeThreads ?? 0;
-              return (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!focusedId) return;
-                    if (focusedSurfaceMode !== "chat") {
-                      switchSurface("chat");
-                      if (!aside?.open) toggleChatAside(focusedId);
-                      return;
-                    }
-                    toggleChatAside(focusedId);
-                  }}
-                  aria-pressed={asideOpen}
-                  title={
-                    asideOpen
-                      ? "收起侧边提问栏（保留当前记录）"
-                      : asideCount > 0
-                        ? `侧边提问（不打断主对话 · 已有 ${asideCount} 条）`
-                        : "侧边提问（Side Question /btw：在右侧独立分栏随口问一句，不打断主对话）"
-                  }
-                  aria-label={asideOpen ? "收起侧边提问栏" : "打开侧边提问栏"}
-                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
-                    asideOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-                  }`}
-                >
-                  <MessagesSquare size={15} strokeWidth={1.8} aria-hidden="true" />
-                  {!asideOpen && (asideBusy || asideCount > 0) && (
-                    <span
-                      className={`absolute right-1 top-1 size-1.5 rounded-full ${
-                        asideBusy ? "animate-pulse bg-mesa-amber" : "bg-l3"
+          {/* 右上角三路分流（2026-11-27 单一工作界面预设）：
+              纯协议原生聊天→「运行日志」抽屉、双客户端原生聊天→隐藏 >_、兼容模式聊天→保留 >_、终端模式→去回聊天与侧边提问；
+              单次跨模式切换统一收进 ⋯ 菜单（「改用终端模式打开」/「改用聊天模式打开」） */}
+          {(() => {
+            const barSpec = topBarModeFor(focusedId);
+            const logsOpen = nativeLogTabId === focusedId && focusedSurfaceMode === "chat";
+            const aside = focusedId ? chatAsideStateByTab[focusedId] : undefined;
+            const asideOpen = focusedSurfaceMode === "chat" && Boolean(aside?.open);
+            const asideBusy = Boolean(aside?.busy);
+            const asideCount = aside?.activeThreads ?? 0;
+            const hasLeftGroup = barSpec.primaryButton !== "none" || barSpec.showAsideButton;
+            const count = gitTotals?.isRepo ? gitTotals.files.length : 0;
+            const hasLines = Boolean(gitTotals && (gitTotals.add > 0 || gitTotals.del > 0));
+            return (
+              <>
+                <span className="ml-auto flex shrink-0 items-center gap-0.5">
+                  {barSpec.primaryButton === "logs" && (
+                    <button
+                      type="button"
+                      onClick={() => setNativeLogTabId((cur) => (cur === focusedId ? null : focusedId))}
+                      aria-pressed={logsOpen}
+                      title={
+                        logsOpen
+                          ? "收起运行日志"
+                          : `查看协议运行日志${toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""}`
+                      }
+                      aria-label={logsOpen ? "收起运行日志" : "查看协议运行日志"}
+                      className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                        logsOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
                       }`}
-                      aria-hidden="true"
-                    />
+                    >
+                      <ScrollText size={15} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
                   )}
-                </button>
-              );
-            })()}
-            <span className="mx-1 h-3.5 w-px bg-hairline" aria-hidden="true" />
-            {(() => {
-              const count = gitTotals?.isRepo ? gitTotals.files.length : 0;
-              const hasLines = Boolean(gitTotals && (gitTotals.add > 0 || gitTotals.del > 0));
-              return (
-                <button
-                  type="button"
-                  onClick={toggleRightPane}
-                  aria-pressed={rightOpen}
-                  title={
-                    rightOpen
-                      ? "收起右栏（文件与改动）"
-                      : count > 0
-                        ? `文件与改动：${count} 个文件未提交${hasLines ? `（+${gitTotals!.add} −${gitTotals!.del}）` : ""}`
-                        : "文件与改动：在右侧打开文件树、预览或改动"
-                  }
-                  aria-label={rightOpen ? "收起右栏" : "打开文件与改动"}
-                  className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
-                    rightOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-                  }`}
-                >
-                  <PanelRight size={15} strokeWidth={1.8} aria-hidden="true" />
-                  {/* 有改动只点一个小点，个数与增删行放悬停 */}
-                  {count > 0 && !rightOpen && (
-                    <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
+                  {barSpec.primaryButton === "terminal" && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        noteMouseToggleSurface(e.currentTarget.getBoundingClientRect(), toggleSurfaceCombo);
+                        switchSurface("terminal");
+                      }}
+                      title={`看这段对话的终端${toggleSurfaceCombo ? `（${comboLabel(toggleSurfaceCombo)}）` : ""}`}
+                      aria-label="看这段对话的终端"
+                      className="flex size-7 items-center justify-center rounded-md text-l4 transition-colors hover:bg-hover hover:text-l2"
+                    >
+                      <TerminalIcon size={15} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
                   )}
-                </button>
-              );
-            })()}
-            <button
-              type="button"
-              onClick={(e) => {
-                const r = e.currentTarget.getBoundingClientRect();
-                setHeadMenu({ x: r.right, y: r.bottom + 4 });
-              }}
-              aria-haspopup="menu"
-              aria-expanded={headMenu != null}
-              title={focusedSurfaceMode === "chat" ? "更多：搜索聊天、关掉这段对话" : "更多：查找终端输出、关掉这段对话"}
-              aria-label="更多操作"
-              className={`flex size-7 items-center justify-center rounded-md transition-colors ${
-                headMenu ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l2"
-              }`}
-            >
-              <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
-            </button>
-          </span>
-          {headMenu && (
-            <ContextMenu
-              x={headMenu.x}
-              y={headMenu.y}
-              alignRight
-              onClose={() => setHeadMenu(null)}
-              items={[
-                focusedSurfaceMode === "chat"
-                  ? {
-                      label: "搜索聊天",
-                      icon: Search,
-                      hint: IS_MAC ? "⌘F" : "Ctrl+F",
-                      title: "在这段对话的消息、命令和输出里找字",
-                      onSelect: () => openChatSearch(focusedId),
+                  {barSpec.showAsideButton && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!focusedId) return;
+                        toggleChatAside(focusedId);
+                      }}
+                      aria-pressed={asideOpen}
+                      title={
+                        asideOpen
+                          ? "收起侧边提问栏（保留当前记录）"
+                          : asideCount > 0
+                            ? `侧边提问（不打断主对话 · 已有 ${asideCount} 条）`
+                            : "侧边提问（Side Question /btw：在右侧独立分栏随口问一句，不打断主对话）"
+                      }
+                      aria-label={asideOpen ? "收起侧边提问栏" : "打开侧边提问栏"}
+                      className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
+                        asideOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                      }`}
+                    >
+                      <MessagesSquare size={15} strokeWidth={1.8} aria-hidden="true" />
+                      {!asideOpen && (asideBusy || asideCount > 0) && (
+                        <span
+                          className={`absolute right-1 top-1 size-1.5 rounded-full ${
+                            asideBusy ? "animate-pulse bg-mesa-amber" : "bg-l3"
+                          }`}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </button>
+                  )}
+                  {hasLeftGroup && <span className="mx-1 h-3.5 w-px bg-hairline" aria-hidden="true" />}
+                  <button
+                    type="button"
+                    onClick={toggleRightPane}
+                    aria-pressed={rightOpen}
+                    title={
+                      rightOpen
+                        ? "收起右栏（文件与改动）"
+                        : count > 0
+                          ? `文件与改动：${count} 个文件未提交${hasLines ? `（+${gitTotals!.add} −${gitTotals!.del}）` : ""}`
+                          : "文件与改动：在右侧打开文件树、预览或改动"
                     }
-                  : {
-                      label: "查找终端输出",
-                      icon: Search,
-                      title: "在这段对话的终端输出里找字",
-                      onSelect: () => tabActionsRef.current.get(focusedId)?.search(),
-                    },
-                ...(splitActive
-                  ? [
+                    aria-label={rightOpen ? "收起右栏" : "打开文件与改动"}
+                    className={`relative flex size-7 items-center justify-center rounded-md transition-colors ${
+                      rightOpen ? "bg-seg-sel text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                    }`}
+                  >
+                    <PanelRight size={15} strokeWidth={1.8} aria-hidden="true" />
+                    {/* 有改动只点一个小点，个数与增删行放悬停 */}
+                    {count > 0 && !rightOpen && (
+                      <span className="absolute right-1 top-1 size-1.5 rounded-full bg-l3" aria-hidden="true" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setHeadMenu({ x: r.right, y: r.bottom + 4 });
+                    }}
+                    aria-haspopup="menu"
+                    aria-expanded={headMenu != null}
+                    title={
+                      focusedSurfaceMode === "chat"
+                        ? "更多：搜索聊天、改用终端模式打开、关掉这段对话"
+                        : "更多：查找终端输出、改用聊天模式打开、关掉这段对话"
+                    }
+                    aria-label="更多操作"
+                    className={`flex size-7 items-center justify-center rounded-md transition-colors ${
+                      headMenu ? "bg-hover text-l1" : "text-l4 hover:bg-hover hover:text-l2"
+                    }`}
+                  >
+                    <MoreHorizontal size={15} strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </span>
+                {headMenu && (
+                  <ContextMenu
+                    x={headMenu.x}
+                    y={headMenu.y}
+                    alignRight
+                    onClose={() => setHeadMenu(null)}
+                    items={[
+                      focusedSurfaceMode === "chat"
+                        ? {
+                            label: "搜索聊天",
+                            icon: Search,
+                            hint: IS_MAC ? "⌘F" : "Ctrl+F",
+                            title: "在这段对话的消息、命令和输出里找字",
+                            onSelect: () => openChatSearch(focusedId),
+                          }
+                        : {
+                            label: "查找终端输出",
+                            icon: Search,
+                            title: "在这段对话的终端输出里找字",
+                            onSelect: () => tabActionsRef.current.get(focusedId)?.search(),
+                          },
+                      ...(barSpec.menuSwitch
+                        ? [
+                            {
+                              label: barSpec.menuSwitch.label,
+                              icon:
+                                barSpec.menuSwitch.targetSurface === "terminal"
+                                  ? TerminalIcon
+                                  : MessagesSquare,
+                              title:
+                                barSpec.menuSwitch.targetSurface === "terminal"
+                                  ? barSpec.menuSwitch.switchNative
+                                    ? "空闲时停下协议进程，按这段对话改用终端模式打开"
+                                    : "同一进程切到终端界面，不重启"
+                                  : "把这段对话改用聊天模式打开",
+                              onSelect: () => {
+                                if (barSpec.menuSwitch!.targetSurface === "terminal") {
+                                  openTabInTerminalMode(focusedId);
+                                } else {
+                                  openTabInChatMode(focusedId);
+                                }
+                              },
+                            },
+                          ]
+                        : []),
+                      ...(splitActive
+                        ? [
+                            {
+                              label: "退出分屏",
+                              icon: Columns2,
+                              title: "回到单段对话视图",
+                              onSelect: toggleSplit,
+                            },
+                          ]
+                        : []),
+                      ...(focusedSurfaceMode !== "chat" && compactBarHidden
+                        ? [
+                            {
+                              label: "显示启动配置行",
+                              icon: PanelTopOpen,
+                              title: "终端上方那一行（插入 / 修改 / 更多操作）",
+                              onSelect: toggleCompactBar,
+                            },
+                          ]
+                        : []),
+                      // 关掉放最后、和上面隔开：停下 Agent 不是查看类动作（2026-10-26 用户定三处入口之一，主要让人发现快捷键）
+                      { separator: true },
                       {
-                        label: "退出分屏",
-                        icon: Columns2,
-                        title: "回到单段对话视图",
-                        onSelect: toggleSplit,
+                        label: "关掉这段对话",
+                        icon: ChatStopIcon,
+                        hint: comboLabel(closeChatCombo(IS_MAC)),
+                        title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
+                        onSelect: () => {
+                          // 用鼠标关到第 2 段时提醒快捷键（shortcut-nudges.tsx）：挂在 ⋯ 下面
+                          noteMouseCloseChat(
+                            { left: headMenu.x - 28, right: headMenu.x, top: headMenu.y - 32, bottom: headMenu.y - 4 },
+                            "below",
+                          );
+                          void requestCloseTab(focusedId);
+                        },
                       },
-                    ]
-                  : []),
-                ...(focusedSurfaceMode !== "chat" && compactBarHidden
-                  ? [
-                      {
-                        label: "显示启动配置行",
-                        icon: PanelTopOpen,
-                        title: "终端上方那一行（插入 / 修改 / 更多操作）",
-                        onSelect: toggleCompactBar,
-                      },
-                    ]
-                  : []),
-                // 关掉放最后、和上面隔开：停下 Agent 不是查看类动作（2026-10-26 用户定三处入口之一，主要让人发现快捷键）
-                { separator: true },
-                {
-                  label: "关掉这段对话",
-                  icon: ChatStopIcon,
-                  hint: comboLabel(closeChatCombo(IS_MAC)),
-                  title: "停下这段对话的 Agent、收起它；记录还在侧栏，再点开发一句就接回（在干活或等你确认的会先问你）",
-                  onSelect: () => {
-                    // 用鼠标关到第 2 段时提醒快捷键（shortcut-nudges.tsx）：挂在 ⋯ 下面
-                    noteMouseCloseChat(
-                      { left: headMenu.x - 28, right: headMenu.x, top: headMenu.y - 32, bottom: headMenu.y - 4 },
-                      "below",
-                    );
-                    void requestCloseTab(focusedId);
-                  },
-                },
-              ]}
-            />
-          )}
+                    ]}
+                  />
+                )}
+              </>
+            );
+          })()}
         </div>
         <div
           ref={splitAreaRef}
@@ -4405,9 +4575,20 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                         mcps={sessionByTab[t.id]?.mcps ?? []}
                         onSend={sendChatToActive}
                         onAllowWrite={() => void allowWritableFork()}
-                        onOpenTerminal={() =>
-                          inReader ? setReaderSurface("terminal") : switchSurface("terminal")
-                        }
+                        onOpenTerminal={() => {
+                          if (inReader) {
+                            setReaderSurface("terminal");
+                            return;
+                          }
+                          if (
+                            statuses[t.id]?.nativeRuntime ||
+                            nativeRuntimeKind(sessionByTab[t.id]?.channel?.kind)
+                          ) {
+                            setNativeLogTabId(t.id);
+                            return;
+                          }
+                          openTabInTerminalMode(t.id);
+                        }}
                         active={chatOn}
                         agentId={agentKey ?? null}
                         confirmDetail={
@@ -4723,6 +4904,14 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
             </div>
           )}
         </div>
+        <NativeLogDrawer
+          open={nativeLogTabId === focusedId && focusedSurfaceMode === "chat"}
+          ptyId={statuses[focusedId]?.ptyId ?? null}
+          title={statuses[focusedId]?.title ?? "对话"}
+          running={Boolean(statuses[focusedId]?.running)}
+          onClose={() => setNativeLogTabId(null)}
+          onOpenInTerminalMode={() => openTabInTerminalMode(focusedId)}
+        />
         {/* 专注内容：右栏铺满即表达主次，中带不加压暗遮罩（v3.44 用户否决压黑） */}
       </div>
 

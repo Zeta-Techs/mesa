@@ -145,13 +145,18 @@ export function ChatBetaNotes({
           {onOpenTerminal && (
             <button
               type="button"
-              onClick={onOpenTerminal}
+              onClick={nativeOn && !runtimeOn && switchTerminalAction ? switchTerminalAction : onOpenTerminal}
               className={`${rowActionClass} ml-auto gap-1.5 font-medium text-l1`}
             >
               {runtimeOn ? (
                 <>
                   <ScrollText size={13} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
                   查看运行日志
+                </>
+              ) : nativeOn ? (
+                <>
+                  <SquareTerminal size={13} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
+                  改用终端模式打开
                 </>
               ) : (
                 <>

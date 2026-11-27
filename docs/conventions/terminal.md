@@ -500,6 +500,8 @@
 - ~~**文件树默认可收起（用户拍板）**~~（2026-10-24 文件树并进右栏文件窗格后作废：不再有单占一列的树、`ccode.terminal.treeOpen` / `ccode.terminal.treeWidth` 弃用、「主目录树自动收一次」`collapseHomeTreeOnce` 删除；右栏本就不跨重启、默认收起）。快速开聊 `pt.clean` 只关右栏，不另造专注态。
 - **卡在哪（2026-11-06，run-blocker.ts）**：`RunOverviewInput.blocker` 是唯一出处，终端页从各标签的会话状态（trustPrompt、menuPrompt、waitScreen、launchFailure、specialScreen、connIssue、grokLoginStuck、stalled）与 attention 现算；
   `stalled` = 在跑且十分钟没出一个字（`STALLED_MS`，出字即清）。只按卡法本身变化重算（序列化签名），不跟着对话刷新。
+- **对话头右上角三路分流与纯文本运行日志抽屉（2026-11-27 单一工作界面预设，替代原常驻 `>_` 双层切换）**：
+  右上角按「当前这段对话实际怎么跑」（`tab-surface.ts topBarModeSpec`，以运行态 `statuses.nativeRuntime` 与连接/通道形态判定，不在界面层写死十家矩阵）分流：① **纯协议原生聊天**（Claude 网关 / Kimi / Gemini / CodeBuddy / Grok / Cursor / agy 官方号）原 `>_` 位置换成 **运行日志**（`ScrollText`，打开纯文本 `NativeLogDrawer`，读 `pty_native_log` 64 KB 环形缓冲，绝不切黑屏 xterm），`⋯` 放 **改用终端模式打开**（空闲重启按会话接回）；② **双客户端原生聊天**（Codex / Qwen / OpenCode）不显示 `>_`，`⋯` 放 **改用终端模式打开**（同进程当场切换不重启）；③ **兼容模式聊天**（Claude 官方订阅 / agy 网关 / ACP 分叉或自动回落）保留 `>_` 终端入口；④ **终端模式**去掉「回聊天」与侧边提问钮（`/btw` 仅聊天模式提供），`⋯` 放 **改用聊天模式打开**。`/terminal`、`/chat`、`ChatBetaNotes`、审批卡「查看日志」及研讨「带回商量」（终端模式改走 bracketed paste 填入）全部对齐同一套分流。
 - **对话头右上角四个与两块宽度（2026-10-24，用户贴 Claude 客户端那一排；「文件、改动是分开的」「可以，改吧」）**：
   右上角是 **>_ 终端**（亮着 = 正看着这段对话的终端）、**± 改动**（`FileDiff`，右栏改动窗格，有改动右上角一个小点、文件数放悬停——那是整个文件夹没提交的数，写大数字像是这段对话改的）、
   **文件**（`FolderTree`，右栏文件窗格）、**⋯ 更多**（分屏对照 / 查找终端输出 / 显示启动配置行〔被收起时〕；原「打开文件预览」项取消，文件钮就是它）。

@@ -2988,7 +2988,7 @@ export default function StepFlow({
           }),
       // 同一步骤的任务书讨论是同一个对话：再点切回已有标签；没有标签才按上面 resume / 新开会话
       reuseKey: discussReuseKey(projectPath, draft.relPath),
-      ...(carry ? { composerInsert: carry, surface: "chat" as const } : {}),
+      ...(carry ? { composerInsert: carry } : {}),
     });
     setPage("terminal");
   }
