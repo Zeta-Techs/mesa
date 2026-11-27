@@ -5379,6 +5379,25 @@ mod e2e {
             });
         }
         let snaps: Arc<Mutex<Vec<ChannelSnapshot>>> = Arc::default();
+        // Windows 上 crate::dirs::home_dir 只认 MESA_SANDBOX_HOME，不认 HOME / USERPROFILE：
+        // 在子进程起完后再切换，避免影响前面的 resolve_binary / cli_version，并让 acp / claude_native 的 find_transcript 命中临时 HOME
+        #[cfg(windows)]
+        struct SandboxGuard(Option<std::ffi::OsString>);
+        #[cfg(windows)]
+        impl Drop for SandboxGuard {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("MESA_SANDBOX_HOME", v),
+                    None => std::env::remove_var("MESA_SANDBOX_HOME"),
+                }
+            }
+        }
+        #[cfg(windows)]
+        let _sandbox = {
+            let prev = std::env::var_os("MESA_SANDBOX_HOME");
+            std::env::set_var("MESA_SANDBOX_HOME", home);
+            SandboxGuard(prev)
+        };
         {
             let snaps = snaps.clone();
             start_with_sink("e2e-pty", prepared, Arc::new(move |s| {

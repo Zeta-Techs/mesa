@@ -66,10 +66,15 @@ pub(crate) struct AcpState {
     transcript: Option<String>,
 }
 
+/// 剥掉 Windows `fs::canonicalize` 可能带入的 `\\?\` 前缀，保证 `session/new` / `session/load` 收到干净路径
+pub(crate) fn clean_cwd(cwd: &str) -> String {
+    crate::paths::strip_verbatim(PathBuf::from(cwd)).to_string_lossy().into_owned()
+}
+
 impl AcpPrep {
     /// 只用到监听口与令牌的桥（Claude 原生模式）：`resume` 记启动参数里定下的会话 id
     pub(super) fn bridge_only(listener: TcpListener, token: String, cwd: &str, resume: Option<String>) -> Self {
-        Self { listener, token, cwd: cwd.to_string(), resume, mode: None, discuss: false, expect_model: None, expect_thinking: None }
+        Self { listener, token, cwd: clean_cwd(cwd), resume, mode: None, discuss: false, expect_model: None, expect_thinking: None }
     }
 }
 
@@ -293,7 +298,7 @@ pub(crate) fn prepare(
         acp: Some(AcpPrep {
             listener,
             token,
-            cwd: cwd.to_string(),
+            cwd: clean_cwd(cwd),
             resume: resume.map(String::from),
             mode,
             discuss,
@@ -561,10 +566,14 @@ pub(crate) fn config_check(opened: &Value, id: &str, want: Option<&str>) -> Mode
 
 /// 按会话 id 查找各家 ACP 的会话文件本体（新会话第一轮之后才落盘；与 sessions/*.rs 同一落点）
 fn find_transcript(agent: &str, sid: &str) -> Option<String> {
+    let roots = crate::sessions::SessionRoots::current()?;
+    find_transcript_in(agent, sid, &roots)
+}
+
+fn find_transcript_in(agent: &str, sid: &str, roots: &crate::sessions::SessionRoots) -> Option<String> {
     if sid.is_empty() || sid.contains(['/', '\\']) {
         return None;
     }
-    let roots = crate::sessions::SessionRoots::current()?;
     match agent {
         "kimi" => {
             let sessions = roots.kimi_code.join("sessions");
@@ -1160,5 +1169,35 @@ mod tests {
         assert!(matches!(&ev[0], ChannelEvent::TurnEnd { reason } if reason.as_deref() == Some("failed")));
         assert!(matches!(&ev[1], ChannelEvent::ErrorDetail(m) if !m.contains("987654321")));
         assert!(constant_eq("abc", "abc") && !constant_eq("abc", "abd") && !constant_eq("abc", "ab"));
+    }
+
+    #[test]
+    fn clean_cwd_strips_windows_verbatim_prefix() {
+        assert_eq!(clean_cwd(r"\\?\C:\Users\demo\work"), r"C:\Users\demo\work");
+        assert_eq!(clean_cwd(r"\\?\UNC\server\share\repo"), r"\\server\share\repo");
+        assert_eq!(clean_cwd(r"C:\Users\demo\work"), r"C:\Users\demo\work");
+    }
+
+    #[test]
+    fn find_transcript_in_locates_all_acp_agents_under_roots() {
+        let root = std::env::temp_dir().join(format!("ccode-acp-ft-{}", uuid::Uuid::new_v4()));
+        let kimi = root.join(".kimi-code").join("sessions").join("wd_work_1").join("session_k1").join("agents").join("main");
+        std::fs::create_dir_all(&kimi).unwrap();
+        std::fs::write(kimi.join("wire.jsonl"), "{}\n").unwrap();
+        let gemini = root.join(".gemini").join("tmp").join("slug-1").join("chats");
+        std::fs::create_dir_all(&gemini).unwrap();
+        std::fs::write(gemini.join("session-2026-11-27-86e4e151.json"), "{}\n").unwrap();
+        let cb = root.join(".codebuddy").join("projects").join("c-Users-work");
+        std::fs::create_dir_all(&cb).unwrap();
+        std::fs::write(cb.join("cb-sid-1.jsonl"), "{}\n").unwrap();
+        let grok = root.join(".grok").join("sessions").join("C%3A%5Cwork").join("grk-1");
+        std::fs::create_dir_all(&grok).unwrap();
+        std::fs::write(grok.join("updates.jsonl"), "{}\n").unwrap();
+        let roots = crate::sessions::SessionRoots::at(&root);
+        assert!(find_transcript_in("kimi", "session_k1", &roots).is_some_and(|p| p.ends_with("wire.jsonl")));
+        assert!(find_transcript_in("gemini", "86e4e151-197b-4686", &roots).is_some_and(|p| p.ends_with("86e4e151.json")));
+        assert!(find_transcript_in("codebuddy", "cb-sid-1", &roots).is_some_and(|p| p.ends_with("cb-sid-1.jsonl")));
+        assert!(find_transcript_in("grok", "grk-1", &roots).is_some_and(|p| p.ends_with("updates.jsonl")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

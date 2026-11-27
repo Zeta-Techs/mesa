@@ -196,4 +196,104 @@ mod tests {
         std::env::remove_var(ADDR_ENV);
         std::env::remove_var(TOKEN_ENV);
     }
+
+    /// Windows 专项：npm `.cmd` shim 深化直启、带空格/引号/中文参数与 UTF-8 双向流，以及断连后进程树连带清理
+    #[cfg(windows)]
+    #[test]
+    fn windows_bridge_handles_cmd_shim_utf8_quoting_and_kills_process_tree() {
+        let dir = std::env::temp_dir().join(format!("ccode-bridge-win-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let js = dir.join("mock_cli.js");
+        let shim = dir.join("mock_cli.cmd");
+        std::fs::write(
+            &js,
+            concat!(
+                "const fs = require('fs');\n",
+                "const cp = require('child_process');\n",
+                "const mode = process.argv[2];\n",
+                "if (mode === 'echo') {\n",
+                "  let buf = '';\n",
+                "  process.stdin.setEncoding('utf8');\n",
+                "  process.stdin.on('data', (c) => {\n",
+                "    buf += c;\n",
+                "    const nl = buf.indexOf('\\n');\n",
+                "    if (nl !== -1) {\n",
+                "      process.stdout.write(JSON.stringify({ arg: process.argv[3], line: buf.slice(0, nl) }) + '\\n');\n",
+                "      process.exit(5);\n",
+                "    }\n",
+                "  });\n",
+                "} else if (mode === 'tree') {\n",
+                "  const grand = cp.spawn(process.execPath, ['-e', 'setInterval(() => {}, 10000)'], { stdio: 'ignore' });\n",
+                "  process.stdout.write(JSON.stringify({ child: process.pid, grand: grand.pid }) + '\\n');\n",
+                "  setInterval(() => {}, 10000);\n",
+                "}\n",
+            ),
+        )
+        .unwrap();
+        // 典型 npm .cmd shim 格式（background_command 会解析并改为 node 直启，不经 cmd /c 破坏引号）
+        std::fs::write(&shim, "@ECHO off\r\n\"node\" \"%~dp0\\mock_cli.js\" %*\r\n").unwrap();
+
+        // 1) .cmd shim + 引号/空格/中文参数 + 中文 UTF-8 往返
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::env::set_var(ADDR_ENV, addr.to_string());
+        std::env::set_var(TOKEN_ENV, "tok-win-1");
+        let shim_arg = shim.to_string_lossy().into_owned();
+        let tagged = "含空格 \"引号\" 中文|a&b%PATH%";
+        let tagged_owned = tagged.to_string();
+        let bridge = std::thread::spawn(move || {
+            helper_stdio_bridge_cli(&["--".into(), shim_arg, "echo".into(), tagged_owned])
+        });
+        let (conn, _) = listener.accept().unwrap();
+        let mut r = BufReader::new(conn.try_clone().unwrap());
+        let mut first = String::new();
+        r.read_line(&mut first).unwrap();
+        assert_eq!(first, "tok-win-1\n");
+        (&conn).write_all("{\"msg\":\"你好，世界\"}\n".as_bytes()).unwrap();
+        let mut back = String::new();
+        r.read_line(&mut back).unwrap();
+        let v: serde_json::Value = serde_json::from_str(back.trim()).unwrap();
+        assert_eq!(v["arg"], tagged);
+        assert_eq!(v["line"], "{\"msg\":\"你好，世界\"}");
+        assert_eq!(bridge.join().unwrap(), 5);
+
+        // 2) 断连后 kill_process_tree 连带清掉孙进程
+        let listener2 = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr2 = listener2.local_addr().unwrap();
+        std::env::set_var(ADDR_ENV, addr2.to_string());
+        std::env::set_var(TOKEN_ENV, "tok-win-2");
+        let shim_arg2 = shim.to_string_lossy().into_owned();
+        let bridge2 = std::thread::spawn(move || {
+            helper_stdio_bridge_cli(&["--".into(), shim_arg2, "tree".into()])
+        });
+        let (conn2, _) = listener2.accept().unwrap();
+        let mut r2 = BufReader::new(conn2.try_clone().unwrap());
+        let mut tok2 = String::new();
+        r2.read_line(&mut tok2).unwrap();
+        assert_eq!(tok2, "tok-win-2\n");
+        let mut pids_line = String::new();
+        r2.read_line(&mut pids_line).unwrap();
+        let pids: serde_json::Value = serde_json::from_str(pids_line.trim()).unwrap();
+        let child_pid = pids["child"].as_u64().unwrap() as u32;
+        let grand_pid = pids["grand"].as_u64().unwrap() as u32;
+        let _ = conn2.shutdown(std::net::Shutdown::Both);
+        drop(r2);
+        drop(conn2);
+        let _ = bridge2.join().unwrap();
+        let alive = |pid: u32| {
+            let out = crate::process::background_command("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            out.contains(&format!("\"{pid}\""))
+        };
+        assert!(!alive(child_pid), "断连后 CLI 子进程应已清理（pid={child_pid}）");
+        assert!(!alive(grand_pid), "断连后 CLI 孙进程应已清理（pid={grand_pid}）");
+
+        std::env::remove_var(ADDR_ENV);
+        std::env::remove_var(TOKEN_ENV);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
