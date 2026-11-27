@@ -67,7 +67,7 @@ export interface ChatChannelSnapshot {
   /** CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉 */
   statusLine?: string | null;
   retry?: string | null;
-  /** 原生模式（没有终端界面的 Kimi、Claude）这一段思考的原文（最近一截，已脱敏）：照终端模式读屏的思考框那样显示；旧版后端没有 */
+  /** 结构化通道（ACP / Claude 原生 / Codex / Qwen / OpenCode）这一段思考的实时原文（最近一截，已脱敏）：正文出来前照思考预览框流式显示；旧版后端没有 */
   thinkingLive?: string | null;
   /** 这个进程里起过几个后台任务（run_in_background 的命令 / 子 Agent、Claude 的 Monitor）；看不到工具参数的旁路为 0；旧版后端没有 */
   backgroundStarted?: number;

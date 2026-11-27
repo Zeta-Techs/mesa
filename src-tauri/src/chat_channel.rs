@@ -147,8 +147,8 @@ pub struct ChannelSnapshot {
     pub activity: Option<ActivityDto>,
     /// 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 的思考增量）；工具开始或正文开始写就清掉
     pub thinking: Option<String>,
-    /// 原生模式（没有终端界面的 Kimi ACP、Claude -p）这一段思考的原文（留最近 THINKING_LIVE_CAP 字节）：终端模式下这段靠读屏
-    /// 照终端原样显示在回复预览的位置，原生模式没有屏可读，改由协议的思考增量给；清掉的时机同 thinking
+    /// 这一段思考的实时原文（ACP / Claude 原生 / Codex / Qwen / OpenCode，留最近 THINKING_LIVE_CAP 字节）：
+    /// 正文出来前照原样流式显示在回复预览位置，清掉的时机同 thinking
     pub thinking_live: Option<String>,
     /// CLI 自己报的一句现状（程序状态旁路的 msg，如 Grok「Connection failed | Retrying (1/15)」）；回合开始 / 结束清掉
     pub status_line: Option<String>,
@@ -204,8 +204,10 @@ pub(crate) enum ChannelEvent {
     TextBreak,
     /// 思考摘要的增量（Codex 推理摘要 / Qwen、OpenCode 思考）
     ThinkingDelta(String),
-    /// 新的一段思考开始：前一段的摘要作废
+    /// 新的一段思考开始（如工具调用后的新 reasoning 条目）：前一段摘要与实时原文都清空
     ThinkingBreak,
+    /// 同一推理条目内新增一段摘要（Codex `summaryPartAdded`）：单行摘要切到新段标题，实时思考原文以空行续接不抹掉前段
+    ThinkingPartBreak,
     /// CLI 自己报的一句现状（None = 清掉）
     StatusLine(Option<String>),
     TurnEnd {
@@ -253,6 +255,8 @@ pub(crate) struct Tracker {
     pub(crate) native_questions: HashMap<String, Value>,
     /// 数过的后台任务调用 id（snap.background_started 不重复数）
     background_ids: std::collections::HashSet<String>,
+    /// 同一思考条目内分段标记（Codex summaryPartAdded）：下一段 ThinkingDelta 进来前在 thinking_live 里插空行
+    pending_thinking_break: bool,
 }
 
 fn is_open(turn: &Option<TurnDto>) -> bool {
@@ -295,6 +299,7 @@ impl Tracker {
         self.snap.activity = None;
         self.snap.thinking = None;
         self.snap.thinking_live = None;
+        self.pending_thinking_break = false;
         self.snap.status_line = None;
         self.snap.retry = None;
         self.prompt_queued = false;
@@ -500,6 +505,7 @@ impl Tracker {
                 // 想完了、动手了：这一段思考的摘要不再是「现在」
                 self.snap.thinking = None;
                 self.snap.thinking_live = None;
+                self.pending_thinking_break = false;
             }
             ChannelEvent::ToolEnd { call_id } => match call_id {
                 Some(id) => {
@@ -515,12 +521,18 @@ impl Tracker {
                 self.running.clear();
                 self.snap.thinking = None;
                 self.snap.thinking_live = None;
+                self.pending_thinking_break = false;
             }
             ChannelEvent::ThinkingBreak => {
                 self.snap.thinking = None;
                 self.snap.thinking_live = None;
+                self.pending_thinking_break = false;
             }
-            ChannelEvent::ThinkingDelta(text) if !text.is_empty() => {
+            ChannelEvent::ThinkingPartBreak => {
+                self.snap.thinking = None;
+                self.pending_thinking_break = true;
+            }
+            ChannelEvent::ThinkingDelta(text) if !text.is_empty() && !self.straggler(now) => {
                 let cur = self.snap.thinking.get_or_insert_with(String::new);
                 if cur.len() < THINKING_CAP {
                     cur.push_str(text);
@@ -529,9 +541,14 @@ impl Tracker {
                         cur.truncate(end);
                     }
                 }
-                // 没有终端界面的原生模式：思考原文另留一份最近的，给聊天层照终端模式的样子显示
-                if matches!(self.snap.kind, "acp" | "claude-native") {
+                // 所有经结构化通道吐出思考增量的家（ACP / Claude 原生 / Codex / Qwen / OpenCode）：
+                // 实时思考原文另留最近 THINKING_LIVE_CAP 字节，聊天层在正文出来前完整流式展示，不再被单行 48 字状态摘要截断
+                if matches!(self.snap.kind, "acp" | "claude-native" | "codex" | "qwen" | "opencode") {
                     let live = self.snap.thinking_live.get_or_insert_with(String::new);
+                    if self.pending_thinking_break && !live.is_empty() && !live.ends_with("\n\n") {
+                        live.push_str(if live.ends_with('\n') { "\n" } else { "\n\n" });
+                    }
+                    self.pending_thinking_break = false;
                     live.push_str(text);
                     if live.len() > THINKING_LIVE_CAP {
                         let cut = live.len() - THINKING_LIVE_CAP;
@@ -544,6 +561,7 @@ impl Tracker {
                 self.running.clear();
                 self.snap.thinking = None;
                 self.snap.thinking_live = None;
+                self.pending_thinking_break = false;
             }
             _ => {}
         }
@@ -568,6 +586,7 @@ impl Tracker {
                 self.snap.activity = None;
                 self.snap.thinking = None;
                 self.snap.thinking_live = None;
+                self.pending_thinking_break = false;
                 self.snap.status_line = None;
                 self.snap.retry = None;
                 self.running.clear();
@@ -591,6 +610,7 @@ impl Tracker {
                     self.snap.live_text = None;
                     self.snap.thinking = None;
                     self.snap.thinking_live = None;
+                    self.pending_thinking_break = false;
                     self.snap.activity = None;
                     self.snap.status_line = None;
                     self.snap.retry = None;
@@ -797,7 +817,7 @@ impl Tracker {
                     self.ensure_running(now);
                 }
             }
-            ChannelEvent::ThinkingBreak => {}
+            ChannelEvent::ThinkingBreak | ChannelEvent::ThinkingPartBreak => {}
         }
     }
 }
@@ -1890,7 +1910,7 @@ pub(crate) fn map_codex(msg: &Value, st: &mut CodexState) -> (Vec<ChannelEvent>,
             }
             // 推理摘要（`**小标题**` + 一段话；一个推理条目可分几段，每段开头先报 summaryPartAdded）。
             // 摘要没开（或模型不给）时只有原始推理增量（第三方模型经网关常见），拿它兜底
-            "item/reasoning/summaryPartAdded" => out.push(ChannelEvent::ThinkingBreak),
+            "item/reasoning/summaryPartAdded" => out.push(ChannelEvent::ThinkingPartBreak),
             "item/reasoning/summaryTextDelta" => {
                 if let Some(id) = params.get("itemId").and_then(|x| x.as_str()) {
                     st.summarized.insert(id.to_string());
@@ -4553,11 +4573,16 @@ mod tests {
         assert!(live.len() <= THINKING_LIVE_CAP && live.ends_with('想'));
         t.apply(ChannelEvent::TextDelta("好的".into()), 5);
         assert_eq!(t.snap.thinking_live, None, "正文开始写就让位");
+        // Codex 等结构化思考通道同样实时写入 thinking_live（含第三方模型原始推理与多段摘要），避免被 48 字单行状态截断
         let mut c = Tracker::new("tab-c", "codex", "codex");
         c.apply(ChannelEvent::TurnStart, 1);
-        c.apply(ChannelEvent::ThinkingDelta("**规划**".into()), 2);
-        assert_eq!(c.snap.thinking_live, None, "Codex 的是推理摘要，照旧只当状态");
-        assert!(c.snap.thinking.is_some());
+        c.apply(ChannelEvent::ThinkingDelta("**规划**\n先查入口。".into()), 2);
+        c.apply(ChannelEvent::ThinkingPartBreak, 3);
+        c.apply(ChannelEvent::ThinkingDelta("**验证**\n再跑单测。".into()), 4);
+        assert_eq!(c.snap.thinking_live.as_deref(), Some("**规划**\n先查入口。\n\n**验证**\n再跑单测。"));
+        assert_eq!(c.snap.thinking.as_deref(), Some("**验证**\n再跑单测。"));
+        c.apply(ChannelEvent::TextDelta("完成了".into()), 5);
+        assert_eq!(c.snap.thinking_live, None, "Codex 开始写正文后思考流让位");
     }
 
     /// 纯协议原生模式（ACP / Claude -p）长文实时预览保留更大窗口，避免科研长表格截头
@@ -4943,20 +4968,23 @@ mod tests {
         // 有摘要的条目，原始推理增量不再拼进来
         apply(reason("item/reasoning/textDelta", json!({"delta":"raw"})), &mut st, &mut t);
         assert_eq!(t.snap.thinking.as_deref(), Some("**规划修复步骤**\n\n先看调用方"));
-        // 新的一段摘要：前一段作废
+        // 新的一段摘要：单行摘要切到新段，实时思考原文以空行衔接不截断前段
         apply(reason("item/reasoning/summaryPartAdded", json!({"summaryIndex":1})), &mut st, &mut t);
         assert!(t.snap.thinking.is_none());
         apply(reason("item/reasoning/summaryTextDelta", json!({"delta":"**跑测试**"})), &mut st, &mut t);
+        assert_eq!(t.snap.thinking_live.as_deref(), Some("**规划修复步骤**\n\n先看调用方\n\n**跑测试**"));
         // 动手了：思考不再是「现在」
         apply(json!({"method":"item/started","params":{"threadId":"th1","turnId":"u1","item":{"type":"commandExecution","id":"c1","command":"/bin/zsh -lc 'npm test'"}}}), &mut st, &mut t);
         assert!(t.snap.thinking.is_none());
+        assert!(t.snap.thinking_live.is_none());
         let a = t.snap.activity.clone().unwrap();
         assert_eq!(a.name, "commandExecution");
         assert!(a.input.contains("npm test"));
-        // 没有摘要的模型：原始推理兜底
+        // 没有摘要的模型：原始推理兜底并实时写入 thinking_live
         apply(json!({"method":"item/started","params":{"threadId":"th1","turnId":"u1","item":{"type":"reasoning","id":"r2","summary":[],"content":[]}}}), &mut st, &mut t);
         apply(json!({"method":"item/reasoning/textDelta","params":{"threadId":"th1","turnId":"u1","itemId":"r2","delta":"想一想","contentIndex":0}}), &mut st, &mut t);
         assert_eq!(t.snap.thinking.as_deref(), Some("想一想"));
+        assert_eq!(t.snap.thinking_live.as_deref(), Some("想一想"));
     }
 
     #[test]

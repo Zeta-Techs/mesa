@@ -687,6 +687,58 @@ test("原生模式权限热切与回合中发话：Claude 原地切 ask/auto、f
     assert.ok(grokStopBtn, "Grok 原生模式应显示走官方协议的停止按钮");
     await act(async () => grokStopBtn.click());
     assert.equal(grokStopped, 1);
+
+    // —— Codex 实时思考流：长段多句原始推理经 thinkingLive 完整展示，不被 48 字状态行截断，正文到来后平滑让位 ——
+    const longThought =
+      "The user wants a long explanation. First I will outline the background and constraints in detail, then compare two concrete approaches before writing the final answer.";
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "codex",
+            attention: "working",
+            channel: baseChannel({
+              agent: "codex",
+              kind: "codex",
+              turn: { seq: 5, status: "running", stopReason: null, startedAt: 40, endedAt: null },
+              thinking: longThought,
+              thinkingLive: longThought,
+              liveText: null,
+            }),
+            liveReply: null,
+            liveReplySource: null,
+          }),
+        ),
+      );
+    });
+    assert.ok(
+      env.rootEl.textContent?.includes("compare two concrete approaches before writing the final answer."),
+      "Codex 思考流应完整渲染超过 48 字与多句的思考原文，不应截断在首句",
+    );
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "codex",
+            attention: "working",
+            channel: baseChannel({
+              agent: "codex",
+              kind: "codex",
+              turn: { seq: 5, status: "running", stopReason: null, startedAt: 40, endedAt: null },
+              thinking: null,
+              thinkingLive: null,
+              liveText: "下面直接给出完整说明。",
+            }),
+            liveReply: ["下面直接给出完整说明。"],
+            liveReplySource: "markdown",
+          }),
+        ),
+      );
+    });
+    assert.ok(env.rootEl.textContent?.includes("下面直接给出完整说明。"), "正文开始后应立即切到流式回复");
+    assert.ok(!env.rootEl.textContent?.includes("compare two concrete approaches"), "正文开始后思考预览应让位");
     assert.deepEqual(env.errors, []);
   } finally {
     await env.cleanup();

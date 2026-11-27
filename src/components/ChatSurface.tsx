@@ -794,8 +794,9 @@ export default function ChatSurface({
   const genElapsed = genStartedAt === null ? 0 : Math.floor((Date.now() - genStartedAt) / 1000);
   // 「这一轮现在在做什么」（chat-status.ts）：说在做的事，不说阶段；过程里已经在动的那一行不在这里重复
   const activity = channel?.activity ?? null;
-  // 原生模式（Kimi、Claude）的思考是原文、整段显示在预览位置（shownThinking）：状态行同终端模式只写「思考中」，不拿原文第一句重复
-  const thinking = nativeRuntimeKind(channel?.kind) ? null : (channel?.thinking ?? null);
+  // 旁路直接给了实时思考原文（ACP / Claude 原生 / Codex / Qwen / OpenCode）时，原文整段显示在预览位置（shownThinking），
+  // 状态行只写「思考中」，不再把思考截成 48 字单行摘要
+  const thinking = channel?.thinkingLive ? null : (channel?.thinking ?? null);
   const statusLine = channel?.statusLine ?? null;
   const statusInput = useMemo(
     () => ({
@@ -935,8 +936,8 @@ export default function ChatSurface({
   const { livePreview, livePreviewStyled } = generating || settling ? previewCandidate : emptyPreview;
   // 终端里正在想（Grok 的思考框）：正文出来前照终端原样显示在实时预览的位置，竖线、「◆ Thinking…」、折叠的「…」已在读屏时去掉
   // （2026-10-26 用户：就要原生的思考显示，只把无关的去掉）；正文一出来就让位
-  // 原生模式（Kimi、Claude 没有终端界面）：屏上没有思考框可读，思考原文由协议给（channel.thinkingLive），显示法同上
-  const shownThinking = liveThinking || (nativeRuntimeKind(channel?.kind) ? (channel?.thinkingLive ?? null) : null);
+  // 结构化通道（ACP / Claude 原生 / Codex / Qwen / OpenCode）直接给出实时思考原文（channel.thinkingLive），照思考预览框流式显示
+  const shownThinking = liveThinking || (channel?.thinkingLive ?? null);
   const thinkingPreview =
     livePreview.length === 0 &&
     generating &&
