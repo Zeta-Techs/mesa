@@ -20,6 +20,7 @@
  */
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { build } from "esbuild";
 
@@ -64,7 +65,7 @@ const bundled = await build({
   stdin: {
     contents: `export { createElement } from 'react'; export { createRoot } from 'react-dom/client';
       export { default as ChatSurface } from './src/components/ChatSurface';`,
-    resolveDir: new URL(".", repo).pathname,
+    resolveDir: fileURLToPath(repo),
     loader: "tsx",
   },
   loader: { ".css": "empty", ".svg": "dataurl", ".png": "dataurl" },
