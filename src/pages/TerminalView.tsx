@@ -128,7 +128,8 @@ import { loadProjectContextPack } from "../project-context-load";
 import { normalizeWorkMode } from "../work-mode";
 import { exitCodeClause, exitCodeSummary, exitToneClass } from "../exit-code";
 import ChatSurface from "../components/ChatSurface";
-import { nativeRuntime } from "../chat-fidelity";
+import { nativeModeAllowed, nativeRuntime } from "../chat-fidelity";
+import { shouldDeferTerminal, stripAnsiLog } from "../tab-surface";
 import { confirmDialog, alertDialog } from "../components/ConfirmDialog";
 import ContextMenu from "../components/ContextMenu";
 import InsertMenuItems from "../components/InsertMenuItems";
@@ -1660,6 +1661,8 @@ export const TerminalView = memo(function TerminalView({
     if (!wasCovered && coveredByChat) {
       const buf = termRef.current?.buffer.active;
       chatCoverPinnedBottomRef.current = !buf || buf.viewportY >= buf.baseY;
+      // 切回聊天层时补一次提示词建议扫描（终端模式下跳过此扫描）
+      if (ptyKindRef.current === "agent") scanSuggestionSoon();
     } else if (wasCovered && !coveredByChat) {
       // content-visibility: hidden 期间 xterm RenderService 暂停，Viewport 可能把 ydisp 卡在半路；
       // 揭开后重新 fit，盖住前本来就在底部的恢复贴底。
@@ -3027,6 +3030,8 @@ export const TerminalView = memo(function TerminalView({
   const [firstRunNote, setFirstRunNote] = useState<FirstRunNote | null>(null);
   // Agent 一启动就退出（接上不到 30 秒、非零退出码）：聊天里出「没能启动」卡，原先只在终端里留一行红字、对话区空着
   const [launchFailure, setLaunchFailure] = useState<LaunchFailure | null>(null);
+  // 纯协议原生无 xterm 态保留末段日志文本，供 30 秒内意外崩退时填充「没能启动」卡
+  const nativeTailRef = useRef("");
   // 启动被拦、聊天层能给出处理办法（Gemini 还没把认证方式设成 API Key）：聊天里出带按钮的卡
   const [launchBlock, setLaunchBlock] = useState<LaunchBlock | null>(null);
   // 认得出的首次启动屏（Gemini 要存密钥、Cursor 要登录，terminal-wait.ts specialScreenOf）：专门的卡
@@ -3136,6 +3141,9 @@ export const TerminalView = memo(function TerminalView({
   // （2026-10-27 用户截图）。writeChatMessage 记下发送前的屏之后放开
   const liveHoldRef = useRef(false);
   function scanLiveReplySoon() {
+    // 终端模式下用户直看 xterm，跳过仅给聊天层预览用的正文 / 思考 / token 读屏扫描
+    // （保留 menuPrompt / trustPrompt / tuiNotice / promptIdle / 通道与 hooks 注意力，保证收件箱、通知与计费略过不受影响）
+    if (!coveredByChatRef.current) return;
     const agent = launchAgentRef.current;
     if (!liveReplySupported(agent) && !outputTokensSupported(agent)) return;
     if (liveHoldRef.current) return;
@@ -3149,6 +3157,7 @@ export const TerminalView = memo(function TerminalView({
   }
   function scanLiveReplyNow() {
     liveScanTimerRef.current = null;
+    if (!coveredByChatRef.current) return;
     if (liveHoldRef.current) return;
     if (channelDeliversLiveText(channelRef.current)) return;
     const term = termRef.current;
@@ -3265,6 +3274,8 @@ export const TerminalView = memo(function TerminalView({
     setPromptSuggestion(next);
   }
   function scanSuggestionSoon() {
+    // 灰字续句建议仅聊天输入框消费，终端模式直接跳过读屏
+    if (!coveredByChatRef.current) return;
     if (suggestionScanTimerRef.current || !promptSuggestionSupported(launchAgentRef.current)) return;
     let waits = 0;
     const run = () => {
@@ -3776,7 +3787,7 @@ export const TerminalView = memo(function TerminalView({
           : null,
       nativeRuntime:
         running && !shellActive && (launchedNativeRef.current || nativeRuntimeKind(channel?.kind)),
-      canResume: shellActive && lastResumeRef.current != null,
+      canResume: (shellActive || exited) && lastResumeRef.current != null,
       startedAt,
       sessionId:
         linkCtxRef.current?.sessionId ??
@@ -3920,10 +3931,24 @@ export const TerminalView = memo(function TerminalView({
   }, [initialCwd]);
 
   // 懒挂载：首次可见时才创建 xterm，未展示过的标签不占用终端资源。
-  // 被聊天层盖着、也不自动启动的（侧栏点开只看的对话、重启恢复的占位标签）用到才建：切到终端层 / 窥视、
-  // 发第一句接回（launch 里 ensureTerminal 现建）。建 xterm + WebGL 约 30ms：原先推到第一帧之后建，
-  // 每点一段只看的对话仍白建一个、切完紧跟一次长任务（2026-10-26 改为用到才建）
-  const deferTerminal = coveredByChat && !autoStart && !resumeKick;
+  // 被聊天层盖着、也不自动启动的（侧栏点开只看的对话、重启恢复的占位标签）以及预期走纯协议原生运行（stdio-bridge 无 TUI，
+  // 日志已由纯文本 NativeLogDrawer 承载）的标签一律推迟创建，不白建 xterm 与 WebGL 上下文；
+  // 若后端实际回落到终端（nativeRuntime=false）或用户切到终端模式，再由 ensureTerminal() / coveredByChat=false 现建
+  const expectPureProtocolNative = Boolean(
+    coveredByChat &&
+      nativeMode &&
+      !customRuntimeId &&
+      !shellOnly &&
+      nativeRuntime(agentId) &&
+      nativeModeAllowed(agentId, selectedProfile?.accountType ?? null) &&
+      (!forkSessionId || agentId === "claude-code"),
+  );
+  const deferTerminal = shouldDeferTerminal({
+    coveredByChat,
+    autoStart: Boolean(autoStart),
+    resumeKick: Boolean(resumeKick),
+    expectPureProtocolNative,
+  });
   const [everVisible, setEverVisible] = useState(visible && !deferTerminal);
   everVisibleRef.current = everVisible;
   useEffect(() => {
@@ -4808,7 +4833,7 @@ export const TerminalView = memo(function TerminalView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
-    if (!autoStart || !visible || !everVisible || autoLaunchedRef.current)
+    if (!autoStart || !visible || (!everVisible && !expectPureProtocolNative) || autoLaunchedRef.current)
       return;
     const profile = customRuntimeId
       ? undefined
@@ -4868,18 +4893,18 @@ export const TerminalView = memo(function TerminalView({
     }, 0);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, everVisible, autoStart, profileId, profiles, restored, officialSt, officialStReady]);
+  }, [visible, everVisible, expectPureProtocolNative, autoStart, profileId, profiles, restored, officialSt, officialStReady]);
 
   const lastResumeKickRef = useRef(0);
   useEffect(() => {
     if (!resumeKick || resumeKick === lastResumeKickRef.current) return;
     // Agent 还在跑：先不消费这次 kick，等它停了再拉起。
     // 标签还藏着时不预热：fit 会落到 0×0，再拉宽就把窄画面写进滚动记录。
-    if (!visible || !everVisible || running) return;
+    if (!visible || (!everVisible && !expectPureProtocolNative) || running) return;
     lastResumeKickRef.current = resumeKick;
     void launch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resumeKick, visible, everVisible, running]);
+  }, [resumeKick, visible, everVisible, expectPureProtocolNative, running]);
 
   /** 终端自己发的通知（OSC 9/777 标题、BEL）：与注意力通知同一套门——
    *  设置关了不发、前台当前标签不打扰（画面就在眼前）、按标签限频。
@@ -4898,21 +4923,23 @@ export const TerminalView = memo(function TerminalView({
     );
   }
 
-  /** 把一个 PTY 接到 xterm 上；agent 退出时自动回落到 shell */
+  /** 把一个 PTY 接到 xterm 上（纯协议原生无 xterm 态同样接住流控、信号与退出事件）；agent 退出时自动回落到 shell */
   async function attach(
     ptyId: string,
     kind: PtyKind,
     opts?: { reset?: boolean; focus?: boolean; reattach?: boolean },
   ) {
-    // await 途中组件可能已卸载（关标签）：杀掉没人持有的 PTY，不碰已 dispose 的 xterm
-    if (!mountedRef.current || !termRef.current) {
+    // await 途中组件可能已卸载（关标签）：杀掉没人持有的 PTY；
+    // 纯协议原生运行时允许无 xterm 接管（headlessNative），不得因 !termRef.current 误杀 PTY
+    const headlessNative = kind === "agent" && launchedNativeRef.current && !termRef.current;
+    if (!mountedRef.current || (!termRef.current && !headlessNative)) {
       invoke("pty_kill", { ptyId }).catch(() => {});
       return;
     }
     const term = termRef.current;
     chatCoverPinnedBottomRef.current = true;
     if (opts?.reset) {
-      term.reset();
+      term?.reset();
       void invoke("drop_terminal_replay", { tabId }).catch(() => {});
     }
     unlistenRef.current.forEach((u) => u());
@@ -4924,6 +4951,7 @@ export const TerminalView = memo(function TerminalView({
       inputReadyRef.current = Boolean(opts?.reattach);
       startupSettledRef.current = Boolean(opts?.reattach);
     }
+    nativeTailRef.current = "";
     kkpArmedRef.current = false;
     queryPendingRef.current = "";
     hostPendingRef.current = "";
@@ -4999,20 +5027,21 @@ export const TerminalView = memo(function TerminalView({
         if (image) {
           setInlineImageUrl(`data:${image.mime};base64,${image.payload}`);
         }
-        if (host.text) {
+        const curTerm = termRef.current;
+        if (host.text && curTerm) {
           // 带清回滚区（ESC[3J）的整屏重画（Ink 回复超一屏时每帧「清屏 + 整段历史重打」）：用户正往上翻着时，
           // xterm 清掉回滚区后把视口钉在新历史的最顶端、此后每帧都回到顶，往下滚也被拽回去，看着像滚轮反了。
           // 历史是从头原样重打的，按原来的行号把视口放回去，用户看的还是那一段。
           // 聊天层从头盖着时（content-visibility: hidden）viewportY 小于 baseY 是 xterm Viewport 自己卡住，不是用户翻的
-          const buf = term.buffer.active;
+          const buf = curTerm.buffer.active;
           const userScrolled =
             buf.viewportY < buf.baseY && (!coveredByChatRef.current || !chatCoverPinnedBottomRef.current);
           const keepLine = host.text.includes("\x1b[3J") && userScrolled ? buf.viewportY : null;
           // term.write 走 WriteBuffer 异步分片解析：读屏必须在这一块落进 buffer 之后排，
           // 否则多块回放分片 >250ms 时定时器在半截画面上跑完，尾块落完却没人再触发扫屏
-          term.write(host.text, () => {
+          curTerm.write(host.text, () => {
             if (keepLine !== null) {
-              term.scrollToLine(Math.min(keepLine, term.buffer.active.baseY));
+              curTerm.scrollToLine(Math.min(keepLine, curTerm.buffer.active.baseY));
             }
             ackDrawn(payload.length);
             if (kind === "agent" && mountedRef.current && ptyIdRef.current === ptyId) {
@@ -5026,6 +5055,11 @@ export const TerminalView = memo(function TerminalView({
             }
           });
         } else {
+          if (host.text) {
+            const combined = nativeTailRef.current + host.text;
+            nativeTailRef.current = combined.length > 4096 ? combined.slice(-4096) : combined;
+          }
+          // 无 xterm 的纯协议原生模式同样及时回 pty_ack，确保后端 FlowGate 不停读、运行日志环形缓冲持续入队
           ackDrawn(payload.length);
         }
         if (kind === "agent" && host.text) {
@@ -5129,37 +5163,39 @@ export const TerminalView = memo(function TerminalView({
         invoke("pty_report_terminal_colors", { ptyId, reports }).catch(() => {});
       }
     }
-    try {
-      fitRef.current?.fit();
-    } catch {}
-    const fitted = fittedPtySize(fitRef.current, term);
-    if (fitted) {
-      if (opts?.reattach && fitted.cols > 20) {
-        // 接回空闲中的既有 TUI 进程：同尺寸 pty_resize 在 macOS 上不触发 SIGWINCH 重绘，
-        // 1 列微幅回弹促发 CLI 立即重画真实活画面，清掉「点恢复任务后重新接上」占位
-        await invoke("pty_resize", {
-          ptyId,
-          cols: fitted.cols - 1,
-          rows: fitted.rows,
-        }).catch(() => {});
-        window.setTimeout(() => {
-          if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
-          void invoke("pty_resize", {
+    if (term) {
+      try {
+        fitRef.current?.fit();
+      } catch {}
+      const fitted = fittedPtySize(fitRef.current, term);
+      if (fitted) {
+        if (opts?.reattach && fitted.cols > 20) {
+          // 接回空闲中的既有 TUI 进程：同尺寸 pty_resize 在 macOS 上不触发 SIGWINCH 重绘，
+          // 1 列微幅回弹促发 CLI 立即重画真实活画面，清掉「点恢复任务后重新接上」占位
+          await invoke("pty_resize", {
+            ptyId,
+            cols: fitted.cols - 1,
+            rows: fitted.rows,
+          }).catch(() => {});
+          window.setTimeout(() => {
+            if (!mountedRef.current || ptyIdRef.current !== ptyId) return;
+            void invoke("pty_resize", {
+              ptyId,
+              cols: fitted.cols,
+              rows: fitted.rows,
+            }).catch(() => {});
+          }, 40);
+        } else {
+          await invoke("pty_resize", {
             ptyId,
             cols: fitted.cols,
             rows: fitted.rows,
           }).catch(() => {});
-        }, 40);
-      } else {
-        await invoke("pty_resize", {
-          ptyId,
-          cols: fitted.cols,
-          rows: fitted.rows,
-        }).catch(() => {});
+        }
       }
+      // 退出回落等被动 attach 不抢焦点（分屏下用户在另一个 pane 打字）
+      if (opts?.focus !== false) term.focus();
     }
-    // 退出回落等被动 attach 不抢焦点（分屏下用户在另一个 pane 打字）
-    if (opts?.focus !== false) term.focus();
   }
 
   async function onPtyExit(exitedId: string, code: number) {
@@ -5199,8 +5235,13 @@ export const TerminalView = memo(function TerminalView({
       !pendingNativeFallbackRef.current &&
       Date.now() - ptyAttachedAtRef.current < 30_000
     ) {
-      termRef.current?.write("", () => setLaunchFailure({ code, lines: exitTail(screenLines()) }));
+      if (termRef.current) {
+        termRef.current.write("", () => setLaunchFailure({ code, lines: exitTail(screenLines()) }));
+      } else {
+        setLaunchFailure({ code, lines: exitTail(stripAnsiLog(nativeTailRef.current).split("\n")) });
+      }
     }
+    nativeTailRef.current = "";
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
     permBaselineRef.current = null;
     setObservedTier(null);
@@ -5252,8 +5293,14 @@ export const TerminalView = memo(function TerminalView({
       }\x1b[0m\r\n`;
       // 快照放在末段横幅的 write 回调里：xterm.write 是异步解析，同步快照读不到刚写的字节
       const t = termRef.current;
-      if (t) t.write(fallbackBanner, () => saveTerminalReplayNow());
-      else saveTerminalReplayNow();
+      if (!t) {
+        // 纯协议原生无 xterm 态退出：不白起隐藏回落 shell（也避免 fittedPtySize(null) 报尺寸错），标记 exited 等发下一句或重启接回
+        setShellActive(false);
+        setExited(true);
+        void finalizeLink();
+        return;
+      }
+      t.write(fallbackBanner, () => saveTerminalReplayNow());
       try {
         // 用 cwdRef 取最新目录：运行期间 pty_get_cwd 轮询更新的 cwd 不进本闭包
         const size = fittedPtySize(fitRef.current, termRef.current);
@@ -6422,7 +6469,7 @@ export const TerminalView = memo(function TerminalView({
         return null;
       }
     }
-    if (!visible || !(await ensureTerminal())) {
+    if (!visible) {
       setError("这次没能按画面大小启动");
       return null;
     }
@@ -6446,6 +6493,18 @@ export const TerminalView = memo(function TerminalView({
     // 原生分叉只在第一次启动用（launch 成功即从标签清掉）；换了目录 / Agent 分不了原会话
     const forkFrom = relayLaunch || resumeFrom || sessionMoved ? undefined : forkSessionId;
     const isResume = Boolean(resumeFrom);
+    // 预期走纯协议原生运行且当前在聊天层：先不建 xterm（若后端实际回落到终端，下面 pty_spawn 回来再补 ensureTerminal）
+    const expectNativeRuntime = Boolean(
+      coveredByChatRef.current &&
+        nativeModeRef.current &&
+        nativeRuntime(agentId) &&
+        nativeModeAllowed(agentId, selectedProfile?.accountType ?? null) &&
+        (!forkFrom || agentId === "claude-code"),
+    );
+    if (!expectNativeRuntime && !(await ensureTerminal())) {
+      setError("这次没能按画面大小启动");
+      return null;
+    }
     const chrome = launchChromeBeforeMeasure({
       resume: isResume,
       prompt: launchPrompt,
@@ -6464,6 +6523,10 @@ export const TerminalView = memo(function TerminalView({
     }
     if (existingPty) {
       launchedNativeRef.current = existingPty.nativeRuntime;
+      if (!existingPty.nativeRuntime && !termRef.current && !(await ensureTerminal())) {
+        setError("这次没能按画面大小启动");
+        return null;
+      }
       resizeLatchRef.current = { kind: "frozen" };
       // 接回活进程也要先立关联上下文：标签重新挂载后 linkCtxRef 是空的，linkTick 见空直接返回，
       // 聊天层永远停在「正在连接当前会话…」、20 秒超时也不触发（2026-10-23 用户点随手聊会话实测）。
@@ -6506,7 +6569,10 @@ export const TerminalView = memo(function TerminalView({
       setAdvancedLaunchOpen(false);
       setBarExpanded(false);
     }
-    const size = await waitForTerminalGrid();
+    const size =
+      expectNativeRuntime && !termRef.current
+        ? { cols: 120, rows: 36 }
+        : await waitForTerminalGrid();
     if (!allowSpawn(size)) {
       setBarExpanded(chromeSnapshot.bar);
       setAdvancedLaunchOpen(chromeSnapshot.advanced);
@@ -6612,6 +6678,10 @@ export const TerminalView = memo(function TerminalView({
       if (res.adopted) resizeLatchRef.current = { kind: "frozen" };
       // 这个进程按原生模式的纯协议运行时起了没有（含从已有运行中 PTY 接回时，由后端照实回传）
       launchedNativeRef.current = !!res.nativeRuntime;
+      // 预期走原生而后端回落到真终端（如连接闸门、版本过低、helper 缺失）：现建 xterm，attach 随后会 fit 并 pty_resize
+      if (!res.nativeRuntime && !termRef.current) {
+        await ensureTerminal();
+      }
       if (selectedProfile?.accountType === "official" && agentId === "agy") {
         void invoke("official_agy_register_session", {
           tabId,
@@ -6890,7 +6960,7 @@ export const TerminalView = memo(function TerminalView({
   }, [attention, channel?.turn?.status]);
 
   useEffect(() => {
-    if (!permissionRestartRef.current || running || !shellActive) return;
+    if (!permissionRestartRef.current || running || (!shellActive && !exited)) return;
     permissionRestartRef.current = false;
     // 另开一条 Run 接回原对话：旧 Run 已停、权限也变了（只讨论 ↔ 可改文件是 Run 身份的一部分）。
     // 接回途中原来的对话留在画面上，接上后会话文件刷新整份替换——原先 launch 先清空聊天，换权限 / 换模型像整页刷新了一次（2026-10-25 用户）
@@ -6900,7 +6970,7 @@ export const TerminalView = memo(function TerminalView({
       keepPreviewConvRef.current = false;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, shellActive]);
+  }, [running, shellActive, exited]);
 
   // 出错换连接（2026-10-17）：先把标签的连接 / 模型换成新的，再停下 Agent；回落 shell 后（下方 effect）
   // 按原会话接回。Agent 已经停了（还能接着聊）就直接接回。模型：新连接名单里有当前模型就留着，没有用它的第一个
@@ -6965,7 +7035,7 @@ export const TerminalView = memo(function TerminalView({
   }
   useEffect(() => {
     const target = switchPendingRef.current;
-    if (!target || running || !shellActive || profileId !== target) return;
+    if (!target || running || (!shellActive && !exited) || profileId !== target) return;
     switchPendingRef.current = null;
     if (!lastResumeRef.current) return;
     // 同换权限：接回途中原来的对话留在画面上
@@ -6974,11 +7044,11 @@ export const TerminalView = memo(function TerminalView({
       keepPreviewConvRef.current = false;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, shellActive, profileId]);
+  }, [running, shellActive, exited, profileId]);
   // 退出 Grok 官方登录：等 Grok 停下（它不再占着登录文件锁）再 grok logout，然后按原会话接回。
   // logout 没清掉（别的 Grok 标签还卡着）照样接回，把原因报出来
   useEffect(() => {
-    if (!grokLogoutPendingRef.current || running || !shellActive) return;
+    if (!grokLogoutPendingRef.current || running || (!shellActive && !exited)) return;
     grokLogoutPendingRef.current = false;
     void (async () => {
       try {
@@ -6994,7 +7064,7 @@ export const TerminalView = memo(function TerminalView({
       });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, shellActive]);
+  }, [running, shellActive, exited]);
 
   async function stop() {
     const id = ptyIdRef.current;
@@ -7258,8 +7328,8 @@ export const TerminalView = memo(function TerminalView({
       return result;
     }
 
-    // Agent 已回落 shell：聊天框继续沿用最后一个会话，而不是启动新上下文。
-    if (!running && shellActive && lastResumeRef.current) {
+    // Agent 已回落 shell（或纯协议原生无 xterm 态干净退出）：聊天框继续沿用最后一个会话，而不是启动新上下文。
+    if (!running && (shellActive || exited) && lastResumeRef.current) {
       const early = showEarlyBubble(message);
       liveHoldRef.current = true;
       const res = await launch(lastResumeRef.current, { prompt: "" }).finally(endEarlyBubbleLaunch);

@@ -638,6 +638,7 @@
   **同日改为用到才建**：只看不接、被聊天层盖着的标签不建 xterm——切到终端层 / 窥视时建，发第一句接回时 `launch` 先 `ensureTerminal()`
   现建（等它挂好再等一帧让 fit 量到真实大小，最多等 2 秒）。原先第一帧之后照样建，每点一段只看的对话仍白建一个、切完紧跟一次约 30ms 长任务。
   有 `resumeKick` 的不推迟（要立刻拉起）；恢复占位标签的目录检查不再等终端建好。
+  **纯协议原生聊天同样延后建终端，终端模式精简聊天读屏（2026-11-27）**：`shouldDeferTerminal`（`src/tab-surface.ts`）把预计走纯协议原生的聊天标签（`nativeModeAllowed && !dualClient && !customCommand`）也纳入「用到才建」，即使 `autoStart` / `resumeKick` 也不在聊天模式下预建 xterm/WebGL。`launch()` 改按 `{ cols: 120, rows: 36 }` 直接 `pty_spawn`，若后端接回或回落返回 `nativeRuntime === false` 再即时 `await ensureTerminal()`；`attach()` 在无 xterm 的原生运行期跳过写入终端但照常 `ackDrawn(payload.length)`，防止后端 `FlowGate` 卡死。切到终端模式（`!coveredByChat`）时跳过只服务聊天层的 `scanLiveReplySoon`/`scanLiveReplyNow`/`scanSuggestionSoon`，但保留 `menuPrompt`、`trustPrompt`、`tuiNotice`（含计费自动跳过）、`promptIdle`、底栏模型与连接检测，避免破坏收件箱、通知与等待态。
 - **终端输出走通道 + 流控（2026-10-21）**：PTY 输出不再走 `pty-output-<id>` 事件（JSON 拼进一段脚本执行），改由前端 attach 时
   新建 `Channel` 交给 `pty_subscribe`：小于 8KB 的帧仍按 JSON 字符串直接执行，≥8KB 的帧发原始字节（Tauri 用 fetch 取回，
   不转义、不拼脚本），前端用 `TextDecoder` 解码。后端 sink（`OutputSink`）把通道与隐藏期 backlog 放同一把锁：没接上通道或不可见

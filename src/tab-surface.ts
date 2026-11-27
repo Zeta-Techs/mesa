@@ -128,3 +128,21 @@ export function stripAnsiLog(raw: string): string {
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n");
 }
+
+/**
+ * 终端实例（xterm.js）是否推迟创建（2026-11-27 复用 deferTerminal / ensureTerminal 机制）：
+ * - 终端层可见时立刻创建；
+ * - 聊天层盖着且预期走纯协议原生运行（stdio-bridge 无 TUI，日志走纯文本抽屉）：即使 autoStart / resumeKick 也推迟，
+ *   不白建 xterm 与 WebGL 上下文；若后端实际回落到终端（nativeRuntime=false），launch 回来后现调 ensureTerminal() 补建；
+ * - 其余聊天盖着的非自动启动标签（只看不接、重启占位）照旧推迟。
+ */
+export function shouldDeferTerminal(opts: {
+  coveredByChat: boolean;
+  autoStart: boolean;
+  resumeKick: boolean;
+  expectPureProtocolNative: boolean;
+}): boolean {
+  if (!opts.coveredByChat) return false;
+  if (opts.expectPureProtocolNative) return true;
+  return !opts.autoStart && !opts.resumeKick;
+}

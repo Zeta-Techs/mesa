@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { launchSurface, openSurfaceDefault, stripAnsiLog, topBarModeSpec } from "../src/tab-surface.ts";
+import { launchSurface, openSurfaceDefault, shouldDeferTerminal, stripAnsiLog, topBarModeSpec } from "../src/tab-surface.ts";
 
 test("设置只认 terminal，缺省与乱值都是聊天", () => {
   assert.equal(openSurfaceDefault(undefined), "chat");
@@ -131,4 +131,27 @@ test("顶栏三路分流：纯协议原生→运行日志、双客户端→隐�
 
 test("stripAnsiLog 剥除 CSI/OSC 控制序列并统一换行为 LF", () => {
   assert.equal(stripAnsiLog("\x1b[32mhello\x1b[0m\r\n\x1b]0;title\x07world\r"), "hello\nworld\n");
+});
+
+test("shouldDeferTerminal：纯协议原生聊天即使 autoStart 也推迟建 xterm，终端可见或非原生自动启动立即建", () => {
+  assert.equal(
+    shouldDeferTerminal({ coveredByChat: true, autoStart: true, resumeKick: false, expectPureProtocolNative: true }),
+    true,
+  );
+  assert.equal(
+    shouldDeferTerminal({ coveredByChat: true, autoStart: false, resumeKick: true, expectPureProtocolNative: true }),
+    true,
+  );
+  assert.equal(
+    shouldDeferTerminal({ coveredByChat: false, autoStart: true, resumeKick: false, expectPureProtocolNative: true }),
+    false,
+  );
+  assert.equal(
+    shouldDeferTerminal({ coveredByChat: true, autoStart: true, resumeKick: false, expectPureProtocolNative: false }),
+    false,
+  );
+  assert.equal(
+    shouldDeferTerminal({ coveredByChat: true, autoStart: false, resumeKick: false, expectPureProtocolNative: false }),
+    true,
+  );
 });
