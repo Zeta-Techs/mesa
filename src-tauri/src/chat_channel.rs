@@ -118,6 +118,15 @@ pub struct NoticeDto {
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+pub struct NativeFallbackDto {
+    /// auth（未登录，引去终端登录）| compat（原生协议握手/启动失败，自动改用兼容模式重开）
+    pub kind: &'static str,
+    /// 脱敏后的人话原因
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct ChannelSnapshot {
     pub tab_id: String,
     pub agent: String,
@@ -143,6 +152,8 @@ pub struct ChannelSnapshot {
     /// 这一轮旁路送来的实时文字（预览用；Claude 这类只有 hooks 的家没有）
     pub live_text: Option<String>,
     pub notice: Option<NoticeDto>,
+    /// 原生模式启动阶段失败时通知前端自动回落（兼容重开或引去登录）
+    pub fallback: Option<NativeFallbackDto>,
     /// 正在跑的工具（最近开始、还没结束的那个）：聊天层「现在在做什么」用，比会话文件早到
     pub activity: Option<ActivityDto>,
     /// 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 的思考增量）；工具开始或正文开始写就清掉
@@ -214,6 +225,10 @@ pub(crate) enum ChannelEvent {
         reason: Option<String>,
     },
     Notice(String),
+    NativeFallback {
+        kind: &'static str,
+        reason: String,
+    },
 }
 
 // ===== 回合状态机（纯逻辑） =====
@@ -302,6 +317,7 @@ impl Tracker {
         self.pending_thinking_break = false;
         self.snap.status_line = None;
         self.snap.retry = None;
+        self.snap.fallback = None;
         self.prompt_queued = false;
     }
 
@@ -614,6 +630,7 @@ impl Tracker {
                     self.snap.activity = None;
                     self.snap.status_line = None;
                     self.snap.retry = None;
+                    self.snap.fallback = None;
                     self.snap.transcript_path = None;
                     self.snap.session_source = None;
                     self.tools.clear();
@@ -641,6 +658,7 @@ impl Tracker {
             }
             ChannelEvent::TurnStart => {
                 self.snap.retry = None;
+                self.snap.fallback = None;
                 if !is_open(&self.snap.turn) {
                     self.start_turn(now);
                 } else if self.snap.kind == "hooks" && self.snap.agent == "claude-code" {
@@ -812,6 +830,12 @@ impl Tracker {
                 let seq = self.snap.notice.as_ref().map(|n| n.seq).unwrap_or(0) + 1;
                 self.snap.notice = Some(NoticeDto { seq, text });
             }
+            ChannelEvent::NativeFallback { kind, reason } => {
+                self.snap.fallback = Some(NativeFallbackDto {
+                    kind,
+                    reason: redact_cap(&reason),
+                });
+            }
             ChannelEvent::ThinkingDelta(text) => {
                 if !text.is_empty() && !self.straggler(now) {
                     self.ensure_running(now);
@@ -883,16 +907,24 @@ fn slim_input(input: &Value) -> String {
     }
 }
 
-/// 出站前的快照：会话文本（实时文字、思考摘要）在 Rust 层脱敏再给前端（AGENTS.md 硬约束；工具参数在登记时已脱敏）
+/// 出站前的快照：会话文本（实时文字、思考摘要、回落原因）在 Rust 层脱敏再给前端（AGENTS.md 硬约束；工具参数在登记时已脱敏）
 fn outbound(snap: &ChannelSnapshot) -> ChannelSnapshot {
     let mut out = snap.clone();
-    if out.live_text.is_some() || out.thinking.is_some() || out.thinking_live.is_some() || out.status_line.is_some() {
+    if out.live_text.is_some()
+        || out.thinking.is_some()
+        || out.thinking_live.is_some()
+        || out.status_line.is_some()
+        || out.fallback.is_some()
+    {
         let secrets = secrets_for_redact();
         let redact = |t: String| crate::sessions::redact_sensitive_text_with(&t, &secrets);
         out.live_text = out.live_text.map(redact);
         out.thinking = out.thinking.map(redact);
         out.thinking_live = out.thinking_live.map(redact);
         out.status_line = out.status_line.map(redact);
+        if let Some(fb) = out.fallback.as_mut() {
+            fb.reason = redact(std::mem::take(&mut fb.reason));
+        }
     }
     out
 }
@@ -2949,6 +2981,13 @@ fn spawn_flusher(sink: Sink, ch: Arc<Channel>) {
             }
             std::thread::sleep(EMIT_INTERVAL);
         }
+        // 关闭前若还有刚写入的快照（如子进程秒退触发的 NativeFallback），先推最后一次再发 None
+        if ch.dirty.swap(false, Ordering::AcqRel) {
+            let snap = ch.tracker.lock().ok().map(|t| outbound(&t.snap));
+            if let Some(snap) = snap {
+                sink(Some(snap));
+            }
+        }
         // 重启接回时旧旁路晚一拍退出：同一标签已有新旁路在发快照，这个 None 会把新的盖掉（快照只在变化时才再发）
         if !superseded(&ch) {
             sink(None);
@@ -3673,7 +3712,7 @@ fn opencode_prompt_request(
             vec!["api", "session", sid, "prompt"],
             json!({ "text": text }),
         ),
-        _ => return Err("这版 OpenCode 还不能从聊天直接发，请关掉原生模式".into()),
+        _ => return Err("这版 OpenCode 还不能从聊天直接发，请改用终端模式打开".into()),
     };
     let mut url = reqwest::Url::parse(&root).map_err(|e| e.to_string())?;
     url.path_segments_mut()
@@ -3694,7 +3733,7 @@ fn opencode_prompt(ch: &Channel, text: &str) -> Result<(), String> {
         let guard = ch.replier.lock().map_err(|_| "实时通道已关闭")?;
         let replier = guard
             .as_ref()
-            .ok_or_else(|| "这版 OpenCode 还不能从聊天直接发，请关掉原生模式".to_string())?;
+            .ok_or_else(|| "这版 OpenCode 还不能从聊天直接发，请改用终端模式打开".to_string())?;
         opencode_prompt_request(replier, &sid, text)?
     };
     let status = tauri::async_runtime::block_on(async move {
@@ -6216,5 +6255,29 @@ mod e2e {
                 assert!(users >= 2, "新会话带着原会话的记录（用户消息 {users} 条）");
             }
         }
+    }
+
+    #[test]
+    fn native_fallback_survives_disconnect_redacts_and_clears_on_turn_start() {
+        let mut t = Tracker::new("tab-fb", "kimi", "acp");
+        assert!(t.apply(
+            ChannelEvent::NativeFallback {
+                kind: "compat",
+                reason: "失败 sk-live-secret-987654321".into(),
+            },
+            100,
+        ));
+        let fb = t.snap.fallback.as_ref().expect("fallback 已写入");
+        assert_eq!(fb.kind, "compat");
+        assert!(!fb.reason.contains("987654321"), "回落原因必须脱敏");
+        // Disconnected 不能清掉 fallback，保证断线后前端仍能收到回落信号
+        t.apply(ChannelEvent::Disconnected, 110);
+        assert!(t.snap.fallback.is_some());
+        let json = serde_json::to_value(outbound(&t.snap)).unwrap();
+        assert_eq!(json["fallback"]["kind"], "compat");
+        assert!(!json["fallback"]["reason"].as_str().unwrap().contains("987654321"));
+        // 新的回合开始会清掉旧 fallback
+        t.apply(ChannelEvent::TurnStart, 120);
+        assert!(t.snap.fallback.is_none());
     }
 }

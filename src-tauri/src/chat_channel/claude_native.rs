@@ -115,8 +115,36 @@ pub(crate) fn prepare(
     Some((helper, bridge_args, env, prepared))
 }
 
+fn init_response_error(msg: &Value, init_rid: &str) -> Option<String> {
+    if msg.get("type").and_then(Value::as_str) != Some("control_response") {
+        return None;
+    }
+    if msg.pointer("/response/request_id").and_then(Value::as_str) != Some(init_rid) {
+        return None;
+    }
+    if msg.pointer("/response/subtype").and_then(Value::as_str) != Some("error") {
+        return None;
+    }
+    let raw = msg
+        .pointer("/response/error")
+        .and_then(Value::as_str)
+        .unwrap_or("初始化失败");
+    Some(crate::sessions::redact_sensitive_text(raw))
+}
+
 pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     let Some(stream) = accept(&ch, &prep.listener, &prep.token) else {
+        if !ch.stop.load(Ordering::Acquire) {
+            let reason = "Claude 原生协议启动超时，已自动改用兼容模式继续".to_string();
+            feed(
+                &ch,
+                vec![
+                    ChannelEvent::NativeFallback { kind: "compat", reason: reason.clone() },
+                    ChannelEvent::Notice(reason),
+                ],
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
         super::disconnect(&ch);
         return;
     };
@@ -142,8 +170,10 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     }
     feed(&ch, events);
     // SDK 宿主开头先发 initialize（控制协议握手；回包里有命令清单，这里不用）
-    let (_, init) = next_request(&ch, json!({ "subtype": "initialize" }));
+    let (init_rid, init) = next_request(&ch, json!({ "subtype": "initialize" }));
     let _ = write_line(&writer, &init);
+    let mut initialized = false;
+    let mut init_failed = false;
     for line in BufReader::new(read_half).lines() {
         if ch.stop.load(Ordering::Acquire) {
             break;
@@ -153,7 +183,40 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
         if std::env::var("MESA_CHANNEL_DEBUG").is_ok() {
             eprintln!("claude← {}", msg.to_string().chars().take(300).collect::<String>());
         }
+        if let Some(err) = init_response_error(&msg, &init_rid) {
+            init_failed = true;
+            let reason = format!("Claude 原生协议握手失败（{err}），已自动改用兼容模式继续");
+            feed(
+                &ch,
+                vec![
+                    ChannelEvent::NativeFallback { kind: "compat", reason: reason.clone() },
+                    ChannelEvent::Notice(reason),
+                ],
+            );
+            std::thread::sleep(Duration::from_millis(250));
+            if let Ok(s) = writer.lock() {
+                let _ = s.shutdown(std::net::Shutdown::Both);
+            }
+            break;
+        }
+        if matches!(
+            msg.get("type").and_then(Value::as_str),
+            Some("control_response" | "system" | "assistant" | "result" | "stream_event")
+        ) {
+            initialized = true;
+        }
         handle(&ch, &msg);
+    }
+    if !initialized && !init_failed && !ch.stop.load(Ordering::Acquire) {
+        let reason = "Claude 原生协议未能启动，已自动改用兼容模式继续".to_string();
+        feed(
+            &ch,
+            vec![
+                ChannelEvent::NativeFallback { kind: "compat", reason: reason.clone() },
+                ChannelEvent::Notice(reason),
+            ],
+        );
+        std::thread::sleep(Duration::from_millis(250));
     }
     super::disconnect(&ch);
 }
@@ -579,5 +642,16 @@ mod tests {
         assert_eq!(mode_for_tier("discuss"), Some("plan"));
         // bypassPermissions 未带 --dangerously-skip-permissions 启动会被拒，不走热切
         assert_eq!(mode_for_tier("full"), None);
+    }
+
+    #[test]
+    fn init_response_error_extracts_and_redacts_failure() {
+        let ok = json!({"type":"control_response","response":{"subtype":"success","request_id":"mesa-1"}});
+        assert_eq!(init_response_error(&ok, "mesa-1"), None);
+        let other_id = json!({"type":"control_response","response":{"subtype":"error","request_id":"mesa-2","error":"boom"}});
+        assert_eq!(init_response_error(&other_id, "mesa-1"), None);
+        let err = json!({"type":"control_response","response":{"subtype":"error","request_id":"mesa-1","error":"bad key sk-live-secret-987654321"}});
+        let msg = init_response_error(&err, "mesa-1").expect("应识别 initialize 失败");
+        assert!(!msg.contains("987654321"));
     }
 }

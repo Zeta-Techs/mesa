@@ -36,7 +36,7 @@ import {
   type MismatchFrom,
   type MismatchReport,
 } from "../chat-mismatch";
-import { AGENTS } from "../types";
+import { AGENTS, type OfficialAccountStatusDto } from "../types";
 import { channelSourceNote, channelTurnOpen, interruptRoute, nativeSwitchWarning, type ChannelReplyDecision } from "../chat-channel";
 import { normSep, pathWithin as pathWithinDialect, revealFolderLabel, samePath, stripVerbatim } from "../path-utils";
 import { cwdIsCodingWorktree } from "../coding-git";
@@ -366,6 +366,47 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
   const handleTabForkChat = useCallback((tabId: string) => {
     void forkChatRef.current(tabId);
   }, []);
+  const handleNativeFallback = useCallback(
+    (tabId: string, fb: { kind: "auth" | "compat"; reason: string; agentId: string }) => {
+      if (fb.kind === "compat") {
+        setTabs((prev) =>
+          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followNativeDefault: false } : t)),
+        );
+        return;
+      }
+      // 登录态缺失：优先复用 connect-official.ts 的终端登录标签（reuseKey: login:<agent>）；没有登录命令再切当前标签到终端
+      void (async () => {
+        const label = AGENTS.find((a) => a.id === fb.agentId)?.label ?? fb.agentId;
+        try {
+          const st = await invoke<OfficialAccountStatusDto>("official_account_status", {
+            agentId: fb.agentId,
+          });
+          if (st.supported && st.loginCommand) {
+            const s = useAppStore.getState();
+            s.setPendingTerminal({
+              cwd: "~",
+              extraEnv: { ...(st.loginEnv ?? {}) },
+              title: `登录 ${label}`,
+              prefillCommand: st.loginCommand,
+              shellOnly: true,
+              reuseKey: `login:${fb.agentId}`,
+            });
+            s.setPage("terminal");
+            toast(`${label} 还没登录：已为你打开终端登录窗口，登录完成后回到这段对话重试`, "warning");
+            return;
+          }
+        } catch {
+          /* 查询失败退回切当前标签到终端 */
+        }
+        setTabs((prev) =>
+          prev.map((t) => (t.id === tabId ? { ...t, nativeMode: false, followNativeDefault: false } : t)),
+        );
+        setSurfaceModeByTab((prev) => ({ ...prev, [tabId]: "terminal" }));
+        toast(fb.reason, "warning");
+      })();
+    },
+    [],
+  );
   const [statuses, setStatuses] = useState<Record<string, TabStatus>>({});
   /** 没有商量复用键的标签（重启恢复、从侧栏点开的旧对话）：会话记录认出是商量任务书时给出那条记录，
    *  聊天层回复里的「开始」照样可点（discuss-step-start.ts） */
@@ -4141,6 +4182,7 @@ export default function TerminalPage({ visible }: { visible: boolean }) {
                 getConversationActions={getConversationActions}
                 onOpenPath={handleTerminalOpenPath}
                 onProgress={handleTabProgress}
+                onNativeFallback={handleNativeFallback}
               />
             );
             return (

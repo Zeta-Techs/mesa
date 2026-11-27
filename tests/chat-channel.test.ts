@@ -18,6 +18,7 @@ import {
   channelLiveLines,
   channelRelink,
   channelTurnOpen,
+  decideNativeFallback,
   displayCommand,
   hooksApprovalAnswered,
   channelInfersApproval,
@@ -248,6 +249,31 @@ test("旁路断开：旧回合与审批失去优先权，来源说明按本次�
   assert.match(channelSourceNote(null), /未接入/);
   assert.match(channelSourceNote(snap({ connection: "connecting" })), /正在连接/);
   assert.match(channelSourceNote(snap({ kind: "codex", connection: "connected" })), /已接入/);
+});
+
+test("原生启动自动回落：单次护栏阻止死循环，区分 auth 与 compat", () => {
+  const compatSnap = snap({
+    agent: "kimi",
+    kind: "acp",
+    connection: "disconnected",
+    fallback: { kind: "compat", reason: "原生协议没连上，已自动改用兼容模式继续" },
+  });
+  assert.deepEqual(decideNativeFallback(compatSnap, false), {
+    kind: "compat",
+    reason: "原生协议没连上，已自动改用兼容模式继续",
+  });
+  assert.equal(decideNativeFallback(compatSnap, true), null, "已经回落过一次后不再重复触发");
+  const authSnap = snap({
+    agent: "cursor",
+    kind: "acp",
+    fallback: { kind: "auth", reason: "还没登录：请在终端里登录后再试" },
+  });
+  assert.deepEqual(decideNativeFallback(authSnap, false), {
+    kind: "auth",
+    reason: "还没登录：请在终端里登录后再试",
+  });
+  assert.equal(decideNativeFallback(snap(), false), null);
+  assert.equal(decideNativeFallback(null, false), null);
 });
 
 

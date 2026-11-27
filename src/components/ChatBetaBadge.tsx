@@ -35,6 +35,7 @@ export function ChatBetaNotes({
   live = false,
   native,
   onOpenTerminal,
+  onSwitchToTerminalMode,
   onReportMismatch,
 }: {
   agentId: string | null;
@@ -42,6 +43,8 @@ export function ChatBetaNotes({
   live?: boolean;
   native?: NativeModeToggle | null;
   onOpenTerminal?: () => void;
+  /** 本机 CLI 版本比核对过的新时，给用户一键「改用终端模式打开」的兜底按钮 */
+  onSwitchToTerminalMode?: () => void;
   /** 「对不上？反馈」：带上两边当时的内容打开反馈表单（chat-mismatch.ts） */
   onReportMismatch?: () => void;
 }) {
@@ -55,10 +58,11 @@ export function ChatBetaNotes({
   const runtimeOn = Boolean(native?.on && runtime);
   const nativeNote = runtimeOn ? nativeFidelityNote(agentId) : null;
   const line = nativeNote
-    ? `${nativeNote.terminalOnly}要先关掉原生模式。`
+    ? `${nativeNote.terminalOnly}需要改用终端模式打开。`
     : fidelity
       ? `以终端为准；${fidelity.terminalOnly}要回终端。`
       : "以终端为准。";
+  const switchTerminalAction = onSwitchToTerminalMode ?? (native ? () => native.onToggle(false) : undefined);
   const lineTitle = fidelity ? `${label} · ${tierLabel(fidelity.tier)}：${nativeNote?.source ?? fidelity.source}` : undefined;
   const nativeLine = runtime
     ? `改用 ${label} 官方协议，无终端界面`
@@ -101,11 +105,23 @@ export function ChatBetaNotes({
           <div className="min-w-0 flex-1 space-y-1">
             {channelIssue && <p>{channelIssue}</p>}
             {newer && (
-              <p>
-                {runtimeOn
-                  ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可暂时关掉原生模式。`
-                  : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
-              </p>
+              <div className="space-y-1.5">
+                <p>
+                  {runtimeOn
+                    ? `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，原生协议若不兼容可改用终端模式打开。`
+                    : `你装的 ${label} ${installed} 比 Mesa 核对过的 ${verified} 新，确认按钮可能按不准，按不对就露出终端自己选。`}
+                </p>
+                {runtimeOn && switchTerminalAction && (
+                  <button
+                    type="button"
+                    onClick={switchTerminalAction}
+                    className={`${rowActionClass} gap-1.5 bg-inset font-medium text-l1`}
+                  >
+                    <SquareTerminal size={12} strokeWidth={1.8} aria-hidden="true" className="text-l3" />
+                    改用终端模式打开
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

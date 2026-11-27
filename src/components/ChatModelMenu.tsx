@@ -778,6 +778,14 @@ export default function ChatModelMenu(props: LaunchProps | RuntimeProps) {
                         }
                       : undefined
                   }
+                  onSwitchToTerminalMode={
+                    props.native
+                      ? () => {
+                          setOpen(false);
+                          props.native?.onToggle(false);
+                        }
+                      : undefined
+                  }
                   onReportMismatch={
                     props.onReportMismatch
                       ? () => {

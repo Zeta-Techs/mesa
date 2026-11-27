@@ -103,6 +103,7 @@ import {
 import { applyRouteFix, findRouteFix, setRouteAlertFromCheck } from "../route-watch";
 import {
   canSendViaChannel,
+  decideNativeFallback,
   nativeRuntimeKind,
   resolveExitResumeSessionId,
   wantsChannelSend,
@@ -906,6 +907,7 @@ export const TerminalView = memo(function TerminalView({
   getConversationActions,
   onOpenPath,
   onProgress,
+  onNativeFallback,
 }: {
   visible: boolean;
   /** 分屏时只有活跃 pane 绑定窗口级 ⌘F 兜底；xterm 聚焦时的拦截不受影响 */
@@ -1008,6 +1010,11 @@ export const TerminalView = memo(function TerminalView({
   /** 终端上报的任务进度（OSC 9;4，kimi/grok/codebuddy 发）→ 标签条小徽章。
    *  带 tabId 的稳定回调（memo 不失效，进度 1Hz 更新不级联全部终端重渲染）。 */
   onProgress?: (tabId: string, progress: TerminalProgress | null) => void;
+  /** 原生模式启动阶段握手失败或未登录时的自动回落通知（带 tabId 的稳定回调） */
+  onNativeFallback?: (
+    tabId: string,
+    fallback: { kind: "auth" | "compat"; reason: string; agentId: string },
+  ) => void;
 }) {
   const profiles = useAppStore((s) => s.profiles);
   const settings = useAppStore((s) => s.settings);
@@ -1370,6 +1377,18 @@ export const TerminalView = memo(function TerminalView({
   onOpenPathRef.current = onOpenPath;
   const onProgressRef = useRef(onProgress);
   onProgressRef.current = onProgress;
+  const onNativeFallbackRef = useRef(onNativeFallback);
+  onNativeFallbackRef.current = onNativeFallback;
+  /** 单次启动最多自动回落一次，避免原生握手反复失败死循环 */
+  const nativeFallbackUsedRef = useRef(false);
+  /** 收到回落信号、等待旧原生进程退出后立刻兼容重开（携带尚未发出的首条消息） */
+  const pendingNativeFallbackRef = useRef<{
+    kind: "auth" | "compat";
+    reason: string;
+    prompt: string | null;
+  } | null>(null);
+  /** deliverAfterRelaunch 正在等原生通道连上时的待发消息，用于 compat 回落后无感补发 */
+  const nativeFallbackPromptRef = useRef<string | null>(null);
   const onForkChatRef = useRef(onForkChat);
   onForkChatRef.current = onForkChat;
   const [inlineImageUrl, setInlineImageUrl] = useState<string | null>(null);
@@ -5173,7 +5192,13 @@ export const TerminalView = memo(function TerminalView({
     setWaitScreenState(null);
     setSpecialScreenState(null);
     // 一启动就退出：xterm 解析是异步的，排在退出横幅前面读屏，读到的是进程最后画的样子
-    if (kind === "agent" && code > 0 && Date.now() - ptyAttachedAtRef.current < 30_000) {
+    // 正在自动回落到兼容模式或引导登录时不出红色异常退出卡，免得吓人
+    if (
+      kind === "agent" &&
+      code > 0 &&
+      !pendingNativeFallbackRef.current &&
+      Date.now() - ptyAttachedAtRef.current < 30_000
+    ) {
       termRef.current?.write("", () => setLaunchFailure({ code, lines: exitTail(screenLines()) }));
     }
     // 换权限重开 / 退出：下一次接上的运行重新取基线，旧运行的切换不再上报
@@ -5198,12 +5223,22 @@ export const TerminalView = memo(function TerminalView({
       });
       // 这个进程退了：之后起的（回落的 shell、自定义运行时）不是原生模式的桥，读屏照常
       launchedNativeRef.current = false;
+      const pendingFallback = pendingNativeFallbackRef.current;
+      if (pendingFallback?.kind === "compat") {
+        pendingNativeFallbackRef.current = null;
+        termRef.current?.write(`\r\n\x1b[90m── ${pendingFallback.reason} ──\x1b[0m\r\n`);
+        runCompatFallbackRelaunch(pendingFallback.prompt);
+        return;
+      }
+      if (pendingFallback?.kind === "auth") {
+        pendingNativeFallbackRef.current = null;
+      }
       // agent 退出（含手动停止）→ 同一终端自动回落到登录 shell。
       // 异常横幅只认 code > 0：负数（-1 等）是 pty_kill/丢弃/等待超时的「原因未知」
       // 哨兵（exit-code.ts），手动「停止」正是走它——code≠0 会把每次停止都误报成崩溃
       //（2026-10-11 复核实证）。死因横幅随回放持久（借鉴 VS Code）。
       const clause = exitCodeClause(code);
-      if (code > 0) {
+      if (code > 0 && !pendingFallback) {
         // 屏上认得出原因就在横幅下面补一句白话（比如 Codex 官方账号连不上 OpenAI）
         const hint = launchFailureHint(exitTail(screenLines()), code);
         termRef.current?.write(
@@ -5797,6 +5832,30 @@ export const TerminalView = memo(function TerminalView({
     else void linkTick();
   }
 
+  function runCompatFallbackRelaunch(prompt: string | null) {
+    if (!mountedRef.current) return;
+    const resume = lastResumeRef.current ?? undefined;
+    keepPreviewConvRef.current = Boolean(resume);
+    setLaunchFailure(null);
+    void launch(resume, {
+      prompt: resume ? "" : (prompt ?? ""),
+      freshRun: true,
+      typeDroppedPrompt: Boolean(!resume && prompt),
+      isFallbackRelaunch: true,
+    })
+      .then(async (res) => {
+        if (!res || !mountedRef.current) return;
+        if (!prompt || (!resume && !res.promptDropped)) return;
+        await new Promise((r) => setTimeout(r, 1200));
+        if (!mountedRef.current || ptyIdRef.current !== res.ptyId) return;
+        armPtyWorking();
+        await writeChatMessage(res.ptyId, prompt);
+      })
+      .finally(() => {
+        keepPreviewConvRef.current = false;
+      });
+  }
+
   function applyChannel(snap: ChatChannelSnapshot | null) {
     const prev = channelRef.current;
     channelRef.current = snap;
@@ -5804,6 +5863,39 @@ export const TerminalView = memo(function TerminalView({
     // 旁路的审批卡撤了（聊天层答过 / 终端里答过）：终端菜单撤掉前那一下读屏不再认（scanMenuSoon）
     if (prev?.approval && !snap?.approval) channelApprovalGoneAtRef.current = Date.now();
     if (!snap) return;
+    // 原生模式启动阶段失败：在判断 disconnected 之前接住（disconnect 与 fallback 可能紧挨着到达）
+    const fb = decideNativeFallback(snap, nativeFallbackUsedRef.current);
+    if (fb) {
+      nativeFallbackUsedRef.current = true;
+      const agent = launchAgentRef.current || snap.agent;
+      if (fb.kind === "compat") {
+        const pendingPrompt = nativeFallbackPromptRef.current;
+        nativeFallbackPromptRef.current = null;
+        nativeModeRef.current = false;
+        onNativeFallbackRef.current?.(tabId, { kind: "compat", reason: fb.reason, agentId: agent });
+        toast(fb.reason, "warning");
+        const activeId = ptyIdRef.current;
+        if (ptyKindRef.current === "agent" && activeId) {
+          pendingNativeFallbackRef.current = { kind: "compat", reason: fb.reason, prompt: pendingPrompt };
+          // 正常情况下后端 250ms 后会关桥让 CLI 自退；万一进程卡住不退，1.5s 后主动收掉触发兼容重开
+          window.setTimeout(() => {
+            if (
+              mountedRef.current &&
+              ptyIdRef.current === activeId &&
+              pendingNativeFallbackRef.current?.kind === "compat"
+            ) {
+              void invoke("pty_kill", { ptyId: activeId }).catch(() => {});
+            }
+          }, 1500);
+        } else {
+          runCompatFallbackRelaunch(pendingPrompt);
+        }
+      } else {
+        nativeFallbackPromptRef.current = null;
+        pendingNativeFallbackRef.current = { kind: "auth", reason: fb.reason, prompt: null };
+        onNativeFallbackRef.current?.(tabId, { kind: "auth", reason: fb.reason, agentId: agent });
+      }
+    }
     if (snap.connection === "disconnected") {
       setAttention(null);
       clearLiveReply();
@@ -6146,11 +6238,16 @@ export const TerminalView = memo(function TerminalView({
       typeDroppedPrompt?: boolean;
       freshRun?: boolean;
       relay?: { resume: string | null; provider: string | null };
+      isFallbackRelaunch?: boolean;
     },
   ): Promise<{ ptyId: string; promptDropped: boolean } | null> {
     setError(null);
     setNotice(null);
     launchCancelRef.current = null;
+    if (!options?.isFallbackRelaunch && nativeModeRef.current) {
+      nativeFallbackUsedRef.current = false;
+      pendingNativeFallbackRef.current = null;
+    }
     if (customRuntimeId) {
       if (restored) {
         setError("自定义 Runtime 不支持恢复；点击“运行”会创建新的 Run");
@@ -6782,6 +6879,7 @@ export const TerminalView = memo(function TerminalView({
     restartWithPermission();
   }
   useEffect(() => {
+    if (nativeMode) nativeFallbackUsedRef.current = false;
     nativeSwitchPendingRef.current = true;
     maybeSwitchNative();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6966,14 +7064,33 @@ export const TerminalView = memo(function TerminalView({
       纯协议运行时没有终端可打字：等不到就如实报错，不往运行日志里敲 */
   async function deliverAfterRelaunch(ptyId: string, text: string): Promise<ChatSendResult> {
     if (channelOwnsSend(text)) {
+      nativeFallbackPromptRef.current = text;
       const deadline = Date.now() + NATIVE_RELAUNCH_WAIT_MS;
       while (Date.now() < deadline && mountedRef.current && ptyIdRef.current === ptyId) {
-        if (canSendViaChannel(channelRef.current)) return sendViaChannel(text);
+        if (pendingNativeFallbackRef.current?.kind === "compat") {
+          return { error: null };
+        }
+        if (pendingNativeFallbackRef.current?.kind === "auth") {
+          return { error: pendingNativeFallbackRef.current.reason };
+        }
+        if (canSendViaChannel(channelRef.current)) {
+          nativeFallbackPromptRef.current = null;
+          return sendViaChannel(text);
+        }
         await new Promise((r) => setTimeout(r, 150));
       }
+      nativeFallbackPromptRef.current = null;
       if (!mountedRef.current) return { error: null };
+      if (pendingNativeFallbackRef.current?.kind === "compat") return { error: null };
+      if (pendingNativeFallbackRef.current?.kind === "auth") {
+        return { error: pendingNativeFallbackRef.current.reason };
+      }
+      if (ptyIdRef.current !== ptyId) {
+        if (nativeFallbackUsedRef.current && !nativeModeRef.current) return { error: null };
+        return { error: "原生模式未能启动，请重试" };
+      }
       if (nativeRuntimeKind(channelRef.current?.kind) || launchedNativeRef.current) {
-        return { error: "原生模式还没连上，稍等再发；一直不行就关掉原生模式" };
+        return { error: "原生模式还没连上，稍等再发；一直不行可从右上角 ⋯ 改用终端模式打开" };
       }
     }
     return writeChatMessage(ptyId, text);

@@ -47,6 +47,11 @@ export interface ChannelApproval {
   questions?: unknown;
 }
 
+export interface ChannelFallback {
+  kind: "auth" | "compat";
+  reason: string;
+}
+
 export interface ChatChannelSnapshot {
   tabId: string;
   agent: string;
@@ -60,6 +65,8 @@ export interface ChatChannelSnapshot {
   approval: ChannelApproval | null;
   liveText: string | null;
   notice: { seq: number; text: string } | null;
+  /** 原生模式启动阶段失败时通知前端自动回落（auth 引去登录 / compat 自动改用兼容模式重开） */
+  fallback?: ChannelFallback | null;
   /** 正在跑的工具（最近开始、还没结束的那个；input 是参数 JSON，已截断脱敏）；没有为 null */
   activity: { name: string; input: string; startedAt: number } | null;
   /** 这一段思考的摘要（Codex 推理摘要、Qwen / OpenCode 思考增量）；工具开始或正文开始写就清掉 */
@@ -98,6 +105,15 @@ export function nativeSwitchWarning(snap: ChatChannelSnapshot | null | undefined
 /** 纯协议运行时的旁路（原生模式的 Kimi ACP、Claude -p 双向 stream-json）：没有终端界面，发话只能经通道 */
 export function nativeRuntimeKind(kind: ChannelKind | null | undefined): boolean {
   return kind === "acp" || kind === "claude-native";
+}
+
+/** 原生模式启动阶段自动回落的单次护栏：每个标签一次启动最多自动回落一次，避免失败死循环 */
+export function decideNativeFallback(
+  snap: Pick<ChatChannelSnapshot, "fallback"> | null | undefined,
+  alreadyUsed: boolean,
+): ChannelFallback | null {
+  if (alreadyUsed || !snap?.fallback) return null;
+  return snap.fallback;
 }
 
 /**

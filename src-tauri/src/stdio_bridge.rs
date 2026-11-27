@@ -84,7 +84,7 @@ pub fn helper_stdio_bridge_cli(args: &[String]) -> i32 {
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| program.clone());
     println!("Mesa 原生模式：{name} 已在协议模式下运行，对话在聊天里进行；这里只显示它的运行日志。");
-    println!("要用终端界面，在聊天里关掉「原生模式」，空闲时会自动接回成终端模式。");
+    println!("要用终端界面，请在右上角 ⋯ 菜单里选择「改用终端模式打开」。");
     let _ = std::io::stdout().flush();
 
     // CLI 标准输出 → 连接

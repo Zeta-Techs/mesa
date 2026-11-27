@@ -334,11 +334,47 @@ fn call(ch: &Channel, method: &str, params: Value, timeout: Duration) -> Result<
         st.waiters.insert(id, tx);
         (id, msg)
     };
-    let got = write_line(&writer, &msg).and_then(|_| rx.recv_timeout(timeout).map_err(|_| format!("{method} 没有回应")));
+    let got = write_line(&writer, &msg).and_then(|_| {
+        rx.recv_timeout(timeout).map_err(|e| match e {
+            mpsc::RecvTimeoutError::Disconnected => format!("{method} 中途断开"),
+            mpsc::RecvTimeoutError::Timeout => format!("{method} 没有回应"),
+        })
+    });
     if let Ok(mut st) = ch.acp.lock() {
         st.waiters.remove(&id);
     }
     got
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OpenErr {
+    kind: &'static str,
+    reason: String,
+}
+
+fn is_auth_error(reply: &Value, err_text: &str) -> bool {
+    if reply.pointer("/error/code").and_then(Value::as_i64) == Some(-32000) {
+        return true;
+    }
+    let lower = err_text.to_lowercase();
+    lower.contains("auth")
+        || lower.contains("unauthenticated")
+        || lower.contains("not logged in")
+        || lower.contains("login")
+}
+
+fn classify_rpc_open_error(reply: &Value, err_text: &str, compat_prefix: &str, compat_suffix: &str) -> OpenErr {
+    if is_auth_error(reply, err_text) {
+        OpenErr {
+            kind: "auth",
+            reason: "还没登录：请在终端里登录后再试".into(),
+        }
+    } else {
+        OpenErr {
+            kind: "compat",
+            reason: format!("{compat_prefix}（{err_text}），{compat_suffix}"),
+        }
+    }
 }
 
 fn error_text(reply: &Value) -> Option<String> {
@@ -352,6 +388,17 @@ fn error_text(reply: &Value) -> Option<String> {
 pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     let AcpPrep { listener, token, cwd, resume, mode, discuss, expect_model, expect_thinking } = prep;
     let Some(stream) = accept(&ch, &listener, &token) else {
+        if !ch.stop.load(Ordering::Acquire) {
+            let reason = "原生协议启动超时，已自动改用兼容模式继续".to_string();
+            feed(
+                &ch,
+                vec![
+                    ChannelEvent::NativeFallback { kind: "compat", reason: reason.clone() },
+                    ChannelEvent::Notice(reason),
+                ],
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        }
         super::disconnect(&ch);
         return;
     };
@@ -375,9 +422,16 @@ pub(crate) fn run(ch: Arc<Channel>, prep: AcpPrep) {
     };
     match open_session(&ch, &cwd, resume.as_deref(), mode, expect_model.as_deref(), expect_thinking) {
         Ok(()) => {}
-        Err(message) => {
-            feed(&ch, vec![ChannelEvent::Notice(message)]);
-            // 会话没开成：关连接让桥和 CLI 退出，标签照旧显示退出
+        Err(err) => {
+            feed(
+                &ch,
+                vec![
+                    ChannelEvent::NativeFallback { kind: err.kind, reason: err.reason.clone() },
+                    ChannelEvent::Notice(err.reason),
+                ],
+            );
+            // 等 flusher（150ms 间隔）把回落快照送达前端，再关连接让桥和 CLI 退出
+            std::thread::sleep(Duration::from_millis(250));
             if let Ok(s) = writer.lock() {
                 let _ = s.shutdown(std::net::Shutdown::Both);
             }
@@ -423,7 +477,11 @@ fn open_session(
     mode: Option<&'static str>,
     expect_model: Option<&str>,
     expect_thinking: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), OpenErr> {
+    let compat_err = |prefix: &str, e: String, suffix: &str| OpenErr {
+        kind: "compat",
+        reason: format!("{prefix}（{e}），{suffix}"),
+    };
     let init = call(
         ch,
         "initialize",
@@ -433,9 +491,10 @@ fn open_session(
             "clientInfo": { "name": "mesa", "title": "Mesa", "version": env!("CARGO_PKG_VERSION") }
         }),
         CALL_TIMEOUT,
-    )?;
+    )
+    .map_err(|e| compat_err("原生协议没连上", e, "已自动改用兼容模式继续"))?;
     if let Some(e) = error_text(&init) {
-        return Err(format!("没连上原生模式：{e}"));
+        return Err(classify_rpc_open_error(&init, &e, "原生协议没连上", "已自动改用兼容模式继续"));
     }
     let agent = ch.acp.lock().map(|s| s.agent.clone()).unwrap_or_default();
     // Cursor ACP 2026.11 实测：session/new 前须先用本机已登录凭证跑一次 authenticate(cursor_login)
@@ -445,9 +504,13 @@ fn open_session(
             .and_then(Value::as_array)
             .is_some_and(|arr| arr.iter().any(|m| m.get("id").and_then(Value::as_str) == Some("cursor_login")))
     {
-        let auth = call(ch, "authenticate", json!({ "methodId": "cursor_login" }), CALL_TIMEOUT)?;
+        let auth = call(ch, "authenticate", json!({ "methodId": "cursor_login" }), CALL_TIMEOUT)
+            .map_err(|e| compat_err("原生协议登录检查失败", e, "已自动改用兼容模式继续"))?;
         if error_text(&auth).is_some() {
-            return Err("还没登录：关掉原生模式，在终端里登录后再打开".into());
+            return Err(OpenErr {
+                kind: "auth",
+                reason: "还没登录：请在终端里登录后再试".into(),
+            });
         }
     }
     let can_load = init.pointer("/result/agentCapabilities/loadSession").and_then(Value::as_bool) == Some(true);
@@ -461,26 +524,33 @@ fn open_session(
             if let Ok(mut st) = ch.acp.lock() {
                 st.loading = false;
             }
-            let r = r?;
+            let r = r.map_err(|e| compat_err("原生模式没接回这段对话", e, "已自动改用兼容模式接回"))?;
             if let Some(e) = error_text(&r) {
-                return Err(format!("没接回这段对话：{e}"));
+                return Err(classify_rpc_open_error(&r, &e, "原生模式没接回这段对话", "已自动改用兼容模式接回"));
             }
             opened = r;
             id.to_string()
         }
-        Some(_) => return Err("这一版不支持在原生模式下接回旧对话，请关掉原生模式再接".into()),
+        Some(_) => {
+            return Err(OpenErr {
+                kind: "compat",
+                reason: "这一版不支持在原生模式下接回旧对话，已自动改用兼容模式接回".into(),
+            });
+        }
         None => {
-            let r = call(ch, "session/new", json!({ "cwd": cwd, "mcpServers": [] }), CALL_TIMEOUT)?;
+            let r = call(ch, "session/new", json!({ "cwd": cwd, "mcpServers": [] }), CALL_TIMEOUT)
+                .map_err(|e| compat_err("原生模式没开成会话", e, "已自动改用兼容模式继续"))?;
             if let Some(e) = error_text(&r) {
-                let auth = r.pointer("/error/code").and_then(Value::as_i64) == Some(-32000)
-                    || e.to_lowercase().contains("auth");
-                return Err(if auth {
-                    "还没登录：关掉原生模式，在终端里登录后再打开".into()
-                } else {
-                    format!("没开成会话：{e}")
-                });
+                return Err(classify_rpc_open_error(&r, &e, "原生模式没开成会话", "已自动改用兼容模式继续"));
             }
-            let id = r.pointer("/result/sessionId").and_then(Value::as_str).ok_or("没开成会话：没有会话 id")?.to_string();
+            let id = r
+                .pointer("/result/sessionId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OpenErr {
+                    kind: "compat",
+                    reason: "原生模式没开成会话（没有会话 id），已自动改用兼容模式继续".into(),
+                })?
+                .to_string();
             opened = r;
             id
         }
@@ -500,9 +570,13 @@ fn open_session(
         ],
     );
     if let Some(mode) = mode {
-        let r = call(ch, "session/set_mode", json!({ "sessionId": sid, "modeId": mode }), CALL_TIMEOUT)?;
-        if let Some(e) = error_text(&r) {
-            feed(ch, vec![ChannelEvent::Notice(format!("没切到对应的权限档：{e}"))]);
+        match call(ch, "session/set_mode", json!({ "sessionId": sid, "modeId": mode }), CALL_TIMEOUT) {
+            Ok(r) => {
+                if let Some(e) = error_text(&r) {
+                    feed(ch, vec![ChannelEvent::Notice(format!("没切到对应的权限档：{e}"))]);
+                }
+            }
+            Err(e) => feed(ch, vec![ChannelEvent::Notice(format!("没切到对应的权限档：{e}"))]),
         }
     }
     // 切换模式后核对模型与思考档（设计稿公共件 3）：会话报的当前值不是 Mesa 选的，能改就改过来，改不了就说一声
@@ -510,9 +584,13 @@ fn open_session(
         match config_check(&opened, id, want) {
             ModelCheck::Fine => {}
             ModelCheck::Switch(want) => {
-                let r = call(ch, "session/set_config_option", json!({ "sessionId": sid, "configId": id, "value": want }), CALL_TIMEOUT)?;
-                if let Some(e) = error_text(&r) {
-                    feed(ch, vec![ChannelEvent::Notice(format!("没能换成 Mesa 选的{what} {want}：{e}"))]);
+                match call(ch, "session/set_config_option", json!({ "sessionId": sid, "configId": id, "value": want }), CALL_TIMEOUT) {
+                    Ok(r) => {
+                        if let Some(e) = error_text(&r) {
+                            feed(ch, vec![ChannelEvent::Notice(format!("没能换成 Mesa 选的{what} {want}：{e}"))]);
+                        }
+                    }
+                    Err(e) => feed(ch, vec![ChannelEvent::Notice(format!("没能换成 Mesa 选的{what} {want}：{e}"))]),
                 }
             }
             ModelCheck::Missing { want, current } => {
@@ -674,6 +752,10 @@ fn read_loop(ch: &Arc<Channel>, writer: &Arc<Mutex<TcpStream>>, stream: TcpStrea
             eprintln!("acp← {}", msg.to_string().chars().take(300).collect::<String>());
         }
         handle(ch, writer, &msg);
+    }
+    // 桥断开时立刻释放所有等待回包的通道，避免 open_session 里的 call 干等 60 秒超时
+    if let Ok(mut st) = ch.acp.lock() {
+        st.waiters.clear();
     }
 }
 
@@ -1199,5 +1281,22 @@ mod tests {
         assert!(find_transcript_in("codebuddy", "cb-sid-1", &roots).is_some_and(|p| p.ends_with("cb-sid-1.jsonl")));
         assert!(find_transcript_in("grok", "grk-1", &roots).is_some_and(|p| p.ends_with("updates.jsonl")));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn classify_rpc_open_error_distinguishes_auth_from_compat() {
+        let auth_code = json!({"error":{"code":-32000,"message":"failed"}});
+        let r = classify_rpc_open_error(&auth_code, "failed", "原生模式没开成会话", "已自动改用兼容模式继续");
+        assert_eq!(r.kind, "auth");
+        assert!(r.reason.contains("终端里登录"));
+
+        let auth_msg = json!({"error":{"code":-32603,"message":"Unauthenticated user"}});
+        let r = classify_rpc_open_error(&auth_msg, "Unauthenticated user", "原生模式没开成会话", "已自动改用兼容模式继续");
+        assert_eq!(r.kind, "auth");
+
+        let compat = json!({"error":{"code":-32601,"message":"method not found"}});
+        let r = classify_rpc_open_error(&compat, "method not found", "原生协议没连上", "已自动改用兼容模式继续");
+        assert_eq!(r.kind, "compat");
+        assert!(r.reason.contains("兼容模式"));
     }
 }
