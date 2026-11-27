@@ -130,6 +130,78 @@ import { nativeRuntime, nativeStopViaChannel } from "../chat-fidelity";
  */
 const StableConversationView = memoWithLatestFunctions(ConversationView, { queuedNote: 3 });
 
+/**
+ * 实时思考预览（全十家统一，2026-11-27）：默认限高 6 行并自动滚到底展示最新几行（溢出时顶部渐隐），
+ * 既能看到思考持续推进又不撑爆对话区；点「展开」随时看当前完整思考原文，正文到来后整体让位。
+ */
+function LiveThinkingPreview({
+  text,
+  elapsed,
+  sweep,
+}: {
+  text: string;
+  elapsed: number;
+  sweep: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflow, setOverflow] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el || expanded) return;
+    if (el.clientHeight > 0) {
+      setOverflow(el.scrollHeight > el.clientHeight + 4);
+      el.scrollTop = el.scrollHeight;
+    } else {
+      // 无布局环境（JSDOM 测试）按行数 / 字数估算是否超过 6 行视窗
+      setOverflow(text.split("\n").length > 6 || text.length > 260);
+    }
+  }, [text, expanded]);
+  const showToggle = overflow || expanded;
+  const clamped = !expanded;
+  return (
+    <div className="mb-2">
+      <div className="mb-1 flex min-w-0 items-center gap-2 text-xs text-l3">
+        <MesaStatusLead text="思考中" motion="thinking" sweep={sweep} />
+        {elapsed >= 10 && (
+          <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
+            {fmtElapsed(elapsed)}
+          </span>
+        )}
+        {showToggle && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 text-micro text-l4 hover:text-l2"
+          >
+            {expanded ? "收起" : "展开"}
+          </button>
+        )}
+      </div>
+      <div className="border-l border-hairline pl-3">
+        <div
+          ref={boxRef}
+          className={`ccode-chat-meta whitespace-pre-wrap break-words leading-relaxed text-l3 ${
+            clamped ? `ccode-thinking-window${overflow ? " ccode-thinking-window-fade" : ""}` : ""
+          }`}
+        >
+          {text}
+        </div>
+        {expanded && overflow && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="mt-1 text-micro text-l4 hover:text-l2"
+          >
+            收起
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ChatSurface({
   messages,
   state,
@@ -2157,23 +2229,11 @@ export default function ChatSurface({
               />
             ))}
           {livePreview.length === 0 && thinkingPreview && (
-            // 终端里的思考（Grok 思考框、Kimi「thinking…」下的两行）：上面固定一行「M▁ 思考中」，原文在下面，
-            // 换成别家思考展开后的样子（ConversationView 过程「思考」行的正文：过程行那一档字号 .ccode-chat-meta、左边一条细线，
-            // 与正文分开，2026-10-26 用户）。Kimi 的思考原文读屏时有时无，原先在这一块与「M▁ 思考中」那一行之间整块换样子；
-            // 现在表头不动，只有下面的原文出没（2026-10-29 用户）
-            <div className="mb-2">
-              <div className="mb-1 flex min-w-0 items-center gap-2 text-xs text-l3">
-                <MesaStatusLead text="思考中" motion="thinking" sweep={!trustPrompt} />
-                {genElapsed >= 10 && (
-                  <span className="shrink-0 tabular-nums text-l4" aria-hidden="true">
-                    {fmtElapsed(genElapsed)}
-                  </span>
-                )}
-              </div>
-              <div className="ccode-chat-meta whitespace-pre-wrap break-words border-l border-hairline pl-3 leading-relaxed text-l3">
-                {livePreviewText}
-              </div>
-            </div>
+            <LiveThinkingPreview
+              text={livePreviewText}
+              elapsed={genElapsed}
+              sweep={!trustPrompt}
+            />
           )}
           {/* 出图进度（ChatImageGen.tsx）：按出图工具的调用记录画，不靠这家 Agent 报状态 */}
           {imageGen.progress}

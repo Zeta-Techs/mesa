@@ -3817,6 +3817,15 @@ select:focus-visible {
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3lh), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 3lh), transparent);
 }
+/* 实时思考流默认视窗（2026-11-27）：约 6 行、滚轮穿透不截留，由组件自动滚到底展示最新内容；溢出时顶部 1.6 行柔和渐隐，点「展开」看全文 */
+.ccode-thinking-window {
+  max-height: calc(1lh * 6);
+  overflow: hidden;
+}
+.ccode-thinking-window-fade {
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 1.6lh);
+  mask-image: linear-gradient(to bottom, transparent, #000 1.6lh);
+}
 .md-chat p,
 .md-chat ul,
 .md-chat ol {

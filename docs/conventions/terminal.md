@@ -119,8 +119,7 @@
   屏上没有说完的一句时还和「思考中」来回跳）；③逐帧拼出思考全文（用户：就要原生的思考显示）。Windows 上转圈是 ASCII 竖线 / 斜线 / 横线，
   不归 SPINNER 管，「Waiting for response… / Thinking… N.Ns」与按 Ctrl+C 后的「Press Ctrl+c to cancel the turn」进 skip。
   样本 `tests/fixtures/screens/grok/win32-1.0.70-*`。
-  **各家统一（同日用户：Grok 思考时就有细线，Kimi 要想完才有，统一）**：凡终端里看得见思考原文的家，思考中一律走这一套
-  （`thinkingPreview`，细线样式），不得当成回复正文显示。新增一家给 `Layout.thinkBlock`（头一行）+ `thinkGutter`（框里的行，默认竖线）。
+  **各家统一（同日用户：Grok 思考时就有细线，Kimi 要想完才有，统一；2026-11-27 拍板限高视窗）**：凡终端读屏或结构化通道（ACP / Claude 原生 / Codex / Qwen / OpenCode）给出实时思考原文的家，思考中一律走 `LiveThinkingPreview` 细线样式——默认限高 6 行（`.ccode-thinking-window`，`overflow: hidden` 滚轮穿透不截留）自动滚到底展示最新内容，超出 6 行时顶部 1.6 行柔和渐隐（`.ccode-thinking-window-fade`）并在标题行给出 **展开 / 收起** 随时看完整思考；正文开始后让位，落盘后折进过程行。新增一家给 `Layout.thinkBlock`（头一行）+ `thinkGutter`（框里的行，默认竖线）或接 `thinking_live`。
   Kimi 2.3.2：思考中画「⠋ thinking…」、下面缩进两格只留最后两行（`thinkGutter` = 缩进两格以上、到空行为止）；想完收成「● 第一行 / 续行 /
   … (N more lines, ctrl+o to expand)」，行首 ● 与回复正文一模一样、只差整段斜体浅字——`Layout.thinkItalic` 让调用方按单元格斜体
   （`screen-cells.ts italicLine`）把这几行剔出回复预览，提示行进 skip。

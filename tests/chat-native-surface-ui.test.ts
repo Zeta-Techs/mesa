@@ -981,6 +981,63 @@ test("全八家原生通道综合验收：长思考不截断、中文路径审�
     });
     assert.ok(env.rootEl.textContent?.includes("/usage"), "Kimi 原生 /usage 命令记录应保留在对话里");
     assert.ok(env.rootEl.textContent?.includes("本月已用 12%"), "Kimi 原生 /usage 结果内容应可见");
+
+    // 5. 实时思考视窗限高渐隐与展开/收起：短思考不出冗余按钮；超过 6 行出顶渐隐与「展开」，点开去限高、点「收起」恢复
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "codex",
+            attention: "working",
+            channel: baseChannel({
+              agent: "codex",
+              kind: "codex",
+              turn: { seq: 70, status: "running", stopReason: null, startedAt: 700, endedAt: null },
+              thinkingLive: "短思考，只有两行。\n不需要展开按钮。",
+            }),
+            liveReply: null,
+            liveReplySource: null,
+          }),
+        ),
+      );
+    });
+    assert.ok(env.rootEl.querySelector(".ccode-thinking-window"), "实时思考预览默认使用限高视窗");
+    assert.equal(env.rootEl.querySelector(".ccode-thinking-window-fade"), null, "短思考不加顶部渐隐");
+    assert.equal(findButton(env.rootEl, "展开"), null, "短思考不显示多余的展开按钮");
+
+    const multiLineThought = Array.from({ length: 8 }, (_, i) => `第 ${i + 1} 行思考内容：对比方案并检查边界条件。`).join("\n");
+    await act(async () => {
+      env.root.render(
+        createElement(
+          ChatSurface,
+          baseProps({
+            agentId: "codex",
+            attention: "working",
+            channel: baseChannel({
+              agent: "codex",
+              kind: "codex",
+              turn: { seq: 71, status: "running", stopReason: null, startedAt: 710, endedAt: null },
+              thinkingLive: multiLineThought,
+            }),
+            liveReply: null,
+            liveReplySource: null,
+          }),
+        ),
+      );
+    });
+    assert.ok(env.rootEl.querySelector(".ccode-thinking-window-fade"), "超过 6 行的长思考应加顶部渐隐");
+    const expandBtn = findButton(env.rootEl, "展开");
+    assert.ok(expandBtn, "超过 6 行的长思考应提供「展开」按钮");
+    assert.equal(expandBtn.getAttribute("aria-expanded"), "false");
+    await act(async () => expandBtn.click());
+    assert.equal(env.rootEl.querySelector(".ccode-thinking-window"), null, "点击展开后应取消限高显示完整思考");
+    assert.equal(env.rootEl.querySelector(".ccode-thinking-window-fade"), null, "点击展开后应去掉顶部渐隐");
+    const collapseBtn = findButton(env.rootEl, "收起");
+    assert.ok(collapseBtn, "展开态应提供「收起」按钮");
+    assert.equal(collapseBtn.getAttribute("aria-expanded"), "true");
+    await act(async () => collapseBtn.click());
+    assert.ok(env.rootEl.querySelector(".ccode-thinking-window-fade"), "点击收起后应回到限高渐隐视窗");
     assert.deepEqual(env.errors, []);
   } finally {
     await env.cleanup();
