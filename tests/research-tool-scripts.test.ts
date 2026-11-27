@@ -209,8 +209,7 @@ test("域稿正文：约义~不与下标记号错配、\\@ 转义还原、同年
     const result = run(citeDocx, ["--input", md, "--bib", bib, "--output", out, "--report", join(root, "r.md")]);
     assert.equal(result.status, 0, result.stderr);
     // 解包验收 run 结构
-    spawnSync("unzip", ["-o", "-q", out, "-d", join(root, "x")]);
-    const xml = readFileSync(join(root, "x", "word", "document.xml"), "utf8");
+    const xml = zipXml(out).stdout;
     const paras = [...xml.matchAll(/<w:p\b.*?<\/w:p>/gs)].map((m) => m[0]);
     const runsOf = (p: string) =>
       [...p.matchAll(/<w:r\b.*?<\/w:r>/gs)].map((m) => ({
@@ -235,8 +234,7 @@ test("域稿正文：约义~不与下标记号错配、\\@ 转义还原、同年
     const out2 = join(root, "same.docx");
     const md2 = join(root, "full.md");
     assert.equal(run(citeDocx, ["--input", md2, "--bib", bib, "--output", out2, "--report", join(root, "r2.md")]).status, 0);
-    spawnSync("unzip", ["-o", "-q", out2, "-d", join(root, "y")]);
-    const xml2 = readFileSync(join(root, "y", "word", "document.xml"), "utf8");
+    const xml2 = zipXml(out2).stdout;
     assert.match(xml2, /\(Chen et al\., 2025a; Chen et al\., 2025b\)/);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

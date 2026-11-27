@@ -177,7 +177,9 @@ def main():
                                 f"{fig['file']} 不是 Python 出图，画后自检只查 matplotlib；请人目视", fig["file"]))
             done[key] = []
             continue
-        out = Path(tempfile.mkstemp(suffix=".json")[1])
+        fd, out_path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        out = Path(out_path)
         env = dict(os.environ, FIG_LINT_OUT=str(out), FIG_LINT_GRAY=str(gray_dir), MPLBACKEND="Agg")
         try:
             r = subprocess.run([sys.executable, "-c", BOOT, str(script)] + [str(x) for x in fig.get("args", [])], cwd=root, env=env,
